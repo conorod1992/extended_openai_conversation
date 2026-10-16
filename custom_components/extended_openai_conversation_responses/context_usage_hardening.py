@@ -8,7 +8,8 @@ estimate before totals/details are persisted.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator, Mapping
+from dataclasses import replace
 import json
 import logging
 import math
@@ -48,7 +49,7 @@ def _local_estimate(usage: RequestUsage | None) -> int | None:
 
 
 def _copy_usage(target: RequestUsage, source: RequestUsage) -> None:
-    """Replace an in-flight estimate with provider-reported usage."""
+    """Copy reconciled provider counts into the in-flight record."""
     target.input_tokens = source.input_tokens
     target.output_tokens = source.output_tokens
     target.total_tokens = source.total_tokens
@@ -57,21 +58,118 @@ def _copy_usage(target: RequestUsage, source: RequestUsage) -> None:
     target.details = dict(source.details)
 
 
+def _usage_value(source: Any, key: str) -> Any:
+    """Read supplied fields without treating SDK model defaults as reports."""
+    supplied = getattr(source, "model_fields_set", None)
+    if isinstance(supplied, set) and key not in supplied:
+        return None
+    return (
+        source.get(key) if isinstance(source, Mapping) else getattr(source, key, None)
+    )
+
+
+def _reported_count(value: Any) -> bool:
+    """Distinguish an explicitly reported zero from an absent/invalid count."""
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _reported_details(details: Any) -> Iterator[tuple[str, int]]:
+    """Yield valid explicit detail counts, excluding SDK model defaults."""
+    supplied = getattr(details, "model_fields_set", None)
+    if hasattr(details, "model_dump"):
+        details = details.model_dump(exclude_none=True)
+    elif not isinstance(details, Mapping) and hasattr(details, "__dict__"):
+        details = vars(details)
+    if isinstance(details, Mapping):
+        for name, value in details.items():
+            if isinstance(supplied, set) and name not in supplied:
+                continue
+            if _reported_count(value):
+                yield name, value
+
+
+def _has_reported_details(raw: Any) -> bool:
+    """Accept sparse detail reports, including explicit zero corrections."""
+    return any(
+        next(_reported_details(_usage_value(raw, alias)), None) is not None
+        for alias in (
+            "input_tokens_details",
+            "prompt_tokens_details",
+            "output_tokens_details",
+            "completion_tokens_details",
+        )
+    )
+
+
+def _merge_provider_usage(
+    previous: RequestUsage, raw: Any, normalized: RequestUsage
+) -> RequestUsage:
+    """Update supplied cumulative fields without adding repeated snapshots."""
+    merged = replace(previous, details=dict(previous.details))
+    components_updated: set[str] = set()
+    for field, aliases in (
+        ("input_tokens", ("input_tokens", "prompt_tokens")),
+        ("output_tokens", ("output_tokens", "completion_tokens")),
+    ):
+        if any(_reported_count(_usage_value(raw, alias)) for alias in aliases):
+            setattr(merged, field, getattr(normalized, field))
+            components_updated.add(field)
+    total = _usage_value(raw, "total_tokens")
+    if _reported_count(total) and total > 0:
+        merged.total_tokens = total
+    elif components_updated and (
+        len(components_updated) == 2
+        or (merged.input_tokens > 0 and merged.output_tokens > 0)
+        or previous.total_tokens == previous.input_tokens + previous.output_tokens
+    ):
+        # Derive from all known provider components, never a local input estimate.
+        # Preserve an unexplained provider total until its components are known.
+        merged.total_tokens = merged.input_tokens + merged.output_tokens
+
+    for prefix, aliases, key, field in (
+        (
+            "input",
+            ("input_tokens_details", "prompt_tokens_details"),
+            "cached_tokens",
+            "cached_input_tokens",
+        ),
+        (
+            "output",
+            ("output_tokens_details", "completion_tokens_details"),
+            "reasoning_tokens",
+            "reasoning_tokens",
+        ),
+    ):
+        details = _usage_value(raw, aliases[0]) or _usage_value(raw, aliases[1])
+        if _reported_count(_usage_value(details, key)):
+            setattr(merged, field, getattr(normalized, field))
+        for name, value in _reported_details(details):
+            detail_key = f"{prefix}_{name}"
+            if value:
+                merged.details[detail_key] = value
+            else:
+                merged.details.pop(detail_key, None)
+    return merged
+
+
 def _capture_provider_usage(
     target: RequestUsage | None, raw_usage: Any
 ) -> RequestUsage | None:
     """Apply one usable provider snapshot and return its provider-only diagnostics.
 
-    Missing/zero reports leave the current snapshot intact. An active local input
-    estimate survives partial reports, independently of stream termination.
+    Missing/all-zero headline reports leave the current snapshot intact. Explicit
+    details can clear prior counts; local estimates stay separate from accounting.
     """
     if target is None or raw_usage is None:
         return None
     normalized = extract_usage(raw_usage)
-    if _has_token_count(normalized):
+    if _has_token_count(normalized) or _has_reported_details(raw_usage):
         estimate = _local_estimate(target)
-        _copy_usage(target, normalized)
-        if estimate is not None and normalized.input_tokens <= 0:
+        provider = usage_for_accounting(target)
+        assert provider is not None
+        merged = _merge_provider_usage(provider, raw_usage, normalized)
+        _copy_usage(target, merged)
+        if estimate is not None and merged.input_tokens <= 0:
             target.input_tokens = estimate
             target.details[_LOCAL_ESTIMATE_DETAIL] = estimate
             target.details[_PARTIAL_PROVIDER_USAGE_DETAIL] = 1

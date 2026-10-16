@@ -8,6 +8,19 @@ const frontend = (name) => new URL(
 
 const pagination = await import(frontend("management-history-pagination.js"));
 const {loadConversationPage} = pagination;
+// Search hits identify an exact turn, not a fixed-size page boundary. Serialized
+// page budgets can return fewer than TURN_PAGE_LIMIT turns (or part of one turn).
+for (const turnIndex of [19, 39, undefined]) {
+  const markup = pagination.renderConversations({
+    _contentData: {sessions: {sessions: [{session_id: "match", turn_index: turnIndex}]}},
+    _e: value => String(value), _formatDate: value => value, _empty: value => value,
+  });
+  assert.deepEqual(
+    [...markup.matchAll(/data-start-turn="(\d+)"/g)].map(match => Number(match[1])),
+    [turnIndex ?? 0, turnIndex ?? 0],
+    "Both the result card and View button must open the exact matching turn",
+  );
+}
 assert.equal(pagination.LIST_PAGE_LIMIT, 50);
 assert.equal(pagination.SEARCH_PAGE_LIMIT, 20);
 assert.equal(pagination.TURN_PAGE_LIMIT, 20);
@@ -182,10 +195,12 @@ function historyPanel() {
   const button = label => body.children[0].children.find(item => item.textContent === label);
   await pagination.openSession(panel, "session");
   assert.equal(button("Previous turns").disabled, true);
+  assert.equal(button("Start of conversation"), undefined);
   button("Next turns").click();
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(requests[1].start_turn, 0, "Next must stay within the long turn");
   assert.equal(requests[1].text_offset, 30000);
+  assert.ok(button("Start of conversation"), "Long-turn fragments can return to the beginning");
   assert.equal(button("Previous turns").disabled, false, "Previous uses actual cursor history even at turn zero");
   button("Previous turns").click();
   await new Promise(resolve => setImmediate(resolve));
@@ -193,4 +208,11 @@ function historyPanel() {
   assert.equal(requests[2].text_offset, 0);
   await pagination.openSession(panel, "another-session", 40);
   assert.equal(button("Previous turns").disabled, true, "Opening another session resets cursor history");
+  button("Start of conversation").click();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(requests.at(-1).session_id, "another-session");
+  assert.equal(requests.at(-1).start_turn, 0);
+  assert.equal(requests.at(-1).text_offset, 0);
+  assert.equal(button("Previous turns").disabled, true);
+  assert.equal(button("Start of conversation"), undefined);
 }

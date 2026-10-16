@@ -148,6 +148,15 @@ function appendTurnPager(panel, body, sessionId, data, history) {
   status.textContent = pageLabel(data, "turns");
   pager.append(status);
 
+  if (integer(data.start_turn) > 0 || integer(data.text_offset) > 0) {
+    const start = document.createElement("button");
+    start.type = "button";
+    start.className = "secondary";
+    start.textContent = "Start of conversation";
+    start.addEventListener("click", () => void openSession(panel, sessionId));
+    pager.append(start);
+  }
+
   const previous = document.createElement("button");
   previous.type = "button";
   previous.className = "secondary";
@@ -259,6 +268,6 @@ export function reconcileActiveConversations(panel) {
 export function renderConversations(panel) {
   const result = panel._contentData || panel._result || {};
   const content = `<div data-eoc-active-conversations>${activeConversationMarkup(panel, result)}</div>
-    <section class="content-card"><div class="section-heading"><div><h2>Retained conversations</h2><p>Search and review conversations for the selected scope.</p></div></div><div class="search-row"><input id="archive-query" type="search" placeholder="Search retained discussions" aria-label="Search retained discussions"><button type="button" id="archive-search">Search</button></div><div class="list">${(result.sessions?.sessions || []).map((item) => `<article class="list-card"><div class="card-main clickable open-session" tabindex="0" role="button" data-start-turn="${Math.floor(integer(item.turn_index) / TURN_PAGE_LIMIT) * TURN_PAGE_LIMIT}" data-id="${panel._e(item.session_id)}"><h3>${panel._e(item.title || "Untitled conversation")}</h3><p class="meta">${panel._e(panel._formatDate(item.last_message_at))} · ${panel._e(String(item.turn_count))} turns · ${panel._e(item.scope_source)}</p>${item.excerpt ? `<p class="search-excerpt">${panel._e(item.excerpt)}</p>` : ""}</div><div class="actions"><button type="button" class="secondary view-session" data-start-turn="${Math.floor(integer(item.turn_index) / TURN_PAGE_LIMIT) * TURN_PAGE_LIMIT}" data-id="${panel._e(item.session_id)}">View</button><button type="button" class="danger delete-session" data-id="${panel._e(item.session_id)}">Delete</button></div></article>`).join("") || panel._empty(panel._eocHistoryMode === "search" ? "No conversations match this search." : "No retained conversations in this scope.")}</div></section>`;
+    <section class="content-card"><div class="section-heading"><div><h2>Retained conversations</h2><p>Search and review conversations for the selected scope.</p></div></div><div class="search-row"><input id="archive-query" type="search" placeholder="Search retained discussions" aria-label="Search retained discussions"><button type="button" id="archive-search">Search</button></div><div class="list">${(result.sessions?.sessions || []).map((item) => `<article class="list-card"><div class="card-main clickable open-session" tabindex="0" role="button" data-start-turn="${integer(item.turn_index)}" data-id="${panel._e(item.session_id)}"><h3>${panel._e(item.title || "Untitled conversation")}</h3><p class="meta">${panel._e(panel._formatDate(item.last_message_at))} · ${panel._e(String(item.turn_count))} turns · ${panel._e(item.scope_source)}</p>${item.excerpt ? `<p class="search-excerpt">${panel._e(item.excerpt)}</p>` : ""}</div><div class="actions"><button type="button" class="secondary view-session" data-start-turn="${integer(item.turn_index)}" data-id="${panel._e(item.session_id)}">View</button><button type="button" class="danger delete-session" data-id="${panel._e(item.session_id)}">Delete</button></div></article>`).join("") || panel._empty(panel._eocHistoryMode === "search" ? "No conversations match this search." : "No retained conversations in this scope.")}</div></section>`;
   return content;
 }

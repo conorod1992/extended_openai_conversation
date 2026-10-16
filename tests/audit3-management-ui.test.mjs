@@ -55,7 +55,7 @@ const hit = {session_id: "long", turn_index: 25, turn_id: "t25", excerpt: "needl
 const conversation = {_e: e, _formatDate: x => x, _empty: x => x, _contentData: {sessions: {sessions: searchSessionRows({results: [hit]})}}};
 const html = renderConversations(conversation);
 assert.match(html, /needle &lt;script>/);
-assert.equal((html.match(/data-start-turn="20"/g) || []).length, 2);
+assert.equal((html.match(/data-start-turn="25"/g) || []).length, 2);
 const button = {dataset: {id: "long", startTurn: "20"}};
 const host = {};
 const dialog = {open: false, showModal() {this.open = true;}};

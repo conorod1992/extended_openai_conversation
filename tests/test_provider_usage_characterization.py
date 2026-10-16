@@ -147,7 +147,7 @@ async def test_terminal_usage_context_accounting_and_diagnostics(mode, limited, 
 
 @pytest.mark.parametrize("mode", ["chat", "responses"])
 @pytest.mark.parametrize("last", ["full", "zero", "missing", "output"])
-async def test_repeated_usage_is_snapshot_replacement_not_addition(mode, last):
+async def test_repeated_usage_updates_supplied_fields_without_addition(mode, last):
     usage = _estimated()
     traces = []
     first = (
@@ -157,8 +157,11 @@ async def test_repeated_usage_is_snapshot_replacement_not_addition(mode, last):
     )
     source = FakeStream([first, *_terminal(mode, _reported(last))])
     _ = [delta async for delta in _transform(mode, source, usage, traces)]
-    # Missing and all-zero reports cannot retract a genuine provider snapshot.
-    expected = _provider_expected("full" if last in {"missing", "zero"} else last)
+    # Partial reports retain earlier components; an explicit positive provider
+    # total remains authoritative even when that provider counts only output.
+    expected = _provider_expected("full")
+    if last == "output":
+        expected.total_tokens = 30
     assert usage == expected
     assert usage_for_accounting(usage) == expected
     assert traces[0] == {"stats": {"input_tokens": 120, "output_tokens": 30}}

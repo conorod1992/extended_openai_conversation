@@ -810,7 +810,7 @@ async def test_restore_rollback_failure_escalates(monkeypatch, hass) -> None:
     )
 
     with pytest.raises(BackupError, match="recovery is still pending"):
-        await backup.async_restore_backup(hass, entry, subentry, {})
+        await backup.async_restore_backup(hass, entry, subentry, prepared)
 
 
 @pytest.mark.asyncio

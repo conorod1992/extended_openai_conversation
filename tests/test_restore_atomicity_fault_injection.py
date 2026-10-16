@@ -4,16 +4,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import backup
-from custom_components.extended_openai_conversation_responses import restore_recovery
-from tests.test_backup import _document
-from tests.test_restore_recovery import (
-    FakeHass,
-    MemoryJournalStore,
-    _identity,
-    _states,
+from custom_components.extended_openai_conversation_responses import (
+    backup,
+    restore_recovery,
 )
-
+from tests.test_restore_recovery import FakeHass, MemoryJournalStore, _identity, _states
 
 _BOUNDARIES = (
     "memory",
@@ -134,10 +129,11 @@ async def test_restore_failure_at_each_manager_boundary_rolls_back_and_retry_suc
     monkeypatch.setattr(restore_recovery, "reset_restored_runtime", reset_runtime)
 
     with pytest.raises(
-        backup.BackupError, match="Restore failed; the previous agent state was recovered"
+        backup.BackupError,
+        match="Restore failed; the previous agent state was recovered",
     ):
         await restore_recovery.async_restore_backup_recoverably(
-            hass, entry, subentry, _document()
+            hass, entry, subentry, target
         )
 
     assert managers[failure_index].failed is True
@@ -156,7 +152,7 @@ async def test_restore_failure_at_each_manager_boundary_rolls_back_and_retry_suc
         assert manager.state in {"rollback", "equivalent"}
 
     result = await restore_recovery.async_restore_backup_recoverably(
-        hass, entry, subentry, _document()
+        hass, entry, subentry, target
     )
 
     assert result["status"] == "restored"
