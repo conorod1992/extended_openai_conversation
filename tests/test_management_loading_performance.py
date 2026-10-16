@@ -40,7 +40,7 @@ from homeassistant.exceptions import HomeAssistantError
 
 
 @pytest.fixture(autouse=True)
-async def retained_rules(monkeypatch):
+async def retained_rules(monkeypatch, hass):
     from custom_components.extended_openai_conversation_responses.request_rules import (
         RequestRules,
     )
@@ -369,7 +369,7 @@ async def test_configuration_get_caches_normalized_persisted_snapshot(monkeypatc
     monkeypatch.setattr(
         function_repair, "_persisted_projections", function_repair.OrderedDict()
     )
-    management_ui._cached_configuration_defaults()
+    management_ui._configuration_defaults()
     original = function_repair.agent_config_snapshot
     tool_validator = Mock(wraps=agent_config.validate_function_tools)
     monkeypatch.setattr(agent_config, "validate_function_tools", tool_validator)

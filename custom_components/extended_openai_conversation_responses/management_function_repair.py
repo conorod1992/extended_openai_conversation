@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from hashlib import sha256
 from time import perf_counter
@@ -41,6 +41,7 @@ from .const import (
     DEFAULT_USAGE_RUN_RETENTION_DAYS,
 )
 from .live_subentry_updates import update_live_subentry
+from .model_catalog import catalog_generation
 from .request import canonical_json
 
 _STALE_CONFIGURATION_ERROR = (
@@ -63,6 +64,16 @@ class _PersistedProjection:
     retention: dict[str, Any]
     repair_state: _RepairState | None = None
     repair_snapshot: dict[str, Any] | None = None
+    snapshot_generation: int = field(default_factory=catalog_generation)
+
+
+def _refresh_catalog_snapshots(projection: _PersistedProjection) -> None:
+    """Expire derived values without changing persisted revision or repair state."""
+    generation = catalog_generation()
+    if projection.snapshot_generation != generation:
+        projection.snapshot = None
+        projection.repair_snapshot = None
+        projection.snapshot_generation = generation
 
 
 @dataclass
@@ -423,6 +434,7 @@ def persisted_config_projection(
     ):
         if diagnostics is not None:
             diagnostics["projection_cache_hit"] = True
+        _refresh_catalog_snapshots(cached)
         _persisted_projections.move_to_end(key)
         return cached
 
@@ -500,6 +512,7 @@ def normalized_persisted_config_snapshot(
 ) -> tuple[dict[str, Any], bool]:
     """Lazily normalize a full read and isolate the returned frontend data."""
     started = perf_counter()
+    _refresh_catalog_snapshots(projection)
     hit = projection.snapshot is not None
     reused_defaults = False
     if projection.snapshot is None:
@@ -788,6 +801,7 @@ def safe_configuration_payload(
     from . import management_loading_performance, management_ui
 
     if projection is not None:
+        _refresh_catalog_snapshots(projection)
         state, _cache_hit = repair_state_for_projection(projection)
         if state is None:
             raise HomeAssistantError("Function Tools do not require repair")
@@ -805,7 +819,7 @@ def safe_configuration_payload(
             "title": projection.title,
             "revision": projection.revision,
             "config": config,
-            "defaults": deepcopy(_cached_repair_defaults()),
+            "defaults": deepcopy(_cached_repair_defaults(catalog_generation())),
             "options": management_ui.agent_config_options(),
             "model_capabilities": management_ui._configuration_model_capabilities(
                 config[management_ui.CONF_CHAT_MODEL]
@@ -829,7 +843,7 @@ def safe_configuration_payload(
 
 
 @lru_cache(maxsize=1)
-def _cached_repair_defaults() -> dict[str, Any]:
+def _cached_repair_defaults(generation: int = 0) -> dict[str, Any]:
     """Build the unchanged legacy repair defaults projection once."""
     from .management_loading_performance import _snapshot_normalized_configuration
 

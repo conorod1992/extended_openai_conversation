@@ -6,9 +6,15 @@ from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from typing import Any
 
+from .context_usage_hardening import _capture_provider_usage
+from .usage import RequestUsage
 
-async def completed_responses_events(response: Any) -> AsyncIterator[Any]:
+
+async def completed_responses_events(
+    response: Any, request_usage: RequestUsage | None = None
+) -> AsyncIterator[Any]:
     """Emit only the events consumed by EOAI's Responses transformer."""
+    _capture_provider_usage(request_usage, getattr(response, "usage", None))
     for output_index, item in enumerate(getattr(response, "output", ())):
         yield SimpleNamespace(type="response.output_item.added", item=item)
         if getattr(item, "type", None) == "message":
@@ -47,8 +53,11 @@ async def completed_responses_events(response: Any) -> AsyncIterator[Any]:
     yield SimpleNamespace(type=event_type, response=response)
 
 
-async def completed_chat_chunks(response: Any) -> AsyncIterator[Any]:
+async def completed_chat_chunks(
+    response: Any, request_usage: RequestUsage | None = None
+) -> AsyncIterator[Any]:
     """Emit one completed choice and its usage through the existing chat parser."""
+    _capture_provider_usage(request_usage, getattr(response, "usage", None))
     for choice in getattr(response, "choices", ()):
         message = choice.message
         tool_calls = [

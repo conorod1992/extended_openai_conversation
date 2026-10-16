@@ -71,6 +71,7 @@ from .context_summary_performance import (
 )
 from .context_usage_hardening import (
     _trace_provider_usage,
+    async_recover_trailing_usage,
     estimate_prepared_request,
     normalized_chat_stream,
     normalized_responses_stream,
@@ -1067,7 +1068,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         if streaming:
                             provider_stream = cast(AsyncStream[Any], response)
                         else:
-                            response_events = completed_responses_events(response)
+                            response_events = completed_responses_events(
+                                response, request_usage
+                            )
                         transformed_stream = self._transform_responses_stream(
                             chat_log, response_events, request_usage
                         )
@@ -1083,7 +1086,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                 AsyncStream[ChatCompletionChunk], response
                             )
                         else:
-                            response_chunks = completed_chat_chunks(response)
+                            response_chunks = completed_chat_chunks(
+                                response, request_usage
+                            )
                         transformed_stream = self._transform_chat_stream(
                             chat_log, response_chunks, request_usage
                         )
@@ -1719,6 +1724,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         args = json.loads(tool_call["arguments"])
                     except json.JSONDecodeError as err:
                         if recovery_state is None or not recovery_state.enabled:
+                            await async_recover_trailing_usage(result, request_usage)
                             raise ParseArgumentsFailed(tool_call["arguments"]) from err
                         args = recovery_state.remember_malformed(
                             tool_call["id"], tool_call["arguments"]
@@ -1727,6 +1733,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         CONTINUE_CONVERSATION_TOOL_NAME,
                         FUNCTION_GROUP_LOADER_TOOL_NAME,
                     } and not isinstance(args, dict):
+                        await async_recover_trailing_usage(result, request_usage)
                         raise ParseArgumentsFailed(tool_call["arguments"])
                     tool_calls_list.append(
                         llm.ToolInput(
@@ -1746,6 +1753,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 terminal_finish_seen = True
             if finish_reason == "content_filter":
                 if not refusal_seen:
+                    await async_recover_trailing_usage(result, request_usage)
                     raise HomeAssistantError(
                         "OpenAI response was blocked by the provider content filter"
                     )
@@ -2009,6 +2017,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         arguments = json.loads(item.arguments)
                     except json.JSONDecodeError as err:
                         if recovery_state is None or not recovery_state.enabled:
+                            await async_recover_trailing_usage(result, request_usage)
                             raise ParseArgumentsFailed(item.arguments) from err
                         arguments = recovery_state.remember_malformed(
                             item.call_id, item.arguments
@@ -2017,6 +2026,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         CONTINUE_CONVERSATION_TOOL_NAME,
                         FUNCTION_GROUP_LOADER_TOOL_NAME,
                     } and not isinstance(arguments, dict):
+                        await async_recover_trailing_usage(result, request_usage)
                         raise ParseArgumentsFailed(item.arguments)
                     completed_calls.append(
                         llm.ToolInput(

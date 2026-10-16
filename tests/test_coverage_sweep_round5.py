@@ -744,9 +744,13 @@ def test_management_normalized_projection_reuses_cached_snapshot(monkeypatch) ->
     )
 
     snapshot = {"value": [1, 2]}
-    projection = SimpleNamespace(
+    projection = repair._PersistedProjection(
+        subentry=None,
         snapshot=deepcopy(snapshot),
         data={},
+        title="Agent",
+        revision="revision",
+        retention={},
     )
     diagnostics = {}
 
