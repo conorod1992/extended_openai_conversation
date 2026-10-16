@@ -426,11 +426,6 @@ def test_tolerant_persist_keeps_invalid_raw_tool_and_hidden_group_member(
         lambda _raw: [deepcopy(invalid_tool)],
     )
     monkeypatch.setattr(quarantine, "repair_revision", lambda _subentry: "new-revision")
-    monkeypatch.setattr(
-        quarantine,
-        "preserve_legacy_guest_policy",
-        lambda _old, new: new,
-    )
 
     class ConfigEntries:
         def async_update_subentry(self, _entry, target, *, data):
