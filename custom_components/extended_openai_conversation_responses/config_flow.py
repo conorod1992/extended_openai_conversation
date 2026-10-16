@@ -34,7 +34,11 @@ from homeassistant.helpers.selector import (
     TextSelectorConfig,
 )
 
-from .agent_config import agent_config_defaults, normalize_agent_config
+from .agent_config import (
+    agent_config_defaults,
+    normalize_agent_config,
+    project_agent_config_fields,
+)
 from .agent_test import async_test_agent
 from .const import (
     API_MODE_OPTIONS,
@@ -624,6 +628,21 @@ class ExtendedOpenAISubentryFlowHandler(ConfigSubentryFlow):
         ]
 
 
+def _ai_task_form_fields(schema: dict[Any, Any], *, create: bool) -> dict[Any, Any]:
+    """Suggest defaults without turning omitted reconfigure fields into edits."""
+    if create:
+        return schema
+    fields = {}
+    for marker, validator in schema.items():
+        if isinstance(marker, vol.Optional):
+            description = dict(marker.description or {})
+            if callable(marker.default):
+                description.setdefault("suggested_value", marker.default())
+            marker = vol.Optional(marker.schema, description=description)
+        fields[marker] = validator
+    return fields
+
+
 class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
     """Flow for managing AI Task subentries."""
 
@@ -660,26 +679,24 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
             return self.async_abort(reason="entry_not_loaded")
 
         if user_input is not None:
+            candidate = {**self.options, **user_input}
             # Check if advanced options is enabled
             if user_input.get(CONF_ADVANCED_OPTIONS, False):
                 # Store data and move to advanced step
                 self._temp_data = dict(user_input)
-                if (
-                    user_input.get("azure_model") or user_input.get(CONF_CHAT_MODEL)
-                ) != (
+                if (candidate.get("azure_model") or candidate.get(CONF_CHAT_MODEL)) != (
                     self.options.get("azure_model") or self.options.get(CONF_CHAT_MODEL)
                 ):
                     self._temp_data[CONF_REASONING_EFFORT] = (
                         recommended_reasoning_effort(
                             str(
-                                user_input.get("azure_model")
-                                or user_input[CONF_CHAT_MODEL]
+                                candidate.get("azure_model")
+                                or candidate[CONF_CHAT_MODEL]
                             )
                         )
                     )
                 return await self.async_step_advanced()
 
-            candidate = {**self.options, **user_input}
             if (candidate.get("azure_model") or candidate.get(CONF_CHAT_MODEL)) != (
                 self.options.get("azure_model") or self.options.get(CONF_CHAT_MODEL)
             ):
@@ -755,7 +772,9 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
             description_placeholders={"reason": validation_error},
             data_schema=schema_for_ha(
                 self.add_suggested_values_to_schema(
-                    schema_for_ha(vol.Schema(schema)),
+                    schema_for_ha(
+                        vol.Schema(_ai_task_form_fields(schema, create=self._is_new))
+                    ),
                     self.options,
                 )
             ),
@@ -767,10 +786,8 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
         """Handle advanced model options from exact catalogue capabilities."""
         errors: dict[str, str] = {}
         validation_error = ""
-        chat_model = str(
-            (self._temp_data or {}).get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
-        )
         effective_options = {**self.options, **(self._temp_data or {})}
+        chat_model = str(effective_options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
         capability_model = str(effective_options.get("azure_model") or chat_model)
         metadata = get_model_capabilities(capability_model)
         recommended_effort = recommended_reasoning_effort(capability_model)
@@ -781,9 +798,11 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
         )
 
         if user_input is not None:
-            final_data = {**self.options, **(self._temp_data or {}), **user_input}
+            submitted = {**(self._temp_data or {}), **user_input}
+            final_data = {**self.options, **submitted}
             configured_effort = final_data.get(CONF_REASONING_EFFORT, display_effort)
-            final_data[CONF_REASONING_EFFORT] = configured_effort
+            if self._is_new:
+                final_data[CONF_REASONING_EFFORT] = configured_effort
             effective_effort = (
                 str(configured_effort)
                 if configured_effort is not None
@@ -795,6 +814,26 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                 ):
                     final_data.pop(parameter, None)
 
+            if not self._is_new:
+                owned = set(submitted)
+                model_changed = capability_model != str(
+                    self.options.get("azure_model")
+                    or self.options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
+                )
+                if model_changed:
+                    owned.add(CONF_REASONING_EFFORT)
+                # Changing the model/effort deliberately clears now-unsupported
+                # sampling fields. Other edits preserve their raw presence.
+                if model_changed or CONF_REASONING_EFFORT in submitted:
+                    owned.update(
+                        key
+                        for key in (CONF_TEMPERATURE, CONF_TOP_P)
+                        if key not in final_data
+                    )
+                final_data = project_agent_config_fields(
+                    self.options, owned, final_data
+                )
+
             from .request import build_provider_request_snapshot
 
             try:
@@ -804,8 +843,7 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
             except HomeAssistantError as err:
                 errors["base"] = "invalid_request"
                 validation_error = str(err)
-                self.options.update(final_data)
-                self._temp_data = dict(final_data)
+                self._temp_data = submitted
                 effective_options = final_data
                 display_effort = effective_effort
             else:
@@ -892,7 +930,9 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
             description_placeholders={"reason": validation_error},
             data_schema=schema_for_ha(
                 self.add_suggested_values_to_schema(
-                    schema_for_ha(vol.Schema(schema)),
+                    schema_for_ha(
+                        vol.Schema(_ai_task_form_fields(schema, create=self._is_new))
+                    ),
                     {
                         **effective_options,
                         CONF_REASONING_EFFORT: display_effort,

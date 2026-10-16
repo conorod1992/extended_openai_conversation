@@ -2725,9 +2725,7 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
         normalized, snapshot = merge_unchanged_function_configuration(
             request.subentry, {CONF_KNOWLEDGE_ENABLED: enabled}
         )
-        persisted = preserve_legacy_guest_policy(
-            dict(request.subentry.data), deepcopy(normalized)
-        )
+        persisted = normalized
         update_live_subentry(
             request.hass, request.entry, request.subentry, data=persisted
         )
@@ -2833,7 +2831,9 @@ async def async_settings_command(request: _ManagementRequest) -> dict[str, Any]:
                 "Configuration revision is required; reload the latest saved settings"
             )
         _require_agent_config_revision(subentry, message["revision"])
-        candidate = merge_agent_config(subentry.data, normalized)
+        candidate, _snapshot = merge_unchanged_function_configuration(
+            subentry, normalized
+        )
         await _async_validate_configuration_request(hass, entry, subentry, candidate)
         _require_agent_config_revision(subentry, message["revision"])
         live = configuration_supports_live_update(

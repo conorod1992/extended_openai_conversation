@@ -17,7 +17,7 @@ from homeassistant.exceptions import HomeAssistantError
 from .agent_config import (
     configured_function_tools_from_data as _STRICT_CONFIGURED_TOOLS,
     merge_agent_config as _STRICT_MERGE_AGENT_CONFIG,
-    preserve_legacy_guest_policy,
+    project_agent_config_updates,
     validate_function_groups as _STRICT_VALIDATE_FUNCTION_GROUPS,
 )
 from .agent_test import (
@@ -97,7 +97,7 @@ def _management_validate_function_groups(
 def _management_merge_agent_config(
     source: Any, updates: dict[str, Any]
 ) -> dict[str, Any]:
-    """Persist unrelated section edits without rewriting repair-owned Function fields."""
+    """Validate unrelated section edits without rewriting repair-owned Function fields."""
     if not _ALLOW_QUARANTINED_TOOLS.get():
         return _STRICT_MERGE_AGENT_CONFIG(source, updates)
 
@@ -118,7 +118,7 @@ def _management_merge_agent_config(
 def merge_unchanged_function_configuration(
     subentry: Any, updates: dict[str, Any]
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Validate unrelated edits and retain exact persisted Function inputs."""
+    """Return a scoped save payload and a separate normalized display candidate."""
     if set(updates) & {CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS}:
         raise HomeAssistantError(
             "Unchanged-function merge cannot change Functions or Groups"
@@ -141,17 +141,7 @@ def merge_unchanged_function_configuration(
         validated_functions=validated_functions,
         function_tools_as_list=True,
     )
-    persisted = deepcopy(candidate)
-    if validated_functions is not None:
-        for key in (CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS):
-            if key in subentry.data:
-                persisted[key] = deepcopy(subentry.data[key])
-            else:
-                persisted.pop(key, None)
-    elif CONF_FUNCTION_TOOLS in subentry.data:
-        persisted[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
-            candidate[CONF_FUNCTION_TOOLS], sort_keys=False, allow_unicode=True
-        )
+    persisted = project_agent_config_updates(subentry.data, updates, candidate)
     return persisted, candidate
 
 
@@ -262,7 +252,6 @@ def _tolerant_persist_function_configuration(
     persisted[CONF_FUNCTION_GROUPS] = persisted_groups
     if extra_updates:
         persisted.update(deepcopy(extra_updates))
-    persisted = preserve_legacy_guest_policy(raw, persisted)
     update_live_subentry(hass, entry, subentry, data=persisted)
     return {
         "functions": deepcopy(tools),

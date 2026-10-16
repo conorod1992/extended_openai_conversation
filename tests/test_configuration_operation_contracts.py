@@ -188,7 +188,7 @@ def test_portable_schema_excludes_opaque_export_and_rejects_unknown_import():
         _parse_import_document(exported)
 
 
-async def test_degraded_configuration_save_retains_its_existing_defaulting_contract(
+async def test_degraded_configuration_save_preserves_raw_fields_and_omissions(
     monkeypatch,
 ):
     from custom_components.extended_openai_conversation_responses import (
@@ -244,7 +244,9 @@ async def test_degraded_configuration_save_retains_its_existing_defaulting_contr
     ).api_kwargs
     for key in ("temperature", "top_p"):
         assert key not in before
-        assert subentry.data[key] == after[key] == agent_config_defaults()[key]
+        assert key not in subentry.data
+        assert key not in after
+    assert subentry.data == {**raw, "max_tokens": 700}
 
 
 def test_model_change_removes_unsupported_reasoning_from_storage_and_requests():

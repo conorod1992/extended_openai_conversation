@@ -1207,6 +1207,10 @@ def merge_agent_config(
 ) -> dict[str, Any]:
     """Validate updates against the final merged configuration.
 
+    This returns a normalized validation/display candidate, not a partial-save
+    payload. Writers must project_agent_config_updates() (or owned fields) before
+    persisting it. Creation and explicit replacement use their transfer policy.
+
     Callers may pass ``validated_functions`` only when its corresponding Function
     inputs in ``updates`` are unchanged from the authoritative source.
     """
