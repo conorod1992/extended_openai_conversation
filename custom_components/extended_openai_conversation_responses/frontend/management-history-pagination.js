@@ -148,6 +148,15 @@ function appendTurnPager(panel, body, sessionId, data, history) {
   status.textContent = pageLabel(data, "turns");
   pager.append(status);
 
+  if (integer(data.start_turn) > 0 || integer(data.text_offset) > 0) {
+    const start = document.createElement("button");
+    start.type = "button";
+    start.className = "secondary";
+    start.textContent = "Start of conversation";
+    start.addEventListener("click", () => void openSession(panel, sessionId));
+    pager.append(start);
+  }
+
   const previous = document.createElement("button");
   previous.type = "button";
   previous.className = "secondary";

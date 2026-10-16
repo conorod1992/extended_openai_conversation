@@ -30,7 +30,10 @@ LATER_COMPLETE = {
 }
 
 SparseDetails = create_model(
-    "SparseDetails", cached_tokens=(int, 0), reasoning_tokens=(int, 0)
+    "SparseDetails",
+    cached_tokens=(int, 0),
+    reasoning_tokens=(int, 0),
+    accepted_prediction_tokens=(int, 0),
 )
 SparseUsage = create_model(
     "SparseUsage",
@@ -102,6 +105,18 @@ def wire_usage(report, api, objects):
         ([COMPLETE, {"output_tokens": 40}], (120, 40, 160, 20, 0)),
         ([COMPLETE, {"input_tokens": 130}], (130, 30, 160, 20, 0)),
         (
+            [COMPLETE, {"input_tokens_details": {"cached_tokens": 0}}],
+            (120, 30, 150, 0, 0),
+        ),
+        (
+            [LATER_COMPLETE, {"output_tokens_details": {"reasoning_tokens": 0}}],
+            (200, 50, 250, 25, 0),
+        ),
+        (
+            [LATER_COMPLETE, {"input_tokens_details": {}, "output_tokens_details": {}}],
+            (200, 50, 250, 25, 3),
+        ),
+        (
             [
                 LATER_COMPLETE,
                 {
@@ -132,6 +147,9 @@ def wire_usage(report, api, objects):
         "zero-report",
         "derive-output-total",
         "derive-input-total",
+        "detail-only-zero-cache",
+        "detail-only-zero-reasoning",
+        "absent-detail-defaults",
         "explicit-zero-details",
         "explicit-zero-input",
         "estimate-survives-partial-reports",
@@ -194,3 +212,37 @@ async def test_partial_stream_usage_reaches_persisted_accounting(
     assert tuple(getattr(run, field) for field in fields) == expected
     assert tuple(details.data["requests"][0][field] for field in fields) == expected
     assert tuple(details.data["runs"][0][field] for field in fields) == expected
+
+
+@pytest.mark.parametrize("api", ["chat", "responses"])
+@pytest.mark.parametrize("objects", ["mapping", "attributes", "model-defaults"])
+@pytest.mark.parametrize("correction", [None, 0, -1, True, "0"])
+async def test_detail_only_prediction_counts_are_persisted(api, objects, correction):
+    usage = RequestUsage()
+    context_usage._capture_provider_usage(usage, wire_usage(COMPLETE, api, objects))
+    report = {"output_tokens_details": {"accepted_prediction_tokens": 7}}
+    context_usage._capture_provider_usage(usage, wire_usage(report, api, objects))
+    assert usage.details["output_accepted_prediction_tokens"] == 7
+    if correction is not None:
+        report["output_tokens_details"]["accepted_prediction_tokens"] = correction
+        # Invalid counts are passed without Pydantic's coercion to integers.
+        raw = wire_usage(report, api, objects if correction == 0 else "mapping")
+        context_usage._capture_provider_usage(usage, raw)
+    expected = 0 if correction == 0 and not isinstance(correction, bool) else 7
+    assert (usage.input_tokens, usage.output_tokens, usage.total_tokens) == (
+        120,
+        30,
+        150,
+    )
+    details = FakeStorage()
+    manager = UsageManager(FakeStorage(), FakeStorage(), details)
+    await manager.async_initialize()
+    async with manager.async_run():
+        await manager.async_record_request(successful=True, usage=usage, api_mode=api)
+    await manager.async_prepare_for_deletion()
+    assert (
+        details.data["requests"][0]["details"].get(
+            "output_accepted_prediction_tokens", 0
+        )
+        == expected
+    )

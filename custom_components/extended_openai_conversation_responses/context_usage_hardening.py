@@ -8,7 +8,7 @@ estimate before totals/details are persisted.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Iterator, Mapping
 from dataclasses import replace
 import json
 import logging
@@ -73,6 +73,34 @@ def _reported_count(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
+def _reported_details(details: Any) -> Iterator[tuple[str, int]]:
+    """Yield valid explicit detail counts, excluding SDK model defaults."""
+    supplied = getattr(details, "model_fields_set", None)
+    if hasattr(details, "model_dump"):
+        details = details.model_dump(exclude_none=True)
+    elif not isinstance(details, Mapping) and hasattr(details, "__dict__"):
+        details = vars(details)
+    if isinstance(details, Mapping):
+        for name, value in details.items():
+            if isinstance(supplied, set) and name not in supplied:
+                continue
+            if _reported_count(value):
+                yield name, value
+
+
+def _has_reported_details(raw: Any) -> bool:
+    """Accept sparse detail reports, including explicit zero corrections."""
+    return any(
+        next(_reported_details(_usage_value(raw, alias)), None) is not None
+        for alias in (
+            "input_tokens_details",
+            "prompt_tokens_details",
+            "output_tokens_details",
+            "completion_tokens_details",
+        )
+    )
+
+
 def _merge_provider_usage(
     previous: RequestUsage, raw: Any, normalized: RequestUsage
 ) -> RequestUsage:
@@ -115,21 +143,12 @@ def _merge_provider_usage(
         details = _usage_value(raw, aliases[0]) or _usage_value(raw, aliases[1])
         if _reported_count(_usage_value(details, key)):
             setattr(merged, field, getattr(normalized, field))
-        supplied = getattr(details, "model_fields_set", None)
-        if hasattr(details, "model_dump"):
-            details = details.model_dump(exclude_none=True)
-        elif not isinstance(details, Mapping) and hasattr(details, "__dict__"):
-            details = vars(details)
-        if isinstance(details, Mapping):
-            for name, value in details.items():
-                if isinstance(supplied, set) and name not in supplied:
-                    continue
-                if _reported_count(value):
-                    detail_key = f"{prefix}_{name}"
-                    if value:
-                        merged.details[detail_key] = value
-                    else:
-                        merged.details.pop(detail_key, None)
+        for name, value in _reported_details(details):
+            detail_key = f"{prefix}_{name}"
+            if value:
+                merged.details[detail_key] = value
+            else:
+                merged.details.pop(detail_key, None)
     return merged
 
 
@@ -138,13 +157,13 @@ def _capture_provider_usage(
 ) -> RequestUsage | None:
     """Apply one usable provider snapshot and return its provider-only diagnostics.
 
-    Missing/zero reports leave the current snapshot intact. Partial reports update
-    only supplied provider fields; local estimates remain separate from accounting.
+    Missing/all-zero headline reports leave the current snapshot intact. Explicit
+    details can clear prior counts; local estimates stay separate from accounting.
     """
     if target is None or raw_usage is None:
         return None
     normalized = extract_usage(raw_usage)
-    if _has_token_count(normalized):
+    if _has_token_count(normalized) or _has_reported_details(raw_usage):
         estimate = _local_estimate(target)
         provider = usage_for_accounting(target)
         assert provider is not None

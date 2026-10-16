@@ -171,6 +171,9 @@ async def test_later_empty_terminal_preserves_genuine_snapshot(
     result = await _say(hass, agent)
     assert (result.response.error_code is not None) == limited
     expected = _provider_expected("full" if kind in {"missing", "zero"} else kind)
+    if kind == "output":
+        # The partial report supplies its own total but omits the known input.
+        expected.input_tokens = 120
     totals = await agent._usage._daily_storage.async_load()
     for key in ("input_tokens", "output_tokens", "total_tokens"):
         assert totals["totals"][key] == getattr(expected, key)

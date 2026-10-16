@@ -56,10 +56,15 @@ links = [...markup.matchAll(/data-start-turn="(\d+)" data-id="([^"]+)"/g)]
 module.bindConversationActions(panel);
 const bodies = [];
 for (const link of links) { await link.activate(); bodies.push(body.html); }
+const start = body.children[0].children.find(item => item.textContent === "Start of conversation");
+start.listeners.click();
+await new Promise(resolve => setImmediate(resolve));
+const beginning = body.html;
+const previousDisabled = body.children[0].children.find(item => item.textContent === "Previous turns").disabled;
 panel._contentData = {sessions: {sessions: [{session_id: fixture.sessionId}]}};
 const listStarts = [...module.renderConversations(panel).matchAll(/data-start-turn="(\d+)"/g)]
   .map(match => Number(match[1]));
-process.stdout.write(JSON.stringify({requests, bodies, listStarts}));
+process.stdout.write(JSON.stringify({requests, bodies, listStarts, beginning, previousDisabled}));
 """
 
 
@@ -121,8 +126,10 @@ async def test_search_card_and_view_open_matching_size_limited_turn(
         timeout=10,
     )
     navigation = json.loads(result.stdout)
-    assert len(navigation["requests"]) == 2  # Card activation and View button.
-    for request, body in zip(navigation["requests"], navigation["bodies"], strict=True):
+    assert len(navigation["requests"]) == 3  # Card, View, then Start of conversation.
+    for request, body in zip(
+        navigation["requests"][:2], navigation["bodies"], strict=True
+    ):
         assert request["section"] == "conversations"
         assert request["action"] == "get"
         assert request["start_turn"] == count - 1
@@ -130,6 +137,10 @@ async def test_search_card_and_view_open_matching_size_limited_turn(
         assert request["limit"] == 20
         assert "needlephrase" in body
     assert navigation["listStarts"] == [0, 0]
+    assert navigation["requests"][2]["start_turn"] == 0
+    assert navigation["requests"][2]["text_offset"] == 0
+    assert "Question 0" in navigation["beginning"]
+    assert navigation["previousDisabled"] is True
 
     # Size-dependent cursor traversal still recovers every turn exactly once.
     cursor = {"start_turn": 0, "text_offset": 0}

@@ -195,10 +195,12 @@ function historyPanel() {
   const button = label => body.children[0].children.find(item => item.textContent === label);
   await pagination.openSession(panel, "session");
   assert.equal(button("Previous turns").disabled, true);
+  assert.equal(button("Start of conversation"), undefined);
   button("Next turns").click();
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(requests[1].start_turn, 0, "Next must stay within the long turn");
   assert.equal(requests[1].text_offset, 30000);
+  assert.ok(button("Start of conversation"), "Long-turn fragments can return to the beginning");
   assert.equal(button("Previous turns").disabled, false, "Previous uses actual cursor history even at turn zero");
   button("Previous turns").click();
   await new Promise(resolve => setImmediate(resolve));
@@ -206,4 +208,11 @@ function historyPanel() {
   assert.equal(requests[2].text_offset, 0);
   await pagination.openSession(panel, "another-session", 40);
   assert.equal(button("Previous turns").disabled, true, "Opening another session resets cursor history");
+  button("Start of conversation").click();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(requests.at(-1).session_id, "another-session");
+  assert.equal(requests.at(-1).start_turn, 0);
+  assert.equal(requests.at(-1).text_offset, 0);
+  assert.equal(button("Previous turns").disabled, true);
+  assert.equal(button("Start of conversation"), undefined);
 }
