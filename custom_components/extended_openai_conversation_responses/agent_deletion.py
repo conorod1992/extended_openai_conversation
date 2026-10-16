@@ -174,6 +174,8 @@ async def async_delete_agent_data(hass: Any, entry_id: str, subentry_id: str) ->
                     continue
                 if suffix == "request_debug_managers":
                     manager.clear()
+                if suffix == "request_rule_managers":
+                    manager.async_unload()
                 if suffix in {
                     "usage_managers",
                     "volatile_usage_managers",

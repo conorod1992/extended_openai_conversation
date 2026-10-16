@@ -28,7 +28,8 @@ import unicodedata
 from urllib.parse import quote
 from uuid import uuid4
 
-from homeassistant.core import Context, HomeAssistant, ServiceCall
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP
+from homeassistant.core import Context, Event, HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import condition as ha_condition, config_validation as cv
 from homeassistant.helpers.script import Script, async_validate_actions_config
@@ -359,6 +360,59 @@ def _normalize_legacy_consumed_request_scope(value: Any) -> tuple[Any, bool]:
     return normalized, True
 
 
+class _NativeConditions:
+    """Own HA checkers and their native disabled-condition semantics."""
+
+    def __init__(self, config: list[Any]) -> None:
+        self.config = deepcopy(config)
+        self._checkers: list[Any] = []
+
+    @classmethod
+    async def async_create(
+        cls, hass: HomeAssistant, config: list[Any]
+    ) -> _NativeConditions:
+        conditions = cls(config)
+        try:
+            for raw in config:
+                # Persisted time bounds and templates still need HA normalization.
+                checked = cv.CONDITION_SCHEMA(deepcopy(raw))
+                checked = await ha_condition.async_validate_condition_config(
+                    hass, checked
+                )
+                conditions._checkers.append(
+                    await ha_condition.async_from_config(hass, checked)
+                )
+        except BaseException:
+            conditions.async_unload()
+            raise
+        return conditions
+
+    def check(self, hass: HomeAssistant, variables: dict[str, Any]) -> bool:
+        for checker in self._checkers:
+            check = getattr(checker, "async_check", None)
+            outcome = (
+                check(variables=variables)
+                if callable(check)
+                else checker(hass, variables)
+            )
+            # HA returns None for disabled conditions; only False rejects an AND.
+            if outcome is False:
+                return False
+        return True
+
+    def async_unload(self) -> None:
+        checkers, self._checkers = self._checkers, []
+        for checker in checkers:
+            unload = getattr(checker, "async_unload", None)
+            if callable(unload):
+                try:
+                    unload()
+                except Exception as err:
+                    log_handled_failure(
+                        _LOGGER, "Request Rule condition cleanup failed", err
+                    )
+
+
 class RequestRules:
     """Concurrency-safe persisted rules with precomputed matcher state."""
 
@@ -376,7 +430,8 @@ class RequestRules:
         self._matching_snapshot = _MatchingSnapshot((), ())
         self._committed_matching_snapshot = self._matching_snapshot
         self._has_continuation = False
-        self._condition_checkers: dict[str, tuple[list[Any], tuple[Any, ...]]] = {}
+        self._condition_checkers: dict[str, _NativeConditions] = {}
+        self._unsubscribe_stop: Callable[[], None] | None = None
         self._diagnostics: dict[str, str] = {}
         self._lock = asyncio.Lock()
         self._initialized = False
@@ -384,6 +439,19 @@ class RequestRules:
         self._generation = 0
         self._revision_generation = 0
         self._committed_revision_generation = 0
+
+    def _discard_condition_checkers(self, rule_id: str | None = None) -> None:
+        keys = list(self._condition_checkers) if rule_id is None else [rule_id]
+        for key in keys:
+            if conditions := self._condition_checkers.pop(key, None):
+                conditions.async_unload()
+
+    def async_unload(self) -> None:
+        """Release native subscriptions when this manager generation retires."""
+        self._discard_condition_checkers()
+        if self._unsubscribe_stop is not None:
+            self._unsubscribe_stop()
+            self._unsubscribe_stop = None
 
     async def async_initialize(self) -> None:
         """Load stored rules while preserving newly unsupported patterns for repair."""
@@ -639,7 +707,7 @@ class RequestRules:
                 )
                 for rule in prepared["rules"]
             ]
-            self._condition_checkers.clear()
+            self._discard_condition_checkers()
             self._sort_and_compile()
             self._initialized = True
             await self._async_save_locked()
@@ -777,7 +845,7 @@ class RequestRules:
                 prospective, inactive_rule_ids=set(self._diagnostics) - {rule_id}
             )
             self._rules[index] = rule
-            self._condition_checkers.pop(rule_id, None)
+            self._discard_condition_checkers(rule_id)
             match_fields = (
                 "enabled",
                 "phrases",
@@ -803,7 +871,7 @@ class RequestRules:
             self._require_revision_locked(expected_revision)
             index = self._index(rule_id)
             del self._rules[index]
-            self._condition_checkers.pop(rule_id, None)
+            self._discard_condition_checkers(rule_id)
             self._sort_and_compile()
             await self._async_save_locked()
         return True
@@ -987,34 +1055,13 @@ class RequestRules:
             return True
         try:
             cached = self._condition_checkers.get(match.rule["id"])
-            if cached is None or cached[0] != conditions:
-                checkers = []
-                for config in conditions:
-                    # validate_rule validates native HA condition schemas, but
-                    # the persisted representation remains JSON-friendly (for
-                    # example, time bounds stay strings). Normalize it again
-                    # before constructing HA's checker: async_validate_condition_config
-                    # does not apply the built-in schemas for every condition,
-                    # and the native time checker treats an unparsed time string
-                    # as an entity ID.
-                    checked = cv.CONDITION_SCHEMA(deepcopy(config))
-                    checked = await ha_condition.async_validate_condition_config(
-                        hass, checked
-                    )
-                    checkers.append(await ha_condition.async_from_config(hass, checked))
-                cached = (deepcopy(conditions), tuple(checkers))
+            if cached is None or cached.config != conditions:
+                self._discard_condition_checkers(match.rule["id"])
+                cached = await _NativeConditions.async_create(hass, conditions)
                 self._condition_checkers[match.rule["id"]] = cached
-            for checker in cached[1]:
-                outcome = checker.async_check(
-                    variables={"request": {"slots": match.slots}, **match.slots}
-                )
-                if outcome is None:
-                    raise HomeAssistantError(
-                        "Request Rule condition returned no result"
-                    )
-                if outcome is False:
-                    return False
-            return True
+            return cached.check(
+                hass, {"request": {"slots": match.slots}, **match.slots}
+            )
         except Exception as err:
             raise HomeAssistantError(
                 "Request Rule condition could not be evaluated"
@@ -1292,6 +1339,7 @@ class RequestRules:
             and disk_state._revision_generation == self._committed_revision_generation
             and disk_state._opaque_fields == self._committed_opaque_fields
         )
+        self._discard_condition_checkers()
         self._defaults = deepcopy(disk_state._defaults)
         self._opaque_fields = deepcopy(disk_state._opaque_fields)
         self._wording_groups = deepcopy(disk_state._wording_groups)
@@ -1321,7 +1369,7 @@ class RequestRules:
         self._wording_groups = _copy_wording_groups(DEFAULT_WORDING_GROUPS)
         self._groups = []
         self._rules = []
-        self._condition_checkers.clear()
+        self._discard_condition_checkers()
         self._sort_and_compile()
         self._committed_matching_snapshot = self._matching_snapshot
         self._has_continuation = False
@@ -1350,6 +1398,7 @@ class RequestRules:
         snapshot = self._committed_state
         if snapshot is None:
             return
+        self._discard_condition_checkers()
         self._defaults = deepcopy(snapshot["defaults"])
         self._opaque_fields = deepcopy(self._committed_opaque_fields)
         self._wording_groups = deepcopy(snapshot["wording_groups"])
@@ -3974,6 +4023,18 @@ async def async_get_request_rules(
             on_change=reconcile_lifecycle,
         )
     manager = cast(RequestRules, managers[key])
+    if manager._unsubscribe_stop is None:
+
+        @callback
+        def unload_conditions(_event: Event) -> None:
+            # HA removes a one-shot listener before invoking it. Cleanup must
+            # stay on the event loop and must not unsubscribe that listener again.
+            manager._unsubscribe_stop = None
+            manager.async_unload()
+
+        manager._unsubscribe_stop = hass.bus.async_listen_once(
+            EVENT_HOMEASSISTANT_STOP, unload_conditions
+        )
     await manager.async_initialize()
     if manager._initialized:
         reconcile_lifecycle()
