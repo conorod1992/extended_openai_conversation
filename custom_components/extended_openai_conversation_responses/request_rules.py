@@ -3061,11 +3061,13 @@ class _ResultReferenceTemplate(Template):
         source: Template,
         helper: str,
         on_error: Callable[[RuleResponseValueError], None],
+        results: Mapping[str, Any],
     ) -> None:
         super().__init__(source.template, source.hass)
         self._source = source
         self._helper = helper
         self._on_error = on_error
+        self._results = results
         self._exact_reference = re.fullmatch(
             r"\{\{\s*" + re.escape(helper) + r"\('([A-Za-z_][A-Za-z0-9_.]*)'\)\s*\}\}",
             source.template,
@@ -3073,7 +3075,7 @@ class _ResultReferenceTemplate(Template):
 
     def async_render_to_info(self, variables=None, **kwargs):
         scope = dict(variables or {})
-        scope[self._helper] = lambda token: _lookup_result_value(token, variables or {})
+        scope[self._helper] = lambda token: _lookup_result_value(token, self._results)
         info = self._source.async_render_to_info(scope, **kwargs)
         error = info.exception
         seen = set()
@@ -3095,29 +3097,33 @@ class _ResultReferenceTemplate(Template):
         if self._exact_reference is not None:
             # A full authored result reference denotes its native value. HA's
             # literal parser must not reinterpret a tool's JSON-looking text.
-            variables = args[0] if args else kwargs.get("variables")
-            return _lookup_result_value(self._exact_reference.group(1), variables or {})
+            return _lookup_result_value(self._exact_reference.group(1), self._results)
         return rendered
 
 
 def _guard_result_references(
-    value: Any, on_error: Callable[[RuleResponseValueError], None]
+    value: Any,
+    on_error: Callable[[RuleResponseValueError], None],
+    results: Mapping[str, Any],
 ) -> Any:
     if isinstance(value, Template):
         helper = re.search(r"\b__eoai_result_value_[0-9a-f]{32}\b", value.template)
         return (
-            _ResultReferenceTemplate(value, helper.group(), on_error)
+            _ResultReferenceTemplate(value, helper.group(), on_error, results)
             if helper
             else value
         )
     if isinstance(value, ScriptVariables):
-        return ScriptVariables(_guard_result_references(value.as_dict(), on_error))
+        return ScriptVariables(
+            _guard_result_references(value.as_dict(), on_error, results)
+        )
     if isinstance(value, Mapping):
         return {
-            key: _guard_result_references(item, on_error) for key, item in value.items()
+            key: _guard_result_references(item, on_error, results)
+            for key, item in value.items()
         }
     if isinstance(value, list):
-        return [_guard_result_references(item, on_error) for item in value]
+        return [_guard_result_references(item, on_error, results) for item in value]
     return value
 
 
@@ -3549,11 +3555,12 @@ async def _async_evaluate_matched_rule(
                     validated_actions,
                     lambda value: _guard_template_reads(value, current_policy),
                 )
+            result_values: dict[str, Any] = {}
             if captures_results:
                 # Keep result rendering outermost: the inner privacy wrapper
                 # authorizes reads, then exact references retain their raw type.
                 validated_actions = _guard_result_references(
-                    validated_actions, stop_on_result_error
+                    validated_actions, stop_on_result_error, result_values
                 )
             if require_matching_revision is not None:
                 require_matching_revision()
@@ -3602,7 +3609,6 @@ async def _async_evaluate_matched_rule(
 
             guard_token = _ACTIVE_ACTION_GUARD.set(authorize_pending)
             token = _ACTIVE_FUNCTION_EXECUTOR.set(function_executor)
-            result_values: dict[str, Any] = {}
             result_token = _ACTIVE_FUNCTION_RESULTS.set(result_values)
             paths_token = _ACTIVE_RESULT_PATHS.set(
                 _result_paths_by_alias(executable_actions)
