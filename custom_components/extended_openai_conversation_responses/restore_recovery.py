@@ -539,6 +539,15 @@ async def _async_restore_backup_recoverably(
 
         managers = await _durable_managers(hass, entry_id, subentry_id)
         rollback = await backup._snapshot_for_restore(managers, subentry)
+        if not isinstance(value, backup.PreparedRestore):
+            from .transfer import async_materialize_restore
+
+            # Public legacy documents contain redaction markers. Resolve them
+            # against the exclusively owned destination before journaling, using
+            # the same context checks and fail-closed policy as selective restore.
+            prepared, _preview = await async_materialize_restore(
+                hass, entry, subentry, value, current_snapshot=rollback
+            )
         journal = _new_journal(entry_id, subentry_id, prepared, rollback)
         # PreparedRestore bypasses inspect_backup's serialized-size validation.
         # Validate the actual journal documents before even the write-ahead save.

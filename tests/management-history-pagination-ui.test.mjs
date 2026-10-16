@@ -8,6 +8,19 @@ const frontend = (name) => new URL(
 
 const pagination = await import(frontend("management-history-pagination.js"));
 const {loadConversationPage} = pagination;
+// Search hits identify an exact turn, not a fixed-size page boundary. Serialized
+// page budgets can return fewer than TURN_PAGE_LIMIT turns (or part of one turn).
+for (const turnIndex of [19, 39, undefined]) {
+  const markup = pagination.renderConversations({
+    _contentData: {sessions: {sessions: [{session_id: "match", turn_index: turnIndex}]}},
+    _e: value => String(value), _formatDate: value => value, _empty: value => value,
+  });
+  assert.deepEqual(
+    [...markup.matchAll(/data-start-turn="(\d+)"/g)].map(match => Number(match[1])),
+    [turnIndex ?? 0, turnIndex ?? 0],
+    "Both the result card and View button must open the exact matching turn",
+  );
+}
 assert.equal(pagination.LIST_PAGE_LIMIT, 50);
 assert.equal(pagination.SEARCH_PAGE_LIMIT, 20);
 assert.equal(pagination.TURN_PAGE_LIMIT, 20);
