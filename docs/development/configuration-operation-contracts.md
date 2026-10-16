@@ -41,7 +41,7 @@ parameters. Persistence helpers must not substitute for that resolver.
 | Backup/export, recovery and selective transfer | Apply the same omission/default policy, retain opaque later-version fields and preserve quarantined raw Function values when safe to do so. Normal tools use the requested frontend/persistence shape. | `project_agent_config_transfer(preserve_unknown=True)`, backup quarantine boundary |
 | Private destination recovery snapshot | As above, but malformed destination Function YAML can remain opaque for private recovery. Public export still requires repair of malformed YAML. | `private_configuration_snapshot` |
 | Duplicate agent | Normalize recognized fields and preserve legacy Guest policy. Unlike portable transfer, omitted reasoning is materialized; opaque fields are excluded. | management duplicate handler |
-| Legacy Function enable/disable services | Persist the merged normalized candidate, preserving omitted reasoning but materializing ordinary defaults. This differs from the Function editor's owned-field save. | `async_set_function_tools_enabled`, `async_set_function_groups_enabled` |
+| Legacy Function enable/disable services | Validate the merged candidate, then persist only the owned Function Tool or Function Group field. Preserve all unrelated raw values and omissions, including legacy Guest policy. Default Functions are materialized only when the tool field is edited. | `async_set_function_tools_enabled`, `async_set_function_groups_enabled` |
 | Unrelated configuration save through the degraded Function repair handler | Preserve raw Function fields and legacy Guest policy, but persist other normalized values. This differs from the ordinary section-save projection. | repair `configuration_save` handler |
 
 ## Shared projections
@@ -64,7 +64,7 @@ normal and quarantine paths both pass through this projection once. YAML parsing
 Function isolation, redaction and secret restoration remain at their existing
 boundaries.
 
-## Unresolved policy decisions: unchanged in this PR
+## Remaining policy differences
 
 1. **Authored versus effective portable transfer.** Sparse source sampling settings
    become explicit default values after transfer and appear in compatible provider
@@ -73,14 +73,15 @@ boundaries.
 2. **Duplicate versus portable transfer.** Duplication materializes reasoning while
    portable transfer preserves its omission. Decide whether these operations should
    converge before changing either contract.
-3. **Legacy/degraded saves versus ordinary section saves.** The service and degraded
-   repair paths above materialize more defaults. Adopting owned-field persistence
-   there needs a separate behavior change with endpoint regressions; helper extraction
-   alone does not authorize it.
+3. **Degraded saves versus ordinary section saves.** The degraded repair path above
+   materializes more defaults. Adopting owned-field persistence there needs a separate
+   behavior change with endpoint regressions. Function enable/disable services now
+   use owned-field persistence, with regressions covering both legacy and v2 Guest
+   policy and unrelated raw settings.
 
 These are observed behaviors, not claims that the policies are ideal. Tests lock
 them down so this refactor cannot silently decide them. In particular, do not add
-sampling to the omission policy or route duplicate/legacy saves through a different
+sampling to the omission policy or route duplicate/degraded saves through a different
 projection as incidental cleanup.
 
 ## Regression evidence

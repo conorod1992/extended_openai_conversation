@@ -424,6 +424,15 @@ def _migrate_saved_native_function_schemas(data: dict) -> bool:
     return changed
 
 
+def _migrate_saved_agent_defaults(data: dict, subentry_type: str) -> bool:
+    """Repair shared model defaults without adding conversation fields to tasks."""
+    changed = _migrate_saved_service_tier(data)
+    if subentry_type == "conversation":
+        changed = _migrate_saved_native_function_schemas(data) or changed
+        changed = _migrate_saved_default_prompt(data) or changed
+    return changed
+
+
 async def async_migrate_integration(hass: HomeAssistant) -> None:
     """Migrate entry structure and historical stock configuration defaults."""
 
@@ -439,12 +448,10 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
         if entry.version < CONFIG_ENTRY_VERSION:
             continue
         for subentry in entry.subentries.values():
-            if subentry.subentry_type != "conversation":
+            if subentry.subentry_type not in {"conversation", "ai_task_data"}:
                 continue
             data = dict(subentry.data)
-            changed = _migrate_saved_native_function_schemas(data)
-            changed = _migrate_saved_default_prompt(data) or changed
-            changed = _migrate_saved_service_tier(data) or changed
+            changed = _migrate_saved_agent_defaults(data, subentry.subentry_type)
             if changed:
                 hass.config_entries.async_update_subentry(entry, subentry, data=data)
 
@@ -485,12 +492,16 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
             )
 
         for subentry in entry.subentries.values():
-            if subentry.subentry_type != "conversation":
+            if subentry.subentry_type not in {"conversation", "ai_task_data"}:
                 continue
             data = dict(subentry.data)
-            _migrate_saved_native_function_schemas(data)
-            _migrate_saved_default_prompt(data)
-            _migrate_saved_service_tier(data)
+            changed = _migrate_saved_agent_defaults(data, subentry.subentry_type)
+            if subentry.subentry_type == "ai_task_data":
+                if changed:
+                    hass.config_entries.async_update_subentry(
+                        entry, subentry, data=data
+                    )
+                continue
             mode = get_memory_mode(data)
             data[CONF_MEMORY_MODE] = mode
             data[CONF_MEMORY_ENABLED] = mode != MEMORY_MODE_OFF

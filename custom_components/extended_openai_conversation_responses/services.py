@@ -36,6 +36,7 @@ from homeassistant.loader import async_get_integration
 
 from .agent_config import (
     merge_agent_config,
+    project_agent_config_updates,
     validate_function_groups,
     validate_function_tools,
 )
@@ -287,10 +288,14 @@ async def async_set_function_tools_enabled(
         for tool in configured:
             if tool["spec"]["name"] in requested:
                 tool["enabled"] = enabled
-        normalized = merge_agent_config(
-            dict(subentry.data), {CONF_FUNCTION_TOOLS: configured}
+        updates = {CONF_FUNCTION_TOOLS: configured}
+        normalized = merge_agent_config(dict(subentry.data), updates)
+        update_live_subentry(
+            hass,
+            entry,
+            subentry,
+            data=project_agent_config_updates(subentry.data, updates, normalized),
         )
-        update_live_subentry(hass, entry, subentry, data=normalized)
 
 
 async def async_set_function_groups_enabled(
@@ -323,10 +328,14 @@ async def async_set_function_groups_enabled(
         for group in groups:
             if group["id"] in requested:
                 group["enabled"] = enabled
-        normalized = merge_agent_config(
-            dict(subentry.data), {CONF_FUNCTION_GROUPS: groups}
+        updates = {CONF_FUNCTION_GROUPS: groups}
+        normalized = merge_agent_config(dict(subentry.data), updates)
+        update_live_subentry(
+            hass,
+            entry,
+            subentry,
+            data=project_agent_config_updates(subentry.data, updates, normalized),
         )
-        update_live_subentry(hass, entry, subentry, data=normalized)
 
 
 async def async_skill_source_ref(
