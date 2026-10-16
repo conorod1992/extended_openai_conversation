@@ -197,8 +197,10 @@ def test_exact_result_reference_preserves_native_type_at_render_boundary(hass, l
     source = Template("{{ " + helper + "('answer') }}", hass)
     if privacy_guard:
         source = rules._guard_template_reads(source, GuestCapabilityPolicy.unrestricted)
-    wrapped = rules._guard_result_references(source, lambda error: pytest.fail(str(error)))
-    rendered = wrapped.async_render({"answer": value})
+    wrapped = rules._guard_result_references(
+        source, lambda error: pytest.fail(str(error)), {"answer": value}
+    )
+    rendered = wrapped.async_render({"answer": "unrelated native variable"})
     assert rendered == value
     assert type(rendered) is type(value)
 
