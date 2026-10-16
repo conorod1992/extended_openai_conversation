@@ -56,3 +56,8 @@ Strict structured outputs normalize nested `oneOf` only when alternatives have
 disjoint types or a required discriminator with disjoint values. Ambiguous
 alternatives are rejected before submission. Caller validation remains
 authoritative when removing optional null placeholders from a task result.
+
+Azure's strict schema subset does not accept numeric bounds or several string
+and array constraints. Those constraints are omitted from the schema sent to
+Azure, while Home Assistant's original selectors still validate the returned
+result. Direct OpenAI requests retain their supported constraints.
