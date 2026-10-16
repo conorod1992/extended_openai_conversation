@@ -8,6 +8,7 @@ estimate before totals/details are persisted.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Iterator, Mapping
 from dataclasses import replace
 import json
@@ -25,6 +26,8 @@ from .usage import RequestUsage, extract_usage
 _LOGGER = logging.getLogger(__name__)
 _LOCAL_ESTIMATE_DETAIL = "__extended_openai_local_context_estimate"
 _PARTIAL_PROVIDER_USAGE_DETAIL = "__extended_openai_partial_provider_usage"
+_TRAILING_USAGE_TIMEOUT = 0.2
+_TRAILING_USAGE_EVENT_LIMIT = 128
 
 
 def _has_token_count(usage: RequestUsage) -> bool:
@@ -293,6 +296,57 @@ def usage_for_accounting(usage: RequestUsage | None) -> RequestUsage | None:
         reasoning_tokens=usage.reasoning_tokens,
         details=details,
     )
+
+
+async def async_recover_trailing_usage(result: Any, usage: RequestUsage) -> None:
+    """Read accounting only after an output interpretation failure, best effort.
+
+    A separate task and bounded wait keep an uncooperative iterator from extending
+    the deadline or delaying caller cancellation. Never await its cancellation;
+    the request owner still closes the provider stream. Expired/cancelled reads
+    cannot change accounting, even if an iterator suppresses cancellation.
+    """
+    owner = asyncio.current_task()
+    if owner is not None and owner.cancelling():
+        raise asyncio.CancelledError
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _TRAILING_USAGE_TIMEOUT
+    active = True
+
+    async def collect() -> None:
+        try:
+            iterator = aiter(result)
+            for _ in range(_TRAILING_USAGE_EVENT_LIMIT):
+                if not active or loop.time() >= deadline:
+                    return
+                event = await anext(iterator)
+                if not active or loop.time() >= deadline:
+                    return
+                response = getattr(event, "response", None)
+                raw = getattr(response, "usage", None)
+                if raw is None:
+                    raw = getattr(event, "usage", None)
+                _capture_provider_usage(usage, raw)
+        except Exception:
+            # EOF, transport failures and malformed metadata cannot replace the
+            # output error that caused recovery. No parsing/tracing runs here.
+            return
+
+    def finished(task: asyncio.Task[None]) -> None:
+        if not task.cancelled():
+            task.exception()
+
+    task = asyncio.create_task(collect())
+    task.add_done_callback(finished)
+    try:
+        await asyncio.wait({task}, timeout=max(0, deadline - loop.time()))
+    except Exception:
+        # Recovery is optional; only caller cancellation may supersede failure.
+        pass
+    finally:
+        active = False
+        if not task.done():
+            task.cancel()
 
 
 async def normalized_chat_stream(
