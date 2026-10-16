@@ -70,6 +70,13 @@ async def test_repair_configuration_validate_and_save_preserve_quarantined_tools
         management_ui, "entry_and_agent", lambda *_args, **_kwargs: (entry, subentry)
     )
     monkeypatch.setattr(guidance, "exposed_attribute_catalog", lambda *_args: {})
+    from custom_components.extended_openai_conversation_responses.request_rules import RequestRules
+    from tests.test_request_rules import MemoryStore
+    rules = RequestRules(MemoryStore())
+    await rules.async_initialize()
+    async def retained_rules(*_args):
+        return rules
+    monkeypatch.setattr(management_ui, "async_get_request_rules", retained_rules)
     base = {"section": "function_repair", "entry_id": entry.entry_id, "subentry_id": subentry.subentry_id}
     validated = await management_ui.async_management_command(
         hass, "admin", True, {**base, "action": "configuration_validate", "config": {"max_tokens": 700}}

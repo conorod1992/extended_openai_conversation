@@ -337,14 +337,19 @@ def _validated_model_request(
     return config
 
 
-async def _async_validate_model_routes(
-    hass: HomeAssistant, entry: Any, subentry: Any, config: Mapping[str, Any]
-) -> None:
-    """Check retained routing dependencies before changing their request defaults."""
+async def _async_validate_configuration_request(
+    hass: HomeAssistant,
+    entry: Any,
+    subentry: Any,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    """Validate proposed defaults and every retained route at one shared boundary."""
     from .request_rules import validate_saved_model_routes
 
+    _validated_model_request(config, entry.data, subentry.data)
     rules = await async_get_request_rules(hass, entry.entry_id, subentry.subentry_id)
     validate_saved_model_routes(rules.snapshot().get("rules", []), config, entry.data)
+    return config
 
 
 async def _persist_function_configuration(
@@ -1294,18 +1299,14 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
         return validation
     timings["merge_validation_ms"] = _elapsed_ms(phase)
     phase = perf_counter()
-    validation = _validation_result(
-        lambda: _validated_model_request(
-            validation["config"], entry.data, subentry.data
-        )
-    )
-    if not validation.get("valid"):
-        return validation
+    normalized = validation["config"]
+    try:
+        await _async_validate_configuration_request(hass, entry, subentry, normalized)
+    except AgentConfigError as err:
+        return {"valid": False, "errors": {err.field: str(err).split(": ", 1)[-1]}}
     timings["model_request_validation_ms"] = _elapsed_ms(phase)
 
     phase = perf_counter()
-    normalized = validation["config"]
-    await _async_validate_model_routes(hass, entry, subentry, normalized)
     _require_agent_config_revision(subentry, message["revision"])
     if tools_changed or groups_changed:
         await _async_validate_configuration_dependencies(
@@ -1584,17 +1585,11 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         if not isinstance(updates, dict):
             raise HomeAssistantError("config must be an object")
         result = _validation_result(
-            lambda: agent_config_snapshot(
-                _validated_model_request(
-                    merge_agent_config(subentry.data, updates),
-                    entry.data,
-                    subentry.data,
-                )
-            )
+            lambda: agent_config_snapshot(merge_agent_config(subentry.data, updates))
         )
         if result["valid"]:
             try:
-                await _async_validate_model_routes(
+                await _async_validate_configuration_request(
                     hass, entry, subentry, result["config"]
                 )
             except HomeAssistantError as err:
@@ -1617,8 +1612,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             )
         _require_agent_config_revision(subentry, message["revision"])
         normalized = merge_agent_config(subentry.data, updates)
-        _validated_model_request(normalized, entry.data, subentry.data)
-        await _async_validate_model_routes(hass, entry, subentry, normalized)
+        await _async_validate_configuration_request(hass, entry, subentry, normalized)
         _require_agent_config_revision(subentry, message["revision"])
         if any(
             normalized.get(key) != subentry.data.get(key)
@@ -2838,8 +2832,7 @@ async def async_settings_command(request: _ManagementRequest) -> dict[str, Any]:
             )
         _require_agent_config_revision(subentry, message["revision"])
         candidate = merge_agent_config(subentry.data, normalized)
-        _validated_model_request(candidate, entry.data, subentry.data)
-        await _async_validate_model_routes(hass, entry, subentry, candidate)
+        await _async_validate_configuration_request(hass, entry, subentry, candidate)
         _require_agent_config_revision(subentry, message["revision"])
         live = configuration_supports_live_update(
             subentry.data, candidate, title_changed=False

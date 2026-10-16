@@ -207,6 +207,13 @@ async def test_degraded_configuration_save_retains_its_existing_defaulting_contr
     monkeypatch.setattr(
         management_ui, "entry_and_agent", lambda *_args, **_kwargs: (entry, subentry)
     )
+    from custom_components.extended_openai_conversation_responses.request_rules import RequestRules
+    from tests.test_request_rules import MemoryStore
+    rules = RequestRules(MemoryStore())
+    await rules.async_initialize()
+    async def retained_rules(*_args):
+        return rules
+    monkeypatch.setattr(management_ui, "async_get_request_rules", retained_rules)
     monkeypatch.setattr(
         management_configuration_guidance,
         "exposed_attribute_catalog",
