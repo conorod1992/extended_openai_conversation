@@ -471,19 +471,24 @@ class EditFileFunction(FileFunction):
                     _read_text_bounded_snapshot, target_path
                 )
 
-                if old_text not in content:
+                first_match = content.find(old_text)
+                if first_match == -1:
                     return backend_failure(
                         f"Text not found in file: {old_text[:50]}..."
                     )
 
-                occurrence_count = content.count(old_text)
-                if occurrence_count > 1:
+                # A second match may start inside the first match's range.
+                if content.find(old_text, first_match + 1) != -1:
                     return backend_failure(
-                        f"Text appears {occurrence_count} times in file. "
+                        "Text appears more than once in file. "
                         "Please provide more specific text to ensure single replacement."
                     )
 
-                new_content = content.replace(old_text, new_text, 1)
+                new_content = (
+                    content[:first_match]
+                    + new_text
+                    + content[first_match + len(old_text) :]
+                )
                 await _async_settle_native_edit(
                     hass.async_add_executor_job(
                         _atomic_replace_text_if_unchanged,

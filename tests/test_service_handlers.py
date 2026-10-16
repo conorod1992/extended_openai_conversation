@@ -8,9 +8,6 @@ from openai import OpenAIError
 import pytest
 
 from custom_components.extended_openai_conversation_responses import services
-from custom_components.extended_openai_conversation_responses.agent_config import (
-    agent_config_defaults,
-)
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_RESPONSES,
     CONF_API_MODE,
@@ -23,8 +20,8 @@ from custom_components.extended_openai_conversation_responses.const import (
     SERVICE_MEMORY_CLEAR,
     SERVICE_MEMORY_DELETE,
     SERVICE_MEMORY_LIST,
-    SERVICE_QUERY_IMAGE,
     SERVICE_PROCESS,
+    SERVICE_QUERY_IMAGE,
     SERVICE_RELOAD_SKILLS,
 )
 from custom_components.extended_openai_conversation_responses.memory import MemoryRecord
@@ -991,7 +988,9 @@ async def test_process_auto_selection_skips_stale_and_unrelated_registry_entries
     agent.async_process_direct.assert_awaited_once()
 
 
-async def test_function_enable_action_materializes_runtime_defaults(hass, monkeypatch):
+async def test_function_enable_action_persists_only_runtime_function_defaults(
+    hass, monkeypatch
+):
     """Legacy agents can manage the same default Functions runtime exposes."""
     subentry = SimpleNamespace(
         subentry_id="agent", subentry_type="conversation", data={}
@@ -1007,10 +1006,8 @@ async def test_function_enable_action_materializes_runtime_defaults(hass, monkey
         hass, "entry", "agent", ["execute_services"], False
     )
     persisted = hass.config_entries.async_update_subentry.call_args.kwargs["data"]
-    # This legacy endpoint materializes ordinary defaults, unlike section saves.
-    assert persisted["temperature"] == agent_config_defaults()["temperature"]
-    assert persisted["top_p"] == agent_config_defaults()["top_p"]
-    assert "reasoning_effort" not in persisted
+    # Materialize the runtime's default Functions without adopting unrelated defaults.
+    assert set(persisted) == {"functions"}
     tools = services.validate_function_tools(persisted["functions"])
     assert (
         next(tool for tool in tools if tool["spec"]["name"] == "execute_services")[

@@ -139,8 +139,47 @@ class TestEditFileFunctionYaml:
         )
 
         assert "error" in result
-        assert "2 times" in result["error"]
+        assert "more than once" in result["error"]
         assert test_file.read_text() == "Hello\nHello\nGoodbye"
+
+    @pytest.mark.parametrize(
+        ("content", "old_text"),
+        [
+            ("aaa", "aa"),
+            ("prefix ababa suffix", "aba"),
+            ("A\n" * 3, "A\n" * 2),
+            ("- action: light.turn_on\n" * 3, "- action: light.turn_on\n" * 2),
+            ("   ", "  "),
+        ],
+        ids=[
+            "adjacent-characters",
+            "periodic-text",
+            "adjacent-lines",
+            "yaml-actions",
+            "whitespace",
+        ],
+    )
+    async def test_edit_file_overlapping_occurrences_leave_file_unchanged(
+        self, hass, function, exposed_entities, llm_context, tmp_path, content, old_text
+    ):
+        """Ambiguous matches are rejected even when their ranges overlap."""
+        test_file = tmp_path / "extended_openai_conversation_responses" / "overlap.txt"
+        original = content.encode("utf-8")
+        test_file.write_bytes(original)
+        function_config = prepare_function_tool_from_yaml("edit_file_example.yaml", 0)[
+            "function"
+        ]
+        result = await function.execute(
+            hass,
+            function_config,
+            {"filename": "overlap.txt", "old_text": old_text, "new_text": "B\n"},
+            llm_context,
+            exposed_entities,
+        )
+        assert "error" in result
+        assert "more specific text" in result["error"]
+        assert result.get("success") is not True
+        assert test_file.read_bytes() == original
 
     async def test_edit_file_is_directory(
         self, hass, function, exposed_entities, llm_context, tmp_path

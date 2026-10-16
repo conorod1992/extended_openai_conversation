@@ -18,6 +18,7 @@ from custom_components.extended_openai_conversation_responses.agent_config impor
 )
 from custom_components.extended_openai_conversation_responses.const import (
     CONFIG_ENTRY_VERSION,
+    DEFAULT_AI_TASK_OPTIONS,
     DOMAIN,
 )
 from custom_components.extended_openai_conversation_responses.request import (
@@ -35,8 +36,18 @@ async def test_legacy_default_is_persisted_readable_editable_and_requestable(
         subentry_type="conversation",
         data=MappingProxyType(deepcopy(original)),
     )
+    task_original = {
+        **DEFAULT_AI_TASK_OPTIONS,
+        "service_tier": "flex",
+        "unrelated": "keep",
+    }
     task = SimpleNamespace(
-        subentry_id="task", subentry_type="ai_task_data", data=deepcopy(original)
+        subentry_id="task",
+        subentry_type="ai_task_data",
+        data=MappingProxyType(deepcopy(task_original)),
+    )
+    unsupported = SimpleNamespace(
+        subentry_id="future", subentry_type="future", data=deepcopy(original)
     )
     entry = SimpleNamespace(
         version=version,
@@ -44,7 +55,7 @@ async def test_legacy_default_is_persisted_readable_editable_and_requestable(
         entry_id="entry",
         title="Agent",
         options={},
-        subentries={"stock": stock, "task": task},
+        subentries={"stock": stock, "task": task, "future": unsupported},
     )
     updates = []
 
@@ -69,8 +80,14 @@ async def test_legacy_default_is_persisted_readable_editable_and_requestable(
     assert stock.data["chat_model"] == "gpt-5-mini"
     assert stock.data["unrelated"] == "keep"
     assert original["service_tier"] == "flex"
-    assert task.data == original
-    assert updates == ["stock"]
+    assert task.data == {**task_original, "service_tier": "default"}
+    assert task_original["service_tier"] == "flex"
+    assert unsupported.data == original
+    assert updates == ["stock", "task"]
+    task_request = build_provider_request_snapshot(
+        task.data, {"api_provider": "openai"}, tools_required=False
+    )
+    assert task_request.api_kwargs["service_tier"] == "default"
     snapshot = agent_config_snapshot(dict(stock.data))
     edited = merge_agent_config(dict(stock.data), {"prompt": "Edited after upgrade"})
     assert snapshot["service_tier"] == edited["service_tier"] == "default"
@@ -79,7 +96,7 @@ async def test_legacy_default_is_persisted_readable_editable_and_requestable(
 
     # A cold start with the persisted mapping requires no second repair.
     await async_migrate_integration(migration_hass)
-    assert updates == ["stock"]
+    assert updates == ["stock", "task"]
     with pytest.raises(AgentConfigError, match="service_tier"):
         merge_agent_config(dict(stock.data), {"service_tier": "flex"})
     with pytest.raises(AgentConfigError, match="service_tier"):
