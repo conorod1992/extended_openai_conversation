@@ -151,6 +151,13 @@ class TestEditFileFunctionYaml:
             ("- action: light.turn_on\n" * 3, "- action: light.turn_on\n" * 2),
             ("   ", "  "),
         ],
+        ids=[
+            "adjacent-characters",
+            "periodic-text",
+            "adjacent-lines",
+            "yaml-actions",
+            "whitespace",
+        ],
     )
     async def test_edit_file_overlapping_occurrences_leave_file_unchanged(
         self, hass, function, exposed_entities, llm_context, tmp_path, content, old_text
