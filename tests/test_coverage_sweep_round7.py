@@ -1253,7 +1253,8 @@ def test_request_rules_invalidate_after_unreadable_store_fails_closed(monkeypatc
     manager._opaque_fields = {"opaque": True}
     manager._groups = [{"id": "g", "name": "Group"}]
     manager._rules = [{"id": "r"}]
-    manager._condition_checkers["r"] = object()
+    conditions = Mock()
+    manager._condition_checkers["r"] = conditions
     manager._has_continuation = True
 
     manager._invalidate_after_unreadable_store()
@@ -1264,6 +1265,7 @@ def test_request_rules_invalidate_after_unreadable_store_fails_closed(monkeypatc
     assert manager._groups == []
     assert manager._rules == []
     assert manager._condition_checkers == {}
+    conditions.async_unload.assert_called_once()
     assert manager._has_continuation is False
 
 

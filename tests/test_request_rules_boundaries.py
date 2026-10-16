@@ -659,7 +659,7 @@ def test_routing_and_name_helpers_cover_remaining_guards() -> None:
 
 
 async def test_shared_manager_and_runtime_factories(monkeypatch) -> None:
-    hass = SimpleNamespace(data={})
+    hass = SimpleNamespace(data={}, bus=SimpleNamespace(async_listen_once=Mock()))
     initialize = AsyncMock()
     storage = ResidualMemoryStore(None)
     storage.bind_agent = Mock(return_value=storage)
@@ -668,6 +668,7 @@ async def test_shared_manager_and_runtime_factories(monkeypatch) -> None:
     first = await rr.async_get_request_rules(hass, "entry", "agent")
     second = await rr.async_get_request_rules(hass, "entry", "agent")
     assert first is second
+    hass.bus.async_listen_once.assert_called_once()
     storage.bind_agent.assert_called_once_with("entry", "agent")
     assert initialize.await_count == 2
     assert rr.get_request_rule_runtime(

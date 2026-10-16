@@ -490,14 +490,10 @@ def _action_supports_previous_state(domain: str, service: str) -> bool:
     return domain != "automation" or service in _AUTOMATION_STATE_SERVICES
 
 
-def _service_participants(
-    hass: HomeAssistant, domain: str, service: str, selected: set[str]
-) -> set[str] | None:
-    """Read HA's registered entity-service candidates, without calling the service.
-
-    Entity services are registered as partials of HA's dispatch helpers. Other
-    services own their target semantics; returning None preserves their checks.
-    """
+def _registered_entity_service(
+    hass: HomeAssistant, domain: str, service: str
+) -> tuple[partial, Mapping[str, Any]] | None:
+    """Read known HA entity-service registrations across Core versions."""
     services_for_domain = getattr(hass.services, "async_services_for_domain", None)
     if services_for_domain is None:
         return None
@@ -513,16 +509,25 @@ def _service_participants(
     entities = target.args[1]
     if callable(entities):
         entities = entities()
-    if isinstance(entities, Mapping):
-        return {entity_id for entity_id in selected if entity_id in entities}
     # Older HA dispatch helpers receive the component's entity platforms.
     if isinstance(entities, (list, tuple)):
-        return {
-            entity_id
-            for entity_id in selected
-            if any(entity_id in platform.entities for platform in entities)
+        entities = {
+            entity_id: entity
+            for platform in entities
+            for entity_id, entity in platform.entities.items()
         }
-    return None
+    return (target, entities) if isinstance(entities, Mapping) else None
+
+
+def _service_participants(
+    hass: HomeAssistant, domain: str, service: str, selected: set[str]
+) -> set[str] | None:
+    """Retain unknown/custom service semantics; identify known entity members."""
+    registration = _registered_entity_service(hass, domain, service)
+    if registration is None:
+        return None
+    _, entities = registration
+    return selected & entities.keys()
 
 
 def _filter_service_features(
@@ -532,45 +537,23 @@ def _filter_service_features(
     selected: set[str],
     explicit: set[str],
 ) -> set[str]:
-    """HA skips indirectly selected unsupported entities; explicit ones must error."""
-    services_for_domain = getattr(hass.services, "async_services_for_domain", None)
-    if services_for_domain is None:
+    """Match HA's indirect availability/feature filtering; validate explicit IDs."""
+    registration = _registered_entity_service(hass, domain, service)
+    if registration is None:
         return selected
-    registered = services_for_domain(domain).get(service)
-    target = registered.job.target if registered is not None else None
-    if (
-        not isinstance(target, partial)
-        or target.func
-        not in (
-            service_helpers.entity_service_call,
-            getattr(service_helpers, "batched_entity_service_call", None),
-        )
-        or len(target.args) < 2
-    ):
-        return selected
+    target, entities = registration
     required = target.keywords.get(
         "required_features", target.args[4] if len(target.args) > 4 else None
     )
     classes = target.keywords.get("entity_device_classes")
-    if required is None and classes is None:
-        return selected
-    entities = target.args[1]
-    if callable(entities):
-        entities = entities()
-    if isinstance(entities, (list, tuple)):
-        entities = {
-            key: entity
-            for platform in entities
-            for key, entity in platform.entities.items()
-        }
-    if not isinstance(entities, Mapping):
-        return selected
+    require_available = action_requires_available_entities(domain, service)
     return {
         entity_id
         for entity_id in selected
         if entity_id in explicit
         or (
             (entity := entities.get(entity_id)) is not None
+            and (not require_available or getattr(entity, "available", True))
             and (classes is None or entity.device_class in classes)
             and (
                 required is None

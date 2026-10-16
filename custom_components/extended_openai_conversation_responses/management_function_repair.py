@@ -949,7 +949,12 @@ async def async_function_repair(
             )
         )
         if result["valid"]:
-            management_ui._validated_model_request(result["config"], entry.data)
+            try:
+                await management_ui._async_validate_configuration_request(
+                    hass, entry, subentry, result["config"]
+                )
+            except HomeAssistantError as err:
+                return {"valid": False, "errors": {"api_mode": str(err)}}
             result["model_capabilities"] = management_ui.model_capabilities(
                 result["config"][management_ui.CONF_CHAT_MODEL]
             )
@@ -983,7 +988,9 @@ async def async_function_repair(
         if not validation.get("valid"):
             return validation
         normalized = validation["config"]
-        management_ui._validated_model_request(normalized, entry.data)
+        await management_ui._async_validate_configuration_request(
+            hass, entry, subentry, normalized
+        )
         persisted = preserve_legacy_guest_policy(
             dict(subentry.data), deepcopy(normalized)
         )
@@ -1186,7 +1193,9 @@ async def async_function_repair(
     persisted[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
         validated_tools, sort_keys=False, allow_unicode=True
     )
-    management_ui._validated_model_request(persisted, entry.data)
+    await management_ui._async_validate_configuration_request(
+        hass, entry, subentry, persisted
+    )
     await management_ui._async_validate_configuration_dependencies(
         hass, entry, subentry, persisted
     )

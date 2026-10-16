@@ -30,7 +30,10 @@ async def test_tool_result_guard_bounds_outermost_string_result() -> None:
             )
 
     content = await object.__new__(FakeEntity)._execute_function_tool({}, {}, None, [])
-    result = tool_result_data(content)["result"]
+    assert len(tool_result_data(content)["result"]) == (
+        runtime_hardening.MAX_MODEL_TOOL_RESULT_CHARACTERS + 100
+    )
+    result = model_tool_results.model_tool_result_data(content)["result"]
     assert len(result) <= runtime_hardening.MAX_MODEL_TOOL_RESULT_CHARACTERS
     assert runtime_hardening._TOOL_RESULT_TRUNCATION_LABEL in result
 

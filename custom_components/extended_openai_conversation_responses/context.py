@@ -9,7 +9,7 @@ from typing import Any
 
 from homeassistant.components import conversation
 
-from .ha_tool_result_compat import tool_result_data
+from .model_tool_results import model_tool_result_data
 
 
 @dataclass(slots=True)
@@ -44,6 +44,18 @@ def _weight(items: list[conversation.Content]) -> int:
     """Return a serialization weight used only to allocate reported token usage."""
     payload: list[Any] = []
     for item in items:
+        if isinstance(item, conversation.ToolResultContent):
+            # HA's as_dict deep-copies retained data. Weight only the bounded
+            # representation that the provider actually receives.
+            payload.append(
+                {
+                    "role": item.role,
+                    "tool_name": item.tool_name,
+                    "tool_call_id": item.tool_call_id,
+                    "tool_result": model_tool_result_data(item),
+                }
+            )
+            continue
         try:
             payload.append(item.as_dict())
         except AttributeError, TypeError, ValueError:
@@ -129,7 +141,7 @@ def history_as_summary_text(items: list[conversation.Content]) -> str:
         if isinstance(item, conversation.ToolResultContent):
             lines.append(
                 f"tool result {item.tool_name}: "
-                f"{json.dumps(tool_result_data(item), ensure_ascii=False, default=str)}"
+                f"{json.dumps(model_tool_result_data(item), ensure_ascii=False, default=str)}"
             )
         native = getattr(item, "native", None)
         if native is not None and not content:

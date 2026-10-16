@@ -313,7 +313,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             runtimes.pop(key, None)
             # Durable managers belong to one loaded entry generation. Reload must
             # hydrate them from HA Store instead of retaining cached rule state.
-            managers.pop(key, None)
+            manager = managers.pop(key, None)
+            if manager is not None:
+                manager.async_unload()
             discard_persisted_config_projection(subentry)
     await async_unload_templates(hass, entry.entry_id)
     return True

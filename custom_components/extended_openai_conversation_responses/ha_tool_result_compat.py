@@ -11,6 +11,16 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 
 
+class ToolResultPayload(dict[str, Any]):
+    """Result data with optional internal, already-prepared provider output."""
+
+    model_wire: str | None = None
+
+
+class ExecutionFailure(ToolResultPayload):
+    """Failure provenance that preserves the existing JSON/local dictionary shape."""
+
+
 def make_tool_result_content(
     *,
     agent_id: str,
@@ -26,6 +36,14 @@ def make_tool_result_content(
         "tool_name": tool_name,
     }
     parameters = signature(conversation.ToolResultContent).parameters
+    if (
+        error
+        and "result" not in parameters
+        and not isinstance(tool_result, ExecutionFailure)
+    ):
+        # Older HA has no native error flag. Keep the producer's explicit
+        # indication in memory without adding fields to returned business data.
+        tool_result = ExecutionFailure(tool_result)
     if "result" in parameters:
         tool_result_type = cast(Any, llm).ToolResult
         kwargs["result"] = tool_result_type(data=tool_result, error=error)

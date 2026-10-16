@@ -286,12 +286,12 @@ async def test_only_when_does_not_check_nonmatching_rule_and_stops_on_error(
         await rules.async_match(hass, "hello")
 
 
-async def test_indeterminate_condition_stops_before_later_local_rule(
+async def test_disabled_condition_does_not_skip_to_later_local_rule(
     hass, monkeypatch
 ) -> None:
     first = local_rule("First", phrases=["hello"])
     first["conditions"] = [
-        {"condition": "state", "entity_id": "input_boolean.first", "state": "on"}
+        {"condition": "state", "entity_id": "input_boolean.first", "state": "on", "enabled": False}
     ]
 
     async def validate(_hass, config):
@@ -309,8 +309,8 @@ async def test_indeterminate_condition_stops_before_later_local_rule(
         build,
     )
     rules = await manager(first, local_rule("Later", phrases=["hello"], order=1))
-    with pytest.raises(HomeAssistantError, match="condition could not be evaluated"):
-        await rules.async_match(hass, "hello")
+    match = await rules.async_match(hass, "hello")
+    assert match.rule["name"] == "First"
 
 
 async def test_sentence_and_fuzzy_conditions_skip_to_next_eligible(
