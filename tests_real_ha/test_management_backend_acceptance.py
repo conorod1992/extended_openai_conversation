@@ -851,3 +851,64 @@ async def test_configuration_transfer_survives_reload(hass, hass_ws_client, acti
         original = await _management_call(client, entry=entry, section="configuration", action="get", subentry_id=source_id)
         assert original["title"] != readback["title"]
         assert original["config"]["max_tokens"] == 777
+
+
+async def test_sparse_memory_projection_survives_function_and_knowledge_saves_and_reload(
+    hass: HomeAssistant, hass_ws_client: Any
+) -> None:
+    """Warm save projections agree with cold reads without materializing flags."""
+    entry = _entry("Sparse memory projection")
+    await _setup_entry(hass, entry)
+    client = await _admin_client(hass, hass_ws_client)
+    subentry = _conversation_subentry(entry)
+    raw = dict(subentry.data)
+    assert raw["memory_mode"] == "manual"
+    tool = {
+        "spec": {
+            "name": "sparse_memory_probe",
+            "description": "Probe",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "function": {"type": "native", "name": "get_user_from_user_id"},
+    }
+    operations = [
+        {"section": "tools", "action": "save", "tool": tool},
+        {
+            "section": "tools",
+            "action": "save_group",
+            "group": {
+                "id": "sparse_memory_group",
+                "name": "Sparse memory group",
+                "description": "Probe",
+                "loading_mode": FUNCTION_GROUP_LOADING_ON_DEMAND,
+                "functions": ["sparse_memory_probe"],
+                "enabled": True,
+            },
+        },
+        {"section": "knowledge", "action": "set_enabled", "enabled": True},
+    ]
+    for operation in operations:
+        before = await _management_call(
+            client, entry=entry, section="configuration", action="get"
+        )
+        await _management_call(
+            client, entry=entry, revision=before["revision"], **operation
+        )
+        warm = await _management_call(
+            client, entry=entry, section="configuration", action="get"
+        )
+        assert warm["config"]["memory_mode"] == "manual"
+        assert warm["config"]["memory_enabled"] is True
+        assert warm["config"]["memory_auto_create"] is False
+        for key in ("memory_mode", "memory_enabled", "memory_auto_create"):
+            assert (key in subentry.data) == (key in raw)
+            if key in raw:
+                assert subentry.data[key] == raw[key]
+        saved = dict(subentry.data)
+        await _fresh_reload(hass, entry)
+        cold = await _management_call(
+            client, entry=entry, section="configuration", action="get"
+        )
+        assert cold["config"] == warm["config"]
+        assert cold["revision"] == warm["revision"]
+        assert dict(_conversation_subentry(entry).data) == saved

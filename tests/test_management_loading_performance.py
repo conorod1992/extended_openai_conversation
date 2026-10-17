@@ -2439,3 +2439,37 @@ async def test_scope_catalog_loads_all_scope_managers_concurrently(monkeypatch) 
         archive_counts,
         temporary_counts,
     )
+
+
+@pytest.mark.parametrize("validated", [False, True])
+@pytest.mark.parametrize(
+    "memory",
+    [
+        {},
+        {"memory_mode": "manual"},
+        {"memory_mode": "automatic"},
+        {"memory_enabled": True},
+        {"memory_enabled": True, "memory_auto_create": True},
+        {"memory_enabled": False},
+        {"memory_mode": "off", "memory_enabled": True},
+        {"memory_mode": "manual", "memory_enabled": False},
+    ],
+    ids=[
+        "absent",
+        "manual",
+        "automatic",
+        "legacy-manual",
+        "legacy-automatic",
+        "legacy-off",
+        "explicit-off",
+        "explicit-manual",
+    ],
+)
+def test_sparse_memory_snapshot_matches_cold_configuration(memory, validated):
+    raw = {"functions": "[]", **memory}
+    before = deepcopy(raw)
+    warm = loading._snapshot_normalized_configuration(raw, validated=validated)
+    cold = agent_config_snapshot(raw)
+    keys = ("memory_mode", "memory_enabled", "memory_auto_create")
+    assert {key: warm[key] for key in keys} == {key: cold[key] for key in keys}
+    assert raw == before
