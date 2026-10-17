@@ -34,6 +34,7 @@ from .const import (
     DEFAULT_API_PROVIDER,
     DEFAULT_ARCHIVE_ENABLED,
     DEFAULT_CHAT_MODEL,
+    DEFAULT_CONF_FUNCTION_TOOLS,
     DEFAULT_FUNCTION_GROUPS,
     DEFAULT_TEMPORARY_MEMORY,
     DOMAIN,
@@ -577,12 +578,15 @@ def _snapshot_normalized_configuration(
     snapshot[CONF_MEMORY_MODE] = mode
     snapshot[CONF_MEMORY_ENABLED] = mode != MEMORY_MODE_OFF
     snapshot[CONF_MEMORY_AUTO_CREATE] = mode == MEMORY_MODE_AUTOMATIC
+    configured = snapshot[CONF_FUNCTION_TOOLS]
+    if configured is None or configured == "":
+        configured = deepcopy(DEFAULT_CONF_FUNCTION_TOOLS)
     if validated:
-        function_tools = snapshot[CONF_FUNCTION_TOOLS]
+        function_tools = configured
         if isinstance(function_tools, str):
             function_tools = yaml.safe_load(function_tools) or []
     else:
-        function_tools = validate_function_tools(snapshot[CONF_FUNCTION_TOOLS])
+        function_tools = validate_function_tools(configured)
     snapshot[CONF_FUNCTION_TOOLS] = function_tools
     if not validated:
         snapshot[CONF_FUNCTION_GROUPS] = validate_function_groups(

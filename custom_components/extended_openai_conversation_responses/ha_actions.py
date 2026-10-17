@@ -586,6 +586,26 @@ def _filter_service_features(
     }
 
 
+def explicit_service_refusal_entity_ids(
+    hass: HomeAssistant, domain: str, service: str, explicit: set[str]
+) -> set[str]:
+    """Identify explicit candidates Core refuses before any entity method runs.
+
+    Unavailable entities are skipped before feature validation, even when named
+    explicitly. Keep those out so an executed partial call still matches a retry.
+    """
+    registration = _registered_entity_service(hass, domain, service)
+    if registration is None:
+        return set()
+    _, entities = registration
+    available = {
+        item
+        for item in explicit
+        if (entity := entities.get(item)) is not None and entity.available
+    }
+    return available - _filter_service_features(hass, domain, service, available, set())
+
+
 def action_requires_available_entities(domain: str | None, service: str | None) -> bool:
     """Recovery operations must be able to target an unavailable entity."""
     return (domain, service) not in {

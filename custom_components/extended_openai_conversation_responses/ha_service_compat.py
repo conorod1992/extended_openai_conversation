@@ -70,7 +70,11 @@ async def _entity_target_identity(
     generic = _generic_power(target, domain, service)
     if not isinstance(processed, Mapping) or not (generic or dispatcher):
         return processed, {}
-    from .ha_actions import resolve_action_entity_ids, service_target_entity_ids
+    from .ha_actions import (
+        explicit_service_refusal_entity_ids,
+        resolve_action_entity_ids,
+        service_target_entity_ids,
+    )
 
     selected = resolve_action_entity_ids(hass, domain, service, processed)
     if generic:
@@ -87,10 +91,18 @@ async def _entity_target_identity(
             if isinstance(ids := identity.get(ATTR_ENTITY_ID), list):
                 identity[ATTR_ENTITY_ID] = sorted(set(ids))
             return identity, {}
-    # Authorization keeps explicit invalid targets visible; receipts identify
-    # actual available/feature-compatible participants instead.
-    selected = service_target_entity_ids(
-        hass, domain, service, selected, explicit=set()
+    # Indirect nonparticipants are skipped, but an explicit feature/device-class
+    # refusal makes the entire entity call different from its valid correction.
+    explicit = processed.get(ATTR_ENTITY_ID, [])
+    explicit = {explicit} if isinstance(explicit, str) else set(explicit)
+    refused = (
+        explicit_service_refusal_entity_ids(hass, domain, service, explicit)
+        if dispatcher
+        else set()
+    )
+    selected = (
+        service_target_entity_ids(hass, domain, service, selected, explicit=set())
+        | refused
     )
     if user_id := getattr(context, "user_id", None):
         user = await hass.auth.async_get_user(user_id)

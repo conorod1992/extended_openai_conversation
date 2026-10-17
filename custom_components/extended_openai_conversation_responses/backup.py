@@ -49,6 +49,7 @@ from .conversation_archive import (
     ConversationArchive,
     async_get_archive,
 )
+from .function_yaml import json_safe_function_fields
 from .guest_mode import GuestModeManager, GuestModeSchedule, async_get_guest_mode
 from .knowledge import KnowledgeLibrary, KnowledgeSource, async_get_knowledge
 from .memory import MemoryRecord, PersistentMemory, async_get_memory
@@ -166,7 +167,8 @@ def _configuration_snapshot_preserving_quarantine(
                         ) from err
             else:
                 snapshot.pop(key, None)
-    return project_agent_config_transfer(raw, snapshot, preserve_unknown=True)
+    projected = project_agent_config_transfer(raw, snapshot, preserve_unknown=True)
+    return json_safe_function_fields(projected) if frontend_shape else projected
 
 
 def export_configuration_snapshot(data: Any) -> dict[str, Any]:

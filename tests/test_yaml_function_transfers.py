@@ -1,0 +1,186 @@
+"""Typed YAML Function values survive transfer and delayed execution identities."""
+
+from copy import deepcopy
+from datetime import date
+import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
+import yaml
+
+from custom_components.extended_openai_conversation_responses import (
+    backup,
+    backup_transfer,
+    management_ui,
+    restore_recovery,
+    transfer,
+)
+from custom_components.extended_openai_conversation_responses.agent_config import (
+    configured_function_tools_from_data,
+)
+from custom_components.extended_openai_conversation_responses.delayed_tools import (
+    tool_definition_fingerprint,
+)
+from tests.test_backup import _document
+
+TOOL_YAML = """spec:
+  name: dated_reminder
+  description: Render the configured reminder date
+  parameters:
+    type: object
+    properties: {}
+function:
+  type: script
+  variables:
+    reminder_date: 2026-10-17
+  sequence:
+    - stop: Done
+"""
+
+
+@pytest.fixture
+async def saved_date_tool(hass, management_agent, management_message, monkeypatch):
+    entry, subentry = management_agent
+    rules = SimpleNamespace(
+        revision=lambda: "unchanged-empty-rules",
+        async_backup_data=AsyncMock(return_value={"defaults": {}, "rules": []}),
+    )
+    monkeypatch.setattr(
+        management_ui, "async_get_request_rules", AsyncMock(return_value=rules)
+    )
+    result = await management_ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        management_message(
+            "tools",
+            "save",
+            yaml=TOOL_YAML,
+            revision=management_ui._agent_config_revision(
+                subentry.data, subentry.title
+            ),
+        ),
+    )
+    assert result["functions"][-1]["spec"]["name"] == "dated_reminder"
+    assert isinstance(subentry.data["functions"], str)
+    parsed = yaml.safe_load(subentry.data["functions"])
+    assert parsed[-1]["function"]["variables"]["reminder_date"] == date(2026, 10, 17)
+    return entry, subentry
+
+
+async def test_supported_save_and_runtime_variables_accept_date(hass, saved_date_tool):
+    _entry, subentry = saved_date_tool
+    tool = configured_function_tools_from_data(subentry.data)[-1]
+    variables = tool["function"]["variables"].async_render(hass, {})
+    assert variables["reminder_date"] == date(2026, 10, 17)
+    assert variables["reminder_date"].isoformat() == "2026-10-17"
+
+
+async def test_delayed_tool_fingerprint_preserves_yaml_date_type(saved_date_tool):
+    _entry, subentry = saved_date_tool
+    tool = configured_function_tools_from_data(subentry.data)[-1]
+    fingerprint = tool_definition_fingerprint(tool)
+    assert fingerprint == tool_definition_fingerprint(deepcopy(tool))
+    quoted = deepcopy(tool)
+    quoted["function"]["variables"]["reminder_date"] = "2026-10-17"
+    assert fingerprint != tool_definition_fingerprint(quoted)
+
+
+@pytest.mark.parametrize("mode", ["setup", "full", "custom_configuration"])
+async def test_exports_accept_yaml_date(hass, saved_date_tool, tmp_path, mode):
+    entry, subentry = saved_date_tool
+    config = backup.export_configuration_snapshot(subentry.data)
+    assert yaml.safe_load(config["functions"])[-1]["function"]["variables"][
+        "reminder_date"
+    ] == date(2026, 10, 17)
+    if mode == "full":
+        document = _document()
+        document["agent"]["config"] = config
+        backup_transfer._build_archive_file(document, str(tmp_path))
+    else:
+        document = transfer._new_transfer_document(
+            entry, subentry, "setup" if mode == "setup" else "custom"
+        )
+        document["sections"]["configuration"] = config
+        if mode == "setup":
+            document["sections"]["request_rules"] = {"defaults": {}, "rules": []}
+            transfer.finalize_setup_export(document)
+        else:
+            backup_transfer._build_archive_file(document, str(tmp_path))
+
+
+async def test_unselected_configuration_preserves_yaml_date_in_restore_rollback(
+    hass, saved_date_tool
+):
+    entry, subentry = saved_date_tool
+    base = _document()
+    managers = (
+        SimpleNamespace(async_backup_data=AsyncMock(return_value=base["memories"])),
+        SimpleNamespace(
+            async_backup_data=AsyncMock(return_value=base["temporary_memories"])
+        ),
+        SimpleNamespace(async_backup_data=AsyncMock(return_value=base["knowledge"])),
+        SimpleNamespace(
+            async_recovery_data=AsyncMock(
+                return_value={**base["archive"], "active": {}}
+            )
+        ),
+        SimpleNamespace(async_backup_data=AsyncMock(return_value=base["usage"])),
+        SimpleNamespace(async_backup_data=AsyncMock(return_value={"schedule": None})),
+        SimpleNamespace(
+            async_backup_data=AsyncMock(return_value={"defaults": {}, "rules": []})
+        ),
+    )
+    rollback = await backup._snapshot_for_restore(managers, subentry)
+    # A valid memory-only custom transfer preserves the destination configuration.
+    incoming = transfer._new_transfer_document(entry, subentry, "custom")
+    incoming["sections"]["persistent_memory"] = {"memories": []}
+    selected = frozenset({"persistent_memory"})
+    imported = transfer.inspect_transfer(
+        incoming, subentry.subentry_id, sections=selected
+    )
+    target, _preserved, _missing = transfer._prepared_restore_from_selection(
+        rollback, imported, selected
+    )
+    journal = restore_recovery._new_journal(
+        entry.entry_id, subentry.subentry_id, target, rollback
+    )
+    restored = backup.inspect_backup(
+        json.loads(json.dumps(journal))["rollback"],
+        subentry.subentry_id,
+        max_bytes=backup.MAX_BACKUP_BYTES,
+        private_journal=True,
+    )
+    assert yaml.safe_load(restored.config["functions"])[-1]["function"]["variables"][
+        "reminder_date"
+    ] == date(2026, 10, 17)
+
+
+async def test_yaml_date_export_redacts_and_restores_secrets(saved_date_tool):
+    from custom_components.extended_openai_conversation_responses.agent_config import (
+        AgentConfigError,
+    )
+    from custom_components.extended_openai_conversation_responses.secret_redaction import (
+        REDACTED_SECRET_SENTINEL,
+    )
+
+    _entry, subentry = saved_date_tool
+    tools = yaml.safe_load(subentry.data["functions"])
+    tools[-1]["function"]["variables"]["password"] = "local-credential"
+    subentry.data = {**subentry.data, "functions": yaml.safe_dump(tools)}
+    document = json.loads(json.dumps(management_ui._export_agent(subentry)))
+    exported = yaml.safe_load(document["config"]["functions"])
+    assert exported[-1]["function"]["variables"]["password"] == REDACTED_SECRET_SENTINEL
+    assert "local-credential" not in json.dumps(document)
+    restored = management_ui._parse_import_document(document, destination=subentry)
+    variables = yaml.safe_load(restored["config"]["functions"])[-1]["function"][
+        "variables"
+    ]
+    assert variables["reminder_date"] == date(2026, 10, 17)
+    assert variables["password"] == "local-credential"
+    with pytest.raises(AgentConfigError, match="unavailable secrets"):
+        management_ui._parse_import_document(document)
+    # Preview must see structured secret markers even inside the YAML transport.
+    prepared = transfer.inspect_transfer(document, subentry.subentry_id)
+    assert prepared.redacted_sensitive_fields

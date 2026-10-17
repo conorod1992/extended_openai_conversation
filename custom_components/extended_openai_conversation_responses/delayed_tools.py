@@ -14,6 +14,7 @@ from typing import Any, cast
 from uuid import uuid4
 
 import voluptuous as vol
+import yaml
 
 from homeassistant.components import conversation
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, EVENT_HOMEASSISTANT_STOP
@@ -97,11 +98,15 @@ def tool_definition_fingerprint(tool: dict[str, Any]) -> str:
     """Hash the persisted schema and implementation, excluding presentation/state."""
     source = deepcopy(tool)
     payload = {key: source[key] for key in ("spec", "function") if key in source}
-    return hashlib.sha256(
-        json.dumps(
+    try:
+        encoded = json.dumps(
             payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-        ).encode()
-    ).hexdigest()
+        )
+    except TypeError:
+        # Preserve existing JSON fingerprints for pending calls. Typed YAML must
+        # retain its tags so a date and its quoted string never share an identity.
+        encoded = "yaml:" + yaml.safe_dump(payload, sort_keys=True, allow_unicode=True)
+    return hashlib.sha256(encoded.encode()).hexdigest()
 
 
 @dataclass(slots=True, frozen=True)

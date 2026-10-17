@@ -175,6 +175,17 @@ class ConversationArchive:
         self._lock = asyncio.Lock()
         self._initialized = False
 
+    def private_continuity_bindings(self) -> dict[str, str]:
+        """Return content-free identities under the caller's exclusive restore lease."""
+        return {
+            key.removeprefix("continuity:"): session.home_assistant_conversation_id
+            for key, session_id in self._active.items()
+            if key.startswith("continuity:")
+            and (session := self._sessions.get(session_id)) is not None
+            and session.retention_state == "private"
+            and session.home_assistant_conversation_id is not None
+        }
+
     @property
     def initialized(self) -> bool:
         """Expose failed-generation recovery state to live reconciliation."""
