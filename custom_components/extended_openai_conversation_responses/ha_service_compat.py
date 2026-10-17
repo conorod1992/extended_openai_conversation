@@ -71,12 +71,17 @@ async def _entity_target_identity(
     if not isinstance(processed, Mapping) or not (generic or dispatcher):
         return processed, {}
     from .ha_actions import (
+        _resolve_target_entity_ids,
         explicit_service_refusal_entity_ids,
         resolve_action_entity_ids,
         service_target_entity_ids,
     )
 
-    selected = resolve_action_entity_ids(hass, domain, service, processed)
+    selected = (
+        _resolve_target_entity_ids(hass, processed, None)
+        if generic
+        else resolve_action_entity_ids(hass, domain, service, processed)
+    )
     if generic:
         # Core forwards selector data to its delegates. A callable delegate can
         # observe that representation, so it must keep the existing raw identity.
@@ -95,11 +100,15 @@ async def _entity_target_identity(
     # refusal makes the entire entity call different from its valid correction.
     explicit = processed.get(ATTR_ENTITY_ID, [])
     explicit = {explicit} if isinstance(explicit, str) else set(explicit)
-    refused = (
-        explicit_service_refusal_entity_ids(hass, domain, service, explicit)
-        if dispatcher
-        else set()
-    )
+    refused = set()
+    for entity_domain in domains if generic else (domain,):
+        refused.update(
+            # Core turns even indirect generic selections into explicit delegate
+            # IDs, unlike a direct domain service's own area/device selection.
+            explicit_service_refusal_entity_ids(
+                hass, entity_domain, service, selected if generic else explicit
+            )
+        )
     selected = (
         service_target_entity_ids(hass, domain, service, selected, explicit=set())
         | refused
@@ -116,6 +125,14 @@ async def _entity_target_identity(
                 for item in selected
                 if user.permissions.check_entity(item, POLICY_CONTROL)
             }
+    if generic and refused:
+        refusing_domains = {item.split(".", 1)[0] for item in refused}
+        if any(item.split(".", 1)[0] not in refusing_domains for item in selected):
+            # Core runs delegates concurrently: another domain may already have
+            # acted. A changed target must not evade that uncertain partial effect.
+            # Unidentifiable preparation retains the existing fail-closed receipt
+            # contract until a successful acknowledgment clears the conversation.
+            return object(), {}
     identity = {
         key: value
         for key, value in processed.items()

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable
-from copy import deepcopy
 from time import perf_counter
 from typing import Any, TypeVar
 
@@ -29,7 +28,6 @@ from .const import (
     DEFAULT_API_PROVIDER,
     DEFAULT_ARCHIVE_ENABLED,
     DEFAULT_CHAT_MODEL,
-    DEFAULT_CONF_FUNCTION_TOOLS,
     DEFAULT_FUNCTION_GROUPS,
     DEFAULT_TEMPORARY_MEMORY,
     DOMAIN,
@@ -555,15 +553,13 @@ async def async_overview_summary(
 def _snapshot_normalized_configuration(
     config: dict[str, Any], *, validated: bool = False
 ) -> dict[str, Any]:
-    """Build a frontend snapshot, trusting tools only after a successful save."""
+    """Project decoded Functions; raw persisted sources use agent_config_snapshot."""
     snapshot = agent_config_value_snapshot(
         {key: value for key, value in config.items() if key in AGENT_CONFIG_FIELDS}
     )
     configured = snapshot[CONF_FUNCTION_TOOLS]
-    if configured is None or configured == "":
-        configured = deepcopy(DEFAULT_CONF_FUNCTION_TOOLS)
     if validated:
-        function_tools = configured
+        function_tools = [] if configured is None else configured
         if isinstance(function_tools, str):
             function_tools = yaml.safe_load(function_tools) or []
     else:

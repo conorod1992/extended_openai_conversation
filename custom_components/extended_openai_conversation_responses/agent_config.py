@@ -1211,10 +1211,6 @@ def normalize_agent_config(
 
     if validated_functions is None:
         configured = result.get(CONF_FUNCTION_TOOLS)
-        # Empty persisted text predates the collection editor and means defaults.
-        # An explicit collection (including []) remains an intentional edit.
-        if configured is None or configured == "":
-            configured = deepcopy(DEFAULT_CONF_FUNCTION_TOOLS)
         function_tools = validate_function_tools(configured)
         function_groups = validate_function_groups(
             result.get(CONF_FUNCTION_GROUPS, []), function_tools

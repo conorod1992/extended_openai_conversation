@@ -118,34 +118,16 @@ async def async_authorize_ha_action(
     return entity_ids
 
 
-async def _async_call_ha_action_unchecked(
-    hass: HomeAssistant,
-    domain: str,
-    service: str,
-    *,
-    data: Mapping[str, Any] | None = None,
-    target: Mapping[str, Any] | None = None,
-    blocking: bool = False,
-    context: Context | None = None,
-    include_response: bool = False,
-) -> dict[str, Any]:
-    """Call an action after the caller completed policy enforcement."""
-    if not hass.services.has_service(domain, service):
-        raise ServiceNotFound(domain, service)
-    previous_state = _capture_previous_state(hass, domain, service, data, target)
-    kwargs: dict[str, Any] = {"service_data": dict(data or {})}
-    if target:
-        kwargs["target"] = dict(target)
-    if blocking:
-        kwargs["blocking"] = True
-    if context is not None:
-        kwargs["context"] = context
-    support = hass.services.supports_response(domain, service)
-    request_response = support is SupportsResponse.ONLY or (
-        include_response and support is SupportsResponse.OPTIONAL
-    )
-    if request_response:
-        kwargs.update(return_response=True, blocking=True)
+async def async_dispatch_ha_service(
+    hass: HomeAssistant, domain: str, service: str, kwargs: dict[str, Any]
+) -> Any:
+    """Dispatch an already authorized call with a shared, prepared effect receipt.
+
+    Script and native callers retain their own authorization and response policy.
+    Return HA's actual response unchanged, including nonblocking call semantics.
+    """
+    context = kwargs.get("context")
+    request_response = bool(kwargs.get("return_response", False))
     from .execution_outcomes import (
         execution_completed,
         execution_rejected,
@@ -195,6 +177,38 @@ async def _async_call_ha_action_unchecked(
         # caller can surface to the model/user, not an uncaught conversation error.
         raise HomeAssistantError(str(err)) from err
     execution_completed(receipt)
+    return response
+
+
+async def _async_call_ha_action_unchecked(
+    hass: HomeAssistant,
+    domain: str,
+    service: str,
+    *,
+    data: Mapping[str, Any] | None = None,
+    target: Mapping[str, Any] | None = None,
+    blocking: bool = False,
+    context: Context | None = None,
+    include_response: bool = False,
+) -> dict[str, Any]:
+    """Call an action after the caller completed policy enforcement."""
+    if not hass.services.has_service(domain, service):
+        raise ServiceNotFound(domain, service)
+    previous_state = _capture_previous_state(hass, domain, service, data, target)
+    kwargs: dict[str, Any] = {"service_data": dict(data or {})}
+    if target:
+        kwargs["target"] = dict(target)
+    if blocking:
+        kwargs["blocking"] = True
+    if context is not None:
+        kwargs["context"] = context
+    support = hass.services.supports_response(domain, service)
+    request_response = support is SupportsResponse.ONLY or (
+        include_response and support is SupportsResponse.OPTIONAL
+    )
+    if request_response:
+        kwargs.update(return_response=True, blocking=True)
+    response = await async_dispatch_ha_service(hass, domain, service, kwargs)
     if include_response:
         result: dict[str, Any] = {}
         if previous_state:

@@ -38,6 +38,7 @@ from .agent_config import (
     model_capabilities,
     normalize_agent_config,
     normalize_persisted_agent_config,
+    parse_configured_function_tools,
     preserve_agent_model_setting_omissions,
     preserve_legacy_guest_policy,
     project_agent_config_transfer,
@@ -1981,6 +1982,25 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
     if action == "validate":
         return _validation_result(lambda: validate_function_tools(message.get("tools")))
     if action == "serialize":
+        if isinstance(name := message.get("name"), str):
+            _require_agent_config_revision(subentry, message.get("revision"))
+            configured = parse_configured_function_tools(subentry.data)
+            matches = (
+                [
+                    saved_tool
+                    for saved_tool in configured
+                    if isinstance(saved_tool, dict)
+                    and isinstance(saved_tool.get("spec"), dict)
+                    and saved_tool["spec"].get("name") == name
+                ]
+                if isinstance(configured, list)
+                else []
+            )
+            if len(matches) == 1:
+                return {"yaml": function_tool_yaml(matches[0])}
+            raise HomeAssistantError(
+                "Function Tool is missing or ambiguous; reload the latest saved tools"
+            )
         return {"yaml": function_tool_yaml(message.get("tool"))}
     if action == "starter":
         return {"yaml": starter_function_tool_yaml()}
@@ -2927,6 +2947,12 @@ async def async_management_command(
     authorization precedes agent lookup; section-specific authorization stays with
     its handler. No setup/feature installer replaces this function.
     """
+    from .function_yaml import decode_management_function_values
+
+    try:
+        message = decode_management_function_values(message)
+    except yaml.YAMLError as err:
+        raise HomeAssistantError("Invalid typed YAML in Management request") from err
     action = message.get("action")
     trace_configuration = (
         message.get("section") == "configuration"
@@ -3164,7 +3190,9 @@ async def websocket_management(
         if isinstance(performance, dict):
             performance["websocket_pre_send_ms"] = _elapsed_ms(started)
     send_started = perf_counter() if trace_request else None
-    connection.send_result(msg["id"], result)
+    from .function_yaml import management_function_response
+
+    connection.send_result(msg["id"], management_function_response(result))
     # Home Assistant serializes inside send_result. Its duration cannot be
     # inserted into a payload that has already been serialized.
     if send_started is not None and _PERFORMANCE_LOGGER.isEnabledFor(logging.DEBUG):

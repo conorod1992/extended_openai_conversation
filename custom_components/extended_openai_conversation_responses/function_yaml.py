@@ -1,11 +1,66 @@
 """Lossless JSON transport for Function collections containing YAML scalar types."""
 
 from copy import deepcopy
+import math
 from typing import Any
 
 import yaml
 
 from .const import CONF_FUNCTION_TOOLS
+
+# Reserved only on the Management wire. A literal mapping with this key is itself
+# YAML-encoded, so decoding never confuses user-authored data with a scalar tag.
+_MANAGEMENT_YAML = "__eoai_management_yaml_v1__"
+
+
+def _management_yaml_value(value: Any) -> Any:
+    """Represent typed Function values reversibly while keeping tools as objects."""
+    if value is None or type(value) in (str, int, bool):
+        return value
+    if type(value) is float and math.isfinite(value):
+        return value
+    if isinstance(value, list):
+        return [_management_yaml_value(item) for item in value]
+    if (
+        isinstance(value, dict)
+        and all(isinstance(key, str) for key in value)
+        and set(value) != {_MANAGEMENT_YAML}
+    ):
+        return {key: _management_yaml_value(item) for key, item in value.items()}
+    return {
+        _MANAGEMENT_YAML: yaml.safe_dump(value, sort_keys=False, allow_unicode=True)
+    }
+
+
+def management_function_response(value: Any) -> Any:
+    """Project Function definitions at the WebSocket boundary, never cache/storage.
+
+    Other Management sections retain HA's established JSON representation. Typed
+    values inside Functions remain tagged through frontend cloning and subsequent
+    edits, instead of becoming strings or breaking a successful save response.
+    """
+    if isinstance(value, dict):
+        if "spec" in value and "function" in value:
+            return _management_yaml_value(value)
+        return {key: management_function_response(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [management_function_response(item) for item in value]
+    return value
+
+
+def decode_management_function_values(value: Any) -> Any:
+    """Decode wire tags once; literal escaped mappings are not decoded again."""
+    if isinstance(value, dict):
+        if set(value) == {_MANAGEMENT_YAML} and isinstance(
+            value[_MANAGEMENT_YAML], str
+        ):
+            return yaml.safe_load(value[_MANAGEMENT_YAML])
+        return {
+            key: decode_management_function_values(item) for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [decode_management_function_values(item) for item in value]
+    return value
 
 
 def _contains_yaml_types(value: Any) -> bool:

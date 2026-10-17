@@ -96,6 +96,20 @@ Restore reload decisions compare the persisted current source against the prepar
 candidate using their respective decoders, so representation-only changes do not
 replace an otherwise compatible live agent.
 
+Explicit new Functions edits containing JSON `null` or blank YAML clear the
+collection, as do `[]` and YAML `null`. Only the persisted-source decoder applies
+the historical falsy-value fallback. Decoded fast snapshots must not repeat it.
+
+Management WebSocket responses keep Function definitions as structured objects.
+YAML-native values inside them use reversible `__eoai_management_yaml_v1__` tags;
+an administrator-authored mapping that resembles a tag is escaped as YAML itself.
+Incoming Management messages decode those tags once before validation. Caches,
+raw configuration and ordinary non-Function Management fields retain their existing
+representations. Existing Function editors request authoritative YAML by saved name
+and configuration revision; new/duplicated definitions can still serialize a draft.
+This protects types during both YAML editor saves and structured draft submission,
+including binary values that HA's ordinary JSON encoder cannot serialize.
+
 Cache seeding receives canonical response values derived from the saved source;
 it does not make normalized defaults part of the saved dictionary. Subentry/data
 replacement reconstructs the projection, and catalogue-generation changes expire

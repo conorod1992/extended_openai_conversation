@@ -375,7 +375,7 @@ async def test_cached_prewarmed_seeded_and_replaced_sources_agree(hass, override
     assert raw == original and subentry.data == original
 
 
-@pytest.mark.parametrize("empty", [[], "[]", "null"])
+@pytest.mark.parametrize("empty", [None, "", [], "[]", "null"])
 async def test_new_explicit_empty_edit_is_distinct_from_legacy_saved_empty(empty):
     raw = {"functions": [], "memory_enabled": True}
     candidate = config.merge_agent_config(raw, {"functions": empty})
