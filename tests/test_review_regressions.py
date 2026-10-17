@@ -95,7 +95,7 @@ async def test_private_archive_binding_after_actual_restore_cleanup(hass, mode):
 
 @pytest.mark.parametrize("prewarmed", [False, True])
 @pytest.mark.parametrize("validated", [False, True])
-def test_legacy_blank_runtime_and_management_agree(prewarmed, validated):
+async def test_legacy_blank_runtime_and_management_agree(hass, prewarmed, validated):
     raw = {**agent_config.agent_config_defaults(), "functions": ""}
     runtime = agent_config.configured_function_tools_from_data(raw)
     assert {t["spec"]["name"] for t in runtime} == {
