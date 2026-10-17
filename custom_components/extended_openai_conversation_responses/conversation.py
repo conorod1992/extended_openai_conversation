@@ -843,6 +843,12 @@ class ExtendedOpenAIAgentEntity(
                 register_conversation_id_cleanup(
                     session, self.hass, claimed_id, claim_owner
                 )
+            if resolution.discard_history:
+                # A restore preserves only the private Archive identity. Core may
+                # still hold its old log; discard that context before this turn.
+                chat_log.content[:] = [chat_log.content[0], chat_log.content[-1]]
+                chat_log.extra_system_prompt = None
+                chat_log.llm_api = None
             # HA consumes satellite context on its first pipeline invocation.
             # Keep only that raw background for this owned logical conversation;
             # current-turn input still overrides it, including an explicit empty value.

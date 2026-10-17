@@ -19,6 +19,9 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_FUNCTION_TOOL_ERROR_RECOVERY,
     CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
 )
+from custom_components.extended_openai_conversation_responses.continuity import (
+    ContinuityResolution,
+)
 from custom_components.extended_openai_conversation_responses.conversation import (
     ExtendedOpenAIAgentEntity,
 )
@@ -29,7 +32,6 @@ from custom_components.extended_openai_conversation_responses.scope import user_
 from homeassistant.components import conversation
 from homeassistant.core import Context
 from homeassistant.helpers import llm
-
 from tests.test_responses_api import (
     FakeStream,
     _completed_event,
@@ -161,13 +163,13 @@ def _provider_fixture(
     entity._attr_entity_id = "conversation.agent"
     continuity = SimpleNamespace(
         async_resolve=AsyncMock(
-            return_value=SimpleNamespace(
+            return_value=ContinuityResolution(
                 resumed=False,
                 extra_system_prompt=None,
                 conversation_id="conversation-1",
                 key="device:kitchen",
                 claim_token="claim-token",
-                history=(),
+                history=[],
             )
         ),
         async_release=AsyncMock(),
@@ -258,9 +260,7 @@ async def test_conversation_final_text_without_tools(hass, monkeypatch) -> None:
     assert client.responses.create.await_count == 1
     entity._execute_function_tool.assert_not_awaited()
     continuity.async_record_success.assert_awaited_once()
-    continuity.async_release.assert_awaited_once_with(
-        "device:kitchen", "claim-token"
-    )
+    continuity.async_release.assert_awaited_once_with("device:kitchen", "claim-token")
     assert logs[0].content[-1].content == "Exact final answer."
 
 
@@ -392,9 +392,7 @@ async def test_conversation_partial_tool_failure(hass, monkeypatch) -> None:
             "additionalProperties": False,
         },
     )
-    good_call = _function_call(
-        "valid_lookup", '{"query":"kitchen"}', "call-good"
-    )
+    good_call = _function_call("valid_lookup", '{"query":"kitchen"}', "call-good")
     bad_call = _function_call("invalid_list", '{"limit":[]}', "call-bad")
     entity, client, _continuity, _logs, invoke = _provider_fixture(
         hass,
@@ -481,9 +479,7 @@ async def test_conversation_provider_failure_before_output(hass, monkeypatch) ->
     assert "Provider request timed out" in result.response.speech["plain"]["speech"]
     entity._execute_function_tool.assert_not_awaited()
     continuity.async_record_success.assert_not_awaited()
-    continuity.async_release.assert_awaited_once_with(
-        "device:kitchen", "claim-token"
-    )
+    continuity.async_release.assert_awaited_once_with("device:kitchen", "claim-token")
     assert not any(
         isinstance(item, conversation.AssistantContent) for item in logs[0].content
     )
@@ -531,7 +527,9 @@ async def test_conversation_tool_budget_exhausted(hass, monkeypatch) -> None:
     assert "tools" not in second_request
     assert "tool_choice" not in second_request
     assert result.response.error_code is not None
-    assert "function 'lookup' does not exist" in result.response.speech["plain"]["speech"]
+    assert (
+        "function 'lookup' does not exist" in result.response.speech["plain"]["speech"]
+    )
     continuity.async_record_success.assert_not_awaited()
     continuity.async_release.assert_awaited_once()
 

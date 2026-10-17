@@ -20,6 +20,10 @@ on:
         description: Optional exact Full Validation cohort branch
         type: string
         required: false
+      ha_dev_sha:
+        description: Optional exact HA dev source required by the validation cohort
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -39,10 +43,12 @@ jobs:
           FULL_ARCHITECTURE: ${{ inputs.full_architecture }}
           HA_VERSION: ${{ inputs.ha_version }}
           VALIDATION_REF: ${{ inputs.validation_ref }}
+          HA_DEV_SHA: ${{ inputs.ha_dev_sha }}
         run: |
           args=()
           if [[ "$FULL_ARCHITECTURE" == "true" ]]; then args+=(--full-architecture); fi
           if [[ -n "$VALIDATION_REF" ]]; then args+=(--validation-ref "$VALIDATION_REF"); fi
+          if [[ -n "$HA_DEV_SHA" ]]; then args+=(--ha-dev-sha "$HA_DEV_SHA"); fi
           python -m ci.nightly_programme --candidate "$CANDIDATE_SHA" --ha-version "$HA_VERSION" --output nightly-programme.json "${args[@]}"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()

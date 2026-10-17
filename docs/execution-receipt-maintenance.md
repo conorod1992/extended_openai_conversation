@@ -79,6 +79,22 @@ may supply different defaults, so this does not declare every service alias or
 same-family payload equivalent. Different target sets and power operations remain
 permitted; callable delegates are excluded from this cross-check.
 
+Script service actions use the same prepared-dispatch receipt boundary as native
+actions, preserving HA's actual response, blocking mode, context and schema events.
+Their outer opaque receipt remains for Script behavior outside service dispatch.
+A changed string/list/order/duplicate target representation cannot repeat an
+unacknowledged service effect; genuinely different prepared effects still proceed
+after a completed Script. Aborted Scripts retain their existing conservative outer
+guard until acknowledgment, including for changed arguments. This does not equate
+arbitrary Script arguments or replace their runtime values.
+
+Generic power calls retain known delegate feature/device-class refusals, including
+area selections that Core forwards as explicit delegate entity IDs. If every
+delegate refuses, a corrected target is distinct. If another delegate may already
+have acted, recovery uses the existing unidentifiable-effect guard until successful
+acknowledgment. In that partial-refusal case, different target sets cannot establish
+a safe new effect. An arbitrary handler exception never proves nothing executed.
+
 Bash owns its receipt immediately before subprocess creation, after rendering and
 validation. Its identity uses the rendered command, resolved working directory,
 effective timeout, platform and the exact inherited environment supplied to the

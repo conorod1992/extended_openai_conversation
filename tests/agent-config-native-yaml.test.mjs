@@ -323,6 +323,23 @@ try {
     assert.deepEqual(harness.editor.values.at(-1), {name: "Delayed definition", type: "script"});
   }
 
+  for (const scalar of ["2026-10-17", "!!binary SGVsbG8="]) {
+    const yaml = `spec:\n  name: typed_tool\nfunction:\n  type: script\n  variables:\n    marker: ${scalar}\n  sequence: []\n`;
+    const harness = makeHarness({initialYaml: yaml, call: async () => ({valid: true, config: {
+      spec: {name: "typed_tool"}, function: {type: "script", variables: {
+        marker: {__eoai_management_yaml_v1__: `${scalar}\n`},
+      }, sequence: []},
+    }})});
+    bindNativeToolYaml(harness.panel);
+    await flush();
+    assert.equal(harness.textarea.hidden, false, "typed values retain the raw YAML editor");
+    assert.equal(harness.editor.hidden, true);
+    assert.equal(harness.editor.values.length, 0, "transport tags must never hydrate a JSON-backed native editor");
+    assert.equal(harness.panel._toolYamlEditorAdapter.getYaml(), yaml);
+    harness.textarea.value = `${yaml}# harmless edit\n`;
+    harness.textarea.dispatchEvent({type: "input"});
+    assert.equal(harness.panel._toolYamlEditorAdapter.getYaml(), `${yaml}# harmless edit\n`);
+  }
   console.log("Native Function Tool YAML adapter unit tests passed");
 } finally {
   if (originalDocument === undefined) delete globalThis.document;

@@ -800,3 +800,100 @@ async def test_completed_toggle_recovery_uses_resolved_effect_targets(
     guard.clear_unacknowledged_calls(entity, log.conversation_id)
     await exchange(original)
     assert switch.toggles == 2 and switch.is_on
+
+
+@pytest.mark.parametrize("unsupported_available", [True, False])
+async def test_explicit_feature_refusal_does_not_alias_corrected_effect(
+    hass, unsupported_available
+):
+    """A full refusal differs from a correction; a skipped entity still aliases it."""
+    import logging
+
+    from homeassistant.components.fan import FanEntity, FanEntityFeature
+    from homeassistant.exceptions import ServiceNotSupported
+    from homeassistant.helpers.entity_component import EntityComponent
+
+    effects = []
+
+    class ProbeFan(FanEntity):
+        _attr_should_poll = False
+        _attr_is_on = False
+
+        def __init__(self, name, features, available=True):
+            self._attr_name = self._attr_unique_id = name
+            self._attr_supported_features = features
+            self._attr_available = available
+
+        async def async_set_percentage(self, percentage):
+            effects.append((self.entity_id, percentage))
+            if not unsupported_available:
+                raise HomeAssistantError("failure after effect")
+
+    component = EntityComponent(logging.getLogger(__name__), "fan", hass)
+    capable = ProbeFan("Speed capable", FanEntityFeature.SET_SPEED)
+    unsupported = ProbeFan("No speed", FanEntityFeature.TURN_ON, unsupported_available)
+    await component.async_add_entities([capable, unsupported])
+    component.async_register_entity_service(
+        "set_percentage",
+        {vol.Required("percentage"): vol.Coerce(int)},
+        "async_set_percentage",
+        [FanEntityFeature.SET_SPEED],
+    )
+    if not unsupported_available:
+        # Native tools reject unavailable explicit targets at their earlier policy
+        # boundary. Check Core's skip semantics at the prepared-dispatch boundary
+        # itself: its actual partial effect must share the corrected identity.
+        from custom_components.extended_openai_conversation_responses.ha_service_compat import (
+            prepare_service_dispatch,
+        )
+
+        initial = {
+            "entity_id": [capable.entity_id, unsupported.entity_id],
+            "percentage": 25,
+        }
+        registry, before = await prepare_service_dispatch(
+            hass, "fan", "set_percentage", {"service_data": initial}
+        )
+        _, after = await prepare_service_dispatch(
+            hass,
+            "fan",
+            "set_percentage",
+            {"service_data": {"entity_id": capable.entity_id, "percentage": 25}},
+        )
+        assert before == after
+        with pytest.raises(HomeAssistantError, match="failure after effect"):
+            await registry.async_call("fan", "set_percentage", initial, blocking=True)
+        assert effects == [(capable.entity_id, 25)]
+        return
+    entity, log, exchange = exchange_owner(
+        hass,
+        {"type": "native", "name": "execute_service_single"},
+        exposed=[{"entity_id": item.entity_id} for item in (capable, unsupported)],
+    )
+    invalid = {
+        "domain": "fan",
+        "service": "set_percentage",
+        "service_data": {
+            "entity_id": [capable.entity_id, unsupported.entity_id],
+            "percentage": 25,
+        },
+    }
+    if unsupported_available:
+        with pytest.raises(ServiceNotSupported):
+            await hass.services.async_call(
+                "fan", "set_percentage", invalid["service_data"], blocking=True
+            )
+        assert effects == []
+    await exchange(invalid)
+    guard.remember_unacknowledged_calls(entity, log, set())
+    corrected = {
+        **invalid,
+        "service_data": {"entity_id": capable.entity_id, "percentage": 25},
+    }
+    if unsupported_available:
+        assert effects == []
+        await exchange(corrected)
+    else:
+        with pytest.raises(HomeAssistantError, match="not acknowledged"):
+            await exchange(corrected)
+    assert effects == [(capable.entity_id, 25)]

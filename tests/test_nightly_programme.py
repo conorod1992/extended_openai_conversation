@@ -34,6 +34,25 @@ def test_programme_rejects_missing_stale_and_wrong_environment_evidence():
     assert programme_errors(SHA, "2026.10.0", ["nightly"], evidence)
 
 
+@pytest.mark.parametrize("sources", [["a" * 40, "a" * 40], ["a" * 40, "c" * 40], ["c" * 40, "c" * 40], []])
+def test_programme_requires_the_dispatcher_pin_and_keeps_drift_guard(sources):
+    rows = [envelope() | {"ha_point": "dev", "environment": {"homeassistant_source_commit": source}} for source in sources]
+    for row in rows:
+        row["environment_fingerprint"] = environment_fingerprint(row["environment"])
+    evidence = {"nightly": {"run": {"head_sha": SHA, "status": "completed", "conclusion": "success"}, "envelopes": rows}}
+    errors = programme_errors(SHA, "2026.9.4", ["nightly"], evidence, expected_ha_dev_sha="a" * 40)
+    assert bool(errors) is (sources != ["a" * 40, "a" * 40])
+    if len(set(sources)) > 1:
+        assert "Nightly workflows exercised different HA dev snapshots" in errors
+    if sources == ["c" * 40, "c" * 40]:
+        assert programme_errors(SHA, "2026.9.4", ["nightly"], evidence) == []
+        assert "Nightly HA dev evidence differs from the pinned validation source" in errors
+
+
+def test_programme_rejects_nonimmutable_expected_dev_source():
+    assert programme_errors(SHA, "2026.9.4", [], {}, expected_ha_dev_sha="dev")
+
+
 @pytest.mark.parametrize("field,value", [("homeassistant", "2026.9.3"), ("pytest-homeassistant-custom-component", "unexpected")])
 def test_version_guard_checks_execution_ledger_as_well_as_job_summary(field, value):
     summary = envelope()

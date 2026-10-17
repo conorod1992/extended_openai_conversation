@@ -64,6 +64,7 @@ class ContinuityResolution:
     resumed: bool
     claim_token: str | None = None
     extra_system_prompt: str | None = None
+    discard_history: bool = False
 
 
 @dataclass(slots=True)
@@ -78,6 +79,7 @@ class ActiveConversation:
     in_flight: bool = False
     claim_token: str | None = None
     extra_system_prompt: str | None = None
+    discard_history: bool = False
 
 
 @dataclass(slots=True)
@@ -105,13 +107,26 @@ class ConversationContinuity:
         self.resume_count = 0
         self.new_session_count = 0
 
-    def reset_all(self) -> None:
+    def reset_all(self, *, private_bindings: dict[str, str] | None = None) -> None:
         """Discard transient context under the caller's exclusive restore lease.
 
         Retain diagnostics and HA-default lock ownership, as restoration did
         before this operation became part of the continuity API.
         """
-        self._sessions.clear()
+        self._sessions = {
+            key: replace(
+                active,
+                history=[],
+                extra_system_prompt=None,
+                in_flight=False,
+                claim_token=None,
+                discard_history=True,
+            )
+            for key, active in self._sessions.items()
+            if private_bindings is not None
+            and private_bindings.get(key) == active.conversation_id
+            and key not in self._pending_ends
+        }
         self._memory_bundles.clear()
         self._pending_ends.clear()
         self._ignored_conversation_ids.clear()
@@ -269,6 +284,7 @@ class ConversationContinuity:
                     True,
                     claim_token=claim_token,
                     extra_system_prompt=active.extra_system_prompt,
+                    discard_history=active.discard_history,
                 )
             # A non-ULID caller-selected ID is explicitly supported by HA's
             # chat-session helper and remains stable if Core recreates its log.
@@ -399,6 +415,7 @@ class ConversationContinuity:
             if key in self._pending_ends:
                 self._remove_session_locked(key)
                 return
+            active.discard_history = False
             active.history = content.copy()
             active.extra_system_prompt = extra_system_prompt
             active.last_active = dt_util.utcnow()

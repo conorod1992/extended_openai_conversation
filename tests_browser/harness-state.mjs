@@ -339,7 +339,13 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
 
     if (key === "tools/starter") return {yaml: "spec:\n  name: browser_tool\n  description: Browser Function Tool\n  parameters:\n    type: object\n    properties: {}\nfunction:\n  type: script\n  sequence: []\n"};
     if (key === "tools/built_in_catalog") return {functions: []};
-    if (key === "tools/serialize") return {yaml: state.toolYamls[message.tool?.spec?.name] || ""};
+    if (key === "tools/serialize") {
+      if (message.name !== undefined) {
+        if (message.revision !== state.configuration.revision) throw new Error("Configuration changed in another tab. Reload the latest saved settings before saving.");
+        if (!state.configuration.config.functions.some(tool => tool.spec?.name === message.name)) throw new Error("Function Tool is missing or ambiguous; reload the latest saved tools");
+      }
+      return {yaml: state.toolYamls[message.name ?? message.tool?.spec?.name] || ""};
+    }
     if (key === "tools/validate_yaml") return parseTool(message.yaml);
     if (key === "tools/save") {
       requireFields([["yaml" in message ? "yaml" : "tool", "yaml" in message ? "string" : "object"], ["revision", "string"]]);

@@ -2,7 +2,17 @@ name: ci
 
 on:
   workflow_dispatch:
+    inputs:
+      ha_dev_sha:
+        description: Optional immutable Home Assistant dev commit supplied by Full Validation
+        type: string
+        required: false
   workflow_call:
+    inputs:
+      ha_dev_sha:
+        description: Optional immutable Home Assistant dev commit supplied by Full Validation
+        type: string
+        required: false
   schedule:
     - cron: "0 0 * * *"
 
@@ -93,8 +103,12 @@ jobs:
       beautifulsoup4-version: ${{ steps.get-versions.outputs.beautifulsoup4-version }}
       lxml-version: ${{ steps.get-versions.outputs.lxml-version }}
     steps:
+      - name: Checkout snapshot resolver
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Get versions from Home Assistant core
         id: get-versions
+        env:
+          REQUESTED_HA_DEV_SHA: ${{ inputs.ha_dev_sha }}
         run: |
           # Function to extract package version from manifest
           get_package_version() {
@@ -105,7 +119,7 @@ jobs:
 
           # Resolve one exact HA Core dev snapshot and use it consistently for
           # Python, dependency metadata, and the cached HA-dev wheel.
-          HA_CORE_SHA="$(git ls-remote "https://github.com/${{ env.HA_CORE_REPO }}.git" "refs/heads/${{ env.HA_CORE_BRANCH }}" | awk '{print $1}')"
+          HA_CORE_SHA="$(python3 ci/ha_dev_snapshot.py --sha "$REQUESTED_HA_DEV_SHA")"
           test -n "$HA_CORE_SHA"
           echo "ha-core-sha=$HA_CORE_SHA" >> $GITHUB_OUTPUT
           echo "Home Assistant Core dev commit: $HA_CORE_SHA"

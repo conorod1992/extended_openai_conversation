@@ -34,3 +34,7 @@ TEST_WORKFLOWS = (
     ("version-check.yml", {}),
 )
 CERTIFICATION_WORKFLOW = "nightly-programme.yml"
+
+# Every dispatched workflow that reads the moving HA Core dev branch must accept
+# the same immutable source selected by Full Validation before dispatch begins.
+HA_DEV_WORKFLOWS = frozenset({"ci.yml", "real-ha.yml", "enhanced-stress.yml", "ha-browser-compatibility.yml"})

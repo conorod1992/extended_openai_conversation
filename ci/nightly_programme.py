@@ -27,11 +27,13 @@ from ci.specialist_evidence import collect_specialist, specialist_errors
 WORKFLOWS = REQUIRED_WORKFLOWS
 
 
-def programme_errors(candidate_sha, stable_version, required, evidence, *, full_architecture=False):
+def programme_errors(candidate_sha, stable_version, required, evidence, *, full_architecture=False, expected_ha_dev_sha=None):
     """Reject missing workflows, stale candidates and independently drifting HA."""
     errors = []
     if not valid_sha(candidate_sha) or not stable_version:
         return ["Programme requires an immutable candidate and resolved HA version"]
+    if expected_ha_dev_sha is not None and not valid_sha(expected_ha_dev_sha):
+        return ["Programme requires an immutable expected HA dev source"]
     if set(evidence) != set(required):
         errors.append("Required nightly workflow inventory differs from evidence")
     dev_sources = set()
@@ -81,6 +83,8 @@ def programme_errors(candidate_sha, stable_version, required, evidence, *, full_
             errors.append(f"{workflow}: missing required source/environment-bound artifacts")
     if len(dev_sources) > 1:
         errors.append("Nightly workflows exercised different HA dev snapshots")
+    if expected_ha_dev_sha is not None and dev_sources != {expected_ha_dev_sha}:
+        errors.append("Nightly HA dev evidence differs from the pinned validation source")
     return errors
 
 
@@ -173,15 +177,16 @@ def main():
     parser.add_argument("--ha-version", required=True)
     parser.add_argument("--full-architecture", action="store_true")
     parser.add_argument("--validation-ref")
+    parser.add_argument("--ha-dev-sha")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     actions = GitHubActions(os.environ["GITHUB_REPOSITORY"], os.environ["GH_TOKEN"])
     try:
         evidence = collect(actions, args.candidate, validation_ref=args.validation_ref)
-        errors = programme_errors(args.candidate, args.ha_version, WORKFLOWS, evidence, full_architecture=args.full_architecture)
+        errors = programme_errors(args.candidate, args.ha_version, WORKFLOWS, evidence, full_architecture=args.full_architecture, expected_ha_dev_sha=args.ha_dev_sha)
     except (RuntimeError, OSError, ValueError, KeyError) as error:
         evidence, errors = {}, [str(error)]
-    args.output.write_text(json.dumps({"candidate_sha": args.candidate, "ha_version": args.ha_version, "passed": not errors, "errors": errors, "workflows": evidence}, indent=2) + "\n", encoding="utf-8")
+    args.output.write_text(json.dumps({"candidate_sha": args.candidate, "ha_version": args.ha_version, "ha_dev_sha": args.ha_dev_sha, "passed": not errors, "errors": errors, "workflows": evidence}, indent=2) + "\n", encoding="utf-8")
     return int(bool(errors))
 
 
