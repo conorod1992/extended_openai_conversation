@@ -87,6 +87,66 @@ async def test_delayed_tool_fingerprint_preserves_yaml_date_type(saved_date_tool
     assert fingerprint != tool_definition_fingerprint(quoted)
 
 
+def test_delayed_fingerprint_is_stable_across_restart_hash_seeds():
+    """A mixed-type YAML set must not make an unchanged delayed job look edited."""
+    import os
+    import subprocess
+    import sys
+
+    # The real persisted-YAML representation contains a native !!set. Python's
+    # randomized hash seeds previously changed its fingerprint on HA restart.
+    probe = r'''
+import yaml
+from custom_components.extended_openai_conversation_responses.delayed_tools import tool_definition_fingerprint
+source = """
+spec:
+  name: mixed_yaml_set
+  parameters: {type: object, properties: {}}
+function:
+  type: script
+  variables:
+    mixed: !!set
+      alpha: null
+      bravo: null
+      123: null
+      456: null
+  sequence:
+    - stop: Done
+"""
+print(tool_definition_fingerprint(yaml.safe_load(source)))
+'''
+    fingerprints = []
+    for seed in (1, 2, 3, 4, 10):
+        result = subprocess.run(
+            [sys.executable, "-c", probe],
+            env={**os.environ, "PYTHONHASHSEED": str(seed)},
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        fingerprints.append(result.stdout.strip())
+    assert len(set(fingerprints)) == 1, fingerprints
+
+
+def test_typed_fingerprint_without_sets_keeps_existing_identity():
+    """Previously queued date-only definitions must retain their fingerprints."""
+    import hashlib
+
+    tool = {
+        "spec": {"name": "dated_reminder"},
+        "function": {"type": "script", "variables": {"date": date(2026, 10, 17)}},
+    }
+    historical = "yaml:" + yaml.safe_dump(
+        {"spec": tool["spec"], "function": tool["function"]},
+        sort_keys=True,
+        allow_unicode=True,
+    )
+    assert tool_definition_fingerprint(tool) == hashlib.sha256(
+        historical.encode()
+    ).hexdigest()
+
+
 @pytest.mark.parametrize("mode", ["setup", "full", "custom_configuration"])
 async def test_exports_accept_yaml_date(hass, saved_date_tool, tmp_path, mode):
     entry, subentry = saved_date_tool

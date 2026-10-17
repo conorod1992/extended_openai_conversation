@@ -94,6 +94,27 @@ def _validate_call_capacity(
         raise _DelayedQueueLimitError("Delayed Function Tool queue capacity reached")
 
 
+class _StableFingerprintDumper(yaml.SafeDumper):
+    """Preserve YAML types while serializing unordered sets deterministically."""
+
+
+def _represent_fingerprint_set(
+    dumper: yaml.SafeDumper, value: set[Any]
+) -> yaml.nodes.MappingNode:
+    # PyYAML falls back to iteration order when mapping keys have mixed types.
+    # A set then hashes differently across process restarts/PYTHONHASHSEEDs.
+    ordered = sorted(
+        value,
+        key=lambda item: yaml.safe_dump(item, sort_keys=True, allow_unicode=True),
+    )
+    return dumper.represent_mapping(
+        "tag:yaml.org,2002:set", ((item, None) for item in ordered)
+    )
+
+
+_StableFingerprintDumper.add_representer(set, _represent_fingerprint_set)
+
+
 def tool_definition_fingerprint(tool: dict[str, Any]) -> str:
     """Hash the persisted schema and implementation, excluding presentation/state."""
     source = deepcopy(tool)
@@ -105,7 +126,9 @@ def tool_definition_fingerprint(tool: dict[str, Any]) -> str:
     except TypeError:
         # Preserve existing JSON fingerprints for pending calls. Typed YAML must
         # retain its tags so a date and its quoted string never share an identity.
-        encoded = "yaml:" + yaml.safe_dump(payload, sort_keys=True, allow_unicode=True)
+        encoded = "yaml:" + yaml.dump(
+            payload, Dumper=_StableFingerprintDumper, sort_keys=True, allow_unicode=True
+        )
     return hashlib.sha256(encoded.encode()).hexdigest()
 
 
