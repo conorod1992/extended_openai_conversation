@@ -117,7 +117,7 @@ def test_ci_dependency_install_respects_selected_ha_constraints(
         install_ha_dependencies,
         "requires",
         lambda _name: [
-            "pydantic==2.13.4",
+            "pydantic==2.13.5",
             "aiohttp[speedups]>=3.9",
             "voluptuous-openapi==0.2.0",
             "unavailable==1; extra == 'unused'",
@@ -134,6 +134,8 @@ def test_ci_dependency_install_respects_selected_ha_constraints(
     install_ha_dependencies.main()
     assert len(commands) == 1
     command = commands[0]
-    assert captured_constraints == [f"pydantic==2.13.4\naiohttp>=3.9\nopenai=={sdk}\n"]
+    assert captured_constraints == [
+        f"pydantic==2.13.5\naiohttp>=3.9\nvoluptuous-openapi==0.2.0\nopenai=={sdk}\nvoluptuous-openapi==0.2.0\npydantic==2.13.5\n"
+    ]
     assert "voluptuous-openapi==0.4.1" in command
     assert "openai>=2.21.0,<=3.26.0" in command

@@ -134,6 +134,14 @@ jobs:
         with:
           python-version: ${{ matrix.ha-version == 'dev' && needs.prepare.outputs.python-version || '3.14' }}
           allow-prereleases: true
+      - name: Verify native installation at the declared minimum
+        if: matrix.ha-version == 'oldest'
+        run: |
+          MINIMUM="$(python -c 'import json; print(json.load(open("hacs.json"))["homeassistant"])')"
+          python -m venv "$RUNNER_TEMP/eoai-native-install"
+          "$RUNNER_TEMP/eoai-native-install/bin/python" -m pip install "homeassistant==$MINIMUM"
+          "$RUNNER_TEMP/eoai-native-install/bin/python" ci/check_native_installation.py custom_components/extended_openai_conversation_responses/manifest.json
+          "$RUNNER_TEMP/eoai-native-install/bin/python" -m pip check
       - name: Install selected Home Assistant and test dependencies
         env:
           HA_POINT: ${{ matrix.ha-version }}
@@ -143,8 +151,8 @@ jobs:
           python -m pip install -r requirements_test.txt
           if [[ "$HA_POINT" == oldest ]]; then
             MINIMUM="$(python -c 'import json; print(json.load(open("hacs.json"))["homeassistant"])')"
-            python -m pip install 'pytest-homeassistant-custom-component==0.13.317'
-            python -m pip install --pre "homeassistant==$MINIMUM"
+            PLUGIN_VERSION="$(python ci/resolve_ha_test_plugin.py "$MINIMUM")"
+            python ci/install_ha_test_plugin.py "$MINIMUM" "$PLUGIN_VERSION"
           elif [[ "$HA_POINT" == stable ]]; then
             VERSION="${{ needs.prepare.outputs.stable-ha-version }}"
             if [ -z "$VERSION" ]; then
@@ -177,7 +185,9 @@ jobs:
           if [ "$ENHANCED_EXECUTION_EVIDENCE" = 1 ]; then
             read -ra TEST_PATHS <<< "$(python ci/compatibility_evidence.py select)"
           else
-            TEST_PATHS=(tests_real_ha/test_public_version_journeys.py tests_real_ha/test_service_receipt_compatibility.py)
+            # PRs exercise the full minimum feature contract too.
+            TEST_PATHS=()
+            read -ra TEST_PATHS <<< "$(STRESS_CAMPAIGN=minimum-ha-features python ci/compatibility_evidence.py select)"
           fi
           # Newer HA Core aliases httpx during initialization. Import Core
           # before pytest autoloads plugins that may import httpx first.

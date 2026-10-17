@@ -78,9 +78,7 @@ jobs:
           "${RUNNER_TEMP}/ha-oldest/bin/python" -m pip install --pre "homeassistant==${MINIMUM_HA}"
           "${RUNNER_TEMP}/ha-oldest/bin/python" ci/install_ha_dependencies.py \
             --manifest custom_components/extended_openai_conversation_responses/manifest.json
-          # Match the oldest-HA public journey's existing dependency policy:
-          # EOAI explicitly uses voluptuous-openapi 0.4.1 over Core's older pin.
-          # Verify compatibility by booting and exercising the populated runtime.
+          # Keep Core constraints intact, then verify the populated runtime.
 
           INSTALLED_OLDEST="$("${RUNNER_TEMP}/ha-oldest/bin/python" - <<'PY'
           from importlib.metadata import version

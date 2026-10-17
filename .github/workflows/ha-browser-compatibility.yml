@@ -88,8 +88,8 @@ jobs:
           python -m pip install -r requirements_test.txt
           if [[ "$HA_POINT" == oldest ]]; then
             MINIMUM="$(python -c 'import json; print(json.load(open("hacs.json"))["homeassistant"])')"
-            python -m pip install 'pytest-homeassistant-custom-component==0.13.317'
-            python -m pip install --pre "homeassistant==$MINIMUM"
+            PLUGIN_VERSION="$(python ci/resolve_ha_test_plugin.py "$MINIMUM")"
+            python ci/install_ha_test_plugin.py "$MINIMUM" "$PLUGIN_VERSION"
           elif [[ "$HA_POINT" == stable ]]; then
             VERSION="${{ needs.prepare.outputs.stable-ha-version }}"
             if [ -z "$VERSION" ]; then
