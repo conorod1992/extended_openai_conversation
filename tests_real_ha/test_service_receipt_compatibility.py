@@ -186,6 +186,7 @@ async def test_entity_service_replay_ignores_target_order_and_duplicates(
 
 async def test_callable_entity_service_preserves_handler_visible_selector_order(hass):
     import logging
+
     from homeassistant.components.switch import SwitchEntity
     from homeassistant.helpers.entity_component import EntityComponent
 
@@ -413,6 +414,7 @@ async def test_nested_provider_conversation_overrides_local_function_ownership(
 
 async def test_unknown_execution_ownership_still_retires_fail_closed(hass, monkeypatch):
     from types import SimpleNamespace
+
     from homeassistant.helpers import llm
 
     monkeypatch.setattr(outcomes, "_MAX_RETAINED_EFFECT_RECEIPTS", 2)
@@ -441,11 +443,11 @@ async def test_unknown_execution_ownership_still_retires_fail_closed(hass, monke
         execution_attempt(
             owner, llm.ToolInput(id="fresh", tool_name="unknown", tool_args={}), tool
         ),
+        pytest.raises(HomeAssistantError, match="acknowledged"),
     ):
-        with pytest.raises(HomeAssistantError, match="acknowledged"):
-            await _async_call_ha_action_unchecked(
-                hass, "probe", "apply", data={"amount": 9}, blocking=True
-            )
+        await _async_call_ha_action_unchecked(
+            hass, "probe", "apply", data={"amount": 9}, blocking=True
+        )
     assert effects == [0, 1, 2]
 
 
@@ -723,3 +725,78 @@ async def test_schema_registration_change_refuses_both_handlers(hass):
     # The replacement remains usable through HA's ordinary public dispatch.
     await hass.services.async_call("probe", "apply", blocking=True)
     assert effects == ["replacement"]
+
+
+@pytest.mark.parametrize(
+    "representation", ["entity", "area", "generic", "generic_first"]
+)
+async def test_completed_toggle_recovery_uses_resolved_effect_targets(
+    hass, representation
+):
+    import logging
+
+    from homeassistant.components.switch import SwitchEntity
+    from homeassistant.helpers import area_registry as ar, entity_registry as er
+    from homeassistant.helpers.entity_component import EntityComponent
+
+    class ProbeSwitch(SwitchEntity):
+        _attr_should_poll = False
+        _attr_is_on = False
+        _attr_name = "Equivalent replay"
+        _attr_unique_id = "equivalent-replay-switch"
+        toggles = 0
+        offs = 0
+
+        async def async_toggle(self, **kwargs):
+            self.toggles += 1
+            self._attr_is_on = not self._attr_is_on
+            self.async_write_ha_state()
+
+        async def async_turn_off(self, **kwargs):
+            self.offs += 1
+            self._attr_is_on = False
+            self.async_write_ha_state()
+
+    component = EntityComponent(logging.getLogger(__name__), "switch", hass)
+    switch = ProbeSwitch()
+    await component.async_add_entities([switch])
+    component.async_register_entity_service("toggle", {}, "async_toggle")
+    component.async_register_entity_service("turn_off", {}, "async_turn_off")
+    registry = er.async_get(hass)
+    if registry.async_get(switch.entity_id) is None:
+        registered = registry.async_get_or_create(
+            "switch",
+            "switch",
+            switch.unique_id,
+            suggested_object_id=switch.entity_id.split(".", 1)[1],
+        )
+        assert registered.entity_id == switch.entity_id
+    area = ar.async_get(hass).async_create("Only this switch")
+    registry.async_update_entity(switch.entity_id, area_id=area.id)
+    entity, log, exchange = exchange_owner(
+        hass,
+        {"type": "native", "name": "execute_service_single"},
+        exposed=[{"entity_id": switch.entity_id}],
+    )
+    original = {
+        "domain": "homeassistant" if representation == "generic_first" else "switch",
+        "service": "toggle",
+        "service_data": {"entity_id": switch.entity_id},
+    }
+    await exchange(original)
+    guard.remember_unacknowledged_calls(entity, log, set())
+    retry = {
+        **original,
+        "domain": "homeassistant" if representation == "generic" else "switch",
+        "service_data": {"area_id": area.id}
+        if representation == "area"
+        else original["service_data"],
+    }
+    with pytest.raises(HomeAssistantError, match="not acknowledged"):
+        await exchange(retry)
+    assert switch.toggles == 1 and switch.is_on
+    await exchange({**original, "service": "turn_off"})
+    assert switch.offs == 1 and not switch.is_on
+    guard.clear_unacknowledged_calls(entity, log.conversation_id)
+    await exchange(original)
+    assert switch.toggles == 2 and switch.is_on

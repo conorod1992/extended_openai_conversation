@@ -3016,6 +3016,7 @@ class ExtendedOpenAIAgentEntity(
                     start_date=arguments.get("start_date"),
                     end_date=arguments.get("end_date"),
                     limit=int(arguments.get("limit", 5)),
+                    offset=int(arguments.get("offset", 0)),
                 )
             if operation == "get":
                 requested = arguments.get("session_id")

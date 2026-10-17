@@ -25,6 +25,7 @@ from homeassistant.components import ai_task, conversation
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import Context, HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from tests_real_ha.test_ai_task_runtime import (
     CallerAPI,
@@ -198,13 +199,14 @@ async def test_mixed_ai_tasks_remain_request_isolated_after_concurrency_and_relo
     fast_model = "gpt-5.6"
     await task(sequential + concurrent + 2)
 
-    with pytest.raises(APIError, match="deterministic provider failure"):
+    with pytest.raises(HomeAssistantError, match="deterministic provider failure") as failure:
         await ai_task.async_generate_data(
             hass,
             task_name="Failed task",
             entity_id=task_entities["Detailed task"],
             instructions=failure_marker,
         )
+    assert isinstance(failure.value.__cause__, APIError)
     # Restore the dependency and retry the same public feature before a sibling.
     await task(9999)
     await task(sequential + concurrent + 4)

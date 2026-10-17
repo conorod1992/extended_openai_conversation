@@ -625,11 +625,21 @@ def function_tool_enabled(tool: dict[str, Any]) -> bool:
     return tool.get("enabled", True) is True
 
 
+def parse_configured_function_tools(data: Mapping[str, Any]) -> Any:
+    """Decode supported persisted representations, retaining legacy default semantics."""
+    configured = data.get(CONF_FUNCTION_TOOLS)
+    if not configured:
+        return deepcopy(DEFAULT_CONF_FUNCTION_TOOLS)
+    return (
+        yaml.safe_load(configured)
+        if isinstance(configured, str)
+        else deepcopy(configured)
+    )
+
+
 def _configured_function_tools_from_data(data: Any) -> list[dict[str, Any]]:
     """Parse fully validated production Function Tools from agent data."""
-    configured = data.get(CONF_FUNCTION_TOOLS)
-    parsed = yaml.safe_load(configured) if configured else DEFAULT_CONF_FUNCTION_TOOLS
-    tools = validate_function_tools(parsed)
+    tools = validate_function_tools(parse_configured_function_tools(data))
     for tool in tools:
         if is_ha_tool(tool):
             continue

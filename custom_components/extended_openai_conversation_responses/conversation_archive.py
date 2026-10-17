@@ -874,11 +874,41 @@ class ConversationArchive:
                 ],
             }
 
+    async def async_recovery_data(self) -> dict[str, Any]:
+        """Capture same-agent recovery state; portable exports omit active bindings."""
+        async with self._lock:
+            self._ensure_initialized()
+            return {
+                "sessions": [
+                    _session_payload(item) for item in self._sessions.values()
+                ],
+                "turns": [
+                    asdict(turn) for turns in self._turns.values() for turn in turns
+                ],
+                "active": dict(self._active),
+            }
+
+    @staticmethod
+    def validate_recovery_bindings(
+        active: Any, sessions: list[ArchiveSession]
+    ) -> dict[str, str]:
+        """Accept only local bindings to validated sessions in the same snapshot."""
+        session_ids = {item.session_id for item in sessions}
+        if not isinstance(active, dict) or any(
+            not isinstance(key, str)
+            or not key
+            or not isinstance(value, str)
+            or value not in session_ids
+            for key, value in active.items()
+        ):
+            raise ValueError("archive recovery bindings are invalid")
+        return dict(active)
+
     @staticmethod
     def validate_backup_data(
-        data: Any, target_agent_id: str
+        data: Any, target_agent_id: str, *, local_recovery: bool = False
     ) -> tuple[list[ArchiveSession], list[ArchiveTurn]]:
-        """Validate archive source data and bind it to the selected agent."""
+        """Validate portable data or content-free local recovery session metadata."""
         if not isinstance(data, dict) or set(data) != {"sessions", "turns"}:
             raise ValueError("archive data is incomplete or corrupted")
         if not isinstance(data["sessions"], list) or not isinstance(
@@ -891,13 +921,13 @@ class ConversationArchive:
             if not isinstance(raw, dict):
                 raise ValueError("archive session must be an object")
             raw = {**raw, "agent_subentry_id": target_agent_id}
-            session = _validated_session(raw)
+            session = _validated_session(raw, allow_unretained=local_recovery)
             if session.session_id in session_ids:
                 raise ValueError("archive session metadata is invalid")
             session_ids.add(session.session_id)
             sessions.append(
                 replace(session, title="")
-                if session.retention_state == "private"
+                if session.retention_state in {"private", "unretained"}
                 else session
             )
 
@@ -909,6 +939,11 @@ class ConversationArchive:
             for session in sessions
             if session.retention_state == "private"
         }
+        unretained_session_ids = {
+            session.session_id
+            for session in sessions
+            if session.retention_state == "unretained"
+        }
         for raw in data["turns"]:
             if not isinstance(raw, dict):
                 raise ValueError("archive turn must be an object")
@@ -916,6 +951,8 @@ class ConversationArchive:
             turn = replace(turn, timestamp=_parse_time(turn.timestamp).isoformat())
             if turn.session_id in private_session_ids:
                 raise ValueError("private archive sessions cannot contain turns")
+            if turn.session_id in unretained_session_ids:
+                raise ValueError("unretained archive sessions cannot contain turns")
             if turn.turn_id in turn_ids or turn.session_id not in session_ids:
                 raise ValueError("archive turn metadata is invalid")
             turn_ids.add(turn.turn_id)
@@ -929,7 +966,11 @@ class ConversationArchive:
         return sessions, turns
 
     async def async_replace_backup(
-        self, sessions: list[ArchiveSession], turns: list[ArchiveTurn]
+        self,
+        sessions: list[ArchiveSession],
+        turns: list[ArchiveTurn],
+        *,
+        active: dict[str, str] | None = None,
     ) -> None:
         """Replace durable archive data through the same restart-safe journal."""
         sessions, turns = self.validate_backup_data(
@@ -938,6 +979,12 @@ class ConversationArchive:
                 "turns": [asdict(turn) for turn in turns],
             },
             self._agent_subentry_id,
+            local_recovery=active is not None,
+        )
+        bindings = (
+            self.validate_recovery_bindings(active, sessions)
+            if active is not None
+            else {}
         )
         async with self._lock:
             self._ensure_initialized()
@@ -954,7 +1001,7 @@ class ConversationArchive:
             await self._async_commit_state_locked(
                 sessions=session_map,
                 turns=dict(turn_map),
-                active={},
+                active=bindings,
                 changed_partitions=set(self._partitions) | new_partitions,
             )
 
@@ -1211,9 +1258,14 @@ def archive_tools() -> list[dict[str, Any]]:
     return [
         _tool(
             "conversation_search",
-            "Search prior retained discussions only when the user refers to them. Dates use Home Assistant's configured time zone.",
+            "Search prior retained discussions only when the user refers to them. Dates use Home Assistant's configured time zone. When has_more is true, repeat the same query and filters with offset increased by the returned limit.",
             {
                 "query": {"type": "string", "minLength": 1},
+                "offset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": MAX_SEARCH_OFFSET,
+                },
                 "start_date": {"type": "string"},
                 "end_date": {"type": "string"},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 10},
@@ -1425,7 +1477,7 @@ def _clean_text(value: str) -> str:
     return value
 
 
-def _validated_session(raw: Any) -> ArchiveSession:
+def _validated_session(raw: Any, *, allow_unretained: bool = False) -> ArchiveSession:
     """Validate one record before it can enter an archive generation."""
     if not isinstance(raw, dict):
         raise ValueError("archive session must be an object")
@@ -1456,7 +1508,12 @@ def _validated_session(raw: Any) -> ArchiveSession:
     if (
         not session.session_id
         or len(session.session_id) > 128
-        or session.retention_state not in {"retained", "private"}
+        or session.retention_state
+        not in (
+            {"retained", "private", "unretained"}
+            if allow_unretained
+            else {"retained", "private"}
+        )
         or not isinstance(session.turn_count, int)
         or isinstance(session.turn_count, bool)
         or session.turn_count < 0

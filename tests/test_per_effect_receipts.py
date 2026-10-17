@@ -881,3 +881,30 @@ async def test_nested_provider_exchange_overrides_independent_ownership(
         assert not provider._execution_effect_receipts
     finally:
         await hass.async_stop(force=True)
+
+
+async def test_rendered_bash_default_is_one_effect_during_recovery(tmp_path):
+    from homeassistant.core import HomeAssistant
+    from tests_real_ha.test_prepared_effect_recovery import exchange_owner
+
+    hass = HomeAssistant(str(tmp_path))
+    function = {"type": "composite", "sequence": [{
+        "type": "bash", "command": "echo {{ value | default(1) }} >> audit-effects.txt",
+        "cwd": str(tmp_path), "allow_unsafe_shell": True,
+    }]}
+    entity, log, exchange = exchange_owner(hass, function)
+    try:
+        await exchange({})
+        remember_unacknowledged_calls(entity, log, set())
+        with pytest.raises(HomeAssistantError, match="not acknowledged"):
+            await exchange({})
+        with pytest.raises(HomeAssistantError, match="not acknowledged"):
+            await exchange({"value": 1})
+        assert [line.strip() for line in (tmp_path / "audit-effects.txt").read_text().splitlines()] == ["1"]
+        # A different prepared command is permitted, and acknowledgment allows repeats.
+        await exchange({"value": 2})
+        clear_unacknowledged_calls(entity, log.conversation_id)
+        await exchange({"value": 1})
+        assert [line.strip() for line in (tmp_path / "audit-effects.txt").read_text().splitlines()] == ["1", "2", "1"]
+    finally:
+        await hass.async_stop(force=True)

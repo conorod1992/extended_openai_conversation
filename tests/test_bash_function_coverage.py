@@ -358,6 +358,7 @@ async def test_execute_success_uses_relative_cwd_caps_timeout_and_reports_stderr
     create_process.assert_awaited_once_with(
         "echo hello",
         cwd=str(expected_cwd),
+        env=dict(bash_module.os.environ),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         start_new_session=bash_module.os.name == "posix",

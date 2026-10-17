@@ -1185,6 +1185,11 @@ def _prepared_restore_from_selection(
         request_rules=rules,
         created_at=imported.created_at or current.created_at,
         integration_version=imported.integration_version or current.integration_version,
+        archive_active=(
+            None
+            if SECTION_CONVERSATION_ARCHIVE in selected
+            else deepcopy(current.archive_active)
+        ),
     )
     return target, tuple(preserved), tuple(missing)
 

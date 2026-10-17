@@ -108,6 +108,11 @@ def _prepared_document(
         "archive": {
             "sessions": [asdict(item) for item in prepared.archive_sessions],
             "turns": [asdict(item) for item in prepared.archive_turns],
+            **(
+                {"active": deepcopy(prepared.archive_active)}
+                if prepared.archive_active is not None
+                else {}
+            ),
         },
         "usage": {
             "totals": asdict(prepared.usage_totals),
@@ -274,8 +279,13 @@ async def _apply_prepared(
     await memory.async_replace_backup(prepared.memories)
     await temporary.async_replace_backup(prepared.temporary_memories)
     await knowledge.async_replace_backup(prepared.knowledge)
+    archive_kwargs = (
+        {"active": prepared.archive_active}
+        if prepared.archive_active is not None
+        else {}
+    )
     await archive.async_replace_backup(
-        prepared.archive_sessions, prepared.archive_turns
+        prepared.archive_sessions, prepared.archive_turns, **archive_kwargs
     )
     await usage.async_replace_backup(
         prepared.usage_totals,

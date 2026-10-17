@@ -370,3 +370,87 @@ async def test_management_archive_snapshot_rechecks_revocation_on_real_websocket
     )
     assert fresh["success"] is True
     assert not fresh["result"]["results" if action == "search" else "sessions"]
+
+
+@pytest.mark.parametrize("fail_knowledge", [False, True])
+async def test_private_browser_followup_survives_knowledge_restore(
+    hass, monkeypatch, fail_knowledge
+):
+    from custom_components.extended_openai_conversation_responses import (
+        backup,
+        transfer,
+    )
+    from custom_components.extended_openai_conversation_responses.knowledge import (
+        async_get_knowledge,
+    )
+
+    agent = await _agent(
+        hass, **{CONF_ARCHIVE_ENABLED: True, "conversation_continuity": "ha_default"}
+    )
+    _provider(monkeypatch, agent, ["Before", "Private followup"])
+    user = MockUser(id="selective-restore-user", name="Archive User")
+    user.add_to_hass(hass)
+
+    async def say(text, conversation_id=None):
+        return await conversation.async_converse(
+            hass=hass,
+            text=text,
+            conversation_id=conversation_id,
+            context=Context(user_id=user.id),
+            language="en",
+            agent_id=agent.entry.entry_id,
+        )
+
+    first = await say("Start browser conversation")
+    archive = agent._archive
+    session = next(iter(archive._sessions.values()))
+    await archive.async_make_private(session.session_id)
+    imported = transfer.PreparedTransfer(
+        source_kind="custom_backup",
+        mode="custom",
+        title="Knowledge",
+        available_sections=frozenset({transfer.SECTION_KNOWLEDGE}),
+        created_at=None,
+        integration_version=None,
+        knowledge=[],
+    )
+    knowledge = await async_get_knowledge(
+        hass, agent.entry.entry_id, agent.subentry.subentry_id
+    )
+    replace = knowledge.async_replace_backup
+    writes = 0
+
+    async def fail_once(*args, **kwargs):
+        nonlocal writes
+        writes += 1
+        if writes == 1:
+            raise OSError("controlled Knowledge failure")
+        return await replace(*args, **kwargs)
+
+    if fail_knowledge:
+        monkeypatch.setattr(knowledge, "async_replace_backup", fail_once)
+        with pytest.raises(
+            backup.BackupError, match="previous agent state was recovered"
+        ):
+            await transfer.async_restore_transfer(
+                hass,
+                agent.entry,
+                agent.subentry,
+                imported,
+                sections=[transfer.SECTION_KNOWLEDGE],
+            )
+    else:
+        await transfer.async_restore_transfer(
+            hass,
+            agent.entry,
+            agent.subentry,
+            imported,
+            sections=[transfer.SECTION_KNOWLEDGE],
+        )
+    result = await say("PRIVATE AFTER RESTORE", first.conversation_id)
+    assert _speech(result) == "Private followup"
+    assert result.conversation_id == first.conversation_id
+    assert len(archive._sessions) == 1
+    assert archive._sessions[session.session_id].retention_state == "private"
+    assert archive.stats()["turn_count"] == 0
+    assert "PRIVATE AFTER RESTORE" not in str(await archive.async_backup_data())

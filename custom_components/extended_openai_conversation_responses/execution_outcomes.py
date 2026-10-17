@@ -26,6 +26,7 @@ class EffectReceipt:
     kind: str
     signature: str
     outcome: Literal["uncertain", "completed", "rejected"] = "uncertain"
+    recovery_alias: str = ""
 
 
 @dataclass
@@ -224,7 +225,11 @@ def current_execution_receipt() -> EffectReceipt | None:
 
 
 def execution_started(
-    *, kind: str | None = None, prepared: Any = None
+    *,
+    kind: str | None = None,
+    prepared: Any = None,
+    recovery_alias: str = "",
+    check_alias: str = "",
 ) -> EffectReceipt | None:
     if (attempt := _ATTEMPT.get()) and attempt.active:
         from .tool_replay_guard import (
@@ -272,12 +277,15 @@ def execution_started(
         # Only previous failed continuations participate. Live repeated actions
         # are distinct occurrences and never enter the recovery ledger here.
         check_effect_replay(attempt.entity, signature)
+        if check_alias:
+            check_effect_replay(attempt.entity, check_alias)
         receipt = EffectReceipt(
             attempt.invocation_id,
             len(attempt.receipts),
             _CHILD_PATH.get(),
             kind,
             signature,
+            recovery_alias=recovery_alias,
         )
         attempt.receipts.append(receipt)
         if operation is not None:
@@ -353,7 +361,7 @@ async def execute_backend(
 ) -> Any:
     """Native effects/composite children own precise boundaries; opaque backends are conservative."""
     with execution_operation("backend", {"function": config, "arguments": arguments}):
-        owns_receipts = config.get("type") in {"native", "composite"}
+        owns_receipts = config.get("type") in {"native", "composite", "bash"}
         before = len(attempt.receipts) if (attempt := _ATTEMPT.get()) else 0
         receipt = None if owns_receipts else execution_started()
         try:

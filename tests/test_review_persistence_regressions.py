@@ -74,6 +74,9 @@ async def test_private_rollback_and_selected_restore_preserve_malformed_destinat
             "request_rules",
         )
     )
+    managers[3].async_recovery_data = AsyncMock(
+        return_value={**document["archive"], "active": {}}
+    )
     current = await backup._snapshot_for_restore(managers, subentry)
     assert current.config["functions"] == config["functions"]
     with pytest.raises(backup.BackupError, match="malformed Function YAML"):
@@ -114,7 +117,7 @@ def test_archive_private_validation_does_not_rescan_sessions_for_every_turn(
         retention_state = "retained"
         turn_count = 2
 
-        def __init__(self, raw):
+        def __init__(self, raw, *, allow_unretained=False):
             self.key = raw["session_id"]
 
         @property
