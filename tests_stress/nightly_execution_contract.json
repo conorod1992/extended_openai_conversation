@@ -3772,6 +3772,7 @@
       "tests_stress/test_valid_configuration_transitions.py"
     ],
     "functions": [
+      "tests_real_ha/test_review_followup_replays.py",
       "tests_real_ha/test_effect_receipts.py",
       "tests/functions",
       "tests/test_function_execution_coverage.py",
@@ -3979,6 +3980,7 @@
       "tests_real_ha/test_action_target_safety.py"
     ],
     "runtime": [
+      "tests_real_ha/test_management_typed_yaml.py",
       "tests_real_ha/test_management_backend_acceptance.py::test_configuration_transfer_survives_reload",
       "tests_real_ha/test_management_backend_acceptance.py::test_undercovered_management_mutations_survive_reload",
       "tests_real_ha/test_provider_serialization_invariants.py",

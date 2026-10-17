@@ -75,9 +75,9 @@ async def test_authorized_script_service_preserves_native_call_contract(
         require_available=True,
     )
     service_call.assert_awaited_once_with(
-        "light",
-        "turn_on",
-        {"brightness": 128},
+        domain="light",
+        service="turn_on",
+        service_data={"brightness": 128},
         blocking=True,
         context=context,
         target={"entity_id": "light.kitchen"},

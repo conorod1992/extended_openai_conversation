@@ -65,7 +65,7 @@ async def test_typed_function_websocket_editor_and_draft_roundtrip(
         )
         assert decode_management_function_values(saved)["functions"][0] == tool
         subentry = entry.subentries[subentry_id]
-        before = deepcopy(subentry.data)
+        before = deepcopy(dict(subentry.data))
         editor = await call(
             "tools", "serialize", name="typed_tool", revision=saved["revision"]
         )

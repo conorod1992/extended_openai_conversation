@@ -83,8 +83,10 @@ Script service actions use the same prepared-dispatch receipt boundary as native
 actions, preserving HA's actual response, blocking mode, context and schema events.
 Their outer opaque receipt remains for Script behavior outside service dispatch.
 A changed string/list/order/duplicate target representation cannot repeat an
-unacknowledged service effect; genuinely different prepared effects still proceed.
-This does not equate arbitrary Script arguments or replace their runtime values.
+unacknowledged service effect; genuinely different prepared effects still proceed
+after a completed Script. Aborted Scripts retain their existing conservative outer
+guard until acknowledgment, including for changed arguments. This does not equate
+arbitrary Script arguments or replace their runtime values.
 
 Generic power calls retain known delegate feature/device-class refusals, including
 area selections that Core forwards as explicit delegate entity IDs. If every

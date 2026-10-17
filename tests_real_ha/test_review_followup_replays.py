@@ -137,7 +137,7 @@ async def test_script_retry_matches_actual_service_effect(hass, first, second, a
     assert first_states["counter.one"] == "8"
     # This is the same recovery boundary used when a provider continuation fails.
     guard.remember_unacknowledged_calls(entity, log, set())
-    if second == "counter.two":
+    if second == "counter.two" and not abort:
         await exchange({"target": second, "fail": False})
         assert hass.states.get("counter.two").state == "8"
     else:
@@ -147,6 +147,11 @@ async def test_script_retry_matches_actual_service_effect(hass, first, second, a
             name: hass.states.get(name).state for name in first_states
         } == first_states
     guard.clear_unacknowledged_calls(entity, log.conversation_id)
+    if second == "counter.two" and abort:
+        # The uncertain outer Script receipt remains conservative about behavior
+        # outside service calls. Acknowledgment releases even that broader guard.
+        await exchange({"target": second, "fail": False})
+        assert hass.states.get("counter.two").state == "8"
     await exchange({"target": first, "fail": False})
     assert hass.states.get("counter.one").state == "6"
 

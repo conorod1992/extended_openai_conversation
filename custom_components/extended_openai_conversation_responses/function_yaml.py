@@ -48,13 +48,24 @@ def management_function_response(value: Any) -> Any:
     return value
 
 
-def decode_management_function_values(value: Any) -> Any:
+def _decode_management_yaml_value(value: Any) -> Any:
     """Decode wire tags once; literal escaped mappings are not decoded again."""
     if isinstance(value, dict):
         if set(value) == {_MANAGEMENT_YAML} and isinstance(
             value[_MANAGEMENT_YAML], str
         ):
             return yaml.safe_load(value[_MANAGEMENT_YAML])
+        return {key: _decode_management_yaml_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_decode_management_yaml_value(item) for item in value]
+    return value
+
+
+def decode_management_function_values(value: Any) -> Any:
+    """Decode Function definitions, leaving unrelated Management payloads intact."""
+    if isinstance(value, dict):
+        if "spec" in value and "function" in value:
+            return _decode_management_yaml_value(value)
         return {
             key: decode_management_function_values(item) for key, item in value.items()
         }

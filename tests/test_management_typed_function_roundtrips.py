@@ -177,11 +177,19 @@ async def test_invalid_wire_yaml_is_rejected_before_mutation(
             management_message(
                 "configuration",
                 "save",
-                config={"functions": {"__eoai_management_yaml_v1__": "[broken"}},
+                config={
+                    "functions": [_tool({"__eoai_management_yaml_v1__": "[broken"})]
+                },
                 revision=ui._agent_config_revision(subentry.data, subentry.title),
             ),
         )
     assert subentry.data == before
+
+
+def test_wire_tags_do_not_change_unrelated_management_fields():
+    value = {"metadata": {"__eoai_management_yaml_v1__": "literal administrator data"}}
+    assert management_function_response(value) == value
+    assert decode_management_function_values(value) == value
 
 
 async def test_saved_yaml_lookup_isolates_invalid_siblings(

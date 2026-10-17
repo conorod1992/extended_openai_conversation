@@ -106,7 +106,8 @@ def test_legacy_blank_runtime_and_management_agree(prewarmed, validated):
     }
     display = (
         management_loading_performance._snapshot_normalized_configuration(
-            raw, validated=validated
+            {**raw, "functions": agent_config.parse_configured_function_tools(raw)},
+            validated=validated,
         )
         if prewarmed
         else agent_config.agent_config_snapshot(raw)
@@ -133,7 +134,9 @@ async def test_legacy_blank_actual_duplicate_and_transfer(
     assert (
         len(agent_config.configured_function_tools_from_data(imported["config"])) == 4
     )
-    recovered = backup.recoverable_configuration_snapshot(subentry.data)
+    recovered = backup.recoverable_configuration_snapshot(
+        backup.export_configuration_snapshot(subentry.data)
+    )
     assert recovered["functions"] != "[]\n"
     assert len(agent_config.configured_function_tools_from_data(recovered)) == 4
     private = backup.private_configuration_snapshot(subentry.data)
