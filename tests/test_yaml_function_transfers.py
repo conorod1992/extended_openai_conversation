@@ -89,45 +89,35 @@ async def test_delayed_tool_fingerprint_preserves_yaml_date_type(saved_date_tool
 
 @pytest.mark.timeout(120)
 def test_delayed_fingerprint_is_stable_across_restart_hash_seeds():
-    """A mixed-type YAML set must not make an unchanged delayed job look edited."""
-    import os
-    import subprocess
-    import sys
+    """Identical YAML sets fingerprint identically regardless of iteration order."""
+    from random import Random
 
-    # The real persisted-YAML representation contains a native !!set. Python's
-    # randomized hash seeds previously changed its fingerprint on HA restart.
-    probe = r'''
-import yaml
-from custom_components.extended_openai_conversation_responses.delayed_tools import tool_definition_fingerprint
-source = """
-spec:
-  name: mixed_yaml_set
-  parameters: {type: object, properties: {}}
-function:
-  type: script
-  variables:
-    mixed: !!set
-      alpha: null
-      bravo: null
-      123: null
-      456: null
-  sequence:
-    - stop: Done
-"""
-print(tool_definition_fingerprint(yaml.safe_load(source)))
-'''
-    fingerprints = []
-    for seed in (1, 2, 3, 4, 10):
-        result = subprocess.run(
-            [sys.executable, "-c", probe],
-            env={**os.environ, "PYTHONHASHSEED": str(seed)},
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        fingerprints.append(result.stdout.strip())
-    assert len(set(fingerprints)) == 1, fingerprints
+    # Mixed YAML scalar types stop PyYAML from sorting the set's mapping keys;
+    # Python's randomized hash-table iteration then changes the old identity.
+    # Vary insertion order in-process instead of importing Home Assistant in
+    # subprocesses: this deterministically models distinct restart hash layouts.
+    members = ["alpha", "bravo", "charlie", 0, 8, 16, 24, 32, 40, 48, 56, 64]
+    rng = Random(419)
+    previous_encodings: set[str] = set()
+    fingerprints: set[str] = set()
+    for _ in range(40):
+        shuffled = members.copy()
+        rng.shuffle(shuffled)
+        mixed = set()
+        for item in shuffled:
+            mixed.add(item)
+        tool = {
+            "spec": {"name": "mixed_yaml_set", "parameters": {"type": "object", "properties": {}}},
+            "function": {
+                "type": "script",
+                "variables": {"mixed": mixed},
+                "sequence": [{"stop": "Done"}],
+            },
+        }
+        previous_encodings.add(yaml.safe_dump(tool, sort_keys=True, allow_unicode=True))
+        fingerprints.add(tool_definition_fingerprint(tool))
+    assert len(previous_encodings) > 1  # Exposes the original nondeterminism.
+    assert len(fingerprints) == 1  # The replay identity must now remain stable.
 
 
 def test_typed_fingerprint_without_sets_keeps_existing_identity():

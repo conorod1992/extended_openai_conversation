@@ -28,7 +28,7 @@ from custom_components.extended_openai_conversation_responses.request import (
 async def test_unrelated_edit_preserves_raw_presence_and_provider_request(
     hass, explicit_sampling
 ):
-    raw = {"chat_model": "gpt-4.1", "functions": [], "extension_data": {"version": 7}}
+    raw = {"chat_model": "gpt-4.1", "functions": "[]", "extension_data": {"version": 7}}
     if explicit_sampling:
         raw.update(
             temperature=agent_config_defaults()["temperature"],
@@ -53,7 +53,7 @@ async def test_unrelated_edit_preserves_raw_presence_and_provider_request(
 async def test_portable_transfer_currently_materializes_sampling_defaults(
     hass, explicit_sampling
 ):
-    raw = {"chat_model": "gpt-4.1", "functions": []}
+    raw = {"chat_model": "gpt-4.1", "functions": "[]"}
     defaults = agent_config_defaults()
     if explicit_sampling:
         raw.update(temperature=defaults["temperature"], top_p=defaults["top_p"])
@@ -114,7 +114,7 @@ async def test_recovery_projections_preserve_omission_opaque_and_legacy_fields(
 async def test_model_change_resets_reasoning_but_unrelated_edit_keeps_omission(
     hass, model_field
 ):
-    current = {"chat_model": "gpt-5.2", "reasoning_effort": "high", "functions": []}
+    current = {"chat_model": "gpt-5.2", "reasoning_effort": "high", "functions": "[]"}
     if model_field == "azure_model":
         current["azure_model"] = "gpt-5.2"
     updates = {model_field: "gpt-5.6"}
@@ -132,7 +132,7 @@ async def test_model_change_resets_reasoning_but_unrelated_edit_keeps_omission(
 
 
 async def test_display_and_explicit_reset_values_do_not_imply_persistence(hass):
-    raw = {"chat_model": "gpt-5.2", "functions": []}
+    raw = {"chat_model": "gpt-5.2", "functions": "[]"}
     before = deepcopy(raw)
     display = agent_config_snapshot(raw)
     assert display["reasoning_effort"]
