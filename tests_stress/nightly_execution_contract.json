@@ -1,6 +1,14 @@
 {
   "schema": "eoai-nightly-execution-contract/v1",
   "pytest": [
+    "tests_real_ha/test_archive_private_activity.py::test_private_followup_after_knowledge_restore[False-ha_default]",
+    "tests_real_ha/test_archive_private_activity.py::test_private_followup_after_knowledge_restore[False-user]",
+    "tests_real_ha/test_archive_private_activity.py::test_private_followup_after_knowledge_restore[False-device]",
+    "tests_real_ha/test_archive_private_activity.py::test_private_followup_after_knowledge_restore[True-ha_default]",
+    "tests_real_ha/test_archive_private_activity.py::test_private_followup_after_knowledge_restore[True-user]",
+    "tests_real_ha/test_archive_private_activity.py::test_private_followup_after_knowledge_restore[True-device]",
+    "tests_real_ha/test_service_receipt_compatibility.py::test_explicit_feature_refusal_does_not_alias_corrected_effect[True]",
+    "tests_real_ha/test_service_receipt_compatibility.py::test_explicit_feature_refusal_does_not_alias_corrected_effect[False]",
     "tests/test_selective_restore_concurrency.py::test_private_active_conversation_survives_selective_restore_and_rollback[private-False]",
     "tests/test_selective_restore_concurrency.py::test_private_active_conversation_survives_selective_restore_and_rollback[private-True]",
     "tests/test_selective_restore_concurrency.py::test_private_active_conversation_survives_selective_restore_and_rollback[unretained-False]",
