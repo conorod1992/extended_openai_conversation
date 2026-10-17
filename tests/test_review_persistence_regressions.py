@@ -74,6 +74,9 @@ async def test_private_rollback_and_selected_restore_preserve_malformed_destinat
             "request_rules",
         )
     )
+    managers[3].async_recovery_data = AsyncMock(
+        return_value={**document["archive"], "active": {}}
+    )
     current = await backup._snapshot_for_restore(managers, subentry)
     assert current.config["functions"] == config["functions"]
     with pytest.raises(backup.BackupError, match="malformed Function YAML"):

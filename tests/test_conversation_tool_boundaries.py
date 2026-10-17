@@ -265,6 +265,7 @@ async def test_archive_dispatcher_routes_session_operations_and_resume_boundary(
         start_date="2026-09-01",
         end_date="2026-09-11",
         limit=3,
+        offset=0,
     )
     entity._archive.async_get.assert_awaited_once_with(
         "user:alice", "selected", 2, 4, text_offset=0
