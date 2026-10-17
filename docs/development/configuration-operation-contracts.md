@@ -109,6 +109,8 @@ representations. Existing Function editors request authoritative YAML by saved n
 and configuration revision; new/duplicated definitions can still serialize a draft.
 This protects types during both YAML editor saves and structured draft submission,
 including binary values that HA's ordinary JSON encoder cannot serialize.
+Definitions containing typed transport values use the existing raw YAML editor:
+HA's JSON-backed native editor must not dump transport tags as literal variables.
 
 Cache seeding receives canonical response values derived from the saved source;
 it does not make normalized defaults part of the saved dictionary. Subentry/data

@@ -92,6 +92,34 @@ test("Function Tool YAML uses the Home Assistant editor when it is registered", 
   await expect.poll(() => nativeEditor.evaluate((element) => element.lastSetValue?.spec?.name)).toBe("browser_tool");
   await expect(nativeEditor).toHaveJSProperty("inDialog", true);
 
+  await panel.locator("#tool-cancel").click();
+  for (const scalar of ["2026-10-17", "!!binary SGVsbG8="]) {
+    const typedYaml = `spec:\n  name: browser_tool\n  description: Typed YAML preservation\n  parameters:\n    type: object\n    properties: {}\nfunction:\n  type: script\n  variables:\n    marker: ${scalar}\n  sequence: []\n`;
+    await panel.evaluate((element, source) => {
+      const originalCall = element._call.bind(element);
+      element._call = async (section, action, payload) => {
+        if (section === "tools" && action === "serialize") return {yaml: source};
+        if (section === "tools" && action === "validate_yaml") return {valid: true, config: {
+          spec: {name: "browser_tool"}, function: {type: "script", variables: {
+            marker: {__eoai_management_yaml_v1__: "typed scalar"},
+          }, sequence: []},
+        }};
+        if (section === "tools" && action === "save") window.typedSavedYaml = payload.yaml;
+        return originalCall(section, action, payload);
+      };
+    }, typedYaml);
+    await card.locator(".edit-tool").click();
+    await expect(fallback).toBeVisible();
+    await expect(nativeEditor).toBeHidden();
+    await expect(fallback).toHaveValue(typedYaml);
+    const edited = `${typedYaml}# harmless edit\n`;
+    await fallback.fill(edited);
+    await panel.locator("#tool-save").click();
+    await expect(dialog).toBeHidden();
+    expect(await page.evaluate(() => window.typedSavedYaml)).toBe(edited);
+    expect(edited).not.toContain("__eoai_management_yaml_v1__");
+  }
+
   await expectHarnessClean(page, pageErrors);
 });
 
