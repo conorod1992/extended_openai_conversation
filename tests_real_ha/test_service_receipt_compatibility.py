@@ -839,6 +839,32 @@ async def test_explicit_feature_refusal_does_not_alias_corrected_effect(
         "async_set_percentage",
         [FanEntityFeature.SET_SPEED],
     )
+    if not unsupported_available:
+        # Native tools reject unavailable explicit targets at their earlier policy
+        # boundary. Check Core's skip semantics at the prepared-dispatch boundary
+        # itself: its actual partial effect must share the corrected identity.
+        from custom_components.extended_openai_conversation_responses.ha_service_compat import (
+            prepare_service_dispatch,
+        )
+
+        initial = {
+            "entity_id": [capable.entity_id, unsupported.entity_id],
+            "percentage": 25,
+        }
+        registry, before = await prepare_service_dispatch(
+            hass, "fan", "set_percentage", {"service_data": initial}
+        )
+        _, after = await prepare_service_dispatch(
+            hass,
+            "fan",
+            "set_percentage",
+            {"service_data": {"entity_id": capable.entity_id, "percentage": 25}},
+        )
+        assert before == after
+        with pytest.raises(HomeAssistantError, match="failure after effect"):
+            await registry.async_call("fan", "set_percentage", initial, blocking=True)
+        assert effects == [(capable.entity_id, 25)]
+        return
     entity, log, exchange = exchange_owner(
         hass,
         {"type": "native", "name": "execute_service_single"},

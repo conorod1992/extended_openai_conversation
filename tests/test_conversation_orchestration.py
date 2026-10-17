@@ -24,6 +24,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     DEFAULT_CONTINUE_CONVERSATION,
 )
 from custom_components.extended_openai_conversation_responses.continuity import (
+    ContinuityResolution,
     ConversationContinuity,
 )
 from custom_components.extended_openai_conversation_responses.conversation import (
@@ -111,13 +112,13 @@ def _pipeline_fixture(monkeypatch, *, text: str = "hello"):
         ],
         conversation_id="conversation-1",
     )
-    resolution = SimpleNamespace(
+    resolution = ContinuityResolution(
         resumed=False,
         extra_system_prompt=None,
         conversation_id="conversation-1",
         key="device:kitchen",
         claim_token="claim-token",
-        history=(),
+        history=[],
     )
     policy = GuestCapabilityPolicy.unrestricted()
     scope = user_scope("alice", source="test", device_id="kitchen")
