@@ -1,12 +1,42 @@
 """Lossless JSON transport for Function collections containing YAML scalar types."""
 
 from copy import deepcopy
-import json
 from typing import Any
 
 import yaml
 
 from .const import CONF_FUNCTION_TOOLS
+
+
+def _contains_yaml_types(value: Any) -> bool:
+    """Inspect types without encoding scalar values ahead of transport budgets.
+
+    Visit shared containers once, using depth-sized iterator storage. Export's
+    existing graph/size checks remain responsible for rejecting cyclic inputs.
+    """
+    pending = [iter((value,))]
+    seen: set[int] = set()
+    scalar_types = (str, int, float, bool, type(None))
+    while pending:
+        try:
+            child = next(pending[-1])
+        except StopIteration:
+            pending.pop()
+            continue
+        if isinstance(child, dict):
+            if any(not isinstance(key, scalar_types) for key in child):
+                return True
+            children = iter(child.values())
+        elif isinstance(child, (list, tuple)):
+            children = iter(child)
+        elif not isinstance(child, scalar_types):
+            return True
+        else:
+            continue
+        if id(child) not in seen:
+            seen.add(id(child))
+            pending.append(children)
+    return False
 
 
 def json_safe_function_fields(config: dict[str, Any]) -> dict[str, Any]:
@@ -18,13 +48,10 @@ def json_safe_function_fields(config: dict[str, Any]) -> dict[str, Any]:
     """
     result = dict(config)
     tools = result.get(CONF_FUNCTION_TOOLS)
-    if isinstance(tools, list):
-        try:
-            json.dumps(tools)
-        except TypeError, ValueError:
-            result[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
-                tools, sort_keys=False, allow_unicode=True
-            )
+    if isinstance(tools, list) and _contains_yaml_types(tools):
+        result[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
+            tools, sort_keys=False, allow_unicode=True
+        )
     return result
 
 
