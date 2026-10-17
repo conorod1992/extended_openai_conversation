@@ -196,12 +196,13 @@ async def test_generate_provider_error_records_failure_and_reauthentication(
         conversation_id="conversation-3",
     )
 
-    with pytest.raises(OpenAIError, match="provider failed"):
+    with pytest.raises(HomeAssistantError, match="provider failed") as raised:
         await entity._async_generate_data(
             cast(Any, SimpleNamespace(name="plain", structure=None)),
             cast(Any, chat_log),
         )
 
+    assert raised.value.__cause__ is error
     assert calls == [("reauth", error), ("record", error), ("log", error)]
 
 

@@ -28,7 +28,11 @@ from .entity import (
 )
 from .ha_llm_tools import ToolSnapshot, caller_api_tools, tool_snapshot_scope
 from .ha_schema import SchemaValidator
-from .provider_errors import log_provider_failure, request_reauthentication
+from .provider_errors import (
+    log_provider_failure,
+    provider_user_message,
+    request_reauthentication,
+)
 from .schema_errors import SCHEMA_ERRORS
 from .tool_replay_guard import clear_unacknowledged_calls, remember_unacknowledged_calls
 
@@ -421,7 +425,9 @@ class ExtendedOpenAITaskEntity(
             request_reauthentication(self.hass, getattr(self, "entry", None), err)
             record_current_provider_failure(err)
             log_provider_failure(_LOGGER, "OpenAI AI Task request failed", err)
-            raise
+            raise HomeAssistantError(
+                f"AI Task provider request failed: {provider_user_message(err)}"
+            ) from err
         finally:
             if not continuation_accepted:
                 remember_unacknowledged_calls(self, chat_log, existing_content_ids)
