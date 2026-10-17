@@ -475,7 +475,9 @@ async def _update_configuration(
     # configuration through the normal live-update path instead of starting an
     # unowned entry reload while exclusive recovery is still settling.
     if not configuration_supports_live_update(
-        backup.recoverable_configuration_snapshot(subentry.data),
+        # Current data is persisted; the candidate is already decoded/prepared.
+        # A raw legacy [] must not look like an empty edit and force a reload.
+        backup.private_configuration_snapshot(subentry.data),
         backup.recoverable_configuration_snapshot(prepared.config),
         title_changed=subentry.title != prepared.title,
     ):

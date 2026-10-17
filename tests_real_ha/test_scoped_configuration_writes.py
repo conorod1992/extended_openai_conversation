@@ -339,6 +339,7 @@ async def test_configuration_projection_round_trip_through_restore_and_rollback(
     try:
         subentry_id = _subentry_id(entry, "conversation")
         subentry = entry.subentries[subentry_id]
+        agent_before = conversation.async_get_agent(hass, entry.entry_id)
         names = [
             tool["spec"]["name"]
             for tool in agent_config.parse_configured_function_tools(subentry.data)
@@ -385,6 +386,8 @@ async def test_configuration_projection_round_trip_through_restore_and_rollback(
             assert calls == 2
         else:
             await transfer.async_restore_transfer(hass, entry, subentry, document)
+        await hass.async_block_till_done()
+        assert conversation.async_get_agent(hass, entry.entry_id) is agent_before
         subentry = entry.subentries[subentry_id]
         assert "reasoning_effort" not in subentry.data
         assert "guest_policy_version" not in subentry.data

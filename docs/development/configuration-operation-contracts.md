@@ -92,6 +92,9 @@ YAML. Rollback can apply them directly without turning a decoded frontend empty
 list into legacy defaults. Malformed quarantined Function YAML remains opaque in
 private recovery. Portable incoming collections and already prepared restore data
 use decoded-value normalization, not a second legacy fallback.
+Restore reload decisions compare the persisted current source against the prepared
+candidate using their respective decoders, so representation-only changes do not
+replace an otherwise compatible live agent.
 
 Cache seeding receives canonical response values derived from the saved source;
 it does not make normalized defaults part of the saved dictionary. Subentry/data

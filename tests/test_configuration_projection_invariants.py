@@ -515,3 +515,31 @@ async def test_runtime_numeric_interpretation_keeps_capability_suppression():
     wire = build_provider_request_snapshot(raw, {}, tools_required=False)
     assert "temperature" not in wire.api_kwargs and "top_p" not in wire.api_kwargs
     assert raw == original
+
+
+@pytest.mark.parametrize("saved", [None, [], "", "null", "[]"])
+@pytest.mark.parametrize("changed", [False, True])
+async def test_restore_update_compares_persisted_and_prepared_effective_values(
+    hass, monkeypatch, saved, changed
+):
+    from unittest.mock import AsyncMock, Mock
+
+    from custom_components.extended_openai_conversation_responses import restore_recovery
+    from custom_components.extended_openai_conversation_responses.const import DOMAIN
+
+    raw = {"functions": saved, "memory_mode": "manual"}
+    subentry = SimpleNamespace(data=raw, title="Unchanged", subentry_id="agent")
+    entry = SimpleNamespace(entry_id="entry")
+    candidate = backup.private_configuration_snapshot(raw)
+    assert isinstance(candidate["functions"], str)
+    if changed:
+        candidate["archive_enabled"] = True
+    monkeypatch.setattr(restore_recovery, "update_live_subentry", Mock())
+    monkeypatch.setattr(restore_recovery, "_async_persist_config_entries", AsyncMock())
+    await restore_recovery._update_configuration(
+        hass, entry, subentry, SimpleNamespace(config=candidate, title=subentry.title)
+    )
+    assert (
+        entry.entry_id in hass.data.get(f"{DOMAIN}.restore_reload_pending", set())
+    ) is changed
+    assert subentry.data == raw
