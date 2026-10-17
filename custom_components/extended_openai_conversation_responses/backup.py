@@ -96,6 +96,8 @@ class PreparedRestore:
     request_rules: dict[str, Any]
     created_at: str
     integration_version: str
+    # Same-agent recovery only; portable archive imports deliberately have none.
+    archive_active: dict[str, str] | None = None
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -438,8 +440,20 @@ def _inspect_decoded_backup(
             value["temporary_memories"]
         )
         knowledge = KnowledgeLibrary.validate_backup_data(value["knowledge"])
+        archive_data = deepcopy(value["archive"])
+        has_active = (
+            private_journal
+            and isinstance(archive_data, dict)
+            and "active" in archive_data
+        )
+        active = archive_data.pop("active") if has_active else None
         archive_sessions, archive_turns = ConversationArchive.validate_backup_data(
-            value["archive"], target_agent_id
+            archive_data, target_agent_id
+        )
+        archive_active = (
+            ConversationArchive.validate_recovery_bindings(active, archive_sessions)
+            if has_active
+            else None
         )
         usage_totals, usage_daily, usage_requests, usage_runs = (
             UsageManager.validate_backup_data(value["usage"], target_agent_id)
@@ -474,6 +488,7 @@ def _inspect_decoded_backup(
         request_rules,
         created_at,
         integration_version,
+        archive_active=archive_active,
     )
 
 
@@ -518,8 +533,12 @@ async def _snapshot_for_restore(
         guest_mode,
         request_rules,
     ) = managers
+    archive_data = await archive.async_recovery_data()
     archive_sessions, archive_turns = ConversationArchive.validate_backup_data(
-        await archive.async_backup_data(), subentry.subentry_id
+        {key: archive_data[key] for key in ("sessions", "turns")}, subentry.subentry_id
+    )
+    archive_active = ConversationArchive.validate_recovery_bindings(
+        archive_data["active"], archive_sessions
     )
     usage_totals, usage_daily, usage_requests, usage_runs = (
         UsageManager.validate_backup_data(
@@ -548,6 +567,7 @@ async def _snapshot_for_restore(
         request_rule_backup,
         dt_util.utcnow().isoformat(),
         _integration_version(),
+        archive_active=archive_active,
     )
 
 
@@ -574,8 +594,13 @@ async def _apply_restore(managers: tuple[Any, ...], prepared: PreparedRestore) -
     await memory.async_replace_backup(prepared.memories)
     await temporary.async_replace_backup(prepared.temporary_memories)
     await knowledge.async_replace_backup(prepared.knowledge)
+    archive_kwargs = (
+        {"active": prepared.archive_active}
+        if prepared.archive_active is not None
+        else {}
+    )
     await archive.async_replace_backup(
-        prepared.archive_sessions, prepared.archive_turns
+        prepared.archive_sessions, prepared.archive_turns, **archive_kwargs
     )
     await usage.async_replace_backup(
         prepared.usage_totals,

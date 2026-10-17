@@ -857,6 +857,8 @@ async def test_snapshot_for_restore_validates_live_manager_backups(monkeypatch) 
             "rules",
         )
     )
+    managers[3].async_recovery_data = AsyncMock(return_value={**payloads["archive"], "active": {}})
+    monkeypatch.setattr(backup.ConversationArchive, "validate_recovery_bindings", staticmethod(lambda active, sessions: dict(active)))
     monkeypatch.setattr(
         backup.ConversationArchive,
         "validate_backup_data",

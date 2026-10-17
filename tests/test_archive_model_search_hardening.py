@@ -322,3 +322,36 @@ async def test_archive_non_search_operation_does_not_require_query():
         owner._ACTIVE_SCOPE.reset(scope)
         owner._ACTIVE_ARCHIVE.reset(active)
     get.assert_awaited_once_with("user:alice", "item-1", 0, 6, text_offset=0)
+
+
+async def test_model_archive_search_can_discover_second_same_day_page(monkeypatch):
+    from homeassistant.util import dt as dt_util
+    now = dt_util.utcnow()
+    monkeypatch.setattr(dt_util, "utcnow", lambda: now)
+    archive, _storage = await _archive()
+    scope = user_scope("alice", source="authenticated_user")
+    for index in range(12):
+        session = await archive.async_begin_session(
+            f"browser-{index}", scope, f"conversation-{index}", archive_enabled=True,
+            shared_archive_enabled=False, inactivity_minutes=30,
+        )
+        await archive.async_record_turn(session.session_id, run_id=f"run-{index}",
+            user_text="Archive marker", assistant_text="A matching discussion", successful=True)
+    agent = _runtime_agent()
+    agent._archive = archive
+    token = owner._ACTIVE_SCOPE.set(scope)
+    active = owner._ACTIVE_ARCHIVE.set(("browser-0", session.session_id))
+    try:
+        day = dt_util.as_local(now).date().isoformat()
+        arguments = {"query": "Archive marker", "limit": 10, "start_date": day, "end_date": day}
+        first = await agent._async_execute_archive_tool("search", arguments)
+        second = await agent._async_execute_archive_tool("search", {**arguments, "offset": 10})
+    finally:
+        owner._ACTIVE_ARCHIVE.reset(active)
+        owner._ACTIVE_SCOPE.reset(token)
+    assert first["has_more"] and len(first["results"]) == 10
+    assert second["offset"] == 10 and len(second["results"]) == 2
+    assert not second["has_more"]
+    assert {item["session_id"] for item in first["results"]}.isdisjoint(item["session_id"] for item in second["results"])
+    search = next(tool for tool in archive_tools() if tool["spec"]["name"] == "conversation_search")
+    assert search["spec"]["parameters"]["properties"]["offset"]["minimum"] == 0

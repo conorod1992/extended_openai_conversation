@@ -42,3 +42,11 @@ Files created by older versions in the system temporary directory have no reliab
 ## Security
 
 Full backup files can contain prompts, memories, Knowledge sources, conversation history and detailed usage information. Treat them as private data even though provider credentials are excluded.
+
+
+Selective restores preserve active Archive privacy bindings when Archive is not
+selected. The private local restore journal includes those same-agent bindings
+for rollback and interrupted-transaction recovery. Portable exports omit them;
+explicitly replacing Archive with imported data still starts without imported
+active conversation bindings. A failed restore does not resume saving a private
+conversation when its prior state is recovered.

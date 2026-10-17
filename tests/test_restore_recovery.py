@@ -727,3 +727,28 @@ async def test_durable_managers_bypasses_volatile_usage_fallback(monkeypatch) ->
     assert result == tuple(expected)
     for mock in mocks:
         mock.assert_awaited_once_with(hass, "entry-1", "agent-1")
+
+
+@pytest.mark.parametrize("invalid", [None, {"conversation:browser": "missing-session"}, {"": "session"}])
+async def test_local_archive_bindings_validate_without_entering_portable_backup(invalid):
+    from custom_components.extended_openai_conversation_responses.conversation_archive import ConversationArchive
+    from custom_components.extended_openai_conversation_responses.scope import user_scope
+    from tests.test_conversation_archive import FakeArchiveStorage
+
+    archive = ConversationArchive(FakeArchiveStorage(), "agent-new")
+    await archive.async_initialize()
+    session = await archive.async_begin_session("conversation:browser", user_scope("alice", source="authenticated_user"), "browser",
+        archive_enabled=True, shared_archive_enabled=False, inactivity_minutes=30)
+    await archive.async_make_private(session.session_id)
+    target, rollback = _states()
+    target.archive_sessions = list(archive._sessions.values())
+    target.archive_active = {"conversation:browser": session.session_id}
+    assert "active" not in await archive.async_backup_data()
+    journal = restore_recovery._new_journal("entry-1", "agent-new", target, rollback)
+    _, recovered, _ = restore_recovery._load_journal(journal, "entry-1", "agent-new")
+    assert recovered.archive_active == target.archive_active
+    with pytest.raises(backup.BackupError, match="archive"):
+        backup.inspect_backup(journal["target"], "agent-new")
+    journal["rollback"]["archive"]["active"] = invalid
+    with pytest.raises(backup.BackupError, match="corrupted"):
+        restore_recovery._load_journal(journal, "entry-1", "agent-new")
