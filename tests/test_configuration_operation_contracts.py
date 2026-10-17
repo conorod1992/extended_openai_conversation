@@ -25,8 +25,10 @@ from custom_components.extended_openai_conversation_responses.request import (
 
 
 @pytest.mark.parametrize("explicit_sampling", [False, True])
-def test_unrelated_edit_preserves_raw_presence_and_provider_request(explicit_sampling):
-    raw = {"chat_model": "gpt-4.1", "functions": [], "extension_data": {"version": 7}}
+async def test_unrelated_edit_preserves_raw_presence_and_provider_request(
+    hass, explicit_sampling
+):
+    raw = {"chat_model": "gpt-4.1", "functions": "[]", "extension_data": {"version": 7}}
     if explicit_sampling:
         raw.update(
             temperature=agent_config_defaults()["temperature"],
@@ -48,8 +50,10 @@ def test_unrelated_edit_preserves_raw_presence_and_provider_request(explicit_sam
 
 
 @pytest.mark.parametrize("explicit_sampling", [False, True])
-def test_portable_transfer_currently_materializes_sampling_defaults(explicit_sampling):
-    raw = {"chat_model": "gpt-4.1", "functions": []}
+async def test_portable_transfer_currently_materializes_sampling_defaults(
+    hass, explicit_sampling
+):
+    raw = {"chat_model": "gpt-4.1", "functions": "[]"}
     defaults = agent_config_defaults()
     if explicit_sampling:
         raw.update(temperature=defaults["temperature"], top_p=defaults["top_p"])
@@ -75,8 +79,8 @@ def test_portable_transfer_currently_materializes_sampling_defaults(explicit_sam
         backup.private_configuration_snapshot,
     ],
 )
-def test_recovery_projections_preserve_omission_opaque_and_legacy_fields(
-    snapshot, quarantined, explicit_effort
+async def test_recovery_projections_preserve_omission_opaque_and_legacy_fields(
+    hass, snapshot, quarantined, explicit_effort
 ):
     raw = {
         "chat_model": "gpt-5.2",
@@ -107,8 +111,10 @@ def test_recovery_projections_preserve_omission_opaque_and_legacy_fields(
 
 
 @pytest.mark.parametrize("model_field", ["chat_model", "azure_model"])
-def test_model_change_resets_reasoning_but_unrelated_edit_keeps_omission(model_field):
-    current = {"chat_model": "gpt-5.2", "reasoning_effort": "high", "functions": []}
+async def test_model_change_resets_reasoning_but_unrelated_edit_keeps_omission(
+    hass, model_field
+):
+    current = {"chat_model": "gpt-5.2", "reasoning_effort": "high", "functions": "[]"}
     if model_field == "azure_model":
         current["azure_model"] = "gpt-5.2"
     updates = {model_field: "gpt-5.6"}
@@ -125,8 +131,8 @@ def test_model_change_resets_reasoning_but_unrelated_edit_keeps_omission(model_f
     )
 
 
-def test_display_and_explicit_reset_values_do_not_imply_persistence():
-    raw = {"chat_model": "gpt-5.2", "functions": []}
+async def test_display_and_explicit_reset_values_do_not_imply_persistence(hass):
+    raw = {"chat_model": "gpt-5.2", "functions": "[]"}
     before = deepcopy(raw)
     display = agent_config_snapshot(raw)
     assert display["reasoning_effort"]
@@ -179,7 +185,7 @@ async def test_duplicate_keeps_its_existing_materialized_reasoning_contract(
     assert subentry.data == original
 
 
-def test_portable_schema_excludes_opaque_export_and_rejects_unknown_import():
+async def test_portable_schema_excludes_opaque_export_and_rejects_unknown_import(hass):
     raw = {"chat_model": "gpt-4.1", "functions": [], "extension_data": {"version": 7}}
     exported = _export_agent(SimpleNamespace(data=raw, title="Portable"))
     assert "extension_data" not in exported["config"]
@@ -207,12 +213,17 @@ async def test_degraded_configuration_save_preserves_raw_fields_and_omissions(
     monkeypatch.setattr(
         management_ui, "entry_and_agent", lambda *_args, **_kwargs: (entry, subentry)
     )
-    from custom_components.extended_openai_conversation_responses.request_rules import RequestRules
+    from custom_components.extended_openai_conversation_responses.request_rules import (
+        RequestRules,
+    )
     from tests.test_request_rules import MemoryStore
+
     rules = RequestRules(MemoryStore())
     await rules.async_initialize()
+
     async def retained_rules(*_args):
         return rules
+
     monkeypatch.setattr(management_ui, "async_get_request_rules", retained_rules)
     monkeypatch.setattr(
         management_configuration_guidance,
@@ -249,7 +260,9 @@ async def test_degraded_configuration_save_preserves_raw_fields_and_omissions(
     assert subentry.data == {**raw, "max_tokens": 700}
 
 
-def test_model_change_removes_unsupported_reasoning_from_storage_and_requests():
+async def test_model_change_removes_unsupported_reasoning_from_storage_and_requests(
+    hass,
+):
     raw = {
         "chat_model": "gpt-5.2",
         "reasoning_effort": "high",
@@ -266,7 +279,7 @@ def test_model_change_removes_unsupported_reasoning_from_storage_and_requests():
     assert request["temperature"] == saved["temperature"] == 0.2
 
 
-def test_explicit_reasoning_on_model_change_overrides_the_recommendation():
+async def test_explicit_reasoning_on_model_change_overrides_the_recommendation(hass):
     raw = {"chat_model": "gpt-5.2", "reasoning_effort": "low", "functions": []}
     updates = {"chat_model": "gpt-5.6", "reasoning_effort": "high"}
     saved = project_agent_config_updates(raw, updates, merge_agent_config(raw, updates))

@@ -2,9 +2,19 @@ name: Real HA Acceptance
 
 on:
   workflow_call:
+    inputs:
+      ha_dev_sha:
+        description: Optional immutable Home Assistant dev commit supplied by Full Validation
+        type: string
+        required: false
   schedule:
     - cron: "30 0 * * *"
   workflow_dispatch:
+    inputs:
+      ha_dev_sha:
+        description: Optional immutable Home Assistant dev commit supplied by Full Validation
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -96,10 +106,14 @@ jobs:
       ha-core-sha: ${{ steps.versions.outputs.ha-core-sha }}
       stable-ha-version: ${{ steps.versions.outputs.stable-ha-version }}
     steps:
+      - name: Checkout snapshot resolver
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Resolve Home Assistant Core dev snapshot
         id: versions
+        env:
+          REQUESTED_HA_DEV_SHA: ${{ inputs.ha_dev_sha }}
         run: |
-          HA_CORE_SHA="$(git ls-remote "https://github.com/${{ env.HA_CORE_REPO }}.git" "refs/heads/${{ env.HA_CORE_BRANCH }}" | awk '{print $1}')"
+          HA_CORE_SHA="$(python3 ci/ha_dev_snapshot.py --sha "$REQUESTED_HA_DEV_SHA")"
           test -n "$HA_CORE_SHA"
           PYTHON_VERSION="$(curl -fsSL "https://raw.githubusercontent.com/${{ env.HA_CORE_REPO }}/$HA_CORE_SHA/.python-version" | tr -d '\n')"
           test -n "$PYTHON_VERSION"

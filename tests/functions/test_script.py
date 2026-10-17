@@ -326,9 +326,9 @@ async def test_script_scoped_service_boundary_preserves_response_or_blocks_dispa
             require_available=True,
         )
         hass.services.async_call.assert_awaited_once_with(
-            "light",
-            "turn_on",
-            {},
+            domain="light",
+            service="turn_on",
+            service_data={},
             blocking=True,
             context=context,
             target={"entity_id": "light.kitchen"},

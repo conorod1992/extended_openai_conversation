@@ -349,6 +349,13 @@ def build_provider_request_snapshot(
     model_capabilities: Mapping[str, Any] | None = None,
 ) -> ProviderRequestSnapshot:
     """Build validated/normalized settings used by the live OpenAI request."""
+    from .agent_config import normalize_agent_numeric_values
+
+    # Decode legacy scalar representations without materializing defaults or
+    # changing the authoritative mapping. In particular, sampling must reach
+    # the provider as numbers while omitted/unsupported settings stay omitted.
+    options = dict(options)
+    normalize_agent_numeric_values(options)
     model = str(options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
     if options.get("azure_model") and entry_data.get(CONF_API_PROVIDER) != "azure":
         raise HomeAssistantError(

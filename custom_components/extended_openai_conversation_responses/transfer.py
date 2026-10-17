@@ -37,6 +37,7 @@ from .conversation_archive import (
     async_get_archive,
 )
 from .function_dependency_integrity import async_validate_request_rule_functions
+from .function_yaml import decoded_function_fields
 from .guest_mode import GuestModeManager, GuestModeSchedule, async_get_guest_mode
 from .knowledge import KnowledgeLibrary, KnowledgeSource, async_get_knowledge
 from .memory import ANONYMOUS_USER_ID, MemoryRecord, PersistentMemory, async_get_memory
@@ -578,6 +579,8 @@ def _secret_path(path: tuple[Any, ...]) -> str:
 
 
 def _collect_secret_paths(value: Any, path: tuple[Any, ...] = ()) -> list[str]:
+    if not path:
+        value = decoded_function_fields(value)
     if is_literal_text(value):
         return []
     if _is_redacted_placeholder(value):
@@ -741,8 +744,8 @@ def _restore_section_secrets(
     preserved: list[str] = []
     missing: list[str] = []
     restored = _restore_with_fallback(
-        value,
-        fallback,
+        decoded_function_fields(value),
+        decoded_function_fields(fallback),
         preserved=preserved,
         missing=missing,
     )
@@ -1085,7 +1088,7 @@ def _prepared_restore_from_selection(
         if imported.raw_configuration is not None:
             raw, kept, absent = _restore_section_secrets(
                 imported.raw_configuration,
-                backup.private_configuration_snapshot(current.config),
+                backup.recoverable_configuration_snapshot(current.config),
             )
             preserved.extend(f"configuration.{path}" for path in kept)
             missing.extend(f"configuration.{path}" for path in absent)
@@ -1102,9 +1105,9 @@ def _prepared_restore_from_selection(
         else:
             raise backup.BackupError("Transferred configuration is unavailable")
     else:
-        # Durable snapshots contain frontend-shaped, parsed Function Tools.
-        # Retained configuration must use the same persisted YAML representation
-        # as imported configuration before dependency validation and restore.
+        # Recovery snapshots are persistence-shaped; older/prepared callers may
+        # still supply parsed Functions. Normalize that decoded representation,
+        # without reapplying legacy raw-value fallbacks.
         config = backup.recoverable_configuration_snapshot(current.config)
 
     rules = current.request_rules

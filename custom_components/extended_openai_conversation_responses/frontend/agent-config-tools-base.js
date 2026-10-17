@@ -901,7 +901,9 @@ export async function openTool(panel, index = null, initialTool = null) {
     const [nativeYaml, [response, catalog]] = await Promise.all([
       import("./agent-config-native-yaml.js"),
       tool
-        ? panel._call("tools", "serialize", {tool}).then((response) => [response, null])
+        ? panel._call("tools", "serialize", index === null
+          ? {tool}
+          : {name: tool.spec?.name, revision: panel._toolRevision}).then((response) => [response, null])
         : Promise.all([
           panel._call("tools", "starter"),
           panel._call("tools", "built_in_catalog", {tools: panel._draft.functions || []}),

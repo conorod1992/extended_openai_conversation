@@ -84,14 +84,18 @@ class _AuthorizedScriptServices:
                 ),
             )
         # Preserve HA's response variables, blocking and cancellation semantics.
-        return await self._hass.services.async_call(
-            domain,
-            service,
-            service_data,
-            blocking=blocking,
-            context=context,
-            target=target,
-            return_response=return_response,
+        kwargs = {
+            "service_data": service_data or {},
+            "blocking": blocking,
+            "context": context,
+            "return_response": return_response,
+        }
+        if target is not None:
+            kwargs["target"] = target
+        if (domain, service) in self._internal_services:
+            return await self._hass.services.async_call(domain, service, **kwargs)
+        return await ha_actions.async_dispatch_ha_service(
+            self._hass, domain, service, kwargs
         )
 
 

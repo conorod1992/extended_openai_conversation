@@ -13,7 +13,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.extended_openai_conversation_responses import backup
 from custom_components.extended_openai_conversation_responses.agent_config import (
-    preserve_legacy_guest_policy,
+    parse_configured_function_tools,
 )
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_MEMORY_MODE,
@@ -112,15 +112,10 @@ async def test_loaded_restore_rolls_back_earlier_subsystems_when_later_apply_fai
 
     memory_before = await memory.async_backup_data()
     knowledge_before = await knowledge.async_backup_data()
-    # Restore writes the integration's canonical/default-expanded agent config, so
-    # compare against the same canonical representation rather than the sparse raw
-    # subentry mapping Home Assistant happened to start with.
-    subentry_data_before = preserve_legacy_guest_policy(
-        dict(subentry.data), backup.agent_config_snapshot(subentry.data)
-    )
-    # Rollback must preserve an unset provider setting rather than materialize a default.
-    if "reasoning_effort" not in subentry.data:
-        subentry_data_before.pop("reasoning_effort", None)
+    # Recovery applies persistence-shaped YAML directly, rather than the parsed
+    # frontend list (whose empty value has different legacy runtime semantics).
+    subentry_data_before = backup.private_configuration_snapshot(subentry.data)
+    runtime_functions_before = parse_configured_function_tools(subentry.data)
     subentry_title_before = subentry.title
 
     original_memory_replace = memory.async_replace_backup
@@ -159,6 +154,7 @@ async def test_loaded_restore_rolls_back_earlier_subsystems_when_later_apply_fai
     assert await memory.async_backup_data() == memory_before
     assert await knowledge.async_backup_data() == knowledge_before
     assert dict(subentry.data) == subentry_data_before
+    assert parse_configured_function_tools(subentry.data) == runtime_functions_before
     assert subentry.title == subentry_title_before
 
     memories = await memory.async_list(owner)

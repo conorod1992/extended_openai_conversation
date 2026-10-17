@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable
-from copy import deepcopy
 from time import perf_counter
 from typing import Any, TypeVar
 
@@ -14,8 +13,7 @@ from homeassistant.core import HomeAssistant
 
 from .agent_config import (
     AGENT_CONFIG_FIELDS,
-    agent_config_defaults,
-    normalize_reasoning_defaults,
+    agent_config_value_snapshot,
     validate_function_groups,
     validate_function_tools,
 )
@@ -26,10 +24,6 @@ from .const import (
     CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
     CONF_KNOWLEDGE_ENABLED,
-    CONF_MEMORY_AUTO_CREATE,
-    CONF_MEMORY_ENABLED,
-    CONF_MEMORY_MODE,
-    CONF_REASONING_EFFORT,
     CONF_TEMPORARY_MEMORY,
     DEFAULT_API_PROVIDER,
     DEFAULT_ARCHIVE_ENABLED,
@@ -37,8 +31,6 @@ from .const import (
     DEFAULT_FUNCTION_GROUPS,
     DEFAULT_TEMPORARY_MEMORY,
     DOMAIN,
-    MEMORY_MODE_AUTOMATIC,
-    MEMORY_MODE_OFF,
 )
 from .conversation_archive import async_get_archive
 from .feature_status import management_feature_status
@@ -561,28 +553,17 @@ async def async_overview_summary(
 def _snapshot_normalized_configuration(
     config: dict[str, Any], *, validated: bool = False
 ) -> dict[str, Any]:
-    """Build a frontend snapshot, trusting tools only after a successful save."""
-    snapshot = agent_config_defaults()
-    snapshot.update(
-        {
-            key: deepcopy(value)
-            for key, value in config.items()
-            if key in AGENT_CONFIG_FIELDS
-        }
+    """Project decoded Functions; raw persisted sources use agent_config_snapshot."""
+    snapshot = agent_config_value_snapshot(
+        {key: value for key, value in config.items() if key in AGENT_CONFIG_FIELDS}
     )
-    normalize_reasoning_defaults(snapshot, explicit=CONF_REASONING_EFFORT in config)
-    # Scoped saves preserve sparse and legacy raw fields. Derive memory aliases
-    # from the source, before display defaults can hide its legacy semantics.
-    mode = get_memory_mode(config)
-    snapshot[CONF_MEMORY_MODE] = mode
-    snapshot[CONF_MEMORY_ENABLED] = mode != MEMORY_MODE_OFF
-    snapshot[CONF_MEMORY_AUTO_CREATE] = mode == MEMORY_MODE_AUTOMATIC
+    configured = snapshot[CONF_FUNCTION_TOOLS]
     if validated:
-        function_tools = snapshot[CONF_FUNCTION_TOOLS]
+        function_tools = [] if configured is None else configured
         if isinstance(function_tools, str):
             function_tools = yaml.safe_load(function_tools) or []
     else:
-        function_tools = validate_function_tools(snapshot[CONF_FUNCTION_TOOLS])
+        function_tools = validate_function_tools(configured)
     snapshot[CONF_FUNCTION_TOOLS] = function_tools
     if not validated:
         snapshot[CONF_FUNCTION_GROUPS] = validate_function_groups(

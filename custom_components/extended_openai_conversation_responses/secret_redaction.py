@@ -5,6 +5,10 @@ from __future__ import annotations
 import re
 from typing import Any
 
+import yaml
+
+from .function_yaml import decoded_function_fields, json_safe_function_fields
+
 REDACTED_SECRET_SENTINEL = {"__extended_openai_redacted_secret__": True}
 LITERAL_TEXT_KEY = "__extended_openai_literal_text__"
 
@@ -107,6 +111,13 @@ def _redact_secrets(
         return _sentinel()
     if is_literal_text(value):
         value = value[LITERAL_TEXT_KEY]
+    if isinstance(value, set):
+        # YAML sets contain hashable scalar keys, so a structured sentinel
+        # cannot replace one member. Redact the whole leaf for same-agent
+        # recovery, just as strings containing an embedded credential are.
+        if any(isinstance(item, str) and _LIKELY_SECRET.search(item) for item in value):
+            return _sentinel()
+        return value.copy()
     if isinstance(value, list):
         return [
             _redact_secrets(
@@ -165,7 +176,10 @@ def _redact_secrets(
 
 def redact_secrets(value: Any, *, schema: bool = False) -> Any:
     """Redact credential values without deleting their surrounding keys/structure."""
-    return _redact_secrets(value, schema=schema, path=())
+    redacted = _redact_secrets(decoded_function_fields(value), schema=schema, path=())
+    return (
+        json_safe_function_fields(redacted) if isinstance(redacted, dict) else redacted
+    )
 
 
 def _restore_redacted_secrets(value: Any) -> Any:
@@ -193,5 +207,16 @@ def _restore_redacted_secrets(value: Any) -> Any:
 
 def restore_redacted_secrets(value: Any) -> Any:
     """Remove redaction sentinels before imported/restored data reaches runtime."""
-    restored = _restore_redacted_secrets(value)
+    decoded = decoded_function_fields(value)
+    restored = _restore_redacted_secrets(decoded)
+    if decoded is not value and isinstance(restored, dict) and "functions" in restored:
+        # Preserve untouched quarantined YAML verbatim. If markers were removed,
+        # retain its persistence shape while exposing the updated structure.
+        restored["functions"] = (
+            value["functions"]
+            if restored["functions"] == decoded["functions"]
+            else yaml.safe_dump(
+                restored["functions"], sort_keys=False, allow_unicode=True
+            )
+        )
     return None if restored is _DROP else restored

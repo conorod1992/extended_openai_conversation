@@ -338,6 +338,14 @@ def reset_restored_runtime(
     key = (entry_id, subentry_id)
     agent = _active_agent(hass, entry_id, subentry_id)
 
+    # Only same-agent Archive recovery retains active bindings. Portable Archive
+    # replacement clears them, so it cannot inherit an old continuity identity.
+    archive = managers[3] if managers is not None else None
+    private_bindings = (
+        archive.private_continuity_bindings()
+        if isinstance(archive, backup.ConversationArchive)
+        else None
+    )
     continuity_managers = hass.data.setdefault(continuity._MANAGERS, {})
     continuity_manager = continuity_managers.get(key)
     agent_continuity = getattr(agent, "_continuity", None)
@@ -346,7 +354,7 @@ def reset_restored_runtime(
         for item in (continuity_manager, agent_continuity)
         if item is not None
     }.values():
-        current.reset_all()
+        current.reset_all(private_bindings=private_bindings)
     if agent_continuity is not None:
         continuity_managers[key] = agent_continuity
 
@@ -467,7 +475,9 @@ async def _update_configuration(
     # configuration through the normal live-update path instead of starting an
     # unowned entry reload while exclusive recovery is still settling.
     if not configuration_supports_live_update(
-        backup.recoverable_configuration_snapshot(subentry.data),
+        # Current data is persisted; the candidate is already decoded/prepared.
+        # A raw legacy [] must not look like an empty edit and force a reload.
+        backup.private_configuration_snapshot(subentry.data),
         backup.recoverable_configuration_snapshot(prepared.config),
         title_changed=subentry.title != prepared.title,
     ):

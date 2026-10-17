@@ -20,6 +20,7 @@ from homeassistant.util import dt as dt_util
 from .agent_config import (
     agent_config_snapshot,
     normalize_agent_config,
+    normalize_persisted_agent_config,
     project_agent_config_transfer,
     validate_agent_title,
 )
@@ -49,6 +50,7 @@ from .conversation_archive import (
     ConversationArchive,
     async_get_archive,
 )
+from .function_yaml import json_safe_function_fields
 from .guest_mode import GuestModeManager, GuestModeSchedule, async_get_guest_mode
 from .knowledge import KnowledgeLibrary, KnowledgeSource, async_get_knowledge
 from .memory import MemoryRecord, PersistentMemory, async_get_memory
@@ -127,14 +129,21 @@ def _safe_configuration(value: Any, *, schema: bool = False) -> Any:
 
 
 def _configuration_snapshot_preserving_quarantine(
-    data: Any, *, frontend_shape: bool, allow_malformed_yaml: bool = False
+    data: Any, *, frontend_shape: bool, persisted_source: bool = True
 ) -> dict[str, Any]:
     """Normalize known config without discarding opaque later-version fields."""
     raw = dict(data)
     from .agent_config import AGENT_CONFIG_FIELDS
 
     known = {key: value for key, value in raw.items() if key in AGENT_CONFIG_FIELDS}
-    normalize = agent_config_snapshot if frontend_shape else normalize_agent_config
+
+    def normalize(value: dict[str, Any], *, decoded: bool = False) -> dict[str, Any]:
+        if frontend_shape:
+            return agent_config_snapshot(value, preparsed_function_tools=decoded)
+        if persisted_source and not decoded:
+            return normalize_persisted_agent_config(value)
+        return normalize_agent_config(value)
+
     try:
         snapshot = normalize(known)
     except HomeAssistantError, yaml.YAMLError, TypeError, ValueError:
@@ -150,7 +159,7 @@ def _configuration_snapshot_preserving_quarantine(
         _usable, issue = function_tools_issue(raw)
         if issue is None:
             raise
-        snapshot = normalize(safe_function_configuration(known))
+        snapshot = normalize(safe_function_configuration(known), decoded=True)
         for key in (CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS):
             if key in raw:
                 snapshot[key] = deepcopy(raw[key])
@@ -159,14 +168,13 @@ def _configuration_snapshot_preserving_quarantine(
                     try:
                         snapshot[key] = yaml.safe_load(snapshot[key])
                     except yaml.YAMLError as err:
-                        if allow_malformed_yaml:
-                            continue
                         raise BackupError(
                             "Repair malformed Function YAML before exporting configuration"
                         ) from err
             else:
                 snapshot.pop(key, None)
-    return project_agent_config_transfer(raw, snapshot, preserve_unknown=True)
+    projected = project_agent_config_transfer(raw, snapshot, preserve_unknown=True)
+    return json_safe_function_fields(projected) if frontend_shape else projected
 
 
 def export_configuration_snapshot(data: Any) -> dict[str, Any]:
@@ -176,14 +184,14 @@ def export_configuration_snapshot(data: Any) -> dict[str, Any]:
 
 def recoverable_configuration_snapshot(data: Any) -> dict[str, Any]:
     """Return persistence-shaped validated config that retains quarantined Functions."""
-    return _configuration_snapshot_preserving_quarantine(data, frontend_shape=False)
+    return _configuration_snapshot_preserving_quarantine(
+        data, frontend_shape=False, persisted_source=False
+    )
 
 
 def private_configuration_snapshot(data: Any) -> dict[str, Any]:
-    """Preserve malformed destination YAML inside private recovery operations."""
-    return _configuration_snapshot_preserving_quarantine(
-        data, frontend_shape=True, allow_malformed_yaml=True
-    )
+    """Return directly persistable recovery config, retaining opaque malformed YAML."""
+    return _configuration_snapshot_preserving_quarantine(data, frontend_shape=False)
 
 
 def _backup_lock(hass: HomeAssistant, entry_id: str, subentry_id: str) -> asyncio.Lock:
@@ -555,6 +563,8 @@ async def _snapshot_for_restore(
     )
     return PreparedRestore(
         subentry.title,
+        # Recovery applies this mapping directly, including during same-process
+        # rollback. A frontend [] must not become a legacy persisted default.
         private_configuration_snapshot(subentry.data),
         PersistentMemory.validate_backup_data(await memory.async_backup_data()),
         TemporaryMemory.validate_backup_data(await temporary.async_backup_data()),

@@ -10,6 +10,8 @@ from unittest.mock import Mock
 
 import pytest
 
+DEV_SHA = "a" * 40
+
 
 def _driver(monkeypatch, tmp_path):
     for key, value in {
@@ -27,6 +29,7 @@ def _driver(monkeypatch, tmp_path):
     spec = importlib.util.spec_from_file_location("full_validation_driver", path)
     driver = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(driver)
+    monkeypatch.setattr(driver, "resolve_ha_dev_sha", Mock(return_value=DEV_SHA))
     return driver
 
 
@@ -189,7 +192,8 @@ def test_final_certification_waits_for_successful_prerequisites(
     monkeypatch.setattr(driver, "dispatch", dispatch)
     monkeypatch.setattr(driver, "wait_for_workflows", wait)
 
-    def inputs(_):
+    def inputs(_, ha_dev_sha):
+        assert ha_dev_sha == DEV_SHA
         if failure == "evidence":
             raise RuntimeError("invalid evidence")
         return {"candidate_sha": driver.TARGET_SHA}
@@ -198,8 +202,10 @@ def test_final_certification_waits_for_successful_prerequisites(
     monkeypatch.chdir(tmp_path)
     assert driver.main() == int(failure is not None)
     import json
+
     cohort = json.loads(Path("full-validation-cohort.json").read_text(encoding="utf-8"))
     assert cohort["candidate_sha"] == driver.TARGET_SHA
+    assert cohort["ha_dev_sha"] == DEV_SHA
     assert cohort["passed"] is (failure is None)
     assert cohort["run_attempt"] == "1"
     assert len(cohort["runs"]) == len(completed)
@@ -211,7 +217,18 @@ def test_final_certification_waits_for_successful_prerequisites(
 
 @pytest.mark.parametrize(
     "defect",
-    [None, "candidate", "failed", "partial", "empty", "expired", "version", "errors"],
+    [
+        None,
+        "candidate",
+        "failed",
+        "partial",
+        "empty",
+        "expired",
+        "version",
+        "errors",
+        "dev-source",
+        "missing-dev-source",
+    ],
 )
 def test_programme_uses_this_runs_verified_environment(monkeypatch, tmp_path, defect):
     from ci.release_certification import GitHubActions
@@ -227,6 +244,9 @@ def test_programme_uses_this_runs_verified_environment(monkeypatch, tmp_path, de
         "candidate_sha": driver.TARGET_SHA,
         "selected": "all",
         "expected_stable_ha_version": "2026.10.0",
+        "jobs": [
+            {"ha_point": "dev", "environment": {"homeassistant_source_commit": DEV_SHA}}
+        ],
         "identity_errors": [],
         "execution_errors": [],
     }
@@ -236,6 +256,15 @@ def test_programme_uses_this_runs_verified_environment(monkeypatch, tmp_path, de
         "partial": {"selected": "runtime"},
         "version": {"expected_stable_ha_version": None},
         "errors": {"execution_errors": ["missing mandatory case"]},
+        "dev-source": {
+            "jobs": [
+                {
+                    "ha_point": "dev",
+                    "environment": {"homeassistant_source_commit": "b" * 40},
+                }
+            ]
+        },
+        "missing-dev-source": {"jobs": []},
     }
     index.update(changes.get(defect, {}))
     if defect == "empty":
@@ -250,12 +279,13 @@ def test_programme_uses_this_runs_verified_environment(monkeypatch, tmp_path, de
     ]
     if defect:
         with pytest.raises(RuntimeError):
-            driver.programme_inputs(results)
+            driver.programme_inputs(results, DEV_SHA)
     else:
-        assert driver.programme_inputs(results) == {
+        assert driver.programme_inputs(results, DEV_SHA) == {
             "candidate_sha": driver.TARGET_SHA,
             "ha_version": "2026.10.0",
             "full_architecture": "true",
             "validation_ref": driver.REF_NAME,
+            "ha_dev_sha": DEV_SHA,
         }
     artifacts.assert_called_once_with(42)

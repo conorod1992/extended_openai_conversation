@@ -19,6 +19,7 @@ from custom_components.extended_openai_conversation_responses import (
 )
 from custom_components.extended_openai_conversation_responses.agent_config import (
     agent_config_defaults,
+    parse_configured_function_tools,
 )
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_FUNCTION_GROUPS,
@@ -175,14 +176,15 @@ async def test_projection_prewarm_discards_yaml_after_subentry_replacement(
     )
 
     async def executor(function, configured):
-        assert function is yaml.safe_load
-        subentry.data = {CONF_FUNCTION_TOOLS: configured}
+        assert function is parse_configured_function_tools
+        subentry.data = dict(configured)
         return function(configured)
 
     hass = SimpleNamespace(async_add_executor_job=executor)
     await repair.async_prewarm_persisted_config_projection(hass, entry, subentry)
 
     assert subentry.data is not original_data
+    assert projection.snapshot is None
 
 
 def test_function_tools_issue_rejects_collection_level_duplicate_names() -> None:

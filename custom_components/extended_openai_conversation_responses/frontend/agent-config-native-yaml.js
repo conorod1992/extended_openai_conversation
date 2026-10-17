@@ -6,6 +6,11 @@ import {
 
 const NATIVE_EDITOR_TAG = "ha-yaml-editor";
 const NATIVE_EDITOR_ID = "tool-yaml-native";
+function hasTypedYamlWireValue(value) {
+  if (!value || typeof value !== "object") return false;
+  if (Object.keys(value).length === 1 && typeof value.__eoai_management_yaml_v1__ === "string") return true;
+  return Object.values(value).some(hasTypedYamlWireValue);
+}
 let nativeEditorLoadPromise = null;
 const NEW_TOOL_STARTER_YAML = `spec:\n  name: my_tool\n  description: Describe what this tool does.\n  parameters:\n    type: object\n    properties: {}\nfunction:\n  type: native\n  name: ''\n`;
 const NEW_TOOL_STARTER_CONFIG = Object.freeze({
@@ -199,6 +204,12 @@ export function bindNativeToolYaml(panel) {
   };
 
   const setNativeValue = (value) => {
+    // HA's native editor dumps a JSON object back to YAML. Typed transport tags
+    // would become literal variables; the existing raw editor preserves source.
+    if (hasTypedYamlWireValue(value)) {
+      showFallback();
+      return false;
+    }
     try {
       nativeEditor.setValue(value);
       constrainNativeCodeEditor(nativeEditor);
