@@ -50,3 +50,5 @@ for rollback and interrupted-transaction recovery. Portable exports omit them;
 explicitly replacing Archive with imported data still starts without imported
 active conversation bindings. A failed restore does not resume saving a private
 conversation when its prior state is recovered.
+
+Local recovery snapshots also preserve content-free active unretained sessions. These sessions are excluded from portable backups and durable Archive metadata, and recovery validation rejects any turns attached to them.

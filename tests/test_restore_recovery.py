@@ -752,3 +752,88 @@ async def test_local_archive_bindings_validate_without_entering_portable_backup(
     journal["rollback"]["archive"]["active"] = invalid
     with pytest.raises(backup.BackupError, match="corrupted"):
         restore_recovery._load_journal(journal, "entry-1", "agent-new")
+
+
+async def test_unretained_archive_sessions_are_local_content_free_recovery_only():
+    from dataclasses import asdict, replace
+    from custom_components.extended_openai_conversation_responses.conversation_archive import (
+        ArchiveTurn,
+        ConversationArchive,
+    )
+    from custom_components.extended_openai_conversation_responses.scope import (
+        unretained_scope,
+    )
+    from tests.test_conversation_archive import FakeArchiveStorage
+
+    storage = FakeArchiveStorage()
+    archive = ConversationArchive(storage, "agent-new")
+    await archive.async_initialize()
+    scope = unretained_scope()
+    session = await archive.async_begin_session(
+        "conversation:browser",
+        scope,
+        "browser",
+        archive_enabled=True,
+        shared_archive_enabled=False,
+        inactivity_minutes=30,
+    )
+    assert session.retention_state == "unretained"
+    target, rollback = _states()
+    target.archive_sessions = [session]
+    target.archive_turns = []
+    target.archive_active = {"conversation:browser": session.session_id}
+    journal = restore_recovery._new_journal("entry-1", "agent-new", target, rollback)
+    _, recovered, _ = restore_recovery._load_journal(journal, "entry-1", "agent-new")
+    await archive.async_replace_backup(
+        recovered.archive_sessions,
+        recovered.archive_turns,
+        active=recovered.archive_active,
+    )
+    continued = await archive.async_begin_session(
+        "conversation:browser",
+        scope,
+        "browser",
+        archive_enabled=True,
+        shared_archive_enabled=False,
+        inactivity_minutes=30,
+    )
+    assert continued.session_id == session.session_id
+    assert continued.retention_state == "unretained"
+    assert (
+        await archive.async_record_turn(
+            continued.session_id,
+            run_id="ignored",
+            user_text="UNRETAINED TEXT",
+            assistant_text="UNRETAINED RESPONSE",
+            successful=True,
+        )
+        is None
+    )
+    assert await archive.async_backup_data() == {"sessions": [], "turns": []}
+    assert session.session_id not in str(storage.metadata)
+    portable = deepcopy(journal["target"])
+    portable["archive"].pop("active")
+    with pytest.raises(backup.BackupError, match="archive"):
+        backup.inspect_backup(portable, "agent-new")
+    with pytest.raises(ValueError, match="archive session metadata"):
+        await archive.async_replace_backup([session], [])
+    turn = ArchiveTurn(
+        "injected",
+        session.session_id,
+        None,
+        session.started_at,
+        "must not retain",
+        "must not retain",
+        True,
+    )
+    with pytest.raises(
+        ValueError, match="unretained archive sessions cannot contain turns"
+    ):
+        archive.validate_backup_data(
+            {
+                "sessions": [asdict(replace(session, turn_count=1))],
+                "turns": [asdict(turn)],
+            },
+            "agent-new",
+            local_recovery=True,
+        )

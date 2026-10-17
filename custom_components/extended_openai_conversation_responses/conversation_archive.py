@@ -906,9 +906,9 @@ class ConversationArchive:
 
     @staticmethod
     def validate_backup_data(
-        data: Any, target_agent_id: str
+        data: Any, target_agent_id: str, *, local_recovery: bool = False
     ) -> tuple[list[ArchiveSession], list[ArchiveTurn]]:
-        """Validate archive source data and bind it to the selected agent."""
+        """Validate portable data or content-free local recovery session metadata."""
         if not isinstance(data, dict) or set(data) != {"sessions", "turns"}:
             raise ValueError("archive data is incomplete or corrupted")
         if not isinstance(data["sessions"], list) or not isinstance(
@@ -921,13 +921,13 @@ class ConversationArchive:
             if not isinstance(raw, dict):
                 raise ValueError("archive session must be an object")
             raw = {**raw, "agent_subentry_id": target_agent_id}
-            session = _validated_session(raw)
+            session = _validated_session(raw, allow_unretained=local_recovery)
             if session.session_id in session_ids:
                 raise ValueError("archive session metadata is invalid")
             session_ids.add(session.session_id)
             sessions.append(
                 replace(session, title="")
-                if session.retention_state == "private"
+                if session.retention_state in {"private", "unretained"}
                 else session
             )
 
@@ -939,6 +939,11 @@ class ConversationArchive:
             for session in sessions
             if session.retention_state == "private"
         }
+        unretained_session_ids = {
+            session.session_id
+            for session in sessions
+            if session.retention_state == "unretained"
+        }
         for raw in data["turns"]:
             if not isinstance(raw, dict):
                 raise ValueError("archive turn must be an object")
@@ -946,6 +951,8 @@ class ConversationArchive:
             turn = replace(turn, timestamp=_parse_time(turn.timestamp).isoformat())
             if turn.session_id in private_session_ids:
                 raise ValueError("private archive sessions cannot contain turns")
+            if turn.session_id in unretained_session_ids:
+                raise ValueError("unretained archive sessions cannot contain turns")
             if turn.turn_id in turn_ids or turn.session_id not in session_ids:
                 raise ValueError("archive turn metadata is invalid")
             turn_ids.add(turn.turn_id)
@@ -972,6 +979,7 @@ class ConversationArchive:
                 "turns": [asdict(turn) for turn in turns],
             },
             self._agent_subentry_id,
+            local_recovery=active is not None,
         )
         bindings = (
             self.validate_recovery_bindings(active, sessions)
@@ -1469,7 +1477,7 @@ def _clean_text(value: str) -> str:
     return value
 
 
-def _validated_session(raw: Any) -> ArchiveSession:
+def _validated_session(raw: Any, *, allow_unretained: bool = False) -> ArchiveSession:
     """Validate one record before it can enter an archive generation."""
     if not isinstance(raw, dict):
         raise ValueError("archive session must be an object")
@@ -1500,7 +1508,12 @@ def _validated_session(raw: Any) -> ArchiveSession:
     if (
         not session.session_id
         or len(session.session_id) > 128
-        or session.retention_state not in {"retained", "private"}
+        or session.retention_state
+        not in (
+            {"retained", "private", "unretained"}
+            if allow_unretained
+            else {"retained", "private"}
+        )
         or not isinstance(session.turn_count, int)
         or isinstance(session.turn_count, bool)
         or session.turn_count < 0

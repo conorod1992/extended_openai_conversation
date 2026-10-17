@@ -1,6 +1,11 @@
 {
   "schema": "eoai-nightly-execution-contract/v1",
   "pytest": [
+    "tests/test_selective_restore_concurrency.py::test_private_active_conversation_survives_selective_restore_and_rollback[private-False]",
+    "tests/test_selective_restore_concurrency.py::test_private_active_conversation_survives_selective_restore_and_rollback[private-True]",
+    "tests/test_selective_restore_concurrency.py::test_private_active_conversation_survives_selective_restore_and_rollback[unretained-False]",
+    "tests/test_selective_restore_concurrency.py::test_private_active_conversation_survives_selective_restore_and_rollback[unretained-True]",
+    "tests/test_restore_recovery.py::test_unretained_archive_sessions_are_local_content_free_recovery_only",
     "tests/test_management_loading_performance.py::test_sparse_memory_snapshot_matches_cold_configuration[absent-False]",
     "tests/test_management_loading_performance.py::test_sparse_memory_snapshot_matches_cold_configuration[absent-True]",
     "tests/test_management_loading_performance.py::test_sparse_memory_snapshot_matches_cold_configuration[manual-False]",
@@ -30,8 +35,6 @@
     "tests/test_restore_recovery.py::test_local_archive_bindings_validate_without_entering_portable_backup[None]",
     "tests/test_restore_recovery.py::test_local_archive_bindings_validate_without_entering_portable_backup[invalid1]",
     "tests/test_restore_recovery.py::test_local_archive_bindings_validate_without_entering_portable_backup[invalid2]",
-    "tests/test_selective_restore_concurrency.py::test_private_active_conversation_survives_selective_restore_and_rollback[False]",
-    "tests/test_selective_restore_concurrency.py::test_private_active_conversation_survives_selective_restore_and_rollback[True]",
     "tests/test_per_effect_receipts.py::test_rendered_bash_default_is_one_effect_during_recovery",
     "tests_real_ha/test_archive_private_activity.py::test_private_browser_followup_survives_knowledge_restore[False]",
     "tests_real_ha/test_archive_private_activity.py::test_private_browser_followup_survives_knowledge_restore[True]",

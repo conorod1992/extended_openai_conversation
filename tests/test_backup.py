@@ -605,7 +605,7 @@ def _patch_section_validators(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         backup.ConversationArchive,
         "validate_backup_data",
-        staticmethod(lambda _value, _agent_id: ([], [])),
+        staticmethod(lambda _value, _agent_id, **_kwargs: ([], [])),
     )
     monkeypatch.setattr(
         backup.UsageManager,
@@ -862,7 +862,7 @@ async def test_snapshot_for_restore_validates_live_manager_backups(monkeypatch) 
     monkeypatch.setattr(
         backup.ConversationArchive,
         "validate_backup_data",
-        staticmethod(lambda value, agent: ([(value, agent)], [])),
+        staticmethod(lambda value, agent, **_kwargs: ([(value, agent)], [])),
     )
     monkeypatch.setattr(
         backup.UsageManager,

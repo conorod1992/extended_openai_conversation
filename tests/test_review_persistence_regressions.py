@@ -117,7 +117,7 @@ def test_archive_private_validation_does_not_rescan_sessions_for_every_turn(
         retention_state = "retained"
         turn_count = 2
 
-        def __init__(self, raw):
+        def __init__(self, raw, *, allow_unretained=False):
             self.key = raw["session_id"]
 
         @property

@@ -448,7 +448,7 @@ def _inspect_decoded_backup(
         )
         active = archive_data.pop("active") if has_active else None
         archive_sessions, archive_turns = ConversationArchive.validate_backup_data(
-            archive_data, target_agent_id
+            archive_data, target_agent_id, local_recovery=has_active
         )
         archive_active = (
             ConversationArchive.validate_recovery_bindings(active, archive_sessions)
@@ -535,7 +535,9 @@ async def _snapshot_for_restore(
     ) = managers
     archive_data = await archive.async_recovery_data()
     archive_sessions, archive_turns = ConversationArchive.validate_backup_data(
-        {key: archive_data[key] for key in ("sessions", "turns")}, subentry.subentry_id
+        {key: archive_data[key] for key in ("sessions", "turns")},
+        subentry.subentry_id,
+        local_recovery=True,
     )
     archive_active = ConversationArchive.validate_recovery_bindings(
         archive_data["active"], archive_sessions

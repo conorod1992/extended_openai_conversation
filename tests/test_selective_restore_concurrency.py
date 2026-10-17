@@ -302,10 +302,20 @@ async def test_full_restore_queues_behind_selective_snapshot_without_lock_invers
 
 
 @pytest.mark.parametrize("fail_knowledge", [False, True])
-async def test_private_active_conversation_survives_selective_restore_and_rollback(monkeypatch, fail_knowledge):
-    from custom_components.extended_openai_conversation_responses.continuity import ConversationContinuity
-    from custom_components.extended_openai_conversation_responses.conversation_archive import ConversationArchive
-    from custom_components.extended_openai_conversation_responses.scope import user_scope
+@pytest.mark.parametrize("retention_state", ["private", "unretained"])
+async def test_private_active_conversation_survives_selective_restore_and_rollback(
+    monkeypatch, fail_knowledge, retention_state
+):
+    from custom_components.extended_openai_conversation_responses.continuity import (
+        ConversationContinuity,
+    )
+    from custom_components.extended_openai_conversation_responses.conversation_archive import (
+        ConversationArchive,
+    )
+    from custom_components.extended_openai_conversation_responses.scope import (
+        shared_scope,
+        user_scope,
+    )
     from tests.test_conversation_archive import FakeArchiveStorage
 
     real_snapshot = backup._snapshot_for_restore
@@ -313,36 +323,82 @@ async def test_private_active_conversation_survives_selective_restore_and_rollba
     harness = RestoreHarness(monkeypatch)
     archive = ConversationArchive(FakeArchiveStorage(), harness.subentry.subentry_id)
     await archive.async_initialize()
-    scope = user_scope("alice", source="authenticated_user")
+    scope = (
+        user_scope("alice", source="authenticated_user")
+        if retention_state == "private"
+        else shared_scope(source="shared_voice_policy")
+    )
     continuity = ConversationContinuity(harness.subentry.subentry_id)
     conversation_id = "browser-conversation"
     session_key = f"conversation:{conversation_id}"
-    session = await archive.async_begin_session(session_key, scope, conversation_id,
-        archive_enabled=True, shared_archive_enabled=False, inactivity_minutes=30)
-    await archive.async_make_private(session.session_id)
-    document = restore_recovery._prepared_document(harness.state, harness.entry.entry_id, harness.subentry.subentry_id)
-    for index, section in ((0,"memories"),(1,"temporary_memories"),(2,"knowledge"),(4,"usage"),(5,"guest_mode"),(6,"request_rules")):
-        harness.managers[index].async_backup_data = AsyncMock(return_value=document[section])
+    session = await archive.async_begin_session(
+        session_key,
+        scope,
+        conversation_id,
+        archive_enabled=True,
+        shared_archive_enabled=False,
+        inactivity_minutes=30,
+    )
+    if retention_state == "private":
+        await archive.async_make_private(session.session_id)
+    document = restore_recovery._prepared_document(
+        harness.state, harness.entry.entry_id, harness.subentry.subentry_id
+    )
+    for index, section in (
+        (0, "memories"),
+        (1, "temporary_memories"),
+        (2, "knowledge"),
+        (4, "usage"),
+        (5, "guest_mode"),
+        (6, "request_rules"),
+    ):
+        harness.managers[index].async_backup_data = AsyncMock(
+            return_value=document[section]
+        )
     harness.managers = (*harness.managers[:3], archive, *harness.managers[4:])
-    monkeypatch.setattr(restore_recovery, "_durable_managers", AsyncMock(return_value=harness.managers))
+    monkeypatch.setattr(
+        restore_recovery, "_durable_managers", AsyncMock(return_value=harness.managers)
+    )
     monkeypatch.setattr(backup, "_snapshot_for_restore", real_snapshot)
     monkeypatch.setattr(restore_recovery, "reset_restored_runtime", real_reset)
-    monkeypatch.setattr(restore_recovery, "_active_agent", lambda *_: SimpleNamespace(_continuity=continuity))
+    monkeypatch.setattr(
+        restore_recovery,
+        "_active_agent",
+        lambda *_: SimpleNamespace(_continuity=continuity),
+    )
     harness.fail_knowledge_writes = int(fail_knowledge)
     if fail_knowledge:
-        with pytest.raises(backup.BackupError, match="previous agent state was recovered"):
+        with pytest.raises(
+            backup.BackupError, match="previous agent state was recovered"
+        ):
             await harness.restore()
     else:
         await harness.restore()
-    resolution = await continuity.async_resolve("ha_default", scope, None, conversation_id, 30)
+    resolution = await continuity.async_resolve(
+        "ha_default", scope, None, conversation_id, 30
+    )
     try:
         assert resolution.conversation_id == conversation_id
-        continued = await archive.async_begin_session(session_key, scope, resolution.conversation_id,
-            archive_enabled=True, shared_archive_enabled=False, inactivity_minutes=30)
+        continued = await archive.async_begin_session(
+            session_key,
+            scope,
+            resolution.conversation_id,
+            archive_enabled=True,
+            shared_archive_enabled=False,
+            inactivity_minutes=30,
+        )
         assert continued.session_id == session.session_id
-        assert continued.retention_state == "private"
-        assert await archive.async_record_turn(continued.session_id, run_id="after-restore",
-            user_text="PRIVATE FOLLOWUP", assistant_text="PRIVATE RESPONSE", successful=True) is None
+        assert continued.retention_state == retention_state
+        assert (
+            await archive.async_record_turn(
+                continued.session_id,
+                run_id="after-restore",
+                user_text="PRIVATE FOLLOWUP",
+                assistant_text="PRIVATE RESPONSE",
+                successful=True,
+            )
+            is None
+        )
         assert "PRIVATE FOLLOWUP" not in str(await archive.async_backup_data())
     finally:
         await continuity.async_release(resolution.key, resolution.claim_token)
