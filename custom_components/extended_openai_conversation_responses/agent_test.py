@@ -6,13 +6,16 @@ from dataclasses import asdict, dataclass
 from typing import Any, cast
 
 from openai import OpenAIError
-import yaml
 
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
-from .agent_config import configured_function_tools_from_data, validate_function_groups
+from .agent_config import (
+    configured_function_tools_from_data,
+    parse_configured_function_tools,
+    validate_function_groups,
+)
 from .const import (
     API_MODE_AUTO,
     API_MODE_CHAT_COMPLETIONS,
@@ -22,14 +25,12 @@ from .const import (
     CONF_BASE_URL,
     CONF_CHAT_MODEL,
     CONF_FUNCTION_GROUPS,
-    CONF_FUNCTION_TOOLS,
     CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     CONF_SKILLS,
     CONF_WEB_SEARCH,
     DEFAULT_API_MODE,
     DEFAULT_API_PROVIDER,
     DEFAULT_CHAT_MODEL,
-    DEFAULT_CONF_FUNCTION_TOOLS,
     DEFAULT_FUNCTION_GROUPS,
     DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     DEFAULT_WEB_SEARCH,
@@ -108,8 +109,7 @@ def _overall(checks: list[TestCheck]) -> str:
 
 def _validate_function_schema(subentry: ConfigSubentry) -> int:
     """Validate configured tool schemas without executing any tool."""
-    configured = subentry.data.get(CONF_FUNCTION_TOOLS)
-    tools = yaml.safe_load(configured) if configured else DEFAULT_CONF_FUNCTION_TOOLS
+    tools = parse_configured_function_tools(subentry.data)
     for tool in tools or []:
         if not isinstance(tool, dict) or not isinstance(tool.get("function"), dict):
             raise ValueError("Each function tool must contain a function mapping")

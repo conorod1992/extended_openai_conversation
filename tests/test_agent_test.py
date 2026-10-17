@@ -837,12 +837,12 @@ class _ResidualCreate:
 
 
 def _residual_subentry_with_tools(tools: list[dict[str, Any]]) -> Any:
-    return SimpleNamespace(data={agent_test.CONF_FUNCTION_TOOLS: yaml.safe_dump(tools)})
+    return SimpleNamespace(data={CONF_FUNCTION_TOOLS: yaml.safe_dump(tools)})
 
 
 def test_validate_function_schema_rejects_missing_function_mapping() -> None:
     subentry = SimpleNamespace(
-        data={agent_test.CONF_FUNCTION_TOOLS: yaml.safe_dump([{"type": "function"}])}
+        data={CONF_FUNCTION_TOOLS: yaml.safe_dump([{"type": "function"}])}
     )
 
     with pytest.raises(ValueError, match="function mapping"):
@@ -900,7 +900,7 @@ async def _residual_run_agent(
         data={
             agent_test.CONF_API_MODE: agent_test.API_MODE_RESPONSES,
             agent_test.CONF_CHAT_MODEL: "gpt-5.6",
-            agent_test.CONF_FUNCTION_TOOLS: "[]",
+            CONF_FUNCTION_TOOLS: "[]",
             agent_test.CONF_WEB_SEARCH: web_search,
         },
     )
@@ -1032,3 +1032,29 @@ async def test_text_only_probe_failure_does_not_claim_function_failure():
     checks = {check.name: check for check in result.checks}
     assert checks["Model access"].status == "Failed"
     assert checks["Function calling"].status == "Skipped"
+
+
+@pytest.mark.parametrize("as_yaml", [False, True])
+@pytest.mark.parametrize("surface", ["direct", "management"])
+async def test_agent_diagnostic_accepts_supported_functions_representations(as_yaml, surface):
+    tools = [{"spec": {"name": "probe", "description": "Probe", "parameters": {"type": "object", "properties": {}}},
+              "function": {"type": "native", "name": "get_user_from_user_id"}}]
+    options = {CONF_FUNCTION_TOOLS: yaml.safe_dump(tools) if as_yaml else tools}
+    if surface == "direct":
+        result, client, _usage = await _run(options)
+        assert result.status == "Passed", result.as_text()
+    else:
+        from custom_components.extended_openai_conversation_responses import management_ui
+        hass, entry, subentry, client, usage = _objects(options)
+        with patch.object(agent_test, "get_exposed_entities", return_value=[{}]), patch.object(agent_test, "async_get_usage", AsyncMock(return_value=usage)):
+            result = await management_ui.async_diagnostics_command(SimpleNamespace(hass=hass, entry=entry, subentry=subentry, message={"action": "test_agent"}))
+        assert result["status"] == "Passed", result
+    client.chat.completions.create.assert_awaited_once()
+
+
+@pytest.mark.parametrize("value", [None, "", [], "[]"])
+def test_diagnostic_parser_retains_runtime_empty_and_default_semantics(value):
+    from custom_components.extended_openai_conversation_responses.agent_config import parse_configured_function_tools
+    from custom_components.extended_openai_conversation_responses.const import DEFAULT_CONF_FUNCTION_TOOLS
+    assert parse_configured_function_tools({CONF_FUNCTION_TOOLS: value}) == ([] if value == "[]" else DEFAULT_CONF_FUNCTION_TOOLS)
+    assert parse_configured_function_tools({}) == DEFAULT_CONF_FUNCTION_TOOLS
