@@ -64,15 +64,28 @@ different retention and ownership duties.
 ## Necessary complexity and residual risks
 
 Prepared HA service identities lowercase domain and service names, matching native
-dispatch. Entity services using string method names, and batched dispatchers which
-strip selector fields, compare top-level selectors as sets and omit empty selector
-lists. Callable entity handlers receive the full ServiceCall, so their selector
-ordering and presence remain part of the identity. The recognized built-in
-homeassistant power dispatcher compares entity IDs as a set because it forwards
-sorted IDs, while preserving its other forwarded fields. Custom replacements for
-those services remain opaque. Actual dispatch data, events, arbitrary payload
-lists and action-batch ordering are unchanged. Exact whole-tool identities remain
-conservative; prepared-effect matching supplies HA-specific equivalence.
+dispatch. Recognized selector-stripping entity dispatchers compare the complete
+resolved participant set, including availability, feature and permission filters.
+Entity, area, device, floor and label selections that reach the same participants
+therefore identify the same operation. Callable entity handlers retain their full
+ServiceCall and observable selector ordering/presence. Actual dispatch data and
+schema execution remain unchanged.
+
+Recognized generic power dispatchers and string-method entity power services also
+retain one bounded, hashed cross-family recovery reference per receipt. During a
+failed continuation, an opposite-family retry with the same full target set,
+power operation, user and response mode is conservatively refused. Their schemas
+may supply different defaults, so this does not declare every service alias or
+same-family payload equivalent. Different target sets and power operations remain
+permitted; callable delegates are excluded from this cross-check.
+
+Bash owns its receipt immediately before subprocess creation, after rendering and
+validation. Its identity uses the rendered command, resolved working directory,
+effective timeout, platform and the exact inherited environment supplied to the
+subprocess. Only the hash is retained. Omitted versus explicit template defaults
+cannot repeat an unresolved effect. Unidentifiable new effects are conservatively
+refused during recovery. Acknowledgment still clears all recovery evidence and
+permits ordinary repeated commands.
 
 Local Request Rule Functions and deferred jobs have explicit detached ownership.
 Their invocation receipts still bound execution, but do not enter provider replay

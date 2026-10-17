@@ -22,6 +22,7 @@ from ..const import (
     SHELL_OUTPUT_LIMIT,
     SHELL_TIMEOUT,
 )
+from ..execution_outcomes import execution_completed, execution_started
 from ..function_execution import backend_failure
 from ..operational_errors import log_handled_failure
 from ..regex_execution import async_search_configured_patterns
@@ -382,10 +383,22 @@ class BashFunction(Function):
         except ValueError as err:
             return backend_failure(str(err), err)
 
+        environment = dict(os.environ)
+        receipt = execution_started(
+            kind="bash",
+            prepared={
+                "command": command,
+                "cwd": str(cwd),
+                "environment": environment,
+                "timeout": timeout,
+                "platform": os.name,
+            },
+        )
         try:
             process = await asyncio.create_subprocess_shell(
                 command,
                 cwd=str(cwd),
+                env=environment,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 start_new_session=os.name == "posix",
@@ -425,6 +438,7 @@ class BashFunction(Function):
                 )
                 raise
 
+            execution_completed(receipt)
             stdout_text = _decode_bounded_output(stdout, stdout_truncated)
             stderr_text = _decode_bounded_output(stderr, stderr_truncated)
 

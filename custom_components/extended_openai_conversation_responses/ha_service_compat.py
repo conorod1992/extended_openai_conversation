@@ -26,16 +26,22 @@ from homeassistant.helpers import service as service_helpers
 from .ha_schema import schema_for_ha
 
 
-def _entity_target_identity(
-    handler: Any, processed: Any, domain: str, service: str
-) -> Any:
-    """Normalize only selectors hidden from the downstream service handler."""
-    target = handler.job.target
-    if not isinstance(processed, Mapping):
-        return processed
-    generic_power = (
-        domain.lower() == "homeassistant"
-        and service.lower() in {"turn_on", "turn_off", "toggle"}
+def _entity_dispatcher(target: Any) -> str | None:
+    """Only Core dispatchers with selector-stripping contracts are precise."""
+    if not isinstance(target, partial):
+        return None
+    if target.func is getattr(service_helpers, "batched_entity_service_call", None):
+        return "batched"
+    func = target.args[2] if len(target.args) > 2 else target.keywords.get("func")
+    if target.func is service_helpers.entity_service_call and isinstance(func, str):
+        return "entity"
+    return None
+
+
+def _generic_power(target: Any, domain: str, service: str) -> bool:
+    return (
+        domain == "homeassistant"
+        and service in {"turn_on", "turn_off", "toggle"}
         and (getattr(target, "__module__", None), getattr(target, "__qualname__", None))
         in {
             (
@@ -48,43 +54,85 @@ def _entity_target_identity(
             ),
         }
     )
-    stripped_selectors = isinstance(target, partial) and (
-        target.func is getattr(service_helpers, "batched_entity_service_call", None)
-        or (
-            target.func is service_helpers.entity_service_call
-            and isinstance(
-                target.args[2] if len(target.args) > 2 else target.keywords.get("func"),
-                str,
-            )
-        )
+
+
+async def _entity_target_identity(
+    hass: HomeAssistant,
+    handler: Any,
+    processed: Any,
+    domain: str,
+    service: str,
+    context: Any,
+) -> tuple[Any, dict[str, Any]]:
+    """Resolve complete participant sets, retaining callable handler semantics."""
+    target = handler.job.target
+    dispatcher = _entity_dispatcher(target)
+    generic = _generic_power(target, domain, service)
+    if not isinstance(processed, Mapping) or not (generic or dispatcher):
+        return processed, {}
+    from .ha_actions import resolve_action_entity_ids, service_target_entity_ids
+
+    selected = resolve_action_entity_ids(hass, domain, service, processed)
+    if generic:
+        # Core forwards selector data to its delegates. A callable delegate can
+        # observe that representation, so it must keep the existing raw identity.
+        domains = {entity_id.split(".", 1)[0] for entity_id in selected}
+        if any(
+            (delegate := hass.services.async_services_for_domain(item).get(service))
+            is None
+            or _entity_dispatcher(delegate.job.target) != "entity"
+            for item in domains
+        ):
+            identity = dict(processed)
+            if isinstance(ids := identity.get(ATTR_ENTITY_ID), list):
+                identity[ATTR_ENTITY_ID] = sorted(set(ids))
+            return identity, {}
+    # Authorization keeps explicit invalid targets visible; receipts identify
+    # actual available/feature-compatible participants instead.
+    selected = service_target_entity_ids(
+        hass, domain, service, selected, explicit=set()
     )
-    if not generic_power and not stripped_selectors:
-        return processed
-    identity = dict(processed)
-    keys = (
-        (ATTR_ENTITY_ID,)
-        if generic_power
-        else (
+    if user_id := getattr(context, "user_id", None):
+        user = await hass.auth.async_get_user(user_id)
+        if user is None:
+            return object(), {}  # Unknown ownership cannot establish a distinct effect.
+        if not user.is_admin:
+            from homeassistant.auth.permissions.const import POLICY_CONTROL
+
+            selected = {
+                item
+                for item in selected
+                if user.permissions.check_entity(item, POLICY_CONTROL)
+            }
+    identity = {
+        key: value
+        for key, value in processed.items()
+        if key
+        not in {
             ATTR_ENTITY_ID,
             ATTR_AREA_ID,
             ATTR_DEVICE_ID,
             ATTR_FLOOR_ID,
             ATTR_LABEL_ID,
-        )
-    )
-    for key in keys:
-        value = identity.get(key)
-        if isinstance(value, (list, tuple, set, frozenset)) and all(
-            isinstance(item, str) for item in value
-        ):
-            if value:
-                identity[key] = sorted(set(value))
-            else:
-                identity.pop(key, None)
-    return identity
+        }
+    }
+    identity[ATTR_ENTITY_ID] = sorted(selected)
+    power = {}
+    if generic or (
+        dispatcher == "entity" and service in {"turn_on", "turn_off", "toggle"}
+    ):
+        # Opposite dispatcher families are conservatively cross-checked by full
+        # target set. Their schemas/defaults may differ, so never collapse all
+        # same-family calls or arbitrary service aliases.
+        power = {
+            "side": "generic" if generic else "entity",
+            "service": service,
+            "entities": sorted(selected),
+        }
+    return identity, power
 
 
-def prepare_service_dispatch(
+async def prepare_service_dispatch(
     hass: HomeAssistant, domain: str, service: str, kwargs: dict[str, Any]
 ) -> tuple[Any, dict[str, Any]]:
     """Return a prepared local registry, or the original opaque adapter."""
@@ -102,6 +150,9 @@ def prepare_service_dispatch(
     raw = dict(kwargs["service_data"])
     raw.update(kwargs.get("target", {}))
     processed = handler.schema(raw) if handler.schema is not None else raw
+    identity, power = await _entity_target_identity(
+        hass, handler, processed, domain.lower(), service.lower(), kwargs.get("context")
+    )
     if (
         registry.async_services_for_domain(domain.lower()).get(service.lower())
         is not handler
@@ -117,6 +168,7 @@ def prepare_service_dispatch(
     kwargs["service_data"] = raw
     kwargs.pop("target", None)
     return prepared_registry, {
-        "data": _entity_target_identity(handler, processed, domain, service),
+        "data": identity,
         "target": {},
+        **({"_power_recovery": power} if power else {}),
     }

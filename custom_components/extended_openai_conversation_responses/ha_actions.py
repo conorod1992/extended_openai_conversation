@@ -153,12 +153,30 @@ async def _async_call_ha_action_unchecked(
     )
 
     try:
-        registry, prepared = prepare_service_dispatch(hass, domain, service, kwargs)
+        registry, prepared = await prepare_service_dispatch(
+            hass, domain, service, kwargs
+        )
     except _SERVICE_SCHEMA_ERRORS as err:
         execution_rejected(before_dispatch=True)
         raise HomeAssistantError(str(err)) from err
 
+    recovery_alias = check_alias = ""
+    if power := prepared.pop("_power_recovery", None):
+        from .tool_replay_guard import effect_signature
+
+        side = power.pop("side")
+        alias = {
+            **power,
+            "user_id": getattr(context, "user_id", None),
+            "return_response": request_response,
+        }
+        recovery_alias = effect_signature(f"ha_power_{side}", alias)
+        check_alias = effect_signature(
+            f"ha_power_{'entity' if side == 'generic' else 'generic'}", alias
+        )
     receipt = execution_started(
+        recovery_alias=recovery_alias,
+        check_alias=check_alias,
         kind="ha_service" if registry is not hass.services else "backend",
         prepared={
             "domain": domain.lower(),

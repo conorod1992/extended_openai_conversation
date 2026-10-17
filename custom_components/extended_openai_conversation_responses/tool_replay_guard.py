@@ -204,6 +204,7 @@ def check_effect_replay(entity: Any, signature: str) -> None:
     )
     if (
         signature in signatures
+        or (signature == "*" and bool(signatures))
         or "*" in signatures
         or _replay_history_incomplete(entity, scope.conversation_id)
     ):
@@ -427,11 +428,16 @@ def remember_unacknowledged_calls(
             if getattr(entity, "_read_only_tool_inputs", {}).get(id(call)) is call:
                 continue
             retained_effects.update(
-                receipt.signature
+                signature
                 for receipt in getattr(entity, "_execution_effect_receipts", {}).get(
                     id(call), ()
                 )
-                if receipt.outcome in {"completed", "uncertain"} and receipt.signature
+                if receipt.outcome in {"completed", "uncertain"}
+                for signature in (
+                    receipt.signature,
+                    getattr(receipt, "recovery_alias", ""),
+                )
+                if signature
             )
     if len(retained_effects) > 4096:
         # Never evict an unresolved effect and silently permit its replay.
