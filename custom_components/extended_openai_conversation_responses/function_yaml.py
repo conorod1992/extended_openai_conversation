@@ -90,7 +90,11 @@ def decode_management_function_request(message: dict[str, Any]) -> dict[str, Any
     resemble a Function definition, including the reserved wire marker.
     """
     section = message.get("section")
-    if section not in {"configuration", "tools", "function_repair"}:
+    if not isinstance(section, str) or section not in {
+        "configuration",
+        "tools",
+        "function_repair",
+    }:
         return message
     result = dict(message)
     if (

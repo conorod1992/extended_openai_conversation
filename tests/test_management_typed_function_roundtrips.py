@@ -243,7 +243,8 @@ def test_wire_tags_do_not_change_unrelated_management_fields():
 
 
 @pytest.mark.parametrize(
-    "section", ["tools", "configuration", "function_repair", "request_rules"]
+    "section",
+    ["tools", "configuration", "function_repair", "request_rules", [], {}, None, 42],
 )
 def test_function_wire_decoder_preserves_arbitrary_arguments(section):
     payload = {
