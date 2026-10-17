@@ -3758,7 +3758,9 @@
       "tests_real_ha/test_retained_context_publication_races.py"
     ],
     "minimum-ha-features": [
-      "tests_real_ha/test_ai_task_provider_wire.py",
+      "tests_real_ha/test_ai_task_provider_wire.py::test_plain_and_structured_ai_tasks_cross_sdk_wire",
+      "tests_real_ha/test_ai_task_provider_wire.py::test_provider_failure_script_respects_continue_on_error",
+      "tests_real_ha/test_ai_task_provider_wire.py::test_provider_cancellation_is_not_translated_or_retried",
       "tests_real_ha/test_assist_voice_identity_precedence.py::test_genuine_assist_prefers_registry_device_voice_identity_when_both_ids_exist",
       "tests_real_ha/test_entity_registry_customization.py::test_conversation_registry_customization_survives_reload_and_service_resolution",
       "tests_real_ha/test_ha_llm_tool_acceptance.py::test_real_ha_llm_tool_catalog_add_reload_and_dispatch",

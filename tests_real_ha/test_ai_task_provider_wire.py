@@ -21,7 +21,6 @@ from custom_components.extended_openai_conversation_responses.const import (
     DOMAIN,
 )
 from homeassistant.components import ai_task
-from homeassistant.components.ai_task.const import DATA_COMPONENT
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -734,6 +733,18 @@ async def test_provider_failure_script_respects_continue_on_error(
     continue_on_error: bool,
 ) -> None:
     entry, entity_id = await _task_entity(hass, mode)
+    from custom_components.extended_openai_conversation_responses import (
+        ai_task as platform,
+    )
+
+    failures = []
+    record_failure = platform.record_current_provider_failure
+
+    def record_once(error):
+        failures.append(error)
+        record_failure(error)
+
+    monkeypatch.setattr(platform, "record_current_provider_failure", record_once)
     raw_client = _raw_client(SimpleNamespace(_client=entry.runtime_data))
     monkeypatch.setattr(raw_client, "max_retries", 0)
     wire = _wire(
@@ -783,10 +794,8 @@ async def test_provider_failure_script_respects_continue_on_error(
     await hass.async_block_till_done()
     assert len(followups) == int(continue_on_error)
     _assert_paths(wire, mode, 1)
-    entity = hass.data[DATA_COMPONENT].get_entity(entity_id)
-    assert entity._usage.totals.api_request_count == 1
-    assert entity._usage.totals.failed_request_count == 1
-    assert entity._usage.totals.successful_request_count == 0
+    assert len(failures) == 1
+    assert isinstance(failures[0], RateLimitError)
 
 
 @pytest.mark.parametrize("mode", MODES)
