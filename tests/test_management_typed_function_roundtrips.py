@@ -183,6 +183,9 @@ async def test_export_uses_lossless_yaml_for_non_json_values(hass, value):
         title="Typed tool", data={"functions": yaml.safe_dump([original])}
     )
     document = json.loads(json.dumps(ui._export_agent(subentry)))
+    response = _wire({"document": document, "json": json.dumps(document)})
+    assert response["document"] == json.loads(response["json"])
+    document = response["document"]
     restored = ui._parse_import_document(document, destination=subentry)
     assert (
         yaml.safe_load(restored["config"]["functions"])[0]["function"]

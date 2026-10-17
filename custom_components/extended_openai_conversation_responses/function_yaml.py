@@ -51,7 +51,13 @@ def management_function_response(value: Any, *, section: str | None = None) -> A
     if isinstance(value, dict):
         if "spec" in value and "function" in value:
             return _management_yaml_value(value)
-        return {key: management_function_response(item) for key, item in value.items()}
+        # Portable artifacts already have their own JSON/YAML representation.
+        # Applying editor tags inside them would change the exported document
+        # (notably literal marker data) and disagree with its serialized JSON.
+        return {
+            key: item if key == "document" else management_function_response(item)
+            for key, item in value.items()
+        }
     if isinstance(value, list):
         return [management_function_response(item) for item in value]
     return value
