@@ -42,7 +42,7 @@ parameters. Persistence helpers must not substitute for that resolver.
 | Private destination recovery snapshot | As above, but malformed destination Function YAML can remain opaque for private recovery. Public export still requires repair of malformed YAML. | `private_configuration_snapshot` |
 | Duplicate agent | Normalize recognized fields and preserve legacy Guest policy. Unlike portable transfer, omitted reasoning is materialized; opaque fields are excluded. | management duplicate handler |
 | Legacy Function enable/disable services | Validate the merged candidate, then persist only the owned Function Tool or Function Group field. Preserve all unrelated raw values and omissions, including legacy Guest policy. Default Functions are materialized only when the tool field is edited. | `async_set_function_tools_enabled`, `async_set_function_groups_enabled` |
-| Unrelated configuration save through the degraded Function repair handler | Preserve raw Function fields and legacy Guest policy, but persist other normalized values. This differs from the ordinary section-save projection. | repair `configuration_save` handler |
+| Unrelated configuration save through the degraded Function repair handler | Preserve raw Function fields and legacy Guest policy; persist only the submitted unrelated fields. | repair `configuration_save` handler, `project_agent_config_updates` |
 
 ## Shared projections
 
@@ -64,6 +64,49 @@ normal and quarantine paths both pass through this projection once. YAML parsing
 Function isolation, redaction and secret restoration remain at their existing
 boundaries.
 
+
+## Effective projection invariants
+
+Cold reads, cache hits, startup prewarming, immediate save responses, and cache
+reconstruction must agree on effective values for the same authoritative source.
+`agent_config_value_snapshot()` shares the cheap scalar/selector derivations with
+strict normalization: legacy prompt migration, numeric coercion, model-dependent
+reasoning defaults, memory aliases, selector canonicalization and exposed attribute
+preferences. Fast reads reuse already validated Functions/Groups; they do not
+recompile templates or repeat Function schemas. Lightweight Settings and retention
+views use the same numeric coercion without constructing a full configuration.
+The provider-request boundary applies that coercion to a detached sparse mapping,
+so legacy sampling strings agree with Management without pinning missing settings
+or bypassing model capability filtering.
+
+A source representation must be decoded exactly once. Existing persisted Functions
+follow `parse_configured_function_tools()` and `normalize_persisted_agent_config()`:
+missing values and historical falsy values (including a raw empty list) use the
+legacy defaults. Truthy YAML that decodes to `null` or an empty list represents no
+Functions. A newly submitted empty list is an intentional edit and is persisted as
+YAML `[]`; it must not pass through the legacy persisted-value fallback. Prewarming
+uses the persisted decoder before handing decoded values to the normalizer.
+
+Private recovery configurations are persistence-shaped, including normal Function
+YAML. Rollback can apply them directly without turning a decoded frontend empty
+list into legacy defaults. Malformed quarantined Function YAML remains opaque in
+private recovery. Portable incoming collections and already prepared restore data
+use decoded-value normalization, not a second legacy fallback.
+
+Cache seeding receives canonical response values derived from the saved source;
+it does not make normalized defaults part of the saved dictionary. Subentry/data
+replacement reconstructs the projection, and catalogue-generation changes expire
+model-derived snapshots while preserving the saved revision and field presence.
+Scoped writers still use the owned-field persistence helpers described above.
+
+`tests/test_configuration_projection_invariants.py` checks these invariants across
+scoped Function/Group/Knowledge/settings/configuration writes, raw-source isolation,
+warm/cold/prewarmed/seeded/replaced caches, model/Azure identities, explicit empty
+edits, duplication, portable and recovery round trips. Genuine-HA WebSocket and
+restore/rollback cases live in `tests_real_ha/test_scoped_configuration_writes.py`.
+The Group-save memory assertion passes with the #1257 snapshot implementation and
+fails with its predecessor in both warm and cold cases.
+
 ## Remaining policy differences
 
 1. **Authored versus effective portable transfer.** Sparse source sampling settings
@@ -73,15 +116,10 @@ boundaries.
 2. **Duplicate versus portable transfer.** Duplication materializes reasoning while
    portable transfer preserves its omission. Decide whether these operations should
    converge before changing either contract.
-3. **Degraded saves versus ordinary section saves.** The degraded repair path above
-   materializes more defaults. Adopting owned-field persistence there needs a separate
-   behavior change with endpoint regressions. Function enable/disable services now
-   use owned-field persistence, with regressions covering both legacy and v2 Guest
-   policy and unrelated raw settings.
 
 These are observed behaviors, not claims that the policies are ideal. Tests lock
 them down so this refactor cannot silently decide them. In particular, do not add
-sampling to the omission policy or route duplicate/degraded saves through a different
+sampling to the omission policy or route duplication through a different
 projection as incidental cleanup.
 
 ## Regression evidence

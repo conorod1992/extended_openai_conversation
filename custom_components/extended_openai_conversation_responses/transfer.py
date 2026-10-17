@@ -1088,7 +1088,7 @@ def _prepared_restore_from_selection(
         if imported.raw_configuration is not None:
             raw, kept, absent = _restore_section_secrets(
                 imported.raw_configuration,
-                backup.private_configuration_snapshot(current.config),
+                backup.recoverable_configuration_snapshot(current.config),
             )
             preserved.extend(f"configuration.{path}" for path in kept)
             missing.extend(f"configuration.{path}" for path in absent)
@@ -1105,9 +1105,9 @@ def _prepared_restore_from_selection(
         else:
             raise backup.BackupError("Transferred configuration is unavailable")
     else:
-        # Durable snapshots contain frontend-shaped, parsed Function Tools.
-        # Retained configuration must use the same persisted YAML representation
-        # as imported configuration before dependency validation and restore.
+        # Recovery snapshots are persistence-shaped; older/prepared callers may
+        # still supply parsed Functions. Normalize that decoded representation,
+        # without reapplying legacy raw-value fallbacks.
         config = backup.recoverable_configuration_snapshot(current.config)
 
     rules = current.request_rules

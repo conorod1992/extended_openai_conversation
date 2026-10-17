@@ -175,3 +175,297 @@ async def test_sparse_ai_task_public_reconfigure_preserves_raw_omissions(
         )
     finally:
         await _unload_entry(hass, entry)
+
+
+@pytest.mark.parametrize(
+    "variant", ["manual", "legacy-values", "legacy-empty", "yaml-null"]
+)
+@pytest.mark.parametrize("warm", [False, True])
+@pytest.mark.parametrize("operation", ["group", "function", "knowledge"])
+async def test_scoped_save_effective_configuration_matches_all_read_paths(
+    hass, hass_ws_client, variant, warm, operation
+):
+    from custom_components.extended_openai_conversation_responses import (
+        agent_config,
+        management_function_repair as projections,
+    )
+    from custom_components.extended_openai_conversation_responses.const import (
+        LEGACY_DEFAULT_PROMPTS,
+    )
+    from custom_components.extended_openai_conversation_responses.memory import (
+        memory_enabled,
+    )
+
+    raw = {
+        "chat_model": "gpt-5.6",
+        "functions": "[]",
+        "memory_mode": "manual",
+        "future_extension": {"keep": [None, False]},
+    }
+    if variant == "legacy-values":
+        raw.pop("memory_mode")
+        raw.update(
+            memory_enabled=True,
+            memory_auto_create=False,
+            max_tokens="1234",
+            prompt=next(iter(LEGACY_DEFAULT_PROMPTS)),
+            usage_request_retention_days="7",
+            local_intent_exclusions=[" light.test ", "light.test"],
+            exposed_entity_attributes={
+                "registry:probe": ["z", "a", "a"],
+                "registry:empty": [],
+            },
+        )
+    elif variant == "legacy-empty":
+        raw["functions"] = []
+    elif variant == "yaml-null":
+        raw["functions"] = "null"
+    entry = _make_entry(conversation_data=deepcopy(raw))
+    await _setup_entry(hass, entry)
+    try:
+        subentry_id = _subentry_id(entry, "conversation")
+        subentry = entry.subentries[subentry_id]
+        before = deepcopy(dict(subentry.data))
+        projections.discard_persisted_config_projection(subentry)
+        client = await _client(
+            hass, hass_ws_client, user_id="projection-invariant-admin", owner=True
+        )
+
+        async def read():
+            response = await _raw_call(
+                client,
+                entry_id=entry.entry_id,
+                subentry_id=subentry_id,
+                section="configuration",
+                action="get",
+            )
+            assert response["success"], response
+            return response["result"]["config"]
+
+        if warm:
+            await read()
+        revision = projections.persisted_config_projection(subentry).revision
+        if operation == "group":
+            names = [
+                tool["spec"]["name"]
+                for tool in agent_config.parse_configured_function_tools(before) or []
+            ]
+            section, action = "tools", "save_group"
+            fields = {
+                "group": {
+                    "id": "projection-group",
+                    "name": "Projection",
+                    "description": "Projection group",
+                    "loading_mode": "always",
+                    "functions": names[:1],
+                }
+            }
+            owned = {"functions", "function_groups"}
+        elif operation == "function":
+            section, action = "tools", "save"
+            fields = {
+                "tool": {
+                    "spec": {
+                        "name": "projection_probe",
+                        "description": "Probe",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                    "function": {"type": "native", "name": "get_user_from_user_id"},
+                }
+            }
+            owned = {"functions", "function_groups"}
+        else:
+            section, action = "knowledge", "set_enabled"
+            fields = {"enabled": True}
+            owned = {"knowledge_enabled"}
+        response = await _raw_call(
+            client,
+            entry_id=entry.entry_id,
+            subentry_id=subentry_id,
+            section=section,
+            action=action,
+            revision=revision,
+            **fields,
+        )
+        assert response["success"], response
+        subentry = entry.subentries[subentry_id]
+        assert {k: v for k, v in subentry.data.items() if k not in owned} == {
+            k: v for k, v in before.items() if k not in owned
+        }
+        immediate = await read()
+        assert immediate == agent_config.agent_config_snapshot(dict(subentry.data))
+        assert immediate["memory_enabled"] == memory_enabled(subentry.data) is True
+        agent = conversation.async_get_agent(hass, entry.entry_id)
+        assert agent._memory is not None
+        assert [tool["spec"]["name"] for tool in immediate["functions"]] == [
+            tool["spec"]["name"]
+            for tool in agent_config.configured_function_tools_from_data(subentry.data)
+        ]
+        projections.discard_persisted_config_projection(subentry)
+        assert await read() == immediate
+        projections.discard_persisted_config_projection(subentry)
+        await projections.async_prewarm_persisted_config_projection(
+            hass, entry, subentry
+        )
+        assert await read() == immediate
+    finally:
+        await _unload_entry(hass, entry)
+
+
+@pytest.mark.parametrize("saved", [[], "null"], ids=["legacy-empty", "yaml-null"])
+@pytest.mark.parametrize("rollback", [False, True])
+async def test_configuration_projection_round_trip_through_restore_and_rollback(
+    hass, hass_ws_client, monkeypatch, saved, rollback
+):
+    from custom_components.extended_openai_conversation_responses import (
+        agent_config,
+        backup,
+        management_function_repair as projections,
+        transfer,
+    )
+    from custom_components.extended_openai_conversation_responses.memory import (
+        memory_enabled,
+    )
+
+    entry = _make_entry(
+        conversation_data={
+            "chat_model": "gpt-5.6",
+            "functions": saved,
+            "memory_enabled": True,
+            "memory_auto_create": False,
+        }
+    )
+    await _setup_entry(hass, entry)
+    try:
+        subentry_id = _subentry_id(entry, "conversation")
+        subentry = entry.subentries[subentry_id]
+        names = [
+            tool["spec"]["name"]
+            for tool in agent_config.parse_configured_function_tools(subentry.data)
+            or []
+        ]
+        client = await _client(
+            hass, hass_ws_client, user_id="projection-restore-admin", owner=True
+        )
+        before = await _raw_call(
+            client,
+            entry_id=entry.entry_id,
+            subentry_id=subentry_id,
+            section="configuration",
+            action="get",
+        )
+        assert before["success"]
+        snapshot = await backup.async_collect_backup_snapshot(hass, entry, subentry)
+        recovered = backup.inspect_backup(snapshot, subentry_id)
+        assert [
+            tool["spec"]["name"]
+            for tool in agent_config.parse_configured_function_tools(recovered.config)
+            or []
+        ] == names
+        assert memory_enabled(recovered.config)
+        document = transfer._new_transfer_document(entry, subentry, "custom")
+        document["sections"][transfer.SECTION_KNOWLEDGE] = {"sources": []}
+        if rollback:
+            knowledge = conversation.async_get_agent(hass, entry.entry_id)._knowledge
+            original = knowledge.async_replace_backup
+            calls = 0
+
+            async def fail_once(records):
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    raise OSError("injected projection rollback")
+                await original(records)
+
+            monkeypatch.setattr(knowledge, "async_replace_backup", fail_once)
+            with pytest.raises(
+                backup.BackupError, match="previous agent state was recovered"
+            ):
+                await transfer.async_restore_transfer(hass, entry, subentry, document)
+            assert calls == 2
+        else:
+            await transfer.async_restore_transfer(hass, entry, subentry, document)
+        subentry = entry.subentries[subentry_id]
+        assert "reasoning_effort" not in subentry.data
+        assert "guest_policy_version" not in subentry.data
+        result = await _raw_call(
+            client,
+            entry_id=entry.entry_id,
+            subentry_id=subentry_id,
+            section="configuration",
+            action="get",
+        )
+        assert result["success"], result
+        shown = result["result"]["config"]
+        assert shown["memory_enabled"] == memory_enabled(subentry.data) is True
+        assert [tool["spec"]["name"] for tool in shown["functions"]] == names
+        assert shown == agent_config.agent_config_snapshot(dict(subentry.data))
+        projections.discard_persisted_config_projection(subentry)
+        await projections.async_prewarm_persisted_config_projection(
+            hass, entry, subentry
+        )
+        repeated = await _raw_call(
+            client,
+            entry_id=entry.entry_id,
+            subentry_id=subentry_id,
+            section="configuration",
+            action="get",
+        )
+        assert repeated["success"] and repeated["result"]["config"] == shown
+    finally:
+        await _unload_entry(hass, entry)
+
+
+@pytest.mark.parametrize("api", ["responses", "chat_completions"])
+async def test_legacy_numeric_configuration_matches_actual_provider_wire(
+    hass, hass_ws_client, monkeypatch, api
+):
+    from custom_components.extended_openai_conversation_responses import agent_config
+    from tests_real_ha.test_cross_feature_acceptance import _agent, _say
+    from tests_real_ha.test_provider_wire_e2e import (
+        _chat_sse_text,
+        _install_wire,
+        _responses_sse_text,
+    )
+
+    agent = await _agent(
+        hass,
+        chat_model="gpt-4.1",
+        api_mode=api,
+        temperature="0.25",
+        top_p="0.9",
+        max_tokens="1234",
+        max_function_calls_per_conversation=0,
+    )
+    original = deepcopy(dict(agent.subentry.data))
+    assert original["temperature"] == "0.25" and original["top_p"] == "0.9"
+    wire = _install_wire(
+        monkeypatch,
+        agent,
+        [
+            (_responses_sse_text if api == "responses" else _chat_sse_text)(
+                "Numeric configuration ready"
+            )
+        ],
+    )
+    result = await _say(hass, agent, "Check numeric configuration")
+    assert result.response.error_code is None
+    assert len(wire.requests) == 1
+    body = wire.requests[0]["body"]
+    client = await _client(
+        hass, hass_ws_client, user_id="numeric-projection-admin", owner=True
+    )
+    read = await _raw_call(
+        client,
+        entry_id=agent.entry.entry_id,
+        subentry_id=agent.subentry.subentry_id,
+        section="configuration",
+        action="get",
+    )
+    assert read["success"], read
+    shown = read["result"]["config"]
+    assert shown == agent_config.agent_config_snapshot(dict(agent.subentry.data))
+    for key in ("temperature", "top_p"):
+        assert body[key] == shown[key]
+        assert type(body[key]) is type(shown[key]) is float
+    assert dict(agent.subentry.data) == original

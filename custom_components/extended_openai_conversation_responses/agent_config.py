@@ -904,6 +904,11 @@ def _coerce_legacy_numbers(config: dict[str, Any]) -> None:
                 continue
 
 
+def normalize_agent_numeric_values(candidate: dict[str, Any]) -> None:
+    """Canonicalize numbers in an owned full or subset projection, never raw data."""
+    _coerce_legacy_numbers(candidate)
+
+
 def normalize_reasoning_defaults(config: dict[str, Any], *, explicit: bool) -> None:
     """Apply the same model-aware omitted-value contract to reads and saves."""
     selected_model = str(
@@ -921,6 +926,89 @@ def normalize_reasoning_defaults(config: dict[str, Any], *, explicit: bool) -> N
             config.pop(CONF_REASONING_EFFORT, None)
         else:
             config[CONF_REASONING_EFFORT] = recommended
+
+
+def _agent_config_value_base(
+    data: Mapping[str, Any], *, apply_defaults: bool
+) -> dict[str, Any]:
+    """Interpret stored scalar values before either validation or projection."""
+    result = agent_config_defaults() if apply_defaults else {}
+    result.update(deepcopy(data))
+    if result.get(CONF_PROMPT) in LEGACY_DEFAULT_PROMPTS:
+        result[CONF_PROMPT] = DEFAULT_PROMPT
+    normalize_agent_numeric_values(result)
+    normalize_reasoning_defaults(result, explicit=CONF_REASONING_EFFORT in data)
+    return result
+
+
+def agent_config_value_snapshot(
+    data: Mapping[str, Any],
+    *,
+    prepared: dict[str, Any] | None = None,
+    apply_defaults: bool = True,
+) -> dict[str, Any]:
+    """Project effective values without Function schemas or template compilation.
+
+    Strict normalization and fast Management reads share these derivations. An
+    owned prepared candidate avoids copying/validating Functions a second time.
+    Source presence remains authoritative for legacy aliases; display defaults
+    must never decide what is persisted by a scoped writer.
+    """
+    result = (
+        prepared
+        if prepared is not None
+        else _agent_config_value_base(data, apply_defaults=apply_defaults)
+    )
+    for key in (
+        CONF_LOCAL_INTENT_EXCLUSIONS,
+        CONF_GUEST_READABLE_ENTITIES,
+        CONF_GUEST_CONTROLLABLE_ENTITIES,
+        CONF_GUEST_READABLE_DOMAINS,
+        CONF_GUEST_CONTROLLABLE_DOMAINS,
+        CONF_GUEST_READABLE_AREAS,
+        CONF_GUEST_CONTROLLABLE_AREAS,
+        CONF_GUEST_READABLE_LABELS,
+        CONF_GUEST_CONTROLLABLE_LABELS,
+        CONF_GUEST_EXCLUDED_ENTITIES,
+        CONF_GUEST_EXCLUDED_DOMAINS,
+        CONF_GUEST_EXCLUDED_AREAS,
+        CONF_GUEST_EXCLUDED_LABELS,
+        CONF_GUEST_CONTROL_EXCLUDED_ENTITIES,
+        CONF_GUEST_CONTROL_EXCLUDED_DOMAINS,
+        CONF_GUEST_CONTROL_EXCLUDED_AREAS,
+        CONF_GUEST_CONTROL_EXCLUDED_LABELS,
+        CONF_GUEST_KNOWLEDGE_SOURCE_IDS,
+        CONF_GUEST_ALLOWED_FUNCTION_NAMES,
+        CONF_GUEST_ALLOWED_GROUP_IDS,
+    ):
+        values = result.get(key, [])
+        if not isinstance(values, list) or not all(
+            isinstance(value, str) and value.strip() for value in values
+        ):
+            raise AgentConfigError(key, "must be a list of non-empty strings")
+        result[key] = list(dict.fromkeys(value.strip() for value in values))
+
+    mode = get_memory_mode(data)
+    result[CONF_MEMORY_MODE] = mode
+    result[CONF_MEMORY_ENABLED] = mode != "off"
+    result[CONF_MEMORY_AUTO_CREATE] = mode == "automatic"
+    if apply_defaults or CONF_EXPOSED_ENTITY_ATTRIBUTES in data:
+        from .exposed_attributes import _validate_preferences
+
+        result[CONF_EXPOSED_ENTITY_ATTRIBUTES] = _validate_preferences(
+            data.get(CONF_EXPOSED_ENTITY_ATTRIBUTES)
+        )
+    return result
+
+
+def agent_retention_snapshot(data: Mapping[str, Any]) -> dict[str, Any]:
+    """Project the lightweight retention view with the same numeric semantics."""
+    result = {
+        key: deepcopy(data.get(key, AGENT_CONFIG_DEFAULTS[key]))
+        for key in (CONF_USAGE_REQUEST_RETENTION_DAYS, CONF_USAGE_RUN_RETENTION_DAYS)
+    }
+    normalize_agent_numeric_values(result)
+    return result
 
 
 def normalize_agent_config(
@@ -945,18 +1033,12 @@ def normalize_agent_config(
         raise AgentConfigError(
             "config", "unknown fields: " + ", ".join(sorted(unknown))
         )
-    reasoning_effort_explicit = CONF_REASONING_EFFORT in data
-    result = agent_config_defaults() if apply_defaults else {}
-    result.update(deepcopy(data))
-    if result.get(CONF_PROMPT) in LEGACY_DEFAULT_PROMPTS:
-        result[CONF_PROMPT] = DEFAULT_PROMPT
-    _coerce_legacy_numbers(result)
+    result = _agent_config_value_base(data, apply_defaults=apply_defaults)
 
     selected_model = str(
         result.get("azure_model") or result.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
     )
     reasoning_options = get_reasoning_effort_options(selected_model)
-    normalize_reasoning_defaults(result, explicit=reasoning_effort_explicit)
 
     _require_type(
         result,
@@ -1126,34 +1208,6 @@ def normalize_agent_config(
         isinstance(skill, str) for skill in skills
     ):
         raise AgentConfigError(CONF_SKILLS, "must be a list of names")
-    for key in (
-        CONF_LOCAL_INTENT_EXCLUSIONS,
-        CONF_GUEST_READABLE_ENTITIES,
-        CONF_GUEST_CONTROLLABLE_ENTITIES,
-        CONF_GUEST_READABLE_DOMAINS,
-        CONF_GUEST_CONTROLLABLE_DOMAINS,
-        CONF_GUEST_READABLE_AREAS,
-        CONF_GUEST_CONTROLLABLE_AREAS,
-        CONF_GUEST_READABLE_LABELS,
-        CONF_GUEST_CONTROLLABLE_LABELS,
-        CONF_GUEST_EXCLUDED_ENTITIES,
-        CONF_GUEST_EXCLUDED_DOMAINS,
-        CONF_GUEST_EXCLUDED_AREAS,
-        CONF_GUEST_EXCLUDED_LABELS,
-        CONF_GUEST_CONTROL_EXCLUDED_ENTITIES,
-        CONF_GUEST_CONTROL_EXCLUDED_DOMAINS,
-        CONF_GUEST_CONTROL_EXCLUDED_AREAS,
-        CONF_GUEST_CONTROL_EXCLUDED_LABELS,
-        CONF_GUEST_KNOWLEDGE_SOURCE_IDS,
-        CONF_GUEST_ALLOWED_FUNCTION_NAMES,
-        CONF_GUEST_ALLOWED_GROUP_IDS,
-    ):
-        values = result.get(key, [])
-        if not isinstance(values, list) or not all(
-            isinstance(value, str) and value.strip() for value in values
-        ):
-            raise AgentConfigError(key, "must be a list of non-empty strings")
-        result[key] = list(dict.fromkeys(value.strip() for value in values))
 
     if validated_functions is None:
         configured = result.get(CONF_FUNCTION_TOOLS)
@@ -1199,17 +1253,9 @@ def normalize_agent_config(
     result[CONF_SPEECH_REGEX_REPLACEMENTS] = validate_speech_regex_replacements(
         result.get(CONF_SPEECH_REGEX_REPLACEMENTS, [])
     )
-    mode = get_memory_mode(data if CONF_MEMORY_MODE not in data else result)
-    result[CONF_MEMORY_MODE] = mode
-    result[CONF_MEMORY_ENABLED] = mode != "off"
-    result[CONF_MEMORY_AUTO_CREATE] = mode == "automatic"
-    if apply_defaults or CONF_EXPOSED_ENTITY_ATTRIBUTES in data:
-        from .exposed_attributes import _validate_preferences
-
-        result[CONF_EXPOSED_ENTITY_ATTRIBUTES] = _validate_preferences(
-            data.get(CONF_EXPOSED_ENTITY_ATTRIBUTES)
-        )
-    return result
+    return agent_config_value_snapshot(
+        data, prepared=result, apply_defaults=apply_defaults
+    )
 
 
 def merge_agent_config(
@@ -1235,6 +1281,10 @@ def merge_agent_config(
             "config", "unknown fields: " + ", ".join(sorted(unknown))
         )
     known = {key: value for key, value in current.items() if key in AGENT_CONFIG_FIELDS}
+    if CONF_FUNCTION_TOOLS not in updates and validated_functions is None:
+        # Untouched fields belong to an existing agent, not a new collection edit.
+        # Decode before merging so legacy falsy values and YAML null stay distinct.
+        known[CONF_FUNCTION_TOOLS] = parse_configured_function_tools(current) or []
     model_changed = _agent_model_changed(current, updates)
     if model_changed and CONF_REASONING_EFFORT not in updates:
         # A model change with no explicit effort should use the new model's
@@ -1260,20 +1310,38 @@ def merge_agent_config(
     }
 
 
+def normalize_persisted_agent_config(
+    data: dict[str, Any],
+    *,
+    preparsed_function_tools: bool = False,
+    function_tools_as_list: bool = False,
+) -> dict[str, Any]:
+    """Interpret an existing configuration, distinct from a newly submitted edit.
+
+    Historical falsy persisted Functions use defaults, including a raw empty
+    list. Truthy YAML that decodes to null/[] means an empty collection. Once
+    decoded, never apply the persisted fallback to that decoded value again.
+    """
+    source = dict(data)
+    source[CONF_FUNCTION_TOOLS] = (
+        data.get(CONF_FUNCTION_TOOLS)
+        if preparsed_function_tools
+        else parse_configured_function_tools(data)
+    )
+    if source[CONF_FUNCTION_TOOLS] is None:
+        source[CONF_FUNCTION_TOOLS] = []
+    return normalize_agent_config(source, function_tools_as_list=function_tools_as_list)
+
+
 def agent_config_snapshot(
     data: dict[str, Any], *, preparsed_function_tools: bool = False
 ) -> dict[str, Any]:
-    """Return defaulted display values and parsed tools, never a save projection."""
-    result = normalize_agent_config(
+    """Return effective display values, never a scoped persistence payload."""
+    return normalize_persisted_agent_config(
         {key: value for key, value in data.items() if key in AGENT_CONFIG_FIELDS},
-        function_tools_as_list=preparsed_function_tools,
+        preparsed_function_tools=preparsed_function_tools,
+        function_tools_as_list=True,
     )
-    # normalize_agent_config already validated the tools and their groups. It
-    # stores explicitly configured tools as YAML for persistence; only decode
-    # that validated representation for the frontend.
-    if isinstance(result[CONF_FUNCTION_TOOLS], str):
-        result[CONF_FUNCTION_TOOLS] = yaml.safe_load(result[CONF_FUNCTION_TOOLS]) or []
-    return result
 
 
 def model_capabilities(model: str) -> dict[str, Any]:

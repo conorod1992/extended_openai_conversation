@@ -15,7 +15,7 @@ from typing import Any
 
 from homeassistant.core import HomeAssistant
 
-from .agent_config import agent_config_defaults
+from .agent_config import agent_config_defaults, normalize_agent_numeric_values
 from .const import (
     CONF_ARCHIVE_ENABLED,
     CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
@@ -138,6 +138,8 @@ def settings_snapshot(options: Mapping[str, Any]) -> dict[str, Any]:
         CONF_USAGE_REQUEST_RETENTION_DAYS,
         CONF_USAGE_RUN_RETENTION_DAYS,
     )
-    return {
+    result = {
         key: options[key] if key in options else deepcopy(defaults[key]) for key in keys
     }
+    normalize_agent_numeric_values(result)
+    return result

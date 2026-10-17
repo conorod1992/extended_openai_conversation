@@ -137,9 +137,10 @@ async def test_legacy_blank_actual_duplicate_and_transfer(
     assert recovered["functions"] != "[]\n"
     assert len(agent_config.configured_function_tools_from_data(recovered)) == 4
     private = backup.private_configuration_snapshot(subentry.data)
-    assert len(private["functions"]) == 4
-    # Private recovery snapshots are frontend-shaped; journal inspection converts
-    # them back to persisted YAML before restore applies the configuration.
+    assert isinstance(private["functions"], str)
+    assert len(agent_config.configured_function_tools_from_data(private)) == 4
+    # Private recovery snapshots can be persisted directly without changing the
+    # distinction between legacy fallback values and explicitly empty Functions.
     prepared = backup.recoverable_configuration_snapshot(private)
     assert prepared["functions"] != "[]\n"
     assert len(agent_config.configured_function_tools_from_data(prepared)) == 4

@@ -22,10 +22,12 @@ from .agent_config import (
     AgentConfigError,
     agent_config_defaults,
     agent_config_snapshot,
+    agent_retention_snapshot,
     configured_function_tool_metadata_from_data,
     configured_function_tools_from_data,
     function_tool_enabled,
     merge_agent_config as _strict_merge_agent_config,
+    parse_configured_function_tools,
     project_agent_config_fields,
     project_agent_config_updates,
     validate_function_groups,
@@ -37,8 +39,6 @@ from .const import (
     CONF_USAGE_REQUEST_RETENTION_DAYS,
     CONF_USAGE_RUN_RETENTION_DAYS,
     DEFAULT_FUNCTION_GROUPS,
-    DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
-    DEFAULT_USAGE_RUN_RETENTION_DAYS,
 )
 from .live_subentry_updates import update_live_subentry
 from .model_catalog import catalog_generation
@@ -466,14 +466,7 @@ def persisted_config_projection(
             if previous is not None
             else content_revision
         )
-    defaults = {
-        CONF_USAGE_REQUEST_RETENTION_DAYS: DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
-        CONF_USAGE_RUN_RETENTION_DAYS: DEFAULT_USAGE_RUN_RETENTION_DAYS,
-    }
-    retention = {
-        key: deepcopy(subentry.data.get(key, defaults[key]))
-        for key in _RETENTION_FIELDS
-    }
+    retention = agent_retention_snapshot(subentry.data)
     projection = _PersistedProjection(
         subentry, subentry.data, subentry.title, None, revision, retention
     )
@@ -557,7 +550,9 @@ async def async_prewarm_persisted_config_projection(
     parsed: Any = _MISSING
     if isinstance(configured, str):
         try:
-            parsed = await hass.async_add_executor_job(yaml.safe_load, configured)
+            parsed = await hass.async_add_executor_job(
+                parse_configured_function_tools, options
+            )
         except yaml.YAMLError:
             # Let the authoritative validator report the original YAML error.
             parsed = configured
@@ -610,7 +605,7 @@ def seed_persisted_config_projection(
         current.title,
         None if repair_state is not None else deepcopy(snapshot),
         revision,
-        {key: deepcopy(snapshot[key]) for key in _RETENTION_FIELDS},
+        agent_retention_snapshot(current.data),
         repair_state=repair_state,
         repair_snapshot=deepcopy(snapshot) if repair_state is not None else None,
     )

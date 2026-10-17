@@ -37,6 +37,7 @@ from .agent_config import (
     merge_agent_config as merge_validated_agent_config,
     model_capabilities,
     normalize_agent_config,
+    normalize_persisted_agent_config,
     preserve_agent_model_setting_omissions,
     preserve_legacy_guest_policy,
     project_agent_config_transfer,
@@ -1680,7 +1681,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         duplicate = ConfigSubentry(
             data=MappingProxyType(
                 preserve_legacy_guest_policy(
-                    duplicate_source, normalize_agent_config(duplicate_source)
+                    duplicate_source, normalize_persisted_agent_config(duplicate_source)
                 )
             ),
             subentry_type="conversation",
