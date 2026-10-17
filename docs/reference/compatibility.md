@@ -1,5 +1,10 @@
 # Compatibility
 
+Home Assistant 2026.7.0 or newer is required. Earlier releases constrain the schema
+serializer to versions incompatible with this integration’s manifest. CI checks
+native requirement installation in an isolated minimum-version environment before
+installing test dependencies, then exercises the minimum runtime’s feature contract.
+
 Feature availability depends on the configured provider, endpoint, and model.
 
 ## Capability matrix

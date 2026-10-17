@@ -36,7 +36,12 @@ def test_ha_dev_image_requires_recent_snapshot(monkeypatch):
 
 def test_ha_dev_allows_fixture_pin_only_when_core_requires_installed_version(
     monkeypatch,
+    tmp_path,
 ):
+    (tmp_path / "package_constraints.txt").write_text("SQLAlchemy==2.0.53\n")
+    monkeypatch.setattr(
+        check_ha_dev_environment.homeassistant, "__path__", [str(tmp_path)]
+    )
     monkeypatch.setattr(
         check_ha_dev_environment,
         "requires",
@@ -57,6 +62,13 @@ def test_ha_dev_allows_fixture_pin_only_when_core_requires_installed_version(
         "but you have sqlalchemy 2.0.53."
     )
 
+    # Core's optional-package constraints are equally authoritative.
+    monkeypatch.setattr(check_ha_dev_environment, "requires", lambda package: [])
+    assert check_ha_dev_environment.allowed_plugin_mismatch(fixture_mismatch)
+    # An unowned fixture dependency cannot be exempted.
+    (tmp_path / "package_constraints.txt").write_text("")
+    assert not check_ha_dev_environment.allowed_plugin_mismatch(fixture_mismatch)
+    (tmp_path / "package_constraints.txt").write_text("SQLAlchemy==2.0.53\n")
     monkeypatch.setattr(check_ha_dev_environment, "version", lambda package: "2.0.54")
     assert not check_ha_dev_environment.allowed_plugin_mismatch(fixture_mismatch)
 

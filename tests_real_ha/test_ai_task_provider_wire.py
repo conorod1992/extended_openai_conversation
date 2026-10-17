@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 from pathlib import Path
@@ -9,7 +10,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import httpx
-from openai import BadRequestError
+from openai import RateLimitError
 import pytest
 from pytest_homeassistant_custom_component.common import MockUser
 import voluptuous as vol
@@ -23,7 +24,9 @@ from homeassistant.components import ai_task
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import config_validation as cv, entity_registry as er
+from homeassistant.helpers.script import Script
+from tests.strict_provider_contract import validate_request
 from tests_real_ha.test_ai_task_runtime import CallerAPI, ContextProbeTool, _entry
 from tests_real_ha.test_provider_wire_e2e import (
     _chat_sse_text,
@@ -33,8 +36,6 @@ from tests_real_ha.test_provider_wire_e2e import (
     _responses_sse_text,
     _responses_sse_tool_call,
 )
-
-from tests.strict_provider_contract import validate_request
 
 MODES = (API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES)
 
@@ -386,7 +387,7 @@ async def test_failed_ai_task_does_not_leak_request_state_to_next_task(
             structure=vol.Schema({vol.Required("answer"): str}),
             attachments=[attachment],
         )
-    with pytest.raises(BadRequestError, match="provider rejected request"):
+    with pytest.raises(HomeAssistantError, match="provider rejected request"):
         await ai_task.async_generate_data(
             hass,
             task_name="Provider Failure Task",
@@ -536,6 +537,7 @@ async def test_invalid_final_task_structure_does_not_replay_completed_caller_act
 
 async def replay_invalid_final_task_action(hass, monkeypatch, mode, trace=None):
     """Shared production journey with optional realised operation evidence."""
+
     def record(op, **fields):
         if trace is not None:
             trace.append({"op": op, **fields})
@@ -720,3 +722,120 @@ async def test_optional_structured_output_round_trips_provider_contract(
                 structure=schema,
             )
     _assert_paths(wire, mode, 3)
+
+
+@pytest.mark.parametrize("mode", MODES)
+@pytest.mark.parametrize("continue_on_error", [False, True])
+async def test_provider_failure_script_respects_continue_on_error(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    continue_on_error: bool,
+) -> None:
+    entry, entity_id = await _task_entity(hass, mode)
+    from custom_components.extended_openai_conversation_responses import (
+        ai_task as platform,
+    )
+
+    failures = []
+    record_failure = platform.record_current_provider_failure
+
+    def record_once(error):
+        failures.append(error)
+        record_failure(error)
+
+    monkeypatch.setattr(platform, "record_current_provider_failure", record_once)
+    raw_client = _raw_client(SimpleNamespace(_client=entry.runtime_data))
+    monkeypatch.setattr(raw_client, "max_retries", 0)
+    wire = _wire(
+        monkeypatch,
+        entry,
+        [
+            (
+                429,
+                {
+                    "error": {
+                        "message": "Optional summary rate limited",
+                        "type": "rate_limit_error",
+                        "code": "rate_limit_exceeded",
+                    }
+                },
+            )
+        ],
+    )
+    followups = []
+    hass.bus.async_listen("eoai_followup_action", lambda event: followups.append(event))
+    sequence = cv.SCRIPT_SCHEMA(
+        [
+            {
+                "action": "ai_task.generate_data",
+                "continue_on_error": continue_on_error,
+                "data": {
+                    "entity_id": entity_id,
+                    "task_name": "Optional summary",
+                    "instructions": "Summarize",
+                },
+                "response_variable": "task_result",
+            },
+            {"event": "eoai_followup_action"},
+        ]
+    )
+    script = Script(
+        hass, sequence, "AI Task fallback", "extended_openai_conversation_responses"
+    )
+    if continue_on_error:
+        await script.async_run(context=Context())
+    else:
+        with pytest.raises(
+            HomeAssistantError, match="Optional summary rate limited"
+        ) as raised:
+            await script.async_run(context=Context())
+        assert isinstance(raised.value.__cause__, RateLimitError)
+    await hass.async_block_till_done()
+    assert len(followups) == int(continue_on_error)
+    _assert_paths(wire, mode, 1)
+    assert len(failures) == 1
+    assert isinstance(failures[0], RateLimitError)
+
+
+@pytest.mark.parametrize("mode", MODES)
+async def test_provider_cancellation_is_not_translated_or_retried(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    entry, entity_id = await _task_entity(hass, mode)
+    started = asyncio.Event()
+    calls = []
+
+    async def blocked(request, *args, **kwargs):
+        calls.append(request)
+        started.set()
+        await asyncio.Future()
+
+    monkeypatch.setattr(
+        _raw_client(SimpleNamespace(_client=entry.runtime_data))._client,
+        "send",
+        blocked,
+    )
+    pending = asyncio.create_task(
+        hass.services.async_call(
+            "ai_task",
+            "generate_data",
+            {
+                "entity_id": entity_id,
+                "task_name": "Cancelled summary",
+                "instructions": "Summarize",
+            },
+            blocking=True,
+            return_response=True,
+        )
+    )
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5)
+        pending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+        assert len(calls) == 1
+    finally:
+        if not pending.done():
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)

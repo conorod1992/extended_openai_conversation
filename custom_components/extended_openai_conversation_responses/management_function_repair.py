@@ -26,8 +26,8 @@ from .agent_config import (
     configured_function_tools_from_data,
     function_tool_enabled,
     merge_agent_config as _strict_merge_agent_config,
-    preserve_legacy_guest_policy,
     project_agent_config_fields,
+    project_agent_config_updates,
     validate_function_groups,
     validate_function_tools,
 )
@@ -709,17 +709,11 @@ def persist_valid_function_configuration(
         candidate[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
             candidate[CONF_FUNCTION_TOOLS], sort_keys=False, allow_unicode=True
         )
-    normalized_candidate = preserve_legacy_guest_policy(
-        subentry.data,
-        candidate,
-    )
     # Function edits must not turn implicit model-dependent defaults into saved
     # settings. For example, an absent effort follows each routed model's profile;
     # persisting the default model's effort can invalidate an unchanged route.
     changed_fields = {CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS, *(extra_updates or {})}
-    normalized = project_agent_config_fields(
-        subentry.data, changed_fields, normalized_candidate
-    )
+    normalized = project_agent_config_fields(subentry.data, changed_fields, candidate)
     normalization_ms = (perf_counter() - phase) * 1000
     from .management_ui import _validated_model_request
 
@@ -730,7 +724,7 @@ def persist_valid_function_configuration(
     phase = perf_counter()
     from .management_loading_performance import _snapshot_normalized_configuration
 
-    response_data = dict(normalized_candidate)
+    response_data = dict(normalized)
     response_data[CONF_FUNCTION_TOOLS] = response_snapshot[CONF_FUNCTION_TOOLS]
     response_data[CONF_FUNCTION_GROUPS] = response_snapshot[CONF_FUNCTION_GROUPS]
     snapshot = _snapshot_normalized_configuration(response_data, validated=True)
@@ -1005,21 +999,7 @@ async def async_function_repair(
         await management_ui._async_validate_configuration_request(
             hass, entry, subentry, normalized
         )
-        persisted = preserve_legacy_guest_policy(
-            dict(subentry.data), deepcopy(normalized)
-        )
-        if CONF_FUNCTION_TOOLS in subentry.data:
-            persisted[CONF_FUNCTION_TOOLS] = deepcopy(
-                subentry.data[CONF_FUNCTION_TOOLS]
-            )
-        else:
-            persisted.pop(CONF_FUNCTION_TOOLS, None)
-        if CONF_FUNCTION_GROUPS in subentry.data:
-            persisted[CONF_FUNCTION_GROUPS] = deepcopy(
-                subentry.data[CONF_FUNCTION_GROUPS]
-            )
-        else:
-            persisted.pop(CONF_FUNCTION_GROUPS, None)
+        persisted = project_agent_config_updates(subentry.data, filtered, normalized)
 
         requested_title = message.get("title")
         if requested_title is not None:

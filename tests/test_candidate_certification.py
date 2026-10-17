@@ -91,7 +91,7 @@ def test_final_lifecycle_gate_requires_independently_resolved_stable_version(
         },
     )
     rows = {
-        "oldest": lifecycle_item("oldest", "2026.3.0b0"),
+        "oldest": lifecycle_item("oldest", "2026.7.0"),
         "stable": lifecycle_item("stable", installed),
         "dev": lifecycle_item("dev", "2026.10.0.dev0"),
     }
@@ -113,9 +113,9 @@ def test_final_lifecycle_gate_requires_independently_resolved_stable_version(
     else:
         assert index["expected_stable_ha_version"] == resolved
         recorded = {row["ha_point"]: row for row in index["jobs"]}
-        # The floor may intentionally be a beta, while dev retains its own Core
+        # The oldest point retains its exact release, while dev retains its own Core
         # identity and runtime fingerprint instead of taking the stable version.
-        assert recorded["oldest"]["ha_version"] == "2026.3.0b0"
+        assert recorded["oldest"]["ha_version"] == "2026.7.0"
         assert recorded["dev"]["ha_version"] == "2026.10.0.dev0"
         assert recorded["dev"]["environment"]["homeassistant_source_commit"] == "d" * 40
 

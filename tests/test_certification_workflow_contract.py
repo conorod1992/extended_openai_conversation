@@ -204,8 +204,8 @@ def test_enhanced_prebuilt_lanes_keep_exact_browser_ha_and_certification_coverag
     )
     assert lifecycle_step["shell"] == "bash"
     lifecycle_install = lifecycle_step["run"]
-    assert "pytest-homeassistant-custom-component==0.13.317" in lifecycle_install
-    assert "homeassistant==$MINIMUM" in lifecycle_install
+    assert 'ci/resolve_ha_test_plugin.py "$MINIMUM"' in lifecycle_install
+    assert 'ci/install_ha_test_plugin.py "$MINIMUM" "$PLUGIN_VERSION"' in lifecycle_install
     assert (
         "apt-get install -y --no-install-recommends build-essential"
         in lifecycle_install

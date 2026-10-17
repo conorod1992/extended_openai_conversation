@@ -12,7 +12,6 @@ import sys
 from tempfile import TemporaryDirectory
 
 from packaging.requirements import Requirement
-from packaging.utils import canonicalize_name
 
 import homeassistant
 
@@ -61,27 +60,21 @@ def main() -> None:
     if not requirements:
         return
 
-    # Preserve core dependencies that the SDK might otherwise upgrade, and its
-    # OpenAI integration pin. Keep the existing installer behavior for other
-    # explicit integration requirements rather than changing their policy here.
-    explicit_names = {
-        canonicalize_name(Requirement(value).name) for value in requirements
-    }
+    # Runtime compatibility must respect the same Core constraints as native
+    # custom-integration installation, including explicitly requested packages.
     constraints = []
     for value in requires("homeassistant") or []:
         requirement = Requirement(value)
-        if canonicalize_name(requirement.name) in explicit_names:
-            continue
         if requirement.marker is None or requirement.marker.evaluate():
             constraints.append(f"{requirement.name}{requirement.specifier}")
     for value in (
         (components.parent / "package_constraints.txt").read_text().splitlines()
     ):
         value = value.split("#", 1)[0].strip()
-        if value and canonicalize_name(Requirement(value).name) == "openai":
+        if value:
             constraints.append(value)
     with TemporaryDirectory() as directory:
-        constraint_path = Path(directory) / "ha-core-and-openai.txt"
+        constraint_path = Path(directory) / "ha-core.txt"
         constraint_path.write_text("\n".join(constraints) + "\n", encoding="utf-8")
         subprocess.check_call(
             [

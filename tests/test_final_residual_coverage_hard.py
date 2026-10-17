@@ -38,7 +38,6 @@ def test_repair_persistence_reuses_tools_while_preserving_absence(monkeypatch, h
             }
         ),
     )
-    monkeypatch.setattr(repair, "preserve_legacy_guest_policy", lambda raw, value: value)
     update = Mock()
     monkeypatch.setattr(repair, "update_live_subentry", update)
     monkeypatch.setattr(repair, "saved_agent_config_revision", Mock(return_value="rev"))
