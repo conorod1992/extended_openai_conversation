@@ -8,6 +8,18 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from custom_components.extended_openai_conversation_responses.functions import script
+from homeassistant.core import ServiceRegistry
+from homeassistant.exceptions import ServiceNotFound
+
+
+async def test_script_missing_service_preserves_ha_error(hass, monkeypatch):
+    hass.services = ServiceRegistry(hass)
+    monkeypatch.setattr(
+        script.ha_actions, "async_authorize_ha_action", AsyncMock(return_value=set())
+    )
+    wrapper = script._AuthorizedScriptServices(hass, None, [])
+    with pytest.raises(ServiceNotFound):
+        await wrapper.async_call("missing_domain", "missing_service", blocking=True)
 
 
 def test_authorized_script_services_proxies_unknown_attributes() -> None:

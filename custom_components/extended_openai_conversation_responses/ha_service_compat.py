@@ -20,7 +20,7 @@ from homeassistant.const import (
     ATTR_LABEL_ID,
 )
 from homeassistant.core import HomeAssistant, ServiceRegistry
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 from homeassistant.helpers import service as service_helpers
 
 from .ha_schema import schema_for_ha
@@ -175,7 +175,11 @@ async def prepare_service_dispatch(
             "data": dict(kwargs["service_data"]),
             "target": dict(kwargs.get("target", {})),
         }
-    handler = registry.async_services_for_domain(domain.lower())[service.lower()]
+    handler = registry.async_services_for_domain(domain.lower()).get(service.lower())
+    if handler is None:
+        # Script callers rely on HA's recoverable error contract as well as
+        # native callers; a missing registration must not escape as KeyError.
+        raise ServiceNotFound(domain, service)
     raw = dict(kwargs["service_data"])
     raw.update(kwargs.get("target", {}))
     processed = handler.schema(raw) if handler.schema is not None else raw

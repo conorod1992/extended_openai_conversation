@@ -28,7 +28,7 @@ from custom_components.extended_openai_conversation_responses.tool_exchange impo
 from homeassistant.components import conversation
 from homeassistant.components.fan import FanEntity, FanEntityFeature
 from homeassistant.core import Context
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 from homeassistant.helpers import llm
 from homeassistant.helpers.entity_component import EntityComponent
 from homeassistant.setup import async_setup_component
@@ -71,6 +71,30 @@ def _exchange_owner(hass, function, exposed):
         )
 
     return entity, log, exchange
+
+
+@pytest.mark.parametrize("domain", ["missing_domain", "script_probe"])
+async def test_script_missing_service_uses_ha_refusal(hass, domain):
+    from custom_components.extended_openai_conversation_responses.functions.script import (
+        ScriptFunction,
+    )
+
+    async def existing(_call):
+        pytest.fail("The unrelated registered service must not execute")
+
+    hass.services.async_register("script_probe", "existing", existing)
+    definition = {
+        "spec": {"name": "probe", "parameters": {"type": "object", "properties": {}}},
+        "function": {
+            "type": "script",
+            "sequence": [{"action": f"{domain}.missing_service"}],
+        },
+    }
+    function = configured_function_tools_from_data({"functions": [definition]})[0][
+        "function"
+    ]
+    with pytest.raises(ServiceNotFound):
+        await ScriptFunction().execute(hass, function, {}, None, [])
 
 
 @pytest.mark.parametrize(

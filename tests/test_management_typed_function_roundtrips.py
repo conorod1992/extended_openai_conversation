@@ -3,6 +3,8 @@
 from copy import deepcopy
 from datetime import date, datetime, timezone
 import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 import yaml
@@ -12,6 +14,7 @@ from custom_components.extended_openai_conversation_responses import (
     management_ui as ui,
 )
 from custom_components.extended_openai_conversation_responses.function_yaml import (
+    decode_management_function_request,
     decode_management_function_values,
     management_function_response,
 )
@@ -53,13 +56,30 @@ VALUES = [
     {"one", "two"},
     {date(2026, 10, 17): "date key", "ordinary": False},
     {"__eoai_management_yaml_v1__": "literal administrator data"},
+    10**100,
+    2**53 + 1,
+    -(2**53 + 1),
+    {7: "integer key", None: "null key"},
+    float("inf"),
 ]
 
 
 @pytest.mark.parametrize(
     "value",
     VALUES,
-    ids=["date", "datetime", "binary", "set", "typed-key", "literal-tag"],
+    ids=[
+        "date",
+        "datetime",
+        "binary",
+        "set",
+        "typed-key",
+        "literal-tag",
+        "large-int",
+        "unsafe-int",
+        "negative-unsafe-int",
+        "numeric-key",
+        "infinity",
+    ],
 )
 async def test_save_json_editor_and_full_configuration_roundtrip(
     hass, management_agent, management_message, projection_rules, value
@@ -80,6 +100,11 @@ async def test_save_json_editor_and_full_configuration_roundtrip(
     )
     response = _wire(result)
     assert yaml.safe_load(subentry.data["functions"])[0] == original
+    if type(value) is int and abs(value) > 2**53 - 1:
+        # A JSON number here is rounded by browser JSON.parse/structured drafts.
+        assert isinstance(
+            response["functions"][0]["function"]["variables"]["marker"], dict
+        )
     assert decode_management_function_values(response)["functions"][0] == original
     cloned = deepcopy(response["functions"][0])
     cloned["spec"]["name"] = "typed_clone"
@@ -140,6 +165,31 @@ async def test_save_json_editor_and_full_configuration_roundtrip(
         )
 
 
+@pytest.mark.parametrize("value", VALUES)
+async def test_export_uses_lossless_yaml_for_non_json_values(hass, value):
+    from custom_components.extended_openai_conversation_responses import backup
+
+    original = _tool(value)
+    exported = backup.export_configuration_snapshot(
+        {"functions": yaml.safe_dump([original])}
+    )
+    functions = exported["functions"]
+    if value == {"__eoai_management_yaml_v1__": "literal administrator data"}:
+        assert functions == [original]  # Ordinary JSON still stays structured.
+    else:
+        assert isinstance(functions, str)
+        assert yaml.safe_load(functions) == [original]
+    subentry = SimpleNamespace(
+        title="Typed tool", data={"functions": yaml.safe_dump([original])}
+    )
+    document = json.loads(json.dumps(ui._export_agent(subentry)))
+    restored = ui._parse_import_document(document, destination=subentry)
+    assert (
+        yaml.safe_load(restored["config"]["functions"])[0]["function"]
+        == original["function"]
+    )
+
+
 @pytest.mark.parametrize("saved", [None, "", [], "null", "[]"])
 @pytest.mark.parametrize("edit", [None, "", [], "null", "[]"])
 async def test_explicit_empty_management_edit_does_not_adopt_legacy_defaults(
@@ -190,6 +240,54 @@ def test_wire_tags_do_not_change_unrelated_management_fields():
     value = {"metadata": {"__eoai_management_yaml_v1__": "literal administrator data"}}
     assert management_function_response(value) == value
     assert decode_management_function_values(value) == value
+
+
+@pytest.mark.parametrize(
+    "section", ["tools", "configuration", "function_repair", "request_rules"]
+)
+def test_function_wire_decoder_preserves_arbitrary_arguments(section):
+    payload = {
+        "spec": "ordinary payload",
+        "function": {"__eoai_management_yaml_v1__": "[broken"},
+    }
+    message = {"section": section, "action": "test", "arguments": payload}
+    assert decode_management_function_request(message) == message
+
+
+@pytest.mark.parametrize("value", [0, 2**53 - 1, -(2**53 - 1)])
+def test_safe_integer_functions_keep_structured_json(value):
+    tool = _tool(value)
+    assert management_function_response(tool) == tool
+
+
+async def test_rule_payload_resembling_function_is_not_wire_decoded(
+    hass, management_agent, management_message, monkeypatch
+):
+    from custom_components.extended_openai_conversation_responses import request_rules
+    from tests.test_request_rules_management import MemoryStore, local_rule
+
+    rules = request_rules.RequestRules(MemoryStore())
+    await rules.async_initialize()
+    monkeypatch.setattr(ui, "async_get_request_rules", AsyncMock(return_value=rules))
+    literal = {
+        "spec": "event payload",
+        "function": {"__eoai_management_yaml_v1__": "2026-10-17"},
+    }
+    rule = local_rule()
+    rule["action"]["actions"] = [{"event": "review_probe", "event_data": literal}]
+    message = management_message(
+        "request_rules", "create", rule=rule, revision=rules.revision()
+    )
+    connection = SimpleNamespace(
+        user=SimpleNamespace(id="admin", is_admin=True),
+        send_result=Mock(),
+        send_error=Mock(),
+    )
+    await ui.websocket_management.__wrapped__(hass, connection, {"id": 1, **message})
+    connection.send_error.assert_not_called()
+    result = connection.send_result.call_args.args[1]
+    assert result["rule"]["action"]["actions"][0]["event_data"] == literal
+    assert rules.snapshot()["rules"][0]["action"]["actions"][0]["event_data"] == literal
 
 
 async def test_saved_yaml_lookup_isolates_invalid_siblings(

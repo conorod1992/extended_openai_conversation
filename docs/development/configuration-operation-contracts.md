@@ -103,12 +103,21 @@ the historical falsy-value fallback. Decoded fast snapshots must not repeat it.
 Management WebSocket responses keep Function definitions as structured objects.
 YAML-native values inside them use reversible `__eoai_management_yaml_v1__` tags;
 an administrator-authored mapping that resembles a tag is escaped as YAML itself.
-Incoming Management messages decode those tags once before validation. Caches,
+Incoming Management messages decode those tags once before validation, only in
+Function editor fields (`config.functions`, `tool`, and `tools`). Arbitrary rule
+event/service payloads and test arguments can resemble Function definitions and
+must retain literal marker-shaped dictionaries. Only configuration, tools and
+Function repair responses use this projection.
+Caches,
 raw configuration and ordinary non-Function Management fields retain their existing
 representations. Existing Function editors request authoritative YAML by saved name
 and configuration revision; new/duplicated definitions can still serialize a draft.
 This protects types during both YAML editor saves and structured draft submission,
 including binary values that HA's ordinary JSON encoder cannot serialize.
+Integers outside JavaScript's safe range also use the typed wire representation:
+HA may reject very large integers, while browser drafts silently round smaller
+ones above that range. Portable exports use YAML text for these integers,
+non-finite floats and non-string mapping keys, preserving values and key types.
 Definitions containing typed transport values use the existing raw YAML editor:
 HA's JSON-backed native editor must not dump transport tags as literal variables.
 

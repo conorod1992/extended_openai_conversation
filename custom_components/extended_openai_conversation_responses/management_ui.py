@@ -2947,10 +2947,10 @@ async def async_management_command(
     authorization precedes agent lookup; section-specific authorization stays with
     its handler. No setup/feature installer replaces this function.
     """
-    from .function_yaml import decode_management_function_values
+    from .function_yaml import decode_management_function_request
 
     try:
-        message = decode_management_function_values(message)
+        message = decode_management_function_request(message)
     except yaml.YAMLError as err:
         raise HomeAssistantError("Invalid typed YAML in Management request") from err
     action = message.get("action")
@@ -3192,7 +3192,10 @@ async def websocket_management(
     send_started = perf_counter() if trace_request else None
     from .function_yaml import management_function_response
 
-    connection.send_result(msg["id"], management_function_response(result))
+    connection.send_result(
+        msg["id"],
+        management_function_response(result, section=msg.get("section", "overview")),
+    )
     # Home Assistant serializes inside send_result. Its duration cannot be
     # inserted into a payload that has already been serialized.
     if send_started is not None and _PERFORMANCE_LOGGER.isEnabledFor(logging.DEBUG):

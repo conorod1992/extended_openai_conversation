@@ -23,7 +23,25 @@ from tests_real_ha.test_management_command_contracts import _client, _raw_call
 
 
 @pytest.mark.parametrize(
-    "value", [date(2026, 10, 17), b"Hello\x00\xff"], ids=["date", "binary"]
+    "value",
+    [
+        date(2026, 10, 17),
+        b"Hello\x00\xff",
+        10**100,
+        2**53 + 1,
+        -(2**53 + 1),
+        {7: "integer key", None: "null key"},
+        float("inf"),
+    ],
+    ids=[
+        "date",
+        "binary",
+        "large-int",
+        "unsafe-int",
+        "negative-unsafe-int",
+        "numeric-key",
+        "infinity",
+    ],
 )
 async def test_typed_function_websocket_editor_and_draft_roundtrip(
     hass, hass_ws_client, value
@@ -63,6 +81,10 @@ async def test_typed_function_websocket_editor_and_draft_roundtrip(
         saved = await call(
             "tools", "save", yaml=yaml.safe_dump(tool), revision=current["revision"]
         )
+        if type(value) is int and abs(value) > 2**53 - 1:
+            assert isinstance(
+                saved["functions"][0]["function"]["variables"]["marker"], dict
+            )
         assert decode_management_function_values(saved)["functions"][0] == tool
         subentry = entry.subentries[subentry_id]
         before = deepcopy(dict(subentry.data))
@@ -112,6 +134,54 @@ async def test_typed_function_websocket_editor_and_draft_roundtrip(
             and "Configuration changed" in stale["error"]["message"]
         )
         assert updated["revision"] != saved["revision"]
+    finally:
+        await _unload_entry(hass, entry)
+
+
+@pytest.mark.parametrize(
+    "marker", ["2026-10-17", "[broken"], ids=["date-like", "invalid-yaml"]
+)
+async def test_rule_event_payload_is_not_function_wire_data(
+    hass, hass_ws_client, marker
+):
+    from tests.test_request_rules_management import local_rule
+
+    entry = _make_entry(conversation_data={"functions": "[]"})
+    await _setup_entry(hass, entry)
+    try:
+        subentry_id = _subentry_id(entry, "conversation")
+        client = await _client(
+            hass, hass_ws_client, user_id="rule-wire-admin", owner=True
+        )
+        literal = {
+            "spec": "event payload",
+            "function": {"__eoai_management_yaml_v1__": marker},
+        }
+        rule = local_rule()
+        rule["action"]["actions"] = [{"event": "review_probe", "event_data": literal}]
+        response = await _raw_call(
+            client,
+            entry_id=entry.entry_id,
+            subentry_id=subentry_id,
+            section="request_rules",
+            action="create",
+            rule=rule,
+        )
+        assert response["success"], response
+        assert (
+            response["result"]["rule"]["action"]["actions"][0]["event_data"] == literal
+        )
+        read = await _raw_call(
+            client,
+            entry_id=entry.entry_id,
+            subentry_id=subentry_id,
+            section="request_rules",
+            action="list",
+        )
+        assert read["success"], read
+        assert (
+            read["result"]["rules"][0]["action"]["actions"][0]["event_data"] == literal
+        )
     finally:
         await _unload_entry(hass, entry)
 

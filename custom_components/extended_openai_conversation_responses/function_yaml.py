@@ -11,11 +11,14 @@ from .const import CONF_FUNCTION_TOOLS
 # Reserved only on the Management wire. A literal mapping with this key is itself
 # YAML-encoded, so decoding never confuses user-authored data with a scalar tag.
 _MANAGEMENT_YAML = "__eoai_management_yaml_v1__"
+_MAX_JSON_INTEGER = 2**53 - 1  # JavaScript's lossless integer range.
 
 
 def _management_yaml_value(value: Any) -> Any:
     """Represent typed Function values reversibly while keeping tools as objects."""
-    if value is None or type(value) in (str, int, bool):
+    if value is None or type(value) in (str, bool):
+        return value
+    if type(value) is int and abs(value) <= _MAX_JSON_INTEGER:
         return value
     if type(value) is float and math.isfinite(value):
         return value
@@ -32,13 +35,19 @@ def _management_yaml_value(value: Any) -> Any:
     }
 
 
-def management_function_response(value: Any) -> Any:
+def management_function_response(value: Any, *, section: str | None = None) -> Any:
     """Project Function definitions at the WebSocket boundary, never cache/storage.
 
     Other Management sections retain HA's established JSON representation. Typed
     values inside Functions remain tagged through frontend cloning and subsequent
     edits, instead of becoming strings or breaking a successful save response.
     """
+    if section is not None and section not in {
+        "configuration",
+        "tools",
+        "function_repair",
+    }:
+        return value
     if isinstance(value, dict):
         if "spec" in value and "function" in value:
             return _management_yaml_value(value)
@@ -74,6 +83,34 @@ def decode_management_function_values(value: Any) -> Any:
     return value
 
 
+def decode_management_function_request(message: dict[str, Any]) -> dict[str, Any]:
+    """Decode only fields owned by Function editors, never arbitrary action data.
+
+    A rule's event/service payload or a tool's test arguments may legitimately
+    resemble a Function definition, including the reserved wire marker.
+    """
+    section = message.get("section")
+    if section not in {"configuration", "tools", "function_repair"}:
+        return message
+    result = dict(message)
+    if (
+        section in {"configuration", "function_repair"}
+        and isinstance(config := message.get("config"), dict)
+        and CONF_FUNCTION_TOOLS in config
+    ):
+        result["config"] = {
+            **config,
+            CONF_FUNCTION_TOOLS: decode_management_function_values(
+                config[CONF_FUNCTION_TOOLS]
+            ),
+        }
+    if section in {"tools", "function_repair"}:
+        for key in ("tool", "tools"):
+            if key in message:
+                result[key] = decode_management_function_values(message[key])
+    return result
+
+
 def _contains_yaml_types(value: Any) -> bool:
     """Inspect types without encoding scalar values ahead of transport budgets.
 
@@ -90,12 +127,18 @@ def _contains_yaml_types(value: Any) -> bool:
             pending.pop()
             continue
         if isinstance(child, dict):
-            if any(not isinstance(key, scalar_types) for key in child):
+            # JSON object keys are strings, including when Python's encoder
+            # silently converts integer/bool/null keys rather than rejecting.
+            if any(not isinstance(key, str) for key in child):
                 return True
             children = iter(child.values())
         elif isinstance(child, (list, tuple)):
             children = iter(child)
-        elif not isinstance(child, scalar_types):
+        elif (
+            not isinstance(child, scalar_types)
+            or (type(child) is int and abs(child) > _MAX_JSON_INTEGER)
+            or (type(child) is float and not math.isfinite(child))
+        ):
             return True
         else:
             continue
