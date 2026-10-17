@@ -111,6 +111,13 @@ def _redact_secrets(
         return _sentinel()
     if is_literal_text(value):
         value = value[LITERAL_TEXT_KEY]
+    if isinstance(value, set):
+        # YAML sets contain hashable scalar keys, so a structured sentinel
+        # cannot replace one member. Redact the whole leaf for same-agent
+        # recovery, just as strings containing an embedded credential are.
+        if any(isinstance(item, str) and _LIKELY_SECRET.search(item) for item in value):
+            return _sentinel()
+        return value.copy()
     if isinstance(value, list):
         return [
             _redact_secrets(

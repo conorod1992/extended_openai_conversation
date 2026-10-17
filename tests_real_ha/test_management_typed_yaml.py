@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from datetime import date
+import json
 
 import pytest
 import yaml
@@ -32,6 +33,7 @@ from tests_real_ha.test_management_command_contracts import _client, _raw_call
         -(2**53 + 1),
         {7: "integer key", None: "null key"},
         float("inf"),
+        {"ordinary", "sk-12345678901234567890"},
     ],
     ids=[
         "date",
@@ -41,6 +43,7 @@ from tests_real_ha.test_management_command_contracts import _client, _raw_call
         "negative-unsafe-int",
         "numeric-key",
         "infinity",
+        "secret-set",
     ],
 )
 async def test_typed_function_websocket_editor_and_draft_roundtrip(
@@ -134,6 +137,32 @@ async def test_typed_function_websocket_editor_and_draft_roundtrip(
             and "Configuration changed" in stale["error"]["message"]
         )
         assert updated["revision"] != saved["revision"]
+        if isinstance(value, set):
+            exported = await call("configuration", "export")
+            assert "sk-12345678901234567890" not in json.dumps(exported)
+            preview = await call(
+                "configuration",
+                "import_preview",
+                document=exported["document"],
+                mode="current",
+            )
+            assert (
+                decode_management_function_values(preview)["config"]["functions"][0][
+                    "function"
+                ]
+                == tool["function"]
+            )
+            missing = await _raw_call(
+                client,
+                entry_id=entry.entry_id,
+                subentry_id=subentry_id,
+                section="configuration",
+                action="import_preview",
+                document=exported["document"],
+                mode="new",
+            )
+            assert not missing["success"]
+            assert "unavailable secrets" in missing["error"]["message"]
     finally:
         await _unload_entry(hass, entry)
 

@@ -87,6 +87,7 @@ async def test_delayed_tool_fingerprint_preserves_yaml_date_type(saved_date_tool
     assert fingerprint != tool_definition_fingerprint(quoted)
 
 
+@pytest.mark.timeout(120)
 def test_delayed_fingerprint_is_stable_across_restart_hash_seeds():
     """A mixed-type YAML set must not make an unchanged delayed job look edited."""
     import os
@@ -142,9 +143,10 @@ def test_typed_fingerprint_without_sets_keeps_existing_identity():
         sort_keys=True,
         allow_unicode=True,
     )
-    assert tool_definition_fingerprint(tool) == hashlib.sha256(
-        historical.encode()
-    ).hexdigest()
+    assert (
+        tool_definition_fingerprint(tool)
+        == hashlib.sha256(historical.encode()).hexdigest()
+    )
 
 
 @pytest.mark.parametrize("mode", ["setup", "full", "custom_configuration"])

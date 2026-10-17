@@ -190,6 +190,51 @@ async def test_export_uses_lossless_yaml_for_non_json_values(hass, value):
     )
 
 
+async def test_yaml_set_exports_redact_recognizable_credentials_and_recover(hass):
+    from custom_components.extended_openai_conversation_responses import backup
+    from custom_components.extended_openai_conversation_responses.agent_config import (
+        AgentConfigError,
+    )
+    from custom_components.extended_openai_conversation_responses.secret_redaction import (
+        REDACTED_SECRET_SENTINEL,
+    )
+
+    secret = "sk-12345678901234567890"
+    original = _tool({secret, "ordinary"})
+    subentry = SimpleNamespace(
+        title="Typed tool", data={"functions": yaml.safe_dump([original])}
+    )
+    document = json.loads(json.dumps(ui._export_agent(subentry)))
+    assert secret not in json.dumps(document)
+    exported = document["config"]["functions"]
+    exported = yaml.safe_load(exported) if isinstance(exported, str) else exported
+    assert exported[0]["function"]["variables"]["marker"] == REDACTED_SECRET_SENTINEL
+    backup_config = backup._safe_configuration(
+        backup.export_configuration_snapshot(subentry.data)
+    )
+    assert secret not in json.dumps(backup_config)
+    restored = ui._parse_import_document(document, destination=subentry)
+    assert (
+        yaml.safe_load(restored["config"]["functions"])[0]["function"]
+        == original["function"]
+    )
+    with pytest.raises(AgentConfigError, match="unavailable secrets"):
+        ui._parse_import_document(document)
+
+
+async def test_yaml_set_export_keeps_nonsecret_literal_redaction_text(hass):
+    original = _tool({"ordinary", "literal [redacted] prose"})
+    subentry = SimpleNamespace(
+        title="Typed tool", data={"functions": yaml.safe_dump([original])}
+    )
+    document = json.loads(json.dumps(ui._export_agent(subentry)))
+    restored = ui._parse_import_document(document)
+    assert (
+        yaml.safe_load(restored["config"]["functions"])[0]["function"]
+        == original["function"]
+    )
+
+
 @pytest.mark.parametrize("saved", [None, "", [], "null", "[]"])
 @pytest.mark.parametrize("edit", [None, "", [], "null", "[]"])
 async def test_explicit_empty_management_edit_does_not_adopt_legacy_defaults(

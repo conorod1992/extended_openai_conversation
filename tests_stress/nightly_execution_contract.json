@@ -2725,7 +2725,8 @@
     "tests_real_ha/test_management_typed_yaml.py::test_rule_event_payload_is_not_function_wire_data[date-like]",
     "tests_real_ha/test_management_typed_yaml.py::test_rule_event_payload_is_not_function_wire_data[invalid-yaml]",
     "tests_real_ha/test_review_followup_replays.py::test_script_missing_service_uses_ha_refusal[missing_domain]",
-    "tests_real_ha/test_review_followup_replays.py::test_script_missing_service_uses_ha_refusal[script_probe]"
+    "tests_real_ha/test_review_followup_replays.py::test_script_missing_service_uses_ha_refusal[script_probe]",
+    "tests_real_ha/test_management_typed_yaml.py::test_typed_function_websocket_editor_and_draft_roundtrip[secret-set]"
   ],
   "browser": {
     "browser": [
