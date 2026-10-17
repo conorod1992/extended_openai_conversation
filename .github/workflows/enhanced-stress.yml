@@ -7,6 +7,10 @@ on:
     - cron: "15 3 * * 0"
   workflow_dispatch:
     inputs:
+      ha_dev_sha:
+        description: Optional immutable Home Assistant dev commit supplied by Full Validation
+        type: string
+        required: false
       campaign:
         description: Campaign to run
         type: choice
@@ -821,8 +825,10 @@ jobs:
           ref: ${{ needs.prepare.outputs.candidate_sha }}
       - name: Resolve exact HA dev commit and Python version
         id: python
+        env:
+          REQUESTED_HA_DEV_SHA: ${{ inputs.ha_dev_sha }}
         run: |
-          SHA="$(git ls-remote https://github.com/home-assistant/core.git refs/heads/dev | awk '{print $1}')"
+          SHA="$(python3 ci/ha_dev_snapshot.py --sha "$REQUESTED_HA_DEV_SHA")"
           test -n "$SHA"
           VERSION="$(curl -fsSL "https://raw.githubusercontent.com/home-assistant/core/$SHA/.python-version" | tr -d '\n')"
           test -n "$VERSION"

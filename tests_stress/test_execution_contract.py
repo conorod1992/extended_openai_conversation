@@ -331,7 +331,7 @@ def test_only_stable_adds_native_browser_engines():
     assert (
         matrix["include"] == "${{ fromJson(needs.prepare.outputs.nightly-browsers) }}"
     )
-    preparation = jobs["prepare"]["steps"][0]["run"]
+    preparation = next(step["run"] for step in jobs["prepare"]["steps"] if step.get("id") == "versions")
     assert '"${{ github.event_name }}" = schedule' in preparation
     assert '"${{ github.event_name }}" = workflow_dispatch' in preparation
     steps = jobs["native-browser"]["steps"]

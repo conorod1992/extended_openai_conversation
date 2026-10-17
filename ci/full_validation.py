@@ -16,9 +16,11 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 try:
-    from ci.validation_inventory import CERTIFICATION_WORKFLOW, TEST_WORKFLOWS
+    from ci.ha_dev_snapshot import resolve_ha_dev_sha
+    from ci.validation_inventory import CERTIFICATION_WORKFLOW, HA_DEV_WORKFLOWS, TEST_WORKFLOWS
 except ImportError:
-    from validation_inventory import CERTIFICATION_WORKFLOW, TEST_WORKFLOWS
+    from ha_dev_snapshot import resolve_ha_dev_sha
+    from validation_inventory import CERTIFICATION_WORKFLOW, HA_DEV_WORKFLOWS, TEST_WORKFLOWS
 
 
 API_URL = os.environ["GH_API_URL"].rstrip("/")
@@ -147,7 +149,7 @@ def wait_for_workflows(launched: list[dict]) -> list[tuple[dict, dict]]:
     return results
 
 
-def programme_inputs(results: list[tuple[dict, dict]]) -> dict[str, str]:
+def programme_inputs(results: list[tuple[dict, dict]], ha_dev_sha: str) -> dict[str, str]:
     """Use the HA version actually certified by this cohort, never a new lookup."""
     try:
         from ci.release_certification import GitHubActions
@@ -172,12 +174,18 @@ def programme_inputs(results: list[tuple[dict, dict]]) -> dict[str, str]:
             "Exactly one nonempty Enhanced certification index is required"
         )
     index = actions.artifact_json(indexes[0], "certification-final.json")
+    dev_sources = {
+        row.get("environment", {}).get("homeassistant_source_commit")
+        for row in index.get("jobs", [])
+        if row.get("ha_point") == "dev"
+    }
     if (
         index.get("passed") is not True
         or index.get("candidate_sha") != TARGET_SHA
         or index.get("selected") != "all"
         or index.get("identity_errors")
         or index.get("execution_errors")
+        or dev_sources != {ha_dev_sha}
     ):
         raise RuntimeError(
             "Enhanced certification does not prove this complete candidate"
@@ -190,13 +198,15 @@ def programme_inputs(results: list[tuple[dict, dict]]) -> dict[str, str]:
         "ha_version": version,
         "full_architecture": "true",
         "validation_ref": REF_NAME,
+        "ha_dev_sha": ha_dev_sha,
     }
 
 
 def main() -> int:
+    ha_dev_sha = resolve_ha_dev_sha()
     print(
         f"Running {len(TEST_WORKFLOWS)} test workflows for {TARGET_SHA} "
-        f"on isolated ref {REF_NAME}; enhanced stress seed={STRESS_SEED}",
+        f"on isolated ref {REF_NAME}; HA dev={ha_dev_sha}; enhanced stress seed={STRESS_SEED}",
         flush=True,
     )
     api("POST", "git/refs", {"ref": f"refs/heads/{REF_NAME}", "sha": TARGET_SHA})
@@ -204,7 +214,10 @@ def main() -> int:
     launch_errors: list[tuple[str, str]] = []
     for workflow, inputs in TEST_WORKFLOWS:
         try:
-            launched.append(dispatch(workflow, dict(inputs)))
+            pinned_inputs = dict(inputs)
+            if workflow in HA_DEV_WORKFLOWS:
+                pinned_inputs["ha_dev_sha"] = ha_dev_sha
+            launched.append(dispatch(workflow, pinned_inputs))
         except Exception as error:
             launch_errors.append((workflow, str(error)))
             print(
@@ -215,7 +228,7 @@ def main() -> int:
         run.get("conclusion") == "success" for _, run in results
     ):
         try:
-            certification = dispatch(CERTIFICATION_WORKFLOW, programme_inputs(results))
+            certification = dispatch(CERTIFICATION_WORKFLOW, programme_inputs(results, ha_dev_sha))
             results.extend(wait_for_workflows([certification]))
         except Exception as error:
             launch_errors.append((CERTIFICATION_WORKFLOW, str(error)))
@@ -232,6 +245,7 @@ def main() -> int:
         "## Full validation",
         "",
         f"Commit: `{TARGET_SHA}`",
+        f"Home Assistant dev source: `{ha_dev_sha}`",
         f"Enhanced stress seed: `{STRESS_SEED}` (heavy)",
         f"Test workflows: {len(TEST_WORKFLOWS)}",
         "Nightly programme certification runs after all test workflows succeed.",
@@ -260,6 +274,7 @@ def main() -> int:
         json.dumps({
             "schema": 1,
             "candidate_sha": TARGET_SHA,
+            "ha_dev_sha": ha_dev_sha,
             "validation_ref": REF_NAME,
             "run_id": RUN_ID,
             "run_attempt": RUN_ATTEMPT,
