@@ -96,11 +96,13 @@ async def test_prewarm_preserves_persisted_function_semantics(hass, saved):
     assert raw == {"functions": saved}
 
 
-async def test_legacy_empty_collection_recovery_preserves_effective_functions():
+async def test_legacy_empty_collection_recovery_preserves_effective_functions(hass):
     raw = {"functions": []}
     expected = config.parse_configured_function_tools(raw)
     exported = backup.export_configuration_snapshot(raw)
     private = backup.private_configuration_snapshot(raw)
+    assert exported["functions"]
+    assert isinstance(private["functions"], str)
     for snapshot in (exported, private):
         restored = backup.recoverable_configuration_snapshot(snapshot)
         assert config.parse_configured_function_tools(restored) == expected
@@ -434,7 +436,7 @@ async def test_lightweight_settings_and_full_configuration_use_same_numeric_valu
 
 
 @pytest.mark.parametrize("saved", ["null", "[]", [], ""])
-async def test_rollback_preparation_preserves_function_runtime_interpretation(saved):
+async def test_rollback_preparation_preserves_function_runtime_interpretation(hass, saved):
     from unittest.mock import AsyncMock
 
     from tests.test_backup import _document
