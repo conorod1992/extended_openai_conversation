@@ -773,6 +773,11 @@ def catalog_generation() -> int:
     return _catalog_generation
 
 
+def active_catalog_version() -> int:
+    """Return the active data version, including across HA process restarts."""
+    return int(_active["catalog_version"])
+
+
 def all_reasoning_efforts() -> list[str]:
     return list(
         dict.fromkeys(

@@ -220,12 +220,20 @@ function formatSourceKind(value) {
   }[value] || "Extended OpenAI transfer";
 }
 
-function transferSummaryLines(result, summaryFormatter) {
-  const summary = result?.summary || {};
-  const lines = [formatSourceKind(result?.source_kind)];
-  const configured = summaryFormatter(summary).filter(Boolean);
-  for (const line of configured) if (!lines.includes(line)) lines.push(line);
-  return lines;
+export function restorePreviewSummaryLines(preview = {}) {
+  const count = (key) => Number(preview[key] || 0);
+  const sections = new Set(preview.selected_sections || []);
+  const lines = [
+    ["configuration", "Agent configuration and Function Tools"],
+    ["request_rules", `${count("request_rules")} Request Rules`],
+    ["persistent_memory", `${count("persistent_memories")} persistent memories`],
+    ["temporary_memory", `${count("temporary_memories")} active temporary memories`],
+    ["knowledge", `${count("knowledge_sources")} Knowledge sources`],
+    ["conversation_archive", `${count("archive_sessions")} archived conversations (${count("archive_turns")} turns)`],
+    ["usage", `Usage history (${count("usage_runs")} runs, ${count("usage_requests")} requests)`],
+    ["guest_mode", `Guest Mode schedule ${preview.guest_mode_scheduled ? "included" : "inactive"}`],
+  ];
+  return lines.filter(([section]) => sections.has(section)).map(([, line]) => line);
 }
 
 function updateSensitiveStatus(panel, preview) {
@@ -313,6 +321,8 @@ function invalidateImportPreview(panel) {
   work.latest = null;
   panel._backupTransferPreview = null;
   panel._backupTransferPreviewToken = null;
+  const summary = panel.shadowRoot?.querySelector("#restore-summary");
+  if (summary) summary.innerHTML = "";
   const apply = panel.shadowRoot?.querySelector(`#${APPLY_ID}`);
   if (apply) apply.disabled = true;
   return panel._transferPreviewToken = (panel._transferPreviewToken || 0) + 1;
@@ -335,10 +345,8 @@ function sendLatestImportPreview(panel) {
       panel._backupTransferPreviewToken = result.preview_token;
       const summary = panel.shadowRoot?.querySelector("#restore-summary");
       if (summary) {
-        summary.innerHTML = transferSummaryLines(
-          {...panel._backupTransferInspection, summary: result.preview},
-          work.summaryFormatter || backupSummaryLines,
-        ).map((line) => `<li>${panel._e(line)}</li>`).join("");
+        summary.innerHTML = restorePreviewSummaryLines(result.preview)
+          .map((line) => `<li>${panel._e(line)}</li>`).join("");
       }
       const missingUsers = updateRestorePreviewStatus(panel, result.preview);
       if (apply) apply.disabled = result.preview_token === null || missingUsers > 0;
@@ -384,10 +392,9 @@ export function refreshImportPreview(panel) {
   return true;
 }
 
-export function bindBackupTransfer(panel, summaryFormatter = backupSummaryLines) {
+export function bindBackupTransfer(panel) {
   const root = panel?.shadowRoot;
   if (!root) return;
-  previewWork(panel).summaryFormatter = summaryFormatter;
 
   const exportMode = root.querySelector(`#${EXPORT_MODE_ID}`);
   const customOptions = root.querySelector(`#${CUSTOM_OPTIONS_ID}`);

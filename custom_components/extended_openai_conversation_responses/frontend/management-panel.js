@@ -1,4 +1,5 @@
 import {mutationEffects} from "./management-mutation-effects.js";
+import {observeCatalogGeneration} from "./model-catalog.js";
 import {invalidateUsageWindows} from "./usage-cache.js";
 import {scheduleWallTime, scheduleInstant} from "./schedule-time.js";
 import {beginOperation} from "./operation-ownership.js";
@@ -478,7 +479,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (!configData?.config || configData.revision == null) return;
     const projection = configData.projection === "retention" ? "retention" : "full";
     const key = this._configurationSnapshotKey(agentId, projection);
-    if (key) this._cleanConfigSnapshots.set(key, {result: configData, loadedAt: Date.now(), generation: this._cacheGeneration});
+    if (key) this._cleanConfigSnapshots.set(key, {result: configData, loadedAt: Date.now(), generation: this._cacheGeneration,
+      catalogGeneration: configData.catalog_generation ?? this._eocCatalogGeneration ?? null,
+      catalogVersion: configData.catalog_version ?? this._eocCatalogVersion ?? null});
   }
 
   _freshCleanConfiguration(agentId, projection) {
@@ -488,6 +491,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     return cached?.result?.config && cached.result.revision != null
       && (cached.result.projection === "retention" ? "retention" : "full") === projection
       && cached.generation === this._cacheGeneration && age >= 0 && age <= CLEAN_CONFIG_TTL_MS
+      && (this._eocCatalogGeneration == null || cached.catalogGeneration === this._eocCatalogGeneration)
+      && (this._eocCatalogVersion == null || cached.catalogVersion === this._eocCatalogVersion)
       ? cached.result : null;
   }
 
@@ -572,7 +577,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       return;
     }
     stopLiveStatus(this);
-    this._refreshModelDataForRoute(destination);
     this._page = route.page;
     this._subsection = route.section;
     this._query = "";
@@ -591,16 +595,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         this._error = error.message || String(error);
         this._render();
       });
-    }
-  }
-
-  _refreshModelDataForRoute(destination) {
-    if (destination === "assistant/model-responses") {
-      // Another browser may have applied shared catalogue data while this
-      // panel was warm. A route visit must refresh both capability projections
-      // and inherited defaults, retaining the local configuration delta.
-      this._modelCatalogData = null;
-      this._invalidateCleanConfiguration(this._agentId);
     }
   }
 
@@ -1101,6 +1095,18 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const cacheGeneration = this._cacheGeneration;
     const scopeCatalogKey = this._prepareScopeCatalogVisit(view);
     const configOnly = this._isDraftView() && view !== "data-memory/conversations" && !["capabilities/request-rules", "usage-maintenance/backup-restore"].includes(view);
+    if (configOnly && this._hasConfigurationCatalogGeneration()) {
+      try {
+        if (!await this._validateConfigurationCatalog()) return;
+      } catch (error) {
+        if (loadToken !== this._loadToken || cacheGeneration !== this._cacheGeneration) return;
+        this._invalidateCleanConfiguration(this._agentId);
+        this._error = `Unable to verify current model data: ${error.message || String(error)}. Retry loading this section.`;
+        this._busy = false;
+        this._render();
+        return;
+      }
+    }
     if (configOnly && this._configData && !this._configDataStale && this._draftAgentId === this._agentId
         && (this._configData.projection !== "retention" || view === "usage-maintenance/retention")) {
       this._applyConfigurationLiveMetadata(view);
@@ -1115,7 +1121,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const needsScopes = ["data-memory/memories", "data-memory/conversations"].includes(view);
     const cache = readSectionCache(this, view);
     const cacheKey = cache.key;
-    const showCached = cache.result !== undefined && (cache.fresh || ["overview", "data-memory/knowledge", "usage-maintenance/usage"].includes(view));
+    // Configuration uses its generation-checked clean snapshots, never the
+    // generic read-only section cache's independent freshness window.
+    const showCached = !configOnly && cache.result !== undefined && (cache.fresh || ["overview", "data-memory/knowledge", "usage-maintenance/usage"].includes(view));
     if (showCached) {
       this._contentData = null;
       this._result = view === "usage-maintenance/usage"
@@ -1458,7 +1466,38 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     await Promise.all(pending);
   }
 
+  _hasConfigurationCatalogGeneration() {
+    return Number.isInteger(this._eocCatalogGeneration) || Number.isInteger(this._configData?.catalog_generation)
+      || [...this._cleanConfigSnapshots.values()].some((cached) => Number.isInteger(cached.result?.catalog_generation));
+  }
+
+  async _validateConfigurationCatalog() {
+    const agentId = this._agentId;
+    const entryId = this._selectedAgent()?.entry_id;
+    const view = this._viewKey();
+    const loadToken = this._loadToken;
+    const cacheGeneration = this._cacheGeneration;
+    const generation = this._eocCatalogGeneration ?? this._configData?.catalog_generation;
+    const version = this._eocCatalogVersion ?? this._configData?.catalog_version;
+    const validated = this._eocCatalogValidation;
+    if (validated?.agentId === agentId && validated.entryId === entryId && validated.view === view
+        && validated.loadToken === loadToken && validated.cacheGeneration === cacheGeneration
+        && validated.generation === generation && validated.version === version
+        && (this._configData?.catalog_generation == null || this._configData.catalog_generation === generation)
+        && (this._configData?.catalog_version == null || this._configData.catalog_version === version)) return true;
+    const result = await this._hass.callWS({type:"extended_openai_conversation_responses/model_catalog", action:"status"});
+    if (agentId !== this._agentId || entryId !== this._selectedAgent()?.entry_id || view !== this._viewKey()
+        || loadToken !== this._loadToken || cacheGeneration !== this._cacheGeneration) return false;
+    if (!Number.isInteger(result?.catalog_generation)) throw new Error("Invalid model catalogue generation");
+    observeCatalogGeneration(this, result);
+    this._eocCatalogValidation = {agentId, entryId, view, loadToken, cacheGeneration, generation:result.catalog_generation, version:result.catalog_version};
+    return true;
+  }
+
   async _loadConfigDraft() {
+    // Validate shared model data before reusing an active baseline, clean cache
+    // or prefetched configuration on any route or assistant.
+    if (this._hasConfigurationCatalogGeneration() && !await this._validateConfigurationCatalog()) return;
     const diagnostics = this._eocConfigurationReadDiagnostics ||= {};
     if (!this._configData || this._configDataStale || this._draftAgentId !== this._agentId
         || (this._configData.projection === "retention" && this._viewKey() !== "usage-maintenance/retention")) {
@@ -1495,13 +1534,17 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
             trace("prefetch-discarded", {status: "discarded", reason: staleReason});
             return;
           }
-          if (settled.status === "fulfilled" && settled.value?.config && typeof settled.value.config === "object") {
+          if (settled.status === "fulfilled" && settled.value?.config && typeof settled.value.config === "object"
+              && (this._eocCatalogGeneration == null || settled.value.catalog_generation === this._eocCatalogGeneration)
+              && (this._eocCatalogVersion == null || settled.value.catalog_version === this._eocCatalogVersion)) {
             configData = settled.value;
             diagnostics.draft = {source: "prefetched-request", action, sentAction: null};
             trace("draft-source", {source: "prefetched-request"});
           } else {
             diagnostics.prefetch.status = "discarded";
-            diagnostics.prefetch.reason = settled.status === "rejected" ? "request-failed" : "invalid-response";
+            diagnostics.prefetch.reason = settled.status === "rejected" ? "request-failed"
+              : (settled.value?.catalog_generation != null && settled.value.catalog_generation !== this._eocCatalogGeneration)
+                || (settled.value?.catalog_version != null && settled.value.catalog_version !== this._eocCatalogVersion) ? "catalogue-changed" : "invalid-response";
             diagnostics.prefetch.discardedAt = Date.now();
             trace("prefetch-discarded", {status: "discarded", reason: diagnostics.prefetch.reason});
           }
@@ -1536,6 +1579,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       if (this._configDirty && this._draftAgentId === agentId && !retainedDraft) return;
       const prior = key ? this._cleanConfigSnapshots.get(key)?.result : null;
       if (prior && prior.revision !== configData.revision) this._invalidateCleanConfiguration(agentId);
+      observeCatalogGeneration(this, configData);
       this._configData = configData;
       this._configDataStale = false;
       if (!cached) this._rememberCleanConfiguration(configData, agentId);
@@ -1567,7 +1611,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       stopLiveStatus(this);
       const metadata = pageMetadata(page);
       const resolvedSubsection = subsection || this._visibleSubsections(page)[0]?.id || metadata.sections[0]?.id || null;
-      this._refreshModelDataForRoute(`${page}/${resolvedSubsection}`);
       this._page = page;
       this._subsection = resolvedSubsection;
       this._query = "";
