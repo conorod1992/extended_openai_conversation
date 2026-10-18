@@ -1,10 +1,16 @@
 name: Full validation
 
-run-name: Full validation · ${{ github.ref_name }}
+run-name: Full validation · ${{ inputs.mode || 'full' }} · ${{ github.ref_name }}
 
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        description: Full coverage or quick (skip Enhanced long-lifetime and iOS; no release certification)
+        required: true
+        type: choice
+        default: full
+        options: [full, quick]
       seed:
         description: Optional reproducible seed for enhanced stress
         required: false
@@ -20,7 +26,7 @@ concurrency:
 
 jobs:
   dispatch-and-wait:
-    name: Dispatch and monitor all CI test lanes
+    name: Dispatch and monitor selected CI test lanes
     runs-on: ubuntu-latest
     timeout-minutes: 345
     steps:
@@ -39,6 +45,7 @@ jobs:
           GH_RUN_ID: ${{ github.run_id }}
           GH_RUN_ATTEMPT: ${{ github.run_attempt }}
           FULL_VALIDATION_SEED: ${{ inputs.seed }}
+          FULL_VALIDATION_MODE: ${{ inputs.mode }}
         run: python3 ci/full_validation.py
       - name: Preserve exact validation cohort for release certification
         if: always()

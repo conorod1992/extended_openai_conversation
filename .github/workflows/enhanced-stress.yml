@@ -16,7 +16,7 @@ on:
         type: choice
         required: true
         default: all
-        options: [all, runtime, lifecycle, ai-task, voice-intercom, archive, feature-crossroads, setup, backup, backup-transfer, persistence, request-rules, guest-security, quiet-hours, functions, provider-resilience, memory-knowledge, large-installation, browser, browser-engines, chaos, process-chaos, long-lifetime, diagnostics]
+        options: [all, all-except-long-lifetime, runtime, lifecycle, ai-task, voice-intercom, archive, feature-crossroads, setup, backup, backup-transfer, persistence, request-rules, guest-security, quiet-hours, functions, provider-resilience, memory-knowledge, large-installation, browser, browser-engines, chaos, process-chaos, long-lifetime, diagnostics]
       intensity:
         description: Workload multiplier
         type: choice
@@ -74,7 +74,7 @@ jobs:
           echo "Stable Home Assistant: $VERSION; compatible test plugin: $PLUGIN_VERSION" >> "$GITHUB_STEP_SUMMARY"
       - name: Resolve one published EOAI release for persistence checks
         id: release
-        if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'persistence'
+        if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'all-except-long-lifetime' || inputs.campaign == 'persistence'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -119,7 +119,7 @@ jobs:
   persistence_runtime:
     name: Prepare isolated published-release runtime
     needs: prepare
-    if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'persistence'
+    if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'all-except-long-lifetime' || inputs.campaign == 'persistence'
     runs-on: ubuntu-latest
     outputs:
       cache_key: ${{ steps.identity.outputs.cache_key }}
@@ -393,7 +393,7 @@ jobs:
   external-recorder:
     name: External Recorder / MariaDB + PostgreSQL
     needs: prepare
-    if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'functions'
+    if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'all-except-long-lifetime' || inputs.campaign == 'functions'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
@@ -458,7 +458,7 @@ jobs:
   browser:
     name: browser / ${{ matrix.intensity }}
     needs: prepare
-    if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'browser' || inputs.campaign == 'diagnostics'
+    if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'all-except-long-lifetime' || inputs.campaign == 'browser' || inputs.campaign == 'diagnostics'
     runs-on: ubuntu-latest
     timeout-minutes: 180
     strategy:
@@ -600,7 +600,7 @@ jobs:
   browser-engines:
     name: browser-${{ matrix.engine }} / ${{ matrix.intensity }}
     needs: prepare
-    if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'browser' || inputs.campaign == 'browser-engines'
+    if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'all-except-long-lifetime' || inputs.campaign == 'browser' || inputs.campaign == 'browser-engines'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     container:
@@ -716,7 +716,7 @@ jobs:
   ha-lifecycle-matrix:
     name: HA ${{ matrix.ha-version }} / shared lifecycle contract
     needs: prepare
-    if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'lifecycle'
+    if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'all-except-long-lifetime' || inputs.campaign == 'lifecycle'
     runs-on: ubuntu-latest
     timeout-minutes: 180
     container:
@@ -806,7 +806,7 @@ jobs:
       ha_core_sha: ${{ steps.python.outputs.sha }}
     name: HA dev / shared lifecycle contract
     needs: prepare
-    if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'lifecycle'
+    if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'all-except-long-lifetime' || inputs.campaign == 'lifecycle'
     runs-on: ubuntu-latest
     timeout-minutes: 180
     env:

@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from ci import enhanced_certification as gate, enhanced_evidence as evidence
+from ci.actions_schedule import enhanced_plan
 from ci.candidate_evidence import check_candidate
 from ci.execution_contract import CONTRACT, expected_cases
 
@@ -144,6 +145,63 @@ def item(sha=SOURCE):
             }
         ],
     }
+
+
+@pytest.mark.parametrize("omitted", [None, "runtime", "browser", "browser-webkit", "dev"])
+def test_all_except_long_lifetime_still_requires_all_remaining_evidence(
+    monkeypatch, tmp_path, omitted
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    plan = enhanced_plan("workflow_dispatch", campaign="all-except-long-lifetime", intensity="heavy")
+    for key, value in {
+        "GITHUB_EVENT_NAME": "workflow_dispatch",
+        "ENHANCED_SELECTED": "all-except-long-lifetime",
+        "ENHANCED_CAMPAIGNS": json.dumps(plan["campaigns"]),
+        "ENHANCED_INTENSITIES": json.dumps(plan["intensities"]),
+        "ENHANCED_CANDIDATE_SHA": SOURCE,
+        "ENHANCED_EXPECTED_STABLE_HA_VERSION": "2026.9.4",
+        "ENHANCED_EXPECTED_HA_DEV_SHA": "d" * 40,
+        "ENHANCED_NEEDS": "{}",
+        "STRESS_SEED": "123",
+    }.items():
+        monkeypatch.setenv(key, value)
+    contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
+    jobs = {}
+    rows = []
+    for campaign in [*plan["campaigns"], "browser", "browser-firefox", "browser-webkit"]:
+        if campaign == omitted:
+            continue
+        row = lifecycle_item("stable", "2026.9.4")
+        row.pop("ha_point")
+        row.update(
+            campaign=campaign, intensity="heavy",
+            execution_cases=[{
+                "nodeid": node, "execution_id": "probe", "collected": True,
+                "executed": True, "outcome": "passed",
+            } for node in sorted(expected_cases(contract, campaign))],
+            measured_totals=contract.get("minimums", {}).get(campaign, {}),
+        )
+        rows.append(row)
+        jobs[f"{campaign} / heavy"] = "success"
+    for point, version in [("oldest", "2026.7.0"), ("stable", "2026.9.4"), ("dev", "2026.10.0.dev0")]:
+        if point == omitted:
+            continue
+        rows.append(lifecycle_item(point, version))
+        jobs[f"HA {point} / shared lifecycle contract"] = "success"
+    for number, row in enumerate(rows):
+        directory = tmp_path / str(number)
+        directory.mkdir()
+        (directory / "certification.json").write_text(json.dumps(row), encoding="utf-8")
+    monkeypatch.setattr(gate, "actual_jobs", lambda: jobs)
+    assert gate.main(tmp_path) == int(omitted is not None)
+    index = json.loads((tmp_path / "certification-final.json").read_text())
+    assert index["expected_rows"] == len(plan["campaigns"]) + 6
+    assert index["passed"] is (omitted is None)
+    assert index["full_programme_passed"] is False
+    assert "long-lifetime" not in index["expected_cases"]
+    assert not index["identity_errors"]
+    assert not index["execution_errors"]
 
 
 @pytest.mark.parametrize(

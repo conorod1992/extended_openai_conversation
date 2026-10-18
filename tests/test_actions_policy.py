@@ -37,6 +37,18 @@ def test_weekly_and_full_validation_preserve_full_programme():
     ] == ["heavy"]
 
 
+@pytest.mark.parametrize("intensity", ["normal", "heavy", "all"])
+def test_manual_all_except_long_lifetime_preserves_other_campaigns(intensity):
+    full = enhanced_plan("workflow_dispatch", campaign="all", intensity=intensity)
+    quick = enhanced_plan(
+        "workflow_dispatch", campaign="all-except-long-lifetime", intensity=intensity
+    )
+    assert quick["campaigns"] == [
+        name for name in full["campaigns"] if name != "long-lifetime"
+    ]
+    assert quick["intensities"] == full["intensities"]
+
+
 @pytest.mark.parametrize(
     "kwargs",
     [
