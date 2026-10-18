@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from datetime import datetime
 import logging
 import math
@@ -125,6 +126,13 @@ def _estimated_row_bytes(row: dict[str, Any]) -> int:
     return len(repr(row).encode("utf-8", errors="replace"))
 
 
+def _json_safe_sqlite_value(value: Any) -> Any:
+    """Represent SQLite BLOBs as explicitly tagged Base64 JSON values."""
+    if isinstance(value, bytes):
+        return {"type": "base64", "data": base64.b64encode(value).decode("ascii")}
+    return value
+
+
 def _set_sqlite_result_limit(conn: sqlite3.Connection, max_result_bytes: int) -> None:
     """Bound any single SQLite string/BLOB before Python can materialize it."""
     conn.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, max_result_bytes)
@@ -192,7 +200,10 @@ def _execute_sqlite_query(
                 check_deadline()
                 if row is None:
                     return {}
-                result = {name: val for name, val in zip(names, row, strict=False)}
+                result = {
+                    name: _json_safe_sqlite_value(val)
+                    for name, val in zip(names, row, strict=False)
+                }
                 result_bytes = _estimated_row_bytes(result)
                 if result_bytes > max_result_bytes:
                     raise HomeAssistantError(
@@ -211,7 +222,10 @@ def _execute_sqlite_query(
                         f"SQLite query returned more than {max_rows} rows; "
                         "add a LIMIT clause or increase max_rows"
                     )
-                item = {name: val for name, val in zip(names, row, strict=False)}
+                item = {
+                    name: _json_safe_sqlite_value(val)
+                    for name, val in zip(names, row, strict=False)
+                }
                 result_bytes += _estimated_row_bytes(item) + 1
                 if result_bytes > max_result_bytes:
                     raise HomeAssistantError(

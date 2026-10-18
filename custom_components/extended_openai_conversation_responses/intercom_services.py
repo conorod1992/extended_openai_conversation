@@ -76,6 +76,7 @@ async def async_setup_intercom_services(hass: HomeAssistant) -> None:
             origin_device_id=call.data.get("origin_device_id"),
             source="service",
             ttl_seconds=call.data["ttl_seconds"],
+            context=call.context,
         )
         return cast(ServiceResponse, result)
 

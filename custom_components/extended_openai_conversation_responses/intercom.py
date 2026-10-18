@@ -11,7 +11,7 @@ from typing import Any, cast
 from uuid import uuid4
 
 from homeassistant.const import ATTR_FRIENDLY_NAME, ATTR_SUPPORTED_FEATURES
-from homeassistant.core import Event, HomeAssistant, State, callback
+from homeassistant.core import Context, Event, HomeAssistant, State, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import (
     area_registry as ar,
@@ -37,6 +37,7 @@ MAX_BROADCAST_DELIVERIES = 256
 MAX_BROADCAST_QUEUE_PER_TARGET = 16
 DEFAULT_TTL_SECONDS = 120
 IDLE_STABILITY_SECONDS = 0.5
+ANNOUNCE_TIMEOUT_SECONDS = 30
 # Matches Home Assistant's AssistSatelliteEntityFeature.ANNOUNCE without importing
 # the Assist Satellite entity module (which eagerly imports the TTS/media stack).
 ANNOUNCE_FEATURE = 1
@@ -66,6 +67,7 @@ class BroadcastMessage:
     origin_device_id: str | None
     targets: list[str]
     deliveries: dict[str, Delivery]
+    context: Context | None = field(default=None, repr=False, compare=False)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -319,6 +321,7 @@ class IntercomManager:
         origin_device_id: str | None = None,
         source: str = "manual",
         ttl_seconds: int = DEFAULT_TTL_SECONDS,
+        context: Context | None = None,
     ) -> dict[str, Any]:
         if not self._enabled:
             raise HomeAssistantError(
@@ -378,6 +381,7 @@ class IntercomManager:
             origin_device_id=origin_device_id,
             targets=targets,
             deliveries={entity_id: Delivery(entity_id) for entity_id in targets},
+            context=context,
         )
         from .execution_outcomes import execution_completed, execution_started
 
@@ -473,13 +477,15 @@ class IntercomManager:
                     continue
                 delivery.set("delivering")
                 try:
-                    await self.hass.services.async_call(
-                        "assist_satellite",
-                        "announce",
-                        {"message": item.message},
-                        target={"entity_id": entity_id},
-                        blocking=True,
-                    )
+                    async with asyncio.timeout(ANNOUNCE_TIMEOUT_SECONDS):
+                        await self.hass.services.async_call(
+                            "assist_satellite",
+                            "announce",
+                            {"message": item.message},
+                            target={"entity_id": entity_id},
+                            blocking=True,
+                            context=item.context,
+                        )
                 except Exception as err:
                     delivery.set("failed", type(err).__name__)
                 else:

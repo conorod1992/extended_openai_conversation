@@ -97,10 +97,11 @@ async def websocket_broadcast(
 
         # Queue only the exact targets that were resolved and authorized for this
         # authenticated Home Assistant caller.
+        context = connection.context(msg)
         targets = await async_authorized_broadcast_targets(
             hass,
             manager,
-            context=connection.context(msg),
+            context=context,
             whole_home=whole_home,
             entity_ids=entity_ids,
         )
@@ -108,6 +109,7 @@ async def websocket_broadcast(
             message,
             entity_ids=targets,
             source="frontend",
+            context=context,
         )
         connection.send_result(msg["id"], result)
     except (HomeAssistantError, ValueError) as err:
