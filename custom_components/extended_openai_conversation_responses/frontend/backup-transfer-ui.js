@@ -128,7 +128,7 @@ export async function downloadCustomBackup(panel, sections, saveBlob = defaultSa
   return downloadArchiveBackup(panel, {mode: "custom", sections}, saveBlob);
 }
 
-export async function uploadFullBackup(panel, file) {
+export async function uploadFullBackup(panel, file, isCurrent = () => true) {
   let sessionId = null;
   try {
     const manifest = await callBackupTransfer(panel, "import_start", {
@@ -136,11 +136,17 @@ export async function uploadFullBackup(panel, file) {
       size: file.size,
     });
     sessionId = manifest.session_id;
+    if (sessionId) {
+      panel._backupTransferUploads ||= new Set();
+      panel._backupTransferUploads.add(sessionId);
+    }
     if (!sessionId || !Number.isInteger(manifest.chunk_size) || manifest.chunk_size < 1 || !Number.isInteger(manifest.chunk_count) || manifest.chunk_count < 1) {
       throw new Error("The backup server returned an invalid upload manifest");
     }
+    if (!isCurrent()) throw new Error("The selected backup was superseded");
     let sent = 0;
     for (let index = 0; index < manifest.chunk_count; index += 1) {
+      if (!isCurrent()) throw new Error("The selected backup was superseded");
       const end = Math.min(file.size, sent + manifest.chunk_size);
       const bytes = new Uint8Array(await file.slice(sent, end).arrayBuffer());
       if (!bytes.byteLength) throw new Error("The selected transfer file ended unexpectedly");
@@ -149,6 +155,7 @@ export async function uploadFullBackup(panel, file) {
         index,
         data: bytesToBase64(bytes),
       });
+      if (!isCurrent()) throw new Error("The selected backup was superseded");
       sent += bytes.byteLength;
       if (result.session_id !== sessionId || result.next_index !== index + 1 || result.received !== sent) {
         throw new Error("The backup server rejected the upload sequence");
@@ -156,6 +163,7 @@ export async function uploadFullBackup(panel, file) {
     }
     if (sent !== file.size) throw new Error("The selected transfer file was not uploaded completely");
     const inspection = await callBackupTransfer(panel, "import_inspect", {session_id: sessionId, inspect_only: true});
+    if (!isCurrent()) throw new Error("The selected backup was superseded");
     if (!inspection?.valid) throw new Error("The transfer could not be validated");
     return {session_id: sessionId, ...inspection};
   } catch (err) {
@@ -167,6 +175,16 @@ export async function uploadFullBackup(panel, file) {
       }
     }
     throw err;
+  } finally {
+    if (sessionId) panel._backupTransferUploads?.delete(sessionId);
+  }
+}
+
+function cancelUploadingBackups(panel) {
+  for (const sessionId of panel?._backupTransferUploads || []) {
+    // The upload's own catch also attempts cleanup if its current request settles
+    // after this cancellation. Both paths are safe if the server already removed it.
+    void callBackupTransfer(panel, "import_cancel", {session_id: sessionId}).catch(() => {});
   }
 }
 
@@ -182,6 +200,8 @@ export async function cancelBackupImport(panel, sessionId = panel?._backupTransf
 }
 
 export function openBackupPicker(panel, input) {
+  if (panel) panel._backupImportGeneration = (panel._backupImportGeneration || 0) + 1;
+  cancelUploadingBackups(panel);
   invalidateImportPreview(panel);
   const previousSession = panel?._backupTransferSession;
   if (previousSession && panel) panel._backupTransferSession = null;
@@ -440,8 +460,9 @@ export function bindBackupTransfer(panel) {
     panel._backupTransferSession = null;
     invalidateImportPreview(panel);
     if (previousSession) void cancelBackupImport(panel, previousSession);
+    cancelUploadingBackups(panel);
     try {
-      const result = await uploadFullBackup(panel, file);
+      const result = await uploadFullBackup(panel, file, () => panel._backupImportGeneration === generation);
       if (panel._backupImportGeneration !== generation) {
         await cancelBackupImport(panel, result.session_id);
         return;

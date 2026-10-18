@@ -62,6 +62,8 @@ const fileNamed = name => { const file = new Blob(['x']); Object.defineProperty(
 const uploadA = raceNodes.get('#backup-file-transfer').handlers.change({target:{files:[fileNamed('A')]}});
 await new Promise(resolve => setTimeout(resolve, 0));
 await raceNodes.get('#backup-file-transfer').handlers.change({target:{files:[fileNamed('B')]}});
+assert.ok(raceCalls.some(([action, data]) => action === 'import_cancel' && data.session_id === 'A'),
+  'superseding a fully-uploaded file cancels its still-active inspection session immediately');
 await new Promise(resolve => setTimeout(resolve, 180));
 oldInspect.resolve({valid:true,title:'A',source_kind:'full_backup',available_sections:['persistent_memory'],preview:{selected_sections:['persistent_memory']},preview_token:'A-token'});
 await uploadA;
