@@ -4,6 +4,12 @@ export async function lookupModelData(panel, model = "", action = "lookup", isCu
     type: "extended_openai_conversation_responses/model_catalog", action, model,
   });
   if (panel && result && isCurrent()) {
+    if (["apply", "reset"].includes(action) && !result.last_error) {
+      // Capability defaults are shared across agents. Cached effective config
+      // values may now differ even though the persisted settings did not change.
+      panel._cleanConfigSnapshots?.clear();
+      panel._invalidateCleanConfiguration?.(panel._draftAgentId || panel._agentId);
+    }
     panel._modelCatalogData = {...result, requested_model: String(model || "")};
     if (panel._result && result.model_capabilities) panel._result.model_capabilities = result.model_capabilities;
   }
@@ -121,17 +127,17 @@ export function bindModelDataControls(panel, onUpdated = () => {}) {
       return String((azure ? azure.value : config.azure_model) || (chat ? chat.value : config.chat_model) || "");
     };
     const model = capabilityModel();
-    const current = () => panel._eocModelDataActionToken === token
+    const ownsAction = () => panel._eocModelDataActionToken === token
       && panel._agentId === agentId && panel._viewKey?.() === view
-      && panel._loadToken === loadToken && panel._cacheGeneration === cacheGeneration
-      && panel._draft === draft
+      && panel._loadToken === loadToken && panel._cacheGeneration === cacheGeneration;
+    const current = () => ownsAction() && panel._draft === draft
       && capabilityModel() === model;
     try {
       const result = await lookupModelData(panel, model, button.dataset.modelData, current);
       if (!current()) return;
       if (status) status.textContent = modelDataStatusText(result);
       syncModelDataControls(panel, result);
-      if (!result.last_error) onUpdated(status?.textContent || "Model data updated.");
+      if (!result.last_error) await onUpdated(status?.textContent || "Model data updated.", button.dataset.modelData);
     } catch (err) {
       if (!current() || !status) return;
       if (button.dataset.modelData === "check") {
@@ -142,7 +148,9 @@ export function bindModelDataControls(panel, onUpdated = () => {}) {
         status.textContent = `Unable to restore bundled model data: ${err.message || String(err)}`;
       }
     } finally {
-      if (current()) {
+      // The successful callback reads/refreshes config and replaces _draft.
+      // That is still this operation's mounted set of buttons to release.
+      if (ownsAction()) {
         buttons.forEach((item) => {
           if (item.dataset.modelData === "apply") item.disabled = !panel?._modelCatalogData?.update_available;
           else item.disabled = false;

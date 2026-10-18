@@ -1,6 +1,7 @@
 import {restoreScopeMarkup} from "./management-decision-guidance.js";
 import {TRANSFER_SECTIONS} from "./backup-transfer-shell.js";
-export {backupSummaryLines} from "./backup-summary.js";
+import {backupSummaryLines} from "./backup-summary.js";
+export {backupSummaryLines};
 export {TRANSFER_SECTIONS, renderBackupTransferPanel} from "./backup-transfer-shell.js";
 export const WS_BACKUP_TRANSFER = "extended_openai_conversation_responses/management/backup_transfer";
 
@@ -332,6 +333,13 @@ function sendLatestImportPreview(panel) {
       if (panel._transferPreviewToken !== request.token || panel._backupTransferSession !== request.sessionId) return;
       panel._backupTransferPreview = result.preview;
       panel._backupTransferPreviewToken = result.preview_token;
+      const summary = panel.shadowRoot?.querySelector("#restore-summary");
+      if (summary) {
+        summary.innerHTML = transferSummaryLines(
+          {...panel._backupTransferInspection, summary: result.preview},
+          work.summaryFormatter || backupSummaryLines,
+        ).map((line) => `<li>${panel._e(line)}</li>`).join("");
+      }
       const missingUsers = updateRestorePreviewStatus(panel, result.preview);
       if (apply) apply.disabled = result.preview_token === null || missingUsers > 0;
     } catch (err) {
@@ -376,9 +384,10 @@ export function refreshImportPreview(panel) {
   return true;
 }
 
-export function bindBackupTransfer(panel, summaryFormatter = () => []) {
+export function bindBackupTransfer(panel, summaryFormatter = backupSummaryLines) {
   const root = panel?.shadowRoot;
   if (!root) return;
+  previewWork(panel).summaryFormatter = summaryFormatter;
 
   const exportMode = root.querySelector(`#${EXPORT_MODE_ID}`);
   const customOptions = root.querySelector(`#${CUSTOM_OPTIONS_ID}`);
@@ -429,7 +438,9 @@ export function bindBackupTransfer(panel, summaryFormatter = () => []) {
       const created = result.summary?.created_at ? new Date(result.summary.created_at).toLocaleString() : "legacy export";
       const version = result.summary?.integration_version ? ` · integration ${result.summary.integration_version}` : "";
       root.querySelector("#restore-backup-meta").textContent = `${formatSourceKind(result.source_kind)} · ${created}${version}`;
-      root.querySelector("#restore-summary").innerHTML = transferSummaryLines(result, summaryFormatter).map((line) => `<li>${panel._e(line)}</li>`).join("");
+      // Header-only inspection has not decoded section contents yet. Do not
+      // present its placeholder zeroes as the contents of a destructive restore.
+      root.querySelector("#restore-summary").innerHTML = "";
       const sectionRoot = root.querySelector(`#${RESTORE_SECTIONS_ID}`);
       sectionRoot.innerHTML = sectionChoices(panel, {className: "transfer-restore-section", available: result.available_sections});
       sectionRoot.querySelectorAll(".transfer-restore-section").forEach((input) => input.addEventListener("change", () => void refreshImportPreview(panel)));

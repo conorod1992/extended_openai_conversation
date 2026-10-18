@@ -572,6 +572,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       return;
     }
     stopLiveStatus(this);
+    this._refreshModelDataForRoute(destination);
     this._page = route.page;
     this._subsection = route.section;
     this._query = "";
@@ -590,6 +591,16 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         this._error = error.message || String(error);
         this._render();
       });
+    }
+  }
+
+  _refreshModelDataForRoute(destination) {
+    if (destination === "assistant/model-responses") {
+      // Another browser may have applied shared catalogue data while this
+      // panel was warm. A route visit must refresh both capability projections
+      // and inherited defaults, retaining the local configuration delta.
+      this._modelCatalogData = null;
+      this._invalidateCleanConfiguration(this._agentId);
     }
   }
 
@@ -1556,6 +1567,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       stopLiveStatus(this);
       const metadata = pageMetadata(page);
       const resolvedSubsection = subsection || this._visibleSubsections(page)[0]?.id || metadata.sections[0]?.id || null;
+      this._refreshModelDataForRoute(`${page}/${resolvedSubsection}`);
       this._page = page;
       this._subsection = resolvedSubsection;
       this._query = "";

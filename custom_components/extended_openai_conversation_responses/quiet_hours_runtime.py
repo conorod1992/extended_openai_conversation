@@ -868,6 +868,10 @@ class QuietHoursManager:
                 )
         controls = self._active.get("controls", {})
         for entity_id, control in list(controls.items()):
+            if "pending_quiet_value" not in control and self._observe_owned_volume(
+                entity_id, control
+            ):
+                await self._async_save_control_state_locked()
             target = desired.get(entity_id)
             if target is None or target[0] != control["kind"]:
                 control["restoration_pending"] = True
@@ -890,7 +894,9 @@ class QuietHoursManager:
                 at_quiet_value = (
                     attained is not None
                     and math.isclose(
-                        attained, control["quiet_value"], abs_tol=_VOLUME_TOLERANCE
+                        attained,
+                        self._attained_quiet_value(control),
+                        abs_tol=_VOLUME_TOLERANCE,
                     )
                     if target[0] == "volume"
                     else attained is control["quiet_value"]
@@ -906,7 +912,7 @@ class QuietHoursManager:
                 control["application_state"] = "applied"
                 await self._async_save_control_state_locked()
             if self._pending_quiet_attained(entity_id, control):
-                control["quiet_value"] = control.pop("pending_quiet_value")
+                self._commit_pending_quiet(entity_id, control)
                 await self._async_save_control_state_locked()
             kind, _, value = target
             if kind == "volume":
@@ -922,7 +928,11 @@ class QuietHoursManager:
             if current is None:
                 continue
             same = (
-                math.isclose(current, control["quiet_value"], abs_tol=_VOLUME_TOLERANCE)
+                math.isclose(
+                    current,
+                    self._attained_quiet_value(control),
+                    abs_tol=_VOLUME_TOLERANCE,
+                )
                 if kind == "volume"
                 else current is control["quiet_value"]
             )
@@ -932,6 +942,9 @@ class QuietHoursManager:
                 await self._async_save_control_state_locked()
                 continue
             control["pending_quiet_value"] = value
+            # A new operation identity distinguishes its rounded report from the
+            # previous Quiet Hours action while the new intent is still pending.
+            control["pending_application_context_id"] = Context().id
             control.pop("restoration_pending", None)
             await self._async_save_control_state_locked()
             # Saving can yield to a manual adjustment or an unavailable device.
@@ -945,7 +958,11 @@ class QuietHoursManager:
             state = self.hass.states.get(entity_id)
             current_context = getattr(getattr(state, "context", None), "id", None)
             same = (
-                math.isclose(current, control["quiet_value"], abs_tol=_VOLUME_TOLERANCE)
+                math.isclose(
+                    current,
+                    self._attained_quiet_value(control),
+                    abs_tol=_VOLUME_TOLERANCE,
+                )
                 if kind == "volume"
                 else current is control["quiet_value"]
             )
@@ -963,8 +980,32 @@ class QuietHoursManager:
                     "retarget", entity_id, kind, err, ownership="retained"
                 )
                 continue
-            control["quiet_value"] = control.pop("pending_quiet_value")
+            self._commit_pending_quiet(entity_id, control)
             await self._async_save_control_state_locked()
+
+    @staticmethod
+    def _attained_quiet_value(control: dict[str, Any]) -> Any:
+        return control.get("attained_value", control["quiet_value"])
+
+    def _observe_owned_volume(self, entity_id: str, control: dict[str, Any]) -> bool:
+        """Retain rounding only when HA attributes the report to our operation."""
+        if control["kind"] != "volume":
+            return False
+        context_id = control.get("application_context_id")
+        if not context_id or self._control_context_id(entity_id) != context_id:
+            return False
+        current = _current_volume(self.hass, entity_id)
+        if current is None or control.get("attained_value") == current:
+            return False
+        control["attained_value"] = current
+        return True
+
+    def _commit_pending_quiet(self, entity_id: str, control: dict[str, Any]) -> None:
+        control["quiet_value"] = control.pop("pending_quiet_value")
+        if context_id := control.pop("pending_application_context_id", None):
+            control["application_context_id"] = context_id
+        control.pop("attained_value", None)
+        self._observe_owned_volume(entity_id, control)
 
     def _pending_quiet_attained(self, entity_id: str, control: dict[str, Any]) -> bool:
         if "pending_quiet_value" not in control:
@@ -980,8 +1021,17 @@ class QuietHoursManager:
             if control["kind"] == "volume"
             else current is desired
         )
-        context_id = control.get("application_context_id")
+        context_id = control.get(
+            "pending_application_context_id", control.get("application_context_id")
+        )
         state = self.hass.states.get(entity_id)
+        if (
+            control["kind"] == "volume"
+            and current is not None
+            and control.get("pending_application_context_id")
+            and getattr(getattr(state, "context", None), "id", None) == context_id
+        ):
+            return True
         return same and (
             not context_id
             or getattr(getattr(state, "context", None), "id", None) == context_id
@@ -1051,6 +1101,7 @@ class QuietHoursManager:
 
         if entity_id in controls:
             control["application_state"] = "applied"
+            self._observe_owned_volume(entity_id, control)
             await self._async_save_control_state_locked()
 
     async def _async_apply_switch_locked(
@@ -1136,8 +1187,9 @@ class QuietHoursManager:
                 existing["kind"] == kind
                 and existing["satellite_entity_id"] == satellite_entity_id
             )
+            self._observe_owned_volume(entity_id, existing)
             at_quiet_value = self._control_values_equal(
-                kind, original, existing["quiet_value"]
+                kind, original, self._attained_quiet_value(existing)
             )
             state = self.hass.states.get(entity_id)
             context_id = existing.get("application_context_id")
@@ -1299,10 +1351,12 @@ class QuietHoursManager:
                 if pending_only and not raw.get("restoration_pending"):
                     continue
                 if self._pending_quiet_attained(entity_id, raw):
-                    raw["quiet_value"] = raw.pop("pending_quiet_value")
+                    self._commit_pending_quiet(entity_id, raw)
+                else:
+                    self._observe_owned_volume(entity_id, raw)
                 kind = raw.get("kind")
                 original = raw.get("original_value")
-                quiet = raw.get("quiet_value")
+                quiet = self._attained_quiet_value(raw)
                 raw["restoration_pending"] = True
                 try:
                     if (
@@ -1382,7 +1436,9 @@ class QuietHoursManager:
             raise HomeAssistantError(
                 "Quiet Hours control identity changed; retry reconciliation"
             )
-        context_id = control.get("application_context_id")
+        context_id = control.get(
+            "pending_application_context_id", control.get("application_context_id")
+        )
         await self.hass.services.async_call(
             domain,
             service,
@@ -1425,6 +1481,15 @@ class QuietHoursManager:
                     if not isinstance(context_id, str) or not context_id:
                         raise ValueError("Quiet Hours application context is invalid")
                     control["application_context_id"] = context_id
+                pending_context = raw_controls.get(entity_id, {}).get(
+                    "pending_application_context_id"
+                )
+                if pending_context is not None:
+                    if not isinstance(pending_context, str) or not pending_context:
+                        raise ValueError(
+                            "Quiet Hours pending application context is invalid"
+                        )
+                    control["pending_application_context_id"] = pending_context
         raw_observed = (
             value.get("observed_controls") if isinstance(value, Mapping) else None
         )
@@ -1524,6 +1589,15 @@ class QuietHoursManager:
                 }
             if entity_id in controls and raw.get("restoration_pending") is True:
                 controls[entity_id]["restoration_pending"] = True
+            attained = raw.get("attained_value")
+            if (
+                entity_id in controls
+                and kind == "volume"
+                and isinstance(attained, (int, float))
+                and not isinstance(attained, bool)
+                and 0 <= attained <= 1
+            ):
+                controls[entity_id]["attained_value"] = float(attained)
             pending_value = raw.get("pending_quiet_value")
             if entity_id in controls and (
                 (
