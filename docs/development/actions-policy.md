@@ -47,7 +47,11 @@ frontend and harness changes. Stable CI image builds track actual image inputs.
 The stable public-journey PR matrix no longer duplicates the stable acceptance
 job, and HA dev remains a scheduled compatibility signal.
 
-Full Validation is for release candidates and deliberate comprehensive checks.
+Full Validation defaults to full coverage for release candidates and deliberate
+comprehensive checks. For faster manual checks, its `quick` mode skips Enhanced
+long-lifetime and iOS, along with the final release certification that requires
+their evidence. Enhanced also offers `all-except-long-lifetime` independently.
+See [Full validation](full-validation.md) for selection and reproduction commands.
 Target individual workflows for specialist troubleshooting. Its coordinator still
 waits on a runner; replacing that coordinator with asynchronous completion is a
 separate change. Measure runner minutes and missed/late detections after rollout

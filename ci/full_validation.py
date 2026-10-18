@@ -17,10 +17,18 @@ from urllib.request import Request, urlopen
 
 try:
     from ci.ha_dev_snapshot import resolve_ha_dev_sha
-    from ci.validation_inventory import CERTIFICATION_WORKFLOW, HA_DEV_WORKFLOWS, TEST_WORKFLOWS
+    from ci.validation_inventory import (
+        CERTIFICATION_WORKFLOW,
+        HA_DEV_WORKFLOWS,
+        TEST_WORKFLOWS,
+    )
 except ImportError:
     from ha_dev_snapshot import resolve_ha_dev_sha
-    from validation_inventory import CERTIFICATION_WORKFLOW, HA_DEV_WORKFLOWS, TEST_WORKFLOWS
+    from validation_inventory import (
+        CERTIFICATION_WORKFLOW,
+        HA_DEV_WORKFLOWS,
+        TEST_WORKFLOWS,
+    )
 
 
 API_URL = os.environ["GH_API_URL"].rstrip("/")
@@ -33,6 +41,9 @@ RUN_ATTEMPT = os.environ["GH_RUN_ATTEMPT"]
 REF_NAME = f"full-validation-{RUN_ID}-{RUN_ATTEMPT}"
 SUMMARY_PATH = Path(os.environ["GITHUB_STEP_SUMMARY"])
 STRESS_SEED = os.environ.get("FULL_VALIDATION_SEED", "") or str(secrets.randbits(32))
+MODE = os.environ.get("FULL_VALIDATION_MODE", "") or "full"
+if MODE not in {"full", "quick"}:
+    raise SystemExit("The validation mode must be full or quick")
 if not re.fullmatch(r"[0-9]+", STRESS_SEED):
     raise SystemExit("The stress seed must be an unsigned integer")
 
@@ -203,16 +214,25 @@ def programme_inputs(results: list[tuple[dict, dict]], ha_dev_sha: str) -> dict[
 
 
 def main() -> int:
+    workflows = tuple(
+        (workflow, dict(inputs))
+        for workflow, inputs in TEST_WORKFLOWS
+        if MODE != "quick" or workflow != "ios-companion-app.yml"
+    )
+    if MODE == "quick":
+        for workflow, inputs in workflows:
+            if workflow == "enhanced-stress.yml":
+                inputs["campaign"] = "all-except-long-lifetime"
     ha_dev_sha = resolve_ha_dev_sha()
     print(
-        f"Running {len(TEST_WORKFLOWS)} test workflows for {TARGET_SHA} "
+        f"Running {len(workflows)} test workflows ({MODE}) for {TARGET_SHA} "
         f"on isolated ref {REF_NAME}; HA dev={ha_dev_sha}; enhanced stress seed={STRESS_SEED}",
         flush=True,
     )
     api("POST", "git/refs", {"ref": f"refs/heads/{REF_NAME}", "sha": TARGET_SHA})
     launched: list[dict] = []
     launch_errors: list[tuple[str, str]] = []
-    for workflow, inputs in TEST_WORKFLOWS:
+    for workflow, inputs in workflows:
         try:
             pinned_inputs = dict(inputs)
             if workflow in HA_DEV_WORKFLOWS:
@@ -224,7 +244,7 @@ def main() -> int:
                 f"Could not dispatch {workflow}: {error}", file=sys.stderr, flush=True
             )
     results = wait_for_workflows(launched)
-    if not launch_errors and all(
+    if MODE == "full" and not launch_errors and all(
         run.get("conclusion") == "success" for _, run in results
     ):
         try:
@@ -244,11 +264,17 @@ def main() -> int:
     lines = [
         "## Full validation",
         "",
+        f"Mode: **{MODE}**",
         f"Commit: `{TARGET_SHA}`",
         f"Home Assistant dev source: `{ha_dev_sha}`",
         f"Enhanced stress seed: `{STRESS_SEED}` (heavy)",
-        f"Test workflows: {len(TEST_WORKFLOWS)}",
-        "Nightly programme certification runs after all test workflows succeed.",
+        f"Test workflows: {len(workflows)}",
+        (
+            "Quick mode skips Enhanced long-lifetime, iOS, and nightly programme "
+            "release certification. This run cannot certify a release candidate."
+            if MODE == "quick"
+            else "Nightly programme certification runs after all test workflows succeed."
+        ),
         "Live OpenAI acceptance is intentionally separate because it calls paid external APIs.",
         "",
         "| Workflow | Result | Run |",
@@ -256,7 +282,9 @@ def main() -> int:
     ]
     result_by_name = {item["workflow"]: (run, item) for item, run in results}
     for workflow, _ in (*TEST_WORKFLOWS, (CERTIFICATION_WORKFLOW, {})):
-        if workflow in result_by_name:
+        if MODE == "quick" and workflow in {"ios-companion-app.yml", CERTIFICATION_WORKFLOW}:
+            lines.append(f"| `{workflow}` | skipped | quick mode |")
+        elif workflow in result_by_name:
             run, item = result_by_name[workflow]
             lines.append(
                 f"| `{workflow}` | {run.get('conclusion')} | [view run]({item['url']}) |"
@@ -273,6 +301,7 @@ def main() -> int:
     Path("full-validation-cohort.json").write_text(
         json.dumps({
             "schema": 1,
+            "mode": MODE,
             "candidate_sha": TARGET_SHA,
             "ha_dev_sha": ha_dev_sha,
             "validation_ref": REF_NAME,

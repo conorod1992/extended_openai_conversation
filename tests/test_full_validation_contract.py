@@ -4,6 +4,7 @@ import ast
 from copy import deepcopy
 from datetime import UTC, datetime
 import importlib.util
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -31,6 +32,61 @@ def _driver(monkeypatch, tmp_path):
     spec.loader.exec_module(driver)
     monkeypatch.setattr(driver, "resolve_ha_dev_sha", Mock(return_value=DEV_SHA))
     return driver
+
+
+@pytest.mark.parametrize("mode", ["full", "quick"])
+@pytest.mark.parametrize("failed", [False, True])
+def test_validation_mode_dispatches_expected_inventory(monkeypatch, tmp_path, mode, failed):
+    monkeypatch.setenv("FULL_VALIDATION_MODE", mode)
+    driver = _driver(monkeypatch, tmp_path)
+    original = deepcopy(driver.TEST_WORKFLOWS)
+    monkeypatch.setattr(driver, "api", Mock())
+    dispatch = Mock(side_effect=lambda workflow, inputs: {
+        "workflow": workflow, "run_id": dispatch.call_count, "url": "https://example.test/run",
+    })
+    monkeypatch.setattr(driver, "dispatch", dispatch)
+    monkeypatch.setattr(driver, "wait_for_workflows", lambda items: [
+        (item, {"conclusion": "failure" if failed and item["workflow"] == "ci.yml" else "success"})
+        for item in items
+    ])
+    programme = Mock(return_value={"candidate_sha": driver.TARGET_SHA})
+    monkeypatch.setattr(driver, "programme_inputs", programme)
+    monkeypatch.chdir(tmp_path)
+    assert driver.main() == int(failed)
+    calls = {call.args[0]: call.args[1] for call in dispatch.call_args_list}
+    expected = {name for name, _ in original}
+    if mode == "quick":
+        expected.remove("ios-companion-app.yml")
+    elif not failed:
+        expected.add(driver.CERTIFICATION_WORKFLOW)
+    assert set(calls) == expected
+    for name, inputs in original:
+        if name not in expected:
+            continue
+        actual = dict(calls[name])
+        if name in driver.HA_DEV_WORKFLOWS:
+            assert actual.pop("ha_dev_sha") == DEV_SHA
+        expected_inputs = dict(inputs)
+        if mode == "quick" and name == "enhanced-stress.yml":
+            expected_inputs["campaign"] = "all-except-long-lifetime"
+        assert actual == expected_inputs
+    assert programme.call_count == int(mode == "full" and not failed)
+    assert original == driver.TEST_WORKFLOWS
+    cohort = json.loads(Path("full-validation-cohort.json").read_text())
+    assert cohort["mode"] == mode
+    assert cohort["passed"] is (not failed)
+    assert {row["workflow"] for row in cohort["runs"]} == expected
+    summary = driver.SUMMARY_PATH.read_text()
+    assert f"Mode: **{mode}**" in summary
+    if mode == "quick":
+        assert "`ios-companion-app.yml` | skipped | quick mode" in summary
+        assert "`nightly-programme.yml` | skipped | quick mode" in summary
+
+
+def test_unknown_validation_mode_fails_before_dispatch(monkeypatch, tmp_path):
+    monkeypatch.setenv("FULL_VALIDATION_MODE", "quik")
+    with pytest.raises(SystemExit, match="mode must be full or quick"):
+        _driver(monkeypatch, tmp_path)
 
 
 @pytest.mark.parametrize(

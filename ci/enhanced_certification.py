@@ -67,18 +67,18 @@ def main(root: Path) -> int:
             and intensity == "heavy"
         )
     }
-    if selected in {"all", "browser", "diagnostics"}:
+    if selected in {"all", "all-except-long-lifetime", "browser", "diagnostics"}:
         browser_campaign = (
             "browser-diagnostics" if selected == "diagnostics" else "browser"
         )
         expected |= {(browser_campaign, intensity, None) for intensity in intensities}
-    if selected in {"all", "browser", "browser-engines"}:
+    if selected in {"all", "all-except-long-lifetime", "browser", "browser-engines"}:
         expected |= {
             (f"browser-{engine}", intensity, None)
             for engine in ("firefox", "webkit")
             for intensity in intensities
         }
-    if selected in {"all", "lifecycle"}:
+    if selected in {"all", "all-except-long-lifetime", "lifecycle"}:
         expected |= {
             ("lifecycle-matrix", "normal", point)
             for point in ("oldest", "stable", "dev")

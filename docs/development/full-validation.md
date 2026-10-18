@@ -1,5 +1,24 @@
 # Full validation
 
+For manual runs, select **mode: quick** in the Full validation Actions form.
+Quick mode runs the same test workflows and heavy intensity, except it skips the
+iOS Companion workflow and uses Enhanced's **all-except-long-lifetime** campaign.
+The summary and cohort artifact record the selected mode and skipped workflows.
+Quick mode also skips nightly programme release certification, which requires
+the complete test inventory. A successful quick run cannot certify a release.
+The default **full** mode retains all coverage and release certification.
+
+To run Enhanced alone without the soak, select **campaign:
+all-except-long-lifetime** in its Actions form. It retains all other Python
+campaigns, persistence preparation, external Recorder checks, browser engines,
+and oldest/stable/dev lifecycle checks at the selected intensity. Scheduled runs
+and the existing **all** campaign keep their current coverage.
+
+```sh
+gh workflow run enhanced-stress.yml -f campaign=all-except-long-lifetime -f intensity=heavy
+gh workflow run full-validation.yml -f mode=quick
+```
+
 Full validation dispatches 27 non-live test workflows for one immutable candidate.
 This includes genuine iOS and Android Companion journeys, all six targeted
 mutation campaigns, HACS/hassfest validation, and the heavy enhanced campaign.

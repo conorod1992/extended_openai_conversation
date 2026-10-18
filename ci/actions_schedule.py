@@ -48,7 +48,9 @@ def enhanced_plan(
     intensity = intensity or "normal"
     if intensity not in {"normal", "heavy", "all"}:
         raise ValueError("Unreviewed stress intensity")
-    if campaign in {"all", "browser"}:
+    if campaign == "all-except-long-lifetime":
+        campaigns = [name for name in CAMPAIGNS if name != "long-lifetime"]
+    elif campaign in {"all", "browser"}:
         campaigns = list(CAMPAIGNS)
     elif campaign == "browser-engines":
         campaigns = []

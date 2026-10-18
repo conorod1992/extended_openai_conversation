@@ -75,6 +75,38 @@ def test_enhanced_dispatch_can_run_the_scheduled_intensity_matrix():
     assert '{"campaign":"long-lifetime","intensity":"heavy"}' in exclusion
 
 
+def test_all_except_long_lifetime_includes_every_supplementary_lane():
+    data = workflow("enhanced-stress.yml")
+    triggers = data.get("on", data.get(True))
+    campaign = triggers["workflow_dispatch"]["inputs"]["campaign"]
+    assert campaign["default"] == "all"
+    assert "all-except-long-lifetime" in campaign["options"]
+    jobs = data["jobs"]
+    conditions = [jobs[name]["if"] for name in (
+        "persistence_runtime", "external-recorder", "browser", "browser-engines",
+        "ha-lifecycle-matrix", "ha-lifecycle-dev",
+    )]
+    release = next(
+        step for step in jobs["prepare"]["steps"] if step.get("id") == "release"
+    )
+    conditions.append(release["if"])
+    assert all("inputs.campaign == 'all-except-long-lifetime'" in value for value in conditions)
+
+
+def test_full_validation_form_passes_mode_to_dispatcher():
+    data = workflow("full-validation.yml")
+    triggers = data.get("on", data.get(True))
+    mode = triggers["workflow_dispatch"]["inputs"]["mode"]
+    assert mode["type"] == "choice"
+    assert mode["default"] == "full"
+    assert mode["options"] == ["full", "quick"]
+    step = next(
+        step for step in data["jobs"]["dispatch-and-wait"]["steps"]
+        if step.get("run") == "python3 ci/full_validation.py"
+    )
+    assert step["env"]["FULL_VALIDATION_MODE"] == "${{ inputs.mode }}"
+
+
 def test_existing_historical_matrix_supports_complete_dispatch_and_exact_checkout():
     upgrade = workflow("upgrade-acceptance.yml")["jobs"]["upgrade"]
     matrix = upgrade["strategy"]["matrix"]["from_version"]
