@@ -1,6 +1,45 @@
 import {expect, test} from "@playwright/test";
 import {acceptConfirmation, browserToolYaml, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
+for (const localEdit of [false, true]) test(`background restore refreshes its agent's mounted configuration editor (local edit: ${localEdit})`, async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("usage-maintenance/backup-restore"));
+  const panel = page.locator("extended-openai-management-panel");
+  await panel.locator("#transfer-export-mode").selectOption("full");
+  const download = page.waitForEvent("download");
+  await panel.locator("#create-backup-transfer").click();
+  const path = await (await download).path();
+  await panel.evaluate(host => host._navigate("assistant", "basics"));
+  await panel.locator('[data-config="__title"]').fill("Saved after backup");
+  await panel.getByRole("button", {name:"Save changes", exact:true}).click();
+  await expect(panel.getByText("Unsaved changes", {exact:true})).toHaveCount(0);
+  await panel.evaluate(host => host._navigate("usage-maintenance", "backup-restore"));
+  await panel.locator("#backup-file-transfer").setInputFiles(path);
+  await expect(panel.locator("#restore-transfer-apply")).toBeEnabled();
+  await page.evaluate(() => {
+    const original = browserHarness.hass.callWS.bind(browserHarness.hass);
+    browserHarness.hass.callWS = async message => {
+      if (message.action === "import_restore") {
+        window.restoreStarted = true;
+        await new Promise(resolve => { window.releaseBackgroundRestore = resolve; });
+      }
+      return original(message);
+    };
+  });
+  await panel.locator("#restore-transfer-apply").click();
+  await acceptConfirmation(panel);
+  await expect.poll(() => page.evaluate(() => window.restoreStarted)).toBe(true);
+  await panel.evaluate(host => host._navigate("assistant", "basics"));
+  await expect(panel.locator('[data-config="__title"]')).toHaveValue("Saved after backup");
+  if (localEdit) await panel.locator('[data-config="__title"]').fill("New local title");
+  await page.evaluate(() => window.releaseBackgroundRestore());
+  await expect.poll(() => panel.evaluate(host => host._backupRestoreOperations.size)).toBe(0);
+  await expect(panel.locator('[data-config="__title"]')).toHaveValue(localEdit ? "New local title" : "Jarvis");
+  expect(await panel.evaluate(host => host._configData.title)).toBe("Jarvis");
+  expect(await panel.evaluate(host => Boolean(host._configDirty))).toBe(localEdit);
+  await expectHarnessClean(page, errors);
+});
+
 test("agent A restore completion preserves agent B's pending Overview", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("usage-maintenance/backup-restore", "&agents=2"));

@@ -94,7 +94,7 @@ test("a switched agent cannot apply a prepared restore after confirmation", asyn
   assert.equal(h.panel._backupTransferSession, null);
 });
 
-test("late restore completion cannot clear the next agent's prepared import", async () => {
+for (const switchAgent of [false, true]) test(`late restore completion cannot clear a newer prepared import (switch agent: ${switchAgent})`, async () => {
   const h = harness(); await h.upload();
   h.panel._backupTransferPreviewToken = "validated";
   h.nodes.get("#restore-transfer-apply").disabled = false;
@@ -104,11 +104,14 @@ test("late restore completion cannot clear the next agent's prepared import", as
     return original(message);
   };
   const applying = h.nodes.get("#restore-transfer-apply").handlers.click(); await started.promise;
-  await confirmStateSafeNavigation(h.panel, null); h.switchAgent(); await h.upload();
+  await confirmStateSafeNavigation(h.panel, null);
+  if (switchAgent) h.switchAgent();
+  await h.upload();
   const next = h.panel._backupTransferSession;
+  h.panel._loadAgents = async () => assert.fail("a newer Backup dialog must retain its own presentation");
   restore.resolve({restored:true}); await applying;
   assert.equal(h.panel._backupTransferSession, next);
-  assert.equal(h.panel._backupTransferInspection.title, "agent-B");
+  assert.equal(h.panel._backupTransferInspection.title, switchAgent ? "agent-B" : "agent-A");
   h.panel._eocBackupTransferCleanup();
 });
 
@@ -123,7 +126,10 @@ for (const dismissal of ["escape", "cancel"]) {
     };
     const toasts = [], reloads = [];
     h.panel._toast = message => toasts.push(message);
-    h.panel._loadAgents = async id => reloads.push(id);
+    h.panel._loadAgents = async (id, owner) => {
+      assert.deepEqual(owner, {agentId:"agent-A", entryId:"entry-A"});
+      reloads.push(id);
+    };
     const session = h.panel._backupTransferSession;
     const applying = h.nodes.get("#restore-transfer-apply").handlers.click(); await started.promise;
     if (dismissal === "escape") {
@@ -165,3 +171,30 @@ test("a departed restore reports its outcome and invalidates its owner's cache",
   assert.ok(toasts.some(message => message.includes("restored") && message.includes("agent-A")));
   h.panel._eocBackupTransferCleanup();
 });
+
+for (const refreshFails of [false, true]) {
+  test(`background restore refreshes its selected agent after navigation (refresh fails: ${refreshFails})`, async () => {
+    const h = harness(); await h.upload();
+    await new Promise(resolve => setTimeout(resolve, 200));
+    const restore = deferred(), started = deferred(), original = h.panel._hass.callWS;
+    h.panel._hass.callWS = message => {
+      if (message.action === "import_restore") { started.resolve(); return restore.promise; }
+      return original(message);
+    };
+    let view = "usage-maintenance/backup-restore";
+    h.panel._viewKey = () => view;
+    const reloads = [], toasts = [];
+    h.panel._toast = message => toasts.push(message);
+    h.panel._loadAgents = async (id, owner) => {
+      reloads.push({id, owner});
+      if (refreshFails) throw new Error("Refresh offline");
+    };
+    const applying = h.nodes.get("#restore-transfer-apply").handlers.click(); await started.promise;
+    await confirmStateSafeNavigation(h.panel, "assistant/basics"); view = "assistant/basics";
+    restore.resolve({restored:true}); await applying;
+    assert.deepEqual(reloads, [{id:"agent-A", owner:{agentId:"agent-A", entryId:"entry-A"}}]);
+    assert.equal(h.calls.some(call => call.action === "import_cancel"), false);
+    assert.equal(toasts.some(message => message.includes("Unable to restore")), false);
+    if (refreshFails) assert.ok(toasts.some(message => message.includes("restored") && message.includes("Refresh offline")));
+  });
+}

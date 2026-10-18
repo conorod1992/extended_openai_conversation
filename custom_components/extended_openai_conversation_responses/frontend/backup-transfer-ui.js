@@ -594,12 +594,21 @@ export function bindBackupTransfer(panel) {
     const status = root.querySelector(`#${RESTORE_STATUS_ID}`);
     if (status) status.textContent = "Restoring selected sections… Please wait for the result.";
     let mustReselectFile = false;
+    let restoreCommitted = false;
+    const refreshOwner = {agentId: session.owner.subentry_id, entryId: session.owner.entry_id};
     panel._setSaving(button, true);
     try {
       await callBackupTransfer(panel, "import_restore", {session_id: session.session_id, sections, preview_token: serverPreviewToken}, session.owner);
+      restoreCommitted = true;
       panel._invalidateCleanConfiguration?.(session.owner.subentry_id);
       if (panel._backupTransferSession !== session || !ownsUI()) {
         panel._toast(`Selected sections restored for agent ${session.owner.subentry_id}`);
+        // Navigation retires the preview, not the selected agent's need for
+        // fresh data. Reload its current view without discarding newer edits.
+        // A newer Backup dialog owns its own session and must stay intact.
+        if (ownsTransfer(panel, session) && panel._viewKey?.() !== "usage-maintenance/backup-restore") {
+          await panel._loadAgents(session.owner.subentry_id, refreshOwner);
+        }
         return;
       }
       panel._backupTransferSession = null;
@@ -608,9 +617,13 @@ export function bindBackupTransfer(panel) {
       panel._backupTransferPreviewToken = null;
       root.querySelector("#restore-dialog").close();
       if (sections.includes("configuration")) panel._clearConfigDraft();
-      await panel._loadAgents(panel._agentId);
+      await panel._loadAgents(session.owner.subentry_id, refreshOwner);
       panel._toast(ownsUI() ? "Selected sections restored" : `Selected sections restored for agent ${session.owner.subentry_id}`);
     } catch (err) {
+      if (restoreCommitted) {
+        panel._toast(`Selected sections restored for agent ${session.owner.subentry_id}, but displayed information could not be refreshed: ${err.message || String(err)}`, true);
+        return;
+      }
       if (panel._backupTransferSession !== session || !ownsUI()) {
         panel._toast(`Unable to restore agent ${session.owner.subentry_id}: ${err.message || String(err)}`, true);
         return;
