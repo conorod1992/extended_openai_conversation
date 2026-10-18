@@ -15,7 +15,15 @@ from homeassistant.core import Context
 from homeassistant.exceptions import HomeAssistantError
 
 
-def _speaker(hass, monkeypatch, *, requested=0.23, delayed=False, lost_ack=False):
+def _speaker(
+    hass,
+    monkeypatch,
+    *,
+    requested=0.23,
+    delayed=False,
+    lost_ack=False,
+    unchanged_reports=True,
+):
     state = SimpleNamespace(
         state="idle", attributes={"volume_level": 0.8}, context=Context()
     )
@@ -45,7 +53,10 @@ def _speaker(hass, monkeypatch, *, requested=0.23, delayed=False, lost_ack=False
     calls, reports = [], []
 
     def report(volume, context):
-        state.attributes["volume_level"] = round(volume / 0.05) * 0.05
+        attained = round(volume / 0.05) * 0.05
+        if not unchanged_reports and attained == state.attributes["volume_level"]:
+            return
+        state.attributes["volume_level"] = attained
         state.context = context
 
     async def service(domain, name, data, **kwargs):
@@ -133,3 +144,24 @@ async def test_retarget_uses_new_rounded_value_without_repeated_volume_calls(
     await manager.async_reconcile(now=END)
     assert state.attributes["volume_level"] == pytest.approx(0.8)
     assert calls == [0.23, 0.31, 0.8]
+
+
+@pytest.mark.parametrize("restart", [False, True])
+async def test_retarget_within_same_volume_step_preserves_restoration_baseline(
+    hass, monkeypatch, restart
+):
+    manager, state, calls, _, _ = _speaker(hass, monkeypatch, unchanged_reports=False)
+    await manager.async_reconcile(now=START)
+    owned_context = state.context
+    manager._config = replace(manager.config, max_volume=0.24)
+    await manager.async_reconcile(now=START)
+    assert state.context is owned_context  # No new report or operation attribution.
+    control = manager.active["controls"]["media_player.test"]
+    assert control["quiet_value"] == 0.24
+    assert control["attained_value"] == pytest.approx(0.25)
+    if restart:
+        manager._active = manager._normalize_active(deepcopy(manager.active))
+        state.context = Context()
+    await manager.async_reconcile(now=END)
+    assert state.attributes["volume_level"] == pytest.approx(0.8)
+    assert calls == [0.23, 0.24, 0.8]

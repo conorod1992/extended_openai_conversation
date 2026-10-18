@@ -54,7 +54,7 @@ const racePanel = {_selectedAgent: () => ({entry_id:'entry', subentry_id:'agent'
     if (action === 'import_chunk') return {session_id:data.session_id, next_index:1, received:1};
     if (action === 'import_inspect' && data.inspect_only && data.session_id === 'A') return oldInspect.promise;
     if (action === 'import_inspect' && data.inspect_only) return {valid:true,title:'B',source_kind:'full_backup',available_sections:['persistent_memory'],preview:{selected_sections:['persistent_memory']},preview_token:'B-token'};
-    if (action === 'import_inspect') return {preview:{selected_sections:['persistent_memory']},preview_token:'B-preview'};
+    if (action === 'import_inspect') return {preview:{selected_sections:['persistent_memory']},preview_token:`${data.session_id}-preview`};
     if (action === 'import_cancel') return {cancelled:true};
     throw new Error(`Unexpected ${action}`);
   }}};
@@ -76,6 +76,32 @@ assert.equal(racePanel._backupTransferPreviewToken, 'B-preview', 'canceling stal
 assert.equal(raceNodes.get('#restore-summary').innerHTML, '<li>0 persistent memories</li>', 'stale cleanup must not clear B\'s preview summary');
 assert.equal(raceNodes.get('#restore-transfer-apply').disabled, false, 'stale cleanup must leave B restorable');
 assert.ok(raceCalls.some(([action, data]) => action === 'import_cancel' && data.session_id === 'A'));
+
+// A full preview that has not settled must not hold the panel-wide dispatch slot
+// when a different backup is selected. Its eventual completion must remain stale.
+const abandonedFullPreview = deferred();
+const originalRaceWS = racePanel._hass.callWS;
+let fullPreviewStarted = false;
+racePanel._hass.callWS = async message => {
+  if (message.action === 'import_inspect' && !message.data.inspect_only && message.data.session_id === 'B') {
+    fullPreviewStarted = true;
+    return abandonedFullPreview.promise;
+  }
+  return originalRaceWS(message);
+};
+refreshImportPreview(racePanel);
+await new Promise(resolve => setTimeout(resolve, 180));
+assert.equal(fullPreviewStarted, true);
+await raceNodes.get('#backup-file-transfer').handlers.change({target:{files:[fileNamed('C')]}});
+await new Promise(resolve => setTimeout(resolve, 180));
+assert.equal(racePanel._backupTransferSession, 'C');
+assert.equal(racePanel._backupTransferPreviewToken, 'C-preview', 'C validates while the superseded full preview is still unresolved');
+assert.equal(raceNodes.get('#restore-transfer-apply').disabled, false);
+assert.ok(raceCalls.some(([action, data]) => action === 'import_cancel' && data.session_id === 'B'));
+abandonedFullPreview.reject(new Error('Superseded inspection cancelled'));
+await new Promise(resolve => setTimeout(resolve, 0));
+assert.equal(racePanel._backupTransferPreviewToken, 'C-preview');
+assert.equal(raceNodes.get('#restore-transfer-apply').disabled, false);
 await new Promise(resolve => setTimeout(resolve, 200));
 assert.equal(panel._backupTransferPreviewToken, 'valid-token');
 assert.equal(panel._backupTransferPreview.persistent_memories, 1);

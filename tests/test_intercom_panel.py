@@ -12,7 +12,10 @@ from custom_components.extended_openai_conversation_responses import intercom_pa
 
 def _connection(*, is_admin: bool = True) -> SimpleNamespace:
     return SimpleNamespace(
-        user=SimpleNamespace(is_admin=is_admin, permissions=SimpleNamespace(check_entity=Mock(return_value=True))),
+        user=SimpleNamespace(
+            is_admin=is_admin,
+            permissions=SimpleNamespace(check_entity=Mock(return_value=True)),
+        ),
         send_result=Mock(),
         send_error=Mock(),
         context=Mock(return_value="context"),
@@ -20,17 +23,27 @@ def _connection(*, is_admin: bool = True) -> SimpleNamespace:
 
 
 async def _call_handler(hass, connection, message: dict) -> None:
-    handler = getattr(intercom_panel.websocket_broadcast, "__wrapped__")
+    handler = intercom_panel.websocket_broadcast.__wrapped__
     await handler(hass, connection, message)
 
 
 @pytest.mark.asyncio
-async def test_websocket_broadcast_snapshot_returns_manager_state(hass, monkeypatch) -> None:
+async def test_websocket_broadcast_snapshot_returns_manager_state(
+    hass, monkeypatch
+) -> None:
     """Snapshot exposes the current catalog, history, and permission state."""
     manager = SimpleNamespace(
         enabled=True,
         catalog=Mock(return_value={"satellites": [{"id": "assist_satellite.kitchen"}]}),
-        history=Mock(return_value=[{"id": "message-1", "targets": ["assist_satellite.kitchen"], "origin_device_id": None}]),
+        history=Mock(
+            return_value=[
+                {
+                    "id": "message-1",
+                    "targets": ["assist_satellite.kitchen"],
+                    "origin_device_id": None,
+                }
+            ]
+        ),
     )
     monkeypatch.setattr(
         intercom_panel, "async_get_intercom", AsyncMock(return_value=manager)
@@ -45,14 +58,22 @@ async def test_websocket_broadcast_snapshot_returns_manager_state(hass, monkeypa
             "enabled": True,
             "can_manage": False,
             "catalog": {"satellites": [{"id": "assist_satellite.kitchen"}]},
-            "history": [{"id": "message-1", "targets": ["assist_satellite.kitchen"], "origin_device_id": None}],
+            "history": [
+                {
+                    "id": "message-1",
+                    "targets": ["assist_satellite.kitchen"],
+                    "origin_device_id": None,
+                }
+            ],
         },
     )
     connection.send_error.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_websocket_broadcast_set_enabled_updates_manager(hass, monkeypatch) -> None:
+async def test_websocket_broadcast_set_enabled_updates_manager(
+    hass, monkeypatch
+) -> None:
     """Administrators can change the Broadcast enabled state."""
     manager = SimpleNamespace(enabled=False, async_set_enabled=AsyncMock())
     monkeypatch.setattr(
@@ -72,7 +93,9 @@ async def test_websocket_broadcast_set_enabled_updates_manager(hass, monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_websocket_broadcast_set_enabled_requires_boolean(hass, monkeypatch) -> None:
+async def test_websocket_broadcast_set_enabled_requires_boolean(
+    hass, monkeypatch
+) -> None:
     """Reject malformed enabled values before mutating the manager."""
     manager = SimpleNamespace(enabled=True, async_set_enabled=AsyncMock())
     monkeypatch.setattr(
@@ -93,7 +116,9 @@ async def test_websocket_broadcast_set_enabled_requires_boolean(hass, monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_websocket_broadcast_set_enabled_requires_admin(hass, monkeypatch) -> None:
+async def test_websocket_broadcast_set_enabled_requires_admin(
+    hass, monkeypatch
+) -> None:
     """Reject settings changes from non-administrators."""
     manager = SimpleNamespace(enabled=True, async_set_enabled=AsyncMock())
     monkeypatch.setattr(
@@ -145,11 +170,15 @@ async def test_websocket_broadcast_rejects_invalid_send_requests(
     await _call_handler(hass, connection, message)
 
     authorized_targets.assert_not_awaited()
-    connection.send_error.assert_called_once_with(message["id"], "invalid_request", error)
+    connection.send_error.assert_called_once_with(
+        message["id"], "invalid_request", error
+    )
 
 
 @pytest.mark.asyncio
-async def test_websocket_broadcast_sends_to_whole_home_targets(hass, monkeypatch) -> None:
+async def test_websocket_broadcast_sends_to_whole_home_targets(
+    hass, monkeypatch
+) -> None:
     """Whole-home sends use the authorized resolved targets and caller context."""
     manager = SimpleNamespace(async_send=AsyncMock(return_value={"id": "broadcast-1"}))
     monkeypatch.setattr(
@@ -193,5 +222,6 @@ async def test_websocket_broadcast_sends_to_whole_home_targets(hass, monkeypatch
         "Dinner is ready",
         entity_ids=["assist_satellite.kitchen"],
         source="frontend",
+        context="context",
     )
     connection.send_result.assert_called_once_with(7, {"id": "broadcast-1"})

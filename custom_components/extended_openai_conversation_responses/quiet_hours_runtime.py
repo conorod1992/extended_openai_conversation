@@ -1004,7 +1004,8 @@ class QuietHoursManager:
         control["quiet_value"] = control.pop("pending_quiet_value")
         if context_id := control.pop("pending_application_context_id", None):
             control["application_context_id"] = context_id
-        control.pop("attained_value", None)
+        # A retarget may quantize to the same reported volume without publishing
+        # a new state/context. Keep the last owned report until a new one arrives.
         self._observe_owned_volume(entity_id, control)
 
     def _pending_quiet_attained(self, entity_id: str, control: dict[str, Any]) -> bool:

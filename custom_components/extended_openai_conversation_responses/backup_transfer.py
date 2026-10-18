@@ -48,6 +48,7 @@ MAX_MANIFEST_BYTES = 64 * 1024
 MAX_TRANSFER_SESSIONS = 4
 MAX_TRANSFER_TEMP_BYTES = 256 * 1024 * 1024
 TRANSFER_TTL_SECONDS = 15 * 60
+IMPORT_INSPECTION_TIMEOUT_SECONDS = 60
 _MAX_BASE64_CHUNK_CHARS = 4 * math.ceil(BACKUP_CHUNK_BYTES / 3) + 4
 _EXPORTS_KEY = f"{DOMAIN}.backup_transfer_exports"
 _IMPORTS_KEY = f"{DOMAIN}.backup_transfer_imports"
@@ -121,6 +122,7 @@ class ImportSession:
     preview_sections: tuple[str, ...] | None = None
     preview_user_scope_mappings: tuple[tuple[str, str], ...] | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    inspection_tasks: set[asyncio.Task[Any]] = field(default_factory=set, repr=False)
 
 
 def _exports(hass: HomeAssistant) -> dict[str, ExportSession]:
@@ -205,6 +207,11 @@ async def _async_delete_session_file(
     hass: HomeAssistant, session: ExportSession | ImportSession
 ) -> None:
     _retire(hass, session)
+    if isinstance(session, ImportSession):
+        # Inspection owns only reads and preview metadata. Retiring the session
+        # cancels those reads before waiting for its lock/maintenance lease.
+        for task in tuple(session.inspection_tasks):
+            task.cancel()
     async with session.lock:
         await _async_remove_path(hass, session.path)
 
@@ -1094,6 +1101,28 @@ async def _inspect_import(
 ) -> dict[str, Any]:
     await _async_cleanup_expired(hass)
     session = _completed_import(hass, data.get("session_id"), entry_id, subentry_id)
+    task = asyncio.create_task(_inspect_import_owned(hass, session, data))
+    session.inspection_tasks.add(task)
+    try:
+        async with asyncio.timeout(IMPORT_INSPECTION_TIMEOUT_SECONDS):
+            return await task
+    except TimeoutError as err:
+        raise backup.BackupError(
+            "Backup inspection timed out; retry validation"
+        ) from err
+    except asyncio.CancelledError as err:
+        if (caller := asyncio.current_task()) is not None and caller.cancelling():
+            raise
+        raise backup.BackupError("The backup inspection was cancelled") from err
+    finally:
+        session.inspection_tasks.discard(task)
+
+
+async def _inspect_import_owned(
+    hass: HomeAssistant, session: ImportSession, data: dict[str, Any]
+) -> dict[str, Any]:
+    """Hold inspection locks only for the lifetime of this session-owned task."""
+    entry_id, subentry_id = session.entry_id, session.subentry_id
     gate = get_agent_maintenance_gate(hass, entry_id, subentry_id)
     async with gate.exclusive(), session.lock:
         if _imports(hass).get(session.session_id) is not session:

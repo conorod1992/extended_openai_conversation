@@ -5,14 +5,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 from probatio.error import MultipleInvalid
-
-from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import CONF_API_KEY
-from homeassistant.core import Context, HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import entity_registry as er
+import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry, MockUser
 
 from custom_components.extended_openai_conversation_responses import (
@@ -35,7 +29,14 @@ from custom_components.extended_openai_conversation_responses.const import (
     SERVICE_QUERY_IMAGE,
     SERVICE_RELOAD_SKILLS,
 )
-from custom_components.extended_openai_conversation_responses.memory import async_get_memory
+from custom_components.extended_openai_conversation_responses.memory import (
+    async_get_memory,
+)
+from homeassistant.config_entries import ConfigEntryState
+from homeassistant.const import CONF_API_KEY
+from homeassistant.core import Context, HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import entity_registry as er
 
 
 def _entry(*, memory: bool = False) -> MockConfigEntry:
@@ -91,6 +92,7 @@ async def _response_service_call(
     data: dict,
     *,
     user_id: str | None = None,
+    context: Context | None = None,
 ):
     """Call a response service through HA's real service registry."""
     return await hass.services.async_call(
@@ -98,7 +100,7 @@ async def _response_service_call(
         service,
         data,
         blocking=True,
-        context=Context(user_id=user_id),
+        context=context if context is not None else Context(user_id=user_id),
         return_response=True,
     )
 
@@ -293,6 +295,7 @@ async def test_broadcast_service_routes_context_and_rejects_invalid_targets(
         AsyncMock(return_value=manager),
     )
 
+    broadcast_context = Context(user_id=hass_admin_user.id)
     response = await _response_service_call(
         hass,
         intercom_services.SERVICE_BROADCAST,
@@ -302,6 +305,7 @@ async def test_broadcast_service_routes_context_and_rejects_invalid_targets(
             "ttl_seconds": 30,
         },
         user_id=hass_admin_user.id,
+        context=broadcast_context,
     )
     assert response == {"id": "broadcast-acceptance"}
     manager.resolve_targets.assert_called_once_with(
@@ -321,7 +325,9 @@ async def test_broadcast_service_routes_context_and_rejects_invalid_targets(
         origin_device_id=None,
         source="service",
         ttl_seconds=30,
+        context=broadcast_context,
     )
+    assert manager.async_send.await_args.kwargs["context"] is broadcast_context
 
     manager.resolve_targets.reset_mock(return_value=True)
     manager.resolve_targets.return_value = []

@@ -664,20 +664,37 @@ def test_secret_restore_drops_unmatched_list_marker() -> None:
 
 
 def test_secret_restore_matches_typed_yaml_nan_without_weakening_context() -> None:
-    imported = {"script": {"value": float("nan"), "token": REDACTED_SECRET_SENTINEL}}
-    destination = {"script": {"value": float("nan"), "token": "local-secret"}}
+    # Function Tools are matched as list items by their stable spec name; this
+    # is where visible configuration equivalence protects credential recovery.
+    imported = [
+        {
+            "spec": {"name": "nan_script"},
+            "script": {"value": float("nan"), "token": REDACTED_SECRET_SENTINEL},
+        }
+    ]
+    destination = [
+        {
+            "spec": {"name": "nan_script"},
+            "script": {"value": float("nan"), "token": "local-secret"},
+        }
+    ]
     restored, preserved, missing = transfer._restore_section_secrets(
         imported, destination
     )
-    assert restored["script"]["token"] == "local-secret"
-    assert preserved == ("script.token",)
+    assert restored[0]["script"]["token"] == "local-secret"
+    assert preserved == ("[0].script.token",)
     assert missing == ()
 
-    changed = {"script": {"value": 1.0, "token": "must-not-copy"}}
+    changed = [
+        {
+            "spec": {"name": "nan_script"},
+            "script": {"value": 1.0, "token": "must-not-copy"},
+        }
+    ]
     restored, preserved, missing = transfer._restore_section_secrets(imported, changed)
-    assert "token" not in restored["script"]
+    assert "token" not in restored[0]["script"]
     assert preserved == ()
-    assert missing == ("script.token",)
+    assert missing == ("[0].script.token",)
 
 
 def test_function_tools_match_secrets_by_stable_spec_name() -> None:

@@ -19,6 +19,59 @@ _STATE_ENTITY_ID = "binary_sensor.extended_openai_quiet_hours"
 _RUNTIME_KEY = "quiet_hours_manager"
 
 
+@pytest.mark.parametrize("restart", [False, True])
+async def test_quantized_retarget_without_state_report_restores_baseline(hass, restart):
+    """A real HA service may succeed without reporting an unchanged volume step."""
+    _, media_player_id, _ = _install_satellite_entities(hass)
+    calls = []
+
+    async def volume_set(call: ServiceCall) -> None:
+        state = hass.states.get(media_player_id)
+        requested = call.data["volume_level"]
+        calls.append(requested)
+        attained = round(requested / 0.05) * 0.05
+        if attained != state.attributes["volume_level"]:
+            hass.states.async_set(
+                media_player_id,
+                state.state,
+                {**state.attributes, "volume_level": attained},
+                context=call.context,
+            )
+
+    hass.services.async_register("media_player", "volume_set", volume_set)
+    manager = await async_get_quiet_hours(hass)
+    start, end = _active_window()
+    await manager.async_update_config(
+        {
+            "enabled": True,
+            "start": start,
+            "end": end,
+            "max_volume": 0.23,
+            "wake_sound": "unchanged",
+            "overrides": {},
+        }
+    )
+    await hass.async_block_till_done()
+    owned_report = hass.states.get(media_player_id)
+    await manager.async_update_config({**manager.config.as_dict(), "max_volume": 0.24})
+    await hass.async_block_till_done()
+    assert hass.states.get(media_player_id) is owned_report
+    if restart:
+        manager._cancel_scheduled_callbacks()
+        if manager._registry_unsubscribe is not None:
+            manager._registry_unsubscribe()
+            manager._registry_unsubscribe = None
+        hass.data[DOMAIN].pop(_RUNTIME_KEY, None)
+        manager = await async_get_quiet_hours(hass)
+        await hass.async_block_till_done()
+    await manager.async_update_config({**manager.config.as_dict(), "enabled": False})
+    await hass.async_block_till_done()
+    assert hass.states.get(media_player_id).attributes["volume_level"] == pytest.approx(
+        0.60
+    )
+    assert calls == [0.23, 0.24, 0.60]
+
+
 def _active_window() -> tuple[str, str]:
     """Return a schedule that safely contains the current HA-local time."""
     now = dt_util.now()
@@ -225,12 +278,22 @@ async def test_unavailable_quiet_hours_controls_restore_after_return(hass):
     start, end = _active_window()
     manager = await async_get_quiet_hours(hass)
     try:
-        await manager.async_update_config({"enabled": True, "start": start, "end": end, "max_volume": 0.2, "wake_sound": "off"})
+        await manager.async_update_config(
+            {
+                "enabled": True,
+                "start": start,
+                "end": end,
+                "max_volume": 0.2,
+                "wake_sound": "off",
+            }
+        )
         hass.states.async_set(media, "unavailable", {"volume_level": 0.2})
         hass.states.async_set(wake, "unavailable")
         await manager.async_set_enabled(False)
         assert set(manager.active["controls"]) == {media, wake}
-        assert all(item["restoration_pending"] for item in manager.active["controls"].values())
+        assert all(
+            item["restoration_pending"] for item in manager.active["controls"].values()
+        )
         hass.states.async_set(media, "idle", {"volume_level": 0.2})
         hass.states.async_set(wake, "off")
         await manager.async_reconcile()
@@ -244,17 +307,32 @@ async def test_unavailable_quiet_hours_controls_restore_after_return(hass):
 
 
 @pytest.mark.asyncio
-async def test_failed_quiet_hours_settings_save_preserves_actual_device_policy(hass, monkeypatch):
+async def test_failed_quiet_hours_settings_save_preserves_actual_device_policy(
+    hass, monkeypatch
+):
     from copy import deepcopy
     from unittest.mock import AsyncMock
+
     _satellite, media, wake = _install_satellite_entities(hass)
     _install_control_services(hass)
     start, end = _active_window()
     manager = await async_get_quiet_hours(hass)
-    await manager.async_update_config({"enabled": True, "start": start, "end": end, "max_volume": 0.2, "wake_sound": "off"})
+    await manager.async_update_config(
+        {
+            "enabled": True,
+            "start": start,
+            "end": end,
+            "max_volume": 0.2,
+            "wake_sound": "off",
+        }
+    )
     baseline = deepcopy(manager.active)
     with monkeypatch.context() as failure:
-        failure.setattr(manager._store, "async_save", AsyncMock(side_effect=OSError("settings save failed")))
+        failure.setattr(
+            manager._store,
+            "async_save",
+            AsyncMock(side_effect=OSError("settings save failed")),
+        )
         with pytest.raises(OSError, match="settings save failed"):
             await manager.async_set_enabled(False)
     assert manager.config.enabled

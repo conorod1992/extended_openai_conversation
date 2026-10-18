@@ -311,7 +311,7 @@ def _function_group_execution_signature(group: Any) -> Any:
         return None
     return (
         group.get("id"),
-        tuple(group.get("functions", ())),
+        frozenset(group.get("functions", ())),
         group.get("loading_mode"),
         group.get("enabled", True),
     )
@@ -1522,9 +1522,10 @@ class ExtendedOpenAIAgentEntity(
         llm_context: llm.LLMContext | None,
     ) -> Any:
         """Execute a configured function through the model-tool security seam."""
-        own_tools = self._configured_function_tools_from_data(self.subentry.data)
+        own_data = current_configuration_data(self)
+        own_tools = self._configured_function_tools_from_data(own_data)
         own_groups = validate_function_groups(
-            self.subentry.data.get(CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS)),
+            own_data.get(CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS)),
             own_tools,
         )
         function_config_token = _ACTIVE_FUNCTION_CONFIG.set((own_tools, own_groups))

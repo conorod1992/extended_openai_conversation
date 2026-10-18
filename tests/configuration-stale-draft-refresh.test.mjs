@@ -154,7 +154,9 @@ test("revisiting prompt context refreshes HA-owned Assist exposure metadata", as
     agentId:"a", epoch:0, revision:"r1", value:{entities:[{entity_id:"light.old"}]},
   }]]);
   host._eocDirtyConfigKeys = new Set();
+  let reads = 0;
   host._call = async (section, action, data) => {
+    reads++;
     assert.equal(section, "configuration");
     assert.equal(action, "live_metadata");
     assert.deepEqual(data.metadata_keys, ["exposed_attribute_catalog"]);
@@ -167,6 +169,11 @@ test("revisiting prompt context refreshes HA-owned Assist exposure metadata", as
     "refreshing read-only metadata must not add an invalid configuration save field");
   assert.deepEqual(host._configData.exposed_attribute_catalog.entities.map(item => item.entity_id), ["light.new"]);
   assert.deepEqual(host._result.exposed_attribute_catalog.entities.map(item => item.entity_id), ["light.new"]);
+  await host._loadConfigurationLiveMetadata("assistant/prompt-context");
+  assert.equal(reads, 1, "re-rendering the current visit must not fetch exposure twice");
+  host._loadToken++;
+  await host._loadConfigurationLiveMetadata("assistant/prompt-context");
+  assert.equal(reads, 2, "a new visit still refreshes HA-owned exposure metadata");
 });
 
 for (const change of ["agent", "entry", "route", "token", "generation", "revision", "full acknowledgement", "partial acknowledgement"]) {

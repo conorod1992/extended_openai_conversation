@@ -1439,7 +1439,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       // revision does not change when users edit the Assist exposure list.
       // Re-fetch it on each visit to its owning view.
       if (cached?.agentId === agentId && cached.epoch === epoch && cached.revision === revision
-          && key !== "exposed_attribute_catalog" && this._configData[key] !== undefined) return null;
+          && this._configData[key] !== undefined
+          && (key !== "exposed_attribute_catalog" || (activeToken !== null && cached.activeToken === activeToken))) return null;
       const existing = this._eocLiveMetadataPending.get(key);
       if (existing?.agentId === agentId && existing.epoch === epoch && existing.revision === revision) {
         if (activeToken !== null) existing.activeToken = activeToken;
@@ -1452,7 +1453,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
           if (agentId !== this._agentId || epoch !== (this._eocLiveMetadataEpoch || 0)
               || (revision !== this._configData?.revision && revision !== cleanRevision)
               || !Object.hasOwn(metadata, key)) return;
-          this._eocLiveMetadataCache.set(key, {agentId, epoch, revision, value: metadata[key]});
+          this._eocLiveMetadataCache.set(key, {agentId, epoch, revision, activeToken: record.activeToken, value: metadata[key]});
           if (this._viewKey() !== view || record.activeToken !== this._loadToken) return;
           const previous = this._configData;
           if (this._applyConfigurationLiveMetadata(view) && this._result === previous) {

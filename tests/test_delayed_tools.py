@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextvars import ContextVar
 from dataclasses import replace
 from datetime import timedelta
 from types import SimpleNamespace
@@ -15,6 +16,8 @@ from custom_components.extended_openai_conversation_responses.const import DOMAI
 from custom_components.extended_openai_conversation_responses.conversation import (
     _ACTIVE_FUNCTION_CONFIG,
     _ACTIVE_GUEST_POLICY,
+    _ACTIVE_LLM_CONTEXT,
+    _ACTIVE_REQUEST_CONFIG_DATA,
     ExtendedOpenAIAgentEntity,
 )
 from custom_components.extended_openai_conversation_responses.delayed_tools import (
@@ -112,6 +115,76 @@ async def test_schedule_is_persisted_before_becoming_live(hass) -> None:
             context,
         )
     assert failing._records == {}
+
+
+async def test_scheduled_waiter_drops_request_context_after_edit_and_revert(
+    hass, monkeypatch
+):
+    """The real waiter executes A again after A/B/A, without request-owned state."""
+    manager = DelayedToolManager(hass)
+    manager._started = manager._setup_complete = True
+    manager._store = SimpleNamespace(async_save=AsyncMock())
+    original = {"prompt": "A", "function_groups": []}
+    subentry = SimpleNamespace(subentry_type="conversation", data=original)
+    hass.config_entries.async_get_entry.return_value = SimpleNamespace(
+        disabled_by=None, subentries={"agent": subentry}
+    )
+    hass.auth.async_get_user = AsyncMock(return_value=SimpleNamespace(is_active=True))
+    tool = _valid_tool()
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.delayed_tools.configured_function_tools_from_data",
+        lambda _data: [tool],
+    )
+    sleeping, due = asyncio.Event(), asyncio.Event()
+
+    async def wait_until_due(_delay):
+        sleeping.set()
+        await due.wait()
+
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.delayed_tools.asyncio.sleep",
+        wait_until_due,
+    )
+    arbitrary_request_state = ContextVar("request_only_test_state", default=None)
+    observed = []
+
+    async def execute(*_args):
+        ExtendedOpenAIAgentEntity._assert_no_aba_configuration(agent)
+        observed.append(
+            (
+                _ACTIVE_REQUEST_CONFIG_DATA.get(),
+                _ACTIVE_LLM_CONTEXT.get(),
+                arbitrary_request_state.get(),
+            )
+        )
+
+    agent = SimpleNamespace(subentry=subentry, _execute_function_tool=execute)
+    monkeypatch.setattr(manager, "_resolve_agent", lambda *_: agent)
+    config_token = _ACTIVE_REQUEST_CONFIG_DATA.set(original)
+    llm_token = _ACTIVE_LLM_CONTEXT.set(object())
+    arbitrary_token = arbitrary_request_state.set("must not survive")
+    try:
+        record = await manager.async_schedule(
+            _entity(hass),
+            "control_light",
+            {"delay": {"seconds": 1}},
+            SimpleNamespace(context=Context(user_id="user-1")),
+            function_tool=tool,
+        )
+        waiter = manager._tasks[record.call_id]
+        await sleeping.wait()
+        subentry.data = {"prompt": "B"}
+        subentry.data = dict(original)
+        due.set()
+        await asyncio.wait_for(waiter, timeout=1)
+        assert _ACTIVE_REQUEST_CONFIG_DATA.get() is original
+        assert arbitrary_request_state.get() == "must not survive"
+    finally:
+        arbitrary_request_state.reset(arbitrary_token)
+        _ACTIVE_LLM_CONTEXT.reset(llm_token)
+        _ACTIVE_REQUEST_CONFIG_DATA.reset(config_token)
+    assert observed == [(None, None, None)]
+    assert record.call_id not in manager._records
 
 
 async def test_schedule_reconciles_after_lost_store_acknowledgement(hass) -> None:
@@ -663,7 +736,7 @@ async def test_waiter_uses_maintenance_gate_and_stops_after_execution(
         sleep,
     )
     execute_due = AsyncMock(return_value=False)
-    monkeypatch.setattr(manager, "_async_execute_due", execute_due)
+    monkeypatch.setattr(manager, "_async_execute_due_detached", execute_due)
 
     await manager._async_wait_and_execute(record.call_id)
 

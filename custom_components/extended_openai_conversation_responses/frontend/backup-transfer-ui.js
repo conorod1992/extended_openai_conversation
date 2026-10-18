@@ -335,7 +335,7 @@ function updateRestorePreviewStatus(panel, preview) {
 }
 
 function previewWork(panel) {
-  return panel._backupTransferPreviewWork ||= {timer: null, inFlight: false, latest: null};
+  return panel._backupTransferPreviewWork ||= {timer: null, inFlight: null, latest: null};
 }
 
 function invalidateImportPreview(panel) {
@@ -355,16 +355,17 @@ function invalidateImportPreview(panel) {
 
 function sendLatestImportPreview(panel) {
   const work = previewWork(panel);
-  if (work.inFlight || work.timer !== null || !work.latest) return;
+  if (work.timer !== null || !work.latest) return;
+  if (work.inFlight?.sessionId === work.latest.sessionId) return;
   const request = work.latest;
   work.latest = null;
   if (panel._backupTransferSession !== request.sessionId || panel._transferPreviewToken !== request.token) return;
-  work.inFlight = true;
+  work.inFlight = request;
   void (async () => {
     const status = panel.shadowRoot?.querySelector(`#${RESTORE_STATUS_ID}`);
     const apply = panel.shadowRoot?.querySelector(`#${APPLY_ID}`);
     try {
-      const result = await callBackupTransfer(panel, "import_inspect", {session_id: request.sessionId, sections: request.sections, user_scope_mappings: request.userScopeMappings});
+      const result = await callBackupTransfer(panel, "import_inspect", {session_id: request.sessionId, sections: request.sections, user_scope_mappings: request.userScopeMappings}, request.owner);
       if (panel._transferPreviewToken !== request.token || panel._backupTransferSession !== request.sessionId) return;
       panel._backupTransferPreview = result.preview;
       panel._backupTransferPreviewToken = result.preview_token;
@@ -384,7 +385,7 @@ function sendLatestImportPreview(panel) {
       }
       if (apply) apply.disabled = true;
     } finally {
-      work.inFlight = false;
+      if (work.inFlight === request) work.inFlight = null;
       sendLatestImportPreview(panel);
     }
   })();
@@ -409,7 +410,7 @@ export function refreshImportPreview(panel) {
     status.textContent = "Validating selected sections…";
   }
   const work = previewWork(panel);
-  work.latest = {sessionId, sections, token, userScopeMappings: selectedUserScopeMappings(root)};
+  work.latest = {sessionId, sections, token, owner: selectedAgent(panel), userScopeMappings: selectedUserScopeMappings(root)};
   work.timer = setTimeout(() => {
     work.timer = null;
     sendLatestImportPreview(panel);
