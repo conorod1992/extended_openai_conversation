@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import json
 from copy import deepcopy
 from dataclasses import replace
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -42,7 +42,9 @@ from tests.test_backup import _document
 async def test_current_snapshot_falls_back_when_durable_manager_api_is_unavailable(
     hass, monkeypatch
 ) -> None:
-    from custom_components.extended_openai_conversation_responses import restore_recovery
+    from custom_components.extended_openai_conversation_responses import (
+        restore_recovery,
+    )
 
     entry = SimpleNamespace(entry_id="entry")
     subentry = SimpleNamespace(subentry_id="agent")
@@ -82,9 +84,7 @@ def _function_rule(
         "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
         "data": {
             "function": function_name,
-            "arguments": (
-                arguments if arguments is not None else {"fact": "hello"}
-            ),
+            "arguments": (arguments if arguments is not None else {"fact": "hello"}),
         },
     }
     raw = {
@@ -169,9 +169,7 @@ async def test_shareable_setup_reads_only_setup_state_and_round_trips_ha_llm_ref
     ):
         monkeypatch.setattr(transfer, name, forbidden)
 
-    result = await transfer.async_create_setup_export(
-        hass, entry, subentry
-    )
+    result = await transfer.async_create_setup_export(hass, entry, subentry)
     document = result["document"]
     assert set(document["sections"]) == transfer.SETUP_SECTIONS
 
@@ -344,9 +342,7 @@ async def test_request_rule_dependency_uses_combined_target_state(
     monkeypatch.setattr(transfer, "_current_snapshot", AsyncMock(return_value=current))
     entry, subentry = _entry_and_subentry()
 
-    with pytest.raises(
-        backup.BackupError, match="unavailable or disabled: remember"
-    ):
+    with pytest.raises(backup.BackupError, match="unavailable or disabled: remember"):
         await transfer.async_materialize_restore(hass, entry, subentry, imported)
 
     current.config[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
@@ -376,9 +372,7 @@ async def test_request_rule_dependency_checks_nested_actions(hass, monkeypatch) 
     monkeypatch.setattr(transfer, "_current_snapshot", AsyncMock(return_value=current))
     entry, subentry = _entry_and_subentry()
 
-    with pytest.raises(
-        backup.BackupError, match="unavailable or disabled: remember"
-    ):
+    with pytest.raises(backup.BackupError, match="unavailable or disabled: remember"):
         await transfer.async_materialize_restore(hass, entry, subentry, imported)
 
 
@@ -405,7 +399,9 @@ async def test_request_rule_dependency_validates_nested_static_arguments(
     monkeypatch.setattr(transfer, "_current_snapshot", AsyncMock(return_value=current))
     entry, subentry = _entry_and_subentry()
 
-    with pytest.raises(backup.BackupError, match="Function input `fact` must be string"):
+    with pytest.raises(
+        backup.BackupError, match="Function input `fact` must be string"
+    ):
         await transfer.async_materialize_restore(hass, entry, subentry, imported)
 
 
@@ -439,7 +435,10 @@ async def test_request_rule_dependency_accepts_tool_imported_with_rule(
         hass, entry, subentry, imported
     )
 
-    assert yaml.safe_load(target.config[CONF_FUNCTION_TOOLS])[0]["spec"]["name"] == "remember"
+    assert (
+        yaml.safe_load(target.config[CONF_FUNCTION_TOOLS])[0]["spec"]["name"]
+        == "remember"
+    )
     assert target.request_rules["rules"][0]["id"] == "remember-rule"
 
 
@@ -555,9 +554,13 @@ def test_section_selection_rejects_ambiguous_types(sections, message) -> None:
         transfer.validate_section_selection(sections)
 
 
-async def test_custom_snapshot_collects_every_selected_manager(hass, monkeypatch) -> None:
+async def test_custom_snapshot_collects_every_selected_manager(
+    hass, monkeypatch
+) -> None:
     entry, subentry = _entry_and_subentry()
-    monkeypatch.setattr(backup, "export_configuration_snapshot", lambda value: dict(value))
+    monkeypatch.setattr(
+        backup, "export_configuration_snapshot", lambda value: dict(value)
+    )
     payloads = {
         "async_get_request_rules": _rules_backup(),
         "async_get_memory": {"memories": []},
@@ -658,6 +661,23 @@ def test_secret_restore_drops_unmatched_list_marker() -> None:
     assert restored == []
     assert preserved == ()
     assert missing == ("[0]",)
+
+
+def test_secret_restore_matches_typed_yaml_nan_without_weakening_context() -> None:
+    imported = {"script": {"value": float("nan"), "token": REDACTED_SECRET_SENTINEL}}
+    destination = {"script": {"value": float("nan"), "token": "local-secret"}}
+    restored, preserved, missing = transfer._restore_section_secrets(
+        imported, destination
+    )
+    assert restored["script"]["token"] == "local-secret"
+    assert preserved == ("script.token",)
+    assert missing == ()
+
+    changed = {"script": {"value": 1.0, "token": "must-not-copy"}}
+    restored, preserved, missing = transfer._restore_section_secrets(imported, changed)
+    assert "token" not in restored["script"]
+    assert preserved == ()
+    assert missing == ("script.token",)
 
 
 def test_function_tools_match_secrets_by_stable_spec_name() -> None:

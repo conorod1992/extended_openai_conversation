@@ -1416,8 +1416,12 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       if (!record || record.agentId !== this._agentId
           || record.epoch !== (this._eocLiveMetadataEpoch || 0)
           || record.revision !== this._configData.revision
-          || this._configData[key] !== undefined) continue;
+          || (this._configData[key] !== undefined && key !== "exposed_attribute_catalog")) continue;
       this._configData = {...this._configData, [key]: record.value};
+      if (key === "exposed_attribute_catalog" && !this._eocDirtyConfigKeys?.has(key)
+          && this._draftAgentId === this._agentId && this._draft) {
+        this._draft = {...this._draft, [key]: record.value};
+      }
       changed = true;
     }
     return changed;
@@ -1433,9 +1437,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const epoch = this._eocLiveMetadataEpoch || 0;
     const revision = this._configData.revision;
     const activeToken = this._viewKey() === view ? this._loadToken : null;
-    const pending = requested.filter(key => this._configData[key] === undefined).map(key => {
+    const pending = requested.map(key => {
       const cached = this._eocLiveMetadataCache.get(key);
-      if (cached?.agentId === agentId && cached.epoch === epoch && cached.revision === revision) return null;
+      // Assist exposure is HA-owned live metadata; EOAI's configuration
+      // revision does not change when users edit the Assist exposure list.
+      // Re-fetch it on each visit to its owning view.
+      if (cached?.agentId === agentId && cached.epoch === epoch && cached.revision === revision
+          && key !== "exposed_attribute_catalog" && this._configData[key] !== undefined) return null;
       const existing = this._eocLiveMetadataPending.get(key);
       if (existing?.agentId === agentId && existing.epoch === epoch && existing.revision === revision) {
         if (activeToken !== null) existing.activeToken = activeToken;

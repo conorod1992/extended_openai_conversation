@@ -432,11 +432,20 @@ export function bindBackupTransfer(panel) {
   root.querySelector(`#${FILE_ID}`)?.addEventListener("change", async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    const generation = (panel._backupImportGeneration || 0) + 1;
+    panel._backupImportGeneration = generation;
     const apply = root.querySelector(`#${APPLY_ID}`);
     apply.disabled = true;
-    await cancelBackupImport(panel);
+    const previousSession = panel._backupTransferSession;
+    panel._backupTransferSession = null;
+    invalidateImportPreview(panel);
+    if (previousSession) void cancelBackupImport(panel, previousSession);
     try {
       const result = await uploadFullBackup(panel, file);
+      if (panel._backupImportGeneration !== generation) {
+        await cancelBackupImport(panel, result.session_id);
+        return;
+      }
       panel._backupTransferSession = result.session_id;
       panel._backupTransferInspection = result;
       panel._backupTransferPreview = result.preview;
@@ -456,6 +465,7 @@ export function bindBackupTransfer(panel) {
       root.querySelector("#restore-dialog").showModal();
       refreshImportPreview(panel);
     } catch (err) {
+      if (panel._backupImportGeneration !== generation) return;
       panel._backupTransferSession = null;
       panel._backupTransferInspection = null;
       panel._backupTransferPreview = null;

@@ -706,9 +706,12 @@ def model_path_timing(entity: Any) -> Iterator[None]:
             )
 
 
-def record_system_prompt(prompt: str, started: float) -> None:
+def record_system_prompt(agent: Any, prompt: str, started: float) -> None:
     trace = current_debug_trace()
-    if trace is not None:
+    if trace is not None and (trace.entry_id, trace.subentry_id) == (
+        agent.entry.entry_id,
+        agent.subentry.subentry_id,
+    ):
         trace.phases_ms["system_prompt_render"] = int(
             (time.monotonic() - started) * 1000
         )

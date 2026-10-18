@@ -305,6 +305,18 @@ def _request_function_groups(
     return groups
 
 
+def _function_group_execution_signature(group: Any) -> Any:
+    """Return execution fields, excluding presentation-only name and description."""
+    if group is None:
+        return None
+    return (
+        group.get("id"),
+        tuple(group.get("functions", ())),
+        group.get("loading_mode"),
+        group.get("enabled", True),
+    )
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: ExtendedOpenAIConfigEntry,
@@ -1510,26 +1522,35 @@ class ExtendedOpenAIAgentEntity(
         llm_context: llm.LLMContext | None,
     ) -> Any:
         """Execute a configured function through the model-tool security seam."""
-        function_tool = configured_function_tool_for_execution(self, function_name)
+        own_tools = self._configured_function_tools_from_data(self.subentry.data)
+        own_groups = validate_function_groups(
+            self.subentry.data.get(CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS)),
+            own_tools,
+        )
+        function_config_token = _ACTIVE_FUNCTION_CONFIG.set((own_tools, own_groups))
         from .execution_outcomes import detached_execution
         from .model_tool_results import local_function_results
 
-        with (
-            detached_execution(),
-            propagate_function_execution_errors(),
-            local_function_results(),
-        ):
-            return await self._execute_function_tool(
-                function_tool,
-                llm.ToolInput(
-                    id="request_rule",
-                    tool_name=function_name,
-                    tool_args=arguments,
-                    external=True,
-                ),
-                llm_context,
-                self._get_exposed_entities(),
-            )
+        try:
+            function_tool = configured_function_tool_for_execution(self, function_name)
+            with (
+                detached_execution(),
+                propagate_function_execution_errors(),
+                local_function_results(),
+            ):
+                return await self._execute_function_tool(
+                    function_tool,
+                    llm.ToolInput(
+                        id="request_rule",
+                        tool_name=function_name,
+                        tool_args=arguments,
+                        external=True,
+                    ),
+                    llm_context,
+                    self._get_exposed_entities(),
+                )
+        finally:
+            _ACTIVE_FUNCTION_CONFIG.reset(function_config_token)
 
     def _build_system_prompt(
         self,
@@ -1561,7 +1582,7 @@ class ExtendedOpenAIAgentEntity(
         )
         record_prompt_render(effective, render_started)
         _PROMPT_CACHE_CONTEXT.set(prompt_cache_context(effective, self.subentry.data))
-        record_system_prompt(effective.text, started)
+        record_system_prompt(self, effective.text, started)
         return effective.text
 
     async def _async_retrieve_memories(
@@ -2166,7 +2187,9 @@ class ExtendedOpenAIAgentEntity(
                             None,
                         )
 
-                    if owning_group(request_config[1]) != owning_group(live_groups):
+                    if _function_group_execution_signature(
+                        owning_group(request_config[1])
+                    ) != _function_group_execution_signature(owning_group(live_groups)):
                         raise FunctionNotFound(str(tool_name))
                 resolved_tool = latest_function_tool_for_execution(self, function_tool)
             except FunctionNotFound:

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {bindBackupTransfer, refreshImportPreview, restorePreviewSummaryLines} from '../custom_components/extended_openai_conversation_responses/frontend/backup-transfer-ui.js';
 import {backupSummaryLines} from '../custom_components/extended_openai_conversation_responses/frontend/backup-summary.js';
+import {deferred} from './frontend-test-helpers.mjs';
 
 const element = () => ({handlers: {}, disabled: false, innerHTML: '', textContent: '',
   addEventListener(type, fn) { this.handlers[type] = fn; }, querySelectorAll() { return []; },
@@ -33,6 +34,40 @@ const file = new Blob(['x']); Object.defineProperty(file, 'name', {value:'backup
 await nodes.get('#backup-file-transfer').handlers.change({target:{files:[file]}});
 assert.equal(nodes.get('#restore-summary').innerHTML, '', 'header-only placeholder counts must stay hidden');
 assert.equal(nodes.get('#restore-transfer-apply').disabled, true);
+
+// A slower earlier file must not replace the session selected after it.
+const oldInspect = deferred();
+const raceCalls = [];
+const raceNodes = new Map(['#create-backup-transfer', '#restore-backup-transfer', '#backup-file-transfer',
+  '#restore-transfer-apply', '#restore-transfer-cancel', '#restore-backup-name', '#restore-backup-meta',
+  '#restore-summary', '#restore-transfer-sections', '#restore-transfer-status', '#restore-dialog'].map(id => [id, {
+    handlers:{}, disabled:false, innerHTML:'', textContent:'', addEventListener(type, fn) { this.handlers[type] = fn; },
+    querySelectorAll() { return [{checked:true, value:'persistent_memory', addEventListener(){}}]; }, showModal(){}, close(){},
+  }]));
+const racePanel = {_selectedAgent: () => ({entry_id:'entry', subentry_id:'agent'}), _e:String, _setSaving(){},
+  _toast(message) { raceCalls.push(['toast', message]); },
+  shadowRoot:{querySelector:selector => raceNodes.get(selector) || null, querySelectorAll:()=>[]},
+  _hass:{async callWS(message) {
+    const {action, data} = message; raceCalls.push([action, data]);
+    if (action === 'import_start') return {session_id:data.filename, chunk_size:1, chunk_count:1};
+    if (action === 'import_chunk') return {session_id:data.session_id, next_index:1, received:1};
+    if (action === 'import_inspect' && data.inspect_only && data.session_id === 'A') return oldInspect.promise;
+    if (action === 'import_inspect' && data.inspect_only) return {valid:true,title:'B',source_kind:'full_backup',available_sections:['persistent_memory'],preview:{selected_sections:['persistent_memory']},preview_token:'B-token'};
+    if (action === 'import_inspect') return {preview:{selected_sections:['persistent_memory']},preview_token:'B-preview'};
+    if (action === 'import_cancel') return {cancelled:true};
+    throw new Error(`Unexpected ${action}`);
+  }}};
+bindBackupTransfer(racePanel);
+const fileNamed = name => { const file = new Blob(['x']); Object.defineProperty(file, 'name', {value:name}); return file; };
+const uploadA = raceNodes.get('#backup-file-transfer').handlers.change({target:{files:[fileNamed('A')]}});
+await new Promise(resolve => setTimeout(resolve, 0));
+await raceNodes.get('#backup-file-transfer').handlers.change({target:{files:[fileNamed('B')]}});
+await new Promise(resolve => setTimeout(resolve, 180));
+oldInspect.resolve({valid:true,title:'A',source_kind:'full_backup',available_sections:['persistent_memory'],preview:{selected_sections:['persistent_memory']},preview_token:'A-token'});
+await uploadA;
+assert.equal(racePanel._backupTransferSession, 'B');
+assert.equal(racePanel._backupTransferInspection.title, 'B');
+assert.ok(raceCalls.some(([action, data]) => action === 'import_cancel' && data.session_id === 'A'));
 await new Promise(resolve => setTimeout(resolve, 200));
 assert.equal(panel._backupTransferPreviewToken, 'valid-token');
 assert.equal(panel._backupTransferPreview.persistent_memories, 1);

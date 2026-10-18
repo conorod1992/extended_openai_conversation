@@ -146,7 +146,7 @@ export function syncGuestDirty(panel) {
   return Boolean(panel._viewKey?.() === "capabilities/guest-mode" && scope?.dirty());
 }
 
-const EDITOR_IDS = ["rule-dialog", "tool-dialog", "group-dialog", "knowledge-dialog", "memory-dialog", "temporary-memory-dialog"];
+const EDITOR_IDS = ["rule-dialog", "tool-dialog", "group-dialog", "knowledge-dialog", "memory-dialog", "temporary-memory-dialog", "ha-llm-tools-dialog"];
 
 export function openDialogBaseline(panel, dialog) {
   if (!dialog?.id || !EDITOR_IDS.includes(dialog.id)) return;

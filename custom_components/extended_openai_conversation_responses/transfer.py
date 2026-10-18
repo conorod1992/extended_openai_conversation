@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable, Iterable, Mapping
 from copy import deepcopy
 from dataclasses import asdict, dataclass, replace
 import json
+import math
 from pathlib import Path
 import re
 from typing import Any
@@ -652,7 +653,14 @@ def _compatible_secret_context(
             return True
         matches = [_fallback_list_index(item, fallback) for item in value]
         return None not in matches and len(set(matches)) == len(matches)
-    return type(value) is type(fallback) and bool(value == fallback)
+    if type(value) is not type(fallback):
+        return False
+    # YAML's .nan is a typed scalar whose IEEE equality is false even against
+    # itself. Treat matching NaN scalars as equivalent without weakening the
+    # structural checks used to recover redacted credentials.
+    if isinstance(value, float) and math.isnan(value):
+        return math.isnan(fallback)
+    return bool(value == fallback)
 
 
 def _fallback_list_index(item: Any, fallback: list[Any]) -> int | None:

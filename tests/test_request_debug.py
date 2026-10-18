@@ -7,15 +7,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from homeassistant.helpers.template import Template
-
 from custom_components.extended_openai_conversation_responses.debug import (
     _ACTIVE_DEBUG_TRACE,
-    _jsonable,
     DebugManager,
     DebugOpenAIClientProxy,
     DebugProviderRequest,
+    _jsonable,
+    record_system_prompt,
 )
+from homeassistant.helpers.template import Template
 
 
 def _trace(manager: DebugManager, index: int = 0):
@@ -64,6 +64,33 @@ def test_debug_manager_can_resize_and_clear() -> None:
 
     with pytest.raises(ValueError, match="Debug run limit"):
         manager.configure(limit=3)
+
+
+def test_nested_agent_prompt_cannot_overwrite_callers_debug_trace() -> None:
+    manager = DebugManager()
+    manager.configure(enabled=True, limit=5)
+    trace = manager.begin(
+        entry_id="entry-a",
+        subentry_id="agent-a",
+        user_input={"text": "caller"},
+        incoming_conversation_id=None,
+    )
+    token = _ACTIVE_DEBUG_TRACE.set(trace)
+    try:
+        child = SimpleNamespace(
+            entry=SimpleNamespace(entry_id="entry-b"),
+            subentry=SimpleNamespace(subentry_id="agent-b"),
+        )
+        record_system_prompt(child, "child prompt", 0.0)
+        assert trace.system_prompt is None
+        caller = SimpleNamespace(
+            entry=SimpleNamespace(entry_id="entry-a"),
+            subentry=SimpleNamespace(subentry_id="agent-a"),
+        )
+        record_system_prompt(caller, "caller prompt", 0.0)
+        assert trace.system_prompt == "caller prompt"
+    finally:
+        _ACTIVE_DEBUG_TRACE.reset(token)
 
 
 @dataclass

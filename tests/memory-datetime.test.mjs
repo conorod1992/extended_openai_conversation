@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {test} from "node:test";
 import {memoryLocalDateTime, memoryExpiryISO} from "../custom_components/extended_openai_conversation_responses/frontend/memory-datetime.js";
+import {temporaryMemoryExpiryForSave} from "../custom_components/extended_openai_conversation_responses/frontend/management-temporary-memory.js";
 
 const panel = time_zone => ({_hass: {config: {time_zone}}});
 test("Memory dates use Home Assistant timezone and round-trip seconds", () => {
@@ -16,4 +17,15 @@ test("Memory date conversion rejects DST gaps and preserves repeated-hour edits"
   assert.equal(memoryExpiryISO(ha, "2026-10-25T01:30"), "2026-10-25T00:30:00.000Z");
   assert.equal(memoryExpiryISO(ha, "2026-10-25T01:30", "2026-10-25T01:30:00Z"), "2026-10-25T01:30:00Z");
   assert.throws(() => memoryExpiryISO(ha, ""), /Choose an expiry/);
+});
+
+test("saving another memory field preserves expiry across an HA timezone change", () => {
+  const panel = {_hass: {config: {time_zone: "Europe/Dublin"}}};
+  const draft = {
+    expires_at: "2026-09-02T18:30:15",
+    original_expiry: "2026-09-02T17:30:15Z",
+  };
+  panel._hass.config.time_zone = "UTC";
+  assert.equal(temporaryMemoryExpiryForSave(panel, draft.expires_at, draft), draft.original_expiry);
+  assert.equal(temporaryMemoryExpiryForSave(panel, "2026-09-03T18:30:15", draft), "2026-09-03T18:30:15.000Z");
 });

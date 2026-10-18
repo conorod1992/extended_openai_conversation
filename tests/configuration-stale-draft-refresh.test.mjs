@@ -144,6 +144,28 @@ for (const kind of ["function", "group"]) {
   });
 }
 
+test("revisiting prompt context refreshes HA-owned Assist exposure metadata", async () => {
+  const {host} = panel();
+  host._viewKey = () => "assistant/prompt-context";
+  host._loadToken = 7;
+  host._configData.exposed_attribute_catalog = {entities:[{entity_id:"light.old"}]};
+  host._draft.exposed_attribute_catalog = host._configData.exposed_attribute_catalog;
+  host._result = host._configData;
+  host._eocLiveMetadataCache = new Map([["exposed_attribute_catalog", {
+    agentId:"a", epoch:0, revision:"r1", value:{entities:[{entity_id:"light.old"}]},
+  }]]);
+  host._eocDirtyConfigKeys = new Set();
+  host._call = async (section, action, data) => {
+    assert.equal(section, "configuration");
+    assert.equal(action, "live_metadata");
+    assert.deepEqual(data.metadata_keys, ["exposed_attribute_catalog"]);
+    return {exposed_attribute_catalog:{entities:[{entity_id:"light.new"}]}};
+  };
+  await host._loadConfigurationLiveMetadata("assistant/prompt-context");
+  assert.deepEqual(host._draft.exposed_attribute_catalog.entities.map(item => item.entity_id), ["light.new"]);
+  assert.deepEqual(host._result.exposed_attribute_catalog.entities.map(item => item.entity_id), ["light.new"]);
+});
+
 for (const change of ["agent", "entry", "route", "token", "generation", "revision", "full acknowledgement", "partial acknowledgement"]) {
   test(`stale refresh cannot overwrite a newer ${change}`, async () => {
     const {host, edit} = panel();

@@ -38,7 +38,8 @@ export function bindHALlmTools(panel, acknowledge) {
   root.querySelector("#add-ha-tools")?.addEventListener("click", async () => {
     const existing = root.querySelector('dialog[data-ha-llm-tools-dialog][open]');
     if (existing) { existing.focus?.(); return; }
-    const dialog = document.createElement("dialog");
+const dialog = document.createElement("dialog");
+    dialog.id = "ha-llm-tools-dialog";
     dialog.className = "editor-dialog";
     dialog.dataset.haLlmToolsDialog = "";
     dialog.setAttribute("aria-label", "Add Home Assistant tools");
