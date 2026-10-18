@@ -1,11 +1,27 @@
 """Deterministic guards for the released upgrade process boundary."""
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
 from tests_real_ha import test_release_upgrade_acceptance as upgrade
+
+
+async def test_upgrade_browser_bridge_supports_catalogue_status():
+    from custom_components.extended_openai_conversation_responses.model_catalog_manager import (
+        DATA_MANAGER,
+    )
+    from tests_real_ha.test_browser_release_upgrade_acceptance import (
+        _model_catalog_result,
+    )
+
+    status = {"catalog_version": 1, "generation": "current"}
+    manager = SimpleNamespace(status=Mock(return_value=status))
+    hass = SimpleNamespace(data={DATA_MANAGER: manager})
+    assert await _model_catalog_result(hass, {"action": "status"}) is status
+    manager.status.assert_called_once_with()
 
 
 async def test_checkpoint_reports_early_conversation_failure():
