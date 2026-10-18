@@ -13,6 +13,7 @@ import pytest
 
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
 from custom_components.extended_openai_conversation_responses.conversation import (
+    _ACTIVE_FUNCTION_CONFIG,
     _ACTIVE_GUEST_POLICY,
     ExtendedOpenAIAgentEntity,
 )
@@ -281,6 +282,7 @@ async def test_due_call_uses_live_guest_policy_not_inherited_request_policy(
     )
 
     observed: list[GuestCapabilityPolicy] = []
+    observed_function_configs: list[Any] = []
 
     class GuestAwareAgent:
         def _resolve_live_guest_policy(self) -> GuestCapabilityPolicy:
@@ -291,19 +293,25 @@ async def test_due_call_uses_live_guest_policy_not_inherited_request_policy(
 
         async def _execute_function_tool(self, *_args) -> object:
             observed.append(self._effective_guest_policy())
+            observed_function_configs.append(_ACTIVE_FUNCTION_CONFIG.get())
             return object()
 
     agent = GuestAwareAgent()
     monkeypatch.setattr(manager, "_resolve_agent", lambda *_args: agent)
 
     token = _ACTIVE_GUEST_POLICY.set(inherited_policy)
+    function_config = ([{"spec": {"name": "control_light"}}], [{"id": "old-group"}])
+    function_token = _ACTIVE_FUNCTION_CONFIG.set(function_config)
     try:
         assert await manager._async_execute_due(record.call_id) is False
         assert _ACTIVE_GUEST_POLICY.get() is inherited_policy
+        assert _ACTIVE_FUNCTION_CONFIG.get() is function_config
     finally:
+        _ACTIVE_FUNCTION_CONFIG.reset(function_token)
         _ACTIVE_GUEST_POLICY.reset(token)
 
     assert observed == [live_policy]
+    assert observed_function_configs == [None]
 
 
 async def test_due_call_is_cancelled_when_tool_is_disabled(hass, monkeypatch) -> None:
@@ -433,7 +441,9 @@ def _valid_tool(*, function_type: str = "native") -> dict[str, Any]:
 
 
 @pytest.mark.parametrize("legacy", [False, True])
-async def test_changed_or_unknown_scheduled_definition_never_executes(hass, monkeypatch, legacy) -> None:
+async def test_changed_or_unknown_scheduled_definition_never_executes(
+    hass, monkeypatch, legacy
+) -> None:
     manager = DelayedToolManager(hass)
     record = _coverage_record(user_id=None)
     if legacy:
@@ -443,7 +453,10 @@ async def test_changed_or_unknown_scheduled_definition_never_executes(hass, monk
     hass.config_entries.async_get_entry.return_value = _live_entry()
     changed = _valid_tool()
     changed["function"]["name"] = "different_implementation"
-    monkeypatch.setattr("custom_components.extended_openai_conversation_responses.delayed_tools.configured_function_tools_from_data", lambda _data: [changed])
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.delayed_tools.configured_function_tools_from_data",
+        lambda _data: [changed],
+    )
     agent = SimpleNamespace(_execute_function_tool=AsyncMock())
     monkeypatch.setattr(manager, "_resolve_agent", lambda *_args: agent)
     await manager._async_execute_due(record.call_id)
@@ -1031,7 +1044,11 @@ async def test_owned_executor_schedules_background_call_and_returns_receipt(
     result = await executor(entity, tool, tool_input, context, [])
 
     manager.async_schedule.assert_awaited_once_with(
-        entity, "control_light", arguments, context, function_tool=tool,
+        entity,
+        "control_light",
+        arguments,
+        context,
+        function_tool=tool,
         execution_delay=timedelta(seconds=10),
     )
     assert tool_result_data(result) == {"result": "Scheduled"}

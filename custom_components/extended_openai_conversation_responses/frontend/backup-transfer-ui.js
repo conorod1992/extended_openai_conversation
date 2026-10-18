@@ -25,9 +25,9 @@ function selectedAgent(panel) {
   return agent;
 }
 
-export async function callBackupTransfer(panel, action, data = {}) {
+export async function callBackupTransfer(panel, action, data = {}, owner = selectedAgent(panel)) {
   if (!panel?._hass?.callWS) throw new Error("Home Assistant connection is unavailable");
-  const agent = selectedAgent(panel);
+  const agent = owner;
   const result = await panel._hass.callWS({
     type: WS_BACKUP_TRANSFER,
     action,
@@ -128,17 +128,17 @@ export async function downloadCustomBackup(panel, sections, saveBlob = defaultSa
   return downloadArchiveBackup(panel, {mode: "custom", sections}, saveBlob);
 }
 
-export async function uploadFullBackup(panel, file, isCurrent = () => true) {
+export async function uploadFullBackup(panel, file, isCurrent = () => true, owner = selectedAgent(panel)) {
   let sessionId = null;
   try {
     const manifest = await callBackupTransfer(panel, "import_start", {
       filename: file.name || "backup",
       size: file.size,
-    });
+    }, owner);
     sessionId = manifest.session_id;
     if (sessionId) {
-      panel._backupTransferUploads ||= new Set();
-      panel._backupTransferUploads.add(sessionId);
+      panel._backupTransferUploads ||= new Map();
+      panel._backupTransferUploads.set(sessionId, owner);
     }
     if (!sessionId || !Number.isInteger(manifest.chunk_size) || manifest.chunk_size < 1 || !Number.isInteger(manifest.chunk_count) || manifest.chunk_count < 1) {
       throw new Error("The backup server returned an invalid upload manifest");
@@ -154,7 +154,7 @@ export async function uploadFullBackup(panel, file, isCurrent = () => true) {
         session_id: sessionId,
         index,
         data: bytesToBase64(bytes),
-      });
+      }, owner);
       if (!isCurrent()) throw new Error("The selected backup was superseded");
       sent += bytes.byteLength;
       if (result.session_id !== sessionId || result.next_index !== index + 1 || result.received !== sent) {
@@ -162,14 +162,14 @@ export async function uploadFullBackup(panel, file, isCurrent = () => true) {
       }
     }
     if (sent !== file.size) throw new Error("The selected transfer file was not uploaded completely");
-    const inspection = await callBackupTransfer(panel, "import_inspect", {session_id: sessionId, inspect_only: true});
+    const inspection = await callBackupTransfer(panel, "import_inspect", {session_id: sessionId, inspect_only: true}, owner);
     if (!isCurrent()) throw new Error("The selected backup was superseded");
     if (!inspection?.valid) throw new Error("The transfer could not be validated");
     return {session_id: sessionId, ...inspection};
   } catch (err) {
     if (sessionId) {
       try {
-        await callBackupTransfer(panel, "import_cancel", {session_id: sessionId});
+        await callBackupTransfer(panel, "import_cancel", {session_id: sessionId}, owner);
       } catch (_cleanupErr) {
         // Server-side expiry is the final cleanup fallback.
       }
@@ -181,10 +181,10 @@ export async function uploadFullBackup(panel, file, isCurrent = () => true) {
 }
 
 function cancelUploadingBackups(panel) {
-  for (const sessionId of panel?._backupTransferUploads || []) {
+  for (const [sessionId, owner] of panel?._backupTransferUploads || []) {
     // The upload's own catch also attempts cleanup if its current request settles
     // after this cancellation. Both paths are safe if the server already removed it.
-    void callBackupTransfer(panel, "import_cancel", {session_id: sessionId}).catch(() => {});
+    void callBackupTransfer(panel, "import_cancel", {session_id: sessionId}, owner).catch(() => {});
   }
 }
 
@@ -192,8 +192,13 @@ export async function cancelBackupImport(panel, sessionId = panel?._backupTransf
   invalidateImportPreview(panel);
   if (!sessionId) return;
   if (panel?._backupTransferSession === sessionId) panel._backupTransferSession = null;
+  await cancelBackupImportSession(panel, sessionId);
+}
+
+async function cancelBackupImportSession(panel, sessionId, owner = selectedAgent(panel)) {
+  if (!sessionId) return;
   try {
-    await callBackupTransfer(panel, "import_cancel", {session_id: sessionId});
+    await callBackupTransfer(panel, "import_cancel", {session_id: sessionId}, owner);
   } catch (_err) {
     // Closing the dialog should remain reliable; the server expires the session.
   }
@@ -454,6 +459,12 @@ export function bindBackupTransfer(panel) {
     if (!file) return;
     const generation = (panel._backupImportGeneration || 0) + 1;
     panel._backupImportGeneration = generation;
+    const owner = selectedAgent(panel);
+    const ownerView = panel._viewKey?.();
+    const isCurrent = () => panel._backupImportGeneration === generation
+      && panel._selectedAgent?.()?.entry_id === owner.entry_id
+      && panel._selectedAgent?.()?.subentry_id === owner.subentry_id
+      && panel._viewKey?.() === ownerView;
     const apply = root.querySelector(`#${APPLY_ID}`);
     apply.disabled = true;
     const previousSession = panel._backupTransferSession;
@@ -462,9 +473,9 @@ export function bindBackupTransfer(panel) {
     if (previousSession) void cancelBackupImport(panel, previousSession);
     cancelUploadingBackups(panel);
     try {
-      const result = await uploadFullBackup(panel, file, () => panel._backupImportGeneration === generation);
-      if (panel._backupImportGeneration !== generation) {
-        await cancelBackupImport(panel, result.session_id);
+      const result = await uploadFullBackup(panel, file, isCurrent, owner);
+      if (!isCurrent()) {
+        await cancelBackupImportSession(panel, result.session_id, owner);
         return;
       }
       panel._backupTransferSession = result.session_id;
@@ -486,7 +497,7 @@ export function bindBackupTransfer(panel) {
       root.querySelector("#restore-dialog").showModal();
       refreshImportPreview(panel);
     } catch (err) {
-      if (panel._backupImportGeneration !== generation) return;
+      if (!isCurrent()) return;
       panel._backupTransferSession = null;
       panel._backupTransferInspection = null;
       panel._backupTransferPreview = null;

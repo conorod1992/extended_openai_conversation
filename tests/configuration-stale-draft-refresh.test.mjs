@@ -149,7 +149,6 @@ test("revisiting prompt context refreshes HA-owned Assist exposure metadata", as
   host._viewKey = () => "assistant/prompt-context";
   host._loadToken = 7;
   host._configData.exposed_attribute_catalog = {entities:[{entity_id:"light.old"}]};
-  host._draft.exposed_attribute_catalog = host._configData.exposed_attribute_catalog;
   host._result = host._configData;
   host._eocLiveMetadataCache = new Map([["exposed_attribute_catalog", {
     agentId:"a", epoch:0, revision:"r1", value:{entities:[{entity_id:"light.old"}]},
@@ -162,7 +161,11 @@ test("revisiting prompt context refreshes HA-owned Assist exposure metadata", as
     return {exposed_attribute_catalog:{entities:[{entity_id:"light.new"}]}};
   };
   await host._loadConfigurationLiveMetadata("assistant/prompt-context");
-  assert.deepEqual(host._draft.exposed_attribute_catalog.entities.map(item => item.entity_id), ["light.new"]);
+  assert.equal(Object.hasOwn(host._draft, "exposed_attribute_catalog"), false,
+    "live Assist metadata must stay outside the persistable configuration draft");
+  assert.equal(host._eocDirtyConfigKeys.has("exposed_attribute_catalog"), false,
+    "refreshing read-only metadata must not add an invalid configuration save field");
+  assert.deepEqual(host._configData.exposed_attribute_catalog.entities.map(item => item.entity_id), ["light.new"]);
   assert.deepEqual(host._result.exposed_attribute_catalog.entities.map(item => item.entity_id), ["light.new"]);
 });
 

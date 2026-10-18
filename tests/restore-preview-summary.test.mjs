@@ -38,15 +38,16 @@ assert.equal(nodes.get('#restore-transfer-apply').disabled, true);
 // A slower earlier file must not replace the session selected after it.
 const oldInspect = deferred();
 const raceCalls = [];
+const raceSection = {checked:true, value:'persistent_memory', addEventListener(){}};
 const raceNodes = new Map(['#create-backup-transfer', '#restore-backup-transfer', '#backup-file-transfer',
   '#restore-transfer-apply', '#restore-transfer-cancel', '#restore-backup-name', '#restore-backup-meta',
   '#restore-summary', '#restore-transfer-sections', '#restore-transfer-status', '#restore-dialog'].map(id => [id, {
     handlers:{}, disabled:false, innerHTML:'', textContent:'', addEventListener(type, fn) { this.handlers[type] = fn; },
-    querySelectorAll() { return [{checked:true, value:'persistent_memory', addEventListener(){}}]; }, showModal(){}, close(){},
+    querySelectorAll() { return [raceSection]; }, showModal(){}, close(){},
   }]));
 const racePanel = {_selectedAgent: () => ({entry_id:'entry', subentry_id:'agent'}), _e:String, _setSaving(){},
   _toast(message) { raceCalls.push(['toast', message]); },
-  shadowRoot:{querySelector:selector => raceNodes.get(selector) || null, querySelectorAll:()=>[]},
+  shadowRoot:{querySelector:selector => raceNodes.get(selector) || null, querySelectorAll:()=>[raceSection]},
   _hass:{async callWS(message) {
     const {action, data} = message; raceCalls.push([action, data]);
     if (action === 'import_start') return {session_id:data.filename, chunk_size:1, chunk_count:1};
@@ -65,10 +66,15 @@ await raceNodes.get('#backup-file-transfer').handlers.change({target:{files:[fil
 assert.ok(raceCalls.some(([action, data]) => action === 'import_cancel' && data.session_id === 'A'),
   'superseding a fully-uploaded file cancels its still-active inspection session immediately');
 await new Promise(resolve => setTimeout(resolve, 180));
+assert.equal(racePanel._backupTransferPreviewToken, 'B-preview');
+assert.equal(raceNodes.get('#restore-transfer-apply').disabled, false);
 oldInspect.resolve({valid:true,title:'A',source_kind:'full_backup',available_sections:['persistent_memory'],preview:{selected_sections:['persistent_memory']},preview_token:'A-token'});
 await uploadA;
 assert.equal(racePanel._backupTransferSession, 'B');
 assert.equal(racePanel._backupTransferInspection.title, 'B');
+assert.equal(racePanel._backupTransferPreviewToken, 'B-preview', 'canceling stale A must preserve B\'s prepared preview token');
+assert.equal(raceNodes.get('#restore-summary').innerHTML, '<li>0 persistent memories</li>', 'stale cleanup must not clear B\'s preview summary');
+assert.equal(raceNodes.get('#restore-transfer-apply').disabled, false, 'stale cleanup must leave B restorable');
 assert.ok(raceCalls.some(([action, data]) => action === 'import_cancel' && data.session_id === 'A'));
 await new Promise(resolve => setTimeout(resolve, 200));
 assert.equal(panel._backupTransferPreviewToken, 'valid-token');

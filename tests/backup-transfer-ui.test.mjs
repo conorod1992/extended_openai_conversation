@@ -108,6 +108,30 @@ assert.deepEqual([...base64ToBytes(bytesToBase64(new Uint8Array([0, 1, 127, 128,
 }
 
 {
+  let selectedAgent = "agent-before-switch";
+  const requests = [];
+  const panel = {
+    _selectedAgent: () => ({entry_id:"entry-1", subentry_id:selectedAgent}),
+    _hass: {async callWS(message) {
+      requests.push(message);
+      if (message.action === "import_start") {
+        selectedAgent = "agent-after-switch";
+        return {session_id:"pinned-agent-upload", chunk_size:1, chunk_count:1};
+      }
+      if (message.action === "import_chunk") return {session_id:message.data.session_id, next_index:1, received:1};
+      if (message.action === "import_inspect") return {valid:true, title:"Agent", preview:{}};
+      if (message.action === "import_cancel") return {cancelled:true};
+      throw new Error(`Unexpected ${message.action}`);
+    }},
+  };
+  const file = new Blob(["x"]);
+  await uploadFullBackup(panel, file);
+  assert.deepEqual(requests.map(request => request.subentry_id), [
+    "agent-before-switch", "agent-before-switch", "agent-before-switch",
+  ], "every upload request stays scoped to the agent selected when the upload began");
+}
+
+{
   let resolveCleanup;
   const calls = [];
   const panel = makePanel((message) => {

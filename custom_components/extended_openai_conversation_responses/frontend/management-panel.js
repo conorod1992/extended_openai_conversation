@@ -1418,10 +1418,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
           || record.revision !== this._configData.revision
           || (this._configData[key] !== undefined && key !== "exposed_attribute_catalog")) continue;
       this._configData = {...this._configData, [key]: record.value};
-      if (key === "exposed_attribute_catalog" && !this._eocDirtyConfigKeys?.has(key)
-          && this._draftAgentId === this._agentId && this._draft) {
-        this._draft = {...this._draft, [key]: record.value};
-      }
       changed = true;
     }
     return changed;

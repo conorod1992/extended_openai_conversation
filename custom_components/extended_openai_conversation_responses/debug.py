@@ -657,7 +657,15 @@ def conversation_debug_trace(
         agent.hass, agent.entry.entry_id, agent.subentry.subentry_id
     )
     if not manager.enabled:
-        yield None
+        # Nested agents inherit ContextVars from the caller. A disabled child
+        # must establish an explicit no-capture boundary so its timings,
+        # continuity, memory, provider requests and failures cannot leak into
+        # the caller's trace.
+        token = _ACTIVE_DEBUG_TRACE.set(None)
+        try:
+            yield None
+        finally:
+            _ACTIVE_DEBUG_TRACE.reset(token)
         return
     trace = manager.begin(
         entry_id=agent.entry.entry_id,
