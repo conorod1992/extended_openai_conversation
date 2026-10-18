@@ -879,6 +879,8 @@ jobs:
             bash ci/run_ha_lifecycle_contract.sh
       - name: Run lifecycle contract in the constructed exact runtime
         if: steps.dev-image.outputs.match != 'true'
+        env:
+          EXPECTED_HA_CORE_SHA: ${{ steps.python.outputs.sha }}
         run: bash ci/run_ha_lifecycle_contract.sh
       - name: Return dev test evidence ownership to the runner
         if: always() && steps.dev-image.outputs.match == 'true'

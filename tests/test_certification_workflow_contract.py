@@ -67,7 +67,7 @@ def test_enhanced_dispatch_can_run_the_scheduled_intensity_matrix():
         for step in jobs["prepare"]["steps"]
         if step.get("name") == "Resolve reproducible run controls"
     )
-    assert 'python ci/actions_schedule.py' in controls["run"]
+    assert "python ci/actions_schedule.py" in controls["run"]
     assert '--intensity "$INTENSITY"' in controls["run"]
     assert '--schedule "$RUN_SCHEDULE"' in controls["run"]
     exclusion = jobs["python-campaigns"]["strategy"]["matrix"]["exclude"]
@@ -82,15 +82,24 @@ def test_all_except_long_lifetime_includes_every_supplementary_lane():
     assert campaign["default"] == "all"
     assert "all-except-long-lifetime" in campaign["options"]
     jobs = data["jobs"]
-    conditions = [jobs[name]["if"] for name in (
-        "persistence_runtime", "external-recorder", "browser", "browser-engines",
-        "ha-lifecycle-matrix", "ha-lifecycle-dev",
-    )]
+    conditions = [
+        jobs[name]["if"]
+        for name in (
+            "persistence_runtime",
+            "external-recorder",
+            "browser",
+            "browser-engines",
+            "ha-lifecycle-matrix",
+            "ha-lifecycle-dev",
+        )
+    ]
     release = next(
         step for step in jobs["prepare"]["steps"] if step.get("id") == "release"
     )
     conditions.append(release["if"])
-    assert all("inputs.campaign == 'all-except-long-lifetime'" in value for value in conditions)
+    assert all(
+        "inputs.campaign == 'all-except-long-lifetime'" in value for value in conditions
+    )
 
 
 def test_full_validation_form_passes_mode_to_dispatcher():
@@ -101,7 +110,8 @@ def test_full_validation_form_passes_mode_to_dispatcher():
     assert mode["default"] == "full"
     assert mode["options"] == ["full", "quick"]
     step = next(
-        step for step in data["jobs"]["dispatch-and-wait"]["steps"]
+        step
+        for step in data["jobs"]["dispatch-and-wait"]["steps"]
         if step.get("run") == "python3 ci/full_validation.py"
     )
     assert step["env"]["FULL_VALIDATION_MODE"] == "${{ inputs.mode }}"
@@ -118,10 +128,7 @@ def test_existing_historical_matrix_supports_complete_dispatch_and_exact_checkou
         for step in upgrade["steps"]
         if step.get("uses", "").startswith("actions/checkout@")
     )
-    assert (
-        checkout["with"]["ref"]
-        == "${{ github.sha }}"
-    )
+    assert checkout["with"]["ref"] == "${{ github.sha }}"
     assert any(
         step.get("with", {}).get("name")
         == "upgrade-evidence-${{ matrix.from_version }}"
@@ -179,9 +186,7 @@ def test_official_container_workflow_binds_image_evidence_to_exact_candidate():
         for step in job["steps"]
         if step.get("uses", "").startswith("actions/checkout@")
     )
-    assert checkout["with"]["ref"] == (
-        "${{ github.sha }}"
-    )
+    assert checkout["with"]["ref"] == ("${{ github.sha }}")
     runner = next(
         step
         for step in job["steps"]
@@ -237,7 +242,9 @@ def test_enhanced_prebuilt_lanes_keep_exact_browser_ha_and_certification_coverag
     assert lifecycle_step["shell"] == "bash"
     lifecycle_install = lifecycle_step["run"]
     assert 'ci/resolve_ha_test_plugin.py "$MINIMUM"' in lifecycle_install
-    assert 'ci/install_ha_test_plugin.py "$MINIMUM" "$PLUGIN_VERSION"' in lifecycle_install
+    assert (
+        'ci/install_ha_test_plugin.py "$MINIMUM" "$PLUGIN_VERSION"' in lifecycle_install
+    )
     assert (
         "apt-get install -y --no-install-recommends build-essential"
         in lifecycle_install
@@ -257,6 +264,21 @@ def test_enhanced_prebuilt_lanes_keep_exact_browser_ha_and_certification_coverag
     )
     assert "ha-lifecycle-dev" in jobs["certify"]["needs"]
     dev_steps = jobs["ha-lifecycle-dev"]["steps"]
+    constructed_run = next(
+        step
+        for step in dev_steps
+        if step.get("name") == "Run lifecycle contract in the constructed exact runtime"
+    )
+    assert (
+        constructed_run["env"]["EXPECTED_HA_CORE_SHA"]
+        == "${{ steps.python.outputs.sha }}"
+    )
+    lifecycle_runner = (ROOT / "ci/run_ha_lifecycle_contract.sh").read_text()
+    assert (
+        'python ci/run_ha_dev_pytest.py --core-sha "${EXPECTED_HA_CORE_SHA:?}"'
+        in lifecycle_runner
+    )
+    assert '"${RUNNER[@]}"' in lifecycle_runner
     for name in (
         "Select only an exact immutable HA dev image",
         "Run lifecycle contract in the matching prebuilt runtime",

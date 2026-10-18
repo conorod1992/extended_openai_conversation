@@ -332,7 +332,11 @@ async def test_replacement_queue_survives_old_native_worker(
             await release.wait()
         await asyncio.sleep(seconds)
 
-    monkeypatch.setattr(intercom, "asyncio", SimpleNamespace(sleep=hold_first_wait))
+    monkeypatch.setattr(
+        intercom,
+        "asyncio",
+        SimpleNamespace(sleep=hold_first_wait, timeout=asyncio.timeout),
+    )
     monkeypatch.setattr(intercom, "async_call_later", timer)
 
     async def send(text):

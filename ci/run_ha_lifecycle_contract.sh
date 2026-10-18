@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+RUNNER=(python -c 'import homeassistant, pytest; raise SystemExit(pytest.main())')
+if [ "${HA_POINT:-}" = "dev" ]; then
+  RUNNER=(python ci/run_ha_dev_pytest.py --core-sha "${EXPECTED_HA_CORE_SHA:?}")
+fi
+
 set +e
 # Initialize HA's httpx alias before pytest autoloads HTTP-related plugins.
-python -c 'import homeassistant, pytest; raise SystemExit(pytest.main())' \
+"${RUNNER[@]}" \
   tests_stress/test_lifecycle_matrix.py tests_real_ha/test_public_version_journeys.py \
   tests_real_ha/test_ha_semantic_contract.py \
   -v -s --asyncio-mode=auto --timeout=600 \

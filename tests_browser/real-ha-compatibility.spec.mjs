@@ -29,7 +29,21 @@ test("HA native components and actual Assist path remain compatible", async ({co
   await panel.evaluate(host => host._navigate("assistant", "prompt-context"));
   const entity = panel.locator("#exposed-entity-picker");
   await panel.locator('[data-config="exposed_entities_enabled"]').check();
-  await expect(entity).toBeVisible();
+  try {
+    await expect(entity).toBeVisible();
+  } catch (error) {
+    const metadata = await panel.evaluate(host => ({
+      view:host._viewKey(), loadToken:host._loadToken,
+      epoch:host._eocLiveMetadataEpoch || 0,
+      resultIsConfig:host._result === host._configData,
+      resultHasCatalog:Boolean(host._result?.exposed_attribute_catalog),
+      configHasCatalog:Boolean(host._configData?.exposed_attribute_catalog),
+      pending:[...(host._eocLiveMetadataPending || [])].map(([key, record]) => ({key, agentId:record.agentId, activeToken:record.activeToken, epoch:record.epoch})),
+      cached:[...(host._eocLiveMetadataCache || [])].map(([key, record]) => ({key, agentId:record.agentId, activeToken:record.activeToken, epoch:record.epoch})),
+      requests:host._eocRequestDiagnostics?.map(({section, action, status}) => ({section, action, status})),
+    }));
+    throw new Error(`${error.message}\nMetadata lifecycle: ${JSON.stringify(metadata)}`);
+  }
   if (process.env.ENHANCED_EXECUTION_EVIDENCE === "1") {
     await entity.locator("ha-picker-field").click();
     const choice = entity.locator("ha-combo-box-item").filter({hasText:"sensor.cold_attribute_kitchen"}).locator("button");

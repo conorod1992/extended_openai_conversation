@@ -33,6 +33,18 @@ class Control extends TestEventTarget {
 
 const tool = (name) => ({spec:{name, description:"Test tool", parameters:{type:"object", properties:{}}}, function:{type:"template", value_template:"ok"}});
 
+test("warm Prompt navigation loads absent metadata through the real request lifecycle", async () => {
+  const {host} = panel();
+  delete host._configData.exposed_attribute_catalog;
+  host._hass = {callWS: async message => {
+    assert.equal(message.action, "live_metadata");
+    return {exposed_attribute_catalog:{entities:[{entity_id:"light.current"}]}};
+  }};
+  await host._loadSectionData();
+  await Promise.all([...host._eocLiveMetadataPending.values()].map(record => record.promise));
+  assert.deepEqual(host._result.exposed_attribute_catalog.entities, [{entity_id:"light.current"}]);
+});
+
 function panel() {
   const host = new ExtendedOpenAIManagementPanel();
   const ids = ["tool-dialog", "tool-dialog-title", "tool-dialog-meta", "tool-yaml", "tool-error", "built-in-picker", "built-in-function", "tool-save", "tool-validate", "tool-cancel",
