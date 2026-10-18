@@ -1408,12 +1408,12 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
           queueMicrotask(() => {
             if (loadToken === this._loadToken) void this._loadSectionData(silent);
           });
-          return;
-        }
-        this._busy = false;
-        this._render();
-        if (this._isDraftView() && this._configData && this._draftAgentId === this._agentId) {
-          void this._loadConfigurationLiveMetadata(view);
+        } else {
+          this._busy = false;
+          this._render();
+          if (this._isDraftView() && this._configData && this._draftAgentId === this._agentId) {
+            void this._loadConfigurationLiveMetadata(view);
+          }
         }
       }
     }
