@@ -936,7 +936,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _invalidateAfterMutation(agentId, section, action) {
     const effects = mutationEffects(section, action);
-    const currentAgent = agentId === this._agentId;
+    const currentAgent = agentId === this._agentId || effects?.global === true;
     if (agentId && effects?.configuration) {
       this._invalidateCleanConfiguration(agentId);
     }
@@ -953,8 +953,15 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       if (currentAgent) this._cacheGeneration += 1;
       this._sectionCache.delete(`${agentId}|overview`);
       this._eocSectionCacheTimes.delete(`${agentId}|overview`);
-      for (const key of this._eocPendingRouteReads?.keys() || []) {
+      if (currentAgent) this._eocPendingRouteReads?.clear();
+      else for (const key of this._eocPendingRouteReads?.keys() || []) {
         if (key.split("|")[1] === agentId) this._eocPendingRouteReads.delete(key);
+      }
+      if (effects.global) {
+        for (const key of this._sectionCache.keys()) if (key.endsWith("|overview")) {
+          this._sectionCache.delete(key);
+          this._eocSectionCacheTimes.delete(key);
+        }
       }
       if (this._eocStoredConfigPrefetch?.subentryId === agentId) discardStoredConfigurationPrefetch(this, "agent-mutated");
     }
