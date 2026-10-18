@@ -15,6 +15,7 @@ def test_native_fixture_bootstrap_preserves_module_identity_and_test_arguments(
     native = ModuleType("pytest_homeassistant")
     native._paths = paths
     modules = {
+        "pytest_homeassistant.plugins": ModuleType("native_plugin"),
         "pytest_homeassistant": native,
         "pytest_homeassistant.common": ModuleType("native_common"),
         "pytest_homeassistant.components.recorder.common": ModuleType(
@@ -30,18 +31,30 @@ def test_native_fixture_bootstrap_preserves_module_identity_and_test_arguments(
             ),
             None,
         )
-    monkeypatch.setattr(
-        run_ha_dev_pytest.importlib, "import_module", modules.__getitem__
-    )
+    imported = []
+
+    def load(name):
+        imported.append(name)
+        return modules[name]
+
+    monkeypatch.setattr(run_ha_dev_pytest.importlib, "import_module", load)
     invoked = []
-    monkeypatch.setattr(pytest, "main", lambda args: invoked.append(args) or 7)
+    monkeypatch.setattr(
+        pytest, "main", lambda args, **kwargs: invoked.append((args, kwargs)) or 7
+    )
     args = ["tests_real_ha/test_public_version_journeys.py", "--stress-seed=12"]
     assert run_ha_dev_pytest.run_pytest(tmp_path, args) == 7
     assert tmp_path / "tests" == paths.TESTS_DIR
     assert invoked == [
-        ["-p", "no:homeassistant", "-p", "pytest_homeassistant.plugins", *args]
+        (
+            ["-p", "no:homeassistant", *args],
+            {"plugins": [modules["pytest_homeassistant.plugins"]]},
+        )
     ]
+    assert imported[0] == "pytest_homeassistant.plugins"
     for name, module in modules.items():
+        if name.endswith(".plugins"):
+            continue
         assert (
             sys.modules[
                 name.replace(

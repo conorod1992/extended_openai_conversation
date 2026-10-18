@@ -27,15 +27,16 @@ def run_pytest(core_root: Path, args: list[str]) -> int:
     import homeassistant  # noqa: F401 — initialize Core's httpx alias first
 
     _paths.TESTS_DIR = core_root / "tests"
+    # Core installs recorder/time/JSON patches before helper imports. Loading
+    # recorder helpers first would violate the plugin's startup assertions.
+    native_plugin = importlib.import_module("pytest_homeassistant.plugins")
     # Existing tests use PHACC import paths. Alias only the modules they import,
     # preserving identity with the modules used by the native fixture plugin.
     for suffix in ("", ".common", ".components.recorder.common"):
         sys.modules[f"pytest_homeassistant_custom_component{suffix}"] = (
             importlib.import_module(f"pytest_homeassistant{suffix}")
         )
-    return pytest.main(
-        ["-p", "no:homeassistant", "-p", "pytest_homeassistant.plugins", *args]
-    )
+    return pytest.main(["-p", "no:homeassistant", *args], plugins=[native_plugin])
 
 
 def main() -> int:

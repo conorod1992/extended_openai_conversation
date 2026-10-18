@@ -1491,6 +1491,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
           if (this._applyConfigurationLiveMetadata(view) && this._result === previous) {
             this._result = this._configData;
             this._render();
+            // The optional attribute section hydrates outside the main markup.
+            // An unchanged placeholder can make _render reuse its existing DOM.
+            if (key === "exposed_attribute_catalog") void this._hydrateExposedAttributes();
           }
         })
         .catch(() => {
@@ -2157,22 +2160,25 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   async _hydrateExposedAttributes() {
-    const target = this.shadowRoot?.querySelector("[data-exposed-feature]");
+    const target = this.shadowRoot?.querySelector("[data-exposed-feature], .exposed-attribute-settings");
     if (!target) return;
     const agentId = this._agentId;
     const revision = this._configData?.revision;
+    const loadToken = this._loadToken;
     try {
       const [feature] = await Promise.all([
         import("./exposed-attributes-ui.js"),
         this._loadConfigurationLiveMetadata("assistant/prompt-context"),
       ]);
       if (!target.isConnected || agentId !== this._agentId
+          || loadToken !== this._loadToken
           || revision !== this._configData?.revision
           || this._viewKey() !== "assistant/prompt-context") return;
       target.outerHTML = feature.renderExposedAttributeSettings(this);
       feature.bindExposedAttributeSettings(this);
     } catch (error) {
       if (target.isConnected && agentId === this._agentId
+          && loadToken === this._loadToken
           && this._viewKey() === "assistant/prompt-context") {
         target.querySelector(".help").textContent = `Unable to load entity choices: ${error.message || String(error)}`;
       }
