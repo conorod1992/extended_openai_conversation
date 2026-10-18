@@ -35,13 +35,13 @@ assert.equal(first.days[0].total_tokens,100);
 const key='agent-a|usage-maintenance/usage|90';
 panel._sectionCache.set(key,{days:first});
 panel._eocSectionCacheTimes.set(key,Date.now());
-panel._backupTransferSession='session';
+panel._backupTransferSession={session_id:'session', owner:{entry_id:'entry-a', subentry_id:'agent-a'}};
 panel._backupTransferPreviewToken='preview';
 const handlers={};
 const apply={disabled:false,dataset:{},addEventListener(type,fn){handlers[type]=fn;}};
 const range={value:'90',disabled:false};
 const root={
-  querySelector(selector){return selector==='#restore-transfer-apply'?apply:selector==='#restore-dialog'?{close(){}}:selector==='#usage-window'?range:null;},
+  querySelector(selector){return selector==='#restore-transfer-apply'?apply:selector==='#restore-dialog'?{close(){},addEventListener(){}}:selector==='#usage-window'?range:null;},
   querySelectorAll(selector){return selector==='.transfer-restore-section'?[{value:'usage',checked:true}]:[];},
 };
 panel.shadowRoot=root;

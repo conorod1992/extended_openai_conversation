@@ -1,6 +1,33 @@
 import {expect, test} from "@playwright/test";
 import {acceptConfirmation, browserToolYaml, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
+test("Escape retires the original agent's prepared import before switching agents", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("usage-maintenance/backup-restore", "&agents=2"));
+  const panel = page.locator("extended-openai-management-panel");
+  await panel.locator("#transfer-export-mode").selectOption("full");
+  const downloading = page.waitForEvent("download");
+  await panel.locator("#create-backup-transfer").click();
+  const path = await (await downloading).path();
+  await panel.locator("#backup-file-transfer").setInputFiles(path);
+  await expect(panel.locator("#restore-dialog")).toHaveJSProperty("open", true);
+  const original = await panel.evaluate(host => host._backupTransferSession);
+  await page.keyboard.press("Escape");
+  await expect(panel.locator("#restore-dialog")).toHaveJSProperty("open", false);
+  await expect.poll(() => panel.evaluate(host => host._backupTransferSession)).toBeNull();
+  await expect.poll(() => page.evaluate(session => browserHarness.calls.some(call => call.action === "import_cancel" && call.data.session_id === session.session_id && call.entry_id === session.owner.entry_id && call.subentry_id === session.owner.subentry_id), original)).toBe(true);
+  await panel.locator("#agent").selectOption("scale-agent-1");
+  await expect(panel.locator("#agent")).toHaveValue("scale-agent-1");
+  await expect.poll(() => panel.evaluate(host => host._agentId === "scale-agent-1" && !host._busy)).toBe(true);
+  await expect(panel.locator("#backup-file-transfer")).toBeAttached();
+  await panel.locator("#backup-file-transfer").setInputFiles(path);
+  await expect(panel.locator("#restore-dialog")).toHaveJSProperty("open", true);
+  expect(await panel.evaluate(host => host._backupTransferSession.owner.subentry_id)).toBe("scale-agent-1");
+  await panel.locator("#restore-transfer-cancel").click();
+  await expect(panel.locator("#restore-dialog")).toHaveJSProperty("open", false);
+  await expectHarnessClean(page, errors);
+});
+
 test("Function Tools support create, reload, edit, and delete through YAML", async ({page}) => {
   const pageErrors = trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/functions"));

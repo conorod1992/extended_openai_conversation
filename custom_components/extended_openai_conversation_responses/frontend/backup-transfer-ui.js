@@ -22,7 +22,16 @@ const SECTION_LABELS = Object.freeze(Object.fromEntries(TRANSFER_SECTIONS));
 function selectedAgent(panel) {
   const agent = panel?._selectedAgent?.();
   if (!agent?.entry_id || !agent?.subentry_id) throw new Error("Select a conversation agent first");
-  return agent;
+  return Object.freeze({entry_id: agent.entry_id, subentry_id: agent.subentry_id});
+}
+
+function transferSession(sessionId, owner) {
+  return Object.freeze({session_id: sessionId, owner: Object.freeze({entry_id: owner.entry_id, subentry_id: owner.subentry_id})});
+}
+
+function ownsTransfer(panel, session) {
+  const current = panel?._selectedAgent?.();
+  return Boolean(session?.owner && current?.entry_id === session.owner.entry_id && current?.subentry_id === session.owner.subentry_id);
 }
 
 export async function callBackupTransfer(panel, action, data = {}, owner = selectedAgent(panel)) {
@@ -79,20 +88,21 @@ export async function downloadSetupExport(panel, saveBlob = defaultSaveBlob) {
 }
 
 export async function downloadArchiveBackup(panel, {mode = "full", sections = null} = {}, saveBlob = defaultSaveBlob) {
-  let sessionId = null;
+  const owner = selectedAgent(panel);
+  let session = null;
   try {
     const data = {mode};
     if (sections != null) data.sections = sections;
-    const manifest = await callBackupTransfer(panel, "export_start", data);
-    sessionId = manifest.session_id;
-    if (!sessionId || !Number.isInteger(manifest.chunk_count) || manifest.chunk_count < 1 || !Number.isInteger(manifest.size) || manifest.size < 1) {
+    const manifest = await callBackupTransfer(panel, "export_start", data, owner);
+    session = transferSession(manifest.session_id, owner);
+    if (!session.session_id || !Number.isInteger(manifest.chunk_count) || manifest.chunk_count < 1 || !Number.isInteger(manifest.size) || manifest.size < 1) {
       throw new Error("The backup server returned an invalid transfer manifest");
     }
     const parts = [];
     let received = 0;
     for (let index = 0; index < manifest.chunk_count; index += 1) {
-      const chunk = await callBackupTransfer(panel, "export_chunk", {session_id: sessionId, index});
-      if (chunk.session_id !== sessionId || chunk.index !== index || chunk.offset !== received || !Number.isInteger(chunk.bytes) || chunk.bytes < 1) {
+      const chunk = await callBackupTransfer(panel, "export_chunk", {session_id: session.session_id, index}, session.owner);
+      if (chunk.session_id !== session.session_id || chunk.index !== index || chunk.offset !== received || !Number.isInteger(chunk.bytes) || chunk.bytes < 1) {
         throw new Error("The backup server returned an out-of-order chunk");
       }
       const bytes = base64ToBytes(chunk.data);
@@ -108,9 +118,9 @@ export async function downloadArchiveBackup(panel, {mode = "full", sections = nu
     await saveBlob(blob, manifest.filename, manifest);
     return manifest;
   } finally {
-    if (sessionId) {
+    if (session?.session_id) {
       try {
-        await callBackupTransfer(panel, "export_cancel", {session_id: sessionId});
+        await callBackupTransfer(panel, "export_cancel", {session_id: session.session_id}, session.owner);
       } catch (_err) {
         // The server expires abandoned sessions. Cleanup failure after a complete
         // browser download must not make the successful export appear to fail.
@@ -129,6 +139,7 @@ export async function downloadCustomBackup(panel, sections, saveBlob = defaultSa
 }
 
 export async function uploadFullBackup(panel, file, isCurrent = () => true, owner = selectedAgent(panel)) {
+  owner = Object.freeze({entry_id: owner.entry_id, subentry_id: owner.subentry_id});
   let sessionId = null;
   try {
     const manifest = await callBackupTransfer(panel, "import_start", {
@@ -138,7 +149,7 @@ export async function uploadFullBackup(panel, file, isCurrent = () => true, owne
     sessionId = manifest.session_id;
     if (sessionId) {
       panel._backupTransferUploads ||= new Map();
-      panel._backupTransferUploads.set(sessionId, owner);
+      panel._backupTransferUploads.set(sessionId, transferSession(sessionId, owner));
     }
     if (!sessionId || !Number.isInteger(manifest.chunk_size) || manifest.chunk_size < 1 || !Number.isInteger(manifest.chunk_count) || manifest.chunk_count < 1) {
       throw new Error("The backup server returned an invalid upload manifest");
@@ -165,7 +176,7 @@ export async function uploadFullBackup(panel, file, isCurrent = () => true, owne
     const inspection = await callBackupTransfer(panel, "import_inspect", {session_id: sessionId, inspect_only: true}, owner);
     if (!isCurrent()) throw new Error("The selected backup was superseded");
     if (!inspection?.valid) throw new Error("The transfer could not be validated");
-    return {session_id: sessionId, ...inspection};
+    return {...inspection, session_id: sessionId, session: transferSession(sessionId, owner)};
   } catch (err) {
     if (sessionId) {
       try {
@@ -181,24 +192,26 @@ export async function uploadFullBackup(panel, file, isCurrent = () => true, owne
 }
 
 function cancelUploadingBackups(panel) {
-  for (const [sessionId, owner] of panel?._backupTransferUploads || []) {
+  for (const session of panel?._backupTransferUploads?.values() || []) {
     // The upload's own catch also attempts cleanup if its current request settles
     // after this cancellation. Both paths are safe if the server already removed it.
-    void callBackupTransfer(panel, "import_cancel", {session_id: sessionId}, owner).catch(() => {});
+    void cancelBackupImportSession(panel, session);
   }
 }
 
-export async function cancelBackupImport(panel, sessionId = panel?._backupTransferSession) {
-  invalidateImportPreview(panel);
-  if (!sessionId) return;
-  if (panel?._backupTransferSession === sessionId) panel._backupTransferSession = null;
-  await cancelBackupImportSession(panel, sessionId);
+export async function cancelBackupImport(panel, session = panel?._backupTransferSession) {
+  if (!session) return;
+  if (panel?._backupTransferSession === session) {
+    invalidateImportPreview(panel);
+    panel._backupTransferSession = null;
+  }
+  await cancelBackupImportSession(panel, session);
 }
 
-async function cancelBackupImportSession(panel, sessionId, owner = selectedAgent(panel)) {
-  if (!sessionId) return;
+async function cancelBackupImportSession(panel, session) {
+  if (!session?.session_id) return;
   try {
-    await callBackupTransfer(panel, "import_cancel", {session_id: sessionId}, owner);
+    await callBackupTransfer(panel, "import_cancel", {session_id: session.session_id}, session.owner);
   } catch (_err) {
     // Closing the dialog should remain reliable; the server expires the session.
   }
@@ -338,6 +351,17 @@ function previewWork(panel) {
   return panel._backupTransferPreviewWork ||= {timer: null, inFlight: null, latest: null};
 }
 
+function retireBackupImports(panel) {
+  panel._backupImportGeneration = (panel._backupImportGeneration || 0) + 1;
+  cancelUploadingBackups(panel);
+  invalidateImportPreview(panel);
+  void cancelBackupImport(panel);
+  panel._backupTransferInspection = null;
+  const dialog = panel.shadowRoot?.querySelector("#restore-dialog");
+  if (dialog) dialog.__eocBackupSession = null;
+  if (dialog?.open) dialog.close();
+}
+
 function invalidateImportPreview(panel) {
   if (!panel) return 0;
   const work = previewWork(panel);
@@ -356,17 +380,19 @@ function invalidateImportPreview(panel) {
 function sendLatestImportPreview(panel) {
   const work = previewWork(panel);
   if (work.timer !== null || !work.latest) return;
-  if (work.inFlight?.sessionId === work.latest.sessionId) return;
+  if (work.inFlight?.session === work.latest.session) return;
   const request = work.latest;
   work.latest = null;
-  if (panel._backupTransferSession !== request.sessionId || panel._transferPreviewToken !== request.token) return;
+  const current = () => panel._backupTransferSession === request.session
+    && ownsTransfer(panel, request.session) && panel._transferPreviewToken === request.token;
+  if (!current()) return;
   work.inFlight = request;
   void (async () => {
     const status = panel.shadowRoot?.querySelector(`#${RESTORE_STATUS_ID}`);
     const apply = panel.shadowRoot?.querySelector(`#${APPLY_ID}`);
     try {
-      const result = await callBackupTransfer(panel, "import_inspect", {session_id: request.sessionId, sections: request.sections, user_scope_mappings: request.userScopeMappings}, request.owner);
-      if (panel._transferPreviewToken !== request.token || panel._backupTransferSession !== request.sessionId) return;
+      const result = await callBackupTransfer(panel, "import_inspect", {session_id: request.session.session_id, sections: request.sections, user_scope_mappings: request.userScopeMappings}, request.session.owner);
+      if (!current()) return;
       panel._backupTransferPreview = result.preview;
       panel._backupTransferPreviewToken = result.preview_token;
       const summary = panel.shadowRoot?.querySelector("#restore-summary");
@@ -377,7 +403,7 @@ function sendLatestImportPreview(panel) {
       const missingUsers = updateRestorePreviewStatus(panel, result.preview);
       if (apply) apply.disabled = result.preview_token === null || missingUsers > 0;
     } catch (err) {
-      if (panel._transferPreviewToken !== request.token || panel._backupTransferSession !== request.sessionId) return;
+      if (!current()) return;
       panel._backupTransferPreview = null;
       if (status) {
         status.className = "validation error";
@@ -394,8 +420,9 @@ function sendLatestImportPreview(panel) {
 export function refreshImportPreview(panel) {
   const root = panel.shadowRoot;
   const token = invalidateImportPreview(panel);
-  const sessionId = panel._backupTransferSession;
-  if (!sessionId) return false;
+  const session = panel._backupTransferSession;
+  if (!session) return false;
+  if (!ownsTransfer(panel, session)) { void cancelBackupImport(panel, session); return false; }
   const sections = selectedValues(root, ".transfer-restore-section");
   const status = root.querySelector(`#${RESTORE_STATUS_ID}`);
   if (!sections.length) {
@@ -410,7 +437,7 @@ export function refreshImportPreview(panel) {
     status.textContent = "Validating selected sections…";
   }
   const work = previewWork(panel);
-  work.latest = {sessionId, sections, token, owner: selectedAgent(panel), userScopeMappings: selectedUserScopeMappings(root)};
+  work.latest = {session, sections, token, userScopeMappings: selectedUserScopeMappings(root)};
   work.timer = setTimeout(() => {
     work.timer = null;
     sendLatestImportPreview(panel);
@@ -421,6 +448,21 @@ export function refreshImportPreview(panel) {
 export function bindBackupTransfer(panel) {
   const root = panel?.shadowRoot;
   if (!root) return;
+  panel._eocBackupTransferCleanup = () => retireBackupImports(panel);
+  const restoreDialog = root.querySelector("#restore-dialog");
+  if (restoreDialog && !restoreDialog.__eocBackupBound) {
+    restoreDialog.__eocBackupBound = true;
+    const dismiss = () => {
+      const session = restoreDialog.__eocBackupSession;
+      restoreDialog.__eocBackupSession = null;
+      if (session && panel._backupTransferSession === session) {
+        panel._backupTransferInspection = null;
+        void cancelBackupImport(panel, session);
+      }
+    };
+    restoreDialog.addEventListener("cancel", dismiss);
+    restoreDialog.addEventListener("close", () => { if (!restoreDialog.open) dismiss(); });
+  }
 
   const exportMode = root.querySelector(`#${EXPORT_MODE_ID}`);
   const customOptions = root.querySelector(`#${CUSTOM_OPTIONS_ID}`);
@@ -476,10 +518,10 @@ export function bindBackupTransfer(panel) {
     try {
       const result = await uploadFullBackup(panel, file, isCurrent, owner);
       if (!isCurrent()) {
-        await cancelBackupImportSession(panel, result.session_id, owner);
+        await cancelBackupImportSession(panel, result.session);
         return;
       }
-      panel._backupTransferSession = result.session_id;
+      panel._backupTransferSession = result.session;
       panel._backupTransferInspection = result;
       panel._backupTransferPreview = result.preview;
       panel._backupTransferPreviewToken = result.preview_token;
@@ -495,10 +537,12 @@ export function bindBackupTransfer(panel) {
       sectionRoot.querySelectorAll(".transfer-restore-section").forEach((input) => input.addEventListener("change", () => void refreshImportPreview(panel)));
       const missingUsers = updateRestorePreviewStatus(panel, result.preview);
       apply.disabled = result.preview_token === null || missingUsers > 0;
+      root.querySelector("#restore-dialog").__eocBackupSession = result.session;
       root.querySelector("#restore-dialog").showModal();
       refreshImportPreview(panel);
     } catch (err) {
       if (!isCurrent()) return;
+      void cancelBackupImport(panel);
       panel._backupTransferSession = null;
       panel._backupTransferInspection = null;
       panel._backupTransferPreview = null;
@@ -508,16 +552,16 @@ export function bindBackupTransfer(panel) {
     }
   });
 
-  root.querySelector(`#${CANCEL_ID}`)?.addEventListener("click", async () => {
-    await cancelBackupImport(panel);
-    panel._backupTransferInspection = null;
-    panel._backupTransferPreview = null;
-    root.querySelector("#restore-dialog").close();
-  });
+  root.querySelector(`#${CANCEL_ID}`)?.addEventListener("click", () => retireBackupImports(panel));
 
   root.querySelector(`#${APPLY_ID}`)?.addEventListener("click", async () => {
-    const sessionId = panel._backupTransferSession;
-    if (!sessionId) return;
+    const session = panel._backupTransferSession;
+    if (!session) return;
+    if (!ownsTransfer(panel, session)) { void cancelBackupImport(panel, session); return; }
+    const generation = panel._backupImportGeneration || 0;
+    const ownerView = panel._viewKey?.();
+    const ownsUI = () => ownsTransfer(panel, session)
+      && (panel._backupImportGeneration || 0) === generation && panel._viewKey?.() === ownerView;
     const sections = selectedValues(root, ".transfer-restore-section");
     if (!sections.length) return;
     const labels = sections.map((key) => SECTION_LABELS[key] || key).join(", ");
@@ -533,12 +577,13 @@ export function bindBackupTransfer(panel) {
       );
       if (!confirmed) return;
     }
-    if (panel._backupTransferSession !== sessionId || panel._transferPreviewToken !== previewToken || root.querySelector(`#${APPLY_ID}`)?.disabled) return;
+    if (panel._backupTransferSession !== session || !ownsUI() || panel._transferPreviewToken !== previewToken || root.querySelector(`#${APPLY_ID}`)?.disabled) return;
     const button = root.querySelector(`#${APPLY_ID}`);
     let mustReselectFile = false;
     panel._setSaving(button, true);
     try {
-      await callBackupTransfer(panel, "import_restore", {session_id: sessionId, sections, preview_token: serverPreviewToken});
+      await callBackupTransfer(panel, "import_restore", {session_id: session.session_id, sections, preview_token: serverPreviewToken}, session.owner);
+      if (panel._backupTransferSession !== session || !ownsUI()) return;
       panel._backupTransferSession = null;
       panel._backupTransferInspection = null;
       panel._backupTransferPreview = null;
@@ -546,17 +591,19 @@ export function bindBackupTransfer(panel) {
       root.querySelector("#restore-dialog").close();
       if (sections.includes("configuration")) panel._clearConfigDraft();
       await panel._loadAgents(panel._agentId);
-      panel._toast("Selected sections restored");
+      if (ownsUI()) panel._toast("Selected sections restored");
     } catch (err) {
+      if (panel._backupTransferSession !== session || !ownsUI()) return;
+      void cancelBackupImportSession(panel, session);
       panel._backupTransferSession = null;
       mustReselectFile = true;
       button.disabled = true;
       panel._toast(`Unable to restore: ${err.message || String(err)} Re-select the transfer file to retry.`, true);
     } finally {
-      if (mustReselectFile) {
+      if (ownsUI() && mustReselectFile) {
         button.disabled = true;
         button.textContent = button.dataset.label || "Restore selected sections";
-      } else {
+      } else if (ownsUI()) {
         panel._setSaving(button, false);
       }
     }

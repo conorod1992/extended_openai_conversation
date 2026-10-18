@@ -26,7 +26,7 @@ function previewHarness() {
   const status = {className: "", textContent: ""};
   let sections = ["configuration"];
   const panel = {
-    _backupTransferSession: "upload-1",
+    _backupTransferSession: {session_id:"upload-1", owner:{entry_id:"entry-1", subentry_id:"agent-1"}},
     _selectedAgent: () => ({entry_id: "entry-1", subentry_id: "agent-1"}),
     _hass: {callWS(message) {
       if (message.action === "import_cancel") return Promise.resolve({cancelled: true});
@@ -137,7 +137,7 @@ test("session replacement clears old work and accepts only the new session previ
   h.select(["configuration"]);
   await waitFor(() => h.calls.length === 1);
   await cancelBackupImport(h.panel);
-  h.panel._backupTransferSession = "upload-2";
+  h.panel._backupTransferSession = {session_id:"upload-2", owner:{entry_id:"entry-1", subentry_id:"agent-1"}};
   h.select(["knowledge"]);
   h.calls[0].resolve({preview: {selected_sections: ["configuration"]}});
   await waitFor(() => h.calls.length === 2);

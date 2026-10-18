@@ -176,6 +176,37 @@ test("revisiting prompt context refreshes HA-owned Assist exposure metadata", as
   assert.equal(reads, 2, "a new visit still refreshes HA-owned exposure metadata");
 });
 
+for (const oldFirst of [false, true]) {
+  test(`exposure reads from an abandoned visit cannot be adopted on return (${oldFirst ? "old" : "new"} response first)`, async () => {
+    const {host} = panel();
+    let view = "assistant/prompt-context";
+    host._viewKey = () => view;
+    host._loadToken = 1;
+    host._result = host._configData;
+    const baseline = host._configData.exposed_attribute_catalog;
+    const reads = [];
+    host._call = () => { const read = deferred(); reads.push(read); return read.promise; };
+    const old = host._loadConfigurationLiveMetadata(view);
+    view = "assistant/basics"; host._loadToken++;
+    view = "assistant/prompt-context"; host._loadToken++;
+    const fresh = host._loadConfigurationLiveMetadata(view);
+    const coalesced = host._loadConfigurationLiveMetadata(view);
+    assert.equal(reads.length, 2, "a new visit must dispatch a new request while coalescing reads within the visit");
+    const result = entity => ({exposed_attribute_catalog:{entities:[{entity_id:entity}]}});
+    if (oldFirst) {
+      reads[0].resolve(result("light.obsolete")); await old;
+      assert.equal(host._configData.exposed_attribute_catalog, baseline);
+      assert.equal(host._eocLiveMetadataCache.has("exposed_attribute_catalog"), false);
+      assert.equal(host._eocLiveMetadataPending.size, 1);
+    }
+    reads[1].resolve(result("light.current")); await Promise.all([fresh, coalesced]);
+    if (!oldFirst) { reads[0].resolve(result("light.obsolete")); await old; }
+    assert.equal(host._configData.exposed_attribute_catalog.entities[0].entity_id, "light.current");
+    assert.equal(host._eocLiveMetadataCache.get("exposed_attribute_catalog").value.entities[0].entity_id, "light.current");
+    assert.equal(host._eocLiveMetadataPending.size, 0);
+  });
+}
+
 for (const change of ["agent", "entry", "route", "token", "generation", "revision", "full acknowledgement", "partial acknowledgement"]) {
   test(`stale refresh cannot overwrite a newer ${change}`, async () => {
     const {host, edit} = panel();

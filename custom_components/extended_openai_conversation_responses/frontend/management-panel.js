@@ -1442,7 +1442,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
           && this._configData[key] !== undefined
           && (key !== "exposed_attribute_catalog" || (activeToken !== null && cached.activeToken === activeToken))) return null;
       const existing = this._eocLiveMetadataPending.get(key);
-      if (existing?.agentId === agentId && existing.epoch === epoch && existing.revision === revision) {
+      if (existing?.agentId === agentId && existing.epoch === epoch && existing.revision === revision
+          && (key !== "exposed_attribute_catalog" || existing.activeToken === activeToken)) {
         if (activeToken !== null) existing.activeToken = activeToken;
         return existing.promise;
       }
@@ -1450,7 +1451,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       record.promise = this._call("configuration", "live_metadata", {metadata_keys: [key]})
         .then(metadata => {
           const cleanRevision = this._cleanConfigSnapshots.get(this._configurationSnapshotKey(agentId, "full"))?.result?.revision;
-          if (agentId !== this._agentId || epoch !== (this._eocLiveMetadataEpoch || 0)
+          if (this._eocLiveMetadataPending.get(key) !== record
+              || (key === "exposed_attribute_catalog" && activeToken !== null
+                  && (this._viewKey() !== view || activeToken !== this._loadToken))
+              || agentId !== this._agentId || epoch !== (this._eocLiveMetadataEpoch || 0)
               || (revision !== this._configData?.revision && revision !== cleanRevision)
               || !Object.hasOwn(metadata, key)) return;
           this._eocLiveMetadataCache.set(key, {agentId, epoch, revision, activeToken: record.activeToken, value: metadata[key]});

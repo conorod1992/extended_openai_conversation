@@ -19,6 +19,36 @@ const makePanel = (handler) => ({
 
 assert.deepEqual([...base64ToBytes(bytesToBase64(new Uint8Array([0, 1, 127, 128, 255])))], [0, 1, 127, 128, 255]);
 
+for (const failDownload of [false, true]) {
+  const firstAgent = {entry_id:"entry-A", subentry_id:"agent-A"};
+  let selected = firstAgent;
+  const requests = [];
+  const panel = {_selectedAgent:() => selected, _hass:{async callWS(message) {
+    requests.push(message);
+    assert.equal(message.entry_id, "entry-A");
+    assert.equal(message.subentry_id, "agent-A", "chunks and cleanup retain the export's owner after switching agents");
+    if (message.action === "export_start") return {session_id:"owned-export", size:2, chunk_count:2};
+    if (message.action === "export_chunk") {
+      const index = message.data.index;
+      if (index === 0) {
+        selected = {entry_id:"entry-B", subentry_id:"agent-B"};
+        firstAgent.subentry_id = "mutated-agent-A";
+      }
+      if (failDownload && index === 1) throw new Error("second chunk failed");
+      return {session_id:"owned-export", index, offset:index, bytes:1, data:bytesToBase64([index])};
+    }
+    if (message.action === "export_cancel") return {cancelled:true};
+    throw new Error(`Unexpected ${message.action}`);
+  }}};
+  let saved = false;
+  const download = downloadFullBackup(panel, async () => { saved = true; });
+  if (failDownload) await assert.rejects(download, /second chunk failed/);
+  else await download;
+  assert.equal(saved, !failDownload);
+  assert.equal(requests.at(-1).action, "export_cancel");
+  assert.equal(requests.at(-1).subentry_id, "agent-A");
+}
+
 {
   const source = new Uint8Array([1, 2, 3, 4, 5]);
   const calls = [];
@@ -138,7 +168,7 @@ assert.deepEqual([...base64ToBytes(bytesToBase64(new Uint8Array([0, 1, 127, 128,
     calls.push(message);
     return new Promise((resolve) => { resolveCleanup = resolve; });
   });
-  panel._backupTransferSession = "old-import";
+  panel._backupTransferSession = {session_id:"old-import", owner:{entry_id:"entry-1", subentry_id:"agent-1"}};
   let clicked = false;
   const input = {
     value: "stale",

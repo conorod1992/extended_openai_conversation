@@ -303,6 +303,38 @@ test("configuration live metadata is fetched only by routes that use it", async 
   await expectHarnessClean(page, errors);
 });
 
+test("returning to Prompt Context owns a fresh exposure read while the prior visit is unresolved", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("assistant/basics"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator('[data-config="__title"]')).toBeVisible();
+  await page.evaluate(() => {
+    const original = browserHarness.hass.callWS;
+    window.exposureReads = 0;
+    browserHarness.hass.callWS = async message => {
+      if (message.section === "configuration" && message.action === "live_metadata" && message.metadata_keys?.includes("exposed_attribute_catalog")) {
+        const visit = ++window.exposureReads;
+        const result = await original(message);
+        result.exposed_attribute_catalog.audit_marker = visit === 1 ? "abandoned" : "current";
+        if (visit === 1) return new Promise(resolve => { window.releaseOldExposure = () => resolve(result); });
+        return result;
+      }
+      return original(message);
+    };
+  });
+  await panel.evaluate(host => { void host._navigate("assistant", "prompt-context"); });
+  await expect.poll(() => page.evaluate(() => window.exposureReads)).toBe(1);
+  await panel.evaluate(host => { window.oldExposureWork = host._eocLiveMetadataPending.get("exposed_attribute_catalog").promise; });
+  await panel.evaluate(host => host._navigate("assistant", "basics"));
+  await panel.evaluate(host => host._navigate("assistant", "prompt-context"));
+  await expect.poll(() => page.evaluate(() => window.exposureReads)).toBe(2);
+  await expect.poll(() => panel.evaluate(host => host._configData.exposed_attribute_catalog?.audit_marker)).toBe("current");
+  await page.evaluate(async () => { window.releaseOldExposure(); await window.oldExposureWork; });
+  await expect.poll(() => panel.evaluate(host => host._eocLiveMetadataPending.size)).toBe(0);
+  expect(await panel.evaluate(host => host._eocLiveMetadataCache.get("exposed_attribute_catalog").value.audit_marker)).toBe("current");
+  await expectHarnessClean(page, errors);
+});
+
 test("Conversation History paints the selected scope before secondary data settles", async ({page}) => {
   await page.goto(fixtureUrl("overview"));
   await expect(page.locator("extended-openai-management-panel .dashboard-grid")).toBeVisible();
