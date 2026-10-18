@@ -246,3 +246,42 @@ async def test_retarget_within_same_volume_step_preserves_restoration_baseline(
     await manager.async_reconcile(now=END)
     assert state.attributes["volume_level"] == pytest.approx(0.8)
     assert calls == [0.21, 0.22, 0.8]
+
+
+@pytest.mark.parametrize("restart_before_correction", [False, True])
+@pytest.mark.parametrize("manual", [False, True])
+async def test_lower_same_step_ceiling_retains_owned_report_across_recovery(
+    hass, monkeypatch, restart_before_correction, manual
+):
+    manager, state, calls, _, _ = _speaker(
+        hass, monkeypatch, requested=0.21, unchanged_reports=False
+    )
+    await manager.async_reconcile(now=START)
+    owned_context = state.context
+    # Model a persisted successful retarget that publishes no new device state.
+    # Recovery must distinguish its command identity from the last owned report.
+    if restart_before_correction:
+        correct = manager._async_correct_volume_ceiling_locked
+        manager._async_correct_volume_ceiling_locked = AsyncMock()
+    manager._config = replace(manager.config, max_volume=0.19)
+    await manager.async_reconcile(now=START)
+    if restart_before_correction:
+        assert state.context is owned_context
+        manager._active = manager._normalize_active(deepcopy(manager.active))
+        manager._async_correct_volume_ceiling_locked = correct
+    if manual:
+        # Even the identical attained value with a different context must not
+        # qualify as the old owned report for further corrective commands.
+        state.attributes["volume_level"] = 0.2
+        state.context = Context()
+        count = len(calls)
+        await manager.async_reconcile(now=START)
+        assert len(calls) == count
+        return
+    await manager.async_reconcile(now=START)
+    assert state.attributes["volume_level"] == pytest.approx(0.15)
+    assert calls == pytest.approx([0.21, 0.19, 0.16])
+    manager._active = manager._normalize_active(deepcopy(manager.active))
+    await manager.async_reconcile(now=END)
+    assert state.attributes["volume_level"] == pytest.approx(0.8)
+    assert calls == pytest.approx([0.21, 0.19, 0.16, 0.8])

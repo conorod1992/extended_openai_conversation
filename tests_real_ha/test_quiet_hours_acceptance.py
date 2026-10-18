@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from unittest.mock import AsyncMock
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -20,9 +21,11 @@ _RUNTIME_KEY = "quiet_hours_manager"
 
 
 @pytest.mark.parametrize("restart", [False, True])
-@pytest.mark.parametrize("requested", [0.21, 0.23])
+@pytest.mark.parametrize(
+    "requested, retarget", [(0.21, 0.22), (0.23, 0.24), (0.21, 0.19)]
+)
 async def test_quantized_retarget_without_state_report_restores_baseline(
-    hass, restart, requested
+    hass, restart, requested, retarget
 ):
     """A real HA service may succeed without reporting an unchanged volume step."""
     _, media_player_id, _ = _install_satellite_entities(hass)
@@ -57,13 +60,18 @@ async def test_quantized_retarget_without_state_report_restores_baseline(
     await hass.async_block_till_done()
     owned_report = hass.states.get(media_player_id)
     assert owned_report.attributes["volume_level"] <= requested
-    retarget = requested + 0.01
+    deferred_correction = restart and retarget == 0.19
+    if deferred_correction:
+        # Persist the no-report retarget before any correction. A newly loaded
+        # manager must recover the earlier report's ownership, not just its value.
+        manager._async_correct_volume_ceiling_locked = AsyncMock()
     await manager.async_update_config(
         {**manager.config.as_dict(), "max_volume": retarget}
     )
     await hass.async_block_till_done()
-    assert hass.states.get(media_player_id).attributes["volume_level"] <= retarget
-    if requested == 0.21:
+    if not deferred_correction:
+        assert hass.states.get(media_player_id).attributes["volume_level"] <= retarget
+    if retarget == 0.22 or deferred_correction:
         assert hass.states.get(media_player_id) is owned_report
     if restart:
         manager._cancel_scheduled_callbacks()
@@ -73,14 +81,18 @@ async def test_quantized_retarget_without_state_report_restores_baseline(
         hass.data[DOMAIN].pop(_RUNTIME_KEY, None)
         manager = await async_get_quiet_hours(hass)
         await hass.async_block_till_done()
+    assert hass.states.get(media_player_id).attributes["volume_level"] <= retarget
     await manager.async_update_config({**manager.config.as_dict(), "enabled": False})
     await hass.async_block_till_done()
     assert hass.states.get(media_player_id).attributes["volume_level"] == pytest.approx(
         0.60
     )
-    assert calls == pytest.approx(
-        [0.21, 0.22, 0.60] if requested == 0.21 else [0.23, 0.18, 0.24, 0.21, 0.60]
-    )
+    expected = {
+        0.22: [0.21, 0.22, 0.60],
+        0.24: [0.23, 0.18, 0.24, 0.21, 0.60],
+        0.19: [0.21, 0.19, 0.16, 0.60],
+    }
+    assert calls == pytest.approx(expected[retarget])
 
 
 def _active_window() -> tuple[str, str]:

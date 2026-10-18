@@ -997,10 +997,30 @@ class QuietHoursManager:
         if not context_id or self._control_context_id(entity_id) != context_id:
             return False
         current = _current_volume(self.hass, entity_id)
-        if current is None or control.get("attained_value") == current:
+        if current is None or (
+            control.get("attained_value") == current
+            and control.get("attained_context_id") == context_id
+        ):
             return False
         control["attained_value"] = current
+        control["attained_context_id"] = context_id
         return True
+
+    def _owned_volume_context_id(
+        self, entity_id: str, control: dict[str, Any]
+    ) -> str | None:
+        """Recognize the latest command or an unchanged, confirmed owned report."""
+        context_id = self._control_context_id(entity_id)
+        if context_id and (
+            context_id == control.get("application_context_id")
+            or (
+                context_id == control.get("attained_context_id")
+                and _current_volume(self.hass, entity_id)
+                == control.get("attained_value")
+            )
+        ):
+            return context_id
+        return None
 
     def _commit_pending_quiet(self, entity_id: str, control: dict[str, Any]) -> None:
         if control["quiet_value"] != control["pending_quiet_value"]:
@@ -1021,8 +1041,8 @@ class QuietHoursManager:
             return
         ceiling = min(control["quiet_value"], control["original_value"])
         while control.get("ceiling_attempts", 0) < 3:
-            context_id = control.get("application_context_id")
-            if not context_id or self._control_context_id(entity_id) != context_id:
+            context_id = self._owned_volume_context_id(entity_id, control)
+            if not context_id:
                 return
             current = _current_volume(self.hass, entity_id)
             if current is None or current <= ceiling + _VOLUME_TOLERANCE:
@@ -1544,6 +1564,13 @@ class QuietHoursManager:
                             "Quiet Hours pending application context is invalid"
                         )
                     control["pending_application_context_id"] = pending_context
+            attained_context = raw_controls.get(entity_id, {}).get(
+                "attained_context_id"
+            )
+            if control["kind"] == "volume" and attained_context is not None:
+                if not isinstance(attained_context, str) or not attained_context:
+                    raise ValueError("Quiet Hours attained context is invalid")
+                control["attained_context_id"] = attained_context
         raw_observed = (
             value.get("observed_controls") if isinstance(value, Mapping) else None
         )
