@@ -88,6 +88,10 @@ function savedUnexposed(panel, item) {
 
 export function renderExposedAttributeSettings(panel) {
   const catalog = catalogFor(panel);
+  const failure = panel?._eocLiveMetadataErrors?.get("exposed_attribute_catalog");
+  const refreshFailed = failure && failure.agentId === panel._agentId
+    && failure.epoch === (panel._eocLiveMetadataEpoch || 0) && failure.activeToken === panel._loadToken
+    && failure.revision === panel._configData?.revision;
   const catalogAvailable = catalog && typeof catalog === "object";
   const entities = Array.isArray(catalog?.entities) ? catalog.entities : [];
   const saved = (Array.isArray(catalog?.saved_unexposed) ? catalog.saved_unexposed : [])
@@ -110,6 +114,7 @@ export function renderExposedAttributeSettings(panel) {
       @media(max-width:680px){.exposed-attribute-grid{grid-template-columns:1fr}.exposed-saved-preference,.exposed-attribute-heading,.exposed-configured-entity,.exposed-editor-heading{display:grid}.exposed-saved-preference button,.exposed-configured-actions{width:100%}.exposed-configured-actions button{flex:1}}
     </style>
     <div class="exposed-attribute-heading"><div><h3>Additional entity attributes</h3><p>Select extra state attributes to include with automatic exposed-device context. Values are read live for each request, and only entities exposed to Assist are eligible.</p></div></div>
+    ${refreshFailed ? `<div class="exposed-catalog-error" role="status"><strong>Unable to refresh Assist exposure.</strong><p>${catalogAvailable ? "Showing the last known catalogue; entity exposure may have changed." : "The current entity catalogue is unavailable."} You can continue editing configuration.</p><button type="button" class="secondary" data-retry-exposed-catalog>Retry exposure refresh</button></div>` : ""}
     ${!automaticContextEnabled ? `<div class="exposed-inactive-notice"><strong>Inactive while automatic entity context is off</strong><p>Your selections are preserved and can still be edited here, but Extended OpenAI will not add these attributes while you manage entity context manually in your prompt.</p></div>` : ""}
     ${!catalogAvailable
       ? `<div class="exposed-catalog-error" role="alert"><strong>Unable to load exposed entity attributes.</strong><p>The integration did not return the current Assist-exposed entity catalogue.</p></div>`
@@ -121,7 +126,7 @@ export function renderExposedAttributeSettings(panel) {
               <option value="">Select an entity…</option>
               ${entities.map((entity) => `<option value="${panel._e(entity.entity_id)}">${panel._e(entity.name || entity.entity_id)} (${panel._e(entity.entity_id)})</option>`).join("")}
             </select>
-            <small>Only entities currently exposed to Assist are available here.</small>
+            <small>${refreshFailed ? "These entities were exposed to Assist at the last successful refresh." : "Only entities currently exposed to Assist are available here."}</small>
           </div>
           ${editorEntity ? entityEditor(panel, editorEntity) : ""}
           <section class="exposed-configured"><h4>Configured entities</h4>
@@ -129,7 +134,7 @@ export function renderExposedAttributeSettings(panel) {
               ? `<div class="exposed-configured-list">${configured.map((entity) => configuredEntity(panel, entity)).join("")}</div>`
               : `<p class="help">No additional attributes are configured yet.</p>`}
           </section>`
-        : `<p class="help">No entities are currently exposed to Assist.</p>`}
+        : `<p class="help">${refreshFailed ? "No entities were exposed to Assist at the last successful refresh." : "No entities are currently exposed to Assist."}</p>`}
     ${saved.length ? `<section class="exposed-saved"><h4>Saved preferences not currently exposed</h4><p class="help">These preferences are retained for their original registry entities, but they cannot make an entity visible to the model.</p>${saved.map((item) => savedUnexposed(panel, item)).join("")}</section>` : ""}
     <span class="field-error" data-error="${CONFIG_KEY}"></span>
   </div>`;
@@ -202,6 +207,11 @@ function bindEntityPicker(panel, entities) {
 export function bindExposedAttributeSettings(panel) {
   const root = panel?.shadowRoot;
   if (!root) return;
+  root.querySelector("[data-retry-exposed-catalog]")?.addEventListener("click", async () => {
+    panel._eocLiveMetadataCache?.delete("exposed_attribute_catalog");
+    await panel._loadConfigurationLiveMetadata("assistant/prompt-context");
+    panel._render?.();
+  });
   const exposedToggle = root.querySelector('[data-config="exposed_entities_enabled"]');
   if (exposedToggle && exposedToggle.dataset.eocExposedRefreshBound === undefined) {
     exposedToggle.dataset.eocExposedRefreshBound = "";

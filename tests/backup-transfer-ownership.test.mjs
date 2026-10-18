@@ -111,3 +111,57 @@ test("late restore completion cannot clear the next agent's prepared import", as
   assert.equal(h.panel._backupTransferInspection.title, "agent-B");
   h.panel._eocBackupTransferCleanup();
 });
+
+for (const dismissal of ["escape", "cancel"]) {
+  test(`an executing restore survives ${dismissal} and reports completion`, async () => {
+    const h = harness(); await h.upload();
+    await new Promise(resolve => setTimeout(resolve, 200));
+    const restore = deferred(), started = deferred(), original = h.panel._hass.callWS;
+    h.panel._hass.callWS = message => {
+      if (message.action === "import_restore") { started.resolve(); return restore.promise; }
+      return original(message);
+    };
+    const toasts = [], reloads = [];
+    h.panel._toast = message => toasts.push(message);
+    h.panel._loadAgents = async id => reloads.push(id);
+    const session = h.panel._backupTransferSession;
+    const applying = h.nodes.get("#restore-transfer-apply").handlers.click(); await started.promise;
+    if (dismissal === "escape") {
+      let prevented = false;
+      h.nodes.get("#restore-dialog").handlers.cancel({preventDefault() { prevented = true; }});
+      assert.equal(prevented, true, "Escape must not dismiss a restore that may already be committed");
+    } else {
+      assert.equal(h.nodes.get("#restore-transfer-cancel").disabled, true);
+      h.nodes.get("#restore-transfer-cancel").handlers.click();
+    }
+    assert.equal(h.panel._backupTransferSession, session);
+    assert.equal(h.calls.some(call => call.action === "import_cancel"), false);
+    restore.resolve({restored:true}); await applying;
+    assert.equal(h.panel._backupTransferSession, null);
+    assert.equal(reloads.length, 1);
+    assert.ok(toasts.some(message => message.includes("restored")));
+    assert.equal(h.nodes.get("#restore-dialog").open, false);
+  });
+}
+
+test("a departed restore reports its outcome and invalidates its owner's cache", async () => {
+  const h = harness(); await h.upload();
+  await new Promise(resolve => setTimeout(resolve, 200));
+  const restore = deferred(), started = deferred(), original = h.panel._hass.callWS;
+  h.panel._hass.callWS = message => {
+    if (message.action === "import_restore") { started.resolve(); return restore.promise; }
+    return original(message);
+  };
+  const toasts = [], invalidated = [];
+  h.panel._toast = message => toasts.push(message);
+  h.panel._invalidateCleanConfiguration = id => invalidated.push(id);
+  h.panel._loadAgents = async () => assert.fail("must not replace another agent's UI");
+  const applying = h.nodes.get("#restore-transfer-apply").handlers.click(); await started.promise;
+  await confirmStateSafeNavigation(h.panel, null); h.switchAgent(); await h.upload();
+  const next = h.panel._backupTransferSession;
+  restore.resolve({restored:true}); await applying;
+  assert.equal(h.panel._backupTransferSession, next);
+  assert.deepEqual(invalidated, ["agent-A"]);
+  assert.ok(toasts.some(message => message.includes("restored") && message.includes("agent-A")));
+  h.panel._eocBackupTransferCleanup();
+});

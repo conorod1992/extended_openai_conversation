@@ -200,6 +200,7 @@ function cancelUploadingBackups(panel) {
 }
 
 export async function cancelBackupImport(panel, session = panel?._backupTransferSession) {
+  if (panel?._backupRestoreOperations?.has(session)) return;
   if (!session) return;
   if (panel?._backupTransferSession === session) {
     invalidateImportPreview(panel);
@@ -355,7 +356,10 @@ function retireBackupImports(panel) {
   panel._backupImportGeneration = (panel._backupImportGeneration || 0) + 1;
   cancelUploadingBackups(panel);
   invalidateImportPreview(panel);
-  void cancelBackupImport(panel);
+  // Once restore has been submitted, cancellation cannot undo its commit.
+  // Retire its presentation while keeping the execution's outcome reporting.
+  if (panel._backupRestoreOperations?.has(panel._backupTransferSession)) panel._backupTransferSession = null;
+  else void cancelBackupImport(panel);
   panel._backupTransferInspection = null;
   const dialog = panel.shadowRoot?.querySelector("#restore-dialog");
   if (dialog) dialog.__eocBackupSession = null;
@@ -418,6 +422,7 @@ function sendLatestImportPreview(panel) {
 }
 
 export function refreshImportPreview(panel) {
+  if (panel._backupRestoreOperations?.has(panel._backupTransferSession)) return false;
   const root = panel.shadowRoot;
   const token = invalidateImportPreview(panel);
   const session = panel._backupTransferSession;
@@ -452,8 +457,9 @@ export function bindBackupTransfer(panel) {
   const restoreDialog = root.querySelector("#restore-dialog");
   if (restoreDialog && !restoreDialog.__eocBackupBound) {
     restoreDialog.__eocBackupBound = true;
-    const dismiss = () => {
+    const dismiss = (event) => {
       const session = restoreDialog.__eocBackupSession;
+      if (panel._backupRestoreOperations?.has(session)) { event?.preventDefault?.(); return; }
       restoreDialog.__eocBackupSession = null;
       if (session && panel._backupTransferSession === session) {
         panel._backupTransferInspection = null;
@@ -552,11 +558,13 @@ export function bindBackupTransfer(panel) {
     }
   });
 
-  root.querySelector(`#${CANCEL_ID}`)?.addEventListener("click", () => retireBackupImports(panel));
+  root.querySelector(`#${CANCEL_ID}`)?.addEventListener("click", () => {
+    if (!panel._backupRestoreOperations?.has(panel._backupTransferSession)) retireBackupImports(panel);
+  });
 
   root.querySelector(`#${APPLY_ID}`)?.addEventListener("click", async () => {
     const session = panel._backupTransferSession;
-    if (!session) return;
+    if (!session || panel._backupRestoreOperations?.has(session)) return;
     if (!ownsTransfer(panel, session)) { void cancelBackupImport(panel, session); return; }
     const generation = panel._backupImportGeneration || 0;
     const ownerView = panel._viewKey?.();
@@ -579,11 +587,21 @@ export function bindBackupTransfer(panel) {
     }
     if (panel._backupTransferSession !== session || !ownsUI() || panel._transferPreviewToken !== previewToken || root.querySelector(`#${APPLY_ID}`)?.disabled) return;
     const button = root.querySelector(`#${APPLY_ID}`);
+    const cancel = root.querySelector(`#${CANCEL_ID}`);
+    panel._backupRestoreOperations ||= new Set();
+    panel._backupRestoreOperations.add(session);
+    if (cancel) cancel.disabled = true;
+    const status = root.querySelector(`#${RESTORE_STATUS_ID}`);
+    if (status) status.textContent = "Restoring selected sections… Please wait for the result.";
     let mustReselectFile = false;
     panel._setSaving(button, true);
     try {
       await callBackupTransfer(panel, "import_restore", {session_id: session.session_id, sections, preview_token: serverPreviewToken}, session.owner);
-      if (panel._backupTransferSession !== session || !ownsUI()) return;
+      panel._invalidateCleanConfiguration?.(session.owner.subentry_id);
+      if (panel._backupTransferSession !== session || !ownsUI()) {
+        panel._toast(`Selected sections restored for agent ${session.owner.subentry_id}`);
+        return;
+      }
       panel._backupTransferSession = null;
       panel._backupTransferInspection = null;
       panel._backupTransferPreview = null;
@@ -591,15 +609,20 @@ export function bindBackupTransfer(panel) {
       root.querySelector("#restore-dialog").close();
       if (sections.includes("configuration")) panel._clearConfigDraft();
       await panel._loadAgents(panel._agentId);
-      if (ownsUI()) panel._toast("Selected sections restored");
+      panel._toast(ownsUI() ? "Selected sections restored" : `Selected sections restored for agent ${session.owner.subentry_id}`);
     } catch (err) {
-      if (panel._backupTransferSession !== session || !ownsUI()) return;
+      if (panel._backupTransferSession !== session || !ownsUI()) {
+        panel._toast(`Unable to restore agent ${session.owner.subentry_id}: ${err.message || String(err)}`, true);
+        return;
+      }
       void cancelBackupImportSession(panel, session);
       panel._backupTransferSession = null;
       mustReselectFile = true;
       button.disabled = true;
       panel._toast(`Unable to restore: ${err.message || String(err)} Re-select the transfer file to retry.`, true);
     } finally {
+      panel._backupRestoreOperations.delete(session);
+      if (ownsUI() && cancel) cancel.disabled = false;
       if (ownsUI() && mustReselectFile) {
         button.disabled = true;
         button.textContent = button.dataset.label || "Restore selected sections";

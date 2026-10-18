@@ -919,6 +919,7 @@ class QuietHoursManager:
                 value = min(value, control["original_value"])
             if value == control["quiet_value"] and "pending_quiet_value" not in control:
                 control.pop("restoration_pending", None)
+                await self._async_correct_volume_ceiling_locked(entity_id, control)
                 continue
             current = (
                 _current_volume(self.hass, entity_id)
@@ -982,6 +983,7 @@ class QuietHoursManager:
                 continue
             self._commit_pending_quiet(entity_id, control)
             await self._async_save_control_state_locked()
+            await self._async_correct_volume_ceiling_locked(entity_id, control)
 
     @staticmethod
     def _attained_quiet_value(control: dict[str, Any]) -> Any:
@@ -1001,12 +1003,62 @@ class QuietHoursManager:
         return True
 
     def _commit_pending_quiet(self, entity_id: str, control: dict[str, Any]) -> None:
+        if control["quiet_value"] != control["pending_quiet_value"]:
+            control.pop("ceiling_attempts", None)
+            control.pop("ceiling_target", None)
         control["quiet_value"] = control.pop("pending_quiet_value")
         if context_id := control.pop("pending_application_context_id", None):
             control["application_context_id"] = context_id
         # A retarget may quantize to the same reported volume without publishing
         # a new state/context. Keep the last owned report until a new one arrives.
         self._observe_owned_volume(entity_id, control)
+
+    async def _async_correct_volume_ceiling_locked(
+        self, entity_id: str, control: dict[str, Any]
+    ) -> None:
+        """Bound upward-rounding correction to three owned attempts per ceiling."""
+        if control["kind"] != "volume":
+            return
+        ceiling = min(control["quiet_value"], control["original_value"])
+        while control.get("ceiling_attempts", 0) < 3:
+            context_id = control.get("application_context_id")
+            if not context_id or self._control_context_id(entity_id) != context_id:
+                return
+            current = _current_volume(self.hass, entity_id)
+            if current is None or current <= ceiling + _VOLUME_TOLERANCE:
+                return
+            # Device command granularity is not part of HA's volume contract.
+            # Back off by the observed overshoot, then try zero on the final
+            # attempt. Persist the budget so retries/restarts cannot loop.
+            attempts = control.get("ceiling_attempts", 0) + 1
+            target = (
+                max(
+                    0.0,
+                    control.get("ceiling_target", ceiling)
+                    - max(0.01, 2 * (current - ceiling + _VOLUME_TOLERANCE)),
+                )
+                if attempts < 3
+                else 0.0
+            )
+            control["ceiling_attempts"] = attempts
+            control["ceiling_target"] = target
+            await self._async_save_control_state_locked()
+            if (
+                self._control_context_id(entity_id) != context_id
+                or _current_volume(self.hass, entity_id) != current
+            ):
+                return
+            try:
+                await self._async_set_volume(entity_id, target)
+            except Exception as err:
+                self._observe_owned_volume(entity_id, control)
+                await self._async_save_control_state_locked()
+                self._log_control_failure(
+                    "ceiling correction", entity_id, "volume", err, ownership="retained"
+                )
+                return
+            self._observe_owned_volume(entity_id, control)
+            await self._async_save_control_state_locked()
 
     def _pending_quiet_attained(self, entity_id: str, control: dict[str, Any]) -> bool:
         if "pending_quiet_value" not in control:
@@ -1104,6 +1156,7 @@ class QuietHoursManager:
             control["application_state"] = "applied"
             self._observe_owned_volume(entity_id, control)
             await self._async_save_control_state_locked()
+            await self._async_correct_volume_ceiling_locked(entity_id, control)
 
     async def _async_apply_switch_locked(
         self,
@@ -1590,6 +1643,17 @@ class QuietHoursManager:
                 }
             if entity_id in controls and raw.get("restoration_pending") is True:
                 controls[entity_id]["restoration_pending"] = True
+            if entity_id in controls and kind == "volume":
+                attempts = raw.get("ceiling_attempts")
+                target = raw.get("ceiling_target")
+                if type(attempts) is int and 0 <= attempts <= 3:
+                    controls[entity_id]["ceiling_attempts"] = attempts
+                if (
+                    isinstance(target, (int, float))
+                    and not isinstance(target, bool)
+                    and 0 <= target <= 1
+                ):
+                    controls[entity_id]["ceiling_target"] = float(target)
             attained = raw.get("attained_value")
             if (
                 entity_id in controls

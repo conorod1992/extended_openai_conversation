@@ -1,6 +1,46 @@
 import {expect, test} from "@playwright/test";
 import {acceptConfirmation, browserToolYaml, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
+test("Escape cannot hide a committed restore's completion or refreshed configuration", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("usage-maintenance/backup-restore"));
+  const panel = page.locator("extended-openai-management-panel");
+  await panel.locator("#transfer-export-mode").selectOption("full");
+  const downloading = page.waitForEvent("download");
+  await panel.locator("#create-backup-transfer").click();
+  const path = await (await downloading).path();
+  await panel.evaluate(host => host._navigate("assistant", "basics"));
+  await panel.locator('[data-config="__title"]').fill("Changed after export");
+  await panel.getByRole("button", {name:"Save changes", exact:true}).click();
+  await expect(panel.getByText("Unsaved changes", {exact:true})).toHaveCount(0);
+  await panel.evaluate(host => host._navigate("usage-maintenance", "backup-restore"));
+  await panel.locator("#backup-file-transfer").setInputFiles(path);
+  await expect(panel.locator("#restore-transfer-apply")).toBeEnabled();
+  await page.evaluate(() => {
+    const original = browserHarness.hass.callWS.bind(browserHarness.hass);
+    browserHarness.hass.callWS = async message => {
+      const result = await original(message);
+      if (message.action === "import_restore") {
+        window.restoreCommitted = true;
+        await new Promise(resolve => { window.releaseRestore = resolve; });
+      }
+      return result;
+    };
+  });
+  await panel.locator("#restore-transfer-apply").click();
+  await acceptConfirmation(panel);
+  await expect.poll(() => page.evaluate(() => window.restoreCommitted)).toBe(true);
+  await expect(panel.locator("#restore-transfer-cancel")).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await expect(panel.locator("#restore-dialog")).toHaveJSProperty("open", true);
+  await page.evaluate(() => window.releaseRestore());
+  await expect(panel.locator("#restore-dialog")).toHaveJSProperty("open", false);
+  await expect(panel.getByText("Selected sections restored", {exact:true})).toBeVisible();
+  await panel.evaluate(host => host._navigate("assistant", "basics"));
+  await expect(panel.locator('[data-config="__title"]')).toHaveValue("Jarvis");
+  await expectHarnessClean(page, errors);
+});
+
 test("Escape retires the original agent's prepared import before switching agents", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("usage-maintenance/backup-restore", "&agents=2"));

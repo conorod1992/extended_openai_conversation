@@ -9,6 +9,33 @@ const localMetadata = {
   },
 };
 
+test("failed exposure refresh warns about cached entities and retries without losing edits", async ({page}) => {
+  await page.goto(fixtureUrl("assistant/prompt-context"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect.poll(() => panel.evaluate(host => Boolean(host._result?.exposed_attribute_catalog))).toBe(true);
+  await panel.evaluate(host => host._navigate("assistant", "basics"));
+  await page.evaluate(() => {
+    const original = browserHarness.hass.callWS.bind(browserHarness.hass);
+    window.failExposureRefresh = true;
+    browserHarness.hass.callWS = message => {
+      if (message.action === "live_metadata" && message.metadata_keys.includes("exposed_attribute_catalog")) {
+        return window.failExposureRefresh ? Promise.reject(new Error("Exposure unavailable"))
+          : Promise.resolve({exposed_attribute_catalog:{entities:[], saved_unexposed:[]}});
+      }
+      return original(message);
+    };
+  });
+  await panel.evaluate(host => host._navigate("assistant", "prompt-context"));
+  await expect(panel.getByText("Unable to refresh Assist exposure.", {exact:true})).toBeVisible();
+  await expect(panel.getByText("Showing the last known catalogue", {exact:false})).toBeVisible();
+  await panel.locator("#prompt-editor").fill("Keep my unsaved prompt");
+  await page.evaluate(() => { window.failExposureRefresh = false; });
+  await panel.getByRole("button", {name:"Retry exposure refresh"}).click();
+  await expect(panel.getByText("Unable to refresh Assist exposure.", {exact:true})).toHaveCount(0);
+  await expect(panel.locator("#prompt-editor")).toHaveValue("Keep my unsaved prompt");
+  expect(await panel.evaluate(host => host._result.exposed_attribute_catalog.entities)).toEqual([]);
+});
+
 test("resident Home Assistant configuration paints before live metadata and keeps edits", async ({page}) => {
   await page.goto(fixtureUrl("assistant/basics"));
   const panel = page.locator("extended-openai-management-panel");

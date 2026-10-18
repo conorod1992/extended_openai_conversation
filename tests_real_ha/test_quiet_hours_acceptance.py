@@ -20,7 +20,10 @@ _RUNTIME_KEY = "quiet_hours_manager"
 
 
 @pytest.mark.parametrize("restart", [False, True])
-async def test_quantized_retarget_without_state_report_restores_baseline(hass, restart):
+@pytest.mark.parametrize("requested", [0.21, 0.23])
+async def test_quantized_retarget_without_state_report_restores_baseline(
+    hass, restart, requested
+):
     """A real HA service may succeed without reporting an unchanged volume step."""
     _, media_player_id, _ = _install_satellite_entities(hass)
     calls = []
@@ -46,16 +49,22 @@ async def test_quantized_retarget_without_state_report_restores_baseline(hass, r
             "enabled": True,
             "start": start,
             "end": end,
-            "max_volume": 0.23,
+            "max_volume": requested,
             "wake_sound": "unchanged",
             "overrides": {},
         }
     )
     await hass.async_block_till_done()
     owned_report = hass.states.get(media_player_id)
-    await manager.async_update_config({**manager.config.as_dict(), "max_volume": 0.24})
+    assert owned_report.attributes["volume_level"] <= requested
+    retarget = requested + 0.01
+    await manager.async_update_config(
+        {**manager.config.as_dict(), "max_volume": retarget}
+    )
     await hass.async_block_till_done()
-    assert hass.states.get(media_player_id) is owned_report
+    assert hass.states.get(media_player_id).attributes["volume_level"] <= retarget
+    if requested == 0.21:
+        assert hass.states.get(media_player_id) is owned_report
     if restart:
         manager._cancel_scheduled_callbacks()
         if manager._registry_unsubscribe is not None:
@@ -69,7 +78,9 @@ async def test_quantized_retarget_without_state_report_restores_baseline(hass, r
     assert hass.states.get(media_player_id).attributes["volume_level"] == pytest.approx(
         0.60
     )
-    assert calls == [0.23, 0.24, 0.60]
+    assert calls == pytest.approx(
+        [0.21, 0.22, 0.60] if requested == 0.21 else [0.23, 0.18, 0.24, 0.21, 0.60]
+    )
 
 
 def _active_window() -> tuple[str, str]:

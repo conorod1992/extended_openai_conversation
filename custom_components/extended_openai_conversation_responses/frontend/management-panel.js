@@ -1448,6 +1448,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         return existing.promise;
       }
       const record = {agentId, epoch, revision, activeToken, promise: null};
+      this._eocLiveMetadataErrors ||= new Map();
+      this._eocLiveMetadataErrors.delete(key);
       record.promise = this._call("configuration", "live_metadata", {metadata_keys: [key]})
         .then(metadata => {
           const cleanRevision = this._cleanConfigSnapshots.get(this._configurationSnapshotKey(agentId, "full"))?.result?.revision;
@@ -1465,7 +1467,14 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
             this._render();
           }
         })
-        .catch(() => {})
+        .catch(() => {
+          if (key !== "exposed_attribute_catalog" || this._eocLiveMetadataPending.get(key) !== record
+              || agentId !== this._agentId || epoch !== (this._eocLiveMetadataEpoch || 0)
+              || revision !== this._configData?.revision || this._viewKey() !== view
+              || activeToken !== this._loadToken) return;
+          this._eocLiveMetadataErrors.set(key, {agentId, epoch, revision, activeToken});
+          this._render();
+        })
         .finally(() => {
           if (this._eocLiveMetadataPending.get(key) === record) this._eocLiveMetadataPending.delete(key);
         });

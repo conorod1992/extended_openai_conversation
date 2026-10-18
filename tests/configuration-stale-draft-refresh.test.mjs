@@ -9,6 +9,7 @@ globalThis.HTMLElement = class { attachShadow() { this.shadowRoot = {hasChildNod
 globalThis.customElements = {define() {}, get() {}, whenDefined() { return Promise.resolve(); }};
 
 const {ExtendedOpenAIManagementPanel} = await import("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js");
+const {renderExposedAttributeSettings, bindExposedAttributeSettings} = await import("../custom_components/extended_openai_conversation_responses/frontend/exposed-attributes-ui.js");
 const {bindTools, openTool} = await import("../custom_components/extended_openai_conversation_responses/frontend/agent-config-tools-base.js");
 const {bindConfiguration} = await import("../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-base.js");
 const {updateConfigurationControl} = await import("../custom_components/extended_openai_conversation_responses/frontend/configuration-inputs.js");
@@ -206,6 +207,42 @@ for (const oldFirst of [false, true]) {
     assert.equal(host._eocLiveMetadataPending.size, 0);
   });
 }
+
+test("a failed exposure refresh labels retained metadata and can retry without changing the draft", async () => {
+  const {host} = panel();
+  host._loadToken = 1;
+  const catalog = {entities:[{entity_id:"light.old", name:"Old", reference:"old", durable_selection_available:true}]};
+  host._configData.exposed_attribute_catalog = catalog;
+  const draft = structuredClone(host._draft);
+  let reads = 0;
+  host._call = async () => {
+    if (++reads === 1) throw new Error("Metadata unavailable");
+    return {exposed_attribute_catalog:{entities:[]}};
+  };
+  await host._loadConfigurationLiveMetadata();
+  assert.equal(host._configData.exposed_attribute_catalog, catalog);
+  assert.match(renderExposedAttributeSettings(host), /Unable to refresh Assist exposure/);
+  assert.match(renderExposedAttributeSettings(host), /last known/i);
+  const retry = new Control("retry");
+  host.shadowRoot.querySelector = selector => selector === "[data-retry-exposed-catalog]" ? retry : null;
+  bindExposedAttributeSettings(host);
+  await retry.emit("click");
+  assert.equal(reads, 2);
+  assert.deepEqual(host._configData.exposed_attribute_catalog.entities, []);
+  assert.doesNotMatch(renderExposedAttributeSettings(host), /Unable to refresh Assist exposure/);
+  assert.deepEqual(host._draft, draft);
+});
+
+test("an abandoned exposure failure cannot mark a newer visit as failed", async () => {
+  const {host} = panel(); host._loadToken = 1;
+  const old = deferred(); let reads = 0;
+  host._call = () => ++reads === 1 ? old.promise : Promise.resolve({exposed_attribute_catalog:{entities:[]}});
+  const loading = host._loadConfigurationLiveMetadata();
+  host._loadToken++;
+  await host._loadConfigurationLiveMetadata();
+  old.reject(new Error("Obsolete failure")); await loading;
+  assert.doesNotMatch(renderExposedAttributeSettings(host), /Unable to refresh Assist exposure/);
+});
 
 for (const change of ["agent", "entry", "route", "token", "generation", "revision", "full acknowledgement", "partial acknowledgement"]) {
   test(`stale refresh cannot overwrite a newer ${change}`, async () => {
