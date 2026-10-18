@@ -104,8 +104,14 @@ test("late metadata does not decorate another route or a cleared agent draft", a
   await page.evaluate(() => {
     const hass = browserHarness.hass;
     const original = hass.callWS.bind(hass);
-    hass.callWS = message => message.section === "configuration" && message.action === "live_metadata"
-      ? new Promise(resolve => { window.resolvePromptMetadata = resolve; }) : original(message);
+    window.liveMetadataReads = 0;
+    hass.callWS = message => {
+      if (message.section === "configuration" && message.action === "live_metadata") {
+        window.liveMetadataReads++;
+        return new Promise(resolve => { window.resolvePromptMetadata = resolve; });
+      }
+      return original(message);
+    };
   });
   await panel.evaluate(host => host._navigate("assistant", "prompt-context"));
   await expect(panel.locator("#prompt-editor")).toBeVisible();
@@ -115,6 +121,11 @@ test("late metadata does not decorate another route or a cleared agent draft", a
   expect(await panel.evaluate(host => host._result?.exposed_attribute_catalog)).toBeUndefined();
 
   await panel.evaluate(host => host._navigate("assistant", "prompt-context"));
+  await expect.poll(() => page.evaluate(() => window.liveMetadataReads)).toBe(2);
+  expect(await panel.evaluate(host => host._result?.exposed_attribute_catalog)).toBeUndefined();
+  // Returning must validate a fresh response; the abandoned visit cannot seed
+  // the new editor or its metadata cache.
+  await page.evaluate(() => window.resolvePromptMetadata({exposed_attribute_catalog: {entities: [], saved_unexposed: []}}));
   await expect.poll(() => panel.evaluate(host => Boolean(host._result?.exposed_attribute_catalog))).toBe(true);
   await panel.evaluate(host => host._navigate("capabilities", "home-assistant"));
   await expect(panel.locator('[data-config="local_intents_enabled"]')).toBeVisible();
