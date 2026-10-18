@@ -695,6 +695,9 @@ async def test_admitted_delayed_work_detaches_even_while_parent_is_active(
         return False
 
     monkeypatch.setattr(manager, "_async_execute_due_detached", due_worker)
+    manager._records["admitted-job"] = SimpleNamespace(
+        status="pending", entry_id="entry", subentry_id="agent"
+    )
     parent = _call("parent", "effect")
     with (
         bind_effect_replay_scope(entity, log.conversation_id),
@@ -859,6 +862,9 @@ async def test_nested_provider_exchange_overrides_independent_ownership(
         else:
             manager = DelayedToolManager(hass)
             monkeypatch.setattr(manager, "_async_execute_due_detached", nested_exchange)
+            manager._records["independent-job"] = SimpleNamespace(
+                status="pending", entry_id="entry", subentry_id="agent"
+            )
             await manager._async_execute_due("independent-job")
 
         remember_unacknowledged_calls(provider, log, set())
@@ -888,10 +894,17 @@ async def test_rendered_bash_default_is_one_effect_during_recovery(tmp_path):
     from tests_real_ha.test_prepared_effect_recovery import exchange_owner
 
     hass = HomeAssistant(str(tmp_path))
-    function = {"type": "composite", "sequence": [{
-        "type": "bash", "command": "echo {{ value | default(1) }} >> audit-effects.txt",
-        "cwd": str(tmp_path), "allow_unsafe_shell": True,
-    }]}
+    function = {
+        "type": "composite",
+        "sequence": [
+            {
+                "type": "bash",
+                "command": "echo {{ value | default(1) }} >> audit-effects.txt",
+                "cwd": str(tmp_path),
+                "allow_unsafe_shell": True,
+            }
+        ],
+    }
     entity, log, exchange = exchange_owner(hass, function)
     try:
         await exchange({})
@@ -900,11 +913,17 @@ async def test_rendered_bash_default_is_one_effect_during_recovery(tmp_path):
             await exchange({})
         with pytest.raises(HomeAssistantError, match="not acknowledged"):
             await exchange({"value": 1})
-        assert [line.strip() for line in (tmp_path / "audit-effects.txt").read_text().splitlines()] == ["1"]
+        assert [
+            line.strip()
+            for line in (tmp_path / "audit-effects.txt").read_text().splitlines()
+        ] == ["1"]
         # A different prepared command is permitted, and acknowledgment allows repeats.
         await exchange({"value": 2})
         clear_unacknowledged_calls(entity, log.conversation_id)
         await exchange({"value": 1})
-        assert [line.strip() for line in (tmp_path / "audit-effects.txt").read_text().splitlines()] == ["1", "2", "1"]
+        assert [
+            line.strip()
+            for line in (tmp_path / "audit-effects.txt").read_text().splitlines()
+        ] == ["1", "2", "1"]
     finally:
         await hass.async_stop(force=True)

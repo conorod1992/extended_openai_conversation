@@ -96,7 +96,9 @@ async def test_async_setup_activates_delayed_tool_manager_after_entity_hardening
     ):
         monkeypatch.setattr(integration, name, AsyncMock())
 
-    from custom_components.extended_openai_conversation_responses import transfer_staging
+    from custom_components.extended_openai_conversation_responses import (
+        transfer_staging,
+    )
 
     monkeypatch.setattr(transfer_staging, "async_get_transfer_staging", AsyncMock())
     assert await integration.async_setup(hass, {}) is True
@@ -231,7 +233,7 @@ async def test_due_delayed_tool_waits_behind_exclusive_restore(
     record = _due_call()
     manager._records[record.call_id] = record
     execute_due = AsyncMock(return_value=False)
-    monkeypatch.setattr(manager, "_async_execute_due", execute_due)
+    monkeypatch.setattr(manager, "_async_execute_due_detached", execute_due)
     gate = get_agent_maintenance_gate(hass, record.entry_id, record.subentry_id)
 
     async with gate.exclusive():
@@ -260,7 +262,7 @@ async def test_active_delayed_tool_holds_restore_until_execution_finishes(
         await release_execution.wait()
         return False
 
-    monkeypatch.setattr(manager, "_async_execute_due", execute_due)
+    monkeypatch.setattr(manager, "_async_execute_due_detached", execute_due)
     delayed = asyncio.create_task(manager._async_wait_and_execute(record.call_id))
     await asyncio.wait_for(execution_entered.wait(), timeout=1)
 
