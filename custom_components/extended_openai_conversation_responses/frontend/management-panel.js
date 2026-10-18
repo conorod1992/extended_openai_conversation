@@ -523,9 +523,15 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const key = this._configurationSnapshotKey(agentId, projection);
       if (key) this._cleanConfigSnapshots.delete(key);
     }
-    this._eocLiveMetadataEpoch = (this._eocLiveMetadataEpoch || 0) + 1;
-    this._eocLiveMetadataCache?.clear();
-    this._eocLiveMetadataPending?.clear();
+    if (agentId === this._agentId) {
+      this._eocLiveMetadataEpoch = (this._eocLiveMetadataEpoch || 0) + 1;
+      this._eocLiveMetadataCache?.clear();
+      this._eocLiveMetadataPending?.clear();
+    } else {
+      for (const records of [this._eocLiveMetadataCache, this._eocLiveMetadataPending]) {
+        for (const [key, record] of records || []) if (record.agentId === agentId) records.delete(key);
+      }
+    }
   }
 
   _configurationDirtyDestinations() {
@@ -930,6 +936,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _invalidateAfterMutation(agentId, section, action) {
     const effects = mutationEffects(section, action);
+    const currentAgent = agentId === this._agentId;
     if (agentId && effects?.configuration) {
       this._invalidateCleanConfiguration(agentId);
     }
@@ -943,25 +950,29 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       }
     }
     if (agentId && effects) {
-      this._cacheGeneration += 1;
+      if (currentAgent) this._cacheGeneration += 1;
       this._sectionCache.delete(`${agentId}|overview`);
       this._eocSectionCacheTimes.delete(`${agentId}|overview`);
-      this._eocPendingRouteReads?.clear();
+      for (const key of this._eocPendingRouteReads?.keys() || []) {
+        if (key.split("|")[1] === agentId) this._eocPendingRouteReads.delete(key);
+      }
+      if (this._eocStoredConfigPrefetch?.subentryId === agentId) discardStoredConfigurationPrefetch(this, "agent-mutated");
     }
     if (agentId && effects?.restore) {
-      this._cacheGeneration += 1;
+      if (currentAgent) this._cacheGeneration += 1;
       // Replacing the map also isolates reads started before the restore.
-      this._eocUsageWindowCache = new Map();
-      this._usageWindowGeneration = (this._usageWindowGeneration || 0) + 1;
+      if (currentAgent) {
+        this._eocUsageWindowCache = new Map();
+        this._usageWindowGeneration = (this._usageWindowGeneration || 0) + 1;
+      } else invalidateUsageWindows(this, agentId);
       const prefix = `${agentId}|`;
       for (const key of this._sectionCache.keys()) if (key.startsWith(prefix)) this._sectionCache.delete(key);
       for (const key of this._eocSectionCacheTimes.keys()) if (key.startsWith(prefix)) this._eocSectionCacheTimes.delete(key);
-      this._eocPendingRouteReads?.clear();
       for (const key of this._scopeCatalogCache.keys()) if (key.startsWith(prefix)) this._scopeCatalogCache.delete(key);
       if (this._scopeCatalogVisitKey?.startsWith(prefix)) this._scopeCatalogVisitKey = null;
     } else {
       if (agentId && (effects?.collectionView || effects?.scopeCatalog)) {
-        this._cacheGeneration += 1;
+        if (currentAgent) this._cacheGeneration += 1;
         const prefix = `${agentId}|`;
         const view = effects.collectionView;
         if (view) {
@@ -1391,6 +1402,14 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       if (loadToken === this._loadToken) this._error = err.message || String(err);
     } finally {
       if (loadToken === this._loadToken) {
+        if (cacheGeneration !== this._cacheGeneration) {
+          // A mutation of this agent superseded the response. Keep loading
+          // until a current read settles instead of rendering an empty section.
+          queueMicrotask(() => {
+            if (loadToken === this._loadToken) void this._loadSectionData(silent);
+          });
+          return;
+        }
         this._busy = false;
         this._render();
         if (this._isDraftView() && this._configData && this._draftAgentId === this._agentId) {

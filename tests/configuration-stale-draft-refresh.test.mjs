@@ -208,6 +208,45 @@ for (const oldFirst of [false, true]) {
   });
 }
 
+test("a background restore cannot discard another agent's pending Overview", async () => {
+  const {host} = panel();
+  host._data.agents.push({entry_id:"e", subentry_id:"b"});
+  host._agentId = "b"; host._page = "overview"; host._subsection = "";
+  host._viewKey = () => "overview";
+  host._result = null;
+  host._sectionCache.set("a|overview", {obsolete:true});
+  host._eocLiveMetadataPending = new Map([["exposed_attribute_catalog", {agentId:"b", promise:Promise.resolve()}]]);
+  const read = deferred(), started = deferred();
+  host._call = () => { started.resolve(); return read.promise; };
+  const loading = host._loadSectionData(); await started.promise;
+  host._invalidateAfterMutation("a", "backup", "restore");
+  assert.equal(host._sectionCache.has("a|overview"), false);
+  assert.equal(host._eocLiveMetadataPending.get("exposed_attribute_catalog").agentId, "b");
+  read.resolve({agent:{subentry_id:"b"}, title:"Agent B overview", usage:{}});
+  await loading;
+  assert.equal(host._result?.title, "Agent B overview");
+  assert.equal(host._busy, false);
+});
+
+test("a mutation that supersedes the current Overview automatically retries its read", async () => {
+  const {host} = panel(); host._viewKey = () => "overview";
+  host._page = "overview"; host._subsection = "";
+  host._result = null;
+  const first = deferred(), second = deferred(), retried = deferred(); let reads = 0;
+  host._call = () => {
+    if (++reads === 1) return first.promise;
+    retried.resolve(); return second.promise;
+  };
+  const loading = host._loadSectionData();
+  host._invalidateAfterMutation("a", "backup", "restore");
+  first.resolve({obsolete:true}); await loading; await retried.promise;
+  second.resolve({title:"Fresh Overview", usage:{}});
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(host._result?.title, "Fresh Overview");
+  assert.equal(host._busy, false);
+  assert.equal(reads, 2);
+});
+
 test("a failed exposure refresh labels retained metadata and can retry without changing the draft", async () => {
   const {host} = panel();
   host._loadToken = 1;

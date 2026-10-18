@@ -21,6 +21,65 @@ _RUNTIME_KEY = "quiet_hours_manager"
 
 
 @pytest.mark.parametrize("restart", [False, True])
+async def test_delayed_corrective_feedback_does_not_exhaust_volume_budget(
+    hass, restart
+):
+    _, media_player_id, _ = _install_satellite_entities(hass)
+    calls, pending = [], []
+
+    def publish(requested, context):
+        state = hass.states.get(media_player_id)
+        hass.states.async_set(
+            media_player_id,
+            state.state,
+            {**state.attributes, "volume_level": round(requested / 0.05) * 0.05},
+            context=context,
+        )
+
+    async def volume_set(call: ServiceCall) -> None:
+        requested = call.data["volume_level"]
+        calls.append(requested)
+        if len(calls) == 2:
+            pending.append((requested, call.context))
+        else:
+            publish(requested, call.context)
+
+    hass.services.async_register("media_player", "volume_set", volume_set)
+    manager = await async_get_quiet_hours(hass)
+    start, end = _active_window()
+    await manager.async_update_config(
+        {
+            "enabled": True,
+            "start": start,
+            "end": end,
+            "max_volume": 0.23,
+            "wake_sound": "unchanged",
+            "overrides": {},
+        }
+    )
+    await hass.async_block_till_done()
+    assert calls == pytest.approx([0.23, 0.18])
+    if restart:
+        manager._cancel_scheduled_callbacks()
+        if manager._registry_unsubscribe is not None:
+            manager._registry_unsubscribe()
+            manager._registry_unsubscribe = None
+        hass.data[DOMAIN].pop(_RUNTIME_KEY, None)
+        manager = await async_get_quiet_hours(hass)
+    await manager.async_reconcile()
+    assert calls == pytest.approx([0.23, 0.18])
+    publish(*pending.pop())
+    await manager.async_reconcile()
+    assert hass.states.get(media_player_id).attributes["volume_level"] == pytest.approx(
+        0.2
+    )
+    assert calls == pytest.approx([0.23, 0.18])
+    await manager.async_update_config({**manager.config.as_dict(), "enabled": False})
+    await hass.async_block_till_done()
+    assert calls == pytest.approx([0.23, 0.18, 0.60])
+
+
+@pytest.mark.parametrize("restart", [False, True])
 @pytest.mark.parametrize(
     "requested, retarget", [(0.21, 0.22), (0.23, 0.24), (0.21, 0.19)]
 )

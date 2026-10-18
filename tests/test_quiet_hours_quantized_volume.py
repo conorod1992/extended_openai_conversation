@@ -78,6 +78,62 @@ START = datetime(2026, 10, 18, 23, tzinfo=UTC)
 END = datetime(2026, 10, 19, 8, tzinfo=UTC)
 
 
+@pytest.mark.parametrize("restart", [False, True])
+async def test_delayed_corrective_report_does_not_issue_further_lower_commands(
+    hass, monkeypatch, restart
+):
+    manager, state, calls, _, report = _speaker(hass, monkeypatch)
+    original = hass.services.async_call.side_effect
+    pending = []
+
+    async def service(domain, name, data, **kwargs):
+        if not calls:
+            await original(domain, name, data, **kwargs)
+        else:
+            calls.append(data["volume_level"])
+            pending.append((data["volume_level"], kwargs["context"]))
+
+    hass.services.async_call.side_effect = service
+    await manager.async_reconcile(now=START)
+    assert calls == pytest.approx([0.23, 0.18])
+    if restart:
+        manager._active = manager._normalize_active(deepcopy(manager.active))
+    await manager.async_reconcile(now=START)
+    assert calls == pytest.approx([0.23, 0.18]), (
+        "unchanged old feedback must not exhaust the budget"
+    )
+    report(*pending.pop())
+    await manager.async_reconcile(now=START)
+    assert state.attributes["volume_level"] == pytest.approx(0.2)
+    assert calls == pytest.approx([0.23, 0.18])
+
+
+async def test_missing_feedback_retries_only_after_settling_with_persisted_budget(
+    hass, monkeypatch
+):
+    manager, state, calls, _, _ = _speaker(hass, monkeypatch)
+    clock = [START]
+    monkeypatch.setattr(runtime.dt_util, "utcnow", lambda: clock[0])
+
+    async def service(domain, name, data, **kwargs):
+        calls.append(data["volume_level"])
+        if len(calls) == 1:
+            state.attributes["volume_level"] = 0.25
+            state.context = kwargs["context"]
+
+    hass.services.async_call.side_effect = service
+    await manager.async_reconcile(now=START)
+    for expected in [3, 4, 4]:
+        manager._active = manager._normalize_active(deepcopy(manager.active))
+        await manager.async_reconcile(now=START)
+        previous = len(calls)
+        clock[0] += runtime._VOLUME_SETTLE_INTERVAL
+        await manager.async_reconcile(now=START)
+        assert len(calls) == expected
+        assert len(calls) <= previous + 1
+    assert calls == pytest.approx([0.23, 0.18, 0.13, 0.0])
+
+
 @pytest.mark.parametrize("original", [0.60, 0.24])
 @pytest.mark.parametrize("restart", [False, True])
 async def test_upward_rounding_is_corrected_below_ceiling_and_restores(

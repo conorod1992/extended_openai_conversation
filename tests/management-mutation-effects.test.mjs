@@ -33,7 +33,7 @@ function panel() {
   host._scopeCatalogCache = new Map(["a", "b"].flatMap(id => ["memory", "archive"].map(kind => [`${id}|scopes|${kind}`, []])));
   host._scopeCatalogVisitKey = "a|scopes|memory";
   host._eocUsageWindowCache = new Map([["a|7|date", {}], ["b|90|date", {}]]);
-  host._eocPendingRouteReads = new Map([["pending", {}]]);
+  host._eocPendingRouteReads = new Map([["entry-a|a|100|overview", {}], ["entry-b|b|100|overview", {}]]);
   host._usageWindowGeneration = 10;
   return host;
 }
@@ -62,7 +62,7 @@ for (const [section, actions] of Object.entries(commands)) for (const action of 
     assert.equal(host._scopeCatalogCache.has("a|scopes|memory"), !(restore || section === "memories"));
     assert.equal(host._scopeCatalogCache.has("a|scopes|archive"), !(restore || section === "memories"));
     assert.equal(host._scopeCatalogCache.has("b|scopes|memory"), true);
-    assert.equal(host._eocPendingRouteReads.size, 0);
+    assert.deepEqual([...host._eocPendingRouteReads.keys()], ["entry-b|b|100|overview"]);
     assert.equal(host._eocUsageWindowCache.has("a|7|date"), !(restore || usage));
     assert.equal(host._eocUsageWindowCache.has("b|90|date"), !restore, "restore retains its existing global Usage-window replacement");
     assert.equal(host._usageWindowGeneration, 10 + Number(restore || usage));

@@ -1,6 +1,46 @@
 import {expect, test} from "@playwright/test";
 import {acceptConfirmation, browserToolYaml, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
+test("agent A restore completion preserves agent B's pending Overview", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("usage-maintenance/backup-restore", "&agents=2"));
+  const panel = page.locator("extended-openai-management-panel");
+  await panel.locator("#transfer-export-mode").selectOption("full");
+  const download = page.waitForEvent("download");
+  await panel.locator("#create-backup-transfer").click();
+  const path = await (await download).path();
+  await panel.locator("#backup-file-transfer").setInputFiles(path);
+  await expect(panel.locator("#restore-transfer-apply")).toBeEnabled();
+  await page.evaluate(() => {
+    const original = browserHarness.hass.callWS.bind(browserHarness.hass);
+    window.pendingOverviewB = [];
+    browserHarness.hass.callWS = async message => {
+      const result = await original(message);
+      if (message.action === "import_restore") {
+        window.restoreCommitted = true;
+        await new Promise(resolve => { window.releaseRestoreA = resolve; });
+      }
+      if (message.section === "overview" && message.action === "primary" && message.subentry_id === "scale-agent-1") {
+        await new Promise(resolve => pendingOverviewB.push(resolve));
+        return {...result, reviewAgentBOverview:true};
+      }
+      return result;
+    };
+  });
+  await panel.locator("#restore-transfer-apply").click();
+  await acceptConfirmation(panel);
+  await expect.poll(() => page.evaluate(() => window.restoreCommitted)).toBe(true);
+  await panel.evaluate(host => host._navigate("overview"));
+  await panel.locator("#agent").selectOption("scale-agent-1");
+  await expect.poll(() => page.evaluate(() => pendingOverviewB.length)).toBeGreaterThan(0);
+  await page.evaluate(() => window.releaseRestoreA());
+  await expect.poll(() => panel.evaluate(host => host._backupRestoreOperations.size)).toBe(0);
+  await page.evaluate(() => pendingOverviewB.splice(0).forEach(resolve => resolve()));
+  await expect.poll(() => panel.evaluate(host => host._result?.reviewAgentBOverview === true && !host._busy)).toBe(true);
+  await expect(panel.locator("#agent")).toHaveValue("scale-agent-1");
+  await expectHarnessClean(page, errors);
+});
+
 test("Escape cannot hide a committed restore's completion or refreshed configuration", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("usage-maintenance/backup-restore"));

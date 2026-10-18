@@ -36,6 +36,7 @@ _STORAGE_KEY = f"{DOMAIN}.quiet_hours"
 _RUNTIME_KEY = "quiet_hours_manager"
 _STATE_ENTITY_ID = "binary_sensor.extended_openai_quiet_hours"
 _VOLUME_TOLERANCE = 0.005
+_VOLUME_SETTLE_INTERVAL = timedelta(seconds=30)
 _DISCOVERY_INTERVAL = timedelta(minutes=5)
 
 DEFAULT_START = "22:00"
@@ -1026,6 +1027,7 @@ class QuietHoursManager:
         if control["quiet_value"] != control["pending_quiet_value"]:
             control.pop("ceiling_attempts", None)
             control.pop("ceiling_target", None)
+            control.pop("ceiling_settle_until", None)
         control["quiet_value"] = control.pop("pending_quiet_value")
         if context_id := control.pop("pending_application_context_id", None):
             control["application_context_id"] = context_id
@@ -1036,49 +1038,61 @@ class QuietHoursManager:
     async def _async_correct_volume_ceiling_locked(
         self, entity_id: str, control: dict[str, Any]
     ) -> None:
-        """Bound upward-rounding correction to three owned attempts per ceiling."""
+        """Send one correction per feedback/settling interval, at most three."""
         if control["kind"] != "volume":
             return
         ceiling = min(control["quiet_value"], control["original_value"])
-        while control.get("ceiling_attempts", 0) < 3:
-            context_id = self._owned_volume_context_id(entity_id, control)
-            if not context_id:
-                return
-            current = _current_volume(self.hass, entity_id)
-            if current is None or current <= ceiling + _VOLUME_TOLERANCE:
-                return
-            # Device command granularity is not part of HA's volume contract.
-            # Back off by the observed overshoot, then try zero on the final
-            # attempt. Persist the budget so retries/restarts cannot loop.
-            attempts = control.get("ceiling_attempts", 0) + 1
-            target = (
-                max(
-                    0.0,
-                    control.get("ceiling_target", ceiling)
-                    - max(0.01, 2 * (current - ceiling + _VOLUME_TOLERANCE)),
-                )
-                if attempts < 3
-                else 0.0
+        if control.get("ceiling_attempts", 0) >= 3:
+            return
+        context_id = self._owned_volume_context_id(entity_id, control)
+        if not context_id:
+            return
+        current = _current_volume(self.hass, entity_id)
+        if current is None or current <= ceiling + _VOLUME_TOLERANCE:
+            return
+        now = dt_util.utcnow()
+        settle_until = _safe_iso(control.get("ceiling_settle_until"))
+        if (
+            settle_until is not None
+            and now < settle_until
+            and context_id != control.get("application_context_id")
+        ):
+            # Service delivery is not device feedback. Do not spend the retry
+            # budget against the same old observation, including after restart.
+            return
+        attempts = control.get("ceiling_attempts", 0) + 1
+        target = (
+            max(
+                0.0,
+                control.get("ceiling_target", ceiling)
+                - max(0.01, 2 * (current - ceiling + _VOLUME_TOLERANCE)),
             )
-            control["ceiling_attempts"] = attempts
-            control["ceiling_target"] = target
-            await self._async_save_control_state_locked()
-            if (
-                self._control_context_id(entity_id) != context_id
-                or _current_volume(self.hass, entity_id) != current
-            ):
-                return
-            try:
-                await self._async_set_volume(entity_id, target)
-            except Exception as err:
-                self._observe_owned_volume(entity_id, control)
-                await self._async_save_control_state_locked()
-                self._log_control_failure(
-                    "ceiling correction", entity_id, "volume", err, ownership="retained"
-                )
-                return
+            if attempts < 3
+            else 0.0
+        )
+        control["ceiling_attempts"] = attempts
+        control["ceiling_target"] = target
+        control["ceiling_settle_until"] = (now + _VOLUME_SETTLE_INTERVAL).isoformat()
+        # A new command context makes its eventual report distinguishable from
+        # the retained report that justified this attempt.
+        control["application_context_id"] = Context().id
+        await self._async_save_control_state_locked()
+        if (
+            self._control_context_id(entity_id) != context_id
+            or _current_volume(self.hass, entity_id) != current
+        ):
+            return
+        try:
+            await self._async_set_volume(entity_id, target)
+        except Exception as err:
             self._observe_owned_volume(entity_id, control)
             await self._async_save_control_state_locked()
+            self._log_control_failure(
+                "ceiling correction", entity_id, "volume", err, ownership="retained"
+            )
+            return
+        self._observe_owned_volume(entity_id, control)
+        await self._async_save_control_state_locked()
 
     def _pending_quiet_attained(self, entity_id: str, control: dict[str, Any]) -> bool:
         if "pending_quiet_value" not in control:
@@ -1675,6 +1689,10 @@ class QuietHoursManager:
                 target = raw.get("ceiling_target")
                 if type(attempts) is int and 0 <= attempts <= 3:
                     controls[entity_id]["ceiling_attempts"] = attempts
+                if settle_until := _safe_iso(raw.get("ceiling_settle_until")):
+                    controls[entity_id]["ceiling_settle_until"] = (
+                        settle_until.isoformat()
+                    )
                 if (
                     isinstance(target, (int, float))
                     and not isinstance(target, bool)
