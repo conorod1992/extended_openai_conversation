@@ -16,6 +16,50 @@ from ci.release_certification import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_all_genuine_dev_lanes_use_exact_native_fixtures():
+    for filename, job_name, step_name in (
+        (
+            "real-ha.yml",
+            "public-journeys",
+            "Run reviewed HA feature compatibility contract",
+        ),
+        (
+            "ha-browser-compatibility.yml",
+            "native-browser",
+            "Run one genuine native shell compatibility journey",
+        ),
+    ):
+        step = next(
+            step
+            for step in workflow(filename)["jobs"][job_name]["steps"]
+            if step.get("name") == step_name
+        )
+        assert step["env"]["HA_POINT"] == "${{ matrix.ha-version }}"
+        assert (
+            step["env"]["EXPECTED_HA_CORE_SHA"]
+            == "${{ needs.prepare.outputs.ha-core-sha }}"
+        )
+        assert (
+            'python ci/run_ha_dev_pytest.py --core-sha "$EXPECTED_HA_CORE_SHA"'
+            in step["run"]
+        )
+    steps = workflow("real-ha.yml")["jobs"]["upcoming"]["steps"]
+    fallback = next(
+        step
+        for step in steps
+        if step.get("name")
+        == "Run genuine Home Assistant acceptance tests against live fallback"
+    )
+    assert (
+        fallback["env"]["EXPECTED_HA_CORE_SHA"]
+        == "${{ needs.prepare.outputs.ha-core-sha }}"
+    )
+    assert (
+        'python ci/run_ha_dev_pytest.py --core-sha "${EXPECTED_HA_CORE_SHA:?}"'
+        in (ROOT / "ci/run_real_ha_upcoming_tests.sh").read_text()
+    )
+
+
 def workflow(filename):
     return yaml.safe_load(
         (ROOT / ".github/workflows" / filename).read_text(encoding="utf-8")
