@@ -32,6 +32,7 @@ from .model_catalog import (
     IncompatibleCatalogError,
     activate_catalog,
     all_reasoning_efforts,
+    catalog_generation,
     catalog_model_metadata,
     catalog_picker_models,
     catalog_reasoning_efforts,
@@ -177,6 +178,7 @@ class ModelCatalogManager:
         return {
             "source": "downloaded" if self.catalog is not None else "bundled",
             "catalog_version": active["catalog_version"],
+            "catalog_generation": catalog_generation(),
             "schema_version": active["schema_version"],
             "update_available": self.available_catalog is not None,
             "available_catalog_version": (
@@ -542,7 +544,7 @@ class ModelCatalogManager:
     {
         vol.Required("type"): WS_CATALOG,
         vol.Optional("action", default="lookup"): vol.In(
-            ("lookup", "check", "update", "apply", "reset")
+            ("status", "lookup", "check", "update", "apply", "reset")
         ),
         vol.Optional("model", default=""): vol.All(str, vol.Length(max=128)),
     }
@@ -554,6 +556,9 @@ async def websocket_catalog(
 ) -> None:
     """Expose the same capability data used by request validation."""
     manager: ModelCatalogManager = hass.data[DATA_MANAGER]
+    if msg["action"] == "status":
+        connection.send_result(msg["id"], manager.status())
+        return
     if msg["action"] in {"check", "update"}:
         status = await manager.async_check(force=True)
         if status["last_error"]:

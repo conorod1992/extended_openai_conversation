@@ -10,7 +10,6 @@ from homeassistant.exceptions import HomeAssistantError
 from .agent_config import function_tool_enabled
 from .const import (
     CONF_CONTINUE_CONVERSATION,
-    CONF_CONVERSATION_CONTINUITY,
     CONF_FUNCTION_GROUPS,
     CONF_KNOWLEDGE_ENABLED,
     CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
@@ -19,7 +18,6 @@ from .const import (
     CONF_TEMPORARY_MEMORY,
     CONTINUE_CONVERSATION_CONDITIONAL,
     DEFAULT_CONTINUE_CONVERSATION,
-    DEFAULT_CONVERSATION_CONTINUITY,
     DEFAULT_FUNCTION_GROUPS,
     DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     DEFAULT_MEMORY_AUTO_RETRIEVE_LIMIT,
@@ -28,7 +26,6 @@ from .const import (
     FUNCTION_GROUP_LOADER_TOOL_NAME,
     TEMPORARY_MEMORY_OFF,
 )
-from .continuity import ConversationContinuity
 from .function_groups import assemble_function_tools
 from .guest_mode import async_get_guest_mode, resolve_guest_policy
 from .ha_llm_tools import ToolSnapshot, async_discover, is_ha_tool
@@ -48,7 +45,6 @@ from .request import (
     canonical_json,
     format_function_tools,
 )
-from .scope import user_scope
 from .skill_runtime_availability import effective_tool_runtime_scope
 from .skills import SkillManager
 from .temporary_memory import (
@@ -109,17 +105,11 @@ async def async_preview_effective_request(
     ]
     temporary = get_loaded_temporary_memory(hass, entry.entry_id, subentry.subentry_id)
     temporary_mode = options.get(CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY)
-    scope = user_scope(user_id, source="management_preview")
-    temporary_scope, _label = ConversationContinuity.identity_key(
-        options.get(CONF_CONVERSATION_CONTINUITY, DEFAULT_CONVERSATION_CONTINUITY),
-        scope,
-        None,
-    )
-    if (
-        temporary_mode != TEMPORARY_MEMORY_OFF
-        and temporary_scope is not None
-        and guest_policy.temporary_memory
-    ):
+    # Temporary Memory is authorized by its retained owner, independently of
+    # Assist continuity. A preview has no conversation/device ID, but does know
+    # the authenticated Personal owner whose context a fresh request can use.
+    temporary_scope = f"user:{user_id}"
+    if temporary_mode != TEMPORARY_MEMORY_OFF and guest_policy.temporary_memory:
         temporary_memories = (
             await temporary.async_active_snapshot(
                 temporary_scope, owner_scope_id=f"user:{user_id}"
@@ -135,8 +125,7 @@ async def async_preview_effective_request(
         )
     elif temporary_mode != TEMPORARY_MEMORY_OFF:
         notes.append(
-            "Active temporary memories are excluded because a fresh device or "
-            "conversation scope cannot be identified without a request."
+            "Active temporary memories are excluded by the current Guest Mode policy."
         )
 
     skill_manager = SkillManager.get_loaded_instance()
@@ -231,9 +220,7 @@ async def async_preview_effective_request(
             options,
             configured_names,
             memory_scope_available=memory_enabled(options),
-            temporary_scope_available=(
-                temporary_mode != TEMPORARY_MEMORY_OFF and temporary_scope is not None
-            ),
+            temporary_scope_available=(temporary_mode != TEMPORARY_MEMORY_OFF),
             knowledge_available=knowledge_available,
             guest_policy=guest_policy,
         )

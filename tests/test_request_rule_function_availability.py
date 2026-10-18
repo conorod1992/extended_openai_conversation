@@ -7,8 +7,12 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from custom_components.extended_openai_conversation_responses import (
+    conversation as conversation_module,
+)
 from custom_components.extended_openai_conversation_responses.conversation import (
     ExtendedOpenAIAgentEntity,
+    _function_group_execution_signature,
 )
 from homeassistant.exceptions import HomeAssistantError
 
@@ -35,6 +39,17 @@ def _group(*, enabled: bool) -> dict:
     }
 
 
+def test_function_group_presentation_edits_do_not_invalidate_pending_calls() -> None:
+    before = _group(enabled=True)
+    after = {**before, "name": "Renamed", "description": "Updated help text"}
+    assert _function_group_execution_signature(
+        before
+    ) == _function_group_execution_signature(after)
+    assert _function_group_execution_signature(
+        before
+    ) != _function_group_execution_signature({**after, "functions": []})
+
+
 def _agent(current_tools: list[dict], groups: list[dict]):
     latest_data = {"function_groups": groups}
     latest_subentry = SimpleNamespace(data=latest_data)
@@ -47,7 +62,7 @@ def _agent(current_tools: list[dict], groups: list[dict]):
     agent.subentry = SimpleNamespace(subentry_id="agent-1", data={})
     agent._configured_function_tools_from_data = Mock(return_value=current_tools)
     agent._execute_function_tool = AsyncMock(
-        return_value=SimpleNamespace(tool_result={"result": ""})
+        side_effect=lambda *_args: SimpleNamespace(tool_result={"result": ""})
     )
     agent._get_exposed_entities = Mock(return_value=[])
     return agent
@@ -72,13 +87,29 @@ async def test_request_rule_rejects_tool_in_disabled_group() -> None:
 async def test_request_rule_uses_latest_configured_definition() -> None:
     current = _tool(service="notify.current")
     agent = _agent([current], [_group(enabled=True)])
+    observed = []
 
-    await ExtendedOpenAIAgentEntity._async_execute_request_rule_function(
-        agent,
-        "notify",
-        {},
-        None,
+    async def execute(*args):
+        observed.append(conversation_module._ACTIVE_FUNCTION_CONFIG.get())
+        return SimpleNamespace(tool_result={"result": ""})
+
+    agent._execute_function_tool.side_effect = execute
+    outer = conversation_module._ACTIVE_FUNCTION_CONFIG.set(
+        ([{"spec": {"name": "outer"}}], [])
     )
+
+    try:
+        await ExtendedOpenAIAgentEntity._async_execute_request_rule_function(
+            agent, "notify", {}, None
+        )
+        assert observed[0][0] == [current]
+        assert observed[0][1] == [_group(enabled=True)]
+        assert (
+            conversation_module._ACTIVE_FUNCTION_CONFIG.get()[0][0]["spec"]["name"]
+            == "outer"
+        )
+    finally:
+        conversation_module._ACTIVE_FUNCTION_CONFIG.reset(outer)
 
     agent._execute_function_tool.assert_awaited_once()
     assert agent._execute_function_tool.await_args.args[0] == current

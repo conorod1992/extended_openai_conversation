@@ -15,8 +15,8 @@ from aiohttp import web
 import pytest
 
 from tests_real_ha.test_release_upgrade_acceptance import (
-    DOMAIN,
     _STATE_FILE as UPGRADE_STATE_FILE,
+    DOMAIN,
     _assert_child_ok as assert_upgrade_child_ok,
     _conversation_subentry as conversation_subentry,
     _exercise_public_conversation as exercise_public_conversation,
@@ -82,6 +82,8 @@ async def _model_catalog_result(hass: Any, message: dict[str, Any]) -> dict[str,
 
     manager: ModelCatalogManager = hass.data[DATA_MANAGER]
     action = str(message.get("action", "lookup"))
+    if action == "status":
+        return manager.status()
     if action == "update":
         status = await manager.async_update(force=True)
         if status["last_error"]:
@@ -104,7 +106,9 @@ async def _model_catalog_result(hass: Any, message: dict[str, Any]) -> dict[str,
     }
 
 
-async def _start_management_bridge(hass: Any, user_id: str) -> tuple[web.AppRunner, str]:
+async def _start_management_bridge(
+    hass: Any, user_id: str
+) -> tuple[web.AppRunner, str]:
     """Expose candidate WebSocket-backed UI calls to the shipped browser fixture."""
     from custom_components.extended_openai_conversation_responses.management_ui import (
         async_management_command,
@@ -134,7 +138,7 @@ async def _start_management_bridge(hass: Any, user_id: str) -> tuple[web.AppRunn
     await runner.setup()
     site = web.TCPSite(runner, "127.0.0.1", 0)
     await site.start()
-    sockets = getattr(site._server, "sockets", None)  # noqa: SLF001 - test socket
+    sockets = getattr(site._server, "sockets", None)
     assert sockets, "browser upgrade management bridge did not bind"
     port = sockets[0].getsockname()[1]
     return runner, f"http://127.0.0.1:{port}/callws"
@@ -166,7 +170,9 @@ async def _run_playwright(backend_url: str, expected_title: str, model: str) -> 
     async with asyncio.timeout(150):
         stdout, _ = await process.communicate()
     output = stdout.decode("utf-8", errors="replace")
-    assert process.returncode == 0, f"browser-visible upgrade Playwright failed:\n{output}"
+    assert process.returncode == 0, (
+        f"browser-visible upgrade Playwright failed:\n{output}"
+    )
 
 
 async def _browser_candidate_phase(hass: Any, config_dir: Path) -> None:
@@ -223,7 +229,9 @@ async def _browser_restart_phase(hass: Any, config_dir: Path) -> None:
     await hass.async_block_till_done()
     assert entry.state is ConfigEntryState.LOADED
     assert entry.entry_id == state["entry_id"]
-    assert entry.version == const.CONFIG_ENTRY_VERSION == state["candidate_entry_version"]
+    assert (
+        entry.version == const.CONFIG_ENTRY_VERSION == state["candidate_entry_version"]
+    )
 
     subentry = conversation_subentry(entry)
     assert subentry.subentry_id == state["subentry_id"]

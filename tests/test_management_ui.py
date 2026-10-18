@@ -113,10 +113,11 @@ async def test_effective_request_preview_covers_discovery_guest_filters_and_note
         management_request_preview, "async_get_guest_mode", AsyncMock(return_value=manager)
     )
     monkeypatch.setattr(management_request_preview, "get_loaded_temporary_memory", lambda *_: None)
+    temporary_snapshot = AsyncMock(return_value=[])
     monkeypatch.setattr(
         management_request_preview,
         "async_read_temporary_memory_snapshot",
-        AsyncMock(return_value=[]),
+        temporary_snapshot,
     )
     monkeypatch.setattr(management_request_preview.SkillManager, "get_loaded_instance", lambda: None)
     monkeypatch.setattr(management_request_preview, "get_loaded_knowledge", lambda *_: None)
@@ -178,11 +179,15 @@ async def test_effective_request_preview_covers_discovery_guest_filters_and_note
     assert trusted["prompt"] == "prompt"
     assert not any(note.startswith("Query-derived") for note in trusted["notes"])
     discover.assert_awaited_once()
+    temporary_snapshot.assert_awaited_once_with(
+        hass, entry.entry_id, subentry.subentry_id, "user:user", owner_scope_id="user:user"
+    )
 
     guest_policy = GuestCapabilityPolicy(
         True,
         readable_entity_ids=frozenset({"sensor.allowed"}),
         configured_tool_names=frozenset({"allowed"}),
+        temporary_memory=False,
     )
     groups = [
         {"id": "public", "guest_allowed": True, "functions": ["allowed", "blocked"]},
@@ -204,16 +209,11 @@ async def test_effective_request_preview_covers_discovery_guest_filters_and_note
             {"entity_id": "sensor.private"},
         ],
     )
-    monkeypatch.setattr(
-        management_request_preview.ConversationContinuity,
-        "identity_key",
-        lambda *_args: (None, "none"),
-    )
-
     guest = await management_request_preview.async_preview_effective_request(
         hass, entry, subentry, options, "user"
     )
     assert any("temporary memories are excluded" in note for note in guest["notes"])
+    assert temporary_snapshot.await_count == 1, "Guest policy excludes owner memory reads"
     assert discover.await_count == 1
 
     monkeypatch.setattr(

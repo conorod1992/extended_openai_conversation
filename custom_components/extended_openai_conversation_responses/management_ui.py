@@ -159,6 +159,7 @@ from .management_request_preview import (
     entry_and_agent,
 )
 from .memory import ANONYMOUS_USER_ID, async_get_memory
+from .model_catalog import active_catalog_version, catalog_generation
 from .regex_execution import async_process_speech_text
 from .request_rule_match_preview import async_request_rule_match_preview
 from .request_rule_packs import (
@@ -218,8 +219,6 @@ def _cached_configuration_options() -> dict[str, list[dict[str, Any]]]:
 
 
 def _configuration_defaults() -> dict[str, Any]:
-    from .model_catalog import catalog_generation
-
     return deepcopy(_cached_configuration_defaults(catalog_generation()))
 
 
@@ -234,8 +233,6 @@ def _cached_model_capabilities(model: str, generation: int = 0) -> dict[str, Any
 
 
 def _configuration_model_capabilities(model: str) -> dict[str, Any]:
-    from .model_catalog import catalog_generation
-
     return deepcopy(_cached_model_capabilities(model, catalog_generation()))
 
 
@@ -3051,6 +3048,12 @@ async def _async_management_request(
     with management_function_tools(section):
         result = await handler(request)
     handler_ms = _elapsed_ms(handler_started) if handler_started is not None else None
+
+    if isinstance(result.get("config"), dict):
+        # Effective defaults and capabilities depend on installation-wide data,
+        # independently of the persisted assistant's configuration revision.
+        result["catalog_generation"] = catalog_generation()
+        result["catalog_version"] = active_catalog_version()
 
     if configuration_action is not None:
         decoration_started = perf_counter()

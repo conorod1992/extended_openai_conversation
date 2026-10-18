@@ -136,9 +136,9 @@ async def _schedule_delayed_call(
     function_tool = next(
         tool for tool in configured if tool["spec"]["name"] == _TOOL_NAME
     )
-    before = set(manager._records)  # noqa: SLF001 - acceptance state boundary
+    before = set(manager._records)
 
-    result = await agent._execute_function_tool(  # noqa: SLF001
+    result = await agent._execute_function_tool(
         function_tool,
         llm.ToolInput(
             id=call_id,
@@ -163,21 +163,19 @@ async def _schedule_delayed_call(
     )
 
     assert tool_result_data(result) == {"result": "Scheduled"}
-    created = set(manager._records) - before  # noqa: SLF001
+    created = set(manager._records) - before
     assert len(created) == 1
     delayed_call_id = created.pop()
-    record = manager._records[delayed_call_id]  # noqa: SLF001
+    record = manager._records[delayed_call_id]
     assert record.status == "pending"
     assert record.user_id == user.id
     assert record.device_id == _DEVICE_ID
     return delayed_call_id
 
 
-async def _cancel_wall_clock_waiter(
-    manager: DelayedToolManager, call_id: str
-) -> None:
+async def _cancel_wall_clock_waiter(manager: DelayedToolManager, call_id: str) -> None:
     """Remove only the 30-second timer while preserving its durable pending record."""
-    task = manager._tasks.get(call_id)  # noqa: SLF001
+    task = manager._tasks.get(call_id)
     if task is not None and not task.done():
         # Let the production waiter enter _async_wait_and_execute() before cancelling
         # the artificial wall-clock sleep. A task cancelled before its first turn can
@@ -187,8 +185,8 @@ async def _cancel_wall_clock_waiter(
         task.cancel()
         with suppress(asyncio.CancelledError):
             await task
-    assert call_id not in manager._tasks  # noqa: SLF001
-    assert manager._records[call_id].status == "pending"  # noqa: SLF001
+    assert call_id not in manager._tasks
+    assert manager._records[call_id].status == "pending"
 
 
 async def _execute_due_under_production_lease(
@@ -197,17 +195,14 @@ async def _execute_due_under_production_lease(
     call_id: str,
 ) -> None:
     """Bypass wall time only; retain the scheduler's real shared maintenance lease."""
-    record = manager._records[call_id]  # noqa: SLF001
-    gate = get_agent_maintenance_gate(hass, record.entry_id, record.subentry_id)
-    async with gate.shared():
-        retry = await manager._async_execute_due(call_id)  # noqa: SLF001
+    retry = await manager._async_execute_due(call_id)
     assert retry is False
 
 
 async def _wait_for_writer(gate: Any) -> None:
     """Yield until the restore task is genuinely queued behind an active reader."""
     for _ in range(100):
-        if gate._waiting_writers:  # noqa: SLF001 - acceptance synchronization point
+        if gate._waiting_writers:
             return
         await asyncio.sleep(0)
     pytest.fail("backup restore never queued for the agent maintenance gate")
@@ -241,7 +236,7 @@ async def test_restore_wins_collision_and_due_tool_uses_restored_configuration(
         "call-restore-wins-collision",
     )
     await _cancel_wall_clock_waiter(manager, call_id)
-    record = manager._records[call_id]  # noqa: SLF001
+    record = manager._records[call_id]
     gate = get_agent_maintenance_gate(hass, record.entry_id, record.subentry_id)
 
     restore_entered = asyncio.Event()
@@ -253,7 +248,7 @@ async def test_restore_wins_collision_and_due_tool_uses_restored_configuration(
         async with original_exclusive():
             # Pause only after the production gate has genuinely granted the writer
             # lease. This avoids depending on backup internals as synchronization hooks.
-            assert gate._writer_active is True  # noqa: SLF001
+            assert gate._writer_active is True
             restore_entered.set()
             await release_restore.wait()
             yield
@@ -274,7 +269,7 @@ async def test_restore_wins_collision_and_due_tool_uses_restored_configuration(
     # The exclusive restore lease must keep the already-due action completely out;
     # neither service dispatch nor its durable execution boundary may begin early.
     assert not due_task.done()
-    assert manager._records[call_id].status == "pending"  # noqa: SLF001
+    assert manager._records[call_id].status == "pending"
     assert calls == []
 
     release_restore.set()
@@ -284,7 +279,7 @@ async def test_restore_wins_collision_and_due_tool_uses_restored_configuration(
     await hass.async_block_till_done()
 
     assert calls == []
-    assert call_id not in manager._records  # noqa: SLF001
+    assert call_id not in manager._records
 
     live_entry = hass.config_entries.async_get_entry(agent.entry.entry_id)
     assert live_entry is not None
@@ -316,12 +311,12 @@ async def test_due_tool_wins_collision_and_restore_waits_for_exactly_once_comple
         "call-delayed-wins-collision",
     )
     await _cancel_wall_clock_waiter(manager, call_id)
-    record = manager._records[call_id]  # noqa: SLF001
+    record = manager._records[call_id]
     gate = get_agent_maintenance_gate(hass, record.entry_id, record.subentry_id)
 
     delayed_entered = asyncio.Event()
     release_delayed = asyncio.Event()
-    original_execute = agent._execute_function_tool  # noqa: SLF001
+    original_execute = agent._execute_function_tool
 
     async def blocking_delayed_execute(
         function_tool: dict[str, Any],
@@ -331,7 +326,7 @@ async def test_due_tool_wins_collision_and_restore_waits_for_exactly_once_comple
     ) -> Any:
         if getattr(llm_context, "_extended_openai_delayed_execution", False):
             # _async_execute_due is called only inside the scheduler's shared lease.
-            assert gate._active_readers > 0  # noqa: SLF001
+            assert gate._active_readers > 0
             delayed_entered.set()
             await release_delayed.wait()
         return await original_execute(
@@ -347,7 +342,7 @@ async def test_due_tool_wins_collision_and_restore_waits_for_exactly_once_comple
         _execute_due_under_production_lease(hass, manager, call_id)
     )
     await delayed_entered.wait()
-    assert manager._records[call_id].status == "executing"  # noqa: SLF001
+    assert manager._records[call_id].status == "executing"
     assert calls == []
 
     restore_task = asyncio.create_task(
@@ -367,7 +362,7 @@ async def test_due_tool_wins_collision_and_restore_waits_for_exactly_once_comple
     assert len(calls) == 1
     assert calls[0].data["entity_id"] == [_ENTITY_ID]
     assert calls[0].context.user_id == user.id
-    assert call_id not in manager._records  # noqa: SLF001
+    assert call_id not in manager._records
 
     restored = await restore_task
     assert restored["status"] == "restored"
@@ -376,7 +371,7 @@ async def test_due_tool_wins_collision_and_restore_waits_for_exactly_once_comple
     # The restore may refresh/reload the live entity, but it cannot retroactively
     # replay the delayed record or duplicate the already-completed external action.
     assert len(calls) == 1
-    assert manager._records == {}  # noqa: SLF001
+    assert manager._records == {}
     live_entry = hass.config_entries.async_get_entry(agent.entry.entry_id)
     assert live_entry is not None
     assert live_entry.subentries[subentry.subentry_id].title == _RESTORED_TITLE

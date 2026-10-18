@@ -190,6 +190,8 @@ jobs:
           python -c 'from importlib.metadata import version; print("HA_POINT=" + __import__("os").environ["HA_POINT"] + " HA_VERSION=" + version("homeassistant"))'
       - name: Run reviewed HA feature compatibility contract
         env:
+          HA_POINT: ${{ matrix.ha-version }}
+          EXPECTED_HA_CORE_SHA: ${{ needs.prepare.outputs.ha-core-sha }}
           PYTHONPATH: ${{ github.workspace }}
           STRESS_CAMPAIGN: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && matrix.ha-version == 'oldest' && 'minimum-ha-features' || 'public-version-journeys' }}
           STRESS_ARTIFACT_DIR: compatibility-evidence
@@ -205,7 +207,11 @@ jobs:
           fi
           # Newer HA Core aliases httpx during initialization. Import Core
           # before pytest autoloads plugins that may import httpx first.
-          python -c 'import homeassistant, pytest; raise SystemExit(pytest.main())' "${TEST_PATHS[@]}" -v --asyncio-mode=auto --timeout=600 --tb=short
+          RUNNER=(python -c 'import homeassistant, pytest; raise SystemExit(pytest.main())')
+          if [[ "$HA_POINT" == dev ]]; then
+            RUNNER=(python ci/run_ha_dev_pytest.py --core-sha "$EXPECTED_HA_CORE_SHA")
+          fi
+          "${RUNNER[@]}" "${TEST_PATHS[@]}" -v --asyncio-mode=auto --timeout=600 --tb=short
       - name: Require every compatibility case to pass
         if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         env:
@@ -561,6 +567,7 @@ jobs:
             -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace \
             -e PYTHONPATH=/workspace \
+            -e EXPECTED_HA_CORE_SHA="${{ needs.prepare.outputs.ha-core-sha }}" \
             "$HA_DEV_IMAGE" \
             bash ci/run_prebuilt_ha_dev.sh upcoming
 
@@ -653,6 +660,7 @@ jobs:
         if: steps.dev-image.outputs.available != 'true'
         env:
           PYTHONPATH: ${{ github.workspace }}
+          EXPECTED_HA_CORE_SHA: ${{ needs.prepare.outputs.ha-core-sha }}
         run: bash ci/run_real_ha_upcoming_tests.sh
 
       - name: Upload acceptance diagnostics

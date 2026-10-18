@@ -300,7 +300,16 @@ function bindSaveBar(panel) {
 export function bindConfiguration(panel) {
   const root = panel.shadowRoot;
   if (root.querySelector("#local-intent-list")) ensureCompactChoiceStyle(panel);
-  bindModelDataControls(panel, (message) => { readConfig(panel); panel._render(); panel._toast(message); });
+  bindModelDataControls(panel, async (message, action) => {
+    readConfig(panel);
+    if (["apply", "reset"].includes(action)) {
+      // The catalogue callback invalidates the effective baseline. Refresh it
+      // through the normal draft merger, retaining unrelated unsaved edits.
+      await panel._loadConfigDraft?.();
+    }
+    panel._render();
+    panel._toast(message);
+  });
   bindHelp(panel);
   bindSaveBar(panel);
   bindConfigurationInputs(panel);

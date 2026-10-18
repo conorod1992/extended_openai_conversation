@@ -9,6 +9,7 @@ globalThis.HTMLElement = class { attachShadow() { this.shadowRoot = {hasChildNod
 globalThis.customElements = {define() {}, get() {}, whenDefined() { return Promise.resolve(); }};
 
 const {ExtendedOpenAIManagementPanel} = await import("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js");
+const {renderExposedAttributeSettings, bindExposedAttributeSettings} = await import("../custom_components/extended_openai_conversation_responses/frontend/exposed-attributes-ui.js");
 const {bindTools, openTool} = await import("../custom_components/extended_openai_conversation_responses/frontend/agent-config-tools-base.js");
 const {bindConfiguration} = await import("../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-base.js");
 const {updateConfigurationControl} = await import("../custom_components/extended_openai_conversation_responses/frontend/configuration-inputs.js");
@@ -31,6 +32,18 @@ class Control extends TestEventTarget {
 }
 
 const tool = (name) => ({spec:{name, description:"Test tool", parameters:{type:"object", properties:{}}}, function:{type:"template", value_template:"ok"}});
+
+test("warm Prompt navigation loads absent metadata through the real request lifecycle", async () => {
+  const {host} = panel();
+  delete host._configData.exposed_attribute_catalog;
+  host._hass = {callWS: async message => {
+    assert.equal(message.action, "live_metadata");
+    return {exposed_attribute_catalog:{entities:[{entity_id:"light.current"}]}};
+  }};
+  await host._loadSectionData();
+  await Promise.all([...host._eocLiveMetadataPending.values()].map(record => record.promise));
+  assert.deepEqual(host._result.exposed_attribute_catalog.entities, [{entity_id:"light.current"}]);
+});
 
 function panel() {
   const host = new ExtendedOpenAIManagementPanel();
@@ -143,6 +156,144 @@ for (const kind of ["function", "group"]) {
     assert.equal(host._configDirty, false);
   });
 }
+
+test("revisiting prompt context refreshes HA-owned Assist exposure metadata", async () => {
+  const {host} = panel();
+  host._viewKey = () => "assistant/prompt-context";
+  host._loadToken = 7;
+  host._configData.exposed_attribute_catalog = {entities:[{entity_id:"light.old"}]};
+  host._result = host._configData;
+  host._eocLiveMetadataCache = new Map([["exposed_attribute_catalog", {
+    agentId:"a", epoch:0, revision:"r1", value:{entities:[{entity_id:"light.old"}]},
+  }]]);
+  host._eocDirtyConfigKeys = new Set();
+  let reads = 0;
+  host._call = async (section, action, data) => {
+    reads++;
+    assert.equal(section, "configuration");
+    assert.equal(action, "live_metadata");
+    assert.deepEqual(data.metadata_keys, ["exposed_attribute_catalog"]);
+    return {exposed_attribute_catalog:{entities:[{entity_id:"light.new"}]}};
+  };
+  await host._loadConfigurationLiveMetadata("assistant/prompt-context");
+  assert.equal(Object.hasOwn(host._draft, "exposed_attribute_catalog"), false,
+    "live Assist metadata must stay outside the persistable configuration draft");
+  assert.equal(host._eocDirtyConfigKeys.has("exposed_attribute_catalog"), false,
+    "refreshing read-only metadata must not add an invalid configuration save field");
+  assert.deepEqual(host._configData.exposed_attribute_catalog.entities.map(item => item.entity_id), ["light.new"]);
+  assert.deepEqual(host._result.exposed_attribute_catalog.entities.map(item => item.entity_id), ["light.new"]);
+  await host._loadConfigurationLiveMetadata("assistant/prompt-context");
+  assert.equal(reads, 1, "re-rendering the current visit must not fetch exposure twice");
+  host._loadToken++;
+  await host._loadConfigurationLiveMetadata("assistant/prompt-context");
+  assert.equal(reads, 2, "a new visit still refreshes HA-owned exposure metadata");
+});
+
+for (const oldFirst of [false, true]) {
+  test(`exposure reads from an abandoned visit cannot be adopted on return (${oldFirst ? "old" : "new"} response first)`, async () => {
+    const {host} = panel();
+    let view = "assistant/prompt-context";
+    host._viewKey = () => view;
+    host._loadToken = 1;
+    host._result = host._configData;
+    const baseline = host._configData.exposed_attribute_catalog;
+    const reads = [];
+    host._call = () => { const read = deferred(); reads.push(read); return read.promise; };
+    const old = host._loadConfigurationLiveMetadata(view);
+    view = "assistant/basics"; host._loadToken++;
+    view = "assistant/prompt-context"; host._loadToken++;
+    const fresh = host._loadConfigurationLiveMetadata(view);
+    const coalesced = host._loadConfigurationLiveMetadata(view);
+    assert.equal(reads.length, 2, "a new visit must dispatch a new request while coalescing reads within the visit");
+    const result = entity => ({exposed_attribute_catalog:{entities:[{entity_id:entity}]}});
+    if (oldFirst) {
+      reads[0].resolve(result("light.obsolete")); await old;
+      assert.equal(host._configData.exposed_attribute_catalog, baseline);
+      assert.equal(host._eocLiveMetadataCache.has("exposed_attribute_catalog"), false);
+      assert.equal(host._eocLiveMetadataPending.size, 1);
+    }
+    reads[1].resolve(result("light.current")); await Promise.all([fresh, coalesced]);
+    if (!oldFirst) { reads[0].resolve(result("light.obsolete")); await old; }
+    assert.equal(host._configData.exposed_attribute_catalog.entities[0].entity_id, "light.current");
+    assert.equal(host._eocLiveMetadataCache.get("exposed_attribute_catalog").value.entities[0].entity_id, "light.current");
+    assert.equal(host._eocLiveMetadataPending.size, 0);
+  });
+}
+
+test("a background restore cannot discard another agent's pending Overview", async () => {
+  const {host} = panel();
+  host._data.agents.push({entry_id:"e", subentry_id:"b"});
+  host._agentId = "b"; host._page = "overview"; host._subsection = "";
+  host._viewKey = () => "overview";
+  host._result = null;
+  host._sectionCache.set("a|overview", {obsolete:true});
+  host._eocLiveMetadataPending = new Map([["exposed_attribute_catalog", {agentId:"b", promise:Promise.resolve()}]]);
+  const read = deferred(), started = deferred();
+  host._call = () => { started.resolve(); return read.promise; };
+  const loading = host._loadSectionData(); await started.promise;
+  host._invalidateAfterMutation("a", "backup", "restore");
+  assert.equal(host._sectionCache.has("a|overview"), false);
+  assert.equal(host._eocLiveMetadataPending.get("exposed_attribute_catalog").agentId, "b");
+  read.resolve({agent:{subentry_id:"b"}, title:"Agent B overview", usage:{}});
+  await loading;
+  assert.equal(host._result?.title, "Agent B overview");
+  assert.equal(host._busy, false);
+});
+
+test("a mutation that supersedes the current Overview automatically retries its read", async () => {
+  const {host} = panel(); host._viewKey = () => "overview";
+  host._page = "overview"; host._subsection = "";
+  host._result = null;
+  const first = deferred(), second = deferred(), retried = deferred(); let reads = 0;
+  host._call = () => {
+    if (++reads === 1) return first.promise;
+    retried.resolve(); return second.promise;
+  };
+  const loading = host._loadSectionData();
+  host._invalidateAfterMutation("a", "backup", "restore");
+  first.resolve({obsolete:true}); await loading; await retried.promise;
+  second.resolve({title:"Fresh Overview", usage:{}});
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(host._result?.title, "Fresh Overview");
+  assert.equal(host._busy, false);
+  assert.equal(reads, 2);
+});
+
+test("a failed exposure refresh labels retained metadata and can retry without changing the draft", async () => {
+  const {host} = panel();
+  host._loadToken = 1;
+  const catalog = {entities:[{entity_id:"light.old", name:"Old", reference:"old", durable_selection_available:true}]};
+  host._configData.exposed_attribute_catalog = catalog;
+  const draft = structuredClone(host._draft);
+  let reads = 0;
+  host._call = async () => {
+    if (++reads === 1) throw new Error("Metadata unavailable");
+    return {exposed_attribute_catalog:{entities:[]}};
+  };
+  await host._loadConfigurationLiveMetadata();
+  assert.equal(host._configData.exposed_attribute_catalog, catalog);
+  assert.match(renderExposedAttributeSettings(host), /Unable to refresh Assist exposure/);
+  assert.match(renderExposedAttributeSettings(host), /last known/i);
+  const retry = new Control("retry");
+  host.shadowRoot.querySelector = selector => selector === "[data-retry-exposed-catalog]" ? retry : null;
+  bindExposedAttributeSettings(host);
+  await retry.emit("click");
+  assert.equal(reads, 2);
+  assert.deepEqual(host._configData.exposed_attribute_catalog.entities, []);
+  assert.doesNotMatch(renderExposedAttributeSettings(host), /Unable to refresh Assist exposure/);
+  assert.deepEqual(host._draft, draft);
+});
+
+test("an abandoned exposure failure cannot mark a newer visit as failed", async () => {
+  const {host} = panel(); host._loadToken = 1;
+  const old = deferred(); let reads = 0;
+  host._call = () => ++reads === 1 ? old.promise : Promise.resolve({exposed_attribute_catalog:{entities:[]}});
+  const loading = host._loadConfigurationLiveMetadata();
+  host._loadToken++;
+  await host._loadConfigurationLiveMetadata();
+  old.reject(new Error("Obsolete failure")); await loading;
+  assert.doesNotMatch(renderExposedAttributeSettings(host), /Unable to refresh Assist exposure/);
+});
 
 for (const change of ["agent", "entry", "route", "token", "generation", "revision", "full acknowledgement", "partial acknowledgement"]) {
   test(`stale refresh cannot overwrite a newer ${change}`, async () => {

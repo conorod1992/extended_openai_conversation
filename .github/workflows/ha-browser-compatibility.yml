@@ -139,7 +139,13 @@ jobs:
           RUN_REAL_HA_BROWSER_COMPATIBILITY: "1"
           HA_POINT: ${{ matrix.ha-version }}
           PYTHONPATH: ${{ github.workspace }}
-        run: python -c 'import homeassistant, pytest; raise SystemExit(pytest.main())' tests_real_ha/test_browser_compatibility_acceptance.py -v -s --asyncio-mode=auto --timeout=300 --tb=short
+          EXPECTED_HA_CORE_SHA: ${{ needs.prepare.outputs.ha-core-sha }}
+        run: |
+          RUNNER=(python -c 'import homeassistant, pytest; raise SystemExit(pytest.main())')
+          if [[ "$HA_POINT" == dev ]]; then
+            RUNNER=(python ci/run_ha_dev_pytest.py --core-sha "$EXPECTED_HA_CORE_SHA")
+          fi
+          "${RUNNER[@]}" tests_real_ha/test_browser_compatibility_acceptance.py -v -s --asyncio-mode=auto --timeout=300 --tb=short
       - name: Require native browser execution evidence
         if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         env:

@@ -1,6 +1,152 @@
 import {expect, test} from "@playwright/test";
 import {acceptConfirmation, browserToolYaml, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
+for (const localEdit of [false, true]) test(`background restore refreshes its agent's mounted configuration editor (local edit: ${localEdit})`, async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("usage-maintenance/backup-restore"));
+  const panel = page.locator("extended-openai-management-panel");
+  await panel.locator("#transfer-export-mode").selectOption("full");
+  const download = page.waitForEvent("download");
+  await panel.locator("#create-backup-transfer").click();
+  const path = await (await download).path();
+  await panel.evaluate(host => host._navigate("assistant", "basics"));
+  await panel.locator('[data-config="__title"]').fill("Saved after backup");
+  await panel.getByRole("button", {name:"Save changes", exact:true}).click();
+  await expect(panel.getByText("Unsaved changes", {exact:true})).toHaveCount(0);
+  await panel.evaluate(host => host._navigate("usage-maintenance", "backup-restore"));
+  await panel.locator("#backup-file-transfer").setInputFiles(path);
+  await expect(panel.locator("#restore-transfer-apply")).toBeEnabled();
+  await page.evaluate(() => {
+    const original = browserHarness.hass.callWS.bind(browserHarness.hass);
+    browserHarness.hass.callWS = async message => {
+      if (message.action === "import_restore") {
+        window.restoreStarted = true;
+        await new Promise(resolve => { window.releaseBackgroundRestore = resolve; });
+      }
+      return original(message);
+    };
+  });
+  await panel.locator("#restore-transfer-apply").click();
+  await acceptConfirmation(panel);
+  await expect.poll(() => page.evaluate(() => window.restoreStarted)).toBe(true);
+  await panel.evaluate(host => host._navigate("assistant", "basics"));
+  await expect(panel.locator('[data-config="__title"]')).toHaveValue("Saved after backup");
+  if (localEdit) await panel.locator('[data-config="__title"]').fill("New local title");
+  await page.evaluate(() => window.releaseBackgroundRestore());
+  await expect.poll(() => panel.evaluate(host => host._backupRestoreOperations.size)).toBe(0);
+  await expect(panel.locator('[data-config="__title"]')).toHaveValue(localEdit ? "New local title" : "Jarvis");
+  expect(await panel.evaluate(host => host._configData.title)).toBe("Jarvis");
+  expect(await panel.evaluate(host => Boolean(host._configDirty))).toBe(localEdit);
+  await expectHarnessClean(page, errors);
+});
+
+test("agent A restore completion preserves agent B's pending Overview", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("usage-maintenance/backup-restore", "&agents=2"));
+  const panel = page.locator("extended-openai-management-panel");
+  await panel.locator("#transfer-export-mode").selectOption("full");
+  const download = page.waitForEvent("download");
+  await panel.locator("#create-backup-transfer").click();
+  const path = await (await download).path();
+  await panel.locator("#backup-file-transfer").setInputFiles(path);
+  await expect(panel.locator("#restore-transfer-apply")).toBeEnabled();
+  await page.evaluate(() => {
+    const original = browserHarness.hass.callWS.bind(browserHarness.hass);
+    window.pendingOverviewB = [];
+    browserHarness.hass.callWS = async message => {
+      const result = await original(message);
+      if (message.action === "import_restore") {
+        window.restoreCommitted = true;
+        await new Promise(resolve => { window.releaseRestoreA = resolve; });
+      }
+      if (message.section === "overview" && message.action === "primary" && message.subentry_id === "scale-agent-1") {
+        await new Promise(resolve => pendingOverviewB.push(resolve));
+        return {...result, reviewAgentBOverview:true};
+      }
+      return result;
+    };
+  });
+  await panel.locator("#restore-transfer-apply").click();
+  await acceptConfirmation(panel);
+  await expect.poll(() => page.evaluate(() => window.restoreCommitted)).toBe(true);
+  await panel.evaluate(host => host._navigate("overview"));
+  await panel.locator("#agent").selectOption("scale-agent-1");
+  await expect.poll(() => page.evaluate(() => pendingOverviewB.length)).toBeGreaterThan(0);
+  await page.evaluate(() => window.releaseRestoreA());
+  await expect.poll(() => panel.evaluate(host => host._backupRestoreOperations.size)).toBe(0);
+  await page.evaluate(() => pendingOverviewB.splice(0).forEach(resolve => resolve()));
+  await expect.poll(() => panel.evaluate(host => host._result?.reviewAgentBOverview === true && !host._busy)).toBe(true);
+  await expect(panel.locator("#agent")).toHaveValue("scale-agent-1");
+  await expectHarnessClean(page, errors);
+});
+
+test("Escape cannot hide a committed restore's completion or refreshed configuration", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("usage-maintenance/backup-restore"));
+  const panel = page.locator("extended-openai-management-panel");
+  await panel.locator("#transfer-export-mode").selectOption("full");
+  const downloading = page.waitForEvent("download");
+  await panel.locator("#create-backup-transfer").click();
+  const path = await (await downloading).path();
+  await panel.evaluate(host => host._navigate("assistant", "basics"));
+  await panel.locator('[data-config="__title"]').fill("Changed after export");
+  await panel.getByRole("button", {name:"Save changes", exact:true}).click();
+  await expect(panel.getByText("Unsaved changes", {exact:true})).toHaveCount(0);
+  await panel.evaluate(host => host._navigate("usage-maintenance", "backup-restore"));
+  await panel.locator("#backup-file-transfer").setInputFiles(path);
+  await expect(panel.locator("#restore-transfer-apply")).toBeEnabled();
+  await page.evaluate(() => {
+    const original = browserHarness.hass.callWS.bind(browserHarness.hass);
+    browserHarness.hass.callWS = async message => {
+      const result = await original(message);
+      if (message.action === "import_restore") {
+        window.restoreCommitted = true;
+        await new Promise(resolve => { window.releaseRestore = resolve; });
+      }
+      return result;
+    };
+  });
+  await panel.locator("#restore-transfer-apply").click();
+  await acceptConfirmation(panel);
+  await expect.poll(() => page.evaluate(() => window.restoreCommitted)).toBe(true);
+  await expect(panel.locator("#restore-transfer-cancel")).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await expect(panel.locator("#restore-dialog")).toHaveJSProperty("open", true);
+  await page.evaluate(() => window.releaseRestore());
+  await expect(panel.locator("#restore-dialog")).toHaveJSProperty("open", false);
+  await expect(panel.getByText("Selected sections restored", {exact:true})).toBeVisible();
+  await panel.evaluate(host => host._navigate("assistant", "basics"));
+  await expect(panel.locator('[data-config="__title"]')).toHaveValue("Jarvis");
+  await expectHarnessClean(page, errors);
+});
+
+test("Escape retires the original agent's prepared import before switching agents", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("usage-maintenance/backup-restore", "&agents=2"));
+  const panel = page.locator("extended-openai-management-panel");
+  await panel.locator("#transfer-export-mode").selectOption("full");
+  const downloading = page.waitForEvent("download");
+  await panel.locator("#create-backup-transfer").click();
+  const path = await (await downloading).path();
+  await panel.locator("#backup-file-transfer").setInputFiles(path);
+  await expect(panel.locator("#restore-dialog")).toHaveJSProperty("open", true);
+  const original = await panel.evaluate(host => host._backupTransferSession);
+  await page.keyboard.press("Escape");
+  await expect(panel.locator("#restore-dialog")).toHaveJSProperty("open", false);
+  await expect.poll(() => panel.evaluate(host => host._backupTransferSession)).toBeNull();
+  await expect.poll(() => page.evaluate(session => browserHarness.calls.some(call => call.action === "import_cancel" && call.data.session_id === session.session_id && call.entry_id === session.owner.entry_id && call.subentry_id === session.owner.subentry_id), original)).toBe(true);
+  await panel.locator("#agent").selectOption("scale-agent-1");
+  await expect(panel.locator("#agent")).toHaveValue("scale-agent-1");
+  await expect.poll(() => panel.evaluate(host => host._agentId === "scale-agent-1" && !host._busy)).toBe(true);
+  await expect(panel.locator("#backup-file-transfer")).toBeAttached();
+  await panel.locator("#backup-file-transfer").setInputFiles(path);
+  await expect(panel.locator("#restore-dialog")).toHaveJSProperty("open", true);
+  expect(await panel.evaluate(host => host._backupTransferSession.owner.subentry_id)).toBe("scale-agent-1");
+  await panel.locator("#restore-transfer-cancel").click();
+  await expect(panel.locator("#restore-dialog")).toHaveJSProperty("open", false);
+  await expectHarnessClean(page, errors);
+});
+
 test("Function Tools support create, reload, edit, and delete through YAML", async ({page}) => {
   const pageErrors = trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/functions"));

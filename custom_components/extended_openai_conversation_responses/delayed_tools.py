@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextvars import Context as TaskContext
 from copy import deepcopy
 from dataclasses import asdict, dataclass, replace
 from datetime import timedelta
@@ -580,6 +581,7 @@ class DelayedToolManager:
         self._tasks[call_id] = asyncio.create_task(
             self._async_wait_and_execute(call_id),
             name=f"{DOMAIN}-delayed-{call_id[:8]}",
+            context=TaskContext(),
         )
 
     async def _async_wait_and_execute(self, call_id: str) -> None:
@@ -603,14 +605,7 @@ class DelayedToolManager:
                 record = self._records.get(call_id)
                 if record is None or record.status != _PENDING:
                     return
-                gate = get_agent_maintenance_gate(
-                    self.hass, record.entry_id, record.subentry_id
-                )
-                # Live resolution, the durable execution boundary, the external tool
-                # action and finalization form one ordinary-agent lease. Restore must
-                # not overlap any of them.
-                async with gate.shared():
-                    retry = await self._async_execute_due(call_id)
+                retry = await self._async_execute_due(call_id)
                 if not retry:
                     return
                 await asyncio.sleep(_AGENT_RETRY_SECONDS)
@@ -621,10 +616,25 @@ class DelayedToolManager:
                 self._tasks.pop(call_id, None)
 
     async def _async_execute_due(self, call_id: str) -> bool:
+        """Run due work in a fresh context, including its maintenance lease."""
+        return await asyncio.create_task(
+            self._async_execute_due_isolated(call_id), context=TaskContext()
+        )
+
+    async def _async_execute_due_isolated(self, call_id: str) -> bool:
         from .execution_outcomes import detached_execution
 
+        record = self._records.get(call_id)
+        if record is None or record.status != _PENDING:
+            return False
+        gate = get_agent_maintenance_gate(
+            self.hass, record.entry_id, record.subentry_id
+        )
+        # Establish the lease inside the new context so nested tool execution can
+        # reenter it safely even when a restore is waiting for exclusive access.
         with detached_execution():
-            return await self._async_execute_due_detached(call_id)
+            async with gate.shared():
+                return await self._async_execute_due_detached(call_id)
 
     async def _async_execute_due_detached(self, call_id: str) -> bool:
         """Re-authorize a due call against live configuration and execute it once."""
@@ -699,13 +709,6 @@ class DelayedToolManager:
                     call_id, f"Function Tool is unavailable: {err}"
                 )
 
-            # A waiter armed from an Assist request inherits that request's ContextVars.
-            # Delayed Function Tools deliberately authorize at execution time, so discard
-            # only the pinned request Guest policy before entering the normal tool seam.
-            # The live agent then resolves the Guest policy that exists when the call is
-            # actually due, matching calls recovered after a Home Assistant restart.
-            from .conversation import _ACTIVE_GUEST_POLICY
-
             executing = replace(record, status=_EXECUTING)
             try:
                 await self._async_replace_record(executing)
@@ -722,7 +725,6 @@ class DelayedToolManager:
                 device_id=record.device_id,
                 **{_DELAYED_EXECUTION_MARKER: True},
             )
-            guest_policy_token = _ACTIVE_GUEST_POLICY.set(None)
             try:
                 with bind_active_ha_context(execution_context):
                     await agent._execute_function_tool(
@@ -744,7 +746,6 @@ class DelayedToolManager:
             else:
                 _LOGGER.info("Executed delayed Function Tool `%s`", record.tool_name)
             finally:
-                _ACTIVE_GUEST_POLICY.reset(guest_policy_token)
                 await self._async_finalize(call_id)
             return False
 

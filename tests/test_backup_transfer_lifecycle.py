@@ -269,9 +269,7 @@ async def test_inspection_with_missing_user_mapping_requires_selection_before_pr
     monkeypatch.setattr(
         transfer, "async_user_scope_mapping_plan", AsyncMock(return_value=mapping)
     )
-    monkeypatch.setattr(
-        transfer, "_current_snapshot", AsyncMock(return_value=object())
-    )
+    monkeypatch.setattr(transfer, "_current_snapshot", AsyncMock(return_value=object()))
     monkeypatch.setattr(transfer, "async_materialize_restore", materialize)
     monkeypatch.setattr(
         transfer,
@@ -550,6 +548,82 @@ def _completed_import_session(path: str, **overrides) -> backup_transfer.ImportS
     }
     values.update(overrides)
     return backup_transfer.ImportSession(**values)
+
+
+@pytest.mark.parametrize("termination", ["cancel", "timeout"])
+async def test_cancelling_stalled_full_inspection_releases_maintenance_for_new_session(
+    hass, tmp_path, monkeypatch, termination
+):
+    """Cancelling A stops its inspection and lets B obtain a valid restore token."""
+    sessions = []
+    if termination == "timeout":
+        monkeypatch.setattr(backup_transfer, "IMPORT_INSPECTION_TIMEOUT_SECONDS", 0.05)
+    for name in ("A", "B"):
+        path = tmp_path / name
+        path.write_bytes(b"data")
+        session = _completed_import_session(str(path), session_id=name)
+        backup_transfer._imports(hass)[name] = session
+        sessions.append(session)
+    started = asyncio.Event()
+    prepared = SimpleNamespace(available_sections=["memory"])
+
+    async def load(_hass, path, *_args, **_kwargs):
+        if path == sessions[0].path:
+            started.set()
+            await asyncio.Event().wait()
+        return prepared
+
+    monkeypatch.setattr(backup_transfer, "_async_load_prepared_restore", load)
+    monkeypatch.setattr(
+        backup_transfer, "_resolve_agent", lambda *_: (object(), object())
+    )
+    monkeypatch.setattr(backup_transfer, "_snapshot_revision", lambda _: "current")
+    monkeypatch.setattr(
+        transfer, "validate_section_selection", lambda *_a, **_k: frozenset({"memory"})
+    )
+    monkeypatch.setattr(
+        transfer,
+        "async_user_scope_mapping_plan",
+        AsyncMock(return_value={"missing_source_user_ids": [], "resolved": {}}),
+    )
+    monkeypatch.setattr(transfer, "_current_snapshot", AsyncMock(return_value=object()))
+    monkeypatch.setattr(transfer, "apply_user_scope_mappings", lambda value, *_: value)
+    monkeypatch.setattr(
+        transfer,
+        "async_materialize_restore",
+        AsyncMock(return_value=(object(), {"selected_sections": ["memory"]})),
+    )
+    monkeypatch.setattr(transfer, "inspection_for_frontend", lambda _: {})
+
+    old = asyncio.create_task(
+        backup_transfer._inspect_import(hass, "entry-1", "agent-1", {"session_id": "A"})
+    )
+    await started.wait()
+    if termination == "timeout":
+        # A's deadline is already armed; B gets its own full validation budget.
+        monkeypatch.setattr(backup_transfer, "IMPORT_INSPECTION_TIMEOUT_SECONDS", 1)
+    new = asyncio.create_task(
+        backup_transfer._inspect_import(hass, "entry-1", "agent-1", {"session_id": "B"})
+    )
+    if termination == "cancel":
+        assert await asyncio.wait_for(
+            backup_transfer._discard_import(hass, "A"), timeout=1
+        )
+    expected = (
+        "inspection was cancelled"
+        if termination == "cancel"
+        else "inspection timed out"
+    )
+    with pytest.raises(backup.BackupError, match=expected):
+        await old
+    if termination == "timeout":
+        assert await backup_transfer._discard_import(hass, "A")
+    result = await asyncio.wait_for(new, timeout=1)
+    assert result["preview_token"]
+    assert backup_transfer._latest_previews(hass)[("entry-1", "agent-1")][0] == "B"
+    assert not sessions[0].inspection_tasks
+    assert not os.path.exists(sessions[0].path)
+    await backup_transfer._discard_import(hass, "B")
 
 
 def _staged_export_session(path: str, **overrides) -> backup_transfer.ExportSession:

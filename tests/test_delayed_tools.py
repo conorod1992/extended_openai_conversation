@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextvars import ContextVar
 from dataclasses import replace
 from datetime import timedelta
 from types import SimpleNamespace
@@ -13,7 +14,10 @@ import pytest
 
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
 from custom_components.extended_openai_conversation_responses.conversation import (
+    _ACTIVE_FUNCTION_CONFIG,
     _ACTIVE_GUEST_POLICY,
+    _ACTIVE_LLM_CONTEXT,
+    _ACTIVE_REQUEST_CONFIG_DATA,
     ExtendedOpenAIAgentEntity,
 )
 from custom_components.extended_openai_conversation_responses.delayed_tools import (
@@ -111,6 +115,76 @@ async def test_schedule_is_persisted_before_becoming_live(hass) -> None:
             context,
         )
     assert failing._records == {}
+
+
+async def test_scheduled_waiter_drops_request_context_after_edit_and_revert(
+    hass, monkeypatch
+):
+    """The real waiter executes A again after A/B/A, without request-owned state."""
+    manager = DelayedToolManager(hass)
+    manager._started = manager._setup_complete = True
+    manager._store = SimpleNamespace(async_save=AsyncMock())
+    original = {"prompt": "A", "function_groups": []}
+    subentry = SimpleNamespace(subentry_type="conversation", data=original)
+    hass.config_entries.async_get_entry.return_value = SimpleNamespace(
+        disabled_by=None, subentries={"agent": subentry}
+    )
+    hass.auth.async_get_user = AsyncMock(return_value=SimpleNamespace(is_active=True))
+    tool = _valid_tool()
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.delayed_tools.configured_function_tools_from_data",
+        lambda _data: [tool],
+    )
+    sleeping, due = asyncio.Event(), asyncio.Event()
+
+    async def wait_until_due(_delay):
+        sleeping.set()
+        await due.wait()
+
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.delayed_tools.asyncio.sleep",
+        wait_until_due,
+    )
+    arbitrary_request_state = ContextVar("request_only_test_state", default=None)
+    observed = []
+
+    async def execute(*_args):
+        ExtendedOpenAIAgentEntity._assert_no_aba_configuration(agent)
+        observed.append(
+            (
+                _ACTIVE_REQUEST_CONFIG_DATA.get(),
+                _ACTIVE_LLM_CONTEXT.get(),
+                arbitrary_request_state.get(),
+            )
+        )
+
+    agent = SimpleNamespace(subentry=subentry, _execute_function_tool=execute)
+    monkeypatch.setattr(manager, "_resolve_agent", lambda *_: agent)
+    config_token = _ACTIVE_REQUEST_CONFIG_DATA.set(original)
+    llm_token = _ACTIVE_LLM_CONTEXT.set(object())
+    arbitrary_token = arbitrary_request_state.set("must not survive")
+    try:
+        record = await manager.async_schedule(
+            _entity(hass),
+            "control_light",
+            {"delay": {"seconds": 1}},
+            SimpleNamespace(context=Context(user_id="user-1")),
+            function_tool=tool,
+        )
+        waiter = manager._tasks[record.call_id]
+        await sleeping.wait()
+        subentry.data = {"prompt": "B"}
+        subentry.data = dict(original)
+        due.set()
+        await asyncio.wait_for(waiter, timeout=1)
+        assert _ACTIVE_REQUEST_CONFIG_DATA.get() is original
+        assert arbitrary_request_state.get() == "must not survive"
+    finally:
+        arbitrary_request_state.reset(arbitrary_token)
+        _ACTIVE_LLM_CONTEXT.reset(llm_token)
+        _ACTIVE_REQUEST_CONFIG_DATA.reset(config_token)
+    assert observed == [(None, None, None)]
+    assert record.call_id not in manager._records
 
 
 async def test_schedule_reconciles_after_lost_store_acknowledgement(hass) -> None:
@@ -281,6 +355,7 @@ async def test_due_call_uses_live_guest_policy_not_inherited_request_policy(
     )
 
     observed: list[GuestCapabilityPolicy] = []
+    observed_function_configs: list[Any] = []
 
     class GuestAwareAgent:
         def _resolve_live_guest_policy(self) -> GuestCapabilityPolicy:
@@ -291,19 +366,25 @@ async def test_due_call_uses_live_guest_policy_not_inherited_request_policy(
 
         async def _execute_function_tool(self, *_args) -> object:
             observed.append(self._effective_guest_policy())
+            observed_function_configs.append(_ACTIVE_FUNCTION_CONFIG.get())
             return object()
 
     agent = GuestAwareAgent()
     monkeypatch.setattr(manager, "_resolve_agent", lambda *_args: agent)
 
     token = _ACTIVE_GUEST_POLICY.set(inherited_policy)
+    function_config = ([{"spec": {"name": "control_light"}}], [{"id": "old-group"}])
+    function_token = _ACTIVE_FUNCTION_CONFIG.set(function_config)
     try:
         assert await manager._async_execute_due(record.call_id) is False
         assert _ACTIVE_GUEST_POLICY.get() is inherited_policy
+        assert _ACTIVE_FUNCTION_CONFIG.get() is function_config
     finally:
+        _ACTIVE_FUNCTION_CONFIG.reset(function_token)
         _ACTIVE_GUEST_POLICY.reset(token)
 
     assert observed == [live_policy]
+    assert observed_function_configs == [None]
 
 
 async def test_due_call_is_cancelled_when_tool_is_disabled(hass, monkeypatch) -> None:
@@ -433,7 +514,9 @@ def _valid_tool(*, function_type: str = "native") -> dict[str, Any]:
 
 
 @pytest.mark.parametrize("legacy", [False, True])
-async def test_changed_or_unknown_scheduled_definition_never_executes(hass, monkeypatch, legacy) -> None:
+async def test_changed_or_unknown_scheduled_definition_never_executes(
+    hass, monkeypatch, legacy
+) -> None:
     manager = DelayedToolManager(hass)
     record = _coverage_record(user_id=None)
     if legacy:
@@ -443,7 +526,10 @@ async def test_changed_or_unknown_scheduled_definition_never_executes(hass, monk
     hass.config_entries.async_get_entry.return_value = _live_entry()
     changed = _valid_tool()
     changed["function"]["name"] = "different_implementation"
-    monkeypatch.setattr("custom_components.extended_openai_conversation_responses.delayed_tools.configured_function_tools_from_data", lambda _data: [changed])
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.delayed_tools.configured_function_tools_from_data",
+        lambda _data: [changed],
+    )
     agent = SimpleNamespace(_execute_function_tool=AsyncMock())
     monkeypatch.setattr(manager, "_resolve_agent", lambda *_args: agent)
     await manager._async_execute_due(record.call_id)
@@ -650,7 +736,7 @@ async def test_waiter_uses_maintenance_gate_and_stops_after_execution(
         sleep,
     )
     execute_due = AsyncMock(return_value=False)
-    monkeypatch.setattr(manager, "_async_execute_due", execute_due)
+    monkeypatch.setattr(manager, "_async_execute_due_detached", execute_due)
 
     await manager._async_wait_and_execute(record.call_id)
 
@@ -1031,7 +1117,11 @@ async def test_owned_executor_schedules_background_call_and_returns_receipt(
     result = await executor(entity, tool, tool_input, context, [])
 
     manager.async_schedule.assert_awaited_once_with(
-        entity, "control_light", arguments, context, function_tool=tool,
+        entity,
+        "control_light",
+        arguments,
+        context,
+        function_tool=tool,
         execution_delay=timedelta(seconds=10),
     )
     assert tool_result_data(result) == {"result": "Scheduled"}

@@ -657,7 +657,15 @@ def conversation_debug_trace(
         agent.hass, agent.entry.entry_id, agent.subentry.subentry_id
     )
     if not manager.enabled:
-        yield None
+        # Nested agents inherit ContextVars from the caller. A disabled child
+        # must establish an explicit no-capture boundary so its timings,
+        # continuity, memory, provider requests and failures cannot leak into
+        # the caller's trace.
+        token = _ACTIVE_DEBUG_TRACE.set(None)
+        try:
+            yield None
+        finally:
+            _ACTIVE_DEBUG_TRACE.reset(token)
         return
     trace = manager.begin(
         entry_id=agent.entry.entry_id,
@@ -706,9 +714,12 @@ def model_path_timing(entity: Any) -> Iterator[None]:
             )
 
 
-def record_system_prompt(prompt: str, started: float) -> None:
+def record_system_prompt(agent: Any, prompt: str, started: float) -> None:
     trace = current_debug_trace()
-    if trace is not None:
+    if trace is not None and (trace.entry_id, trace.subentry_id) == (
+        agent.entry.entry_id,
+        agent.subentry.subentry_id,
+    ):
         trace.phases_ms["system_prompt_render"] = int(
             (time.monotonic() - started) * 1000
         )

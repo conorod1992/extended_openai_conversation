@@ -52,6 +52,7 @@ from custom_components.extended_openai_conversation_responses.temporary_memory i
     _temporary_memory_store,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import storage as ha_storage
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util, file as ha_file
 from tests_stress.conftest import record
@@ -60,6 +61,9 @@ from tests_stress.conftest import record
 # with its in-memory shim. This preserves the native writer on stable and dev,
 # including versions that no longer expose the synchronous _write_data helper.
 _REAL_STORE_ASYNC_WRITE_DATA = Store._async_write_data
+# Newer Core moves its fixture shim below Store into an injected I/O class.
+# Capture that class before hass_storage replaces it for each test as well.
+_REAL_FILE_STORE_IO = getattr(ha_storage, "_FileStoreIO", None)
 
 
 @pytest.mark.parametrize(
@@ -456,6 +460,8 @@ def real_store_io(
     # Restore the plugin's Store shim before its own fixture tears down. A
     # function-scoped monkeypatch teardown runs too late for its autospec.
     with monkeypatch.context() as scoped:
+        if _REAL_FILE_STORE_IO is not None:
+            scoped.setattr(ha_storage, "_FileStoreIO", _REAL_FILE_STORE_IO)
         scoped.setattr(Store, "_async_write_data", _REAL_STORE_ASYNC_WRITE_DATA)
         scoped.setattr(Store, "_async_load", load_from_disk)
         scoped.setattr(Store, "async_remove", remove_from_disk)

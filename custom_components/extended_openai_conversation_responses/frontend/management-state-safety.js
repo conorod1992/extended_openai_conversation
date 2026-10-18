@@ -146,7 +146,7 @@ export function syncGuestDirty(panel) {
   return Boolean(panel._viewKey?.() === "capabilities/guest-mode" && scope?.dirty());
 }
 
-const EDITOR_IDS = ["rule-dialog", "tool-dialog", "group-dialog", "knowledge-dialog", "memory-dialog", "temporary-memory-dialog"];
+const EDITOR_IDS = ["rule-dialog", "tool-dialog", "group-dialog", "knowledge-dialog", "memory-dialog", "temporary-memory-dialog", "ha-llm-tools-dialog"];
 
 export function openDialogBaseline(panel, dialog) {
   if (!dialog?.id || !EDITOR_IDS.includes(dialog.id)) return;
@@ -297,6 +297,7 @@ async function navigateWithUnsavedState(panel, destination) {
     for (const scope of scopes) scope.discard();
   }
   // Close even clean editors before switching their owning context.
+  if (destination !== panel._viewKey?.()) panel._eocBackupTransferCleanup?.();
   for (const id of EDITOR_IDS) {
     const editor = panel.shadowRoot?.querySelector?.(`#${id}`);
     if (editor?.open) { clearDialogBaseline(panel, editor); editor.close(); }
@@ -305,6 +306,7 @@ async function navigateWithUnsavedState(panel, destination) {
 }
 
 export function cleanupStateSafety(panel) {
+  panel._eocBackupTransferCleanup?.();
   if (panel._eocStateBeforeUnload) {
     window.removeEventListener("beforeunload", panel._eocStateBeforeUnload);
     panel._eocStateBeforeUnload = null;

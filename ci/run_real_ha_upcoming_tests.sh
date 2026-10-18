@@ -72,4 +72,4 @@ TEST_PATHS=(
 )
 
 # Initialize HA's HTTP client alias before pytest autoloads plugins.
-python -c 'import homeassistant, pytest; raise SystemExit(pytest.main())' "${TEST_PATHS[@]}"   -v   --asyncio-mode=auto   --timeout=60   --durations=30   --junitxml=real-ha-junit.xml   2>&1 | tee real-ha-pytest.log
+python ci/run_ha_dev_pytest.py --core-sha "${EXPECTED_HA_CORE_SHA:?}" "${TEST_PATHS[@]}"   -v   --asyncio-mode=auto   --timeout=60   --durations=30   --junitxml=real-ha-junit.xml   2>&1 | tee real-ha-pytest.log

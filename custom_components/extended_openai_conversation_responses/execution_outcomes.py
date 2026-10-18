@@ -193,6 +193,7 @@ def with_execution_receipt[ResultT](
 @contextmanager
 def detached_execution() -> Iterator[None]:
     """Independent work has no provider continuation to recover."""
+    from .function_tool_recovery import bind_tool_recovery_state
     from .tool_replay_guard import bind_effect_replay_scope
 
     attempt_token = _ATTEMPT.set(None)
@@ -200,7 +201,7 @@ def detached_execution() -> Iterator[None]:
     path_token = _CHILD_PATH.set(())
     detached_token = _DETACHED.set(True)
     try:
-        with bind_effect_replay_scope(None, None):
+        with bind_effect_replay_scope(None, None), bind_tool_recovery_state(None):
             yield
     finally:
         _DETACHED.reset(detached_token)

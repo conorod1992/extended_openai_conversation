@@ -159,6 +159,12 @@ export function temporaryMemoryDirty(panel) {
     || panel.shadowRoot.querySelector("#temporary-memory-expiry")?.value !== draft.expires_at;
 }
 
+export function temporaryMemoryExpiryForSave(panel, value, draft) {
+  return value === draft.expires_at
+    ? draft.original_expiry
+    : memoryExpiryISO(panel, value, draft.original_expiry);
+}
+
 async function closeTemporaryMemory(panel, force = false) {
   const dialog = panel.shadowRoot.querySelector("#temporary-memory-dialog");
   if (force) dialog?.close();
@@ -188,7 +194,9 @@ async function saveTemporaryMemory(panel) {
       memory_id: draft.memory_id,
       content,
       category,
-      expires_at: memoryExpiryISO(panel, expiresAt, draft.original_expiry),
+      // An unrelated edit must not reinterpret the displayed wall time if HA's
+      // timezone changed while this editor was open.
+      expires_at: temporaryMemoryExpiryForSave(panel, expiresAt, draft),
     });
     if (!panel._ownsRetainedMutation(owner)) return;
     if (!response?.memory?.memory_id) throw new Error("The saved memory response was incomplete.");

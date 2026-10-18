@@ -33,7 +33,7 @@ function panel() {
   host._scopeCatalogCache = new Map(["a", "b"].flatMap(id => ["memory", "archive"].map(kind => [`${id}|scopes|${kind}`, []])));
   host._scopeCatalogVisitKey = "a|scopes|memory";
   host._eocUsageWindowCache = new Map([["a|7|date", {}], ["b|90|date", {}]]);
-  host._eocPendingRouteReads = new Map([["pending", {}]]);
+  host._eocPendingRouteReads = new Map([["entry-a|a|100|overview", {}], ["entry-b|b|100|overview", {}]]);
   host._usageWindowGeneration = 10;
   return host;
 }
@@ -67,7 +67,7 @@ for (const [section, actions] of Object.entries(commands)) for (const action of 
     assert.equal(host._eocUsageWindowCache.has("b|90|date"), !restore, "restore retains its existing global Usage-window replacement");
     assert.equal(host._usageWindowGeneration, 10 + Number(restore || usage));
     for (const key of host._sectionCache.keys()) assert.equal(host._eocSectionCacheTimes.has(key), true);
-    for (const view of ["overview", "capabilities/request-rules", "usage-maintenance/usage|90"]) assert.equal(host._sectionCache.has(`b|${view}`), true);
+    for (const view of ["overview", "capabilities/request-rules", "usage-maintenance/usage|90"]) assert.equal(host._sectionCache.has(`b|${view}`), !(section === "quiet_hours" && view === "overview"));
   });
 }
 
@@ -87,6 +87,19 @@ test("missing owner does not invalidate any projections", () => {
   host._invalidateAfterMutation(null, "backup", "restore");
   assert.deepEqual([...host._sectionCache], before);
   assert.equal(host._cacheGeneration, 100);
+});
+
+test("background agent restore preserves current reads while global policy changes invalidate them", () => {
+  const host = panel();
+  host._agentId = "b";
+  host._invalidateAfterMutation("a", "backup", "restore");
+  assert.equal(host._cacheGeneration, 100);
+  assert.deepEqual([...host._eocPendingRouteReads.keys()], ["entry-b|b|100|overview"]);
+  assert.equal(host._eocUsageWindowCache.has("b|90|date"), true);
+  host._invalidateAfterMutation("a", "quiet_hours", "update");
+  assert.equal(host._cacheGeneration, 101);
+  assert.equal(host._sectionCache.has("b|overview"), false);
+  assert.equal(host._eocPendingRouteReads.size, 0);
 });
 
 

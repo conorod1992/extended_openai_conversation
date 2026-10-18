@@ -5,18 +5,19 @@ from __future__ import annotations
 import asyncio
 from inspect import unwrap
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.extended_openai_conversation_responses import (
     intercom,
     intercom_panel,
     intercom_services,
 )
-from custom_components.extended_openai_conversation_responses.intercom import IntercomManager
+from custom_components.extended_openai_conversation_responses.intercom import (
+    IntercomManager,
+)
+from homeassistant.exceptions import HomeAssistantError
 
 
 @pytest.mark.asyncio
@@ -43,7 +44,10 @@ async def test_broadcast_service_registration_is_idempotent(hass) -> None:
 
     assert hass.services.async_register.call_count == 1
     register_args = hass.services.async_register.call_args.args
-    assert register_args[:2] == (intercom_services.DOMAIN, intercom_services.SERVICE_BROADCAST)
+    assert register_args[:2] == (
+        intercom_services.DOMAIN,
+        intercom_services.SERVICE_BROADCAST,
+    )
     assert callable(register_args[2])
     assert panel_setup.await_count == 2
 
@@ -57,7 +61,9 @@ async def test_service_permission_denial_stops_before_send(hass) -> None:
 
     with (
         patch.object(intercom_services, "async_setup_broadcast_api", AsyncMock()),
-        patch.object(intercom_services, "async_get_intercom", AsyncMock(return_value=manager)),
+        patch.object(
+            intercom_services, "async_get_intercom", AsyncMock(return_value=manager)
+        ),
         patch.object(intercom_services, "async_authorized_broadcast_targets", denied),
     ):
         await intercom_services.async_setup_intercom_services(hass)
@@ -91,7 +97,9 @@ async def test_websocket_permission_denial_returns_one_error_without_send(hass) 
     )
 
     with (
-        patch.object(intercom_panel, "async_get_intercom", AsyncMock(return_value=manager)),
+        patch.object(
+            intercom_panel, "async_get_intercom", AsyncMock(return_value=manager)
+        ),
         patch.object(
             intercom_panel,
             "async_authorized_broadcast_targets",
@@ -249,3 +257,72 @@ async def test_same_target_announcements_are_serialized_in_queue_order(
         item["deliveries"]["assist_satellite.kitchen"]["status"]
         for item in manager.history()
     ] == ["delivered", "delivered"]
+
+
+@pytest.mark.asyncio
+async def test_stalled_announcement_times_out_and_releases_target_queue(
+    hass, monkeypatch
+) -> None:
+    """A never-returning satellite handler cannot block later queued messages."""
+    manager = IntercomManager(hass)
+    manager._enabled = True
+    monkeypatch.setattr(
+        manager, "resolve_targets", lambda **_kwargs: ["assist_satellite.kitchen"]
+    )
+    monkeypatch.setattr(manager, "_schedule_drain", lambda _entity_id: None)
+    monkeypatch.setattr(intercom, "ANNOUNCE_TIMEOUT_SECONDS", 0.01)
+    hass.states.get.return_value = SimpleNamespace(state="idle")
+    monkeypatch.setattr(intercom.asyncio, "sleep", AsyncMock(return_value=None))
+    announced: list[str] = []
+
+    async def announce(_domain, _service, data, **_kwargs):
+        announced.append(data["message"])
+        if data["message"] == "Stalled":
+            await asyncio.Event().wait()
+
+    hass.services.async_call = AsyncMock(side_effect=announce)
+    await manager.async_send("Stalled", entity_ids=["assist_satellite.kitchen"])
+    await manager.async_send("Next", entity_ids=["assist_satellite.kitchen"])
+
+    await asyncio.wait_for(manager._async_drain("assist_satellite.kitchen"), timeout=1)
+
+    deliveries = [
+        item["deliveries"]["assist_satellite.kitchen"] for item in manager.history()
+    ]
+    assert announced == ["Stalled", "Next"]
+    assert deliveries[1]["status"] == "failed"
+    assert deliveries[1]["detail"] == "TimeoutError"
+    assert deliveries[0]["status"] == "delivered"
+    assert manager._queues == {}
+
+
+@pytest.mark.asyncio
+async def test_queued_announcements_keep_each_initiating_context(
+    hass, monkeypatch
+) -> None:
+    """Messages from different users retain their own HA context in queue order."""
+    manager = IntercomManager(hass)
+    manager._enabled = True
+    monkeypatch.setattr(
+        manager, "resolve_targets", lambda **_kwargs: ["assist_satellite.kitchen"]
+    )
+    monkeypatch.setattr(manager, "_schedule_drain", lambda _entity_id: None)
+    hass.states.get.return_value = SimpleNamespace(state="idle")
+    monkeypatch.setattr(intercom.asyncio, "sleep", AsyncMock(return_value=None))
+    first_context = SimpleNamespace(user_id="first-user")
+    second_context = SimpleNamespace(user_id="second-user")
+
+    await manager.async_send(
+        "First", entity_ids=["assist_satellite.kitchen"], context=first_context
+    )
+    await manager.async_send(
+        "Second", entity_ids=["assist_satellite.kitchen"], context=second_context
+    )
+    await manager._async_drain("assist_satellite.kitchen")
+
+    assert [
+        call.kwargs["context"] for call in hass.services.async_call.await_args_list
+    ] == [
+        first_context,
+        second_context,
+    ]

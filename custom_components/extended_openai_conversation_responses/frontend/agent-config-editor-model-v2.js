@@ -18,7 +18,11 @@ async function ensureCatalogData(panel) {
   if (currentCatalogData(panel, model)) return;
   const searchTarget = panel._pendingSettingFocus;
   const agent = panel._agentId;
-  const current = () => panel._agentId === agent && String(currentConfig(panel).azure_model || currentConfig(panel).chat_model || "") === model;
+  const view = panel._viewKey?.();
+  const loadToken = panel._loadToken;
+  const current = () => panel._agentId === agent && panel._viewKey?.() === view
+    && panel._loadToken === loadToken
+    && String(currentConfig(panel).azure_model || currentConfig(panel).chat_model || "") === model;
   try {
     await lookupModelData(panel, model, "lookup", current);
     if (!current()) return;

@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from custom_components.extended_openai_conversation_responses.conversation import (
+    _ACTIVE_FUNCTION_CONFIG,
     ExtendedOpenAIAgentEntity,
 )
 from custom_components.extended_openai_conversation_responses.exceptions import (
@@ -46,6 +47,37 @@ def _agent(current_tools: list[dict], *, groups: list[dict] | None = None):
         return_value=GuestCapabilityPolicy.unrestricted()
     )
     return agent
+
+
+async def test_group_member_reorder_does_not_cancel_advertised_call(monkeypatch):
+    first = _tool()
+    second = {**_tool(), "spec": {**first["spec"], "name": "other"}}
+    before = {
+        "id": "notifications",
+        "name": "Notifications",
+        "description": "Notification tools",
+        "loading_mode": "always",
+        "enabled": True,
+        "functions": ["notify", "other"],
+    }
+    after = {**before, "functions": ["other", "notify"]}
+    agent = _agent([first, second], groups=[after])
+    base_execute = AsyncMock(return_value=SimpleNamespace(tool_result={"result": "ok"}))
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.entity.ExtendedOpenAIBaseLLMEntity._execute_function_tool",
+        base_execute,
+    )
+    token = _ACTIVE_FUNCTION_CONFIG.set(([first, second], [before]))
+    try:
+        await agent._execute_function_tool(
+            first,
+            SimpleNamespace(id="call", tool_name="notify", tool_args={}),
+            None,
+            [],
+        )
+    finally:
+        _ACTIVE_FUNCTION_CONFIG.reset(token)
+    base_execute.assert_awaited_once()
 
 
 def test_integration_lifecycle_tool_keeps_request_round_definition() -> None:

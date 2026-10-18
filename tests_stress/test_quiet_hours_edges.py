@@ -25,8 +25,8 @@ from tests_real_ha.test_quiet_hours_scheduling import (
     _install_satellite_entities,
 )
 from tests_stress.conftest import record
-from tests_stress.test_quiet_hours_ownership_time import _stop_for_restart
 from tests_stress.test_os_storage_faults import real_store_io  # noqa: F401
+from tests_stress.test_quiet_hours_ownership_time import _stop_for_restart
 
 
 def policy(start="22:00", end="07:00"):
@@ -204,6 +204,14 @@ async def test_control_changes_then_raises_preserves_durable_ownership(
             assert manager.active["controls"][target] == {
                 **owned,
                 "application_state": "applied",
+                **(
+                    {
+                        "attained_value": desired,
+                        "attained_context_id": owned["application_context_id"],
+                    }
+                    if kind == "volume"
+                    else {}
+                ),
             }
         assert calls == before_restart
         assert json.loads(Path(manager._store.path).read_text())["data"]["active"][

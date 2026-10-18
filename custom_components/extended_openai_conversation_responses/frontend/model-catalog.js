@@ -1,9 +1,38 @@
 // All model matching and capability choices come from the Python catalogue.
+export function observeCatalogGeneration(panel, result = {}, forceInvalidate = false) {
+  const generation = Number.isInteger(result.catalog_generation) ? result.catalog_generation : null;
+  const version = Number.isInteger(result.catalog_version) ? result.catalog_version : null;
+  const previousGeneration = panel._eocCatalogGeneration ?? panel._configData?.catalog_generation;
+  const previousVersion = panel._eocCatalogVersion ?? panel._configData?.catalog_version ?? panel._modelCatalogData?.catalog_version;
+  const changed = (generation !== null && generation !== previousGeneration)
+    || (version !== null && previousVersion != null && version !== previousVersion);
+  const staleBaseline = !panel._configDataStale && (
+    (generation !== null && panel._configData?.catalog_generation != null && panel._configData.catalog_generation !== generation)
+    || (version !== null && panel._configData?.catalog_version != null && panel._configData.catalog_version !== version)
+  );
+  if (generation !== null) panel._eocCatalogGeneration = generation;
+  if (version !== null) panel._eocCatalogVersion = version;
+  if (!changed && !staleBaseline && !forceInvalidate) return;
+  panel._modelCatalogData = null;
+  panel._cleanConfigSnapshots?.clear();
+  panel._invalidateCleanConfiguration?.(panel._draftAgentId || panel._agentId);
+  panel._eocCatalogValidation = null;
+  panel._settingsSearchConfig = null;
+  panel._settingsSearchConfigAgentId = null;
+  panel._settingsSearchConfigError = null;
+  panel._settingsSearchConfigErrorAgentId = null;
+}
+
 export async function lookupModelData(panel, model = "", action = "lookup", isCurrent = () => true) {
   const result = await panel._hass.callWS({
     type: "extended_openai_conversation_responses/model_catalog", action, model,
   });
-  if (panel && result && isCurrent()) {
+  // A committed global mutation invalidates caches even if its initiating
+  // editor no longer owns the returned model-specific presentation.
+  const current = isCurrent();
+  const mutation = ["apply", "reset"].includes(action);
+  if (panel && result && !result.last_error && (current || mutation)) observeCatalogGeneration(panel, result, mutation);
+  if (panel && result && current) {
     panel._modelCatalogData = {...result, requested_model: String(model || "")};
     if (panel._result && result.model_capabilities) panel._result.model_capabilities = result.model_capabilities;
   }
@@ -121,20 +150,27 @@ export function bindModelDataControls(panel, onUpdated = () => {}) {
       return String((azure ? azure.value : config.azure_model) || (chat ? chat.value : config.chat_model) || "");
     };
     const model = capabilityModel();
-    const current = () => panel._eocModelDataActionToken === token
+    const ownsAction = () => panel._eocModelDataActionToken === token
       && panel._agentId === agentId && panel._viewKey?.() === view
-      && panel._loadToken === loadToken && panel._cacheGeneration === cacheGeneration
-      && panel._draft === draft
+      && panel._loadToken === loadToken && panel._cacheGeneration === cacheGeneration;
+    const current = () => ownsAction() && panel._draft === draft
       && capabilityModel() === model;
+    let catalogueSucceeded = false;
     try {
       const result = await lookupModelData(panel, model, button.dataset.modelData, current);
       if (!current()) return;
       if (status) status.textContent = modelDataStatusText(result);
       syncModelDataControls(panel, result);
-      if (!result.last_error) onUpdated(status?.textContent || "Model data updated.");
+      if (!result.last_error) {
+        catalogueSucceeded = true;
+        await onUpdated(status?.textContent || "Model data updated.", button.dataset.modelData);
+      }
     } catch (err) {
-      if (!current() || !status) return;
-      if (button.dataset.modelData === "check") {
+      if (!(catalogueSucceeded ? ownsAction() : current()) || !status) return;
+      if (catalogueSucceeded) {
+        status.textContent = `Model data updated, but assistant settings could not be refreshed: ${err.message || String(err)}. Your unsaved edits are retained. Leave this section and return to retry loading the settings.`;
+        panel._toast?.(status.textContent, true);
+      } else if (button.dataset.modelData === "check") {
         status.textContent = "Unable to check for model data updates. The existing model data is still in use. Check Home Assistant's internet connection and try again.";
       } else if (button.dataset.modelData === "apply") {
         status.textContent = `Unable to apply the model data update: ${err.message || String(err)}`;
@@ -142,7 +178,9 @@ export function bindModelDataControls(panel, onUpdated = () => {}) {
         status.textContent = `Unable to restore bundled model data: ${err.message || String(err)}`;
       }
     } finally {
-      if (current()) {
+      // The successful callback reads/refreshes config and replaces _draft.
+      // That is still this operation's mounted set of buttons to release.
+      if (ownsAction()) {
         buttons.forEach((item) => {
           if (item.dataset.modelData === "apply") item.disabled = !panel?._modelCatalogData?.update_available;
           else item.disabled = false;
