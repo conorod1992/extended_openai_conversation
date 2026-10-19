@@ -1066,13 +1066,22 @@ async def test_repair_preflight_keeps_valid_sibling_collection_checks(monkeypatc
     function_repair._cached_isolated_function_tools.cache_clear()
 
     with pytest.raises(agent_config.AgentConfigError, match="duplicate tool name"):
-        await management_ui.async_management_command(
-            hass, "admin", True,
-            {
-                "entry_id": "entry-1", "subentry_id": "agent-1",
-                "section": "configuration", "action": "get",
-            },
-        )
+        agent_config.validate_function_tools(tools)
+    original = deepcopy(subentry.data)
+    result = await management_ui.async_management_command(
+        hass, "admin", True,
+        {
+            "entry_id": "entry-1", "subentry_id": "agent-1",
+            "section": "configuration", "action": "get",
+        },
+    )
+    assert result["config"]["functions"] == []
+    assert result["function_repair"]["isolatable"] is False
+    assert result["function_repair"]["tools_valid"] is False
+    assert "duplicate tool name" in result["function_repair"]["validation_error"]
+    assert result["function_repair"]["tools"] == tools
+    assert subentry.data == original
+    assert hass.config_entries.updates == 0
 
 
 async def test_delete_quarantined_tools_immediately_restores_normal_get(monkeypatch) -> None:

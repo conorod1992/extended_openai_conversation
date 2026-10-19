@@ -38,7 +38,9 @@ async def test_repair_configuration_save_preserves_absent_function_fields(
         "entry_and_agent",
         Mock(return_value=(entry, subentry)),
     )
-    repair_state = Mock(return_value=SimpleNamespace(issue="broken"))
+    repair_state = Mock(
+        return_value=SimpleNamespace(issue="broken", field_updates_allowed=True)
+    )
     monkeypatch.setattr(repair, "function_configuration_repair_state", repair_state)
     monkeypatch.setattr(
         repair,

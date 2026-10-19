@@ -183,6 +183,14 @@ def _isolate_function_tools_uncached(
             valid.append(validated)
 
     if invalid:
+        try:
+            if len(valid) > 1:
+                valid = validate_function_tools(deepcopy(valid))
+        except (HomeAssistantError, yaml.YAMLError, TypeError, ValueError) as err:
+            # Individually valid siblings can still conflict as a collection.
+            # Keep the whole-field repair fallback, rather than exposing an
+            # ambiguous subset as independently editable Tools.
+            return [], [], str(err) or type(err).__name__
         return valid, invalid, invalid[0]["validation_error"]
 
     # Some failures (for example collection-level invariants) cannot safely be
@@ -422,10 +430,6 @@ def function_configuration_repair_state(options: dict[str, Any]) -> _RepairState
     if issue is not None:
         valid, invalid, issue = isolated_function_tools(options)
     field_updates_allowed = issue is None or bool(invalid)
-    if invalid and len(valid) > 1:
-        # Individual isolation does not check collection invariants such as
-        # duplicate names or HA references. The former safe snapshot did.
-        valid = validate_function_tools(valid)
     groups, group_issues, raw_groups = _effective_function_groups(options, valid)
     try:
         groups = validate_function_groups(groups, valid)
@@ -989,6 +993,13 @@ async def async_function_repair(
         updates = message.get("config", {})
         if not isinstance(updates, dict):
             raise HomeAssistantError("config must be an object")
+        if not state.field_updates_allowed:
+            return {
+                "valid": False,
+                "errors": {
+                    CONF_FUNCTION_TOOLS: "Repair the whole Function Tool collection before changing unrelated settings"
+                },
+            }
         safe_payload = _safe_configuration_payload(
             hass, management_ui, management_loading_performance, entry, subentry
         )
@@ -1029,6 +1040,13 @@ async def async_function_repair(
         updates = message.get("config", {})
         if not isinstance(updates, dict):
             raise HomeAssistantError("config must be an object")
+        if not state.field_updates_allowed:
+            return {
+                "valid": False,
+                "errors": {
+                    CONF_FUNCTION_TOOLS: "Repair the whole Function Tool collection before changing unrelated settings"
+                },
+            }
         safe_payload = _safe_configuration_payload(
             hass, management_ui, management_loading_performance, entry, subentry
         )
@@ -1123,6 +1141,10 @@ async def async_function_repair(
         if index < 0 or index >= len(editable):
             raise HomeAssistantError(
                 "The Function Tool changed position; reload and try again"
+            )
+        if not state.field_updates_allowed:
+            raise HomeAssistantError(
+                "Saved Function Tools cannot be isolated safely; repair the whole collection first"
             )
         current = editable[index]
         old_name = None

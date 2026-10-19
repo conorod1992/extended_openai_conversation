@@ -248,6 +248,11 @@ def _tolerant_persist_function_configuration(
             f"Function Tool {duplicate[0]} already exists as a quarantined tool"
         )
 
+    if not state.field_updates_allowed:
+        raise HomeAssistantError(
+            "Saved Function Tools cannot be isolated safely; repair the whole collection first"
+        )
+
     editable = editable_function_tools(raw)
     if not isinstance(editable, list):
         raise HomeAssistantError("Saved Function Tools cannot be isolated safely")
