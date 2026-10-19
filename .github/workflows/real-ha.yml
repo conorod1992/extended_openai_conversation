@@ -303,6 +303,8 @@ jobs:
               "test_pending_store_write_shutdown_recovery.py",
           }
           stateful_serial = {
+              # Wall-clock responsiveness runs without coverage or xdist load.
+              "test_restore_loop_responsiveness.py",
               "test_backup_restore_atomicity.py",
               "test_backup_restore_delayed_tool_collision.py",
               "test_backup_restore_live_runtime_refresh.py",
@@ -404,6 +406,7 @@ jobs:
             tests_real_ha/test_pending_store_write_shutdown_recovery.py
           )
           STATEFUL_SERIAL=(
+            tests_real_ha/test_restore_loop_responsiveness.py
             tests_real_ha/test_backup_restore_atomicity.py
             tests_real_ha/test_backup_restore_delayed_tool_collision.py
             tests_real_ha/test_backup_restore_live_runtime_refresh.py

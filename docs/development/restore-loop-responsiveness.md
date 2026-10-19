@@ -16,12 +16,14 @@ With normal loop settings and a 5ms unrelated heartbeat, the initial isolated
 After the worker boundary, prepared restores measured **55ms and 43ms**, and legacy
 document restores **42ms and 73ms**. These are responsiveness measurements, not a
 claim that total restore duration decreases. Host scheduling changes exact values.
-The 250ms test ceiling provides scheduling headroom while detecting the original
-stall; thread-identity assertions separately verify the processing boundary.
+The genuine-HA test retains a 250ms latency ceiling. Unit tests record timing but
+assert worker placement deterministically: coverage and asyncio debug tracing can
+amplify scheduling gaps without changing the worker boundary. The genuine-HA test
+is assigned to the serial shard without coverage or xdist contention.
 
 The identical final seven cases produce **five failures and two passing empty
 controls** on an untouched `baa721a` checkout. The failures are the four large
-prepared/legacy restores and the Usage-worker validation boundary. No production
+prepared/legacy worker-placement cases and the Usage-worker validation boundary. No production
 source changes, artificial processing delays, debug-loop amplification or increased
 timeouts are involved in that before/after replay.
 

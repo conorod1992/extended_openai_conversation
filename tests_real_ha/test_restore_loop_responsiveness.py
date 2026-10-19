@@ -20,6 +20,7 @@ from tests_real_ha.test_backup_transfer_protocol import (
 )
 
 
+@pytest.mark.timeout(120)
 @pytest.mark.parametrize("count", [0, 2000])
 async def test_full_archive_restore_remains_responsive(hass, hass_ws_client, count):
     entry = _entry()
