@@ -149,7 +149,11 @@ async def test_restore_revalidates_preview_before_writing(
     monkeypatch.setattr(
         bt, "_async_load_prepared_restore", AsyncMock(return_value=prepared)
     )
-    monkeypatch.setattr(transfer, "apply_user_scope_mappings", lambda value, *_: value)
+    monkeypatch.setattr(
+        transfer,
+        "async_apply_user_scope_mappings",
+        AsyncMock(side_effect=lambda value, *_: value),
+    )
 
     async def snapshot(*_):
         if change == "cancel-during-snapshot":
@@ -221,7 +225,9 @@ async def test_cancelled_import_cannot_publish_new_preview(
             }
         ),
     )
-    monkeypatch.setattr(transfer, "apply_user_scope_mappings", lambda *_: prepared)
+    monkeypatch.setattr(
+        transfer, "async_apply_user_scope_mappings", AsyncMock(return_value=prepared)
+    )
     monkeypatch.setattr(
         transfer,
         "async_materialize_restore",

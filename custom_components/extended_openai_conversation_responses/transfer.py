@@ -343,10 +343,22 @@ def apply_user_scope_mappings(
     prepared: PreparedTransfer,
     selected: Iterable[str],
     mapping: Mapping[str, str],
+    *,
+    copy_categories: bool = True,
 ) -> PreparedTransfer:
     """Apply explicit cross-install user ownership mappings to selected sections."""
     selected_set = frozenset(selected)
-    mapped = deepcopy(prepared)
+    mapped = (
+        deepcopy(prepared)
+        if copy_categories
+        else replace(
+            prepared,
+            config=deepcopy(prepared.config),
+            request_rules=deepcopy(prepared.request_rules),
+            raw_configuration=deepcopy(prepared.raw_configuration),
+            raw_request_rules=deepcopy(prepared.raw_request_rules),
+        )
+    )
 
     if SECTION_CONFIGURATION in selected_set:
         mapped.config = _map_configuration_users(mapped.config, mapping)
@@ -400,6 +412,14 @@ def apply_user_scope_mappings(
         ]
 
     return mapped
+
+
+async def async_apply_user_scope_mappings(
+    prepared: PreparedTransfer, selected: Iterable[str], mapping: Mapping[str, str]
+) -> PreparedTransfer:
+    """Copy bulk data in a worker and retain HA-aware configuration copies on-loop."""
+    detached = await asyncio.to_thread(_copy_transfer_categories, prepared)
+    return apply_user_scope_mappings(detached, selected, mapping, copy_categories=False)
 
 
 def _safe_title(title: str) -> str:

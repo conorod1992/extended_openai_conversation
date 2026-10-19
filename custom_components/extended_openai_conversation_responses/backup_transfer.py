@@ -1176,11 +1176,8 @@ async def _inspect_import_owned(
                 _schedule_expiry(hass)
             token = None
         else:
-            mapped = await asyncio.to_thread(
-                transfer.apply_user_scope_mappings,
-                prepared,
-                selected,
-                mapping_plan["resolved"],
+            mapped = await transfer.async_apply_user_scope_mappings(
+                prepared, selected, mapping_plan["resolved"]
             )
             _target, preview = await transfer.async_materialize_restore(
                 hass,
@@ -1258,11 +1255,8 @@ async def _restore_import(
         )
         selected_sections = tuple(session.preview_sections or ())
         resolved_user_mappings = dict(session.preview_user_scope_mappings or ())
-        prepared = await asyncio.to_thread(
-            transfer.apply_user_scope_mappings,
-            prepared,
-            selected_sections,
-            resolved_user_mappings,
+        prepared = await transfer.async_apply_user_scope_mappings(
+            prepared, selected_sections, resolved_user_mappings
         )
 
     async def validate_preview() -> None:

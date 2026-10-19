@@ -43,11 +43,13 @@ timeouts are involved in that before/after replay.
 ## Validation
 
 The related Usage, restore, rollback/fault-injection, redaction, selective-transfer,
-ownership, validation-context and maintenance selection passes **821 tests** locally.
+ownership, validation-context and maintenance selection passes **822 tests** locally.
 Six existing Windows transfer-staging failures remain (`fcntl` unavailable), and
 `test_transfer_staging.py` cannot be collected on this host; these are not presented
 as passing runtime validation. Ruff checks/format and MyPy pass all 146 source files.
-No existing assertions or skip policy are weakened.
+The additional configuration-copy control requires loop context during ownership
+mapping. Existing race/cancellation test doubles now mock the async mapping boundary;
+all their assertions remain intact. No skip policy is weakened.
 
 `tests_real_ha/test_restore_loop_responsiveness.py` uses a genuine authenticated HA
 WebSocket client, EOAI export/upload/preview/restore commands, an empty control and

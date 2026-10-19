@@ -153,3 +153,28 @@ async def test_async_inspection_validates_usage_in_worker_but_configuration_on_l
     await backup.async_inspect_backup(_document(), "agent-new")
     assert usage_threads and all(thread != loop_thread for thread in usage_threads)
     assert config_threads == [loop_thread]
+
+
+async def test_scope_mapping_keeps_configuration_copy_in_loop_context():
+    loop = asyncio.get_running_loop()
+
+    class LoopBoundConfig(dict):
+        def __deepcopy__(self, memo):
+            assert asyncio.get_running_loop() is loop
+            return dict(self)
+
+    prepared = transfer.PreparedTransfer(
+        source_kind="full_backup",
+        mode="full",
+        title="Loop context",
+        available_sections=frozenset({transfer.SECTION_CONFIGURATION}),
+        created_at=None,
+        integration_version=None,
+        config=LoopBoundConfig(),
+        raw_configuration=LoopBoundConfig(),
+    )
+    mapped = await transfer.async_apply_user_scope_mappings(
+        prepared, prepared.available_sections, {}
+    )
+    assert mapped is not prepared
+    assert mapped.config == {}
