@@ -69,3 +69,7 @@ an ordinary permitted Windows event loop and a workspace `--basetemp`; neither
 production code nor fixtures are patched to simulate Linux locks.
 
 Additional review cases live in `tests/test_nine_contract_review.py`.
+
+Pinned Ruff **0.16.8** lint and format checks pass. Pinned MyPy **2.3.1** with
+`--platform linux` reports **no issues in all 146 source files**. This checks Linux
+typing contracts locally; it does not replace runtime validation on Linux CI.
