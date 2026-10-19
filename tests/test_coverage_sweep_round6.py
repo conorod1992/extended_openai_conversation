@@ -236,7 +236,8 @@ def test_management_effective_function_groups_filters_unavailable_members() -> N
             "id": "g",
             "name": "Group",
             "unavailable_functions": ["missing"],
-        }
+        },
+        {"id": "g", "name": "Group", "invalid_members": [123]},
     ]
     assert raw[0]["functions"] == ["valid", "missing", 123]
 
