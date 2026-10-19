@@ -303,7 +303,7 @@ def _tolerant_persist_function_configuration(
         sort_keys=False,
         allow_unicode=True,
     )
-    if tools == state.valid:
+    if deepcopy(tools) == state.valid:
         # Group-only edits must not reserialize untouched Tools.
         if CONF_FUNCTION_TOOLS in raw:
             persisted[CONF_FUNCTION_TOOLS] = raw[CONF_FUNCTION_TOOLS]

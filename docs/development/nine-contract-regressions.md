@@ -139,3 +139,8 @@ A broader attempt including property tests hit Hypothesis source-discovery timeo
 Windows. These local runs are not claimed as a passing full Linux suite. Pinned Ruff
 and MyPy still pass, with all 146 source files checked; the full Linux stable/dev CI
 remains the final validation gate.
+
+A final review pass additionally reproduces three failures where hydrated runtime
+Tool configs caused Group-only repair to reserialize unchanged Functions YAML. The
+comparison now uses the existing persistence-safe deepcopy contract, retaining raw
+comments and formatting. All three targeted cases pass after that correction.

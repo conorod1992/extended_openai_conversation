@@ -283,3 +283,36 @@ async def test_group_creation_cannot_overwrite_quarantined_identifier(grouped_ag
             message(entry, subentry, "tools", "save_group", group=candidate),
         )
     assert subentry.data == original
+
+
+async def test_group_only_repair_preserves_hydrated_tools_source(
+    grouped_agent, monkeypatch
+):
+    from custom_components.extended_openai_conversation_responses.functions.base import (
+        _RuntimeFunctionConfig,
+    )
+
+    hass, entry, subentry, _ = grouped_agent
+    source = "# Retain this Functions source exactly\n" + subentry.data["functions"]
+    subentry.data = {**subentry.data, "functions": source}
+    tools = yaml.safe_load(source)
+    persisted_function = deepcopy(tools[0]["function"])
+    tools[0]["function"] = _RuntimeFunctionConfig(
+        {"type": "native", "name": object()}, persisted_function
+    )
+    monkeypatch.setattr(ui, "configured_function_tools_from_data", lambda _: tools)
+    monkeypatch.setattr(ui, "_async_validate_configuration_dependencies", AsyncMock())
+    await ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        message(
+            entry,
+            subentry,
+            "tools",
+            "delete_group",
+            group_id="probe-group",
+            confirm=True,
+        ),
+    )
+    assert subentry.data["functions"] == source
