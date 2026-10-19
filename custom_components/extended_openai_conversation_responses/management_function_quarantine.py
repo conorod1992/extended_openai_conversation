@@ -282,6 +282,24 @@ def _tolerant_persist_function_configuration(
     assigned_groups = {
         name: group["id"] for group in groups for name in group["functions"]
     }
+    previous_assignments = {
+        renamed_function[1]
+        if renamed_function and name == renamed_function[0]
+        else name: renamed_group[1]
+        if renamed_group and group["id"] == renamed_group[0]
+        else group["id"]
+        for group in state.groups
+        for name in group["functions"]
+    }
+    # Existing assignments do not authorize editing quarantined siblings.
+    # Compare identities after renames so metadata and ID edits cannot become moves.
+    moved_assignments = {
+        name: group_id
+        for name, group_id in assigned_groups.items()
+        if previous_assignments.get(name) != group_id
+    }
+    if renamed_function and renamed_function[1] in moved_assignments:
+        moved_assignments[renamed_function[0]] = moved_assignments[renamed_function[1]]
     restored_groups = []
     restored_ids = set()
     if isinstance(original_groups, list):
@@ -362,8 +380,8 @@ def _tolerant_persist_function_configuration(
                     )
                     and (
                         not isinstance(member, str)
-                        or member not in assigned_groups
-                        or assigned_groups[member] == group_id
+                        or member not in moved_assignments
+                        or moved_assignments[member] == group_id
                     )
                 ]
             if isinstance(group_id, str):
@@ -395,6 +413,11 @@ def _tolerant_persist_function_configuration(
     if extra_updates:
         persisted.update(deepcopy(extra_updates))
     next_state = function_configuration_repair_state(persisted)
+    response_groups = (
+        next_state.groups
+        if next_state is not None
+        else _STRICT_VALIDATE_FUNCTION_GROUPS(persisted[CONF_FUNCTION_GROUPS], tools)
+    )
     metadata = (
         None
         if next_state is None
@@ -412,7 +435,7 @@ def _tolerant_persist_function_configuration(
     return {
         "function_repair": metadata,
         "functions": deepcopy(tools),
-        "function_groups": deepcopy(groups),
+        "function_groups": deepcopy(response_groups),
         "revision": repair_revision(subentry),
     }
 

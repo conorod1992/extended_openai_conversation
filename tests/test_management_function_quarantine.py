@@ -455,7 +455,9 @@ def test_tolerant_persist_keeps_invalid_raw_tool_and_hidden_group_member(
     assert subentry.data["guest_mode_enabled"] is True
     assert {key: result[key] for key in ("functions", "function_groups", "revision")} == {
         "functions": tools,
-        "function_groups": groups,
+        # This raw Group lacks its required name/description. Retain it for repair,
+        # but never advertise it as usable in a post-save acknowledgement.
+        "function_groups": [],
         "revision": "new-revision",
     }
     assert result["function_repair"]["persisted_groups"] == subentry.data[CONF_FUNCTION_GROUPS]

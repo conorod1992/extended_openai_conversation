@@ -279,4 +279,7 @@ def test_tolerant_function_persist_keeps_invalid_raw_sibling_and_membership() ->
         invalid["spec"]["name"],
     ]
     assert result["functions"] == [valid]
-    assert result["function_groups"] == effective_groups
+    # Mutation acknowledgements use the same canonical projection as a fresh read.
+    assert result["function_groups"] == [
+        {**effective_groups[0], "loading_mode": "on_demand", "enabled": True}
+    ]
