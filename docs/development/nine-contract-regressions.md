@@ -151,3 +151,57 @@ Tool-only entry check. That test now supplies the shared repair state instead;
 its assertions that absent Function fields remain absent are unchanged, and it
 also asserts one shared-state lookup and one save. No production change or test
 suppression is needed for this CI correction.
+
+## Group identity, hidden membership and native UI follow-up
+
+The review of `aa3906b` identified rename collisions with quarantined IDs,
+incidental membership edits losing unresolved references, Group-only damage routing
+into the Tool fallback editor, and `validate_current` reporting only the usable
+projection as if it certified all stored definitions.
+
+Group persistence now distinguishes raw definitions, their usable baseline and the
+explicit mutation target. All persisted string IDs remain reserved during creation
+and rename. Ambiguous duplicate IDs cannot be edited/deleted by an ID-only command,
+and unrelated Tool changes retain both duplicate raw entries. Incidental Group
+membership updates apply only the intended usable-member delta, preserving missing
+Tool references, malformed members and untouched raw fields. Tool rename/delete
+semantics also apply to structurally quarantined Groups. Explicit Group repair or
+deletion consumes only its selected definition. Strict proposed-Group validation,
+revision checks, dependency handling and deletion confirmation remain in force.
+
+The response identifies valid Tools independently from Group damage. The frontend
+keeps normal Functions controls and exposes uniquely identifiable malformed Groups
+through the existing Group editor/delete controls, including malformed or empty
+string IDs. Repair preserves disabled and Guest settings and safely initializes
+malformed fields. Mutation acknowledgements refresh repair metadata immediately.
+The saved-definition validation button now reports excluded Tools/Groups as needing
+repair; healthy definitions still produce the existing success result.
+
+The same final 48 public-command cases in
+`tests/test_group_mutation_preservation.py` yield **36 failures and 12 control passes**
+on untouched reviewed head `aa3906b`, and **48 passes** with the correction. The
+five native Chromium cases in `tests_browser/group-quarantine-repair.spec.mjs` fail
+with the reviewed frontend and pass after the fix. They exercise real DOM routing,
+edit/save/delete dialogs, acknowledgement refresh and validation messages against a
+controlled transport fixture; actual HA-command behavior is tested separately by the
+public backend cases. These are not claims of a new live-HA corruption reproduction.
+
+The expanded related backend run has **2,783 passed, 1 skipped and only the ten
+previously reproduced Windows/platform failures**. Existing assertion coverage is
+retained; the persistence response assertion additionally verifies updated repair
+metadata, and the frontend composition assertion still requires repair controls to
+precede normal Groups. Pinned Ruff/MyPy pass all 146 source files. Required frontend
+syntax, standalone, type/unit and deterministic double-build checks are run, and
+tracked generated assets are rebuilt from source.
+
+Group mutation intent is explicit: ordinary edits, availability toggles and
+assignment changes preserve hidden members in both source and destination Groups.
+Only the dedicated repair controls submit `repair: true` to replace the targeted
+Group's unavailable members; deletion remains separately confirmed. Additional
+public-command cases cover that distinction, and the native browser transport
+asserts that the repair form actually sends the explicit intent.
+
+Final native-browser validation passes all **89 related source-mode journeys** and
+all **five Group-repair journeys against the rebuilt shipped bundle**. The same five
+recovery journeys fail against the reviewed frontend. All 106 standalone frontend
+files, frontend typing, 39 Vitest tests and the deterministic double build pass.
