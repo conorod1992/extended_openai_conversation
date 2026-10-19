@@ -21,10 +21,6 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-_HEADING_OR_QUOTE = re.compile(r"(?m)^\s{0,3}(?:#{1,6}|>)\s+")
-_LIST_MARKER = re.compile(r"(?m)^\s*(?:[-+*]|\d+[.)])\s+")
-_EMPHASIS = re.compile(r"(?<!\w)(?:\*\*|__|~~)|(?:\*\*|__|~~)(?!\w)")
-_INLINE_CODE = re.compile(r"`([^`\n]+)`")
 _EMPTY_PARENS = re.compile(r"\(\s*\)")
 _SPACE_BEFORE_PUNCTUATION = re.compile(r"\s+([,.;:!?])")
 _WHITESPACE = re.compile(r"[ \t\f\v]+")
@@ -68,6 +64,7 @@ class StreamingSpeechSanitizer:
         self._buffer = ""
         self._format_buffer = ""
         self._format_previous = ""
+        self._format_depth = 0
         self._line_start = True
         self._needs_separator = False
         self._last_output = ""
@@ -305,6 +302,18 @@ class StreamingSpeechSanitizer:
             previous = (
                 self._format_buffer[index - 1] if index else self._format_previous
             )
+            if char in "*_~" and not final and all(
+                value == char for value in self._format_buffer[index:]
+            ):
+                # A delimiter run may continue in the next provider chunk.
+                break
+            if char in "*_" and self._format_buffer.startswith(char * 3, index):
+                if char != "_" or not previous.isalnum() or (
+                    index + 3 == len(self._format_buffer)
+                    or not self._format_buffer[index + 3].isalnum()
+                ):
+                    index += 3
+                    continue
             if (
                 char in "*_"
                 and pair not in _FORMAT_MARKERS
@@ -322,6 +331,9 @@ class StreamingSpeechSanitizer:
                     if end < 0:
                         break
                     after = self._format_buffer[end + 1 : end + 2]
+                    if self._format_buffer[end - 1] in (char, "\\") or after == char:
+                        # A nested strong delimiter cannot close single emphasis.
+                        continue
                     if not self._format_buffer[end - 1].isspace() and (
                         not after or (not after.isalnum() and after != char)
                     ):
@@ -331,7 +343,13 @@ class StreamingSpeechSanitizer:
                         unresolved_emphasis = True
                         break
                 else:
-                    output.append(self._format_buffer[index + 1 : end])
+                    body = self._format_buffer[index + 1 : end]
+                    if self._format_depth < 32:
+                        nested = StreamingSpeechSanitizer(urls=False)
+                        nested._line_start = False
+                        nested._format_depth = self._format_depth + 1
+                        body = nested._format(body, final=True)
+                    output.append(body)
                     index = end + 1
                     continue
             if pair in _FORMAT_MARKERS:
@@ -528,15 +546,7 @@ def async_streaming_speech_cleanup(chat_log: Any, agent_config: Mapping[str, Any
 
 def _built_in_cleanup(text: str, *, markdown: bool, urls: bool) -> str:
     sanitizer = StreamingSpeechSanitizer(markdown=markdown, urls=urls)
-    text = sanitizer.feed(text) + sanitizer.finish()
-    # Keep the completed-response regex cleanup as a conservative safety net and
-    # to preserve the established formatting semantics used by Speech Preview.
-    if markdown:
-        text = _HEADING_OR_QUOTE.sub("", text)
-        text = _LIST_MARKER.sub("", text)
-        text = _INLINE_CODE.sub(r"\1", text)
-        text = _EMPHASIS.sub("", text)
-    return text
+    return sanitizer.feed(text) + sanitizer.finish()
 
 
 def _final_whitespace_cleanup(text: str) -> str:
