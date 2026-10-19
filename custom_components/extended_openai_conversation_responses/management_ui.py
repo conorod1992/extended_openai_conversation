@@ -366,6 +366,7 @@ async def _persist_function_configuration(
     renamed_function: tuple[str, str] | None = None,
     renamed_group: tuple[str, str] | None = None,
     deleted_group: str | None = None,
+    repaired_group: str | None = None,
     rules_manager: Any = None,
 ) -> dict[str, Any]:
     """Persist one revision-checked tool edit without discarding quarantined siblings."""
@@ -400,6 +401,8 @@ async def _persist_function_configuration(
         expected_revision=expected_revision,
         renamed_group=renamed_group,
         deleted_group=deleted_group,
+        renamed_function=renamed_function,
+        repaired_group=repaired_group,
     )
 
 
@@ -1360,6 +1363,8 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
             "persisted_groups": deepcopy(repair_state.raw_groups),
             "validation_error": repair_state.issue,
             "isolatable": bool(repair_state.invalid),
+            "tools_valid": not repair_state.invalid
+            and repair_state.field_updates_allowed,
         }
     phase = perf_counter()
     seed_persisted_config_projection(entry, subentry, snapshot, revision)
@@ -2034,12 +2039,29 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
                 }
             )
         return result
+    if action == "validate_current":
+        state, _ = repair_state_for_projection(persisted_config_projection(subentry))
+        if state is None:
+            return {"valid": True, "errors": {}}
+        errors = {}
+        if state.invalid or not state.field_updates_allowed:
+            errors[CONF_FUNCTION_TOOLS] = state.issue
+        if state.group_issues:
+            errors[CONF_FUNCTION_GROUPS] = (
+                "Saved Function Groups contain definitions or members needing repair"
+            )
+        return {
+            "valid": False,
+            "errors": errors,
+            "function_repair": {
+                "invalid_count": len(state.invalid),
+                "group_issues": deepcopy(state.group_issues),
+            },
+        }
     tools = configured_function_tools_from_data(subentry.data)
     groups = validate_function_groups(
         subentry.data.get(CONF_FUNCTION_GROUPS, []), tools
     )
-    if action == "validate_current":
-        return {"valid": True, "errors": {}}
     if action == "save":
         if "yaml" in message:
             if "tool" in message:
@@ -2240,6 +2262,10 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
         ):
             raise HomeAssistantError("group functions must be a list of names")
         original_id = message.get("original_id")
+        if "repair" in message and not isinstance(message["repair"], bool):
+            raise HomeAssistantError("repair must be a boolean")
+        if message.get("repair") is True and not isinstance(original_id, str):
+            raise HomeAssistantError("Group repair requires an existing original_id")
         if original_id is not None and not isinstance(original_id, str):
             raise HomeAssistantError("original_id must be a string")
         raw_groups = subentry.data.get(CONF_FUNCTION_GROUPS, [])
@@ -2247,25 +2273,23 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             raise HomeAssistantError(
                 "Repair the malformed Function Group collection before adding a Group"
             )
-        if original_id is None and any(
+        if candidate.get("id") != original_id and any(
             isinstance(group, dict) and group.get("id") == candidate.get("id")
             for group in raw_groups
         ):
             raise HomeAssistantError(
                 "Function Group already exists; reload it before replacing it"
             )
-        existing = (
-            next(
-                (
-                    group
-                    for group in raw_groups
-                    if isinstance(group, dict) and group.get("id") == original_id
-                ),
-                None,
+        matching = [
+            group
+            for group in raw_groups
+            if isinstance(group, dict) and group.get("id") == original_id
+        ]
+        if original_id is not None and len(matching) > 1:
+            raise HomeAssistantError(
+                "Function Group identifier is ambiguous; repair the saved collection first"
             )
-            if isinstance(raw_groups, list)
-            else None
-        )
+        existing = matching[0] if matching else None
         if original_id is not None and existing is None:
             raise HomeAssistantError("The Function Group no longer exists")
         selected = set(candidate_functions)
@@ -2282,6 +2306,9 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
         from .agent_config import validate_function_groups as validate_edited_groups
 
         validated_groups = validate_edited_groups([*remaining_groups, candidate], tools)
+        repair_options: dict[str, Any] = {}
+        if message.get("repair") is True:
+            repair_options["repaired_group"] = original_id
         return await _persist_function_configuration(
             hass,
             entry,
@@ -2289,6 +2316,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             tools,
             validated_groups,
             expected_revision=message.get("revision"),
+            **repair_options,
             renamed_group=(original_id, candidate["id"])
             if isinstance(original_id, str) and isinstance(candidate.get("id"), str)
             else None,
@@ -2308,11 +2336,21 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             raise HomeAssistantError("group_id is required")
         raw_groups = subentry.data.get(CONF_FUNCTION_GROUPS, [])
         remaining = [group for group in groups if group["id"] != group_id]
-        if not isinstance(raw_groups, list) or not any(
-            isinstance(group, dict) and group.get("id") == group_id
-            for group in raw_groups
-        ):
+        matching = (
+            [
+                group
+                for group in raw_groups
+                if isinstance(group, dict) and group.get("id") == group_id
+            ]
+            if isinstance(raw_groups, list)
+            else []
+        )
+        if not matching:
             raise HomeAssistantError("The Function Group no longer exists")
+        if len(matching) > 1:
+            raise HomeAssistantError(
+                "Function Group identifier is ambiguous; repair the saved collection first"
+            )
         return await _persist_function_configuration(
             hass,
             entry,

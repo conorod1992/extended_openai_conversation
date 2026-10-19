@@ -453,11 +453,13 @@ def test_tolerant_persist_keeps_invalid_raw_tool_and_hidden_group_member(
         {"id": "g", "functions": ["valid", "broken"]}
     ]
     assert subentry.data["guest_mode_enabled"] is True
-    assert result == {
+    assert {key: result[key] for key in ("functions", "function_groups", "revision")} == {
         "functions": tools,
         "function_groups": groups,
         "revision": "new-revision",
     }
+    assert result["function_repair"]["persisted_groups"] == subentry.data[CONF_FUNCTION_GROUPS]
+    assert result["function_repair"]["group_issues"]
 
 
 @pytest.mark.asyncio

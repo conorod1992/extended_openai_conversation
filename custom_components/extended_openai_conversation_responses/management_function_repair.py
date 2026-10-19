@@ -829,6 +829,7 @@ def _safe_configuration_payload(
             "persisted_groups": raw_groups,
             "validation_error": issue,
             "isolatable": bool(invalid),
+            "tools_valid": not invalid and function_tools_issue(persisted)[1] is None,
             "tools": editable_function_tools(persisted) if not invalid else None,
         },
     }
@@ -876,6 +877,7 @@ def safe_configuration_payload(
                 "persisted_groups": deepcopy(state.raw_groups),
                 "validation_error": state.issue,
                 "isolatable": bool(state.invalid),
+                "tools_valid": not state.invalid and state.field_updates_allowed,
                 "tools": editable_function_tools(dict(subentry.data))
                 if not state.invalid
                 else None,

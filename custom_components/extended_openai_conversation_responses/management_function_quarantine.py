@@ -209,6 +209,8 @@ def _tolerant_persist_function_configuration(
     expected_revision: str | None = None,
     renamed_group: tuple[str, str] | None = None,
     deleted_group: str | None = None,
+    renamed_function: tuple[str, str] | None = None,
+    repaired_group: str | None = None,
 ) -> dict[str, Any]:
     """Persist edits to valid siblings while retaining quarantined raw tools."""
     raw = dict(subentry.data)
@@ -257,46 +259,122 @@ def _tolerant_persist_function_configuration(
         for index, candidate in enumerate(editable)
         if index in invalid_indices
     ]
-    persisted_groups = _restore_quarantined_group_members(
-        groups,
-        raw.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS),
-        invalid_names,
-        renamed_group,
-    )
+    persisted_groups = deepcopy(groups)
     # Invalid Group siblings are repair-owned. A targeted replacement or deletion
     # consumes only that raw definition; unrelated damage survives unchanged.
     original_groups = raw.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS)
-    usable_ids = {group["id"] for group in state.groups}
-    damaged_ids = {
-        item["id"]
-        for item in state.group_issues
-        if isinstance(item.get("id"), str) and "invalid_members" in item
+    if (
+        renamed_group is not None
+        and renamed_group[0] != renamed_group[1]
+        and isinstance(original_groups, list)
+        and any(
+            isinstance(group, dict) and group.get("id") == renamed_group[1]
+            for group in original_groups
+        )
+    ):
+        raise HomeAssistantError(
+            "Function Group already exists; reload it before replacing it"
+        )
+    consumed = {deleted_group, repaired_group}
+    baseline_by_id = {group["id"]: group for group in state.groups}
+    proposed_by_id = {group["id"]: group for group in groups}
+    removed_tools = {tool["spec"]["name"] for tool in state.valid} - valid_names
+    assigned_groups = {
+        name: group["id"] for group in groups for name in group["functions"]
     }
-    consumed = {deleted_group, renamed_group[0] if renamed_group else None}
+    restored_groups = []
+    restored_ids = set()
     if isinstance(original_groups, list):
-        for group in original_groups:
-            group_id = group.get("id") if isinstance(group, dict) else None
+        for raw_group in original_groups:
+            group_id = raw_group.get("id") if isinstance(raw_group, dict) else None
             if isinstance(group_id, str) and group_id in consumed:
                 continue
+            baseline = (
+                baseline_by_id.get(group_id) if isinstance(group_id, str) else None
+            )
+            targeted = renamed_group is not None and group_id == renamed_group[0]
+            proposed_id = renamed_group[1] if targeted and renamed_group else group_id
+            proposed = (
+                proposed_by_id.get(proposed_id)
+                if isinstance(proposed_id, str)
+                else None
+            )
+            if targeted and proposed is not None and baseline is None:
+                baseline = {"functions": [tool["spec"]["name"] for tool in state.valid]}
             if (
                 isinstance(group_id, str)
-                and group_id in usable_ids
-                and group_id not in damaged_ids
+                and sum(
+                    isinstance(item, dict) and item.get("id") == group_id
+                    for item in original_groups
+                )
+                > 1
             ):
-                proposed = next(
-                    (item for item in groups if item["id"] == group_id), None
+                baseline = None
+            restored = deepcopy(raw_group)
+            if baseline is not None and proposed is not None:
+                # Only the usable members were edited indirectly. Retain hidden
+                # raw members and fields that the operation never presented.
+                baseline_members = set(baseline["functions"])
+                proposed_members = proposed["functions"]
+                restored.update(
+                    {
+                        key: deepcopy(value)
+                        for key, value in proposed.items()
+                        if key != "functions"
+                        and (targeted or value != baseline.get(key))
+                    }
                 )
-                baseline = next(
-                    (item for item in state.groups if item["id"] == group_id), None
-                )
-                if proposed != baseline:
-                    continue
-            persisted_groups = [
-                item
-                for item in persisted_groups
-                if not (isinstance(group_id, str) and item.get("id") == group_id)
-            ]
-            persisted_groups.append(deepcopy(group))
+                restored["functions"] = [
+                    renamed_function[1]
+                    if renamed_function and member == renamed_function[0]
+                    else member
+                    for member in (
+                        raw_group.get("functions", [])
+                        if isinstance(raw_group.get("functions"), list)
+                        else []
+                    )
+                    if not isinstance(member, str)
+                    or member not in baseline_members
+                    or member in proposed_members
+                    or (
+                        renamed_function
+                        and member == renamed_function[0]
+                        and renamed_function[1] in proposed_members
+                    )
+                ]
+                for member in proposed_members:
+                    if member not in restored["functions"]:
+                        restored["functions"].append(member)
+            elif isinstance(restored, dict) and isinstance(
+                restored.get("functions"), list
+            ):
+                # Even structurally quarantined Groups retain Tool rename/delete
+                # semantics, without dropping unrelated unavailable references.
+                restored["functions"] = [
+                    renamed_function[1]
+                    if renamed_function and member == renamed_function[0]
+                    else member
+                    for member in restored["functions"]
+                    if (
+                        not isinstance(member, str)
+                        or member not in removed_tools
+                        or (renamed_function and member == renamed_function[0])
+                    )
+                    and (
+                        not isinstance(member, str)
+                        or member not in assigned_groups
+                        or assigned_groups[member] == group_id
+                    )
+                ]
+            if isinstance(group_id, str):
+                restored_ids.add(group_id)
+            if targeted and isinstance(proposed_id, str):
+                restored_ids.add(proposed_id)
+            restored_groups.append(restored)
+        persisted_groups = [
+            item for item in persisted_groups if item["id"] not in restored_ids
+        ]
+        persisted_groups.extend(restored_groups)
     persisted = dict(raw)
     persisted[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
         [*deepcopy(tools), *quarantined_raw],
@@ -316,8 +394,23 @@ def _tolerant_persist_function_configuration(
     )
     if extra_updates:
         persisted.update(deepcopy(extra_updates))
+    next_state = function_configuration_repair_state(persisted)
+    metadata = (
+        None
+        if next_state is None
+        else {
+            "invalid_tools": deepcopy(next_state.invalid),
+            "invalid_count": len(next_state.invalid),
+            "group_issues": deepcopy(next_state.group_issues),
+            "persisted_groups": deepcopy(next_state.raw_groups),
+            "validation_error": next_state.issue,
+            "isolatable": bool(next_state.invalid),
+            "tools_valid": not next_state.invalid and next_state.field_updates_allowed,
+        }
+    )
     update_live_subentry(hass, entry, subentry, data=persisted)
     return {
+        "function_repair": metadata,
         "functions": deepcopy(tools),
         "function_groups": deepcopy(groups),
         "revision": repair_revision(subentry),
