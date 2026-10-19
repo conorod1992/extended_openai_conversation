@@ -136,6 +136,10 @@ def _redact_secrets(
         return value
     result: dict[Any, Any] = {}
     for key, item in value.items():
+        if rule_action and key == "canonical_signature":
+            # This derived field encodes the unredacted action as JSON. Import
+            # rebuilds it from actions; exporting it would duplicate credentials.
+            continue
         child_path = (*path, key)
         child_schema = schema or _is_function_tool_schema_root(child_path)
         secret_key = _is_payload_secret_key(key) if payload else _is_secret_key(key)
