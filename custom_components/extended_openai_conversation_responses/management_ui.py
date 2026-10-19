@@ -29,6 +29,7 @@ from .agent_config import (
     AGENT_CONFIG_FIELDS,
     GUEST_V2_FIELDS,
     MAX_AGENT_TITLE_LENGTH,
+    MAX_FUNCTION_GROUPS,
     AgentConfigError,
     agent_config_defaults,
     agent_config_options,
@@ -2277,6 +2278,11 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
         if not isinstance(raw_groups, list):
             raise HomeAssistantError(
                 "Repair the malformed Function Group collection before adding a Group"
+            )
+        if original_id is None and len(raw_groups) >= MAX_FUNCTION_GROUPS:
+            raise HomeAssistantError(
+                f"Function Groups support at most {MAX_FUNCTION_GROUPS} saved groups; "
+                "delete a Group before adding another"
             )
         if candidate.get("id") != original_id and any(
             isinstance(group, dict) and group.get("id") == candidate.get("id")
