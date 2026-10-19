@@ -918,10 +918,8 @@ class QuietHoursManager:
             kind, _, value = target
             if kind == "volume":
                 value = min(value, control["original_value"])
-            if value == control["quiet_value"] and "pending_quiet_value" not in control:
-                control.pop("restoration_pending", None)
-                await self._async_correct_volume_ceiling_locked(entity_id, control)
-                continue
+            # Ownership is independent of whether the configured target changed
+            # or a ceiling correction has any work left to do.
             current = (
                 _current_volume(self.hass, entity_id)
                 if kind == "volume"
@@ -942,6 +940,10 @@ class QuietHoursManager:
                 # An independent adjustment ends ownership; never claim its value as our baseline.
                 controls.pop(entity_id)
                 await self._async_save_control_state_locked()
+                continue
+            if value == control["quiet_value"] and "pending_quiet_value" not in control:
+                control.pop("restoration_pending", None)
+                await self._async_correct_volume_ceiling_locked(entity_id, control)
                 continue
             control["pending_quiet_value"] = value
             # A new operation identity distinguishes its rounded report from the
