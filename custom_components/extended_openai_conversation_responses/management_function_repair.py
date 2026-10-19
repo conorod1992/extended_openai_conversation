@@ -1171,7 +1171,7 @@ async def async_function_repair(
                 rules, _references = await management_ui._function_reference_state(
                     hass, entry_id, subentry_id, subentry.data, old_name
                 )
-                rule_references = _references["request_rules"]
+                rule_references = _references.get("request_rules", [])
                 rules_revision = rules.revision()
                 extra_updates[management_ui.CONF_GUEST_ALLOWED_FUNCTION_NAMES] = [
                     new_name if name == old_name else name

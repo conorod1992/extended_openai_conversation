@@ -2161,7 +2161,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             )
         except (Exception, asyncio.CancelledError) as err:
             if renamed_function_references_are_saved(
-                rules, original_name, saved_name, references["request_rules"]
+                rules, original_name, saved_name, references.get("request_rules", [])
             ):
                 if isinstance(err, asyncio.CancelledError):
                     raise

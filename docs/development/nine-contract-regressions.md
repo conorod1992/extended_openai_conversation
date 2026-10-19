@@ -302,3 +302,14 @@ All **34 final cases pass** with the corrections. The expanded **139-module** ru
 has **2,842 passed, one skipped and only the same ten previously reproduced
 Windows/platform failures**. Full Linux stable/dev and selected browser, lifecycle,
 recovery and upgrade CI remain the final acceptance checks.
+
+The first full stable run reached **9,532 passes, six skips and 98.45% coverage**,
+with three existing repair-rollback tests failing because their reference lookup
+returns an empty metadata mapping. Missing reference metadata now conservatively
+means a durable Rule rename cannot be certified. The two readers use an empty
+reference-list default; the existing rollback/revision tests remain unchanged.
+All **48 tests** in that existing module and the four new regression files pass,
+including the three CI cases.
+
+Including that entire unchanged module, the final **140-module** local run has
+**2,856 passed, one skipped and only the same ten Windows/platform failures**.
