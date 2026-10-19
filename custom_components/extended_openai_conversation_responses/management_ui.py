@@ -379,6 +379,9 @@ async def _persist_function_configuration(
     )
 
     _require_agent_config_revision(subentry, expected_revision)
+    # Legacy callers may omit a revision. Still bind this operation to the state
+    # used to prepare its Tool/Group edit before dependency validation yields.
+    operation_revision = persisted_config_projection(subentry).revision
     _valid, invalid, _issue = isolated_function_tools(dict(subentry.data))
     editable = editable_function_tools(dict(subentry.data)) if invalid else []
     candidate_tools = [*tools, *(editable[item["index"]] for item in invalid)]
@@ -401,7 +404,7 @@ async def _persist_function_configuration(
         tools,
         groups,
         extra_updates=extra_updates,
-        expected_revision=expected_revision,
+        expected_revision=operation_revision,
         renamed_group=renamed_group,
         deleted_group=deleted_group,
         renamed_function=renamed_function,

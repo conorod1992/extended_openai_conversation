@@ -440,3 +440,35 @@ The focused selection passes **149 tests**. The expanded **144-module** selectio
 has **2,908 passed, one skipped and only the same ten previously reproduced
 Windows/platform failures**. Pinned Ruff checks/format and MyPy pass all 146 source
 files. No existing tests, skip policy or frontend assets change in this pass.
+
+## Bind legacy Tool/Group writes across dependency-validation awaits
+
+Review of `72c205a` found that normal Tool/Group mutations forwarded an optional
+client revision through the asynchronous dependency validator. When a legacy
+caller omitted it, a concurrent save during validation could be overwritten by
+Tools/Groups prepared from the earlier configuration. Explicit client revisions,
+Tool rename/delete and dedicated repair writers already protected their transitions.
+
+The shared normal writer now captures its canonical operation revision before
+awaiting dependency validation, after checking any supplied revision. Both strict
+and tolerant persistence receive that captured revision and reject a changed
+configuration before writing. This covers Tool save/toggle, Group save/delete and
+HA additions without requiring a client-protocol change.
+
+The identical final **16 public-command cases** in
+`tests/test_tool_persistence_await_revision.py` yield **eight failures and eight
+explicit-revision control passes** on untouched `72c205a`, then **16 passes** after
+the fix. They cover healthy/quarantined Groups, four mutation routes and concurrent
+Tool/Group changes, requiring the newer state to survive with zero persistence calls.
+The focused mutation/dependency/rollback/concurrency selection passes **133 tests**.
+Pinned Ruff checks/format and MyPy pass all 146 source files.
+
+The **145-module** Windows selection produced **2,923 passed, one skipped and
+11 failures** in each of two runs. Ten failures match the previously documented
+platform failures. The additional file-edit test failed on a different parameter
+in each run with a suppressed executor RuntimeError; its complete 42-test module
+passes in isolation. The same broad selection on untouched `72c205a` has **2,916
+passed, one skipped and 18 failures**: the ten known platform failures plus the
+eight new concurrency regressions; no file-edit failure in that replay. Linux CI
+remains the authoritative full-suite check. No existing assertions, skips or
+frontend assets were changed.
