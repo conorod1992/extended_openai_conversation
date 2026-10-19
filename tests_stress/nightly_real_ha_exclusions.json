@@ -106,7 +106,8 @@
     "tests_real_ha/test_configuration_operation_contracts.py",
     "tests_real_ha/test_script_structure_inspection.py",
     "tests_real_ha/test_script_transformer_migration.py",
-    "tests_real_ha/test_restore_loop_responsiveness.py"
+    "tests_real_ha/test_restore_loop_responsiveness.py",
+    "tests_real_ha/test_restore_category_responsiveness.py"
   ],
   "partial_selected": {
     "tests_real_ha/test_management_backend_acceptance.py": {
@@ -775,6 +776,12 @@
       "job": "stable",
       "selector": "tests_real_ha/",
       "reason": "Restore responsiveness control and 2,000-record regression run in genuine HA acceptance on each PR; enhanced nightly retains its separate restore stress campaigns."
+    },
+    "tests_real_ha/test_restore_category_responsiveness.py": {
+      "workflow": "real-ha.yml",
+      "job": "stable",
+      "selector": "tests_real_ha/",
+      "reason": "Archive-heavy, Knowledge-heavy and mixed restore responsiveness run serially in genuine HA PR acceptance with real disk storage."
     }
   }
 }
