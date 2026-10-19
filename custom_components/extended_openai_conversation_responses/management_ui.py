@@ -1679,7 +1679,11 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         duplicate = ConfigSubentry(
             data=MappingProxyType(
                 preserve_legacy_guest_policy(
-                    duplicate_source, normalize_persisted_agent_config(duplicate_source)
+                    duplicate_source,
+                    preserve_agent_model_setting_omissions(
+                        duplicate_source,
+                        normalize_persisted_agent_config(duplicate_source),
+                    ),
                 )
             ),
             subentry_type="conversation",
