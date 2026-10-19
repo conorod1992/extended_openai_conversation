@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 import json
@@ -318,7 +319,7 @@ async def async_inspect_backup(
     max_bytes: int | None = None,
     private_journal: bool = False,
 ) -> PreparedRestore:
-    """Process bounded JSON and Usage off-loop; retain HA-aware schema context."""
+    """Process bounded JSON and bulk categories off-loop; retain HA-aware schema context."""
     if isinstance(value, PreparedRestore):
         return value
     document = await asyncio.to_thread(
@@ -329,8 +330,11 @@ async def async_inspect_backup(
     # Check the envelope before accessing its potentially large Usage section.
     _inspect_decoded_backup(document, target_agent_id, header_only=True)
     try:
-        usage = await asyncio.to_thread(
-            UsageManager.validate_backup_data, document["usage"], target_agent_id
+        categories = await asyncio.to_thread(
+            _validate_data_categories,
+            document,
+            target_agent_id,
+            private_journal=private_journal,
         )
     except (TypeError, ValueError) as err:
         raise BackupError(f"The backup is incomplete or corrupted: {err}") from err
@@ -338,8 +342,44 @@ async def async_inspect_backup(
         document,
         target_agent_id,
         private_journal=private_journal,
-        validated_usage=usage,
+        validated_categories=categories,
     )
+
+
+def _validate_data_categories(
+    value: Mapping[str, Any], target_agent_id: str, *, private_journal: bool = False
+) -> dict[str, Any]:
+    """Validate selected, context-free categories without accessing manager state."""
+    result: dict[str, Any] = {}
+    for key, validator in (
+        ("memories", PersistentMemory.validate_backup_data),
+        ("temporary_memories", TemporaryMemory.validate_backup_data),
+        ("knowledge", KnowledgeLibrary.validate_backup_data),
+    ):
+        if key in value:
+            result[key] = validator(value[key])
+    if "archive" in value:
+        archive_data = deepcopy(value["archive"])
+        has_active = (
+            private_journal
+            and isinstance(archive_data, dict)
+            and "active" in archive_data
+        )
+        active = archive_data.pop("active") if has_active else None
+        sessions, turns = ConversationArchive.validate_backup_data(
+            archive_data, target_agent_id, local_recovery=has_active
+        )
+        bindings = (
+            ConversationArchive.validate_recovery_bindings(active, sessions)
+            if has_active
+            else None
+        )
+        result["archive"] = sessions, turns, bindings
+    if "usage" in value:
+        result["usage"] = UsageManager.validate_backup_data(
+            value["usage"], target_agent_id
+        )
+    return result
 
 
 def _decode_backup_document(value: Any, max_bytes: int) -> dict[str, Any]:
@@ -384,7 +424,7 @@ def _inspect_decoded_backup(
     *,
     private_journal: bool = False,
     header_only: bool = False,
-    validated_usage: ValidatedUsage | None = None,
+    validated_categories: dict[str, Any] | None = None,
 ) -> PreparedRestore:
     """Validate the decoded envelope and categories, including HA-aware schemas."""
     if value.get("format") != BACKUP_FORMAT:
@@ -471,31 +511,18 @@ def _inspect_decoded_backup(
         if not isinstance(raw_config, dict):
             raise ValueError("agent config must be an object")
         config = recoverable_configuration_snapshot(raw_config)
-        memories = PersistentMemory.validate_backup_data(value["memories"])
-        temporary_memories = TemporaryMemory.validate_backup_data(
-            value["temporary_memories"]
+        categories = (
+            validated_categories
+            if validated_categories is not None
+            else _validate_data_categories(
+                value, target_agent_id, private_journal=private_journal
+            )
         )
-        knowledge = KnowledgeLibrary.validate_backup_data(value["knowledge"])
-        archive_data = deepcopy(value["archive"])
-        has_active = (
-            private_journal
-            and isinstance(archive_data, dict)
-            and "active" in archive_data
-        )
-        active = archive_data.pop("active") if has_active else None
-        archive_sessions, archive_turns = ConversationArchive.validate_backup_data(
-            archive_data, target_agent_id, local_recovery=has_active
-        )
-        archive_active = (
-            ConversationArchive.validate_recovery_bindings(active, archive_sessions)
-            if has_active
-            else None
-        )
-        usage_totals, usage_daily, usage_requests, usage_runs = (
-            validated_usage
-            if validated_usage is not None
-            else UsageManager.validate_backup_data(value["usage"], target_agent_id)
-        )
+        memories = categories["memories"]
+        temporary_memories = categories["temporary_memories"]
+        knowledge = categories["knowledge"]
+        archive_sessions, archive_turns, archive_active = categories["archive"]
+        usage_totals, usage_daily, usage_requests, usage_runs = categories["usage"]
         guest_mode_schedule = (
             GuestModeManager.validate_backup_data(value["guest_mode"])
             if version >= 2 and "guest_mode" in value
@@ -571,20 +598,21 @@ async def _snapshot_for_restore(
         guest_mode,
         request_rules,
     ) = managers
-    archive_data = await archive.async_recovery_data()
-    archive_sessions, archive_turns = ConversationArchive.validate_backup_data(
-        {key: archive_data[key] for key in ("sessions", "turns")},
+    raw_categories = {
+        "archive": await archive.async_recovery_data(),
+        "usage": await usage.async_backup_data(),
+        "memories": await memory.async_backup_data(),
+        "temporary_memories": await temporary.async_backup_data(),
+        "knowledge": await knowledge.async_backup_data(),
+    }
+    categories = await asyncio.to_thread(
+        _validate_data_categories,
+        raw_categories,
         subentry.subentry_id,
-        local_recovery=True,
+        private_journal=True,
     )
-    archive_active = ConversationArchive.validate_recovery_bindings(
-        archive_data["active"], archive_sessions
-    )
-    usage_totals, usage_daily, usage_requests, usage_runs = await asyncio.to_thread(
-        UsageManager.validate_backup_data,
-        await usage.async_backup_data(),
-        subentry.subentry_id,
-    )
+    archive_sessions, archive_turns, archive_active = categories["archive"]
+    usage_totals, usage_daily, usage_requests, usage_runs = categories["usage"]
     guest_mode_schedule = GuestModeManager.validate_backup_data(
         await guest_mode.async_backup_data()
     )
@@ -596,9 +624,9 @@ async def _snapshot_for_restore(
         # Recovery applies this mapping directly, including during same-process
         # rollback. A frontend [] must not become a legacy persisted default.
         private_configuration_snapshot(subentry.data),
-        PersistentMemory.validate_backup_data(await memory.async_backup_data()),
-        TemporaryMemory.validate_backup_data(await temporary.async_backup_data()),
-        KnowledgeLibrary.validate_backup_data(await knowledge.async_backup_data()),
+        categories["memories"],
+        categories["temporary_memories"],
+        categories["knowledge"],
         archive_sessions,
         archive_turns,
         usage_totals,

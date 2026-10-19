@@ -75,3 +75,32 @@ and payload logging synchronously; it is not representative of production Store 
 and introduced an additional 500ms stall into the first acceptance attempt. The
 disk-backed fixture restores HA's actual writer/reader before setup and restores the
 pytest shims before teardown, as in the existing OS-boundary acceptance tests.
+
+
+## Category review follow-up
+
+A separate category profile on PR head `19aefa1` confirmed additional on-loop
+processing. Validating 5,000 persistent memories took 64–90ms per pass, 300 Knowledge
+sources (about 3MB of text) took 23–28ms, and 6,000 archive turns took 24–30ms
+(one repeat was 65ms). Full preparation repeats these validations for snapshots and
+journal documents. These are per-category CPU samples, not a claim that every
+category alone exceeds the 250ms heartbeat ceiling.
+
+The shared data-category validator now runs in workers for full/legacy inspection,
+custom transfers, rollback snapshots and journal validation. Archive snapshot
+serialization and replacement validation also use workers while storage, publication
+and locking stay on-loop. Configuration and Request Rules retain HA context.
+Transfer materialization already detaches bulk categories in a worker; no additional
+copy refactor was needed.
+
+The identical `test_restore_category_workers.py` produces four worker-boundary
+failures and two passing deep-isolation controls on `19aefa1`. Nested Usage details,
+model lists, configuration, raw configuration, rules and selected/partially selected
+materialized data cannot mutate the original prepared transfer. All six cases pass
+with the correction.
+
+The existing Usage-specific genuine-HA acceptance test is unchanged. A separate
+serial acceptance module exercises archive-heavy (6,000 turns), Knowledge-heavy
+(500 sources) and mixed (2,000 turns, 200 sources, 5,000 memories) full restores,
+using genuine disk I/O and the same 250ms heartbeat ceiling. It verifies restored
+content as well as successful delivery through the public archive protocol.

@@ -875,29 +875,24 @@ class ConversationArchive:
                 if session.retention_state != "unretained"
             ]
             retained_ids = {session.session_id for session in sessions}
-            return {
-                "sessions": [_session_payload(session) for session in sessions],
-                "turns": [
-                    asdict(turn)
-                    for session_id, turns in self._turns.items()
-                    if session_id in retained_ids
-                    for turn in turns
-                ],
-            }
+            turns = [
+                turn
+                for session_id, items in self._turns.items()
+                if session_id in retained_ids
+                for turn in items
+            ]
+            return await asyncio.to_thread(_archive_payload, sessions, turns)
 
     async def async_recovery_data(self) -> dict[str, Any]:
         """Capture same-agent recovery state; portable exports omit active bindings."""
         async with self._lock:
             self._ensure_initialized()
-            return {
-                "sessions": [
-                    _session_payload(item) for item in self._sessions.values()
-                ],
-                "turns": [
-                    asdict(turn) for turns in self._turns.values() for turn in turns
-                ],
-                "active": dict(self._active),
-            }
+            # Records are immutable; the lock protects selection and serialization.
+            sessions = list(self._sessions.values())
+            turns = [turn for items in self._turns.values() for turn in items]
+            payload = await asyncio.to_thread(_archive_payload, sessions, turns)
+            payload["active"] = dict(self._active)
+            return payload
 
     @staticmethod
     def validate_recovery_bindings(
@@ -984,13 +979,12 @@ class ConversationArchive:
         active: dict[str, str] | None = None,
     ) -> None:
         """Replace durable archive data through the same restart-safe journal."""
-        sessions, turns = self.validate_backup_data(
-            {
-                "sessions": [asdict(session) for session in sessions],
-                "turns": [asdict(turn) for turn in turns],
-            },
-            self._agent_subentry_id,
-            local_recovery=active is not None,
+        sessions, turns = await asyncio.to_thread(
+            lambda: self.validate_backup_data(
+                _archive_payload(sessions, turns),
+                self._agent_subentry_id,
+                local_recovery=active is not None,
+            )
         )
         bindings = (
             self.validate_recovery_bindings(active, sessions)
@@ -1715,3 +1709,13 @@ def _session_payload(session: ArchiveSession) -> dict[str, Any]:
     if session.retention_state == "private":
         payload["title"] = ""
     return payload
+
+
+def _archive_payload(
+    sessions: list[ArchiveSession], turns: list[ArchiveTurn]
+) -> dict[str, Any]:
+    """Serialize immutable records without touching live manager collections."""
+    return {
+        "sessions": [_session_payload(item) for item in sessions],
+        "turns": [asdict(item) for item in turns],
+    }

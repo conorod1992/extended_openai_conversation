@@ -31,16 +31,11 @@ from .const import (
     CONF_VOICE_DEFAULT_USER_ID,
     CONF_VOICE_DEVICE_MAPPINGS,
 )
-from .conversation_archive import (
-    ArchiveSession,
-    ArchiveTurn,
-    ConversationArchive,
-    async_get_archive,
-)
+from .conversation_archive import ArchiveSession, ArchiveTurn, async_get_archive
 from .function_dependency_integrity import async_validate_request_rule_functions
 from .function_yaml import decoded_function_fields
 from .guest_mode import GuestModeManager, GuestModeSchedule, async_get_guest_mode
-from .knowledge import KnowledgeLibrary, KnowledgeSource, async_get_knowledge
+from .knowledge import KnowledgeSource, async_get_knowledge
 from .memory import ANONYMOUS_USER_ID, MemoryRecord, PersistentMemory, async_get_memory
 from .request_rules import RequestRules, async_get_request_rules
 from .secret_redaction import (
@@ -51,12 +46,8 @@ from .secret_redaction import (
     redact_secrets,
     restore_redacted_secrets,
 )
-from .temporary_memory import (
-    TemporaryMemory,
-    TemporaryMemoryRecord,
-    async_get_temporary_memory,
-)
-from .usage import UsageManager, UsageRequest, UsageRun, UsageTotals, async_get_usage
+from .temporary_memory import TemporaryMemoryRecord, async_get_temporary_memory
+from .usage import UsageRequest, UsageRun, UsageTotals, async_get_usage
 
 TRANSFER_FORMAT = "extended_openai_conversation_transfer"
 TRANSFER_VERSION = 1
@@ -813,7 +804,7 @@ def _validate_transfer_document(
     target_agent_id: str,
     selected: Iterable[str] | None = None,
     *,
-    validated_usage: backup.ValidatedUsage | None = None,
+    validated_categories: dict[str, Any] | None = None,
 ) -> PreparedTransfer:
     expected = {
         "format",
@@ -884,37 +875,26 @@ def _validate_transfer_document(
                 if _collect_secret_paths(raw)
                 else RequestRules.validate_backup_data(restore_redacted_secrets(raw))
             )
+        categories = validated_categories
+        if categories is None:
+            categories = backup._validate_data_categories(
+                _data_categories(raw_sections, validating), target_agent_id
+            )
         if SECTION_PERSISTENT_MEMORY in validating:
-            prepared.memories = PersistentMemory.validate_backup_data(
-                raw_sections[SECTION_PERSISTENT_MEMORY]
-            )
+            prepared.memories = categories["memories"]
         if SECTION_TEMPORARY_MEMORY in validating:
-            prepared.temporary_memories = TemporaryMemory.validate_backup_data(
-                raw_sections[SECTION_TEMPORARY_MEMORY]
-            )
+            prepared.temporary_memories = categories["temporary_memories"]
         if SECTION_KNOWLEDGE in validating:
-            prepared.knowledge = KnowledgeLibrary.validate_backup_data(
-                raw_sections[SECTION_KNOWLEDGE]
-            )
+            prepared.knowledge = categories["knowledge"]
         if SECTION_CONVERSATION_ARCHIVE in validating:
-            prepared.archive_sessions, prepared.archive_turns = (
-                ConversationArchive.validate_backup_data(
-                    raw_sections[SECTION_CONVERSATION_ARCHIVE], target_agent_id
-                )
-            )
+            prepared.archive_sessions, prepared.archive_turns, _ = categories["archive"]
         if SECTION_USAGE in validating:
             (
                 prepared.usage_totals,
                 prepared.usage_daily,
                 prepared.usage_requests,
                 prepared.usage_runs,
-            ) = (
-                validated_usage
-                if validated_usage is not None
-                else UsageManager.validate_backup_data(
-                    raw_sections[SECTION_USAGE], target_agent_id
-                )
-            )
+            ) = categories["usage"]
         if SECTION_GUEST_MODE in validating:
             prepared.guest_mode_schedule = GuestModeManager.validate_backup_data(
                 raw_sections[SECTION_GUEST_MODE]
@@ -973,7 +953,7 @@ def _inspect_full_backup(
     target_agent_id: str,
     selected: Iterable[str] | None = None,
     *,
-    validated_usage: backup.ValidatedUsage | None = None,
+    validated_categories: dict[str, Any] | None = None,
 ) -> PreparedTransfer:
     header = backup._inspect_decoded_backup(
         dict(value), target_agent_id, header_only=True
@@ -999,7 +979,7 @@ def _inspect_full_backup(
         "sections": sections,
     }
     prepared = _validate_transfer_document(
-        portable, target_agent_id, selected, validated_usage=validated_usage
+        portable, target_agent_id, selected, validated_categories=validated_categories
     )
     prepared.source_kind, prepared.mode = "full_backup", "full"
     return prepared
@@ -1046,7 +1026,7 @@ def _decode_transfer_input(value: Any) -> Mapping[str, Any]:
 async def async_inspect_transfer(
     value: Any, target_agent_id: str, *, sections: Iterable[str] | None = None
 ) -> PreparedTransfer:
-    """Inspect external transfers without running bulk Usage work on HA's loop."""
+    """Inspect external transfers without running bulk category work on HA's loop."""
     if isinstance(value, PreparedTransfer):
         return value
     document = await asyncio.to_thread(_decode_transfer_input, value)
@@ -1062,31 +1042,52 @@ async def async_inspect_decoded_transfer(
     sections: Iterable[str] | None = None,
     inspect_only: bool = False,
 ) -> PreparedTransfer:
-    """Validate HA schemas on-loop, but large Usage records in a worker."""
+    """Validate HA schemas on-loop, but bulk data categories in a worker."""
     header = _inspect_decoded_transfer(value, target_agent_id, inspect_only=True)
     if inspect_only:
         return header
     selected = validate_section_selection(
         sections, allowed=header.available_sections, default=header.available_sections
     )
-    validated_usage = None
-    if SECTION_USAGE in selected:
-        raw = (
-            value["usage"]
-            if value.get("format") == backup.BACKUP_FORMAT
-            else value["sections"][SECTION_USAGE]
-        )
-        try:
-            validated_usage = await asyncio.to_thread(
-                UsageManager.validate_backup_data, raw, target_agent_id
-            )
-        except (TypeError, ValueError) as err:
-            raise backup.BackupError(
-                f"The transfer is incomplete or corrupted: {err}"
-            ) from err
-    return _inspect_decoded_transfer(
-        value, target_agent_id, sections=selected, validated_usage=validated_usage
+    raw_categories = (
+        {
+            key: value[key]
+            for section, key in _DATA_CATEGORY_KEYS.items()
+            if section in selected
+        }
+        if value.get("format") == backup.BACKUP_FORMAT
+        else _data_categories(value.get("sections", {}), selected)
     )
+    try:
+        categories = await asyncio.to_thread(
+            backup._validate_data_categories, raw_categories, target_agent_id
+        )
+    except (TypeError, ValueError) as err:
+        raise backup.BackupError(
+            f"The transfer is incomplete or corrupted: {err}"
+        ) from err
+    return _inspect_decoded_transfer(
+        value, target_agent_id, sections=selected, validated_categories=categories
+    )
+
+
+_DATA_CATEGORY_KEYS = {
+    SECTION_PERSISTENT_MEMORY: "memories",
+    SECTION_TEMPORARY_MEMORY: "temporary_memories",
+    SECTION_KNOWLEDGE: "knowledge",
+    SECTION_CONVERSATION_ARCHIVE: "archive",
+    SECTION_USAGE: "usage",
+}
+
+
+def _data_categories(
+    sections: Mapping[str, Any], selected: Iterable[str]
+) -> dict[str, Any]:
+    return {
+        key: sections[section]
+        for section, key in _DATA_CATEGORY_KEYS.items()
+        if section in selected
+    }
 
 
 def _inspect_decoded_transfer(
@@ -1095,7 +1096,7 @@ def _inspect_decoded_transfer(
     *,
     sections: Iterable[str] | None = None,
     inspect_only: bool = False,
-    validated_usage: backup.ValidatedUsage | None = None,
+    validated_categories: dict[str, Any] | None = None,
 ) -> PreparedTransfer:
     """Validate HA-aware schemas after a bounded, context-free transport read.
 
@@ -1107,14 +1108,14 @@ def _inspect_decoded_transfer(
             value,
             target_agent_id,
             frozenset() if inspect_only else sections,
-            validated_usage=validated_usage,
+            validated_categories=validated_categories,
         )
     if value.get("format") == backup.BACKUP_FORMAT:
         return _inspect_full_backup(
             value,
             target_agent_id,
             frozenset() if inspect_only else sections,
-            validated_usage=validated_usage,
+            validated_categories=validated_categories,
         )
     if value.get("schema") == LEGACY_AGENT_SCHEMA:
         return _inspect_legacy_setup(
