@@ -664,8 +664,12 @@ class ExtendedOpenAIAgentEntity(
         await super().async_will_remove_from_hass()
 
     async def async_process(self, user_input: ConversationInput) -> ConversationResult:
-        """Process a sentence."""
-        return await self._async_process(user_input)
+        """Process a sentence without inheriting an enclosing invocation's metadata."""
+        token = _PROCESS_METADATA.set(None)
+        try:
+            return await self._async_process(user_input)
+        finally:
+            _PROCESS_METADATA.reset(token)
 
     async def async_process_direct(
         self, user_input: ConversationInput
