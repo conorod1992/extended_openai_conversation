@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from contextlib import suppress
 from copy import deepcopy
@@ -84,6 +85,7 @@ from .function_dependency_integrity import (
     _rule_script_actions,
     async_validate_request_rule_functions,
     group_reference_updates,
+    renamed_function_references_are_saved,
 )
 from .function_groups import get_function_group_runtime
 from .functions import FUNCTIONS
@@ -2120,10 +2122,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
 
         assert original_name is not None
         operation_revision = persisted_config_projection(subentry).revision
-        original_tools = configured_function_tools_from_data(subentry.data)
-        original_groups = validate_function_groups(
-            subentry.data.get(CONF_FUNCTION_GROUPS, []), original_tools
-        )
+        original_data = deepcopy(dict(subentry.data))
         groups = [
             {
                 **group,
@@ -2159,18 +2158,24 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
                 saved_name,
                 expected_revision=rules_revision,
             )
-        except Exception as err:
+        except (Exception, asyncio.CancelledError) as err:
+            if renamed_function_references_are_saved(
+                rules, original_name, saved_name, references["request_rules"]
+            ):
+                if isinstance(err, asyncio.CancelledError):
+                    raise
+                raise HomeAssistantError(
+                    "Function Tool and Request Rule rename were saved, but the save "
+                    "acknowledgement failed. Reload the latest saved settings."
+                ) from err
             try:
-                await _persist_function_configuration(
-                    hass,
-                    entry,
-                    subentry,
-                    original_tools,
-                    original_groups,
-                    extra_updates={CONF_GUEST_ALLOWED_FUNCTION_NAMES: guest_names},
-                    expected_revision=result["revision"],
-                )
+                _require_agent_config_revision(subentry, result["revision"])
+                # A rollback restores the authoritative raw snapshot, including
+                # quarantined references that a usable projection cannot recover.
+                update_live_subentry(hass, entry, subentry, data=original_data)
             except HomeAssistantError as rollback_err:
+                if isinstance(err, asyncio.CancelledError):
+                    raise err from rollback_err
                 raise HomeAssistantError(
                     "Function Tool configuration changed while a related Request Rule "
                     "rename failed. The newer configuration was preserved; reload "

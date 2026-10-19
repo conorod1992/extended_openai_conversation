@@ -594,11 +594,12 @@ async def test_function_rename_propagates_failure_after_successful_rollback(
         "_function_reference_state",
         AsyncMock(return_value=(rules, {"request_rules": [], "guest_mode": False})),
     )
+    original_data = deepcopy(subentry.data)
     persist = AsyncMock(
-        side_effect=[
-            {"status": "saved", "revision": "new-revision"},
-            {"status": "rolled-back"},
-        ]
+        return_value={
+            "status": "saved",
+            "revision": management_ui.persisted_config_projection(subentry).revision,
+        }
     )
     monkeypatch.setattr(management_ui, "_persist_function_configuration", persist)
 
@@ -609,7 +610,13 @@ async def test_function_rename_propagates_failure_after_successful_rollback(
             True,
             _message("tools", "save", tool=_tool("new"), original_name="old"),
         )
-    assert persist.call_count == 2
+    persist.assert_awaited_once()
+    hass.config_entries.async_update_subentry.assert_called_once_with(
+        entry, subentry, data=original_data
+    )
+    rules.async_rename_function_reference.assert_awaited_once_with(
+        "old", "new", expected_revision="rules-revision"
+    )
 
 
 @pytest.mark.asyncio

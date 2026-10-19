@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections import OrderedDict
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -1162,11 +1163,13 @@ async def async_function_repair(
             editable[index] = validated_tool
             original_data = deepcopy(dict(subentry.data))
             rules = None
+            rule_references = []
             extra_updates = {}
             if old_name and old_name != new_name:
                 rules, _references = await management_ui._function_reference_state(
                     hass, entry_id, subentry_id, subentry.data, old_name
                 )
+                rule_references = _references["request_rules"]
                 rules_revision = rules.revision()
                 extra_updates[management_ui.CONF_GUEST_ALLOWED_FUNCTION_NAMES] = [
                     new_name if name == old_name else name
@@ -1198,14 +1201,30 @@ async def async_function_repair(
                 subentry, persisted, subentry.title
             )
             if rules is not None:
+                assert old_name is not None
                 try:
                     await rules.async_rename_function_reference(
                         old_name, new_name, expected_revision=rules_revision
                     )
-                except Exception:
+                except (Exception, asyncio.CancelledError) as err:
+                    from .function_dependency_integrity import (
+                        renamed_function_references_are_saved,
+                    )
+
+                    if renamed_function_references_are_saved(
+                        rules, old_name, new_name, rule_references
+                    ):
+                        if isinstance(err, asyncio.CancelledError):
+                            raise
+                        raise HomeAssistantError(
+                            "Function Tool and Request Rule rename were saved, but the "
+                            "save acknowledgement failed. Reload the latest saved settings."
+                        ) from err
                     try:
                         require_repair_revision(subentry, persisted_revision)
                     except HomeAssistantError as rollback_err:
+                        if isinstance(err, asyncio.CancelledError):
+                            raise err from rollback_err
                         raise HomeAssistantError(
                             "Function Tool configuration changed while a related Request Rule "
                             "rename failed. The newer configuration was preserved; reload "

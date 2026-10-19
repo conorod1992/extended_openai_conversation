@@ -185,6 +185,24 @@ def _rule_script_actions(rule: Mapping[str, Any]):
     )
 
 
+def renamed_function_references_are_saved(
+    manager: Any,
+    old_name: str,
+    new_name: str,
+    original_references: Sequence[Mapping[str, Any]],
+) -> bool:
+    """Recognize a durable rename after the rule store settles a failed save."""
+    references = getattr(manager, "function_references", None)
+    if not original_references or not callable(references):
+        return False
+    original_ids = {item["id"] for item in original_references}
+    return (
+        bool(original_ids)
+        and not references(old_name)
+        and original_ids <= {item["id"] for item in references(new_name)}
+    )
+
+
 def recursive_function_references(
     manager: Any, function_name: str
 ) -> list[dict[str, str]]:
