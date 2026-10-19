@@ -126,7 +126,10 @@ def merge_unchanged_function_configuration(
     projection = persisted_config_projection(subentry)
     snapshot = projection.snapshot
     repair_state = None
-    if snapshot is None and _ALLOW_QUARANTINED_TOOLS.get():
+    # Field-only updates cannot activate or rewrite Functions/Groups. Their
+    # validation projection must therefore work independently of the UI section
+    # that initiated the edit; raw repair-owned fields are projected unchanged.
+    if snapshot is None:
         repair_state, _ = repair_state_for_projection(projection)
     validated_functions = (
         (snapshot[CONF_FUNCTION_TOOLS], snapshot[CONF_FUNCTION_GROUPS])

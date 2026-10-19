@@ -70,6 +70,27 @@ def test_safe_function_configuration_quarantines_unknown_native() -> None:
     }
 
 
+@pytest.mark.parametrize("updates", [
+    {"knowledge_enabled": True}, {"archive_enabled": True},
+    {"prompt": "Edited"}, {"chat_model": "gpt-4.1"},
+    {"skills": []}, {"temporary_memory": "off"},
+])
+@pytest.mark.parametrize("broken_groups", [False, True])
+def test_field_only_updates_preserve_quarantine_without_section_scope(hass, updates, broken_groups):
+    data, valid, invalid = _mixed_unknown_native_data()
+    if broken_groups:
+        data[CONF_FUNCTION_GROUPS] = [{"id": "broken", "functions": ["missing"]}]
+    data.pop("reasoning_effort", None)
+    original = deepcopy(data)
+    subentry = SimpleNamespace(data=data, subentry_id="quarantined-agent", title="Agent")
+    persisted, display = quarantine.merge_unchanged_function_configuration(subentry, updates)
+    assert persisted == {**original, **updates}
+    assert data == original
+    assert display[CONF_FUNCTION_TOOLS] == [valid]
+    with pytest.raises(quarantine.HomeAssistantError, match="cannot change Functions"):
+        quarantine.merge_unchanged_function_configuration(subentry, {CONF_FUNCTION_TOOLS: [invalid]})
+
+
 def test_management_merge_preserves_repair_owned_function_fields(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

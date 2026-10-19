@@ -382,15 +382,22 @@ def repair_state_for_projection(
         return projection.repair_state, True
     options = dict(projection.data)
     valid, invalid, issue = isolated_function_tools(options)
-    if issue is None:
-        return None, False
     if len(valid) > 1:
         # Individual isolation does not check collection invariants such as
         # duplicate names or HA references. The former safe snapshot did.
         valid = validate_function_tools(valid)
     groups, group_issues, raw_groups = _effective_function_groups(options, valid)
-    # Preserve the same strict group contract as the former safe snapshot path.
-    groups = validate_function_groups(groups, valid)
+    try:
+        groups = validate_function_groups(groups, valid)
+    except (HomeAssistantError, TypeError, ValueError) as err:
+        # A malformed saved group is repair-owned data too. Exclude it from
+        # this validation/display projection without rewriting the raw field.
+        groups = []
+        group_issues.append({"validation_error": str(err)})
+        issue = issue or str(err)
+    if issue is None and not group_issues:
+        return None, False
+    issue = issue or "Function Groups contain unavailable members"
     state = _RepairState(valid, invalid, issue, groups, group_issues, raw_groups)
     projection.repair_state = state
     return state, False
