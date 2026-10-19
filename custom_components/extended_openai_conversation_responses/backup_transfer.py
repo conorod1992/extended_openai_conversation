@@ -1189,6 +1189,7 @@ async def _inspect_import_owned(
             )
             preview["user_scope_mapping"] = mapping_plan
             token = uuid4().hex
+            revision = await asyncio.to_thread(_snapshot_revision, current)
             async with _registry_lock(hass):
                 if _imports(hass).get(session.session_id) is not session:
                     raise backup.BackupError(
@@ -1196,7 +1197,7 @@ async def _inspect_import_owned(
                     )
                 _forget_preview(hass, session)
                 session.preview_token = token
-                session.preview_revision = _snapshot_revision(current)
+                session.preview_revision = revision
                 session.preview_sections = tuple(preview["selected_sections"])
                 session.preview_user_scope_mappings = tuple(
                     sorted(mapping_plan["resolved"].items())
@@ -1280,7 +1281,8 @@ async def _restore_import(
             ):
                 raise backup.BackupError("The backup preview is stale; preview again")
         current = await transfer._current_snapshot(hass, entry, subentry)
-        if _snapshot_revision(current) != session.preview_revision:
+        revision = await asyncio.to_thread(_snapshot_revision, current)
+        if revision != session.preview_revision:
             raise backup.BackupError("The target changed after preview; preview again")
         async with _registry_lock(hass):
             if _imports(hass).get(session.session_id) is not session:

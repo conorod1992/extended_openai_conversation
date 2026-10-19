@@ -36,8 +36,8 @@ timeouts are involved in that before/after replay.
   limits before schema processing. HA configuration/Function/Rule validation stays
   in its original loop context, including `cv.template`.
 - Copy detached transfer data, apply data-only ownership mappings, build journal
-  documents, copy journal write data and compare verified journal contents in
-  workers. No live manager mutation or durable storage call moves to a worker.
+  documents, copy journal write data, compare verified journal contents and fingerprint
+  full preview snapshots in workers. No live manager mutation or durable storage call moves to a worker.
 - Keep maintenance ownership, backup locking, cancellation shielding, write-ahead
   verification, category apply order, commit verification and rollback unchanged.
   Synchronous inspection helpers remain available for existing synchronous callers.
@@ -45,7 +45,7 @@ timeouts are involved in that before/after replay.
 ## Validation
 
 The related Usage, restore, rollback/fault-injection, redaction, selective-transfer,
-ownership, validation-context and maintenance selection passes **822 tests** locally.
+ownership, validation-context and maintenance selection passes **824 tests** locally.
 Six existing Windows transfer-staging failures remain (`fcntl` unavailable), and
 `test_transfer_staging.py` cannot be collected on this host; these are not presented
 as passing runtime validation. Ruff checks/format and MyPy pass all 146 source files.
@@ -60,3 +60,10 @@ restore request contains only the session ID and preview token. It checks the
 heartbeat and exact restored counters. This acceptance test runs in the repository's
 Linux real-HA CI; WSL/HA's Linux test runtime was unavailable locally. Linux CI status
 and any additional review corrections are recorded in the PR.
+
+The two public-route cases in `tests/test_restore_preview_worker.py` also fail on
+untouched `baa721a` and pass with the fix. They require the full snapshot fingerprint
+to run in a worker and prevent a cancellation delivered during hashing from consuming
+an expired upload or committing data. The seven replay cases plus these two give
+**seven failures and two empty controls** before correction. The additional
+configuration-copy context control passes afterward as well.
