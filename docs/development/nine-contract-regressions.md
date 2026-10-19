@@ -144,3 +144,10 @@ A final review pass additionally reproduces three failures where hydrated runtim
 Tool configs caused Group-only repair to reserialize unchanged Functions YAML. The
 comparison now uses the existing persistence-safe deepcopy contract, retaining raw
 comments and formatting. All three targeted cases pass after that correction.
+
+The first full stable-HA run of this follow-up (`ba1f6b0`) reached 9,426 passes,
+6 skips and 98.49% coverage, with one exhaustive seam test still mocking the old
+Tool-only entry check. That test now supplies the shared repair state instead;
+its assertions that absent Function fields remain absent are unchanged, and it
+also asserts one shared-state lookup and one save. No production change or test
+suppression is needed for this CI correction.

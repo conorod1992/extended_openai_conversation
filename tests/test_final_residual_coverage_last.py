@@ -38,7 +38,8 @@ async def test_repair_configuration_save_preserves_absent_function_fields(
         "entry_and_agent",
         Mock(return_value=(entry, subentry)),
     )
-    monkeypatch.setattr(repair, "function_tools_issue", Mock(return_value=([], "broken")))
+    repair_state = Mock(return_value=SimpleNamespace(issue="broken"))
+    monkeypatch.setattr(repair, "function_configuration_repair_state", repair_state)
     monkeypatch.setattr(
         repair,
         "_safe_configuration_payload",
@@ -72,6 +73,8 @@ async def test_repair_configuration_save_preserves_absent_function_fields(
         },
     )
 
+    repair_state.assert_called_once_with({})
+    update.assert_called_once()
     persisted = update.call_args.kwargs["data"]
     assert repair.CONF_FUNCTION_TOOLS not in persisted
     assert repair.CONF_FUNCTION_GROUPS not in persisted
