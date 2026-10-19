@@ -792,6 +792,8 @@ def _validate_transfer_document(
     value: Mapping[str, Any],
     target_agent_id: str,
     selected: Iterable[str] | None = None,
+    *,
+    validated_usage: backup.ValidatedUsage | None = None,
 ) -> PreparedTransfer:
     expected = {
         "format",
@@ -886,8 +888,12 @@ def _validate_transfer_document(
                 prepared.usage_daily,
                 prepared.usage_requests,
                 prepared.usage_runs,
-            ) = UsageManager.validate_backup_data(
-                raw_sections[SECTION_USAGE], target_agent_id
+            ) = (
+                validated_usage
+                if validated_usage is not None
+                else UsageManager.validate_backup_data(
+                    raw_sections[SECTION_USAGE], target_agent_id
+                )
             )
         if SECTION_GUEST_MODE in validating:
             prepared.guest_mode_schedule = GuestModeManager.validate_backup_data(
@@ -946,6 +952,8 @@ def _inspect_full_backup(
     value: Mapping[str, Any],
     target_agent_id: str,
     selected: Iterable[str] | None = None,
+    *,
+    validated_usage: backup.ValidatedUsage | None = None,
 ) -> PreparedTransfer:
     header = backup._inspect_decoded_backup(
         dict(value), target_agent_id, header_only=True
@@ -970,7 +978,9 @@ def _inspect_full_backup(
         "agent": {key: item for key, item in value["agent"].items() if key != "config"},
         "sections": sections,
     }
-    prepared = _validate_transfer_document(portable, target_agent_id, selected)
+    prepared = _validate_transfer_document(
+        portable, target_agent_id, selected, validated_usage=validated_usage
+    )
     prepared.source_kind, prepared.mode = "full_backup", "full"
     return prepared
 
@@ -985,6 +995,14 @@ def inspect_transfer(
     """Classify and fully validate portable, custom, legacy, or full backup input."""
     if isinstance(value, PreparedTransfer):
         return value
+    value = _decode_transfer_input(value)
+    return _inspect_decoded_transfer(
+        value, target_agent_id, sections=sections, inspect_only=inspect_only
+    )
+
+
+def _decode_transfer_input(value: Any) -> Mapping[str, Any]:
+    """Bound and decode an external document without HA schema validation."""
     if isinstance(value, str):
         try:
             check_utf8_budget(value, backup.MAX_BACKUP_BYTES)
@@ -1002,8 +1020,52 @@ def inspect_transfer(
         )
     if value.get("format") == backup.BACKUP_FORMAT:
         value = backup._decode_backup_document(value, backup.MAX_BACKUP_BYTES)
+    return dict(value)
+
+
+async def async_inspect_transfer(
+    value: Any, target_agent_id: str, *, sections: Iterable[str] | None = None
+) -> PreparedTransfer:
+    """Inspect external transfers without running bulk Usage work on HA's loop."""
+    if isinstance(value, PreparedTransfer):
+        return value
+    document = await asyncio.to_thread(_decode_transfer_input, value)
+    return await async_inspect_decoded_transfer(
+        document, target_agent_id, sections=sections
+    )
+
+
+async def async_inspect_decoded_transfer(
+    value: Mapping[str, Any],
+    target_agent_id: str,
+    *,
+    sections: Iterable[str] | None = None,
+    inspect_only: bool = False,
+) -> PreparedTransfer:
+    """Validate HA schemas on-loop, but large Usage records in a worker."""
+    header = _inspect_decoded_transfer(value, target_agent_id, inspect_only=True)
+    if inspect_only:
+        return header
+    selected = validate_section_selection(
+        sections, allowed=header.available_sections, default=header.available_sections
+    )
+    validated_usage = None
+    if SECTION_USAGE in selected:
+        raw = (
+            value["usage"]
+            if value.get("format") == backup.BACKUP_FORMAT
+            else value["sections"][SECTION_USAGE]
+        )
+        try:
+            validated_usage = await asyncio.to_thread(
+                UsageManager.validate_backup_data, raw, target_agent_id
+            )
+        except (TypeError, ValueError) as err:
+            raise backup.BackupError(
+                f"The transfer is incomplete or corrupted: {err}"
+            ) from err
     return _inspect_decoded_transfer(
-        value, target_agent_id, sections=sections, inspect_only=inspect_only
+        value, target_agent_id, sections=selected, validated_usage=validated_usage
     )
 
 
@@ -1013,6 +1075,7 @@ def _inspect_decoded_transfer(
     *,
     sections: Iterable[str] | None = None,
     inspect_only: bool = False,
+    validated_usage: backup.ValidatedUsage | None = None,
 ) -> PreparedTransfer:
     """Validate HA-aware schemas after a bounded, context-free transport read.
 
@@ -1021,11 +1084,17 @@ def _inspect_decoded_transfer(
     """
     if value.get("format") == TRANSFER_FORMAT:
         return _validate_transfer_document(
-            value, target_agent_id, frozenset() if inspect_only else sections
+            value,
+            target_agent_id,
+            frozenset() if inspect_only else sections,
+            validated_usage=validated_usage,
         )
     if value.get("format") == backup.BACKUP_FORMAT:
         return _inspect_full_backup(
-            value, target_agent_id, frozenset() if inspect_only else sections
+            value,
+            target_agent_id,
+            frozenset() if inspect_only else sections,
+            validated_usage=validated_usage,
         )
     if value.get("schema") == LEGACY_AGENT_SCHEMA:
         return _inspect_legacy_setup(
@@ -1080,12 +1149,33 @@ async def _async_validate_request_rule_function_dependencies(
             ) from err
 
 
+def _copy_transfer_categories(prepared: PreparedTransfer) -> PreparedTransfer:
+    """Detach data-only categories; never copy HA-aware configuration in a worker."""
+    fields = (
+        "memories",
+        "temporary_memories",
+        "knowledge",
+        "archive_sessions",
+        "archive_turns",
+        "usage_totals",
+        "usage_daily",
+        "usage_requests",
+        "usage_runs",
+        "guest_mode_schedule",
+    )
+    copied = deepcopy(tuple(getattr(prepared, name) for name in fields))
+    return replace(prepared, **dict(zip(fields, copied, strict=True)))
+
+
 def _prepared_restore_from_selection(
     current: backup.PreparedRestore,
     imported: PreparedTransfer,
     selected: frozenset[str],
+    *,
+    copy_categories: bool = True,
 ) -> tuple[backup.PreparedRestore, tuple[str, ...], tuple[str, ...]]:
     """Overlay selected replacement sections on one complete current snapshot."""
+    copy_category = deepcopy if copy_categories else lambda value: value
     preserved: list[str] = []
     missing: list[str] = []
 
@@ -1141,55 +1231,55 @@ def _prepared_restore_from_selection(
         title=title,
         config=config,
         memories=(
-            deepcopy(imported.memories)
+            copy_category(imported.memories)
             if SECTION_PERSISTENT_MEMORY in selected and imported.memories is not None
             else current.memories
         ),
         temporary_memories=(
-            deepcopy(imported.temporary_memories)
+            copy_category(imported.temporary_memories)
             if SECTION_TEMPORARY_MEMORY in selected
             and imported.temporary_memories is not None
             else current.temporary_memories
         ),
         knowledge=(
-            deepcopy(imported.knowledge)
+            copy_category(imported.knowledge)
             if SECTION_KNOWLEDGE in selected and imported.knowledge is not None
             else current.knowledge
         ),
         archive_sessions=(
-            deepcopy(imported.archive_sessions)
+            copy_category(imported.archive_sessions)
             if SECTION_CONVERSATION_ARCHIVE in selected
             and imported.archive_sessions is not None
             else current.archive_sessions
         ),
         archive_turns=(
-            deepcopy(imported.archive_turns)
+            copy_category(imported.archive_turns)
             if SECTION_CONVERSATION_ARCHIVE in selected
             and imported.archive_turns is not None
             else current.archive_turns
         ),
         usage_totals=(
-            deepcopy(imported.usage_totals)
+            copy_category(imported.usage_totals)
             if SECTION_USAGE in selected and imported.usage_totals is not None
             else current.usage_totals
         ),
         usage_daily=(
-            deepcopy(imported.usage_daily)
+            copy_category(imported.usage_daily)
             if SECTION_USAGE in selected and imported.usage_daily is not None
             else current.usage_daily
         ),
         usage_requests=(
-            deepcopy(imported.usage_requests)
+            copy_category(imported.usage_requests)
             if SECTION_USAGE in selected and imported.usage_requests is not None
             else current.usage_requests
         ),
         usage_runs=(
-            deepcopy(imported.usage_runs)
+            copy_category(imported.usage_runs)
             if SECTION_USAGE in selected and imported.usage_runs is not None
             else current.usage_runs
         ),
         guest_mode_schedule=(
-            deepcopy(imported.guest_mode_schedule)
+            copy_category(imported.guest_mode_schedule)
             if SECTION_GUEST_MODE in selected
             else current.guest_mode_schedule
         ),
@@ -1228,7 +1318,9 @@ async def async_materialize_restore(
     current_snapshot: backup.PreparedRestore | None = None,
 ) -> tuple[backup.PreparedRestore, dict[str, Any]]:
     """Build and validate a complete restore target from a selective transfer."""
-    prepared = inspect_transfer(imported, subentry.subentry_id, sections=sections)
+    prepared = await async_inspect_transfer(
+        imported, subentry.subentry_id, sections=sections
+    )
     selected = validate_section_selection(
         sections,
         allowed=prepared.available_sections,
@@ -1239,8 +1331,9 @@ async def async_materialize_restore(
         if current_snapshot is not None
         else await _current_snapshot(hass, entry, subentry)
     )
+    prepared = await asyncio.to_thread(_copy_transfer_categories, prepared)
     target, preserved, missing = _prepared_restore_from_selection(
-        current, prepared, selected
+        current, prepared, selected, copy_categories=False
     )
     if missing:
         raise backup.BackupError(

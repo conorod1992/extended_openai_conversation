@@ -63,6 +63,10 @@ from .temporary_memory import (
 )
 from .usage import UsageManager, UsageRequest, UsageRun, UsageTotals, async_get_usage
 
+type ValidatedUsage = tuple[
+    UsageTotals, dict[str, dict[str, Any]], list[UsageRequest], list[UsageRun]
+]
+
 BACKUP_FORMAT = "extended_openai_conversation_backup"
 BACKUP_VERSION = 5
 # The management UI uses the chunked transfer path for large files. Keep validation
@@ -307,14 +311,35 @@ def inspect_backup(
     )
 
 
-async def async_inspect_backup(value: Any, target_agent_id: str) -> PreparedRestore:
-    """Decode bounded legacy JSON off-loop, then validate in HA's loop context."""
+async def async_inspect_backup(
+    value: Any,
+    target_agent_id: str,
+    *,
+    max_bytes: int | None = None,
+    private_journal: bool = False,
+) -> PreparedRestore:
+    """Process bounded JSON and Usage off-loop; retain HA-aware schema context."""
     if isinstance(value, PreparedRestore):
         return value
     document = await asyncio.to_thread(
-        _decode_backup_document, value, MAX_LEGACY_EXPORT_BYTES
+        _decode_backup_document,
+        value,
+        MAX_LEGACY_EXPORT_BYTES if max_bytes is None else max_bytes,
     )
-    return _inspect_decoded_backup(document, target_agent_id)
+    # Check the envelope before accessing its potentially large Usage section.
+    _inspect_decoded_backup(document, target_agent_id, header_only=True)
+    try:
+        usage = await asyncio.to_thread(
+            UsageManager.validate_backup_data, document["usage"], target_agent_id
+        )
+    except (TypeError, ValueError) as err:
+        raise BackupError(f"The backup is incomplete or corrupted: {err}") from err
+    return _inspect_decoded_backup(
+        document,
+        target_agent_id,
+        private_journal=private_journal,
+        validated_usage=usage,
+    )
 
 
 def _decode_backup_document(value: Any, max_bytes: int) -> dict[str, Any]:
@@ -359,6 +384,7 @@ def _inspect_decoded_backup(
     *,
     private_journal: bool = False,
     header_only: bool = False,
+    validated_usage: ValidatedUsage | None = None,
 ) -> PreparedRestore:
     """Validate the decoded envelope and categories, including HA-aware schemas."""
     if value.get("format") != BACKUP_FORMAT:
@@ -466,7 +492,9 @@ def _inspect_decoded_backup(
             else None
         )
         usage_totals, usage_daily, usage_requests, usage_runs = (
-            UsageManager.validate_backup_data(value["usage"], target_agent_id)
+            validated_usage
+            if validated_usage is not None
+            else UsageManager.validate_backup_data(value["usage"], target_agent_id)
         )
         guest_mode_schedule = (
             GuestModeManager.validate_backup_data(value["guest_mode"])
@@ -552,10 +580,10 @@ async def _snapshot_for_restore(
     archive_active = ConversationArchive.validate_recovery_bindings(
         archive_data["active"], archive_sessions
     )
-    usage_totals, usage_daily, usage_requests, usage_runs = (
-        UsageManager.validate_backup_data(
-            await usage.async_backup_data(), subentry.subentry_id
-        )
+    usage_totals, usage_daily, usage_requests, usage_runs = await asyncio.to_thread(
+        UsageManager.validate_backup_data,
+        await usage.async_backup_data(),
+        subentry.subentry_id,
     )
     guest_mode_schedule = GuestModeManager.validate_backup_data(
         await guest_mode.async_backup_data()

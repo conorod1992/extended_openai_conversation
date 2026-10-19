@@ -787,12 +787,12 @@ async def _async_load_prepared_restore(
     sections: Any = None,
     inspect_only: bool = False,
 ) -> transfer.PreparedTransfer:
-    """Decode an upload off-loop, then run HA-aware validation on the event loop."""
+    """Process upload bytes and Usage off-loop; validate HA schemas on-loop."""
     document = await hass.async_add_executor_job(_load_uploaded_document, path, kind)
     # inspect_transfer ultimately validates configured Function Tools. Some Home
     # Assistant validators used by those schemas (notably cv.template) require the
-    # event-loop context, so only file I/O/decompression belongs in the executor.
-    return transfer._inspect_decoded_transfer(
+    # event-loop context. The async validator isolates data-only Usage work.
+    return await transfer.async_inspect_decoded_transfer(
         document, target_subentry_id, sections=sections, inspect_only=inspect_only
     )
 
@@ -1176,8 +1176,11 @@ async def _inspect_import_owned(
                 _schedule_expiry(hass)
             token = None
         else:
-            mapped = transfer.apply_user_scope_mappings(
-                prepared, selected, mapping_plan["resolved"]
+            mapped = await asyncio.to_thread(
+                transfer.apply_user_scope_mappings,
+                prepared,
+                selected,
+                mapping_plan["resolved"],
             )
             _target, preview = await transfer.async_materialize_restore(
                 hass,
@@ -1255,8 +1258,11 @@ async def _restore_import(
         )
         selected_sections = tuple(session.preview_sections or ())
         resolved_user_mappings = dict(session.preview_user_scope_mappings or ())
-        prepared = transfer.apply_user_scope_mappings(
-            prepared, selected_sections, resolved_user_mappings
+        prepared = await asyncio.to_thread(
+            transfer.apply_user_scope_mappings,
+            prepared,
+            selected_sections,
+            resolved_user_mappings,
         )
 
     async def validate_preview() -> None:

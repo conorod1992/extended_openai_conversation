@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from copy import deepcopy
 from dataclasses import asdict
@@ -220,11 +221,11 @@ async def _async_write_journal_verified(
 ) -> bool:
     """Write and read back a journal state because HA Store logs some write failures."""
     try:
-        await store.async_save(deepcopy(journal))
+        await store.async_save(await asyncio.to_thread(deepcopy, journal))
         persisted = await store.async_load()
     except Exception as err:
         raise _JournalVerificationUnavailable from err
-    return persisted == journal
+    return await asyncio.to_thread(lambda: persisted == journal)
 
 
 async def _durable_managers(
@@ -545,7 +546,7 @@ async def _async_restore_backup_recoverably(
     only the backup lock; both full and selective restores share its journal and
     rollback implementation without nesting maintenance-gate ownership.
     """
-    prepared = backup.inspect_backup(value, subentry.subentry_id)
+    prepared = await backup.async_inspect_backup(value, subentry.subentry_id)
     entry_id = entry.entry_id
     subentry_id = subentry.subentry_id
 
@@ -568,12 +569,14 @@ async def _async_restore_backup_recoverably(
             prepared, _preview = await async_materialize_restore(
                 hass, entry, subentry, value, current_snapshot=rollback
             )
-        journal = _new_journal(entry_id, subentry_id, prepared, rollback)
+        journal = await asyncio.to_thread(
+            _new_journal, entry_id, subentry_id, prepared, rollback
+        )
         # PreparedRestore bypasses inspect_backup's serialized-size validation.
         # Validate the actual journal documents before even the write-ahead save.
         for section in ("target", "rollback"):
             try:
-                backup.inspect_backup(
+                await backup.async_inspect_backup(
                     journal[section],
                     subentry_id,
                     max_bytes=backup.MAX_BACKUP_BYTES,
