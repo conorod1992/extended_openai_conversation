@@ -86,7 +86,9 @@ def _management_validate_function_groups(
         pass
     state = function_configuration_repair_state(
         {
-            CONF_FUNCTION_TOOLS: deepcopy(function_tools),
+            # These tools are decoded: an empty usable collection is not the
+            # historical falsy persisted value that means "load defaults".
+            CONF_FUNCTION_TOOLS: deepcopy(function_tools) if function_tools else "[]",
             CONF_FUNCTION_GROUPS: value,
         }
     )
