@@ -1,11 +1,31 @@
 """Exact Core fixtures must replace stable helpers without changing test semantics."""
 
+from pathlib import Path
 import sys
 from types import ModuleType, SimpleNamespace
 
 import pytest
 
 from ci import run_ha_dev_pytest
+
+
+def test_dev_compatibility_lane_uses_immutable_runtime_fixture_source():
+    import yaml
+
+    root = Path(__file__).resolve().parents[1]
+    job = yaml.safe_load(
+        (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    )["jobs"]["dev-test"]
+    assert (
+        job["env"]["EXPECTED_HA_CORE_SHA"] == "${{ needs.prepare.outputs.ha-core-sha }}"
+    )
+    script = (root / "ci/run_ha_dev_compat_tests.sh").read_text(encoding="utf-8")
+    assert 'CORE_SHA="$(cat /opt/eoai-ci/ha-core-sha)"' in script
+    assert (
+        'python ci/run_ha_dev_pytest.py --core-sha "${CORE_SHA:?}" "${TEST_PATHS[@]}"'
+        in script
+    )
+    assert "pytest.main()" not in script
 
 
 def test_native_fixture_bootstrap_preserves_module_identity_and_test_arguments(
