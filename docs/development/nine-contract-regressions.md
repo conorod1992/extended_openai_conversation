@@ -214,3 +214,47 @@ marker assertions remain intact, and the native recovery campaign runs all five
 scenarios across all five reviewed viewport classes (25 cases). A registration
 tripwire requires the conditional controls, save/delete actions and viewport
 campaign to remain linked. No production changes are needed for this correction.
+
+## Assignment transitions and reserved Group names
+
+The review of `fcf0707` reproduced two further preservation/validation gaps through
+public management commands. Existing usable assignments were incorrectly treated
+as instructions to strip duplicate references from quarantined siblings. Changed
+Group names were checked only against usable Groups, allowing a collision with a
+quarantined sibling's saved name.
+
+Quarantine persistence now compares the usable assignments before and after the
+operation. Tool and Group renames preserve identity during that comparison.
+Metadata edits and availability toggles leave duplicate raw references untouched;
+intentional moves and Tool removals/renames still update affected memberships.
+Removing a conflicting assignment or Group preserves the other Group's reference.
+Acknowledgements project the actual resulting configuration before committing, so
+Groups made usable by an intentional change appear immediately and match a fresh
+configuration read.
+
+Group creation and name changes reserve the trimmed, case-folded names of every
+other persisted Group, including Groups missing an ID or required description.
+An unchanged normalized name does not block an unrelated edit merely because a
+collision already existed. Rejected collisions preserve all configuration and
+Guest references and perform no update.
+
+The same final **25 public-command cases** in
+`tests/test_group_assignment_transitions.py` and
+`tests/test_group_name_transitions.py` produce **21 failures and four control passes**
+on untouched reviewed head `fcf0707`, and all pass after the correction. Coverage
+includes metadata/availability/ID changes, intentional Tool moves/renames/deletions,
+Group unassignment/deletion/explicit repair, mutation responses and subsequent
+reads, new/renamed case-insensitive collisions and pre-existing collisions.
+The focused public/configuration/validation-reuse selection passes **243 tests**.
+
+Two existing private-persistence assertions expected the submitted Group list to
+be echoed rather than the canonical saved projection. They now require canonical
+defaults and exclusion of a structurally unusable Group respectively. All their
+raw Tool/Group preservation, revision, and repair-metadata assertions remain in
+place. Pinned Ruff checks/format and MyPy pass all 146 source files. There are no
+frontend source or generated-asset changes in this pass.
+
+The expanded 135-module local run has **2,808 passed, one skipped and only the ten
+previously reproduced Windows/platform failures** (seven Linux staging-lock paths
+and three bash/process-group paths). No skips or platform accommodations were
+added; full Linux CI remains required.
