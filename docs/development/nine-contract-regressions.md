@@ -346,3 +346,41 @@ platform policy or frontend assets change in this pass.
 The expanded **141-module** run has **2,864 passed, one skipped and only the same
 ten previously reproduced Windows/platform failures**. All 16 selected
 unknown/known-outcome cases pass with the correction.
+
+## Collection-level Tool repair boundary
+
+Review of `1e8e093` found two related collection-level gaps. A duplicate name or
+HA reference among otherwise valid siblings, combined with an individually invalid
+Tool, could throw out of the shared repair-state builder. This blocked recovery
+reads, backups and bulk repair. A collection containing only duplicate definitions
+already produced the whole-field fallback, but ordinary add/edit commands could
+treat its empty usable projection as an empty saved collection and replace raw
+definitions. Indexed repair could also apply a name-based Group change while the
+name still identified more than one saved Tool.
+
+Collection invariants now run inside cached isolation. Conflicting valid siblings
+produce a whole-collection repair state with no ambiguous usable subset. Recovery
+reads and backup projections preserve the complete raw definitions. Normal
+Function/Group mutations, indexed repairs and legacy repair-settings saves all
+require the same isolatable-collection contract. Whole-collection repair remains
+available and validates the explicit replacement strictly while preserving raw
+Groups. Ordinary independently quarantined Tools retain their existing behavior.
+
+The same final **32 public-command/projection cases** in
+`tests/test_function_collection_repair_boundary.py` yield **24 failures and eight
+control passes** on untouched reviewed head `1e8e093`, then **32 passes** after the
+correction. Cases cover duplicate names and duplicate HA identities, mixed invalid
+Tools, configuration/repair/validation reads, all three recovery projections,
+ordinary and indexed partial mutations, legacy settings routes and successful
+bulk repair with subsequent reads. Rejected writes leave the full raw data intact.
+
+The existing preflight test retains its strict duplicate-validator rejection and
+now additionally requires a whole-field repair view with no ambiguous usable
+Tools, intact raw definitions and zero writes. The absent-field persistence test's
+mock now declares `field_updates_allowed=True`; all its assertions remain intact.
+The focused selection passes **194 tests**. Pinned Ruff checks/format and MyPy pass
+all 146 source files. No frontend source, generated assets or skip policy changes.
+
+The final **142-module** related run has **2,896 passed, one skipped and only the
+same ten previously reproduced Windows/platform failures**. All 32 new cases pass;
+the original-revision replay uses the same final test file.
