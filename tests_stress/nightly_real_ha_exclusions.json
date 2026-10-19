@@ -107,7 +107,9 @@
     "tests_real_ha/test_script_structure_inspection.py",
     "tests_real_ha/test_script_transformer_migration.py",
     "tests_real_ha/test_restore_loop_responsiveness.py",
-    "tests_real_ha/test_restore_category_responsiveness.py"
+    "tests_real_ha/test_restore_category_responsiveness.py",
+    "tests_real_ha/test_completion_event_responsiveness.py",
+    "tests_real_ha/test_followup_audit_contracts.py"
   ],
   "partial_selected": {
     "tests_real_ha/test_management_backend_acceptance.py": {
@@ -782,6 +784,18 @@
       "job": "stable",
       "selector": "tests_real_ha/",
       "reason": "Archive-heavy, Knowledge-heavy and mixed restore responsiveness run serially in genuine HA PR acceptance with real disk storage."
+    },
+    "tests_real_ha/test_completion_event_responsiveness.py": {
+      "workflow": "real-ha.yml",
+      "job": "stable",
+      "selector": "tests_real_ha/",
+      "reason": "Focused follow-up audit regressions run in the ordinary genuine HA PR acceptance suite."
+    },
+    "tests_real_ha/test_followup_audit_contracts.py": {
+      "workflow": "real-ha.yml",
+      "job": "stable",
+      "selector": "tests_real_ha/",
+      "reason": "Focused follow-up audit regressions run in the ordinary genuine HA PR acceptance suite."
     }
   }
 }
