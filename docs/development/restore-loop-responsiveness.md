@@ -54,7 +54,8 @@ mapping. Existing race/cancellation test doubles now mock the async mapping boun
 all their assertions remain intact. No skip policy is weakened.
 
 `tests_real_ha/test_restore_loop_responsiveness.py` uses a genuine authenticated HA
-WebSocket client, EOAI export/upload/preview/restore commands, an empty control and
+WebSocket client, genuine disk-backed HA Stores, EOAI export/upload/preview/restore
+commands, an empty control and
 2,000 real Usage requests/runs. Upload and preview finish before measurement; the
 restore request contains only the session ID and preview token. It checks the
 heartbeat and exact restored counters. This acceptance test runs in the repository's
@@ -67,3 +68,10 @@ to run in a worker and prevent a cancellation delivered during hashing from cons
 an expired upload or committing data. The seven replay cases plus these two give
 **seven failures and two empty controls** before correction. The additional
 configuration-copy context control passes afterward as well.
+
+Acceptance intentionally requests the repository's `real_store_io` fixture. The
+upstream in-memory Store shim performs whole-document mock checking, JSON conversion
+and payload logging synchronously; it is not representative of production Store I/O
+and introduced an additional 500ms stall into the first acceptance attempt. The
+disk-backed fixture restores HA's actual writer/reader before setup and restores the
+pytest shims before teardown, as in the existing OS-boundary acceptance tests.

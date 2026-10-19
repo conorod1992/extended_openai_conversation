@@ -9,6 +9,7 @@ from custom_components.extended_openai_conversation_responses.usage import (
     RequestUsage,
     async_get_durable_usage,
 )
+from tests_stress.test_os_storage_faults import real_store_io  # noqa: F401
 from tests_real_ha.test_backup_transfer_protocol import (
     _entry,
     _setup_entry,
@@ -22,7 +23,9 @@ from tests_real_ha.test_backup_transfer_protocol import (
 
 @pytest.mark.timeout(120)
 @pytest.mark.parametrize("count", [0, 2000])
-async def test_full_archive_restore_remains_responsive(hass, hass_ws_client, count):
+async def test_full_archive_restore_remains_responsive(
+    hass, hass_ws_client, real_store_io, count
+):
     entry = _entry()
     await _setup_entry(hass, entry)
     subentry = _conversation_subentry(entry)

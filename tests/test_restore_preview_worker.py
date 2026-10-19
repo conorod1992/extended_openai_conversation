@@ -43,10 +43,23 @@ async def test_restore_hash_is_off_loop_and_cancel_cannot_commit(
     threads = []
     fingerprint = bt._snapshot_revision
 
+    cancelled = threading.Event()
+
+    def cancel_upload():
+        bt._imports(hass).pop(session.session_id, None)
+        cancelled.set()
+
     def observed(value):
-        threads.append(threading.get_ident())
+        thread = threading.get_ident()
+        threads.append(thread)
         if cancel:
-            loop.call_soon_threadsafe(bt._imports(hass).pop, session.session_id, None)
+            if thread == loop_thread:
+                cancel_upload()
+            else:
+                loop.call_soon_threadsafe(cancel_upload)
+                # The worker returns only after the intended race has happened.
+                # This synchronizes the fixture; it never sleeps on HA's loop.
+                assert cancelled.wait(5), "Loop did not process upload cancellation"
         return fingerprint(value)
 
     monkeypatch.setattr(bt, "_snapshot_revision", observed)
