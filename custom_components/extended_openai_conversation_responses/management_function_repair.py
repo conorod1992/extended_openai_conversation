@@ -1025,6 +1025,7 @@ async def async_function_repair(
     if action == "configuration_save":
         if message.get("revision") is not None:
             require_repair_revision(subentry, message["revision"])
+        operation_revision = repair_revision(subentry)
         updates = message.get("config", {})
         if not isinstance(updates, dict):
             raise HomeAssistantError("config must be an object")
@@ -1053,6 +1054,7 @@ async def async_function_repair(
         await management_ui._async_validate_configuration_request(
             hass, entry, subentry, normalized
         )
+        require_repair_revision(subentry, operation_revision)
         persisted = project_agent_config_updates(subentry.data, filtered, normalized)
 
         requested_title = message.get("title")
