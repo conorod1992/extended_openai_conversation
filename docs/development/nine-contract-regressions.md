@@ -258,3 +258,47 @@ The expanded 135-module local run has **2,808 passed, one skipped and only the t
 previously reproduced Windows/platform failures** (seven Linux staging-lock paths
 and three bash/process-group paths). No skips or platform accommodations were
 added; full Linux CI remains required.
+
+## Final review of `9875a8e`
+
+The final source/caller review covered the original nine changes, Group editor
+routing, raw/usable/persisted projections, configuration and recovery writers,
+rename/delete dependencies, failure responses and revision guards. Three bounded
+areas needed further correction:
+
+- Normal Tool rename rollback rebuilt configuration from usable Tools/Groups,
+  which could lose hidden references and raw YAML. It now restores the exact raw
+  snapshot only while the saved revision remains current. Both normal and dedicated
+  repair rename handlers also respect settled Request Rule storage: a lost save
+  acknowledgement after commit retains the renamed Tool/Groups, while a failure or
+  cancellation before commit restores the original configuration. A committed
+  rename followed by an acknowledgement error explicitly tells the user it was
+  saved and to reload. Concurrent configuration edits remain authoritative.
+- Dedicated repair `configuration_save` rechecks the operation's revision after
+  asynchronous validation, including when its legacy caller omitted a revision.
+  It cannot overwrite a newer prompt or Group edit made during that await.
+- Group creation counts all raw saved entries against the shared existing limit
+  of 50. Quarantined definitions retain their slots. Metadata edits and targeted
+  repair remain possible at the limit, and creation below the limit still works.
+
+The same final **34 regression/control cases** in
+`tests/test_group_rename_rollback.py`,
+`tests/test_repair_configuration_save_concurrency.py`,
+`tests/test_group_quarantine_capacity.py` and
+`tests/test_function_rename_rule_settlement.py` produce **17 failures and 17 control
+passes** on untouched reviewed head `9875a8e`. The settlement cases use the actual
+production RequestRules manager and save/reconciliation code with a fault-injected
+in-memory Store; they assert both current state and a fresh manager read. They do
+not claim a live-HA filesystem failure reproduction.
+
+The existing mocked rollback test now requires one validated save followed by an
+exact raw restore, rather than a second projected save. It retains the original
+exception assertion and additionally checks the exact restore payload and Rule
+rename arguments. No existing regression is skipped or relaxed. Pinned Ruff
+checks/format and MyPy pass all 146 source files. No frontend rebuild is needed for
+these backend-only corrections.
+
+All **34 final cases pass** with the corrections. The expanded **139-module** run
+has **2,842 passed, one skipped and only the same ten previously reproduced
+Windows/platform failures**. Full Linux stable/dev and selected browser, lifecycle,
+recovery and upgrade CI remain the final acceptance checks.
