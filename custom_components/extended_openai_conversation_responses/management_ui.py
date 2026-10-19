@@ -2289,9 +2289,27 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             raise HomeAssistantError(
                 "Function Group identifier is ambiguous; repair the saved collection first"
             )
-        existing = matching[0] if matching else None
+        existing = matching[0] if original_id is not None and matching else None
         if original_id is not None and existing is None:
             raise HomeAssistantError("The Function Group no longer exists")
+        candidate_name = candidate.get("name")
+        previous_name = existing.get("name") if existing is not None else None
+        if (
+            isinstance(candidate_name, str)
+            and (
+                not isinstance(previous_name, str)
+                or candidate_name.strip().casefold() != previous_name.strip().casefold()
+            )
+            and any(
+                isinstance(group, dict)
+                and group is not existing
+                and isinstance(group.get("name"), str)
+                and group["name"].strip().casefold()
+                == candidate_name.strip().casefold()
+                for group in raw_groups
+            )
+        ):
+            raise HomeAssistantError(f"duplicate group name: {candidate_name.strip()}")
         selected = set(candidate_functions)
         remaining_groups = [
             {
