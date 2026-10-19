@@ -472,6 +472,7 @@ async def test_function_enable_delete_and_group_validation_boundaries(
     monkeypatch.setattr(management_ui, "entry_and_agent", lambda *_: (entry, subentry))
     tools = [_tool("one")]
     groups = [{"id": "group", "functions": ["one"]}]
+    subentry.data = {**subentry.data, "function_groups": deepcopy(groups)}
     monkeypatch.setattr(
         management_ui,
         "configured_function_tools_from_data",

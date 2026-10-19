@@ -303,16 +303,26 @@ def effective_function_configuration(
     str | None,
 ]:
     """Return a usable config while retaining metadata for quarantined siblings."""
-    valid, invalid, issue = isolated_function_tools(options)
+    state = function_configuration_repair_state(options)
     safe = dict(options)
+    valid = state.valid if state else function_tools_issue(options)[0]
     safe[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
         valid, sort_keys=False, allow_unicode=True
     )
-    effective_groups, group_issues, raw_groups = _effective_function_groups(
-        options, valid
+    safe[CONF_FUNCTION_GROUPS] = (
+        state.groups
+        if state
+        else validate_function_groups(
+            options.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS), valid
+        )
     )
-    safe[CONF_FUNCTION_GROUPS] = effective_groups
-    return safe, invalid, group_issues, raw_groups, issue
+    return (
+        safe,
+        state.invalid if state else [],
+        state.group_issues if state else [],
+        deepcopy(options.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS)),
+        state.issue if state else None,
+    )
 
 
 def _effective_function_groups(
@@ -421,7 +431,16 @@ def function_configuration_repair_state(options: dict[str, Any]) -> _RepairState
     except (HomeAssistantError, TypeError, ValueError) as err:
         # A malformed saved group is repair-owned data too. Exclude it from
         # this validation/display projection without rewriting the raw field.
-        groups = []
+        usable: list[dict[str, Any]] = []
+        if isinstance(groups, list):
+            for index, group in enumerate(groups):
+                try:
+                    usable = validate_function_groups([*usable, group], valid)
+                except (HomeAssistantError, TypeError, ValueError) as group_error:
+                    group_issues.append(
+                        {"index": index, "validation_error": str(group_error)}
+                    )
+        groups = usable
         group_issues.append({"validation_error": str(err)})
         issue = issue or str(err)
     if issue is None and not group_issues:
@@ -952,9 +971,10 @@ async def async_function_repair(
     if not isinstance(entry_id, str) or not isinstance(subentry_id, str):
         raise HomeAssistantError("entry_id and subentry_id are required")
     entry, subentry = management_ui.entry_and_agent(hass, entry_id, subentry_id)
-    _configured, issue = function_tools_issue(dict(subentry.data))
-    if issue is None:
+    state = function_configuration_repair_state(dict(subentry.data))
+    if state is None:
         raise HomeAssistantError("Function Tools do not require repair")
+    issue = state.issue
 
     action = message.get("action")
     if action == "configuration_get":
@@ -1209,17 +1229,16 @@ async def async_function_repair(
     if not isinstance(candidate, list):
         raise HomeAssistantError("tools must be a JSON array")
     validated_tools = validate_function_tools(candidate)
-    validate_function_groups(
-        subentry.data.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS),
-        validated_tools,
-    )
+    # Bulk Tool repair owns Tools only. Validate surviving usable Groups against
+    # the proposed Tools while retaining unrelated raw Group damage for repair.
+    validate_function_groups(state.groups, validated_tools)
 
     persisted = dict(subentry.data)
     persisted[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
         validated_tools, sort_keys=False, allow_unicode=True
     )
     await management_ui._async_validate_configuration_request(
-        hass, entry, subentry, persisted
+        hass, entry, subentry, safe_function_configuration(persisted)
     )
     await management_ui._async_validate_configuration_dependencies(
         hass, entry, subentry, persisted

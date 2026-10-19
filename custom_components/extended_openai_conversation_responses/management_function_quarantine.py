@@ -31,6 +31,7 @@ from .const import CONF_FUNCTION_GROUPS, CONF_FUNCTION_TOOLS, DEFAULT_FUNCTION_G
 from .live_subentry_updates import update_live_subentry
 from .management_function_repair import (
     editable_function_tools,
+    function_configuration_repair_state,
     function_tools_issue,
     isolated_function_tools,
     persist_valid_function_configuration,
@@ -79,20 +80,21 @@ def _management_validate_function_groups(
     """Ignore quarantined members without weakening normal group validation."""
     if not _ALLOW_QUARANTINED_TOOLS.get():
         return _STRICT_VALIDATE_FUNCTION_GROUPS(value, function_tools)
-    quarantined = _QUARANTINED_FUNCTION_NAMES.get()
-    if not quarantined:
+    try:
         return _STRICT_VALIDATE_FUNCTION_GROUPS(value, function_tools)
-    safe = deepcopy(value)
-    if isinstance(safe, list):
-        for group in safe:
-            if not isinstance(group, dict) or not isinstance(
-                group.get("functions"), list
-            ):
-                continue
-            group["functions"] = [
-                name for name in group["functions"] if name not in quarantined
-            ]
-    return _STRICT_VALIDATE_FUNCTION_GROUPS(safe, function_tools)
+    except HomeAssistantError, TypeError, ValueError:
+        pass
+    state = function_configuration_repair_state(
+        {
+            CONF_FUNCTION_TOOLS: deepcopy(function_tools),
+            CONF_FUNCTION_GROUPS: value,
+        }
+    )
+    return (
+        state.groups
+        if state
+        else _STRICT_VALIDATE_FUNCTION_GROUPS(value, function_tools)
+    )
 
 
 def _management_merge_agent_config(
@@ -103,8 +105,8 @@ def _management_merge_agent_config(
         return _STRICT_MERGE_AGENT_CONFIG(source, updates)
 
     raw = dict(source)
-    _tools, issue = function_tools_issue(raw)
-    if issue is None:
+    state = function_configuration_repair_state(raw)
+    if state is None or not is_field_only_configuration_update(updates):
         return _STRICT_MERGE_AGENT_CONFIG(source, updates)
 
     normalized = _STRICT_MERGE_AGENT_CONFIG(_safe_function_configuration(raw), updates)
@@ -172,7 +174,9 @@ def _restore_quarantined_group_members(
     by_id = {
         group.get("id"): group
         for group in raw_groups
-        if isinstance(group, dict) and isinstance(group.get("functions"), list)
+        if isinstance(group, dict)
+        and isinstance(group.get("id"), str)
+        and isinstance(group.get("functions"), list)
     }
     for group in restored:
         if not isinstance(group, dict) or not isinstance(group.get("functions"), list):
@@ -204,11 +208,13 @@ def _tolerant_persist_function_configuration(
     extra_updates: dict[str, Any] | None = None,
     expected_revision: str | None = None,
     renamed_group: tuple[str, str] | None = None,
+    deleted_group: str | None = None,
 ) -> dict[str, Any]:
     """Persist edits to valid siblings while retaining quarantined raw tools."""
     raw = dict(subentry.data)
-    _valid, invalid, issue = isolated_function_tools(raw)
-    if issue is None or not invalid:
+    _valid, invalid, _issue = isolated_function_tools(raw)
+    state = function_configuration_repair_state(raw)
+    if state is None:
         return persist_valid_function_configuration(
             hass,
             entry,
@@ -257,13 +263,57 @@ def _tolerant_persist_function_configuration(
         invalid_names,
         renamed_group,
     )
+    # Invalid Group siblings are repair-owned. A targeted replacement or deletion
+    # consumes only that raw definition; unrelated damage survives unchanged.
+    original_groups = raw.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS)
+    usable_ids = {group["id"] for group in state.groups}
+    damaged_ids = {
+        item["id"]
+        for item in state.group_issues
+        if isinstance(item.get("id"), str) and "invalid_members" in item
+    }
+    consumed = {deleted_group, renamed_group[0] if renamed_group else None}
+    if isinstance(original_groups, list):
+        for group in original_groups:
+            group_id = group.get("id") if isinstance(group, dict) else None
+            if isinstance(group_id, str) and group_id in consumed:
+                continue
+            if (
+                isinstance(group_id, str)
+                and group_id in usable_ids
+                and group_id not in damaged_ids
+            ):
+                proposed = next(
+                    (item for item in groups if item["id"] == group_id), None
+                )
+                baseline = next(
+                    (item for item in state.groups if item["id"] == group_id), None
+                )
+                if proposed != baseline:
+                    continue
+            persisted_groups = [
+                item
+                for item in persisted_groups
+                if not (isinstance(group_id, str) and item.get("id") == group_id)
+            ]
+            persisted_groups.append(deepcopy(group))
     persisted = dict(raw)
     persisted[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
         [*deepcopy(tools), *quarantined_raw],
         sort_keys=False,
         allow_unicode=True,
     )
-    persisted[CONF_FUNCTION_GROUPS] = persisted_groups
+    if tools == state.valid:
+        # Group-only edits must not reserialize untouched Tools.
+        if CONF_FUNCTION_TOOLS in raw:
+            persisted[CONF_FUNCTION_TOOLS] = raw[CONF_FUNCTION_TOOLS]
+        else:
+            persisted.pop(CONF_FUNCTION_TOOLS, None)
+    persisted[CONF_FUNCTION_GROUPS] = (
+        persisted_groups
+        if isinstance(original_groups, list)
+        else deepcopy(original_groups)
+    )
     if extra_updates:
         persisted.update(deepcopy(extra_updates))
     update_live_subentry(hass, entry, subentry, data=persisted)
@@ -279,9 +329,10 @@ async def _tolerant_agent_test(
 ) -> AgentTestResult:
     """Run provider diagnostics with valid Function Tool siblings only."""
     raw = dict(subentry.data)
-    _valid, invalid, issue = isolated_function_tools(raw)
-    if issue is None:
+    state = function_configuration_repair_state(raw)
+    if state is None:
         return await async_test_configured_agent(hass, entry, subentry)
+    invalid = state.invalid
 
     safe_subentry = SimpleNamespace(
         data=_safe_function_configuration(raw),
@@ -302,7 +353,16 @@ async def _tolerant_agent_test(
         )
     else:
         detail = "Invalid Function Tool configuration was quarantined for this test"
-    result.checks.append(TestCheck("Function Tools", "Warning", detail))
+    if invalid or not state.field_updates_allowed:
+        result.checks.append(TestCheck("Function Tools", "Warning", detail))
+    if state.group_issues:
+        result.checks.append(
+            TestCheck(
+                "Function Groups",
+                "Warning",
+                "Unavailable Function Groups were quarantined for this test",
+            )
+        )
     result.status = _overall(result.checks)
     return result
 

@@ -375,7 +375,9 @@ async def test_group_dependency_update_shares_config_revision_and_write(
         extra_updates=None,
         expected_revision=None,
         renamed_group=None,
+        deleted_group=None,
     ):
+        seen["deleted_group"] = deleted_group
         seen["renamed_group"] = renamed_group
         seen["extra_updates"] = extra_updates
         seen["expected_revision"] = expected_revision
@@ -403,6 +405,7 @@ async def test_group_dependency_update_shares_config_revision_and_write(
     )
 
     assert seen["expected_revision"] == revision
+    assert seen["deleted_group"] == ("old_group" if action == "delete_group" else None)
     assert seen["renamed_group"] == (("old_group", "new_group") if action == "save_group" else None)
     assert seen["extra_updates"][CONF_GUEST_ALLOWED_GROUP_IDS] == expected_ids
     assert result["revision"] == "next-revision"

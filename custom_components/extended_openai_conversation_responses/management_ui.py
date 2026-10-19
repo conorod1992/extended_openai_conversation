@@ -365,6 +365,7 @@ async def _persist_function_configuration(
     expected_revision: str | None = None,
     renamed_function: tuple[str, str] | None = None,
     renamed_group: tuple[str, str] | None = None,
+    deleted_group: str | None = None,
     rules_manager: Any = None,
 ) -> dict[str, Any]:
     """Persist one revision-checked tool edit without discarding quarantined siblings."""
@@ -398,6 +399,7 @@ async def _persist_function_configuration(
         extra_updates=extra_updates,
         expected_revision=expected_revision,
         renamed_group=renamed_group,
+        deleted_group=deleted_group,
     )
 
 
@@ -1096,6 +1098,14 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
                 subentry.data.get(CONF_FUNCTION_GROUPS, []), configured_tools
             )
             groups_ms = _elapsed_ms(phase)
+            repair_state, _ = repair_state_for_projection(
+                persisted_config_projection(subentry)
+            )
+            if repair_state is not None:
+                details_result["function_repair"] = {
+                    "group_issues": deepcopy(repair_state.group_issues),
+                    "invalid_count": len(repair_state.invalid),
+                }
 
             phase = perf_counter()
             knowledge_sources = await library.async_list()
@@ -2232,7 +2242,30 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
         original_id = message.get("original_id")
         if original_id is not None and not isinstance(original_id, str):
             raise HomeAssistantError("original_id must be a string")
-        existing = next((group for group in groups if group["id"] == original_id), None)
+        raw_groups = subentry.data.get(CONF_FUNCTION_GROUPS, [])
+        if not isinstance(raw_groups, list):
+            raise HomeAssistantError(
+                "Repair the malformed Function Group collection before adding a Group"
+            )
+        if original_id is None and any(
+            isinstance(group, dict) and group.get("id") == candidate.get("id")
+            for group in raw_groups
+        ):
+            raise HomeAssistantError(
+                "Function Group already exists; reload it before replacing it"
+            )
+        existing = (
+            next(
+                (
+                    group
+                    for group in raw_groups
+                    if isinstance(group, dict) and group.get("id") == original_id
+                ),
+                None,
+            )
+            if isinstance(raw_groups, list)
+            else None
+        )
         if original_id is not None and existing is None:
             raise HomeAssistantError("The Function Group no longer exists")
         selected = set(candidate_functions)
@@ -2246,9 +2279,9 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             for group in groups
             if group["id"] != original_id
         ]
-        validated_groups = validate_function_groups(
-            [*remaining_groups, candidate], tools
-        )
+        from .agent_config import validate_function_groups as validate_edited_groups
+
+        validated_groups = validate_edited_groups([*remaining_groups, candidate], tools)
         return await _persist_function_configuration(
             hass,
             entry,
@@ -2273,8 +2306,12 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
         group_id = message.get("group_id")
         if not isinstance(group_id, str):
             raise HomeAssistantError("group_id is required")
+        raw_groups = subentry.data.get(CONF_FUNCTION_GROUPS, [])
         remaining = [group for group in groups if group["id"] != group_id]
-        if len(remaining) == len(groups):
+        if not isinstance(raw_groups, list) or not any(
+            isinstance(group, dict) and group.get("id") == group_id
+            for group in raw_groups
+        ):
             raise HomeAssistantError("The Function Group no longer exists")
         return await _persist_function_configuration(
             hass,
@@ -2284,6 +2321,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             remaining,
             expected_revision=message.get("revision"),
             extra_updates=group_reference_updates(subentry.data, group_id, None),
+            deleted_group=group_id,
         )
 
     return _unknown_management_action(request)
