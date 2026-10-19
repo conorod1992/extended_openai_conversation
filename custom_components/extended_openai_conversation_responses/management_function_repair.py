@@ -929,6 +929,11 @@ def _persist_raw_tools(
         persisted.update(deepcopy(extra_updates))
     from .management_ui import _validated_model_request
 
+    candidate_state = function_configuration_repair_state(persisted)
+    if candidate_state is not None and not candidate_state.field_updates_allowed:
+        # Recovery can retain individually invalid siblings, but must not commit
+        # new collection conflicts that hide every usable Tool in the fallback.
+        raise AgentConfigError(CONF_FUNCTION_TOOLS, candidate_state.issue)
     _validated_model_request(safe_function_configuration(persisted), entry.data)
     update_live_subentry(hass, entry, subentry, data=persisted)
     return persisted

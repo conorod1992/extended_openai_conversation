@@ -384,3 +384,31 @@ all 146 source files. No frontend source, generated assets or skip policy change
 The final **142-module** related run has **2,896 passed, one skipped and only the
 same ten previously reproduced Windows/platform failures**. All 32 new cases pass;
 the original-revision replay uses the same final test file.
+
+## Validate the resulting collection during indexed Tool repair
+
+Review of `7b96ff1` found that `function_repair/save_one` validated the replacement
+in isolation and checked sibling names, but could introduce a duplicate HA Tool
+reference under a different local alias. Its raw persistence helper validated a
+safe display projection; the new collection conflict caused that projection to
+exclude every Tool, so validation accepted the empty projection and saved the
+conflicting raw collection. This also occurred with another invalid legacy sibling.
+
+The shared raw Tool persistence boundary now checks the proposed repair state
+before model validation or saving. A candidate with unsafe collection-level
+conflicts is rejected with its strict validation error. Individually invalid,
+unmodified siblings remain supported; valid repairs preserve raw Groups and other
+legacy Tools. Normal editor and bulk replacement routes already validate collection
+invariants, while both indexed mutations now share the guarded persistence boundary.
+
+The identical four public-command cases in
+`tests/test_repair_candidate_collection_validation.py` yield **two failures and
+two valid-repair control passes** before the fix, then **four passes** after it.
+The tests cover duplicate HA references with and without another invalid sibling,
+assert zero writes and exact raw preservation on rejection, and verify valid repair
+responses and stored definitions. No existing assertions or skips were changed.
+
+The focused repair/Group/rollback/concurrency selection passes **133 tests**.
+The expanded **143-module** selection has **2,900 passed, one skipped and only the
+same ten previously reproduced Windows/platform failures**. Pinned Ruff checks,
+format and MyPy pass all 146 source files. No frontend assets change.
