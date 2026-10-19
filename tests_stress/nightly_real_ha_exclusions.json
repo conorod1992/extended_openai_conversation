@@ -105,7 +105,8 @@
     "tests_real_ha/test_conversation_request_lifetimes.py",
     "tests_real_ha/test_configuration_operation_contracts.py",
     "tests_real_ha/test_script_structure_inspection.py",
-    "tests_real_ha/test_script_transformer_migration.py"
+    "tests_real_ha/test_script_transformer_migration.py",
+    "tests_real_ha/test_restore_loop_responsiveness.py"
   ],
   "partial_selected": {
     "tests_real_ha/test_management_backend_acceptance.py": {
@@ -768,6 +769,12 @@
       "job": "stable",
       "selector": "tests_real_ha/",
       "reason": "Focused regression coverage runs in the ordinary genuine HA acceptance suite; enhanced nightly retains its separate stress campaigns."
+    },
+    "tests_real_ha/test_restore_loop_responsiveness.py": {
+      "workflow": "real-ha.yml",
+      "job": "stable",
+      "selector": "tests_real_ha/",
+      "reason": "Restore responsiveness control and 2,000-record regression run in genuine HA acceptance on each PR; enhanced nightly retains its separate restore stress campaigns."
     }
   }
 }
