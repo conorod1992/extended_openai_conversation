@@ -210,6 +210,7 @@ class TemporaryMemory:
         """Add a fact, coalescing an exact owned active duplicate."""
         if source not in {"automatic", "manual"}:
             raise ValueError("source must be automatic or manual")
+        _validate_record_scope_id(scope_id)
         owner_scope_id = _require_owner_scope_id(owner_scope_id)
         content = _clean(content, MAX_CONTENT_LENGTH, "content")
         category = _clean(category, MAX_CATEGORY_LENGTH, "category")
@@ -446,7 +447,6 @@ class TemporaryMemory:
                 or len(record.memory_id) > 128
                 or record.memory_id in seen
                 or not record.scope_id
-                or len(record.scope_id) > 128
                 or (
                     record.owner_scope_id is not None
                     and (not record.owner_scope_id or len(record.owner_scope_id) > 128)
@@ -738,6 +738,7 @@ def _record_from_storage(raw: Mapping[str, Any]) -> TemporaryMemoryRecord:
             else None
         )
     record = TemporaryMemoryRecord(**values)
+    _validate_record_scope_id(record.scope_id)
     if not isinstance(record.content, str):
         raise ValueError("temporary memory fields must be strings")
     validate_memory_privacy(record.content, automatic=record.source == "automatic")
@@ -747,6 +748,17 @@ def _record_from_storage(raw: Mapping[str, Any]) -> TemporaryMemoryRecord:
         content=_clean(record.content, MAX_CONTENT_LENGTH, "content"),
         category=_clean(record.category, MAX_CATEGORY_LENGTH, "category"),
     )
+
+
+def _validate_record_scope_id(value: object) -> None:
+    """Accept opaque runtime session identifiers unchanged at every boundary.
+
+    Conversation/continuity identifiers are not bounded owner IDs. Historical
+    writes accepted long scopes; imposing an owner-ID limit makes those records
+    unrestorable. Backup transport retains its document size/count limits.
+    """
+    if not isinstance(value, str) or not value:
+        raise ValueError("temporary memory metadata is invalid: scope must be a nonempty string")
 
 
 def _matches_owner(
