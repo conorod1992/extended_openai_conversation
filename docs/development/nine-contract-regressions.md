@@ -313,3 +313,36 @@ including the three CI cases.
 
 Including that entire unchanged module, the final **140-module** local run has
 **2,856 passed, one skipped and only the same ten Windows/platform failures**.
+
+## Further review: unreadable Rule save recovery
+
+Review of `0dda997` found one remaining distinction in rename recovery. When both
+a Rule write and its authoritative readback fail, RequestRules invalidates its
+execution state and clears references. The rename helper treated that empty view
+as non-commit evidence. Both management routes could then undo a saved Tool/Group
+rename even when the Rule rename had actually reached storage.
+
+The shared helper now distinguishes confirmed commit, confirmed available-state
+rollback and unknown storage outcome. Unknown outcomes retain the already-saved
+Tool/Group configuration and leave Rule execution invalidated. The management
+error explicitly says the Rule state cannot be verified and asks the user to
+restore storage access and review references. Cancellation still propagates.
+An authoritative read is needed to establish whether the Rule write committed;
+automatic rollback cannot be inferred from the cleared, invalidated view.
+
+The same final eight public-command regressions in
+`tests/test_function_rename_unknown_outcome.py`, combined with the eight existing
+known-outcome controls, yield **eight failures and eight passes** on untouched
+reviewed head `0dda997`. They cover both normal and dedicated repair routes,
+pre/post-commit failures, cancellation, retained raw configuration, one accepted
+configuration write, fail-closed Rule state and a fresh read after storage becomes
+available. The tests use the production manager with a fault-injected in-memory
+Store; they do not claim live-HA filesystem fault injection.
+
+The focused recovery/concurrency selection passes **52 tests**. Pinned Ruff
+checks/format and MyPy pass all 146 source files. No existing test assertions,
+platform policy or frontend assets change in this pass.
+
+The expanded **141-module** run has **2,864 passed, one skipped and only the same
+ten previously reproduced Windows/platform failures**. All 16 selected
+unknown/known-outcome cases pass with the correction.
