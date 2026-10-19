@@ -98,3 +98,44 @@ collection rejection assertions in `test_save_validation_reuse.py` remain intact
 The normalization-count tests observe the shared normalizer directly and continue
 to require exactly one normalization, including failed writes. Additional tests
 cover explicit strict edits and legacy default-Tool semantics.
+
+## Group editor, repair responses and diagnostic follow-up
+
+Review of `4f43fce` identified three sibling gaps: Group editor mutations validated
+malformed saved Groups before reaching their replacement/deletion; dedicated Tool
+repair responses still used a Tool-only projection after committing; and Guest Mode
+and provider diagnostics did not consistently recognize Group-only damage.
+
+`function_configuration_repair_state()` now supplies the legacy repair payload and
+read-only management Group projection too. When a malformed collection contains
+usable Group siblings, those siblings remain available. Group mutations locate the
+explicit target in raw persisted definitions, strictly validate the proposed usable
+result, and consume only the targeted raw definition. Untouched malformed and healthy
+siblings retain their raw fields; Group-only mutations also retain the original
+Functions representation. Creating a Group cannot overwrite a quarantined identifier
+without explicitly selecting that existing Group. Tool edits preserve even an opaque
+non-collection Group field. Bulk Tool repair uses the same boundary as single-item
+repair, and diagnostics report Group degradation alongside the usable projection.
+
+Public-command regressions are in `tests/test_group_repair_command_contracts.py`.
+They cover Group replacement, deletion and creation with both Group-only and mixed
+Tool/Group damage, single-item and bulk Tool repair, post-commit response construction,
+subsequent configuration reads, provider diagnostics and Guest Mode details. Controls
+retain invalid-proposal rejection, stale revisions, missing targets, explicit deletion
+confirmation, raw sibling preservation and identifier collision protection.
+
+The **same final 66 tests** produce **36 failures and 30 control passes** on untouched
+reviewed head `4f43fce`, and **66 passes** with the correction. There are no collection
+or setup failures in that replay. Existing seam tests now observe the shared repair
+state, use valid Group fixtures for Tool-only cases, and retain their persistence and
+dependency assertions; an old assertion accepting a numeric Group member now requires
+that malformed member to be excluded from the diagnostic projection.
+
+The expanded 131-module non-property local run produced **2,726 passed, 1 skipped and
+12 failures**. Ten failures reproduce on `4f43fce` (Windows lacks `fcntl`/`killpg`, plus
+the existing defensive-path case). The other two file-edit failures pass when repeated
+on both heads; the complete file-edit module passes all 42 cases on the corrected head.
+A broader attempt including property tests hit Hypothesis source-discovery timeout on
+Windows. These local runs are not claimed as a passing full Linux suite. Pinned Ruff
+and MyPy still pass, with all 146 source files checked; the full Linux stable/dev CI
+remains the final validation gate.
