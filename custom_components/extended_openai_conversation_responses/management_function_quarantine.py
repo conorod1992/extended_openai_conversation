@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
@@ -15,6 +15,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
 from .agent_config import (
+    AgentConfigError,
     configured_function_tools_from_data as _STRICT_CONFIGURED_TOOLS,
     merge_agent_config as _STRICT_MERGE_AGENT_CONFIG,
     project_agent_config_updates,
@@ -115,11 +116,16 @@ def _management_merge_agent_config(
     return normalized
 
 
+def is_field_only_configuration_update(updates: Mapping[str, Any]) -> bool:
+    """Submitted Function/Group fields always require their strict edit contract."""
+    return not set(updates) & {CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS}
+
+
 def merge_unchanged_function_configuration(
     subentry: Any, updates: dict[str, Any]
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Return a scoped save payload and a separate normalized display candidate."""
-    if set(updates) & {CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS}:
+    if not is_field_only_configuration_update(updates):
         raise HomeAssistantError(
             "Unchanged-function merge cannot change Functions or Groups"
         )
@@ -131,6 +137,11 @@ def merge_unchanged_function_configuration(
     # that initiated the edit; raw repair-owned fields are projected unchanged.
     if snapshot is None:
         repair_state, _ = repair_state_for_projection(projection)
+    if repair_state is not None and not repair_state.field_updates_allowed:
+        raise AgentConfigError(
+            CONF_FUNCTION_TOOLS,
+            "repair the malformed Function Tool collection before saving unrelated settings",
+        )
     validated_functions = (
         (snapshot[CONF_FUNCTION_TOOLS], snapshot[CONF_FUNCTION_GROUPS])
         if snapshot is not None

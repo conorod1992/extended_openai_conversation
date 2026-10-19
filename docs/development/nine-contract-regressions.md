@@ -73,3 +73,28 @@ Additional review cases live in `tests/test_nine_contract_review.py`.
 Pinned Ruff **0.16.8** lint and format checks pass. Pinned MyPy **2.3.1** with
 `--platform linux` reports **no issues in all 146 source files**. This checks Linux
 typing contracts locally; it does not replace runtime validation on Linux CI.
+
+## Group-repair follow-up review
+
+The review of head `cd36684` found Group-only gaps in normal Configuration Save,
+legacy Update and backup export, plus a crash on object/list Group members. The
+same public-route selection (`group_only or group_repair_records` in
+`test_group_quarantine_public_contracts.py`) produces **28 failures and 2 control
+passes** on that head. It covers Get → Save, cold Save, Update, Validate, Knowledge,
+public backup creation and the three recovery/configuration projections.
+
+The shared field-only decision now applies to these writers. A recognizable Tool
+collection with quarantined items, or invalid Groups with valid Tools, can remain
+untouched while unrelated fields are validated and projected. Object/list members
+are recorded as Group repair issues before membership lookup. Functions YAML that
+cannot decode to a collection (or a collection-wide invariant failure that cannot
+be isolated) still requires explicit repair before an ordinary field-only save.
+Submitting Functions or Groups always invokes strict edit validation. Private
+recovery retains its existing ability to snapshot opaque malformed input.
+
+The older scoped-persistence tests now assert exact raw preservation and successful
+unrelated edits instead of rejection on selected UI routes. Both malformed-
+collection rejection assertions in `test_save_validation_reuse.py` remain intact.
+The normalization-count tests observe the shared normalizer directly and continue
+to require exactly one normalization, including failed writes. Additional tests
+cover explicit strict edits and legacy default-Tool semantics.

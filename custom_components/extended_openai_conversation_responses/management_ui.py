@@ -125,6 +125,7 @@ from .management_function_quarantine import (
     _management_validate_function_groups as validate_function_groups,
     _tolerant_agent_test as async_test_agent,
     _tolerant_persist_function_configuration,
+    is_field_only_configuration_update,
     management_function_tools,
     merge_unchanged_function_configuration,
 )
@@ -1246,22 +1247,24 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
     groups_changed = CONF_FUNCTION_GROUPS in updates
     repair_state = None
     validated_functions = None
-    if not tools_changed:
-        if (
-            projection.repair_state is not None
-            and projection.repair_state.invalid
-            and not groups_changed
-        ):
-            repair_state = projection.repair_state
-        elif projection.snapshot is not None:
+    if is_field_only_configuration_update(updates):
+        validation = _validation_result(
+            lambda: merge_unchanged_function_configuration(subentry, updates)[1]
+        )
+        repair_state = projection.repair_state
+        if projection.snapshot is not None:
             validated_functions = (
                 projection.snapshot[CONF_FUNCTION_TOOLS],
-                None if groups_changed else projection.snapshot[CONF_FUNCTION_GROUPS],
+                projection.snapshot[CONF_FUNCTION_GROUPS],
             )
-        elif not groups_changed and has_unavailable_native_tool(dict(projection.data)):
-            repair_state, _ = repair_state_for_projection(projection)
-            if repair_state is not None and not repair_state.invalid:
-                repair_state = None
+    else:
+        if not tools_changed and projection.snapshot is not None:
+            validated_functions = (projection.snapshot[CONF_FUNCTION_TOOLS], None)
+        validation = _validation_result(
+            lambda: merge_validated_agent_config(
+                dict(subentry.data), updates, validated_functions=validated_functions
+            )
+        )
     timings["function_state_lookup_ms"] = _elapsed_ms(phase)
     timings["function_tools_reused"] = (
         repair_state is not None or validated_functions is not None
@@ -1270,32 +1273,6 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
         validated_functions is not None and validated_functions[1] is not None
     )
     phase = perf_counter()
-    if repair_state is not None:
-
-        def merge_for_repair() -> dict[str, Any]:
-            merged = merge_validated_agent_config(
-                dict(subentry.data),
-                updates,
-                validated_functions=(repair_state.valid, repair_state.groups),
-            )
-            for key in (CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS):
-                if key in subentry.data:
-                    merged[key] = deepcopy(subentry.data[key])
-                else:
-                    merged.pop(key, None)
-            return merged
-
-        validation: dict[str, Any] = _validation_result(merge_for_repair)
-    elif validated_functions is not None:
-        validation = _validation_result(
-            lambda: merge_validated_agent_config(
-                dict(subentry.data), updates, validated_functions=validated_functions
-            )
-        )
-    else:
-        validation = _validation_result(
-            lambda: merge_agent_config(subentry.data, updates)
-        )
     if not validation.get("valid"):
         return validation
     timings["merge_validation_ms"] = _elapsed_ms(phase)
@@ -1585,9 +1562,13 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         updates = message.get("config", {})
         if not isinstance(updates, dict):
             raise HomeAssistantError("config must be an object")
-        result = _validation_result(
-            lambda: agent_config_snapshot(merge_agent_config(subentry.data, updates))
-        )
+
+        def validation_candidate() -> dict[str, Any]:
+            if is_field_only_configuration_update(updates):
+                return merge_unchanged_function_configuration(subentry, updates)[1]
+            return agent_config_snapshot(merge_agent_config(subentry.data, updates))
+
+        result = _validation_result(validation_candidate)
         if result["valid"]:
             try:
                 await _async_validate_configuration_request(
@@ -1612,13 +1593,17 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
                 "Configuration revision is required; reload the latest saved settings before saving."
             )
         _require_agent_config_revision(subentry, message["revision"])
-        normalized = merge_agent_config(subentry.data, updates)
+        field_only = is_field_only_configuration_update(updates)
+        if field_only:
+            _persisted, normalized = merge_unchanged_function_configuration(
+                subentry, updates
+            )
+        else:
+            normalized = merge_agent_config(subentry.data, updates)
+        response_candidate = normalized
         await _async_validate_configuration_request(hass, entry, subentry, normalized)
         _require_agent_config_revision(subentry, message["revision"])
-        if any(
-            normalized.get(key) != subentry.data.get(key)
-            for key in (CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS)
-        ):
+        if not field_only:
             await _async_validate_configuration_dependencies(
                 hass, entry, subentry, normalized
             )
@@ -1643,7 +1628,11 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             hass.config_entries.async_update_subentry(
                 entry, subentry, data=normalized, title=saved_title
             )
-        snapshot = agent_config_snapshot(normalized)
+        from .management_loading_performance import _snapshot_normalized_configuration
+
+        snapshot = _snapshot_normalized_configuration(
+            response_candidate, validated=True
+        )
         result = {
             "title": saved_title,
             "revision": saved_agent_config_revision(subentry, normalized, saved_title),

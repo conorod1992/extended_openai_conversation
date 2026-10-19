@@ -1327,15 +1327,17 @@ async def test_configuration_save_normalizes_once(monkeypatch) -> None:
     )
 
     monkeypatch.setattr(guidance, "exposed_attribute_catalog", lambda *_: {})
-    original_merge = management_ui.merge_agent_config
+    from custom_components.extended_openai_conversation_responses import agent_config
+
+    original_normalize = agent_config.normalize_agent_config
     merge_calls = 0
 
-    def counted_merge(current, updates):
+    def counted_normalize(*args, **kwargs):
         nonlocal merge_calls
         merge_calls += 1
-        return original_merge(current, updates)
+        return original_normalize(*args, **kwargs)
 
-    monkeypatch.setattr(management_ui, "merge_agent_config", counted_merge)
+    monkeypatch.setattr(agent_config, "normalize_agent_config", counted_normalize)
     monkeypatch.setattr(
         loading,
         "validate_function_tools",
@@ -1916,15 +1918,17 @@ async def test_configuration_save_validation_failure_does_not_persist(
 ) -> None:
     """A single failed normalization remains frontend-friendly and write-free."""
     hass, _entry, _subentry = _hass_with_agent()
-    original_merge = management_ui.merge_agent_config
+    from custom_components.extended_openai_conversation_responses import agent_config
+
+    original_normalize = agent_config.normalize_agent_config
     merge_calls = 0
 
-    def counted_merge(current, updates):
+    def counted_normalize(*args, **kwargs):
         nonlocal merge_calls
         merge_calls += 1
-        return original_merge(current, updates)
+        return original_normalize(*args, **kwargs)
 
-    monkeypatch.setattr(management_ui, "merge_agent_config", counted_merge)
+    monkeypatch.setattr(agent_config, "normalize_agent_config", counted_normalize)
 
     result = await management_ui.async_management_command(
         hass,

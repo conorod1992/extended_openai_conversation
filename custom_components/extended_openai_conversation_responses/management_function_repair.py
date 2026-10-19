@@ -86,6 +86,7 @@ class _RepairState:
     groups: list[dict[str, Any]]
     group_issues: list[dict[str, Any]]
     raw_groups: Any
+    field_updates_allowed: bool = True
 
 
 _persisted_projections: OrderedDict[int, _PersistedProjection] = OrderedDict()
@@ -348,8 +349,21 @@ def _effective_function_groups(
                         "unavailable_functions": unavailable,
                     }
                 )
+            invalid_members = [
+                name for name in persisted_functions if not isinstance(name, str)
+            ]
+            if invalid_members:
+                group_issues.append(
+                    {
+                        "id": group.get("id"),
+                        "name": group.get("name"),
+                        "invalid_members": deepcopy(invalid_members),
+                    }
+                )
             group["functions"] = [
-                name for name in persisted_functions if name in valid_names
+                name
+                for name in persisted_functions
+                if isinstance(name, str) and name in valid_names
             ]
     return effective_groups, group_issues, raw_groups
 
@@ -380,9 +394,24 @@ def repair_state_for_projection(
     """Resolve quarantine once for the current persisted Function fields."""
     if projection.repair_state is not None:
         return projection.repair_state, True
-    options = dict(projection.data)
-    valid, invalid, issue = isolated_function_tools(options)
-    if len(valid) > 1:
+    state = function_configuration_repair_state(dict(projection.data))
+    projection.repair_state = state
+    return state, False
+
+
+def function_configuration_repair_state(options: dict[str, Any]) -> _RepairState | None:
+    """Share Tool and Group recovery policy across editors and backups.
+
+    Unrelated writes require an isolatable Tool collection; unreadable YAML or
+    collection-wide errors still require explicit repair. Recovery snapshots may
+    retain opaque input for repair without certifying it for an ordinary write.
+    """
+    valid, issue = function_tools_issue(options)
+    invalid: list[dict[str, Any]] = []
+    if issue is not None:
+        valid, invalid, issue = isolated_function_tools(options)
+    field_updates_allowed = issue is None or bool(invalid)
+    if invalid and len(valid) > 1:
         # Individual isolation does not check collection invariants such as
         # duplicate names or HA references. The former safe snapshot did.
         valid = validate_function_tools(valid)
@@ -396,11 +425,11 @@ def repair_state_for_projection(
         group_issues.append({"validation_error": str(err)})
         issue = issue or str(err)
     if issue is None and not group_issues:
-        return None, False
+        return None
     issue = issue or "Function Groups contain unavailable members"
-    state = _RepairState(valid, invalid, issue, groups, group_issues, raw_groups)
-    projection.repair_state = state
-    return state, False
+    return _RepairState(
+        valid, invalid, issue, groups, group_issues, raw_groups, field_updates_allowed
+    )
 
 
 def safe_function_configuration(options: dict[str, Any]) -> dict[str, Any]:

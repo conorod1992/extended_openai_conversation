@@ -213,14 +213,6 @@ async def test_public_partial_writers_preserve_unowned_raw_fields(
         message.update(
             section="guest_mode", action="save_policy", config=deepcopy(owned)
         )
-    if degraded and operation in {"settings", "update", "knowledge"}:
-        # These strict legacy surfaces do not opt into Function quarantine.
-        from homeassistant.exceptions import HomeAssistantError
-
-        with pytest.raises(HomeAssistantError):
-            await ui.async_management_command(hass, "admin", True, message)
-        assert subentry.data == raw
-        return
     if degraded and operation == "save":
         # The normal editor read establishes its repair-aware save projection.
         await ui.async_management_command(

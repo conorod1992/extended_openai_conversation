@@ -147,19 +147,21 @@ def _configuration_snapshot_preserving_quarantine(
     try:
         snapshot = normalize(known)
     except HomeAssistantError, yaml.YAMLError, TypeError, ValueError:
-        # Backup/import is a recovery boundary: tolerate only a Function Tool
+        # Backup/import is a recovery boundary: tolerate only a Function Tool/Group
         # validation failure. Normalize every unrelated field strictly using a
         # safe Function projection, then put the original persisted Function
         # Tool/Group values back so the user can repair them after restore.
-        from .management_function_repair import (
-            function_tools_issue,
-            safe_function_configuration,
-        )
+        from .management_function_repair import function_configuration_repair_state
 
-        _usable, issue = function_tools_issue(raw)
-        if issue is None:
+        state = function_configuration_repair_state(raw)
+        if state is None:
             raise
-        snapshot = normalize(safe_function_configuration(known), decoded=True)
+        safe = {
+            **known,
+            CONF_FUNCTION_TOOLS: state.valid,
+            CONF_FUNCTION_GROUPS: state.groups,
+        }
+        snapshot = normalize(safe, decoded=True)
         for key in (CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS):
             if key in raw:
                 snapshot[key] = deepcopy(raw[key])
