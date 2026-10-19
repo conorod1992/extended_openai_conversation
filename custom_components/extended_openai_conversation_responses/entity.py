@@ -720,25 +720,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             threshold = int(
                 options.get(CONF_CONTEXT_THRESHOLD, DEFAULT_CONTEXT_THRESHOLD)
             )
-            estimated_input = estimate_provider_input_tokens(
-                _convert_content_to_responses_param(chat_log.content)
-            )
-            if (
-                estimated_input > threshold
-                and len(partition_history(chat_log.content).turns) > 1
-            ):
-                await self._truncate_message_history(
-                    chat_log, observed_input_tokens=estimated_input
-                )
-                # A background summary cannot rescue this immediate request.
-                if (
-                    estimate_provider_input_tokens(
-                        _convert_content_to_responses_param(chat_log.content)
-                    )
-                    > threshold
-                ):
-                    keep_recent_messages(chat_log.content, estimated_input, threshold)
-            # Prepare retained attachment bytes before assembling the live tool set.
+            # Prepare attachment content before the API-aware budgeting boundary.
             # Responses content provides a lossless intermediate for images and PDFs.
             messages: Any = _convert_content_to_responses_param(chat_log.content)
             await self._async_add_attachments(chat_log, messages, API_MODE_RESPONSES)
