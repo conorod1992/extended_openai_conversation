@@ -1,0 +1,62 @@
+"""Prepare completion event messages outside HA's event loop."""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import AsyncIterator, Iterable
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
+from typing import Any
+
+from homeassistant.core import HomeAssistant
+
+from .const import EVENT_CONVERSATION_FINISHED
+from .ha_tool_result_compat import is_tool_result_content
+
+# Each invocation owns its queue, including same-agent and cross-agent nesting.
+_PENDING: ContextVar[
+    list[tuple[HomeAssistant, dict[str, Any], tuple[Any, ...]]] | None
+] = ContextVar("eoai_completion_events", default=None)
+
+
+async def _async_emit(
+    hass: HomeAssistant, payload: dict[str, Any], contents: tuple[Any, ...]
+) -> None:
+    """Only message conversion leaves the loop; the HA bus call stays on-loop."""
+    payload["messages"] = await asyncio.to_thread(
+        lambda: [item.as_dict() for item in contents]
+    )
+    hass.bus.async_fire(EVENT_CONVERSATION_FINISHED, payload)
+
+
+@asynccontextmanager
+async def completion_event_scope() -> AsyncIterator[None]:
+    """Finish queued events before returning the request, retaining their order."""
+    pending: list[tuple[HomeAssistant, dict[str, Any], tuple[Any, ...]]] = []
+    token = _PENDING.set(pending)
+    try:
+        yield
+    finally:
+        _PENDING.reset(token)
+        for hass, payload, contents in pending:
+            # Once completion is queued, cancellation must not discard its event.
+            await asyncio.shield(_async_emit(hass, payload, contents))
+
+
+def queue_completion_event(
+    hass: HomeAssistant, payload: dict[str, Any], contents: Iterable[Any]
+) -> None:
+    """Capture message membership on-loop without traversing retained results."""
+    snapshot = tuple(contents)
+    if (pending := _PENDING.get()) is not None:
+        pending.append((hass, payload, snapshot))
+    elif any(is_tool_result_content(item) for item in snapshot):
+        # Standalone helper callers have no response boundary to await the event.
+        hass.async_create_task(
+            _async_emit(hass, payload, snapshot), "EOAI conversation completion"
+        )
+    else:
+        # Plain text conversion does not traverse payloads; preserve synchronous
+        # notification for standalone local/error helpers without Tool history.
+        payload["messages"] = [item.as_dict() for item in snapshot]
+        hass.bus.async_fire(EVENT_CONVERSATION_FINISHED, payload)

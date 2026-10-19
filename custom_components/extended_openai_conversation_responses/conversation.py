@@ -44,6 +44,7 @@ from .agent_configuration import (
     sync_memory_embedding_provider,
 )
 from .agent_maintenance import conversation_request_lease, get_agent_maintenance_gate
+from .completion_events import completion_event_scope, queue_completion_event
 from .const import (
     CONF_ARCHIVE_ENABLED,
     CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
@@ -87,7 +88,6 @@ from .const import (
     DEFAULT_USAGE_RUN_RETENTION_DAYS,
     DEFAULT_WORKING_DIRECTORY,
     DOMAIN,
-    EVENT_CONVERSATION_FINISHED,
     MEMORY_RETRIEVAL_HYBRID,
     SHARED_MEMORY_AUTOMATIC,
     SHARED_MEMORY_DISABLED,
@@ -667,7 +667,8 @@ class ExtendedOpenAIAgentEntity(
         """Process a sentence without inheriting an enclosing invocation's metadata."""
         token = _PROCESS_METADATA.set(None)
         try:
-            return await self._async_process(user_input)
+            async with completion_event_scope():
+                return await self._async_process(user_input)
         finally:
             _PROCESS_METADATA.reset(token)
 
@@ -678,7 +679,9 @@ class ExtendedOpenAIAgentEntity(
         metadata: dict[str, Any] = {"handled_locally": False}
         token = _PROCESS_METADATA.set(metadata)
         try:
-            return await self._async_process(user_input), dict(metadata)
+            async with completion_event_scope():
+                result = await self._async_process(user_input)
+            return result, dict(metadata)
         finally:
             _PROCESS_METADATA.reset(token)
 
@@ -1419,7 +1422,6 @@ class ExtendedOpenAIAgentEntity(
         """Emit exactly one completion event with backward-compatible fields."""
         payload: dict[str, Any] = {
             "user_input": user_input,
-            "messages": [content.as_dict() for content in chat_log.content],
             "agent_id": self.subentry.subentry_id,
             "status": status,
         }
@@ -1427,7 +1429,7 @@ class ExtendedOpenAIAgentEntity(
             payload["handled_locally"] = True
         if error_type is not None:
             payload["error_type"] = error_type
-        self.hass.bus.async_fire(EVENT_CONVERSATION_FINISHED, payload)
+        queue_completion_event(self.hass, payload, chat_log.content)
 
     async def _async_archive_turn(
         self,
