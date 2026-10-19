@@ -205,3 +205,12 @@ Final native-browser validation passes all **89 related source-mode journeys** a
 all **five Group-repair journeys against the rebuilt shipped bundle**. The same five
 recovery journeys fail against the reviewed frontend. All 106 standalone frontend
 files, frontend typing, 39 Vitest tests and the deterministic double build pass.
+
+The first full stable run of this pass had 9,474 passes and one inventory-tripwire
+failure: adding the Group Edit/Delete controls increases the repair module's
+interactive markers from five to seven. The reviewed inventory now records those
+two controls and their conditional recovery scenario. The existing exact source
+marker assertions remain intact, and the native recovery campaign runs all five
+scenarios across all five reviewed viewport classes (25 cases). A registration
+tripwire requires the conditional controls, save/delete actions and viewport
+campaign to remain linked. No production changes are needed for this correction.

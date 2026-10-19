@@ -1,9 +1,13 @@
+import fs from "node:fs";
 import {expect, test} from '@playwright/test';
 import {fixtureUrl, acceptConfirmation, expectHarnessClean, trackPageErrors} from './browser-helpers.mjs';
 
+const reachabilityInventory = JSON.parse(fs.readFileSync(new URL('../tests_stress/frontend_control_reachability_inventory.json', import.meta.url), 'utf8'));
+for (const viewport of reachabilityInventory.viewports) {
 for (const action of ['edit', 'delete', 'malformed-fields', 'invalid-id', 'empty-id']) {
-  test(`Group-only quarantine keeps native Functions controls accessible for ${action}`, async ({page}) => {
+  test(`Group-only quarantine keeps native Functions controls accessible for ${action} (${viewport.name})`, async ({page}) => {
     const errors = trackPageErrors(page);
+    await page.setViewportSize({width: viewport.width, height: viewport.height});
     await page.goto(fixtureUrl('overview'));
     await page.waitForFunction(() => window.browserHarness?.panel?._selectedAgent?.());
     await page.evaluate(async action => {
@@ -81,4 +85,5 @@ for (const action of ['edit', 'delete', 'malformed-fields', 'invalid-id', 'empty
     }
     await expectHarnessClean(page, errors);
   });
+}
 }

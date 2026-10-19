@@ -2,7 +2,7 @@
   "schema_version": 1,
   "purpose": "Reviewed source-level tripwire for interactive frontend markup. Runtime reachability is exercised by tests_browser/control-reachability.spec.mjs.",
   "interactive_marker_pattern": "<(?:button|input|select|textarea|summary|a)\\\\b|<ha-selector\\\\b|role=[\\\"'](?:button|switch|checkbox|link|tab)[\\\"']",
-  "expected_total_markers": 465,
+  "expected_total_markers": 467,
   "viewports": [
     {
       "name": "small-phone",
@@ -51,7 +51,7 @@
     "management-dialogs.js": 2,
     "management-feature-status-core.js": 2,
     "management-feature-status.js": 3,
-    "management-function-repair.js": 5,
+    "management-function-repair.js": 7,
     "management-guest-feature.js": 19,
     "management-history-pagination.js": 6,
     "management-knowledge-feature.js": 7,
@@ -78,5 +78,16 @@
     "usage-chart.js": 6,
     "voice-identity-core.js": 4,
     "voice-identity-ui.js": 8
-  }
+  },
+  "conditional_controls": [
+    {
+      "source": "management-function-repair.js",
+      "scenario": "Group-only quarantine with valid Function Tools",
+      "selectors": [
+        ".group-repair-entry .edit-group",
+        ".group-repair-entry .delete-group"
+      ],
+      "browser_spec": "tests_browser/group-quarantine-repair.spec.mjs"
+    }
+  ]
 }
