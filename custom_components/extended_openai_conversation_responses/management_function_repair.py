@@ -159,7 +159,16 @@ def _isolate_function_tools_uncached(
 
     valid: list[dict[str, Any]] = []
     invalid: list[dict[str, Any]] = []
+    saved_names: set[str] = set()
     for index, candidate in enumerate(editable):
+        spec = candidate.get("spec") if isinstance(candidate, dict) else None
+        name = spec.get("name") if isinstance(spec, dict) else None
+        if isinstance(name, str) and name:
+            if name in saved_names:
+                # References identify Tools by name, including quarantined ones.
+                # Indexed repair cannot safely rename/delete an ambiguous name.
+                return [], [], f"duplicate tool name: {name}"
+            saved_names.add(name)
         try:
             validated = validate_function_tools([deepcopy(candidate)])[0]
         except (HomeAssistantError, yaml.YAMLError, TypeError, ValueError) as err:

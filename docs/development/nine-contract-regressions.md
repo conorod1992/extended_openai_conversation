@@ -412,3 +412,31 @@ The focused repair/Group/rollback/concurrency selection passes **133 tests**.
 The expanded **143-module** selection has **2,900 passed, one skipped and only the
 same ten previously reproduced Windows/platform failures**. Pinned Ruff checks,
 format and MyPy pass all 146 source files. No frontend assets change.
+
+## Ambiguous names across valid and quarantined Tools
+
+Review of `c2dfe53` found that isolation checked uniqueness among valid Tools but
+could classify duplicate raw names as independently repairable when one or both
+entries were invalid. Indexed rename/delete then changed name-based Group and Rule
+references even though that name also identified an untouched sibling. The normal
+editor already rejected names shared with quarantined definitions.
+
+Cached isolation now reserves names from every recognizable saved Tool before
+individual validation. Any repeated nonempty string name uses the existing
+whole-collection fallback, without exposing an ambiguous usable subset. Recovery
+reads retain all raw definitions. Indexed mutations stop before reference lookup or
+writes; the existing frontend metadata selects its bulk recovery editor. Explicit
+bulk replacement remains strictly validated and preserves the raw Group field.
+Unique-name legacy Tools retain the existing individual repair behavior.
+
+The identical final eight public-route cases in
+`tests/test_ambiguous_repair_tool_names.py` produce **six failures and two bulk-repair
+control passes** on untouched `c2dfe53`, then **eight passes** after correction.
+They cover a valid/invalid pair and two invalid Tools sharing a name, recovery reads,
+indexed rename/delete rejection with zero writes or reference lookup, exact raw
+preservation, and successful bulk repair.
+
+The focused selection passes **149 tests**. The expanded **144-module** selection
+has **2,908 passed, one skipped and only the same ten previously reproduced
+Windows/platform failures**. Pinned Ruff checks/format and MyPy pass all 146 source
+files. No existing tests, skip policy or frontend assets change in this pass.
