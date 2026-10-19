@@ -185,6 +185,28 @@ def _rule_script_actions(rule: Mapping[str, Any]):
     )
 
 
+def renamed_function_references_are_saved(
+    manager: Any,
+    old_name: str,
+    new_name: str,
+    original_references: Sequence[Mapping[str, Any]],
+) -> bool | None:
+    """Recognize a settled rename, or return None if storage remains unreadable."""
+    if getattr(manager, "_initialized", True) is False:
+        # Invalidation clears references to fail closed. It does not establish
+        # whether the candidate or the previous generation reached storage.
+        return None
+    references = getattr(manager, "function_references", None)
+    if not original_references or not callable(references):
+        return False
+    original_ids = {item["id"] for item in original_references}
+    return (
+        bool(original_ids)
+        and not references(old_name)
+        and original_ids <= {item["id"] for item in references(new_name)}
+    )
+
+
 def recursive_function_references(
     manager: Any, function_name: str
 ) -> list[dict[str, str]]:

@@ -70,11 +70,13 @@ from .context_summary_performance import (
     schedule_context_summary,
 )
 from .context_usage_hardening import (
+    ContextInputMeasurement,
     _trace_provider_usage,
     async_recover_trailing_usage,
     estimate_prepared_request,
     normalized_chat_stream,
     normalized_responses_stream,
+    prepared_input_revision,
 )
 from .delayed_tools import (
     _DELAYED_EXECUTION_MARKER,
@@ -720,25 +722,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             threshold = int(
                 options.get(CONF_CONTEXT_THRESHOLD, DEFAULT_CONTEXT_THRESHOLD)
             )
-            estimated_input = estimate_provider_input_tokens(
-                _convert_content_to_responses_param(chat_log.content)
-            )
-            if (
-                estimated_input > threshold
-                and len(partition_history(chat_log.content).turns) > 1
-            ):
-                await self._truncate_message_history(
-                    chat_log, observed_input_tokens=estimated_input
-                )
-                # A background summary cannot rescue this immediate request.
-                if (
-                    estimate_provider_input_tokens(
-                        _convert_content_to_responses_param(chat_log.content)
-                    )
-                    > threshold
-                ):
-                    keep_recent_messages(chat_log.content, estimated_input, threshold)
-            # Prepare retained attachment bytes before assembling the live tool set.
+            # Prepare attachment content before the API-aware budgeting boundary.
             # Responses content provides a lossless intermediate for images and PDFs.
             messages: Any = _convert_content_to_responses_param(chat_log.content)
             await self._async_add_attachments(chat_log, messages, API_MODE_RESPONSES)
@@ -870,7 +854,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             )
             ha_prompt_applied = False
             draft_content_ids: set[int] = set()
-            observed_input_tokens = 0
+            context_measurement: ContextInputMeasurement | None = None
             loader_rounds = 0
             integration_loader_seen = False
             force_finalizer_only = False
@@ -1051,6 +1035,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     self, request_usage, messages, tool_kwargs.get("tools")
                 )
                 request_started = time.monotonic()
+                request_history_length = len(chat_log.content)
+                request_input_revision = prepared_input_revision(messages)
                 existing_content_ids = {id(content) for content in chat_log.content}
                 pending_tool_calls: list[llm.ToolInput] = []
                 web_search_used = False
@@ -1174,9 +1160,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             error=err,
                         )
                         raise
-                    observed_input_tokens = max(
-                        observed_input_tokens,
+                    context_measurement = ContextInputMeasurement(
                         request_usage.input_tokens or request_usage.total_tokens,
+                        request_history_length,
+                        request_input_revision,
                     )
                 finally:
                     await _async_close_provider_streams(
@@ -1384,6 +1371,39 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             threshold = int(
                 options.get(CONF_CONTEXT_THRESHOLD, DEFAULT_CONTEXT_THRESHOLD)
             )
+            # Only the latest request can describe retained input. Earlier rounds
+            # may have been compacted in preflight; usage totals still account for
+            # them independently. Check the prepared prefix even when its objects
+            # were mutated in place by a correction or tool-result reduction.
+            observed_input_tokens = 0
+            if context_measurement is not None:
+                measured_prefix = chat_log.content[: context_measurement.history_length]
+                prepared_prefix = (
+                    _convert_content_to_responses_param(
+                        measured_prefix, prepared_user_content
+                    )
+                    if api_mode == API_MODE_RESPONSES
+                    else _convert_content_to_param(
+                        measured_prefix, shorten_tool_call_id, prepared_user_content
+                    )
+                )
+                if context_measurement.applies_to(prepared_prefix):
+                    observed_input_tokens = context_measurement.tokens
+                else:
+                    prepared_current = (
+                        _convert_content_to_responses_param(
+                            chat_log.content, prepared_user_content
+                        )
+                        if api_mode == API_MODE_RESPONSES
+                        else _convert_content_to_param(
+                            chat_log.content,
+                            shorten_tool_call_id,
+                            prepared_user_content,
+                        )
+                    )
+                    observed_input_tokens = estimate_provider_input_tokens(
+                        prepared_current, tool_kwargs.get("tools")
+                    )
             if observed_input_tokens > threshold:
                 await self._truncate_message_history(
                     chat_log,

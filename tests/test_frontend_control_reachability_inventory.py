@@ -89,3 +89,22 @@ def test_reachability_campaign_is_part_of_normal_and_nightly_browser_discovery()
         in spec
     )
     assert '"control-reachability.spec.mjs"' in stress
+
+
+def test_conditional_group_repair_controls_have_reviewed_browser_coverage() -> None:
+    controls = _payload()["conditional_controls"]
+    group_controls = next(
+        item for item in controls if item["source"] == "management-function-repair.js"
+    )
+    assert group_controls["selectors"] == [
+        ".group-repair-entry .edit-group",
+        ".group-repair-entry .delete-group",
+    ]
+    spec = (ROOT / group_controls["browser_spec"]).read_text(encoding="utf-8")
+    assert "reachabilityInventory.viewports" in spec
+    assert "page.setViewportSize" in spec
+    assert ".group-repair-entry" in spec
+    for selector in (".edit-group", ".delete-group"):
+        assert selector in spec
+    assert "acceptConfirmation(panel)" in spec
+    assert "#group-save" in spec

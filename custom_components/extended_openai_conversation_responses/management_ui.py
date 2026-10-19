@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from contextlib import suppress
 from copy import deepcopy
@@ -28,6 +29,7 @@ from .agent_config import (
     AGENT_CONFIG_FIELDS,
     GUEST_V2_FIELDS,
     MAX_AGENT_TITLE_LENGTH,
+    MAX_FUNCTION_GROUPS,
     AgentConfigError,
     agent_config_defaults,
     agent_config_options,
@@ -84,6 +86,7 @@ from .function_dependency_integrity import (
     _rule_script_actions,
     async_validate_request_rule_functions,
     group_reference_updates,
+    renamed_function_references_are_saved,
 )
 from .function_groups import get_function_group_runtime
 from .functions import FUNCTIONS
@@ -125,6 +128,7 @@ from .management_function_quarantine import (
     _management_validate_function_groups as validate_function_groups,
     _tolerant_agent_test as async_test_agent,
     _tolerant_persist_function_configuration,
+    is_field_only_configuration_update,
     management_function_tools,
     merge_unchanged_function_configuration,
 )
@@ -364,6 +368,8 @@ async def _persist_function_configuration(
     expected_revision: str | None = None,
     renamed_function: tuple[str, str] | None = None,
     renamed_group: tuple[str, str] | None = None,
+    deleted_group: str | None = None,
+    repaired_group: str | None = None,
     rules_manager: Any = None,
 ) -> dict[str, Any]:
     """Persist one revision-checked tool edit without discarding quarantined siblings."""
@@ -373,6 +379,9 @@ async def _persist_function_configuration(
     )
 
     _require_agent_config_revision(subentry, expected_revision)
+    # Legacy callers may omit a revision. Still bind this operation to the state
+    # used to prepare its Tool/Group edit before dependency validation yields.
+    operation_revision = persisted_config_projection(subentry).revision
     _valid, invalid, _issue = isolated_function_tools(dict(subentry.data))
     editable = editable_function_tools(dict(subentry.data)) if invalid else []
     candidate_tools = [*tools, *(editable[item["index"]] for item in invalid)]
@@ -395,8 +404,11 @@ async def _persist_function_configuration(
         tools,
         groups,
         extra_updates=extra_updates,
-        expected_revision=expected_revision,
+        expected_revision=operation_revision,
         renamed_group=renamed_group,
+        deleted_group=deleted_group,
+        renamed_function=renamed_function,
+        repaired_group=repaired_group,
     )
 
 
@@ -1095,6 +1107,14 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
                 subentry.data.get(CONF_FUNCTION_GROUPS, []), configured_tools
             )
             groups_ms = _elapsed_ms(phase)
+            repair_state, _ = repair_state_for_projection(
+                persisted_config_projection(subentry)
+            )
+            if repair_state is not None:
+                details_result["function_repair"] = {
+                    "group_issues": deepcopy(repair_state.group_issues),
+                    "invalid_count": len(repair_state.invalid),
+                }
 
             phase = perf_counter()
             knowledge_sources = await library.async_list()
@@ -1246,22 +1266,24 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
     groups_changed = CONF_FUNCTION_GROUPS in updates
     repair_state = None
     validated_functions = None
-    if not tools_changed:
-        if (
-            projection.repair_state is not None
-            and projection.repair_state.invalid
-            and not groups_changed
-        ):
-            repair_state = projection.repair_state
-        elif projection.snapshot is not None:
+    if is_field_only_configuration_update(updates):
+        validation = _validation_result(
+            lambda: merge_unchanged_function_configuration(subentry, updates)[1]
+        )
+        repair_state = projection.repair_state
+        if projection.snapshot is not None:
             validated_functions = (
                 projection.snapshot[CONF_FUNCTION_TOOLS],
-                None if groups_changed else projection.snapshot[CONF_FUNCTION_GROUPS],
+                projection.snapshot[CONF_FUNCTION_GROUPS],
             )
-        elif not groups_changed and has_unavailable_native_tool(dict(projection.data)):
-            repair_state, _ = repair_state_for_projection(projection)
-            if repair_state is not None and not repair_state.invalid:
-                repair_state = None
+    else:
+        if not tools_changed and projection.snapshot is not None:
+            validated_functions = (projection.snapshot[CONF_FUNCTION_TOOLS], None)
+        validation = _validation_result(
+            lambda: merge_validated_agent_config(
+                dict(subentry.data), updates, validated_functions=validated_functions
+            )
+        )
     timings["function_state_lookup_ms"] = _elapsed_ms(phase)
     timings["function_tools_reused"] = (
         repair_state is not None or validated_functions is not None
@@ -1270,32 +1292,6 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
         validated_functions is not None and validated_functions[1] is not None
     )
     phase = perf_counter()
-    if repair_state is not None:
-
-        def merge_for_repair() -> dict[str, Any]:
-            merged = merge_validated_agent_config(
-                dict(subentry.data),
-                updates,
-                validated_functions=(repair_state.valid, repair_state.groups),
-            )
-            for key in (CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS):
-                if key in subentry.data:
-                    merged[key] = deepcopy(subentry.data[key])
-                else:
-                    merged.pop(key, None)
-            return merged
-
-        validation: dict[str, Any] = _validation_result(merge_for_repair)
-    elif validated_functions is not None:
-        validation = _validation_result(
-            lambda: merge_validated_agent_config(
-                dict(subentry.data), updates, validated_functions=validated_functions
-            )
-        )
-    else:
-        validation = _validation_result(
-            lambda: merge_agent_config(subentry.data, updates)
-        )
     if not validation.get("valid"):
         return validation
     timings["merge_validation_ms"] = _elapsed_ms(phase)
@@ -1373,6 +1369,8 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
             "persisted_groups": deepcopy(repair_state.raw_groups),
             "validation_error": repair_state.issue,
             "isolatable": bool(repair_state.invalid),
+            "tools_valid": not repair_state.invalid
+            and repair_state.field_updates_allowed,
         }
     phase = perf_counter()
     seed_persisted_config_projection(entry, subentry, snapshot, revision)
@@ -1585,9 +1583,13 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         updates = message.get("config", {})
         if not isinstance(updates, dict):
             raise HomeAssistantError("config must be an object")
-        result = _validation_result(
-            lambda: agent_config_snapshot(merge_agent_config(subentry.data, updates))
-        )
+
+        def validation_candidate() -> dict[str, Any]:
+            if is_field_only_configuration_update(updates):
+                return merge_unchanged_function_configuration(subentry, updates)[1]
+            return agent_config_snapshot(merge_agent_config(subentry.data, updates))
+
+        result = _validation_result(validation_candidate)
         if result["valid"]:
             try:
                 await _async_validate_configuration_request(
@@ -1612,13 +1614,17 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
                 "Configuration revision is required; reload the latest saved settings before saving."
             )
         _require_agent_config_revision(subentry, message["revision"])
-        normalized = merge_agent_config(subentry.data, updates)
+        field_only = is_field_only_configuration_update(updates)
+        if field_only:
+            _persisted, normalized = merge_unchanged_function_configuration(
+                subentry, updates
+            )
+        else:
+            normalized = merge_agent_config(subentry.data, updates)
+        response_candidate = normalized
         await _async_validate_configuration_request(hass, entry, subentry, normalized)
         _require_agent_config_revision(subentry, message["revision"])
-        if any(
-            normalized.get(key) != subentry.data.get(key)
-            for key in (CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS)
-        ):
+        if not field_only:
             await _async_validate_configuration_dependencies(
                 hass, entry, subentry, normalized
             )
@@ -1643,7 +1649,11 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             hass.config_entries.async_update_subentry(
                 entry, subentry, data=normalized, title=saved_title
             )
-        snapshot = agent_config_snapshot(normalized)
+        from .management_loading_performance import _snapshot_normalized_configuration
+
+        snapshot = _snapshot_normalized_configuration(
+            response_candidate, validated=True
+        )
         result = {
             "title": saved_title,
             "revision": saved_agent_config_revision(subentry, normalized, saved_title),
@@ -1679,7 +1689,11 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         duplicate = ConfigSubentry(
             data=MappingProxyType(
                 preserve_legacy_guest_policy(
-                    duplicate_source, normalize_persisted_agent_config(duplicate_source)
+                    duplicate_source,
+                    preserve_agent_model_setting_omissions(
+                        duplicate_source,
+                        normalize_persisted_agent_config(duplicate_source),
+                    ),
                 )
             ),
             subentry_type="conversation",
@@ -2031,12 +2045,29 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
                 }
             )
         return result
+    if action == "validate_current":
+        state, _ = repair_state_for_projection(persisted_config_projection(subentry))
+        if state is None:
+            return {"valid": True, "errors": {}}
+        errors = {}
+        if state.invalid or not state.field_updates_allowed:
+            errors[CONF_FUNCTION_TOOLS] = state.issue
+        if state.group_issues:
+            errors[CONF_FUNCTION_GROUPS] = (
+                "Saved Function Groups contain definitions or members needing repair"
+            )
+        return {
+            "valid": False,
+            "errors": errors,
+            "function_repair": {
+                "invalid_count": len(state.invalid),
+                "group_issues": deepcopy(state.group_issues),
+            },
+        }
     tools = configured_function_tools_from_data(subentry.data)
     groups = validate_function_groups(
         subentry.data.get(CONF_FUNCTION_GROUPS, []), tools
     )
-    if action == "validate_current":
-        return {"valid": True, "errors": {}}
     if action == "save":
         if "yaml" in message:
             if "tool" in message:
@@ -2095,10 +2126,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
 
         assert original_name is not None
         operation_revision = persisted_config_projection(subentry).revision
-        original_tools = configured_function_tools_from_data(subentry.data)
-        original_groups = validate_function_groups(
-            subentry.data.get(CONF_FUNCTION_GROUPS, []), original_tools
-        )
+        original_data = deepcopy(dict(subentry.data))
         groups = [
             {
                 **group,
@@ -2134,18 +2162,33 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
                 saved_name,
                 expected_revision=rules_revision,
             )
-        except Exception as err:
+        except (Exception, asyncio.CancelledError) as err:
+            rule_rename_saved = renamed_function_references_are_saved(
+                rules, original_name, saved_name, references.get("request_rules", [])
+            )
+            if rule_rename_saved is None:
+                if isinstance(err, asyncio.CancelledError):
+                    raise
+                raise HomeAssistantError(
+                    "Request Rule storage cannot be verified. The saved Function Tool "
+                    "rename was retained; restore storage access and reload to review "
+                    "Rule references."
+                ) from err
+            if rule_rename_saved:
+                if isinstance(err, asyncio.CancelledError):
+                    raise
+                raise HomeAssistantError(
+                    "Function Tool and Request Rule rename were saved, but the save "
+                    "acknowledgement failed. Reload the latest saved settings."
+                ) from err
             try:
-                await _persist_function_configuration(
-                    hass,
-                    entry,
-                    subentry,
-                    original_tools,
-                    original_groups,
-                    extra_updates={CONF_GUEST_ALLOWED_FUNCTION_NAMES: guest_names},
-                    expected_revision=result["revision"],
-                )
+                _require_agent_config_revision(subentry, result["revision"])
+                # A rollback restores the authoritative raw snapshot, including
+                # quarantined references that a usable projection cannot recover.
+                update_live_subentry(hass, entry, subentry, data=original_data)
             except HomeAssistantError as rollback_err:
+                if isinstance(err, asyncio.CancelledError):
+                    raise err from rollback_err
                 raise HomeAssistantError(
                     "Function Tool configuration changed while a related Request Rule "
                     "rename failed. The newer configuration was preserved; reload "
@@ -2237,11 +2280,59 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
         ):
             raise HomeAssistantError("group functions must be a list of names")
         original_id = message.get("original_id")
+        if "repair" in message and not isinstance(message["repair"], bool):
+            raise HomeAssistantError("repair must be a boolean")
+        if message.get("repair") is True and not isinstance(original_id, str):
+            raise HomeAssistantError("Group repair requires an existing original_id")
         if original_id is not None and not isinstance(original_id, str):
             raise HomeAssistantError("original_id must be a string")
-        existing = next((group for group in groups if group["id"] == original_id), None)
+        raw_groups = subentry.data.get(CONF_FUNCTION_GROUPS, [])
+        if not isinstance(raw_groups, list):
+            raise HomeAssistantError(
+                "Repair the malformed Function Group collection before adding a Group"
+            )
+        if original_id is None and len(raw_groups) >= MAX_FUNCTION_GROUPS:
+            raise HomeAssistantError(
+                f"Function Groups support at most {MAX_FUNCTION_GROUPS} saved groups; "
+                "delete a Group before adding another"
+            )
+        if candidate.get("id") != original_id and any(
+            isinstance(group, dict) and group.get("id") == candidate.get("id")
+            for group in raw_groups
+        ):
+            raise HomeAssistantError(
+                "Function Group already exists; reload it before replacing it"
+            )
+        matching = [
+            group
+            for group in raw_groups
+            if isinstance(group, dict) and group.get("id") == original_id
+        ]
+        if original_id is not None and len(matching) > 1:
+            raise HomeAssistantError(
+                "Function Group identifier is ambiguous; repair the saved collection first"
+            )
+        existing = matching[0] if original_id is not None and matching else None
         if original_id is not None and existing is None:
             raise HomeAssistantError("The Function Group no longer exists")
+        candidate_name = candidate.get("name")
+        previous_name = existing.get("name") if existing is not None else None
+        if (
+            isinstance(candidate_name, str)
+            and (
+                not isinstance(previous_name, str)
+                or candidate_name.strip().casefold() != previous_name.strip().casefold()
+            )
+            and any(
+                isinstance(group, dict)
+                and group is not existing
+                and isinstance(group.get("name"), str)
+                and group["name"].strip().casefold()
+                == candidate_name.strip().casefold()
+                for group in raw_groups
+            )
+        ):
+            raise HomeAssistantError(f"duplicate group name: {candidate_name.strip()}")
         selected = set(candidate_functions)
         remaining_groups = [
             {
@@ -2253,9 +2344,12 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             for group in groups
             if group["id"] != original_id
         ]
-        validated_groups = validate_function_groups(
-            [*remaining_groups, candidate], tools
-        )
+        from .agent_config import validate_function_groups as validate_edited_groups
+
+        validated_groups = validate_edited_groups([*remaining_groups, candidate], tools)
+        repair_options: dict[str, Any] = {}
+        if message.get("repair") is True:
+            repair_options["repaired_group"] = original_id
         return await _persist_function_configuration(
             hass,
             entry,
@@ -2263,6 +2357,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             tools,
             validated_groups,
             expected_revision=message.get("revision"),
+            **repair_options,
             renamed_group=(original_id, candidate["id"])
             if isinstance(original_id, str) and isinstance(candidate.get("id"), str)
             else None,
@@ -2280,9 +2375,23 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
         group_id = message.get("group_id")
         if not isinstance(group_id, str):
             raise HomeAssistantError("group_id is required")
+        raw_groups = subentry.data.get(CONF_FUNCTION_GROUPS, [])
         remaining = [group for group in groups if group["id"] != group_id]
-        if len(remaining) == len(groups):
+        matching = (
+            [
+                group
+                for group in raw_groups
+                if isinstance(group, dict) and group.get("id") == group_id
+            ]
+            if isinstance(raw_groups, list)
+            else []
+        )
+        if not matching:
             raise HomeAssistantError("The Function Group no longer exists")
+        if len(matching) > 1:
+            raise HomeAssistantError(
+                "Function Group identifier is ambiguous; repair the saved collection first"
+            )
         return await _persist_function_configuration(
             hass,
             entry,
@@ -2291,6 +2400,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             remaining,
             expected_revision=message.get("revision"),
             extra_updates=group_reference_updates(subentry.data, group_id, None),
+            deleted_group=group_id,
         )
 
     return _unknown_management_action(request)

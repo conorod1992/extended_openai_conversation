@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Iterator, Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
+from hashlib import sha256
 import json
 import logging
 import math
@@ -28,6 +29,28 @@ _LOCAL_ESTIMATE_DETAIL = "__extended_openai_local_context_estimate"
 _PARTIAL_PROVIDER_USAGE_DETAIL = "__extended_openai_partial_provider_usage"
 _TRAILING_USAGE_TIMEOUT = 0.2
 _TRAILING_USAGE_EVENT_LIMIT = 128
+
+
+def prepared_input_revision(input_value: Any) -> str:
+    """Fingerprint an outgoing input without retaining another payload copy."""
+    digest = sha256()
+    encoder = json.JSONEncoder(ensure_ascii=False, sort_keys=True, default=str)
+    for chunk in encoder.iterencode(input_value):
+        digest.update(chunk.encode())
+    return digest.hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class ContextInputMeasurement:
+    """A request-local count, independent of cumulative usage accounting."""
+
+    tokens: int
+    history_length: int
+    input_revision: str
+
+    def applies_to(self, prepared_prefix: Any) -> bool:
+        """Allow appended output, but never a rewritten or reduced input prefix."""
+        return prepared_input_revision(prepared_prefix) == self.input_revision
 
 
 def _has_token_count(usage: RequestUsage) -> bool:

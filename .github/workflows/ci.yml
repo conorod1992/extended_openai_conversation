@@ -398,6 +398,7 @@ jobs:
     needs: prepare
     env:
       HA_DEV_IMAGE: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-dev:ha-dev
+      EXPECTED_HA_CORE_SHA: ${{ needs.prepare.outputs.ha-core-sha }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

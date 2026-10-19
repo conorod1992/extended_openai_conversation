@@ -51,6 +51,7 @@ def _mixed_grouped_data() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any
                     "id": "reminders",
                     "name": "Reminders",
                     "description": "Reminder tools",
+                    "loading_mode": "on_demand",
                     "functions": [valid_name, "create_recurring_reminder"],
                 }
             ],
@@ -107,34 +108,12 @@ def test_tolerant_group_validation_ignores_only_quarantined_members(
     monkeypatch,
 ) -> None:
     """Guest Mode and Functions validate the usable group view, not broken members."""
-    observed: dict[str, Any] = {}
-
-    def strict(value: Any, function_tools: list[dict[str, Any]]) -> Any:
-        observed["value"] = deepcopy(value)
-        observed["tools"] = function_tools
-        return value
-
-    monkeypatch.setattr(quarantine, "_STRICT_VALIDATE_FUNCTION_GROUPS", strict)
-    allow_token = quarantine._ALLOW_QUARANTINED_TOOLS.set(True)
-    names_token = quarantine._QUARANTINED_FUNCTION_NAMES.set(
-        frozenset({"create_recurring_reminder"})
-    )
-    try:
-        groups = quarantine._management_validate_function_groups(
-            [
-                {
-                    "id": "reminders",
-                    "functions": ["valid_tool", "create_recurring_reminder"],
-                }
-            ],
-            [{"spec": {"name": "valid_tool"}}],
-        )
-    finally:
-        quarantine._QUARANTINED_FUNCTION_NAMES.reset(names_token)
-        quarantine._ALLOW_QUARANTINED_TOOLS.reset(allow_token)
-
-    assert groups[0]["functions"] == ["valid_tool"]
-    assert observed["value"][0]["functions"] == ["valid_tool"]
+    data, valid, _invalid = _mixed_grouped_data()
+    original = deepcopy(data[CONF_FUNCTION_GROUPS])
+    with quarantine.management_function_tools("guest_mode"):
+        groups = quarantine._management_validate_function_groups(original, [valid])
+    assert groups[0]["functions"] == [valid["spec"]["name"]]
+    assert original == data[CONF_FUNCTION_GROUPS]
 
 
 def test_group_quarantine_keeps_non_list_input_for_strict_validation(
@@ -300,4 +279,7 @@ def test_tolerant_function_persist_keeps_invalid_raw_sibling_and_membership() ->
         invalid["spec"]["name"],
     ]
     assert result["functions"] == [valid]
-    assert result["function_groups"] == effective_groups
+    # Mutation acknowledgements use the same canonical projection as a fresh read.
+    assert result["function_groups"] == [
+        {**effective_groups[0], "loading_mode": "on_demand", "enabled": True}
+    ]

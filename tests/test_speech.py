@@ -115,6 +115,23 @@ def test_unresolved_single_emphasis_is_bounded_and_preserves_word_boundary():
     assert sanitizer.feed("_tail_") + sanitizer.finish() == "_tail_"
 
 
+@pytest.mark.parametrize("text,expected", [
+    ("***hello***", "hello"),
+    ("___hello___", "hello"),
+    ("*outer **inner** outer*", "outer inner outer"),
+    ("*outer __inner__ outer*", "outer inner outer"),
+    ("_outer *inner* outer_", "outer inner outer"),
+    ("*outer `inner` outer*", "outer inner outer"),
+    ("**Hello _world_**!", "Hello world!"),
+    ("*Hello __世界__*", "Hello 世界"),
+])
+def test_nested_formatting_has_one_completed_and_streaming_contract(text, expected):
+    assert process_speech_text(text, _config()) == expected
+    assert _stream(list(text)) == expected
+    for split in range(len(text) + 1):
+        assert _stream([text[:split], text[split:]]) == expected
+
+
 def test_custom_replacements_run_in_order_and_allow_empty_replacement() -> None:
     config = _config(
         speech_regex_replacements=[

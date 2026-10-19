@@ -602,7 +602,7 @@ def test_backup_validation_rejects_too_many_records() -> None:
         ("memory_id", "", "metadata is invalid"),
         ("memory_id", "x" * 129, "metadata is invalid"),
         ("scope_id", "", "metadata is invalid"),
-        ("scope_id", "x" * 129, "metadata is invalid"),
+        ("scope_id", None, "metadata is invalid"),
         ("owner_scope_id", "", "metadata is invalid"),
         ("owner_scope_id", "x" * 129, "metadata is invalid"),
         ("source", "explicit", "metadata is invalid"),
@@ -869,3 +869,19 @@ async def test_model_update_cannot_inherit_manual_sensitive_permission(monkeypat
     records = await memory.async_active("user:alice", owner_scope_id="user:alice")
     assert records[0].content == "My medical diagnosis is diabetes"
     assert records[0].source == "manual"
+
+
+@pytest.mark.parametrize("scope_id", ["x" * 129, "conversation:" + "x" * 200, "continuity:" + "\u754c" * 1000], ids=["legacy-129", "conversation", "unicode-continuity"])
+async def test_long_opaque_scope_round_trips_live_restart_and_backup(scope_id):
+    storage = Storage()
+    memory = TemporaryMemory(storage)
+    await memory.async_add(scope_id, "Temporary test fact", future(), owner_scope_id="user:alice")
+    backup = await memory.async_backup_data()
+    records = TemporaryMemory.validate_backup_data(backup)
+    assert len(records) == 1 and records[0].scope_id == scope_id
+    restarted = TemporaryMemory(storage)
+    await restarted.async_initialize()
+    assert await restarted.async_backup_data() == backup
+    restored = TemporaryMemory(Storage())
+    await restored.async_replace_backup(records)
+    assert await restored.async_backup_data() == backup

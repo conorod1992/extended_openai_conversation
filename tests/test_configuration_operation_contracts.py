@@ -145,8 +145,9 @@ async def test_display_and_explicit_reset_values_do_not_imply_persistence(hass):
     assert raw == before
 
 
-async def test_duplicate_keeps_its_existing_materialized_reasoning_contract(
-    hass, monkeypatch
+@pytest.mark.parametrize("effort", [None, "none", "high"])
+async def test_duplicate_preserves_reasoning_inheritance(
+    hass, monkeypatch, effort
 ):
     from custom_components.extended_openai_conversation_responses import management_ui
     from tests.test_management_ui import _entry_pair
@@ -157,6 +158,8 @@ async def test_duplicate_keeps_its_existing_materialized_reasoning_contract(
         "functions": [],
         "extension_data": {"version": 7},
     }
+    if effort is not None:
+        subentry.data["reasoning_effort"] = effort
     original = deepcopy(subentry.data)
     monkeypatch.setattr(
         management_ui, "entry_and_agent", lambda *_args, **_kwargs: (entry, subentry)
@@ -174,12 +177,9 @@ async def test_duplicate_keeps_its_existing_materialized_reasoning_contract(
     )
     assert result["status"] == "created"
     duplicate = hass.config_entries.async_add_subentry.call_args.args[1]
-    assert (
-        duplicate.data["reasoning_effort"]
-        == normalize_agent_config({"chat_model": "gpt-5.2", "functions": []})[
-            "reasoning_effort"
-        ]
-    )
+    assert ("reasoning_effort" in duplicate.data) is (effort is not None)
+    if effort is not None:
+        assert duplicate.data["reasoning_effort"] == effort
     assert "temperature" in duplicate.data and "top_p" in duplicate.data
     assert "extension_data" not in duplicate.data
     assert subentry.data == original

@@ -650,6 +650,7 @@ def _configured_function_tools_from_data(data: Any) -> list[dict[str, Any]]:
     return tools
 
 
+MAX_FUNCTION_GROUPS = 50
 _FUNCTION_GROUP_ID = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
 
@@ -661,8 +662,10 @@ def _validate_function_groups(
         return []
     if not isinstance(value, list):
         raise AgentConfigError(CONF_FUNCTION_GROUPS, "must be a list")
-    if len(value) > 50:
-        raise AgentConfigError(CONF_FUNCTION_GROUPS, "supports at most 50 groups")
+    if len(value) > MAX_FUNCTION_GROUPS:
+        raise AgentConfigError(
+            CONF_FUNCTION_GROUPS, f"supports at most {MAX_FUNCTION_GROUPS} groups"
+        )
 
     tool_names = {tool["spec"]["name"] for tool in function_tools}
     group_ids: set[str] = set()

@@ -29,6 +29,14 @@ from custom_components.extended_openai_conversation_responses.request_rule_patte
 )
 
 
+@pytest.mark.parametrize("suffix", [".", "!", "?", "。", "؟", "！"])
+@pytest.mark.parametrize("pattern", ["turn the light on [please]", "turn the light on [[pretty ]please]"])
+def test_omitted_trailing_optional_at_logical_sentence_end(pattern, suffix):
+    compiled = compile_sentence_pattern(pattern)
+    assert compiled.match("turn the light on" + suffix) is not None
+    assert compiled.match("turnthe light on" + suffix) is None
+
+
 def test_optional_alternative_and_embedded_optional() -> None:
     """Documented optional and alternative syntax should compose safely."""
     pattern = compile_sentence_pattern(

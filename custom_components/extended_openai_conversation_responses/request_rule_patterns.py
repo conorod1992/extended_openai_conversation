@@ -357,7 +357,9 @@ class CompiledSentencePattern:
                 # syntax work without allowing required middle separators to vanish.
                 if pos < len(folded) and folded[pos] == " ":
                     push(state.out, pos + 1, starts, lengths, values, penalty)
-                if pos in {0, len(folded)} or (pos > 0 and folded[pos - 1] == " "):
+                if pos in {0, sentence_end, len(folded)} or (
+                    pos > 0 and folded[pos - 1] == " "
+                ):
                     push(state.out, pos, starts, lengths, values, penalty)
                 continue
 

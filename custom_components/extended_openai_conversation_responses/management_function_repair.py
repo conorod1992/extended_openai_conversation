@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections import OrderedDict
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -86,6 +87,7 @@ class _RepairState:
     groups: list[dict[str, Any]]
     group_issues: list[dict[str, Any]]
     raw_groups: Any
+    field_updates_allowed: bool = True
 
 
 _persisted_projections: OrderedDict[int, _PersistedProjection] = OrderedDict()
@@ -157,7 +159,16 @@ def _isolate_function_tools_uncached(
 
     valid: list[dict[str, Any]] = []
     invalid: list[dict[str, Any]] = []
+    saved_names: set[str] = set()
     for index, candidate in enumerate(editable):
+        spec = candidate.get("spec") if isinstance(candidate, dict) else None
+        name = spec.get("name") if isinstance(spec, dict) else None
+        if isinstance(name, str) and name:
+            if name in saved_names:
+                # References identify Tools by name, including quarantined ones.
+                # Indexed repair cannot safely rename/delete an ambiguous name.
+                return [], [], f"duplicate tool name: {name}"
+            saved_names.add(name)
         try:
             validated = validate_function_tools([deepcopy(candidate)])[0]
         except (HomeAssistantError, yaml.YAMLError, TypeError, ValueError) as err:
@@ -181,6 +192,14 @@ def _isolate_function_tools_uncached(
             valid.append(validated)
 
     if invalid:
+        try:
+            if len(valid) > 1:
+                valid = validate_function_tools(deepcopy(valid))
+        except (HomeAssistantError, yaml.YAMLError, TypeError, ValueError) as err:
+            # Individually valid siblings can still conflict as a collection.
+            # Keep the whole-field repair fallback, rather than exposing an
+            # ambiguous subset as independently editable Tools.
+            return [], [], str(err) or type(err).__name__
         return valid, invalid, invalid[0]["validation_error"]
 
     # Some failures (for example collection-level invariants) cannot safely be
@@ -302,16 +321,26 @@ def effective_function_configuration(
     str | None,
 ]:
     """Return a usable config while retaining metadata for quarantined siblings."""
-    valid, invalid, issue = isolated_function_tools(options)
+    state = function_configuration_repair_state(options)
     safe = dict(options)
+    valid = state.valid if state else function_tools_issue(options)[0]
     safe[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
         valid, sort_keys=False, allow_unicode=True
     )
-    effective_groups, group_issues, raw_groups = _effective_function_groups(
-        options, valid
+    safe[CONF_FUNCTION_GROUPS] = (
+        state.groups
+        if state
+        else validate_function_groups(
+            options.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS), valid
+        )
     )
-    safe[CONF_FUNCTION_GROUPS] = effective_groups
-    return safe, invalid, group_issues, raw_groups, issue
+    return (
+        safe,
+        state.invalid if state else [],
+        state.group_issues if state else [],
+        deepcopy(options.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS)),
+        state.issue if state else None,
+    )
 
 
 def _effective_function_groups(
@@ -348,8 +377,21 @@ def _effective_function_groups(
                         "unavailable_functions": unavailable,
                     }
                 )
+            invalid_members = [
+                name for name in persisted_functions if not isinstance(name, str)
+            ]
+            if invalid_members:
+                group_issues.append(
+                    {
+                        "id": group.get("id"),
+                        "name": group.get("name"),
+                        "invalid_members": deepcopy(invalid_members),
+                    }
+                )
             group["functions"] = [
-                name for name in persisted_functions if name in valid_names
+                name
+                for name in persisted_functions
+                if isinstance(name, str) and name in valid_names
             ]
     return effective_groups, group_issues, raw_groups
 
@@ -380,20 +422,47 @@ def repair_state_for_projection(
     """Resolve quarantine once for the current persisted Function fields."""
     if projection.repair_state is not None:
         return projection.repair_state, True
-    options = dict(projection.data)
-    valid, invalid, issue = isolated_function_tools(options)
-    if issue is None:
-        return None, False
-    if len(valid) > 1:
-        # Individual isolation does not check collection invariants such as
-        # duplicate names or HA references. The former safe snapshot did.
-        valid = validate_function_tools(valid)
-    groups, group_issues, raw_groups = _effective_function_groups(options, valid)
-    # Preserve the same strict group contract as the former safe snapshot path.
-    groups = validate_function_groups(groups, valid)
-    state = _RepairState(valid, invalid, issue, groups, group_issues, raw_groups)
+    state = function_configuration_repair_state(dict(projection.data))
     projection.repair_state = state
     return state, False
+
+
+def function_configuration_repair_state(options: dict[str, Any]) -> _RepairState | None:
+    """Share Tool and Group recovery policy across editors and backups.
+
+    Unrelated writes require an isolatable Tool collection; unreadable YAML or
+    collection-wide errors still require explicit repair. Recovery snapshots may
+    retain opaque input for repair without certifying it for an ordinary write.
+    """
+    valid, issue = function_tools_issue(options)
+    invalid: list[dict[str, Any]] = []
+    if issue is not None:
+        valid, invalid, issue = isolated_function_tools(options)
+    field_updates_allowed = issue is None or bool(invalid)
+    groups, group_issues, raw_groups = _effective_function_groups(options, valid)
+    try:
+        groups = validate_function_groups(groups, valid)
+    except (HomeAssistantError, TypeError, ValueError) as err:
+        # A malformed saved group is repair-owned data too. Exclude it from
+        # this validation/display projection without rewriting the raw field.
+        usable: list[dict[str, Any]] = []
+        if isinstance(groups, list):
+            for index, group in enumerate(groups):
+                try:
+                    usable = validate_function_groups([*usable, group], valid)
+                except (HomeAssistantError, TypeError, ValueError) as group_error:
+                    group_issues.append(
+                        {"index": index, "validation_error": str(group_error)}
+                    )
+        groups = usable
+        group_issues.append({"validation_error": str(err)})
+        issue = issue or str(err)
+    if issue is None and not group_issues:
+        return None
+    issue = issue or "Function Groups contain unavailable members"
+    return _RepairState(
+        valid, invalid, issue, groups, group_issues, raw_groups, field_updates_allowed
+    )
 
 
 def safe_function_configuration(options: dict[str, Any]) -> dict[str, Any]:
@@ -774,6 +843,7 @@ def _safe_configuration_payload(
             "persisted_groups": raw_groups,
             "validation_error": issue,
             "isolatable": bool(invalid),
+            "tools_valid": not invalid and function_tools_issue(persisted)[1] is None,
             "tools": editable_function_tools(persisted) if not invalid else None,
         },
     }
@@ -821,6 +891,7 @@ def safe_configuration_payload(
                 "persisted_groups": deepcopy(state.raw_groups),
                 "validation_error": state.issue,
                 "isolatable": bool(state.invalid),
+                "tools_valid": not state.invalid and state.field_updates_allowed,
                 "tools": editable_function_tools(dict(subentry.data))
                 if not state.invalid
                 else None,
@@ -867,6 +938,11 @@ def _persist_raw_tools(
         persisted.update(deepcopy(extra_updates))
     from .management_ui import _validated_model_request
 
+    candidate_state = function_configuration_repair_state(persisted)
+    if candidate_state is not None and not candidate_state.field_updates_allowed:
+        # Recovery can retain individually invalid siblings, but must not commit
+        # new collection conflicts that hide every usable Tool in the fallback.
+        raise AgentConfigError(CONF_FUNCTION_TOOLS, candidate_state.issue)
     _validated_model_request(safe_function_configuration(persisted), entry.data)
     update_live_subentry(hass, entry, subentry, data=persisted)
     return persisted
@@ -916,9 +992,10 @@ async def async_function_repair(
     if not isinstance(entry_id, str) or not isinstance(subentry_id, str):
         raise HomeAssistantError("entry_id and subentry_id are required")
     entry, subentry = management_ui.entry_and_agent(hass, entry_id, subentry_id)
-    _configured, issue = function_tools_issue(dict(subentry.data))
-    if issue is None:
+    state = function_configuration_repair_state(dict(subentry.data))
+    if state is None:
         raise HomeAssistantError("Function Tools do not require repair")
+    issue = state.issue
 
     action = message.get("action")
     if action == "configuration_get":
@@ -930,6 +1007,13 @@ async def async_function_repair(
         updates = message.get("config", {})
         if not isinstance(updates, dict):
             raise HomeAssistantError("config must be an object")
+        if not state.field_updates_allowed:
+            return {
+                "valid": False,
+                "errors": {
+                    CONF_FUNCTION_TOOLS: "Repair the whole Function Tool collection before changing unrelated settings"
+                },
+            }
         safe_payload = _safe_configuration_payload(
             hass, management_ui, management_loading_performance, entry, subentry
         )
@@ -966,9 +1050,17 @@ async def async_function_repair(
     if action == "configuration_save":
         if message.get("revision") is not None:
             require_repair_revision(subentry, message["revision"])
+        operation_revision = repair_revision(subentry)
         updates = message.get("config", {})
         if not isinstance(updates, dict):
             raise HomeAssistantError("config must be an object")
+        if not state.field_updates_allowed:
+            return {
+                "valid": False,
+                "errors": {
+                    CONF_FUNCTION_TOOLS: "Repair the whole Function Tool collection before changing unrelated settings"
+                },
+            }
         safe_payload = _safe_configuration_payload(
             hass, management_ui, management_loading_performance, entry, subentry
         )
@@ -994,6 +1086,7 @@ async def async_function_repair(
         await management_ui._async_validate_configuration_request(
             hass, entry, subentry, normalized
         )
+        require_repair_revision(subentry, operation_revision)
         persisted = project_agent_config_updates(subentry.data, filtered, normalized)
 
         requested_title = message.get("title")
@@ -1063,6 +1156,10 @@ async def async_function_repair(
             raise HomeAssistantError(
                 "The Function Tool changed position; reload and try again"
             )
+        if not state.field_updates_allowed:
+            raise HomeAssistantError(
+                "Saved Function Tools cannot be isolated safely; repair the whole collection first"
+            )
         current = editable[index]
         old_name = None
         if isinstance(current, dict) and isinstance(current.get("spec"), dict):
@@ -1104,11 +1201,13 @@ async def async_function_repair(
             editable[index] = validated_tool
             original_data = deepcopy(dict(subentry.data))
             rules = None
+            rule_references = []
             extra_updates = {}
             if old_name and old_name != new_name:
                 rules, _references = await management_ui._function_reference_state(
                     hass, entry_id, subentry_id, subentry.data, old_name
                 )
+                rule_references = _references.get("request_rules", [])
                 rules_revision = rules.revision()
                 extra_updates[management_ui.CONF_GUEST_ALLOWED_FUNCTION_NAMES] = [
                     new_name if name == old_name else name
@@ -1140,14 +1239,39 @@ async def async_function_repair(
                 subentry, persisted, subentry.title
             )
             if rules is not None:
+                assert old_name is not None
                 try:
                     await rules.async_rename_function_reference(
                         old_name, new_name, expected_revision=rules_revision
                     )
-                except Exception:
+                except (Exception, asyncio.CancelledError) as err:
+                    from .function_dependency_integrity import (
+                        renamed_function_references_are_saved,
+                    )
+
+                    rule_rename_saved = renamed_function_references_are_saved(
+                        rules, old_name, new_name, rule_references
+                    )
+                    if rule_rename_saved is None:
+                        if isinstance(err, asyncio.CancelledError):
+                            raise
+                        raise HomeAssistantError(
+                            "Request Rule storage cannot be verified. The saved Function "
+                            "Tool rename was retained; restore storage access and reload "
+                            "to review Rule references."
+                        ) from err
+                    if rule_rename_saved:
+                        if isinstance(err, asyncio.CancelledError):
+                            raise
+                        raise HomeAssistantError(
+                            "Function Tool and Request Rule rename were saved, but the "
+                            "save acknowledgement failed. Reload the latest saved settings."
+                        ) from err
                     try:
                         require_repair_revision(subentry, persisted_revision)
                     except HomeAssistantError as rollback_err:
+                        if isinstance(err, asyncio.CancelledError):
+                            raise err from rollback_err
                         raise HomeAssistantError(
                             "Function Tool configuration changed while a related Request Rule "
                             "rename failed. The newer configuration was preserved; reload "
@@ -1173,17 +1297,16 @@ async def async_function_repair(
     if not isinstance(candidate, list):
         raise HomeAssistantError("tools must be a JSON array")
     validated_tools = validate_function_tools(candidate)
-    validate_function_groups(
-        subentry.data.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS),
-        validated_tools,
-    )
+    # Bulk Tool repair owns Tools only. Validate surviving usable Groups against
+    # the proposed Tools while retaining unrelated raw Group damage for repair.
+    validate_function_groups(state.groups, validated_tools)
 
     persisted = dict(subentry.data)
     persisted[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
         validated_tools, sort_keys=False, allow_unicode=True
     )
     await management_ui._async_validate_configuration_request(
-        hass, entry, subentry, persisted
+        hass, entry, subentry, safe_function_configuration(persisted)
     )
     await management_ui._async_validate_configuration_dependencies(
         hass, entry, subentry, persisted

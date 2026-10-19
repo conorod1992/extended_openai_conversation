@@ -1066,13 +1066,22 @@ async def test_repair_preflight_keeps_valid_sibling_collection_checks(monkeypatc
     function_repair._cached_isolated_function_tools.cache_clear()
 
     with pytest.raises(agent_config.AgentConfigError, match="duplicate tool name"):
-        await management_ui.async_management_command(
-            hass, "admin", True,
-            {
-                "entry_id": "entry-1", "subentry_id": "agent-1",
-                "section": "configuration", "action": "get",
-            },
-        )
+        agent_config.validate_function_tools(tools)
+    original = deepcopy(subentry.data)
+    result = await management_ui.async_management_command(
+        hass, "admin", True,
+        {
+            "entry_id": "entry-1", "subentry_id": "agent-1",
+            "section": "configuration", "action": "get",
+        },
+    )
+    assert result["config"]["functions"] == []
+    assert result["function_repair"]["isolatable"] is False
+    assert result["function_repair"]["tools_valid"] is False
+    assert "duplicate tool name" in result["function_repair"]["validation_error"]
+    assert result["function_repair"]["tools"] == tools
+    assert subentry.data == original
+    assert hass.config_entries.updates == 0
 
 
 async def test_delete_quarantined_tools_immediately_restores_normal_get(monkeypatch) -> None:
@@ -1327,15 +1336,17 @@ async def test_configuration_save_normalizes_once(monkeypatch) -> None:
     )
 
     monkeypatch.setattr(guidance, "exposed_attribute_catalog", lambda *_: {})
-    original_merge = management_ui.merge_agent_config
+    from custom_components.extended_openai_conversation_responses import agent_config
+
+    original_normalize = agent_config.normalize_agent_config
     merge_calls = 0
 
-    def counted_merge(current, updates):
+    def counted_normalize(*args, **kwargs):
         nonlocal merge_calls
         merge_calls += 1
-        return original_merge(current, updates)
+        return original_normalize(*args, **kwargs)
 
-    monkeypatch.setattr(management_ui, "merge_agent_config", counted_merge)
+    monkeypatch.setattr(agent_config, "normalize_agent_config", counted_normalize)
     monkeypatch.setattr(
         loading,
         "validate_function_tools",
@@ -1916,15 +1927,17 @@ async def test_configuration_save_validation_failure_does_not_persist(
 ) -> None:
     """A single failed normalization remains frontend-friendly and write-free."""
     hass, _entry, _subentry = _hass_with_agent()
-    original_merge = management_ui.merge_agent_config
+    from custom_components.extended_openai_conversation_responses import agent_config
+
+    original_normalize = agent_config.normalize_agent_config
     merge_calls = 0
 
-    def counted_merge(current, updates):
+    def counted_normalize(*args, **kwargs):
         nonlocal merge_calls
         merge_calls += 1
-        return original_merge(current, updates)
+        return original_normalize(*args, **kwargs)
 
-    monkeypatch.setattr(management_ui, "merge_agent_config", counted_merge)
+    monkeypatch.setattr(agent_config, "normalize_agent_config", counted_normalize)
 
     result = await management_ui.async_management_command(
         hass,

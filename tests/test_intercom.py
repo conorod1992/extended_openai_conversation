@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections import deque
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -303,6 +304,32 @@ def _coverage_message(entity_id: str, *, status: str = "queued_busy", seconds: i
         targets=[entity_id],
         deliveries={entity_id: Delivery(entity_id, status)},
     )
+
+
+@pytest.mark.parametrize("message", ["A short announcement", "A long announcement. " * 100])
+async def test_announcement_completion_outlives_old_timeout_and_queue_ttl(hass, monkeypatch, message):
+    manager = IntercomManager(hass)
+    manager._enabled = True
+    entity_id = "assist_satellite.kitchen"
+    item = _coverage_message(entity_id)
+    item.message = message
+    manager._queues[entity_id] = deque([item])
+    hass.states.get.return_value = SimpleNamespace(state="idle")
+    monkeypatch.setattr(intercom, "IDLE_STABILITY_SECONDS", 0)
+    timeout = asyncio.timeout
+    # Scale seconds to milliseconds without changing production deadline logic.
+    monkeypatch.setattr(intercom.asyncio, "timeout", lambda seconds: timeout(seconds / 1000))
+
+    async def announce(*args, **kwargs):
+        assert kwargs["blocking"] is True
+        manager._expire(item.id)
+        assert manager._queues[entity_id][0] is item
+        await asyncio.sleep(0.065)
+
+    hass.services.async_call.side_effect = announce
+    await manager._async_drain(entity_id)
+    assert item.deliveries[entity_id].status == "delivered"
+    assert entity_id not in manager._queues
 
 
 def test_aliases_are_filtered_trimmed_sorted_and_unique() -> None:

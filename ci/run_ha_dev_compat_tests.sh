@@ -55,5 +55,10 @@ TEST_PATHS=(
   tests/test_voice_identity_runtime.py
 )
 
-# Initialize HA's HTTP client alias before pytest autoloads plugins.
-python -c 'import homeassistant, pytest; raise SystemExit(pytest.main())' "${TEST_PATHS[@]}"   -v   --asyncio-mode=auto   --timeout=30
+# Use fixtures from the installed dev runtime, rather than autoloading the
+# stable-release plugin (whose private HA imports may no longer exist).
+CORE_SHA="${EXPECTED_HA_CORE_SHA:-}"
+if [[ -s /opt/eoai-ci/ha-core-sha ]]; then
+  CORE_SHA="$(cat /opt/eoai-ci/ha-core-sha)"
+fi
+python ci/run_ha_dev_pytest.py --core-sha "${CORE_SHA:?}" "${TEST_PATHS[@]}"   -v   --asyncio-mode=auto   --timeout=30

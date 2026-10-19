@@ -1803,7 +1803,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (view === "capabilities/request-rules") return getRouteFeature(view)?.reconcileRequestRules?.(this) || false;
     if (view !== "capabilities/functions") return false;
     const repair = getRouteFeature(view);
-    if (repair?.repairIssue(this) && repair.repairMetadata(this)?.isolatable === false) return false;
+    if (repair?.repairIssue(this) && repair.requiresToolRepairFallback(this)) return false;
     return getConfigurationTools()?.reconcileTools?.(this, {repairCards: repair?.renderFunctionRepairCards(this) || ""}) || false;
   }
 
@@ -1842,7 +1842,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (view === "capabilities/functions") {
       const repair = getRouteFeature(view);
       const issue = repair?.repairIssue(this);
-      if (issue && repair.repairMetadata(this)?.isolatable === false) return repair.renderFallbackRepair(this, issue);
+      if (issue && repair.requiresToolRepairFallback(this)) return repair.renderFallbackRepair(this, issue);
       const repairCards = issue ? repair.renderFunctionRepairCards(this) : "";
       return getConfigurationTools()?.renderTools(this, {repairCards}) || this._loading();
     }

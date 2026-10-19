@@ -31,13 +31,15 @@ def test_backup_recovery_preserves_absence_of_function_fields(monkeypatch) -> No
         return dict(value)
 
     monkeypatch.setattr(backup, "agent_config_snapshot", normalize)
-    monkeypatch.setattr(repair, "function_tools_issue", lambda raw: ([], "broken"))
-    monkeypatch.setattr(repair, "safe_function_configuration", lambda raw: {})
+    repair_state = Mock(return_value=SimpleNamespace(valid=[], groups=[]))
+    monkeypatch.setattr(repair, "function_configuration_repair_state", repair_state)
 
     result = backup.export_configuration_snapshot({})
 
     assert backup.CONF_FUNCTION_TOOLS not in result
     assert backup.CONF_FUNCTION_GROUPS not in result
+    repair_state.assert_called_once_with({})
+    assert calls == 2
 
 
 @pytest.mark.asyncio

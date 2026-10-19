@@ -70,6 +70,27 @@ def test_safe_function_configuration_quarantines_unknown_native() -> None:
     }
 
 
+@pytest.mark.parametrize("updates", [
+    {"knowledge_enabled": True}, {"archive_enabled": True},
+    {"prompt": "Edited"}, {"chat_model": "gpt-4.1"},
+    {"skills": []}, {"temporary_memory": "off"},
+])
+@pytest.mark.parametrize("broken_groups", [False, True])
+def test_field_only_updates_preserve_quarantine_without_section_scope(hass, updates, broken_groups):
+    data, valid, invalid = _mixed_unknown_native_data()
+    if broken_groups:
+        data[CONF_FUNCTION_GROUPS] = [{"id": "broken", "functions": ["missing"]}]
+    data.pop("reasoning_effort", None)
+    original = deepcopy(data)
+    subentry = SimpleNamespace(data=data, subentry_id="quarantined-agent", title="Agent")
+    persisted, display = quarantine.merge_unchanged_function_configuration(subentry, updates)
+    assert persisted == {**original, **updates}
+    assert data == original
+    assert display[CONF_FUNCTION_TOOLS] == [valid]
+    with pytest.raises(quarantine.HomeAssistantError, match="cannot change Functions"):
+        quarantine.merge_unchanged_function_configuration(subentry, {CONF_FUNCTION_TOOLS: [invalid]})
+
+
 def test_management_merge_preserves_repair_owned_function_fields(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -228,33 +249,14 @@ def test_management_quarantine_clean_paths_use_strict_helpers_and_reset_names(
 def test_management_group_validation_filters_only_quarantined_members(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    captured = {}
-
-    def strict(groups, tools):
-        captured["groups"] = groups
-        captured["tools"] = tools
-        return groups
-
-    monkeypatch.setattr(quarantine, "_STRICT_VALIDATE_FUNCTION_GROUPS", strict)
-    allow = quarantine._ALLOW_QUARANTINED_TOOLS.set(True)
-    names = quarantine._QUARANTINED_FUNCTION_NAMES.set(
-        frozenset({"broken", "missing"})
-    )
-    try:
-        result = quarantine._management_validate_function_groups(
-            [
-                {"id": "g", "functions": ["keep", "broken", 123]},
-                {"id": "no-functions"},
-                "not-a-group",
-            ],
-            [{"spec": {"name": "keep"}}],
-        )
-    finally:
-        quarantine._QUARANTINED_FUNCTION_NAMES.reset(names)
-        quarantine._ALLOW_QUARANTINED_TOOLS.reset(allow)
-
-    assert result[0]["functions"] == ["keep", 123]
-    assert captured["groups"][0]["functions"] == ["keep", 123]
+    data, valid, invalid = _mixed_unknown_native_data()
+    name = valid["spec"]["name"]
+    groups = [{"id": "g", "name": "Group", "description": "Group tools", "loading_mode": "on_demand", "functions": [name, invalid["spec"]["name"], 123]}]
+    original = deepcopy(groups)
+    with quarantine.management_function_tools("guest_mode"):
+        result = quarantine._management_validate_function_groups(groups, [valid])
+    assert result[0]["functions"] == [name]
+    assert groups == original
 
 
 def test_restore_quarantined_group_members_preserves_hidden_raw_members() -> None:
@@ -327,8 +329,8 @@ def test_tolerant_persist_delegates_when_configuration_is_clean(
     delegated = Mock(return_value={"revision": "delegated"})
     monkeypatch.setattr(
         quarantine,
-        "isolated_function_tools",
-        lambda _raw: ([], [], None),
+        "function_configuration_repair_state",
+        lambda _raw: None,
     )
     monkeypatch.setattr(
         quarantine, "persist_valid_function_configuration", delegated
@@ -451,11 +453,15 @@ def test_tolerant_persist_keeps_invalid_raw_tool_and_hidden_group_member(
         {"id": "g", "functions": ["valid", "broken"]}
     ]
     assert subentry.data["guest_mode_enabled"] is True
-    assert result == {
+    assert {key: result[key] for key in ("functions", "function_groups", "revision")} == {
         "functions": tools,
-        "function_groups": groups,
+        # This raw Group lacks its required name/description. Retain it for repair,
+        # but never advertise it as usable in a post-save acknowledgement.
+        "function_groups": [],
         "revision": "new-revision",
     }
+    assert result["function_repair"]["persisted_groups"] == subentry.data[CONF_FUNCTION_GROUPS]
+    assert result["function_repair"]["group_issues"]
 
 
 @pytest.mark.asyncio
@@ -469,8 +475,8 @@ async def test_tolerant_agent_test_clean_and_collection_level_warning_paths(
     monkeypatch.setattr(quarantine, "async_test_configured_agent", provider)
     monkeypatch.setattr(
         quarantine,
-        "isolated_function_tools",
-        lambda _raw: ([], [], None),
+        "function_configuration_repair_state",
+        lambda _raw: None,
     )
     entry = SimpleNamespace()
     subentry = SimpleNamespace(data={}, subentry_id="agent", title="Assistant")
@@ -484,8 +490,8 @@ async def test_tolerant_agent_test_clean_and_collection_level_warning_paths(
 
     monkeypatch.setattr(
         quarantine,
-        "isolated_function_tools",
-        lambda _raw: ([], [], "collection-level corruption"),
+        "function_configuration_repair_state",
+        lambda _raw: SimpleNamespace(invalid=[], group_issues=[], field_updates_allowed=False),
     )
     monkeypatch.setattr(
         quarantine,
