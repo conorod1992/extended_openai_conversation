@@ -720,10 +720,10 @@ function bindToolCollection(panel) {
     }
     if (button.id === "add-tool") return openTool(panel);
     if (button.id === "add-group") return openFunctionGroup(panel);
-    if (button.matches(".edit-group")) return openFunctionGroup(panel, button.dataset.groupId);
+    if (button.matches(".edit-group")) return openFunctionGroup(panel, button.dataset.groupId, Boolean(button.closest(".group-repair-entry")));
     if (button.matches(".delete-group")) {
       const submission = captureConfigurationSubmission(panel);
-      const group = (panel._draft.function_groups || []).find(item => item.id === button.dataset.groupId);
+      const group = editableFunctionGroup(panel, button.dataset.groupId);
       panel._eocDeletingFunctionGroups ||= new Set();
       if (!group || panel._eocDeletingFunctionGroups.has(group.id)
         || !await panel._confirm("Delete function group?", `The group “${group.name}” will be removed. Its functions will not be deleted; they will move to Always available.`, "Delete group")) return;
@@ -832,18 +832,18 @@ function bindToolCollection(panel) {
 }
 
 function functionAcknowledgement(result) {
-  return {...result, config:{functions:result.functions || [], function_groups:result.function_groups || []}};
+  return {...result, function_repair: result.function_repair ?? null, config:{functions:result.functions || [], function_groups:result.function_groups || []}};
 }
 
 export function synchronizePersistedFunctions(panel, result, submission = captureConfigurationSubmission(panel)) {
-  if (!reconcileConfigurationAcknowledgement(panel, functionAcknowledgement(result), submission, {fields:["functions", "function_groups"]})) return false;
+  if (!reconcileConfigurationAcknowledgement(panel, functionAcknowledgement(result), submission, {fields:["functions", "function_groups"], metadata:["function_repair"]})) return false;
   panel._result = panel._configData;
   return true;
 }
 
 function completeFunctionMutation(panel, result, submission, message, refresh = () => panel._render()) {
   return completeConfigurationAcknowledgement(panel, functionAcknowledgement(result), submission, {
-    fields:["functions", "function_groups"], message,
+    fields:["functions", "function_groups"], metadata:["function_repair"], message,
     refresh:() => {
       if (!panel._viewKey || panel._viewKey() === "capabilities/functions") panel._result = panel._configData;
       return refresh();
@@ -978,21 +978,28 @@ function renderGroupFunctionChoices(panel, selected = []) {
   list.innerHTML=tools.map((tool)=>{const name=tool.spec?.name||"";const enabled=isFunctionToolEnabled(tool);return `<label class="group-function-choice ${enabled?"":"is-disabled"}" data-choice-search="${panel._e(`${haToolName(tool)} ${tool.function?.source_id||""} ${toolDescription(panel,tool)} ${enabled?"enabled":"disabled"}`.toLowerCase())}"><input type="checkbox" value="${panel._e(name)}" ${selectedNames.has(name)?"checked":""}><span><strong>${panel._e(haToolName(tool))}${enabled?"":" · Disabled"}</strong><small>${panel._e(toolDescription(panel,tool))}</small></span></label>`;}).join("") || panel._empty("Add function tools before assigning them to a group.");
 }
 
-function openFunctionGroup(panel, groupId = null) {
+function editableFunctionGroup(panel, groupId) {
+  const usable = (panel._draft.function_groups || []).find(item => item.id === groupId);
+  const raw = panel._result?.function_repair?.persisted_groups;
+  return usable || (Array.isArray(raw) ? raw.find(item => item && item.id === groupId) : null);
+}
+
+function openFunctionGroup(panel, groupId = null, repair = false) {
   const root=panel.shadowRoot;
-  const group=(panel._draft.function_groups||[]).find((item)=>item.id===groupId);
-  panel._groupOriginalId=group?.id||null;
+  const group=editableFunctionGroup(panel, groupId);
+  panel._groupOriginalId=group?.id??null;
+  panel._groupRepair=repair;
   panel._groupIdEdited=Boolean(group);
   root.querySelector("#group-dialog-title").textContent=group?"Edit function group":"Create function group";
   root.querySelector("#group-name").value=group?.name||"";
   root.querySelector("#group-id").value=group?.id||"";
   root.querySelector("#group-description").value=group?.description||"";
-  root.querySelector("#group-loading-mode").value=group?.loading_mode||"on_demand";
+  root.querySelector("#group-loading-mode").value=["on_demand", "always"].includes(group?.loading_mode)?group.loading_mode:"on_demand";
   root.querySelector("#group-function-search").value="";
   root.querySelector("#group-functions-empty").hidden=true;
   root.querySelector("#group-error").textContent="";
   delete root.querySelector("#group-error").dataset.field;
-  renderGroupFunctionChoices(panel,group?.functions||[]);
+  renderGroupFunctionChoices(panel,Array.isArray(group?.functions)?group.functions:[]);
   panel._groupRevision = panel._configData?.revision;
   root.querySelector("#group-dialog").showModal();
   panel._captureDialogBaseline?.(root.querySelector("#group-dialog"));
@@ -1027,7 +1034,9 @@ async function saveFunctionGroup(panel) {
   const id=root.querySelector("#group-id").value.trim();
   const description=root.querySelector("#group-description").value.trim();
   const loading_mode=root.querySelector("#group-loading-mode").value;
-  const guest_allowed=(panel._draft.function_groups||[]).find((group)=>group.id===panel._groupOriginalId)?.guest_allowed===true;
+  const originalGroup=editableFunctionGroup(panel,panel._groupOriginalId);
+  const guest_allowed=originalGroup?.guest_allowed===true;
+  const enabled=originalGroup?.enabled!==false;
   const functions=[...root.querySelectorAll("#group-functions input:checked")].map((input)=>input.value);
   const error=root.querySelector("#group-error");
   const validation = functionGroupValidation(root);
@@ -1041,7 +1050,7 @@ async function saveFunctionGroup(panel) {
   panel._setSaving(button, true);
   const submission = captureConfigurationSubmission(panel);
   try {
-    const result=await queueFunctionGroupMutation(panel,()=>panel._call("tools","save_group",{group:{id,name,description,loading_mode,functions,guest_allowed},...(panel._groupOriginalId?{original_id:panel._groupOriginalId}:{})}));
+    const result=await queueFunctionGroupMutation(panel,()=>panel._call("tools","save_group",{group:{id,name,description,loading_mode,functions,guest_allowed,enabled},...(panel._groupOriginalId!==null?{original_id:panel._groupOriginalId}:{}),...(panel._groupRepair?{repair:true}:{})}));
     await completeFunctionMutation(panel, result, submission, "Function group saved", () => {
       root.querySelector("#group-dialog").close();
       panel._render();

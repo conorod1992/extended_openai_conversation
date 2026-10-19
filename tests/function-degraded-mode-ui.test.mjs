@@ -5,6 +5,7 @@ import {buildSetupHealth} from "../custom_components/extended_openai_conversatio
 import {
   renderFunctionRepairCards,
   invalidToolCards,
+  requiresToolRepairFallback,
 } from "../custom_components/extended_openai_conversation_responses/frontend/management-function-repair.js";
 import {renderTools} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-tools.js";
 
@@ -53,7 +54,7 @@ test("Needs attention group is inserted before normal Function Groups", () => {
   const html = renderTools(decoratedPanel, {repairCards:renderFunctionRepairCards(decoratedPanel)});
 
   assert.ok(html.indexOf("Needs attention") < html.indexOf('class="function-group-card always-card"'));
-  assert.match(html, /<div class="function-groups"><article class="function-group-card function-repair-attention"/);
+  assert.match(html, /<div class="function-groups"><div class="function-repair-attention"[^>]*><article class="function-group-card function-repair-attention"/);
 });
 
 test("Overview reports quarantined Function Tools without treating valid siblings as unavailable", () => {
@@ -79,4 +80,14 @@ test("Overview reports quarantined Function Tools without treating valid sibling
   assert.equal(functions.value, "1 function needs repair");
   assert.match(functions.detail, /30 valid Function Tools remain available/);
   assert.equal(health.checks.find((check) => check.id === "provider_runtime").state, "ready");
+});
+
+
+test("Group-only damage keeps normal controls while unreadable Tools use fallback", () => {
+  const groupOnly = {...panel, _result:{config:{function_groups:[]}, function_repair:{isolatable:false, tools_valid:true, invalid_count:0, validation_error:"Group name missing", group_issues:[{index:0}], persisted_groups:[{id:"broken-group", functions:[]}]}}};
+  assert.equal(requiresToolRepairFallback(groupOnly), false);
+  assert.match(renderFunctionRepairCards(groupOnly), /group-repair-entry/);
+  assert.match(renderFunctionRepairCards(groupOnly), /edit-group/);
+  assert.match(renderFunctionRepairCards(groupOnly), /delete-group/);
+  assert.equal(requiresToolRepairFallback({...panel, _result:{function_repair:{isolatable:false, tools_valid:false, validation_error:"Unreadable Tools"}}}), true);
 });

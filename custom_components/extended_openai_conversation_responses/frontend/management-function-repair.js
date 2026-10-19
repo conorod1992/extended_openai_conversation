@@ -84,10 +84,28 @@ function renderFallbackRepair(panel, issue) {
   </section>`;
 }
 
+function requiresToolRepairFallback(panel) {
+  const repair = repairMetadata(panel);
+  return repair?.isolatable === false && repair.tools_valid !== true;
+}
+
 function renderFunctionRepairCards(panel) {
   const repair = repairMetadata(panel);
-  if (!repair?.isolatable || !Array.isArray(repair.invalid_tools) || !repair.invalid_tools.length) return "";
-  return invalidToolCards(panel, repair);
+  if (!repair) return "";
+  const usableIds = new Set((panel._result?.config?.function_groups || []).map(group => group.id));
+  const raw = Array.isArray(repair.persisted_groups) ? repair.persisted_groups : [];
+  const issues = Array.isArray(repair.group_issues) ? repair.group_issues : [];
+  const groups = raw.filter((group, index) => group && typeof group.id === "string"
+    && raw.filter(item => item?.id === group.id).length === 1
+    && (!usableIds.has(group.id) || issues.some(issue => issue.id === group.id || issue.index === index)));
+  const tools = repair.isolatable ? invalidToolCards(panel, repair) : "";
+  const cards = groups.map(group => {
+    const label = group.name || group.id || "Unnamed Function Group";
+    return `<article class="function-group-card group-repair-entry" data-group-id="${escapeHtml(panel, group.id)}" data-group-search="needs repair group ${escapeHtml(panel, label)}">
+      <div class="function-group-heading"><div><h3>${escapeHtml(panel, label)}</h3><span class="status-pill status-off">Needs repair</span><p>This saved Function Group is unavailable or has unavailable members. Edit it to save a valid definition, or delete it. Saving a repair removes unavailable members from this Group.</p></div>
+      <div class="actions"><button type="button" class="secondary edit-group" data-group-id="${escapeHtml(panel, group.id)}">Edit</button><button type="button" class="danger delete-group" data-group-id="${escapeHtml(panel, group.id)}">Delete</button></div></div></article>`;
+  }).join("");
+  return tools || cards ? `<div class="function-repair-attention" style="display:grid;gap:18px">${tools}${cards}</div>` : "";
 }
 
 async function openInvalidToolEditor(panel, item) {
@@ -280,6 +298,7 @@ export {
   bindFallbackRepair,
   bindIsolatedRepair,
   renderFunctionRepairCards,
+  requiresToolRepairFallback,
   editableToolsText,
   functionRepairView,
   invalidToolCards,
@@ -290,6 +309,6 @@ export {
 
 export function bindFunctionRepair(panel) {
   if (!repairIssue(panel) || !functionRepairView(panel)) return;
-  if (repairMetadata(panel)?.isolatable === false) bindFallbackRepair(panel);
+  if (requiresToolRepairFallback(panel)) bindFallbackRepair(panel);
   else bindIsolatedRepair(panel);
 }
