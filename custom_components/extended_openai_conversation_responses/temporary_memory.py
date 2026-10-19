@@ -758,7 +758,9 @@ def _validate_record_scope_id(value: object) -> None:
     unrestorable. Backup transport retains its document size/count limits.
     """
     if not isinstance(value, str) or not value:
-        raise ValueError("temporary memory metadata is invalid: scope must be a nonempty string")
+        raise ValueError(
+            "temporary memory metadata is invalid: scope must be a nonempty string"
+        )
 
 
 def _matches_owner(

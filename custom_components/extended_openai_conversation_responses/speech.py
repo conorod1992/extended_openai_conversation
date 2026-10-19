@@ -302,18 +302,27 @@ class StreamingSpeechSanitizer:
             previous = (
                 self._format_buffer[index - 1] if index else self._format_previous
             )
-            if char in "*_~" and not final and all(
-                value == char for value in self._format_buffer[index:]
+            if (
+                char in "*_~"
+                and not final
+                and all(value == char for value in self._format_buffer[index:])
             ):
                 # A delimiter run may continue in the next provider chunk.
                 break
-            if char in "*_" and self._format_buffer.startswith(char * 3, index):
-                if char != "_" or not previous.isalnum() or (
-                    index + 3 == len(self._format_buffer)
-                    or not self._format_buffer[index + 3].isalnum()
-                ):
-                    index += 3
-                    continue
+            if (
+                char in "*_"
+                and self._format_buffer.startswith(char * 3, index)
+                and (
+                    char != "_"
+                    or not previous.isalnum()
+                    or (
+                        index + 3 == len(self._format_buffer)
+                        or not self._format_buffer[index + 3].isalnum()
+                    )
+                )
+            ):
+                index += 3
+                continue
             if (
                 char in "*_"
                 and pair not in _FORMAT_MARKERS
@@ -331,7 +340,14 @@ class StreamingSpeechSanitizer:
                     if end < 0:
                         break
                     after = self._format_buffer[end + 1 : end + 2]
-                    if self._format_buffer[end - 1] in (char, "\\") or after == char:
+                    combined_close = self._format_buffer[
+                        max(index + 1, end - 2) : end
+                    ] == char * 2 and (end < 3 or self._format_buffer[end - 3] != char)
+                    if (
+                        self._format_buffer[end - 1] == "\\"
+                        or (self._format_buffer[end - 1] == char and not combined_close)
+                        or after == char
+                    ):
                         # A nested strong delimiter cannot close single emphasis.
                         continue
                     if not self._format_buffer[end - 1].isspace() and (
@@ -353,6 +369,14 @@ class StreamingSpeechSanitizer:
                     index = end + 1
                     continue
             if pair in _FORMAT_MARKERS:
+                if (
+                    previous.isspace()
+                    and self._format_buffer[index + 2 : index + 3].isspace()
+                ):
+                    # Spaced operators (e.g. 2 ** 3) are literal mathematical text.
+                    output.append(pair)
+                    index += 2
+                    continue
                 if (
                     pair == "__"
                     and previous.isalnum()

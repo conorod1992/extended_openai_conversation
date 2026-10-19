@@ -46,7 +46,9 @@ ANNOUNCE_FEATURE = 1
 
 def _announcement_timeout_seconds(message: str) -> float:
     """Allow synthesis overhead plus slow playback, independently of queue TTL."""
-    return min(MAX_ANNOUNCE_TIMEOUT_SECONDS, ANNOUNCE_TIMEOUT_SECONDS + len(message) / 8)
+    return min(
+        MAX_ANNOUNCE_TIMEOUT_SECONDS, ANNOUNCE_TIMEOUT_SECONDS + len(message) / 8
+    )
 
 
 @dataclass(slots=True)
@@ -483,7 +485,9 @@ class IntercomManager:
                     continue
                 delivery.set("delivering")
                 try:
-                    async with asyncio.timeout(_announcement_timeout_seconds(item.message)):
+                    async with asyncio.timeout(
+                        _announcement_timeout_seconds(item.message)
+                    ):
                         await self.hass.services.async_call(
                             "assist_satellite",
                             "announce",
