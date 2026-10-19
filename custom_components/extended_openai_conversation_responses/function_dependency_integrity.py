@@ -190,8 +190,12 @@ def renamed_function_references_are_saved(
     old_name: str,
     new_name: str,
     original_references: Sequence[Mapping[str, Any]],
-) -> bool:
-    """Recognize a durable rename after the rule store settles a failed save."""
+) -> bool | None:
+    """Recognize a settled rename, or return None if storage remains unreadable."""
+    if getattr(manager, "_initialized", True) is False:
+        # Invalidation clears references to fail closed. It does not establish
+        # whether the candidate or the previous generation reached storage.
+        return None
     references = getattr(manager, "function_references", None)
     if not original_references or not callable(references):
         return False

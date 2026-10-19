@@ -1213,9 +1213,18 @@ async def async_function_repair(
                         renamed_function_references_are_saved,
                     )
 
-                    if renamed_function_references_are_saved(
+                    rule_rename_saved = renamed_function_references_are_saved(
                         rules, old_name, new_name, rule_references
-                    ):
+                    )
+                    if rule_rename_saved is None:
+                        if isinstance(err, asyncio.CancelledError):
+                            raise
+                        raise HomeAssistantError(
+                            "Request Rule storage cannot be verified. The saved Function "
+                            "Tool rename was retained; restore storage access and reload "
+                            "to review Rule references."
+                        ) from err
+                    if rule_rename_saved:
                         if isinstance(err, asyncio.CancelledError):
                             raise
                         raise HomeAssistantError(
