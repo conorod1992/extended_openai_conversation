@@ -87,7 +87,12 @@ async def test_blocking_nested_request_does_not_reenter_parent_conversation(
                 "parent_manager": manager is parent._continuity,
                 "conversation_id": conversation_id,
                 "ancestors": [
-                    (owner.manager is manager, owner.conversation_id, owner.active)
+                    (
+                        owner.manager is manager,
+                        owner.conversation_id,
+                        owner.claimed_conversation_id,
+                        owner.active,
+                    )
                     for owner in owners
                 ],
                 "users": dict(manager._ha_default_lock_users),

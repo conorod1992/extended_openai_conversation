@@ -15,9 +15,10 @@ from custom_components.extended_openai_conversation_responses.scope import user_
 from tests.test_conversation_orchestration import _pipeline_fixture
 
 
+@pytest.mark.parametrize("normalized", [False, True])
 @pytest.mark.parametrize("target", ["same", "new-id", "other-agent"])
 async def test_processing_scope_rejects_ancestor_lock_without_affecting_controls(
-    monkeypatch, target
+    monkeypatch, target, normalized
 ):
     agent, request, chat_log, policy, process = _pipeline_fixture(monkeypatch)
     parent = ConversationContinuity("parent")
@@ -27,8 +28,11 @@ async def test_processing_scope_rejects_ancestor_lock_without_affecting_controls
     claim = await parent.async_resolve(
         CONVERSATION_CONTINUITY_HA_DEFAULT, scope, None, chat_log.conversation_id, 30
     )
+    parent_id = chat_log.conversation_id
+    if normalized:
+        chat_log.conversation_id = "ha-normalized-id"
     child_manager = other if target == "other-agent" else parent
-    child_id = "new-conversation" if target == "new-id" else chat_log.conversation_id
+    child_id = "new-conversation" if target == "new-id" else parent_id
 
     async def nested(*args):
         child = await asyncio.create_task(
@@ -48,12 +52,12 @@ async def test_processing_scope_rejects_ancestor_lock_without_affecting_controls
                 await asyncio.wait_for(process(), 1)
         else:
             await asyncio.wait_for(process(), 1)
-        assert parent._ha_default_lock_users[chat_log.conversation_id] == 1
+        assert parent._ha_default_lock_users[parent_id] == 1
     finally:
         await parent.async_release(claim.key, claim.claim_token)
     # After the enclosing request exits, the same ID remains usable.
     child = await parent.async_resolve(
-        CONVERSATION_CONTINUITY_HA_DEFAULT, scope, None, chat_log.conversation_id, 30
+        CONVERSATION_CONTINUITY_HA_DEFAULT, scope, None, parent_id, 30
     )
     await parent.async_release(child.key, child.claim_token)
     assert not parent._ha_default_locks

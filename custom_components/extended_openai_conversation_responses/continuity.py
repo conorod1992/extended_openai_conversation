@@ -31,6 +31,7 @@ _MAX_IGNORED_CONVERSATION_IDS = 64
 class _ProcessingConversation:
     manager: object
     conversation_id: str | None
+    claimed_conversation_id: str | None
     active: bool = True
 
 
@@ -41,10 +42,14 @@ _PROCESSING_CONVERSATIONS: ContextVar[tuple[_ProcessingConversation, ...]] = Con
 
 @contextmanager
 def processing_conversation_scope(
-    manager: object, conversation_id: str | None
+    manager: object,
+    conversation_id: str | None,
+    claimed_conversation_id: str | None = None,
 ) -> Generator[None]:
     """Expose active ancestor requests to nested calls, including HA service tasks."""
-    owner = _ProcessingConversation(manager, conversation_id)
+    # HA can allocate a different ChatLog ID while continuity still owns the
+    # caller-supplied ID's lock. Both names identify this active invocation.
+    owner = _ProcessingConversation(manager, conversation_id, claimed_conversation_id)
     token = _PROCESSING_CONVERSATIONS.set((*_PROCESSING_CONVERSATIONS.get(), owner))
     try:
         yield
@@ -368,7 +373,8 @@ class ConversationContinuity:
         if any(
             owner.active
             and owner.manager is self
-            and owner.conversation_id == conversation_id
+            and conversation_id
+            in (owner.conversation_id, owner.claimed_conversation_id)
             for owner in _PROCESSING_CONVERSATIONS.get()
         ):
             raise HomeAssistantError(
