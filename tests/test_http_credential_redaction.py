@@ -197,11 +197,8 @@ def test_unsupported_url_markers_cannot_authorize_hidden_destinations(url):
     ],
 )
 def test_marker_shaped_stored_values_are_not_trusted_on_export(url):
-    from custom_components.extended_openai_conversation_responses.secret_redaction import (
-        REDACTED_URL_KEY,
-    )
-
-    stored = {"resource": {REDACTED_URL_KEY: url}}
+    # Use the wire key so this assertion also runs on the original revision.
+    stored = {"resource": {"__extended_openai_redacted_url__": url}}
     original = deepcopy(stored)
     public = redact_secrets(stored)
     assert SECRET not in json.dumps(public)
