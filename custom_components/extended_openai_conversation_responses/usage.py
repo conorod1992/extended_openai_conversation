@@ -634,12 +634,8 @@ class UsageManager:
         """Persist one candidate detail state before publishing it in memory."""
         if self._detail_storage is None:
             return
-        await self._detail_storage.async_save(
-            {
-                "requests": [asdict(request) for request in requests],
-                "runs": [asdict(run) for run in runs],
-            }
-        )
+        details = await asyncio.to_thread(_serialize_usage_details, requests, runs)
+        await self._detail_storage.async_save(details)
 
     async def async_prune_details(self, *, save: bool = True) -> dict[str, int]:
         """Apply retention transactionally, persisting survivors before publication."""
