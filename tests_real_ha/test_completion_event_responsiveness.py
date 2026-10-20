@@ -74,3 +74,75 @@ async def test_retained_backend_completion_does_not_block_ha(hass, tmp_path, row
     assert max(gaps) < 0.25, (
         f"Retained result conversion stalled HA for {max(gaps):.3f}s"
     )
+
+
+@pytest.mark.parametrize("failed_index", [0, 1])
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_conversion_failure_does_not_hide_later_native_completion_events(
+    hass, monkeypatch, caplog, failed_index, cancel
+):
+    """One failed notification preserves later real HA events and request outcome."""
+    import threading
+
+    from homeassistant.components import conversation
+
+    entered = asyncio.Event()
+    release = threading.Event()
+    loop = asyncio.get_running_loop()
+    original = conversation.UserContent.as_dict
+    secret = "private-event-content-do-not-log"
+
+    def as_dict(content):
+        if content.content == "broken":
+            loop.call_soon_threadsafe(entered.set)
+            if cancel:
+                assert release.wait(5), "test did not release conversion worker"
+            raise ValueError(secret)
+        return original(content)
+
+    monkeypatch.setattr(conversation.UserContent, "as_dict", as_dict)
+    agent = object.__new__(ExtendedOpenAIAgentEntity)
+    agent.hass = hass
+    agent.subentry = SimpleNamespace(subentry_id="completion-failure-agent")
+    finished = []
+    hass.bus.async_listen(
+        EVENT_CONVERSATION_FINISHED, lambda event: finished.append(event)
+    )
+
+    async def process(_request):
+        for index in range(3):
+            agent._fire_conversation_finished(
+                SimpleNamespace(index=index),
+                SimpleNamespace(
+                    content=[
+                        conversation.UserContent(
+                            content="broken" if index == failed_index else str(index)
+                        )
+                    ]
+                ),
+                status="success",
+            )
+        return "successful response"
+
+    agent._async_process = process
+    task = asyncio.create_task(agent.async_process(object()))
+    try:
+        if cancel:
+            await asyncio.wait_for(entered.wait(), 2)
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not task.done()
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            assert await task == "successful response"
+        await hass.async_block_till_done()
+        assert [event.data["user_input"].index for event in finished] == [
+            index for index in range(3) if index != failed_index
+        ]
+        assert "Completion notification failed" in caplog.text
+        assert secret not in caplog.text
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)

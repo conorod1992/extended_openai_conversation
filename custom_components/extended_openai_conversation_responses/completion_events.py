@@ -6,12 +6,16 @@ import asyncio
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
+import logging
 from typing import Any
 
 from homeassistant.core import HomeAssistant
 
 from .const import EVENT_CONVERSATION_FINISHED
 from .ha_tool_result_compat import is_tool_result_content
+from .operational_errors import log_handled_failure
+
+_LOGGER = logging.getLogger(__name__)
 
 # Each invocation owns its queue, including same-agent and cross-agent nesting.
 _PENDING: ContextVar[
@@ -23,15 +27,20 @@ async def _async_emit(
     hass: HomeAssistant, payload: dict[str, Any], contents: tuple[Any, ...]
 ) -> None:
     """Only message conversion leaves the loop; the HA bus call stays on-loop."""
-    payload["messages"] = await asyncio.to_thread(
-        lambda: [item.as_dict() for item in contents]
-    )
-    hass.bus.async_fire(EVENT_CONVERSATION_FINISHED, payload)
+    try:
+        payload["messages"] = await asyncio.to_thread(
+            lambda: [item.as_dict() for item in contents]
+        )
+        hass.bus.async_fire(EVENT_CONVERSATION_FINISHED, payload)
+    except Exception as err:
+        # Notifications describe completed work; one failure must not replace the
+        # request outcome or prevent later notifications. Cancellation still exits.
+        log_handled_failure(_LOGGER, "Completion notification failed", err)
 
 
 @asynccontextmanager
 async def completion_event_scope() -> AsyncIterator[None]:
-    """Finish queued events before returning the request, retaining their order."""
+    """Attempt every notification in order before return or cancellation exits."""
     pending: list[tuple[HomeAssistant, dict[str, Any], tuple[Any, ...]]] = []
     token = _PENDING.set(pending)
     try:
@@ -80,5 +89,8 @@ def queue_completion_event(
     else:
         # Plain text conversion does not traverse payloads; preserve synchronous
         # notification for standalone local/error helpers without Tool history.
-        payload["messages"] = [item.as_dict() for item in snapshot]
-        hass.bus.async_fire(EVENT_CONVERSATION_FINISHED, payload)
+        try:
+            payload["messages"] = [item.as_dict() for item in snapshot]
+            hass.bus.async_fire(EVENT_CONVERSATION_FINISHED, payload)
+        except Exception as err:
+            log_handled_failure(_LOGGER, "Completion notification failed", err)
