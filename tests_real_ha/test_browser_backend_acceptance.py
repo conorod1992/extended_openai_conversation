@@ -478,7 +478,7 @@ async def real_ha_shell(
         entity = registry.async_get_or_create(
             domain, "cold_quiet_fixture", object_id,
             suggested_object_id=object_id, original_name=label,
-            device_id=device.id, config_entry_id=entry.entry_id,
+            device_id=device.id, config_entry=entry,
         )
         attributes = {"friendly_name": label}
         if domain == "media_player":
