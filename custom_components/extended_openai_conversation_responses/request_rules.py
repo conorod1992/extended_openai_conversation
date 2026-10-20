@@ -3751,7 +3751,7 @@ async def _async_evaluate_matched_rule(
     effort = (
         _resolved_routing_value(
             action["reasoning_effort"], match.slots, "reasoning effort"
-        )
+        ).lower()
         if action["reasoning_effort"]
         else None
     )
