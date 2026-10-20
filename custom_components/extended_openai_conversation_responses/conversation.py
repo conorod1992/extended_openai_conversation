@@ -99,6 +99,7 @@ from .continuity import (
     ConversationContinuity,
     async_get_continuity,
     forward_chat_log_deltas,
+    processing_conversation_scope,
 )
 from .conversation_archive import ArchiveSession, ConversationArchive, async_get_archive
 from .conversation_id_ownership import (
@@ -840,6 +841,7 @@ class ExtendedOpenAIAgentEntity(
             async_get_chat_session(self.hass, resolution.conversation_id) as session,
             async_get_chat_log(self.hass, session, user_input) as chat_log,
             forward_chat_log_deltas(assist_chat_log, chat_log, user_input.text),
+            processing_conversation_scope(continuity, chat_log.conversation_id),
         ):
             # HA allocates a ChatLog ID when the initial request has no ID.
             # Claim that actual ID before any processing can retain its history.
