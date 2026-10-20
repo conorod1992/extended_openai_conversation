@@ -75,6 +75,29 @@ async def test_blocking_nested_request_does_not_reenter_parent_conversation(
     )
     if child is not parent:
         _provider(monkeypatch, child, [])
+    # Retain lock/scope observations if a regression reaches the bounded witness.
+    observed_claims = []
+    manager_type = type(parent._continuity)
+    claim_method = manager_type._async_claim_ha_default_conversation
+
+    async def observe_claim(manager, conversation_id):
+        owners = claim_method.__globals__["_PROCESSING_CONVERSATIONS"].get()
+        observed_claims.append(
+            {
+                "parent_manager": manager is parent._continuity,
+                "conversation_id": conversation_id,
+                "ancestors": [
+                    (owner.manager is manager, owner.conversation_id, owner.active)
+                    for owner in owners
+                ],
+                "users": dict(manager._ha_default_lock_users),
+            }
+        )
+        return await claim_method(manager, conversation_id)
+
+    monkeypatch.setattr(
+        manager_type, "_async_claim_ha_default_conversation", observe_claim
+    )
     parent_id = "nested-parent-conversation"
     child_id = "nested-isolated-child" if target == "new-id" else parent_id
     sent = _provider(
@@ -99,7 +122,7 @@ async def test_blocking_nested_request_does_not_reenter_parent_conversation(
         ],
     )
     user = MockUser(id="lock-owner", name="Lock owner", is_owner=True).add_to_hass(hass)
-    result = await asyncio.wait_for(
+    outer = asyncio.create_task(
         _response_service_call(
             hass,
             "process",
@@ -109,9 +132,36 @@ async def test_blocking_nested_request_does_not_reenter_parent_conversation(
                 "conversation_id": parent_id,
             },
             user_id=user.id,
-        ),
-        5,
+        )
     )
+    try:
+        result = await asyncio.wait_for(asyncio.shield(outer), 5)
+    except TimeoutError:
+        pending = []
+        for task in asyncio.all_tasks():
+            chain = []
+            coroutine = task.get_coro()
+            while coroutine is not None and len(chain) < 35:
+                frame = getattr(coroutine, "cr_frame", None)
+                if frame is not None:
+                    chain.append((frame.f_code.co_name, frame.f_lineno))
+                coroutine = getattr(coroutine, "cr_await", None)
+            if any(
+                name
+                in {
+                    "_async_claim_ha_default_conversation",
+                    "async_resolve",
+                    "_async_process",
+                    "async_call",
+                }
+                for name, _ in chain
+            ):
+                pending.append(chain)
+        outer.cancel()
+        await asyncio.gather(outer, return_exceptions=True)
+        pytest.fail(
+            f"Nested request remained pending: claims={observed_claims}; tasks={pending}"
+        )
     if target == "same":
         assert effects == []
         assert "Nested processing cannot reuse" in json.dumps(sent) + str(result)
