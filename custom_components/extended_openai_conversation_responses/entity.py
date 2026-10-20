@@ -1197,6 +1197,26 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         transformed_stream, provider_stream
                     )
 
+                if (
+                    api_mode != API_MODE_RESPONSES
+                    and not pending_tool_calls
+                    and not any(
+                        id(content) not in existing_content_ids
+                        and isinstance(content, conversation.AssistantContent)
+                        for content in chat_log.content
+                    )
+                ):
+                    # Successful parser completion validates the terminal finish
+                    # reason, including truncation/refusal/stream error handling.
+                    # HA drops wholly empty streamed answers. Retain their terminal
+                    # role explicitly so a preceding Tool result cannot ask for
+                    # another provider round after an accepted silent completion.
+                    chat_log.async_add_assistant_content_without_tools(
+                        conversation.AssistantContent(
+                            agent_id=self.entity_id, content=""
+                        )
+                    )
+
                 if pending_tool_calls:
                     _LOGGER.info(
                         "Provider requested %d tool calls: %s",
