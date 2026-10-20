@@ -94,7 +94,7 @@ def redact_http_url(value: str) -> dict[str, Any] | None:
     authority = parsed.netloc
     changed = "@" in authority
     if changed:
-        authority = "[redacted]@" + authority.rsplit("@", 1)[1]
+        authority = "%5Bredacted%5D@" + authority.rsplit("@", 1)[1]
     query = []
     for component in parsed.query.split("&"):
         name, separator, content = component.partition("=")
@@ -161,7 +161,12 @@ def _redact_secrets(
 ) -> Any:
     """Recursively redact secrets while tracking structural schema context."""
     if is_redacted_url(value):
-        return dict(value)
+        # Marker-shaped persisted input is still untrusted on export. Normalize
+        # its visible URL too, rather than allowing the wrapper to hide a secret.
+        public = value[REDACTED_URL_KEY]
+        return (redact_http_url(public) if isinstance(public, str) else None) or {
+            REDACTED_URL_KEY: None
+        }
     if value == REDACTED_SECRET_SENTINEL:
         return _sentinel()
     if is_literal_text(value):

@@ -186,3 +186,24 @@ def test_unsupported_url_markers_cannot_authorize_hidden_destinations(url):
         public, {"resource": url}
     )
     assert missing and not kept and restored == {}
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://user:EOAI_AUDIT_HTTP_SECRET@example.test/api",
+        "https://example.test/api?api_key=EOAI_AUDIT_HTTP_SECRET",
+        "EOAI_AUDIT_HTTP_SECRET",
+    ],
+)
+def test_marker_shaped_stored_values_are_not_trusted_on_export(url):
+    from custom_components.extended_openai_conversation_responses.secret_redaction import (
+        REDACTED_URL_KEY,
+    )
+
+    stored = {"resource": {REDACTED_URL_KEY: url}}
+    original = deepcopy(stored)
+    public = redact_secrets(stored)
+    assert SECRET not in json.dumps(public)
+    assert redact_secrets(public) == public
+    assert stored == original
