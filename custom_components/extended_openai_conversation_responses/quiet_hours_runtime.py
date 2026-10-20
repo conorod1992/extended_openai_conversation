@@ -577,18 +577,42 @@ class QuietHoursManager:
                         period_started_at=new_period.start.isoformat(),
                         period_ends_at=new_period.end.isoformat(),
                     )
-                    self._active["observed_controls"] = list(
-                        self._active.get("controls", {})
+                    # Saving a policy must not erase observations that released
+                    # ownership or protect an unapplied intent's baseline. Only
+                    # a changed target can reconsider unowned controls of that
+                    # kind; schedule/other-control edits do not reclaim them.
+                    changed_domains = set()
+                    if candidate.max_volume != previous.max_volume:
+                        changed_domains.add("media_player")
+                    if candidate.wake_sound != previous.wake_sound:
+                        changed_domains.add("switch")
+                    controls = self._active.get("controls", {})
+                    observed = list(
+                        dict.fromkeys(
+                            [*self._active.get("observed_controls", []), *controls]
+                        )
                     )
+                    self._active["observed_controls"] = observed = [
+                        entity_id
+                        for entity_id in observed
+                        if entity_id in controls
+                        or entity_id.partition(".")[0] not in changed_domains
+                    ]
                     if "observed_identities" in self._active:
                         self._active["observed_identities"] = {
                             key: identity
                             for key, identity in self._active[
                                 "observed_identities"
                             ].items()
-                            if key in self._active["controls"]
+                            if key in observed
                         }
-                    self._active["pending_controls"] = {}
+                    self._active["pending_controls"] = {
+                        key: intent
+                        for key, intent in self._active.get(
+                            "pending_controls", {}
+                        ).items()
+                        if key in observed
+                    }
                     await self._async_save_control_state_locked()
             except BaseException as err:
                 failure = err
