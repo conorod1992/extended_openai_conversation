@@ -49,6 +49,17 @@ from homeassistant.components import conversation
 from homeassistant.exceptions import HomeAssistantError
 
 
+@pytest.fixture(autouse=True)
+async def own_completion_notifications():
+    """Direct internal-handler tests still own and await their notification work."""
+    from custom_components.extended_openai_conversation_responses.completion_events import (
+        completion_event_scope,
+    )
+
+    async with completion_event_scope():
+        yield
+
+
 class FakeStream:
     """Async iterator over fake SDK stream events."""
 
@@ -1204,12 +1215,14 @@ async def test_conditional_continue_retries_ordinary_text_with_finalizer(hass) -
         for item in retry["input"]
     )
     assert all(
-        content.content != "Draft answer without a finalizer."
+        getattr(content, "content", None) != "Draft answer without a finalizer."
         for content in chat_log.content
     )
     assert chat_log.content[-1].content == "Which room did you mean?"
     assert "Draft answer" not in "".join(delta.get("content", "") for delta in heard)
-    assert "Which room did you mean?" in "".join(delta.get("content", "") for delta in heard)
+    assert "Which room did you mean?" in "".join(
+        delta.get("content", "") for delta in heard
+    )
 
 
 async def test_conditional_continue_finalization_retry_is_bounded(hass) -> None:

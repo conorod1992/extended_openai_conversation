@@ -556,6 +556,23 @@ def _convert_content_to_param(
     return messages
 
 
+def _discard_conditional_drafts(
+    chat_log: conversation.ChatLog, draft_ids: set[int], *, preserve_native: bool
+) -> None:
+    """Hide superseded speech while retaining complete native provider output."""
+    retained = []
+    for content in chat_log.content:
+        if id(content) not in draft_ids:
+            retained.append(content)
+        elif (
+            preserve_native
+            and isinstance(content, conversation.AssistantContent)
+            and content.native is not None
+        ):
+            retained.append(replace(content, content=None))
+    chat_log.content[:] = retained
+
+
 def _serialize_response_item(item: Any) -> dict[str, Any]:
     """Serialize an SDK Responses item for use as a subsequent input item."""
     if hasattr(item, "model_dump"):
@@ -600,7 +617,12 @@ def _convert_content_to_responses_param(
         if isinstance(content, conversation.AssistantContent):
             native = content.native
             native_type = getattr(native, "type", "") if native is not None else ""
-            if native_type in {"reasoning", "web_search_call", "message"}:
+            if native_type in {
+                "reasoning",
+                "web_search_call",
+                "message",
+                "function_call",
+            }:
                 items.append(_serialize_response_item(native))
 
         has_attachments = isinstance(content, conversation.UserContent) and bool(
@@ -620,6 +642,11 @@ def _convert_content_to_responses_param(
 
         if isinstance(content, conversation.AssistantContent):
             for tool_call in content.tool_calls or []:
+                if (
+                    native_type == "function_call"
+                    and tool_call.id == content.native.call_id
+                ):
+                    continue
                 items.append(
                     {
                         "type": "function_call",
@@ -1272,15 +1299,16 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             chat_log,
                             existing_content_ids,
                             response_text if is_final else None,
+                            preserve_calls=api_mode == API_MODE_RESPONSES,
                         )
                     if is_final:
                         continuation_decision = decision
                         if draft_content_ids:
-                            chat_log.content[:] = [
-                                content
-                                for content in chat_log.content
-                                if id(content) not in draft_content_ids
-                            ]
+                            _discard_conditional_drafts(
+                                chat_log,
+                                draft_content_ids,
+                                preserve_native=api_mode == API_MODE_RESPONSES,
+                            )
 
                 await async_execute_tool_exchange(
                     self,
@@ -1340,11 +1368,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         CONTINUE_CONVERSATION_TOOL_NAME,
                     )
                     if draft_content_ids:
-                        chat_log.content[:] = [
-                            content
-                            for content in chat_log.content
-                            if id(content) not in draft_content_ids
-                        ]
+                        _discard_conditional_drafts(
+                            chat_log,
+                            draft_content_ids,
+                            preserve_native=api_mode == API_MODE_RESPONSES,
+                        )
                     if chat_log.delta_listener:
                         with async_streaming_speech_cleanup(chat_log, options):
                             for finalizer_content in chat_log.content:
@@ -1419,9 +1447,12 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         chat_log: conversation.ChatLog,
         existing_content_ids: set[int],
         response_text: str | None,
+        *,
+        preserve_calls: bool = False,
     ) -> None:
-        """Convert the internal finalizer tool call into normal assistant content."""
+        """Expose finalizer speech without breaking native Responses replay."""
         updated_content: list[conversation.Content] = []
+        retained_calls: list[llm.ToolInput] = []
         already_delivered = False
         for content in chat_log.content:
             if (
@@ -1441,6 +1472,15 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 )
             ):
                 updated_content.append(content)
+                continue
+
+            if preserve_calls:
+                updated_content.append(content)
+                retained_calls.extend(
+                    call
+                    for call in content.tool_calls
+                    if call.tool_name == CONTINUE_CONVERSATION_TOOL_NAME
+                )
                 continue
 
             remaining_calls = [
@@ -1468,6 +1508,21 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 )
 
         chat_log.content[:] = updated_content
+        for call in retained_calls:
+            chat_log.async_add_assistant_content_without_tools(
+                make_tool_result_content(
+                    agent_id=self.entity_id,
+                    tool_call_id=call.id,
+                    tool_name=call.tool_name,
+                    tool_result={
+                        "result": {
+                            "status": "handled",
+                            "applied": response_text is not None
+                            and call is retained_calls[-1],
+                        }
+                    },
+                )
+            )
         if response_text and already_delivered and chat_log.delta_listener:
             chat_log.delta_listener(
                 chat_log, {"role": "assistant", "content": response_text}
@@ -1813,23 +1868,24 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             ):
                 yield delta
         except BaseException:
-            # Completed calls/results remain authoritative for side effects and
-            # replay protection. Only this failed request's native reasoning IDs
-            # are unsafe to send again without their associated complete output.
+            # An interrupted response has no complete native output graph. Downgrade
+            # this whole response, not guessed adjacent reasoning/message pairs.
+            # Keep plain text and completed calls/results for side-effect tracking
+            # and replay protection, without retaining dependent provider IDs.
             content = getattr(chat_log, "content", None)
             if content is not None:
-                for item in list(content):
+                retained = []
+                for item in content:
                     if (
                         id(item) not in existing
-                        and getattr(getattr(item, "native", None), "type", None)
-                        == "reasoning"
+                        and isinstance(item, conversation.AssistantContent)
+                        and item.native is not None
                     ):
-                        if getattr(item, "tool_calls", None) or getattr(
-                            item, "content", None
-                        ):
-                            item.native = None
-                        else:
-                            content.remove(item)
+                        if item.tool_calls or item.content:
+                            retained.append(replace(item, native=None))
+                    else:
+                        retained.append(item)
+                content[:] = retained
             raise
 
     async def _transform_responses_stream_events(
@@ -2058,6 +2114,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     )
                     validate_tool_call_ids(completed_calls)
                     yield {
+                        # SDK-native calls retain their original provider item ID
+                        # and arguments, alongside HA's executable call record.
+                        **({"native": item} if hasattr(item, "model_dump") else {}),
                         "tool_calls": [
                             llm.ToolInput(
                                 id=item.call_id,
@@ -2065,7 +2124,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                 tool_args=arguments,
                                 external=True,
                             )
-                        ]
+                        ],
                     }
                 continue
 

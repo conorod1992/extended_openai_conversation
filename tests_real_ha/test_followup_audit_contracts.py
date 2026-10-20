@@ -347,3 +347,19 @@ async def test_group_repair_reaches_registered_websocket_handler(
     )
     assert after["config"]["function_groups"][0]["name"] == "Repaired"
 
+
+@pytest.mark.parametrize("commentary", [False, True])
+async def test_native_ha_reasoning_finalizer_history(hass, commentary):
+    from tests.test_responses_history_coherence import (
+        exercise_reasoning_finalizer_history,
+    )
+
+    await exercise_reasoning_finalizer_history(hass, commentary)
+
+
+async def test_native_ha_interrupted_reasoning_history(hass):
+    from tests.test_responses_history_coherence import (
+        exercise_interrupted_response_history,
+    )
+
+    await exercise_interrupted_response_history(hass)
