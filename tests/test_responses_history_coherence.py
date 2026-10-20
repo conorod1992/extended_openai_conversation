@@ -335,3 +335,51 @@ async def test_conditional_retry_preserves_complete_earlier_native_output(hass, 
             for item in outgoing
         )
         obj._execute_function_tool.assert_awaited_once()
+
+
+@pytest.mark.parametrize("answer", ["Already streamed answer", ""])
+async def test_finalizer_result_never_leaves_a_completed_turn_awaiting_response(
+    hass, answer
+):
+    native = [reasoning("rs_terminal")]
+    if answer:
+        native.append(message("msg_spoken", answer))
+    native.append(
+        call(
+            CONTINUE_CONVERSATION_TOOL_NAME,
+            "final",
+            {"response": answer, "continue_conversation": True},
+        )
+    )
+    obj, client = entity(hass, [events(native)])
+
+    async def create(**_kwargs):
+        assert client.responses.create.await_count == 1, (
+            "completed finalizer requested another provider round"
+        )
+        return events(native)
+
+    client.responses.create.side_effect = create
+    log = conversation.ChatLog(hass, "finalizer-terminal")
+    heard = []
+    log.delta_listener = lambda _log, delta: heard.append(delta)
+    log.async_add_user_content(conversation.UserContent(content="Start"))
+    from custom_components.extended_openai_conversation_responses.completion_events import (
+        completion_event_scope,
+    )
+
+    async with completion_event_scope():
+        assert (
+            await obj._async_handle_chat_log(log, [], [], conditional_continue=True)
+            is True
+        )
+    assert client.responses.create.await_count == 1
+    assert log.content[-1].role == "assistant"
+    assert log.content[-1].content == answer
+    assert not log.unresponded_tool_results
+    if answer:
+        assert sum(delta.get("content", "").count(answer) for delta in heard) == 1
+        assert (
+            sum(getattr(content, "content", None) == answer for content in log.content)
+            == 1
+        )

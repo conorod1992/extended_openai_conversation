@@ -1507,6 +1507,17 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     )
                 )
 
+        if retained_calls and already_delivered:
+            # Keep native output intact, but move its display text after the
+            # handling results so HA sees a terminal assistant answer exactly once.
+            updated_content = [
+                replace(content, content=None)
+                if id(content) not in existing_content_ids
+                and isinstance(content, conversation.AssistantContent)
+                and content.content == response_text
+                else content
+                for content in updated_content
+            ]
         chat_log.content[:] = updated_content
         for call in retained_calls:
             chat_log.async_add_assistant_content_without_tools(
@@ -1521,6 +1532,18 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             and call is retained_calls[-1],
                         }
                     },
+                )
+            )
+        if (
+            retained_calls
+            and response_text is not None
+            and (already_delivered or not response_text)
+        ):
+            # A result at the tail means "request another provider turn" to HA.
+            # This answer has already been handled, including an explicit silence.
+            chat_log.async_add_assistant_content_without_tools(
+                conversation.AssistantContent(
+                    agent_id=self.entity_id, content=response_text
                 )
             )
         if response_text and already_delivered and chat_log.delta_listener:
