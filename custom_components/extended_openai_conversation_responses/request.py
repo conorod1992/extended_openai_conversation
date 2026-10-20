@@ -203,32 +203,33 @@ def build_web_search_tool(
     }
 
 
-def conversation_tools_required(options: Mapping[str, Any]) -> bool:
-    """Bound saved Conversation validation to the tools its fresh requests expose."""
+def function_call_budget_available(options: Mapping[str, Any]) -> bool:
+    """Share the ordinary Function/Group-loader exposure rule with runtime."""
     from .const import (
-        CONF_CONTINUE_CONVERSATION,
         CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-        CONTINUE_CONVERSATION_CONDITIONAL,
         DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     )
 
-    # A fresh Conversation always advertises its lifecycle Function unless the
-    # execution budget suppresses ordinary tools. Control tools bypass that budget.
     return (
-        bool(
-            int(
-                options.get(
-                    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-                    DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-                )
+        int(
+            options.get(
+                CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+                DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
             )
         )
+        > 0
+    )
+
+
+def conversation_tools_required(options: Mapping[str, Any]) -> bool:
+    """Bound saved Conversation validation to the tools its fresh requests expose."""
+    from .const import CONF_CONTINUE_CONVERSATION, CONTINUE_CONVERSATION_CONDITIONAL
+
+    # A positive budget exposes the lifecycle Function and ordinary/Group tools.
+    # Conditional continuation independently requires its finalizer at zero.
+    return (
+        function_call_budget_available(options)
         or options.get(CONF_CONTINUE_CONVERSATION) == CONTINUE_CONVERSATION_CONDITIONAL
-        or any(
-            group.get("enabled", True) and group.get("loading_mode") == "on_demand"
-            for group in options.get(CONF_FUNCTION_GROUPS, [])
-            if isinstance(group, Mapping)
-        )
     )
 
 

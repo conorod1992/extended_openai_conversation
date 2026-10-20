@@ -78,7 +78,7 @@ def test_conversation_tool_requirement_tracks_budget_finalizer_and_loader():
             "continue_conversation": "conditional",
         }
     )
-    assert conversation_tools_required(
+    assert not conversation_tools_required(
         {
             "max_function_calls_per_conversation": 0,
             "function_groups": [
