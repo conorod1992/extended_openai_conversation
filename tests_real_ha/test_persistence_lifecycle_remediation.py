@@ -21,10 +21,33 @@ from custom_components.extended_openai_conversation_responses.usage import (
     async_get_usage,
 )
 from homeassistant.components import conversation
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 from tests_real_ha.test_acceptance_lifecycle import _conversation_subentry, _make_entry
 from tests_real_ha.test_cross_feature_acceptance import _agent
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+async def test_usage_stop_releases_one_shot_listener_without_duplicate_removal(
+    hass, caplog, explicit
+):
+    manager = await async_get_usage(hass, "stop-listener-entry", "stop-listener-agent")
+    async with manager.async_run():
+        await manager.async_record_request(successful=True, usage=RequestUsage(total_tokens=123))
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert manager._cancel_stop is not None
+    if explicit:
+        await manager.async_shutdown()
+    caplog.clear()
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_STOP)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    manager.dispose_maintenance()
+    assert "Unable to remove unknown job listener" not in caplog.text
+    assert manager._cancel_stop is None
+    assert manager._cancel_retention is None
+    assert manager.as_dict()["total_tokens"] == 123
+    assert len(manager.requests) == len(manager.runs) == 1
 
 
 async def test_expired_export_removes_private_payload_during_idle(hass, freezer):

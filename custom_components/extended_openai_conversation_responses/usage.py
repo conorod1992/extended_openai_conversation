@@ -1310,12 +1310,16 @@ def _register_usage_maintenance(hass: HomeAssistant, manager: UsageManager) -> N
     async def prune(_now: datetime) -> None:
         await manager._async_prune_usage_if_due()
 
+    async def stop(event: Any) -> None:
+        # HA removes a one-shot listener before invoking its coroutine. Release
+        # our handle so shutdown only cancels callbacks that are still owned.
+        manager._cancel_stop = None
+        await manager.async_shutdown(event)
+
     manager._cancel_retention = async_track_time_interval(
         hass, prune, timedelta(days=1)
     )
-    manager._cancel_stop = hass.bus.async_listen_once(
-        EVENT_HOMEASSISTANT_STOP, manager.async_shutdown
-    )
+    manager._cancel_stop = hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, stop)
     manager._shutdown_registered = True
 
 
