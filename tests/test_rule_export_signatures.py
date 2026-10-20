@@ -70,3 +70,46 @@ async def test_no_credential_survives_any_redacted_rule_export(hass, kind):
             backup.restore_redacted_secrets(exported_rules)
         )["rules"][0]["action"]
     )
+
+
+async def test_forged_signature_cannot_authorize_secret_recovery(hass, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    manager = RequestRules(MemoryStore())
+    await manager.async_initialize()
+    rule = local_rule()
+    rule["action"]["actions"] = [
+        {
+            "action": "rest_command.send",
+            "data": {"destination": "trusted", "api_key": "private-value"},
+        }
+    ]
+    await manager.async_create(rule)
+    document = _document()
+    document["request_rules"] = await manager.async_backup_data()
+    current = backup.inspect_backup(document, "agent-new")
+    exported = backup.finalize_backup_snapshot(document)["document"]
+    action = exported["request_rules"]["rules"][0]["action"]
+    action["actions"][0]["data"]["destination"] = "untrusted"
+    # Supplying the original derived string does not authorize changed public context.
+    action["canonical_signature"] = current.request_rules["rules"][0]["action"][
+        "canonical_signature"
+    ]
+    imported = transfer.inspect_transfer(
+        exported, "agent-new", sections=[transfer.SECTION_REQUEST_RULES]
+    )
+    monkeypatch.setattr(
+        transfer, "_async_validate_request_rule_function_dependencies", AsyncMock()
+    )
+    with pytest.raises(
+        backup.BackupError, match="Cannot safely restore unavailable secrets"
+    ):
+        await transfer.async_materialize_restore(
+            hass,
+            SimpleNamespace(data={}),
+            SimpleNamespace(subentry_id="agent-new"),
+            imported,
+            sections=[transfer.SECTION_REQUEST_RULES],
+            current_snapshot=current,
+        )

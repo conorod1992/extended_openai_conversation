@@ -757,6 +757,29 @@ def _restore_with_fallback(
     return deepcopy(value)
 
 
+def _request_rule_secret_context(value: Any) -> Any:
+    """Exclude recomputed action metadata from credential-context matching."""
+    if not isinstance(value, Mapping) or not isinstance(value.get("rules"), list):
+        return value
+    rules = []
+    for rule in value["rules"]:
+        if (
+            isinstance(rule, Mapping)
+            and rule.get("action_type") == "local_action"
+            and isinstance(rule.get("action"), Mapping)
+        ):
+            rule = {
+                **rule,
+                "action": {
+                    key: item
+                    for key, item in rule["action"].items()
+                    if key != "canonical_signature"
+                },
+            }
+        rules.append(rule)
+    return {**value, "rules": rules}
+
+
 def _restore_section_secrets(
     value: Any, fallback: Any
 ) -> tuple[Any, tuple[str, ...], tuple[str, ...]]:
@@ -1233,7 +1256,8 @@ def _prepared_restore_from_selection(
     if SECTION_REQUEST_RULES in selected:
         if imported.raw_request_rules is not None:
             raw, kept, absent = _restore_section_secrets(
-                imported.raw_request_rules, current.request_rules
+                _request_rule_secret_context(imported.raw_request_rules),
+                _request_rule_secret_context(current.request_rules),
             )
             preserved.extend(f"request_rules.{path}" for path in kept)
             missing.extend(f"request_rules.{path}" for path in absent)
