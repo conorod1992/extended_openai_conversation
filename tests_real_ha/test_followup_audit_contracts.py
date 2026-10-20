@@ -1,6 +1,5 @@
 """Follow-up findings through native HA services, storage and translations."""
 
-
 import pytest
 from pytest_homeassistant_custom_component.common import MockUser
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
@@ -109,3 +108,145 @@ async def test_runtime_retirement_translation_and_english_fallback(hass, languag
         "{" + name + "}" in issues[prefix + "description"]
         for name in ("assistant", "model", "shutdown_at")
     )
+
+
+@pytest.mark.parametrize("child_service", ["conversation.process", f"{DOMAIN}.process"])
+@pytest.mark.parametrize("loading_mode", ["always", "on_demand"])
+async def test_nested_rule_uses_callee_group_and_restores_parent_group(
+    hass, monkeypatch, child_service, loading_mode
+):
+    """Real Rule Function dispatch must not compare another agent's Groups."""
+    import json
+
+    from custom_components.extended_openai_conversation_responses.const import (
+        CONF_FUNCTION_GROUPS,
+        SERVICE_CALL_FUNCTION,
+    )
+
+    def template(name, value):
+        return {
+            "spec": {
+                "name": name,
+                "description": name,
+                "parameters": {"type": "object", "properties": {}},
+            },
+            "function": {
+                "type": "template",
+                "value_template": value,
+                "parse_result": False,
+            },
+        }
+
+    def group(group_id, names, mode="always"):
+        return {
+            "id": group_id,
+            "name": group_id,
+            "description": group_id,
+            "enabled": True,
+            "loading_mode": mode,
+            "functions": names,
+        }
+
+    child = await _agent(
+        hass,
+        title="Grouped child",
+        **{
+            CONF_FUNCTION_TOOLS: [template("surface_value_a", "child-only-value")],
+            CONF_FUNCTION_GROUPS: [
+                group("child-group", ["surface_value_a"], loading_mode)
+            ],
+        },
+    )
+    effects = []
+
+    async def record(call):
+        effects.append(call.data["value"])
+
+    hass.services.async_register("nested_group_probe", "record", record)
+    await child._request_rules.async_create(
+        _local(
+            [
+                {
+                    "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+                    "data": {
+                        "function": "surface_value_a",
+                        "arguments": {},
+                        "result_alias": "answer",
+                    },
+                },
+                {"action": "nested_group_probe.record", "data": {"value": "{answer}"}},
+            ],
+            phrase="grouped child request",
+            success="Child value {answer}",
+            failure="Child function failed",
+        )
+    )
+    async_expose_entity(hass, "conversation", child.entity_id, True)
+    child_sent = _provider(monkeypatch, child, [])
+    delegate = template("delegate", "unused")
+    delegate["function"] = {
+        "type": "script",
+        "sequence": [
+            {
+                "action": child_service,
+                "data": {
+                    "agent_id": child.entity_id,
+                    "text": "grouped child request",
+                    "language": "en",
+                },
+                "response_variable": "child_answer",
+            },
+            {"variables": {"_function_result": "{{ child_answer }}"}},
+        ],
+    }
+    parent = await _agent(
+        hass,
+        title="Grouped parent",
+        **{
+            CONF_FUNCTION_TOOLS: [
+                delegate,
+                template("parent_value", "parent-only-value"),
+            ],
+            CONF_FUNCTION_GROUPS: [group("parent-group", ["delegate", "parent_value"])],
+        },
+    )
+    parent_sent = _provider(
+        monkeypatch,
+        parent,
+        [
+            {
+                "index": 0,
+                "id": name + "-call",
+                "type": "function",
+                "function": {"name": name, "arguments": "{}"},
+            }
+            for name in ("delegate", "parent_value")
+        ]
+        + ["Parent completed"],
+    )
+    user = MockUser(id="group-owner", name="Group owner", is_owner=True).add_to_hass(
+        hass
+    )
+    direct = await _response_service_call(
+        hass,
+        "process",
+        {"text": "grouped child request", "agent_id": child.entity_id},
+        user_id=user.id,
+    )
+    assert direct["successful"] is True, direct
+    assert direct["response"] == "Child value child-only-value"
+    result = await _response_service_call(
+        hass,
+        "process",
+        {"text": "Delegate and check parent", "agent_id": parent.entity_id},
+        user_id=user.id,
+    )
+    assert result["successful"] is True, result
+    assert result["response"] == "Parent completed"
+    assert effects == ["child-only-value", "child-only-value"]
+    assert child_sent == []
+    assert len(parent_sent) == 3
+    retained = json.dumps(parent_sent[-1]["messages"])
+    assert "Child value child-only-value" in retained
+    assert "parent-only-value" in retained
+    assert "Child function failed" not in retained
