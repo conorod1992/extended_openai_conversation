@@ -38,9 +38,31 @@ async def completion_event_scope() -> AsyncIterator[None]:
         yield
     finally:
         _PENDING.reset(token)
-        for hass, payload, contents in pending:
-            # Once completion is queued, cancellation must not discard its event.
-            await asyncio.shield(_async_emit(hass, payload, contents))
+        if pending:
+            # Own one task for the whole queue. Shielding alone would let this
+            # context exit on cancellation while later events remain unscheduled.
+            task = asyncio.create_task(_async_flush(pending))
+            cancellation: asyncio.CancelledError | None = None
+            while not task.done():
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError as err:
+                    if task.cancelled():
+                        raise
+                    if cancellation is None:
+                        cancellation = err
+                except Exception:
+                    break
+            task.result()
+            if cancellation is not None:
+                raise cancellation
+
+
+async def _async_flush(
+    pending: list[tuple[HomeAssistant, dict[str, Any], tuple[Any, ...]]],
+) -> None:
+    for hass, payload, contents in pending:
+        await _async_emit(hass, payload, contents)
 
 
 def queue_completion_event(
