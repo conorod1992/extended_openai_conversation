@@ -16,7 +16,9 @@ from custom_components.extended_openai_conversation_responses.entity import (
     CONTINUE_CONVERSATION_TOOL_NAME,
 )
 from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+    is_tool_result_content,
     make_tool_result_content,
+    tool_result_data,
 )
 from homeassistant.components import conversation
 from homeassistant.exceptions import HomeAssistantError
@@ -155,17 +157,16 @@ async def exercise_finalizer_termination(
             tool["name"] if api_mode == "responses" else tool["function"]["name"]
             for tool in request_tools
         } == {CONTINUE_CONVERSATION_TOOL_NAME}
-        assert (
-            len(
-                [
-                    item
-                    for item in log.content
-                    if isinstance(item, conversation.ToolResultContent)
-                    and item.tool_call_id == "action"
-                ]
-            )
-            == 1
-        )
+        action_results = [
+            item
+            for item in log.content
+            if is_tool_result_content(item) and item.tool_call_id == "action"
+        ]
+        assert len(action_results) == 1
+        assert action_results[0].tool_name == "effect"
+        assert tool_result_data(action_results[0]) == {
+            "result": "effect completed once"
+        }
 
 
 @pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
