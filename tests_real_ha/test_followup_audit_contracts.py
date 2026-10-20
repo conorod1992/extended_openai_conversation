@@ -15,6 +15,15 @@ from tests_real_ha.test_request_rules_script_semantics import _local
 from tests_real_ha.test_service_registry_acceptance import _response_service_call
 
 
+@pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
+@pytest.mark.parametrize("decision", [False, True])
+@pytest.mark.parametrize("answer", ["", "Done"], ids=["silent", "spoken"])
+async def test_native_finalizer_after_action_terminates(hass, api_mode, decision, answer):
+    from tests.test_conditional_finalizer_termination import exercise_finalizer_termination
+
+    await exercise_finalizer_termination(hass, api_mode, decision, answer)
+
+
 @pytest.mark.parametrize("child_service", ["conversation.process", f"{DOMAIN}.process"])
 async def test_standard_child_service_does_not_poison_parent_response(
     hass, monkeypatch, child_service

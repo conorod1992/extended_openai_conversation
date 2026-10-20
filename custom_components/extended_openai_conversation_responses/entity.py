@@ -1534,13 +1534,12 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     },
                 )
             )
-        if (
-            retained_calls
-            and response_text is not None
-            and (already_delivered or not response_text)
+        if response_text is not None and (
+            not response_text or (retained_calls and already_delivered)
         ):
             # A result at the tail means "request another provider turn" to HA.
-            # This answer has already been handled, including an explicit silence.
+            # Explicit silence completes either API's answer even when the
+            # consumed Chat Completions finalizer was removed from history.
             chat_log.async_add_assistant_content_without_tools(
                 conversation.AssistantContent(
                     agent_id=self.entity_id, content=response_text
