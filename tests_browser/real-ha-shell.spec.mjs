@@ -968,6 +968,36 @@ test("genuine HA YAML keyboard saves reject invalid YAML before persisting the c
   await expect(card).toHaveCount(0);
 });
 
+test("cold Quiet Hours loads native entity pickers and saves both manual selections", async ({context,page}) => {
+  await authenticate(context);
+  // This test receives its own browser context. Do not visit another editor
+  // first: HA deliberately lazy-loads these native custom elements.
+  await page.goto(`${baseUrl}/extended-openai/capabilities/quiet-hours`, {waitUntil:"domcontentloaded"});
+  const panel=page.locator("extended-openai-management-panel");
+  const card=panel.locator('[data-qh-satellite="assist_satellite.cold_quiet"]');
+  await expect(card).toBeVisible();
+  if (!await card.locator("details").evaluate(element=>element.open)) await card.locator("summary").click();
+  const choose=async (kind,label,entityId) => {
+    const picker=card.locator(`ha-entity-picker[data-kind="${kind}"]`);
+    await expect(picker.locator("ha-picker-field")).toBeVisible({timeout:30000});
+    await picker.locator("ha-picker-field").click();
+    await picker.locator("ha-combo-box-item").filter({hasText:label}).locator("button").click();
+    await expect(picker).toHaveJSProperty("value",entityId);
+    expect(await picker.evaluate(element=>Boolean(element.shadowRoot) && element.getBoundingClientRect().height>0)).toBe(true);
+  };
+  await choose("media_player_entity_id","Cold speaker A","media_player.cold_quiet_a");
+  await choose("wake_sound_entity_id","Cold wake sound A","switch.cold_quiet_wake_a");
+  await panel.locator("#save-page").click();
+  await expect.poll(()=>panel.evaluate(host=>host._call("quiet_hours","get").then(result=>result.config.overrides))).toEqual({
+    "assist_satellite.cold_quiet":{media_player_entity_id:"media_player.cold_quiet_a",wake_sound_entity_id:"switch.cold_quiet_wake_a"},
+  });
+  await page.reload();
+  await expect(card).toBeVisible();
+  if (!await card.locator("details").evaluate(element=>element.open)) await card.locator("summary").click();
+  await expect(card.locator('[data-kind="media_player_entity_id"]')).toHaveJSProperty("value","media_player.cold_quiet_a");
+  await expect(card.locator('[data-kind="wake_sound_entity_id"]')).toHaveJSProperty("value","switch.cold_quiet_wake_a");
+});
+
 test("cold Voice user pickers select a secondary HA user and keep its name after save/reload", async ({context,page}) => {
   await authenticate(context);
   await page.goto(`${baseUrl}/extended-openai/assistant/voice`, {waitUntil:"domcontentloaded"});
