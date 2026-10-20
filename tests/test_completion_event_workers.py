@@ -1,6 +1,7 @@
 """Completion event snapshots keep retained backend payload traversal off HA's loop."""
 
 import asyncio
+from contextlib import closing
 import sqlite3
 import threading
 from types import SimpleNamespace
@@ -65,7 +66,7 @@ async def test_completion_copies_real_sqlite_history_in_workers(
 
 async def retained_sqlite_history(tmp_path, rows):
     path = tmp_path / "report.db"
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         connection.execute(
             "CREATE TABLE report (a BLOB,b BLOB,c BLOB,d BLOB,e BLOB,f BLOB,g BLOB,h BLOB)"
         )

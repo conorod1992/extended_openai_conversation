@@ -1,6 +1,7 @@
 """Real HA completion conversion remains responsive with accepted SQLite history."""
 
 import asyncio
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -36,6 +37,15 @@ async def test_retained_backend_completion_does_not_block_ha(hass, tmp_path, row
     loop = asyncio.get_running_loop()
     prior_debug = loop.get_debug()
     loop.set_debug(False)
+    # pytest enables bus DEBUG logging, which formats the entire event payload
+    # synchronously. Measure normal HA logging, retaining the genuine bus call.
+    bus_logger = logging.getLogger("homeassistant.core")
+    prior_level = bus_logger.level
+    bus_logger.setLevel(logging.INFO)
+    # EventBus caches this level at construction and eagerly builds event repr
+    # when enabled, even if the logger level is changed afterward.
+    prior_bus_debug = hass.bus._debug
+    hass.bus._debug = False
     running = True
     gaps = []
 
@@ -56,6 +66,8 @@ async def test_retained_backend_completion_does_not_block_ha(hass, tmp_path, row
         running = False
         await pulse
         loop.set_debug(prior_debug)
+        bus_logger.setLevel(prior_level)
+        hass.bus._debug = prior_bus_debug
     await hass.async_block_till_done()
     assert len(finished) == 1
     assert finished[0].data["messages"] == expected
