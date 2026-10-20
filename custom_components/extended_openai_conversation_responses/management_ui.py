@@ -3230,6 +3230,7 @@ def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
         vol.Optional("name"): str,
         vol.Optional("original_name"): str,
         vol.Optional("original_id"): str,
+        vol.Optional("repair"): bool,
         vol.Optional("group_id"): vol.Any(None, str),
         vol.Optional("rule_id"): str,
         vol.Optional("rule"): dict,

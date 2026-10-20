@@ -61,3 +61,17 @@ async def test_empty_usable_tools_do_not_become_defaults(
                 }
             ]
         )
+
+
+@pytest.mark.parametrize("repair", [False, True])
+def test_public_group_repair_schema_accepts_boolean_flag(repair):
+    payload = {
+        "id": 1,
+        "type": ui.WS_COMMAND,
+        "section": "tools",
+        "action": "save_group",
+        "original_id": "repair-group",
+        "repair": repair,
+        "group": {},
+    }
+    assert ui.websocket_management._ws_schema(payload) == payload

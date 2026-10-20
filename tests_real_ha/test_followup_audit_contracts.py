@@ -250,3 +250,100 @@ async def test_nested_rule_uses_callee_group_and_restores_parent_group(
     assert "Child value child-only-value" in retained
     assert "parent-only-value" in retained
     assert "Child function failed" not in retained
+
+
+@pytest.mark.parametrize("quarantined_tool", [False, True])
+async def test_group_repair_reaches_registered_websocket_handler(
+    hass, hass_ws_client, monkeypatch, quarantined_tool
+):
+    from copy import deepcopy
+    from unittest.mock import AsyncMock
+    from custom_components.extended_openai_conversation_responses import (
+        management_ui as ui,
+    )
+    from tests_real_ha.test_management_backend_acceptance import (
+        _admin_client,
+        _management_call,
+        _management_response,
+    )
+
+    tool = {
+        "spec": {
+            "name": "execute_services",
+            "description": "Probe",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "function": {"type": "template", "value_template": "OK"},
+    }
+    agent = await _agent(hass, **{CONF_FUNCTION_TOOLS: [tool]})
+    broken_tool = deepcopy(tool)
+    if quarantined_tool:
+        broken_tool["spec"]["parameters"]["description"] = 123
+    broken_group = {
+        "id": "repair-group",
+        "description": "Repair me",
+        "loading_mode": "always",
+        "enabled": True,
+        "functions": ["execute_services"],
+    }
+    hass.config_entries.async_update_subentry(
+        agent.entry,
+        agent.subentry,
+        data={
+            **agent.subentry.data,
+            CONF_FUNCTION_TOOLS: [broken_tool],
+            "function_groups": [broken_group],
+        },
+    )
+    client = await _admin_client(hass, hass_ws_client)
+    before = await _management_call(
+        client, entry=agent.entry, section="configuration", action="get"
+    )
+    assert before.get("function_repair")
+    raw_tools = deepcopy(agent.subentry.data[CONF_FUNCTION_TOOLS])
+    dispatch = AsyncMock(wraps=ui.async_management_command)
+    monkeypatch.setattr(ui, "async_management_command", dispatch)
+    replacement = {**broken_group, "name": "Repaired", "functions": []}
+    repaired = await _management_response(
+        client,
+        entry=agent.entry,
+        section="tools",
+        action="save_group",
+        original_id="repair-group",
+        repair=True,
+        group=replacement,
+    )
+    assert repaired["success"] is True, repaired
+    assert repaired["result"].get("valid", True), repaired
+    assert dispatch.await_count == 1
+    assert agent.subentry.data["function_groups"][0]["name"] == "Repaired"
+    assert agent.subentry.data[CONF_FUNCTION_TOOLS] == raw_tools
+    missing_id = await _management_response(
+        client,
+        entry=agent.entry,
+        section="tools",
+        action="save_group",
+        repair=True,
+        group=replacement,
+    )
+    assert missing_id["success"] is False
+    assert missing_id["error"]["code"] == "invalid_request"
+    assert "original_id" in missing_id["error"]["message"]
+    assert dispatch.await_count == 2
+    invalid_flag = await _management_response(
+        client,
+        entry=agent.entry,
+        section="tools",
+        action="save_group",
+        original_id="repair-group",
+        repair="true",
+        group=replacement,
+    )
+    assert invalid_flag["success"] is False
+    assert invalid_flag["error"]["code"] == "invalid_format"
+    assert dispatch.await_count == 2
+    after = await _management_call(
+        client, entry=agent.entry, section="configuration", action="get"
+    )
+    assert after["config"]["function_groups"][0]["name"] == "Repaired"
+
