@@ -1663,28 +1663,62 @@ def _search_features(turn: ArchiveTurn) -> tuple[str, frozenset[str]]:
     return normalized, tokens
 
 
+def _excerpt_match_offset(value: str, query: str) -> int:
+    """Use ranking's lexical matches, retaining offsets into the display text."""
+    from .retrieval_text import cjk_terms
+
+    folded_parts: list[str] = []
+    offsets: list[int] = []
+    for index, character in enumerate(value):
+        folded = character.casefold().replace("\u2019", "'")
+        folded_parts.append(folded)
+        offsets.extend([index] * len(folded))
+    folded_text = "".join(folded_parts)
+    words = list(_TOKEN_PATTERN.finditer(folded_text))
+    normalized = " ".join(word.group() for word in words)
+    normalized_query = _normalize(query)
+    # Prefer the same whole phrase bonus as the ranker, including punctuation
+    # normalized to spaces. A substring inside a different word is not a match.
+    phrase = f" {normalized} ".find(f" {normalized_query} ") if normalized_query else -1
+    if phrase >= 0:
+        position = 0
+        for word in words:
+            if position == phrase:
+                return offsets[word.start()]
+            position += len(word.group()) + 1
+
+    terms = _tokens_from_normalized(normalized_query)
+    for word in words:
+        token = word.group()
+        if not (_tokens_from_normalized(token) & terms):
+            continue
+        # Compounds and possessives are indexed both whole and by component.
+        # Anchor a matching component, even in a compound longer than a snippet.
+        stem = token[:-2] if token.endswith("'s") else token
+        positions = [
+            part.start()
+            for part in re.finditer(r"[^-]+", stem)
+            if part.group() not in _STOP_WORDS and _stem(part.group()) in terms
+        ]
+        if not token.isascii():
+            # Continuous CJK text has no word boundary; prefer the complete
+            # query when present, otherwise the character/bigram rank matches.
+            cjk_matches = cjk_terms(token) & terms
+            if cjk_matches:
+                exact = token.find(normalized_query) if normalized_query else -1
+                positions.append(
+                    exact
+                    if exact >= 0
+                    else min(token.find(term) for term in cjk_matches)
+                )
+        return offsets[word.start() + min(positions, default=0)]
+    return 0
+
+
 def _excerpt(value: str, query: str) -> str:
     normalized = _SPACE_PATTERN.sub(" ", unicodedata.normalize("NFC", value)).strip()
-    lower = normalized.casefold().replace("\u2019", "'")
-    raw_query = unicodedata.normalize("NFC", query).casefold().replace("\u2019", "'")
-    terms = _tokens(query)
-    matches = [lower.find(raw_query)] if raw_query.strip() else []
-    if not any(position >= 0 for position in matches):
-        matches = [
-            lower.find(token)
-            for token in _TOKEN_PATTERN.findall(raw_query)
-            if token not in _STOP_WORDS
-        ]
-    if not any(position >= 0 for position in matches):
-        matches.extend(lower.find(token) for token in terms)
-    if not any(position >= 0 for position in matches):
-        matches.extend(
-            match.start()
-            for match in _TOKEN_PATTERN.finditer(normalized)
-            if _stem(match.group().casefold().replace("\u2019", "'")) in terms
-        )
-    index = min((position for position in matches if position >= 0), default=0)
-    start = max(0, index - MAX_EXCERPT_LENGTH // 3) if index >= 0 else 0
+    index = _excerpt_match_offset(normalized, query)
+    start = max(0, index - MAX_EXCERPT_LENGTH // 3)
     excerpt = normalized[start : start + MAX_EXCERPT_LENGTH]
     return (
         ("…" if start else "")
