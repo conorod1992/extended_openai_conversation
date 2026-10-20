@@ -43,6 +43,8 @@ from .secret_redaction import (
     REDACTED_SECRET_SENTINEL,
     is_literal_text,
     is_redacted_secret,
+    is_redacted_url,
+    redact_http_url,
     redact_secrets,
     restore_redacted_secrets,
 )
@@ -514,7 +516,7 @@ def _is_redacted_placeholder(value: Any) -> bool:
 
 def _normalize_redaction_placeholders(value: Any) -> Any:
     """Use one explicit placeholder in newly created transfer documents."""
-    if is_literal_text(value):
+    if is_literal_text(value) or is_redacted_url(value):
         return deepcopy(value)
     if _is_redacted_placeholder(value):
         return dict(REDACTED_SECRET_SENTINEL)
@@ -632,6 +634,12 @@ def _compatible_secret_context(
     """
     if is_literal_text(value):
         return bool(value[LITERAL_TEXT_KEY] == fallback)
+    if is_redacted_url(value):
+        return (
+            isinstance(fallback, str)
+            and None not in value.values()
+            and redact_http_url(fallback) == value
+        )
     if _is_redacted_placeholder(value):
         return (
             fallback is not _ABSENT

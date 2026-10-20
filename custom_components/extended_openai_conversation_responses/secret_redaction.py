@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from urllib.parse import unquote_plus, urlsplit, urlunsplit
 
 import yaml
 
 from .function_yaml import decoded_function_fields, json_safe_function_fields
 
 REDACTED_SECRET_SENTINEL = {"__extended_openai_redacted_secret__": True}
+REDACTED_URL_KEY = "__extended_openai_redacted_url__"
 LITERAL_TEXT_KEY = "__extended_openai_literal_text__"
 
 _SECRET_KEY_PARTS = frozenset(
@@ -65,6 +67,55 @@ def _is_payload_secret_key(key: Any) -> bool:
     )
 
 
+def is_redacted_url(value: Any) -> bool:
+    """Recognize an HTTP credential marker with its visible destination binding."""
+    return (
+        isinstance(value, dict)
+        and set(value) == {REDACTED_URL_KEY}
+        and (
+            value[REDACTED_URL_KEY] is None or isinstance(value[REDACTED_URL_KEY], str)
+        )
+    )
+
+
+def redact_http_url(value: str) -> dict[str, Any] | None:
+    """Hide HTTP user information/query credentials, retaining public URL bytes.
+
+    The marker is a scalar replacement, not a runnable URL. Recovery compares
+    the entire public projection, including non-secret query values and order.
+    Unsupported malformed URLs cannot authorize recovery of a local credential.
+    """
+    if not value.lower().startswith(("http://", "https://")):
+        return None
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return {REDACTED_URL_KEY: None}
+    authority = parsed.netloc
+    changed = "@" in authority
+    if changed:
+        authority = "[redacted]@" + authority.rsplit("@", 1)[1]
+    query = []
+    for component in parsed.query.split("&"):
+        name, separator, content = component.partition("=")
+        if separator and (
+            _is_secret_key(unquote_plus(name))
+            or unquote_plus(name).casefold()
+            in {"key", "sig", "signature", "credential"}
+            or _LIKELY_SECRET.search(unquote_plus(content))
+        ):
+            content = "[redacted]"
+            changed = True
+        query.append(name + separator + content)
+    if not changed:
+        return None
+    public = urlunsplit(
+        (parsed.scheme, authority, parsed.path, "&".join(query), parsed.fragment)
+    )
+    # Do not emit a second credential detected outside the supported URL parts.
+    return {REDACTED_URL_KEY: None if _LIKELY_SECRET.search(public) else public}
+
+
 def _sentinel() -> dict[str, bool]:
     """Return an isolated sentinel object suitable for JSON serialization."""
     return dict(REDACTED_SECRET_SENTINEL)
@@ -72,8 +123,10 @@ def _sentinel() -> dict[str, bool]:
 
 def is_redacted_secret(value: Any) -> bool:
     """Recognize structured markers and whole/embedded legacy text markers."""
-    return value == REDACTED_SECRET_SENTINEL or (
-        isinstance(value, str) and "[redacted]" in value
+    return (
+        is_redacted_url(value)
+        or value == REDACTED_SECRET_SENTINEL
+        or (isinstance(value, str) and "[redacted]" in value)
     )
 
 
@@ -107,6 +160,8 @@ def _redact_secrets(
     rule_action: bool = False,
 ) -> Any:
     """Recursively redact secrets while tracking structural schema context."""
+    if is_redacted_url(value):
+        return dict(value)
     if value == REDACTED_SECRET_SENTINEL:
         return _sentinel()
     if is_literal_text(value):
@@ -126,6 +181,10 @@ def _redact_secrets(
             for index, item in enumerate(value)
         ]
     if isinstance(value, str):
+        if not schema and path and path[-1] in {"resource", "url", "resource_template"}:
+            redacted_url = redact_http_url(value)
+            if redacted_url is not None:
+                return redacted_url
         # The entire leaf must be recoverable. Substring replacement loses the
         # credential while leaving a seemingly usable, permanently corrupt value.
         if _LIKELY_SECRET.search(value):
@@ -143,7 +202,13 @@ def _redact_secrets(
         child_path = (*path, key)
         child_schema = schema or _is_function_tool_schema_root(child_path)
         secret_key = _is_payload_secret_key(key) if payload else _is_secret_key(key)
-        if not schema and secret_key:
+        http_cookie = (
+            path
+            and isinstance(path[-1], str)
+            and path[-1].casefold() == "headers"
+            and str(key).casefold() in {"cookie", "set-cookie"}
+        )
+        if not schema and (secret_key or http_cookie):
             result[key] = _sentinel()
             continue
         result[key] = _redact_secrets(
