@@ -134,6 +134,7 @@ from .request import (
 )
 from .request_static_cache import cached_format_tools
 from .resource_limits import MAX_ATTACHMENT_COUNT, read_bounded_local_file
+from .responses_stream_order import ordered_output_events
 from .speech import async_streaming_speech_cleanup
 from .tool_exchange import (
     append_unresolved_tool_results,
@@ -1966,7 +1967,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         completed_calls: list[llm.ToolInput] = []
         argument_fragments: dict[Any, str] = {}
         event_count = 0
-        async for event in normalized_responses_stream(chat_log, result, request_usage):
+        async for event in ordered_output_events(
+            normalized_responses_stream(chat_log, result, request_usage)
+        ):
             event_count += 1
             event_type = getattr(event, "type", "")
             if (

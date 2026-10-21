@@ -405,19 +405,36 @@ async def test_responses_stream_separates_native_output_items(hass) -> None:
     assert contents[-1].content == "It is mild today."
 
 
+@pytest.mark.parametrize("overlap", [False, True])
 @pytest.mark.parametrize("reasoning_effort", ["low", "medium", "high"])
 async def test_responses_tool_chain_preserves_reasoning(
-    hass, reasoning_effort: str
+    hass, reasoning_effort: str, overlap: bool
 ) -> None:
     """A Responses tool result is fed into a second streamed request."""
     reasoning_item = FakeReasoningItem()
-    function_call = SimpleNamespace(
+    from openai.types.responses import ResponseFunctionToolCall
+
+    function_call = ResponseFunctionToolCall(
         type="function_call",
+        id="fc_get_state",
         call_id="call_1",
         name="get_state",
         arguments='{"entity_id":"light.kitchen"}',
     )
     message_item = SimpleNamespace(type="message")
+    starts = [
+        _event("response.output_item.added", output_index=index, item=item)
+        for index, item in enumerate([reasoning_item, function_call])
+    ]
+    ends = [
+        _event("response.output_item.done", output_index=index, item=item)
+        for index, item in enumerate([reasoning_item, function_call])
+    ]
+    first_events = (
+        [*starts, *reversed(ends)]
+        if overlap
+        else [starts[0], ends[0], starts[1], ends[1]]
+    )
 
     client = SimpleNamespace(
         responses=SimpleNamespace(
@@ -425,10 +442,7 @@ async def test_responses_tool_chain_preserves_reasoning(
                 side_effect=[
                     FakeStream(
                         [
-                            _event("response.output_item.added", item=reasoning_item),
-                            _event("response.output_item.done", item=reasoning_item),
-                            _event("response.output_item.added", item=function_call),
-                            _event("response.output_item.done", item=function_call),
+                            *first_events,
                             _completed_event(),
                         ]
                     ),
@@ -502,6 +516,18 @@ async def test_responses_tool_chain_preserves_reasoning(
     assert any(item["type"] == "reasoning" for item in second_input)
     assert any(item["type"] == "function_call" for item in second_input)
     assert any(item["type"] == "function_call_output" for item in second_input)
+    provider_outputs = [
+        item
+        for item in second_input
+        if item["type"] in {"reasoning", "function_call", "function_call_output"}
+    ]
+    assert [item["type"] for item in provider_outputs] == [
+        "reasoning",
+        "function_call",
+        "function_call_output",
+    ]
+    assert provider_outputs[1]["id"] == "fc_get_state"
+    entity._execute_function_tool.assert_awaited_once()
     assert chat_log.content[-1].content == "The light is on."
 
 
@@ -1708,3 +1734,120 @@ async def test_malformed_finalizer_raises_instead_of_enabling_listening(
         await entity._async_handle_chat_log(log, [], [], conditional_continue=True)
     assert create.await_count == 1
     assert log.continue_conversation is False
+
+
+@pytest.mark.parametrize("overlap", [False, True])
+@pytest.mark.parametrize("mixed", [False, True])
+@pytest.mark.parametrize("reverse", [False, True])
+async def test_responses_overlapping_items_keep_native_replay(
+    hass, overlap, mixed, reverse
+):
+    """Indexed concurrent lifetimes retain each item's own text and native output."""
+    from openai.types.responses import (
+        ResponseFunctionToolCall,
+        ResponseOutputMessage,
+        ResponseOutputText,
+        ResponseReasoningItem,
+    )
+
+    calls = [
+        ResponseFunctionToolCall(
+            type="function_call",
+            id=f"fc_{i}",
+            call_id=f"call_{i}",
+            name=f"probe_{i}",
+            arguments='{"value":1}',
+            status="completed",
+        )
+        for i in range(2)
+    ]
+    items = calls
+    if mixed:
+        items = [
+            ResponseReasoningItem(
+                type="reasoning",
+                id="rs_overlap",
+                summary=[],
+                encrypted_content="opaque",
+            ),
+            ResponseOutputMessage(
+                type="message",
+                id="msg_overlap",
+                role="assistant",
+                status="completed",
+                content=[
+                    ResponseOutputText(
+                        type="output_text", text="Checking now", annotations=[]
+                    )
+                ],
+            ),
+            *calls,
+        ]
+
+    def events_for(index, item):
+        events = []
+        if item.type == "message":
+            events.append(
+                _event(
+                    "response.output_text.delta",
+                    output_index=index,
+                    content_index=0,
+                    item_id=item.id,
+                    delta="Checking now",
+                )
+            )
+        if item.type == "function_call":
+            events.extend(
+                _event(
+                    "response.function_call_arguments.delta",
+                    output_index=index,
+                    item_id=item.id,
+                    delta=fragment,
+                )
+                for fragment in ['{"value":', "1}"]
+            )
+        events.append(
+            _event("response.output_item.done", output_index=index, item=item)
+        )
+        return events
+
+    starts = [
+        _event("response.output_item.added", output_index=index, item=item)
+        for index, item in enumerate(items)
+    ]
+    if overlap:
+        # Finish later items first, with argument fragments interleaved by index.
+        tails = [events_for(index, item) for index, item in enumerate(items)]
+        events = starts + [tail.pop(0) for tail in tails if len(tail) > 1]
+        events += [
+            event for tail in (reversed(tails) if reverse else tails) for event in tail
+        ]
+    else:
+        events = [
+            event
+            for index, item in enumerate(items)
+            for event in [starts[index], *events_for(index, item)]
+        ]
+    entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
+    entity.subentry = SimpleNamespace(data={})
+    log = conversation.ChatLog(hass, "overlap")
+    retained = [
+        content
+        async for content in log.async_add_delta_content_stream(
+            "conversation.test",
+            entity._transform_responses_stream(
+                log, FakeStream([*events, _completed_event()])
+            ),
+        )
+    ]
+    assert [content.native.id for content in retained] == [item.id for item in items]
+    assert [call.id for content in retained for call in content.tool_calls or []] == [
+        item.call_id for item in calls
+    ]
+    if mixed:
+        assert retained[1].content == "Checking now"
+        assert all(
+            not content.content for index, content in enumerate(retained) if index != 1
+        )
+    replay = _convert_content_to_responses_param(retained)
+    assert replay == [item.model_dump(exclude_none=True) for item in items]
