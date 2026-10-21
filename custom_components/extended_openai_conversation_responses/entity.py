@@ -72,11 +72,11 @@ from .context_summary_performance import (
 from .context_usage_hardening import (
     ContextInputMeasurement,
     _trace_provider_usage,
+    async_prepared_input_revision,
     async_recover_trailing_usage,
     estimate_prepared_request,
     normalized_chat_stream,
     normalized_responses_stream,
-    prepared_input_revision,
 )
 from .delayed_tools import (
     _DELAYED_EXECUTION_MARKER,
@@ -1063,7 +1063,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 )
                 request_started = time.monotonic()
                 request_history_length = len(chat_log.content)
-                request_input_revision = prepared_input_revision(messages)
+                request_input_revision = await async_prepared_input_revision(messages)
                 existing_content_ids = {id(content) for content in chat_log.content}
                 pending_tool_calls: list[llm.ToolInput] = []
                 web_search_used = False
@@ -1447,7 +1447,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         measured_prefix, shorten_tool_call_id, prepared_user_content
                     )
                 )
-                if context_measurement.applies_to(prepared_prefix):
+                if await context_measurement.async_applies_to(prepared_prefix):
                     observed_input_tokens = context_measurement.tokens
                 else:
                     prepared_current = (

@@ -40,6 +40,11 @@ def prepared_input_revision(input_value: Any) -> str:
     return digest.hexdigest()
 
 
+async def async_prepared_input_revision(input_value: Any) -> str:
+    """Fingerprint a stable prepared request off-loop, including attachment bytes."""
+    return await asyncio.to_thread(prepared_input_revision, input_value)
+
+
 @dataclass(frozen=True, slots=True)
 class ContextInputMeasurement:
     """A request-local count, independent of cumulative usage accounting."""
@@ -48,9 +53,11 @@ class ContextInputMeasurement:
     history_length: int
     input_revision: str
 
-    def applies_to(self, prepared_prefix: Any) -> bool:
+    async def async_applies_to(self, prepared_prefix: Any) -> bool:
         """Allow appended output, but never a rewritten or reduced input prefix."""
-        return prepared_input_revision(prepared_prefix) == self.input_revision
+        return (
+            await async_prepared_input_revision(prepared_prefix) == self.input_revision
+        )
 
 
 def _has_token_count(usage: RequestUsage) -> bool:
