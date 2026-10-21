@@ -2612,11 +2612,19 @@ async def _async_temporary_memories_command(
     )
     action = message["action"]
     entry, subentry = request.entry, request.subentry
-    selected_scope_id = _selected_scope(user_id, is_admin, message.get("scope_id"))
+    # Creating a record acts on the selected destination, even when the editor
+    # was opened from a legacy view. Existing-record operations still authorize
+    # their source owner and cannot be redirected using target_scope_id.
+    scope_id = message.get("scope_id")
+    if action == "temporary_add":
+        scope_id = message.get("target_scope_id", scope_id)
+    selected_scope_id = _selected_scope(user_id, is_admin, scope_id)
     owner = _valid_owner_scope_id(selected_scope_id)
     if owner is None:
         raise HomeAssistantError(
-            "Temporary Memory can only be managed in Personal or Shared scopes"
+            "Short-term memories require a Personal or Shared owner"
+            if action == "temporary_add"
+            else "Temporary Memory can only be managed in Personal or Shared scopes"
         )
     manager = await async_get_temporary_memory(
         hass, entry.entry_id, subentry.subentry_id
@@ -2634,13 +2642,7 @@ async def _async_temporary_memories_command(
             "stats": manager.stats(),
         }
     if action == "temporary_add":
-        target = _valid_owner_scope_id(
-            _selected_scope(user_id, is_admin, message.get("target_scope_id", owner))
-        )
-        if target is None:
-            raise HomeAssistantError(
-                "Short-term memories require a Personal or Shared owner"
-            )
+        target = owner
         await _require_existing_user_destination(hass, target)
         content = message.get("content")
         category = message.get("category", "general")

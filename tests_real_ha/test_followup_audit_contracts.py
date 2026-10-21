@@ -828,3 +828,75 @@ async def test_zero_budget_request_never_constructs_external_api(
     _provider(monkeypatch, agent, replies)
     assert _speech(await _say(hass, agent, "Text only")) == "Done"
     assert calls == []
+
+
+@pytest.mark.parametrize("destination", ["personal", "shared"])
+async def test_short_term_creation_from_legacy_page_uses_destination(
+    hass, hass_ws_client, destination
+):
+    from tests_real_ha.test_management_backend_acceptance import (
+        ADMIN_ID,
+        _admin_client,
+        _management_call,
+        _management_response,
+    )
+
+    agent = await _agent(hass)
+    client = await _admin_client(hass, hass_ws_client)
+    owner = f"user:{ADMIN_ID}" if destination == "personal" else "shared:household"
+    created = await _management_call(
+        client,
+        entry=agent.entry,
+        section="memories",
+        action="temporary_add",
+        scope_id="__anonymous__",
+        target_scope_id=owner,
+        content="Created from legacy page",
+        category="home",
+        expires_at="2099-01-01T00:00:00Z",
+    )
+    assert created["scope_id"] == owner
+    listed = await _management_call(
+        client,
+        entry=agent.entry,
+        section="memories",
+        action="temporary_list",
+        scope_id=owner,
+    )
+    assert any(
+        record["content"] == "Created from legacy page"
+        and record["owner_scope_id"] == owner
+        for record in listed["memories"]
+    )
+    legacy = await _management_response(
+        client,
+        entry=agent.entry,
+        section="memories",
+        action="temporary_list",
+        scope_id="__anonymous__",
+        target_scope_id=owner,
+    )
+    assert legacy["success"] is False
+
+
+@pytest.mark.parametrize("overlap", [False, True])
+@pytest.mark.parametrize("mixed", [False, True])
+async def test_native_responses_overlap_preserves_replay(hass, overlap, mixed):
+    """Consume SDK native items with HA's production stream accumulator."""
+    from tests.test_responses_api import (
+        test_responses_overlapping_items_keep_native_replay,
+    )
+
+    await test_responses_overlapping_items_keep_native_replay(hass, overlap, mixed, True)
+
+
+@pytest.mark.parametrize("overlap", [False, True])
+async def test_native_responses_overlap_reaches_next_provider_request(hass, overlap):
+    from tests.test_responses_api import test_responses_tool_chain_preserves_reasoning
+
+    from custom_components.extended_openai_conversation_responses.completion_events import (
+        completion_event_scope,
+    )
+
+    async with completion_event_scope():
+        await test_responses_tool_chain_preserves_reasoning(hass, "low", overlap)

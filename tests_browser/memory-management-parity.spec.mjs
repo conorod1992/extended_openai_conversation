@@ -120,3 +120,34 @@ test("Temporary clear cannot follow a scope or agent change while confirmation i
   expect(await page.evaluate(() => dataCollectionBackend.calls.filter(c => c.action === "temporary_clear"))).toHaveLength(0);
   await expect(panel.locator(".memory-list article")).toHaveCount(12);
 });
+
+
+for (const bundled of [false, true]) {
+  for (const destination of ["user:test-user", "shared:household"]) {
+    test(`Short-term creation from Legacy anonymous targets ${destination} (${bundled})`, async ({page}) => {
+      const panel = await openDataCollection(page, "persistent", 20, bundled);
+      await page.evaluate(() => {
+        const host = browserHarness.panel, original = browserHarness.hass.callWS.bind(browserHarness.hass);
+        const scopes = [
+          {scope_id: "user:test-user", scope_type: "user", display_name: "Test User", is_current_user: true},
+          {scope_id: "shared:household", scope_type: "shared", display_name: "Shared household"},
+          {scope_id: "__anonymous__", scope_type: "anonymous_legacy", display_name: "Legacy anonymous", memory_count: 1},
+        ];
+        browserHarness.hass.callWS = message => message.section === "scopes" ? Promise.resolve({scopes}) : original(message);
+        host._data.scopes = scopes; host._baseScopes = scopes; host._scopeCatalogCache.clear(); host._eocScopeCatalogTimes.clear(); host._render();
+      });
+      await panel.locator("#scope").selectOption("__anonymous__");
+      await panel.locator("#add-memory").click();
+      await panel.locator("#memory-type").selectOption("temporary");
+      await panel.locator("#memory-owner").selectOption(destination);
+      await panel.locator("#memory-content").fill("Legacy view short-term fact");
+      await panel.locator("#memory-expiry").fill("2099-01-01T12:00");
+      await panel.locator("#memory-save").click();
+      await expect(panel.locator("#memory-dialog")).not.toHaveJSProperty("open", true);
+      const created = await page.evaluate(() => dataCollectionBackend.calls.filter(call => call.action === "temporary_add"));
+      expect(created).toHaveLength(1);
+      expect(created[0]).toMatchObject({scope_id: "__anonymous__", target_scope_id: destination});
+      expect(await page.evaluate(() => dataCollectionBackend.state.temporary.at(-1).owner_scope_id)).toBe(destination);
+    });
+  }
+}
