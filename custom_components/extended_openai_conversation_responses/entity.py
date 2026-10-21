@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 from collections.abc import AsyncGenerator, Callable, Iterable, Mapping
+from contextlib import aclosing
 from copy import deepcopy
 from dataclasses import replace
 from hashlib import sha256
@@ -1920,12 +1921,13 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         """Retain reasoning only when its provider output group completes."""
         existing = {id(content) for content in getattr(chat_log, "content", ())}
         try:
-            async for (
-                delta
-            ) in ExtendedOpenAIBaseLLMEntity._transform_responses_stream_events(
-                self, chat_log, result, request_usage
-            ):
-                yield delta
+            async with aclosing(
+                ExtendedOpenAIBaseLLMEntity._transform_responses_stream_events(
+                    self, chat_log, result, request_usage
+                )
+            ) as events:
+                async for delta in events:
+                    yield delta
         except BaseException:
             # An interrupted response has no complete native output graph. Downgrade
             # this whole response, not guessed adjacent reasoning/message pairs.
@@ -1964,174 +1966,186 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         terminal_event_seen = False
         completed_calls: list[llm.ToolInput] = []
         event_count = 0
-        async for event in ordered_output_events(
-            normalized_responses_stream(chat_log, result, request_usage)
-        ):
-            event_count += 1
-            event_type = getattr(event, "type", "")
-            if event_type == "response.output_item.added":
-                item_type = getattr(event.item, "type", "")
-                if item_type in {
-                    "message",
-                    "function_call",
-                    "reasoning",
-                    "web_search_call",
-                }:
-                    yield {"role": "assistant"}
-                continue
+        async with aclosing(
+            ordered_output_events(
+                normalized_responses_stream(chat_log, result, request_usage)
+            )
+        ) as events:
+            async for event in events:
+                event_count += 1
+                event_type = getattr(event, "type", "")
+                if event_type == "response.output_item.added":
+                    item_type = getattr(event.item, "type", "")
+                    if item_type in {
+                        "message",
+                        "function_call",
+                        "reasoning",
+                        "web_search_call",
+                    }:
+                        yield {"role": "assistant"}
+                    continue
 
-            if event_type == "response.output_text.delta":
-                if event.delta:
-                    part_key = (
-                        getattr(event, "output_index", None),
-                        getattr(event, "content_index", None),
-                    )
-                    response_text_lengths[part_key] = response_text_lengths.get(
-                        part_key, 0
-                    ) + len(event.delta)
-                    yield {"content": event.delta}
-                continue
+                if event_type == "response.output_text.delta":
+                    if event.delta:
+                        part_key = (
+                            getattr(event, "output_index", None),
+                            getattr(event, "content_index", None),
+                        )
+                        response_text_lengths[part_key] = response_text_lengths.get(
+                            part_key, 0
+                        ) + len(event.delta)
+                        yield {"content": event.delta}
+                    continue
 
-            if event_type == "response.refusal.delta":
-                refusal_delta = getattr(event, "delta", None)
-                if refusal_delta:
-                    if not isinstance(refusal_delta, str):
-                        refusal_delta = str(refusal_delta)
-                    part_key = (
-                        getattr(event, "output_index", None),
-                        getattr(event, "content_index", None),
-                    )
-                    response_refusal_lengths[part_key] = response_refusal_lengths.get(
-                        part_key, 0
-                    ) + len(refusal_delta)
-                    yield {"content": refusal_delta}
-                continue
+                if event_type == "response.refusal.delta":
+                    refusal_delta = getattr(event, "delta", None)
+                    if refusal_delta:
+                        if not isinstance(refusal_delta, str):
+                            refusal_delta = str(refusal_delta)
+                        part_key = (
+                            getattr(event, "output_index", None),
+                            getattr(event, "content_index", None),
+                        )
+                        response_refusal_lengths[part_key] = (
+                            response_refusal_lengths.get(part_key, 0)
+                            + len(refusal_delta)
+                        )
+                        yield {"content": refusal_delta}
+                    continue
 
-            if event_type == "response.refusal.done":
-                refusal = getattr(event, "refusal", None)
-                if refusal:
-                    if not isinstance(refusal, str):
-                        refusal = str(refusal)
-                    part_key = (
-                        getattr(event, "output_index", None),
-                        getattr(event, "content_index", None),
-                    )
-                    already_streamed = response_refusal_lengths.get(part_key, 0)
-                    if len(refusal) > already_streamed:
-                        yield {"content": refusal[already_streamed:]}
-                    response_refusal_lengths[part_key] = max(
-                        already_streamed, len(refusal)
-                    )
-                continue
+                if event_type == "response.refusal.done":
+                    refusal = getattr(event, "refusal", None)
+                    if refusal:
+                        if not isinstance(refusal, str):
+                            refusal = str(refusal)
+                        part_key = (
+                            getattr(event, "output_index", None),
+                            getattr(event, "content_index", None),
+                        )
+                        already_streamed = response_refusal_lengths.get(part_key, 0)
+                        if len(refusal) > already_streamed:
+                            yield {"content": refusal[already_streamed:]}
+                        response_refusal_lengths[part_key] = max(
+                            already_streamed, len(refusal)
+                        )
+                    continue
 
-            if event_type == "response.output_text.annotation.added":
-                citation = _normalize_url_citation(getattr(event, "annotation", None))
-                if citation is not None:
-                    part_key = (
-                        getattr(event, "output_index", None),
-                        getattr(event, "content_index", None),
+                if event_type == "response.output_text.annotation.added":
+                    citation = _normalize_url_citation(
+                        getattr(event, "annotation", None)
                     )
-                    url_citations.setdefault(part_key, []).append(citation)
-                    current_length = response_text_lengths.get(part_key, 0)
-                    timing = (
-                        "after cited text"
-                        if citation["end_index"] <= current_length
-                        else "before cited text completed"
-                    )
-                    _LOGGER.debug(
-                        "Observed structured URL citation %s (%d total for content part)",
-                        timing,
-                        len(url_citations[part_key]),
-                    )
-                continue
+                    if citation is not None:
+                        part_key = (
+                            getattr(event, "output_index", None),
+                            getattr(event, "content_index", None),
+                        )
+                        url_citations.setdefault(part_key, []).append(citation)
+                        current_length = response_text_lengths.get(part_key, 0)
+                        timing = (
+                            "after cited text"
+                            if citation["end_index"] <= current_length
+                            else "before cited text completed"
+                        )
+                        _LOGGER.debug(
+                            "Observed structured URL citation %s (%d total for content part)",
+                            timing,
+                            len(url_citations[part_key]),
+                        )
+                    continue
 
-            if event_type == "response.output_item.done":
-                item = event.item
-                item_type = getattr(item, "type", "")
-                if item_type in {"reasoning", "web_search_call"}:
-                    # Preserve native hosted-tool and reasoning output so stateless
-                    # chained function calls retain the complete Responses context.
-                    yield {"native": item}
-                elif (
-                    item_type == "message"
-                    and getattr(item, "content", None) is not None
-                ):
-                    # Keep URL citation annotations internally. Home Assistant's
-                    # native field is not exposed to the streaming listener, so the
-                    # original message and structured metadata remain available for
-                    # stateless replay while speech receives sanitized text deltas.
-                    yield {"native": item}
-                elif item_type == "function_call":
-                    try:
-                        arguments = json.loads(item.arguments)
-                    except json.JSONDecodeError as err:
-                        if recovery_state is None or not recovery_state.enabled:
+                if event_type == "response.output_item.done":
+                    item = event.item
+                    item_type = getattr(item, "type", "")
+                    if item_type in {"reasoning", "web_search_call"}:
+                        # Preserve native hosted-tool and reasoning output so stateless
+                        # chained function calls retain the complete Responses context.
+                        yield {"native": item}
+                    elif (
+                        item_type == "message"
+                        and getattr(item, "content", None) is not None
+                    ):
+                        # Keep URL citation annotations internally. Home Assistant's
+                        # native field is not exposed to the streaming listener, so the
+                        # original message and structured metadata remain available for
+                        # stateless replay while speech receives sanitized text deltas.
+                        yield {"native": item}
+                    elif item_type == "function_call":
+                        try:
+                            arguments = json.loads(item.arguments)
+                        except json.JSONDecodeError as err:
+                            if recovery_state is None or not recovery_state.enabled:
+                                await async_recover_trailing_usage(
+                                    result, request_usage
+                                )
+                                raise ParseArgumentsFailed(item.arguments) from err
+                            arguments = recovery_state.remember_malformed(
+                                item.call_id, item.arguments
+                            )
+                        if item.name in {
+                            CONTINUE_CONVERSATION_TOOL_NAME,
+                            FUNCTION_GROUP_LOADER_TOOL_NAME,
+                        } and not isinstance(arguments, dict):
                             await async_recover_trailing_usage(result, request_usage)
-                            raise ParseArgumentsFailed(item.arguments) from err
-                        arguments = recovery_state.remember_malformed(
-                            item.call_id, item.arguments
-                        )
-                    if item.name in {
-                        CONTINUE_CONVERSATION_TOOL_NAME,
-                        FUNCTION_GROUP_LOADER_TOOL_NAME,
-                    } and not isinstance(arguments, dict):
-                        await async_recover_trailing_usage(result, request_usage)
-                        raise ParseArgumentsFailed(item.arguments)
-                    completed_calls.append(
-                        llm.ToolInput(
-                            id=item.call_id,
-                            tool_name=item.name,
-                            tool_args=arguments,
-                            external=True,
-                        )
-                    )
-                    validate_tool_call_ids(completed_calls)
-                    yield {
-                        # SDK-native calls retain their original provider item ID
-                        # and arguments, alongside HA's executable call record.
-                        **({"native": item} if hasattr(item, "model_dump") else {}),
-                        "tool_calls": [
+                            raise ParseArgumentsFailed(item.arguments)
+                        completed_calls.append(
                             llm.ToolInput(
                                 id=item.call_id,
                                 tool_name=item.name,
                                 tool_args=arguments,
                                 external=True,
                             )
-                        ],
-                    }
-                continue
-
-            if event_type in {"response.completed", "response.incomplete"}:
-                if event_type == "response.completed":
-                    terminal_event_seen = True
-                response = event.response
-                if response.usage is not None:
-                    _trace_provider_usage(chat_log, extract_usage(response.usage))
-
-                if event_type == "response.incomplete":
-                    details = response.incomplete_details
-                    reason = (
-                        details.reason
-                        if details and details.reason
-                        else "unknown reason"
-                    )
-                    if reason == "max_output_tokens":
-                        raise TokenLengthExceededError(
-                            self.subentry.data.get(CONF_MAX_TOKENS, DEFAULT_MAX_TOKENS)
                         )
-                    raise HomeAssistantError(f"OpenAI response incomplete: {reason}")
-                continue
+                        validate_tool_call_ids(completed_calls)
+                        yield {
+                            # SDK-native calls retain their original provider item ID
+                            # and arguments, alongside HA's executable call record.
+                            **({"native": item} if hasattr(item, "model_dump") else {}),
+                            "tool_calls": [
+                                llm.ToolInput(
+                                    id=item.call_id,
+                                    tool_name=item.name,
+                                    tool_args=arguments,
+                                    external=True,
+                                )
+                            ],
+                        }
+                    continue
 
-            if event_type == "response.failed":
-                response = getattr(event, "response", None)
-                raise provider_stream_error(
-                    "OpenAI response failed",
-                    getattr(response, "error", None),
-                    response_id=getattr(response, "id", None),
-                )
+                if event_type in {"response.completed", "response.incomplete"}:
+                    if event_type == "response.completed":
+                        terminal_event_seen = True
+                    response = event.response
+                    if response.usage is not None:
+                        _trace_provider_usage(chat_log, extract_usage(response.usage))
 
-            if event_type in {"error", "response.error"}:
-                raise provider_stream_error("OpenAI response error", event)
+                    if event_type == "response.incomplete":
+                        details = response.incomplete_details
+                        reason = (
+                            details.reason
+                            if details and details.reason
+                            else "unknown reason"
+                        )
+                        if reason == "max_output_tokens":
+                            raise TokenLengthExceededError(
+                                self.subentry.data.get(
+                                    CONF_MAX_TOKENS, DEFAULT_MAX_TOKENS
+                                )
+                            )
+                        raise HomeAssistantError(
+                            f"OpenAI response incomplete: {reason}"
+                        )
+                    continue
+
+                if event_type == "response.failed":
+                    response = getattr(event, "response", None)
+                    raise provider_stream_error(
+                        "OpenAI response failed",
+                        getattr(response, "error", None),
+                        response_id=getattr(response, "id", None),
+                    )
+
+                if event_type in {"error", "response.error"}:
+                    raise provider_stream_error("OpenAI response error", event)
 
         if not terminal_event_seen:
             raise HomeAssistantError(

@@ -79,3 +79,58 @@ async def test_repeated_completion_reaches_existing_validation():
     done = event("response.output_item.done", output_index=0)
     with pytest.raises(ProviderStreamError, match="repeated completed output item"):
         _ = [value async for value in ordered_output_events(stream([done, done]))]
+
+
+async def test_closing_output_adapter_closes_all_owned_layers():
+    closed = []
+
+    async def source():
+        try:
+            yield event("response.output_item.added", output_index=0)
+            yield event("response.output_item.done", output_index=0)
+        finally:
+            closed.append(True)
+
+    ordered = ordered_output_events(source())
+    await anext(ordered)
+    await ordered.aclose()
+    assert closed == [True]
+
+
+@pytest.mark.parametrize("outcome", ["close", "error", "cancel"])
+async def test_responses_parser_closes_source_on_every_exit(outcome):
+    import asyncio
+    from custom_components.extended_openai_conversation_responses.entity import (
+        ExtendedOpenAIBaseLLMEntity,
+    )
+
+    entered = asyncio.Event()
+    closed = []
+
+    class Source:
+        async def __aiter__(self):
+            try:
+                yield event("response.output_item.added", output_index=0)
+                entered.set()
+                if outcome == "error":
+                    raise RuntimeError("source failed")
+                await asyncio.Event().wait()
+            finally:
+                closed.append(True)
+
+    entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
+    entity.subentry = SimpleNamespace(data={})
+    parsed = entity._transform_responses_stream(SimpleNamespace(content=[]), Source())
+    assert await anext(parsed) == {"role": "assistant"}
+    if outcome == "close":
+        await parsed.aclose()
+    elif outcome == "error":
+        with pytest.raises(RuntimeError, match="source failed"):
+            await anext(parsed)
+    else:
+        task = asyncio.create_task(anext(parsed))
+        await entered.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert closed == [True]

@@ -399,20 +399,26 @@ async def normalized_responses_stream(
     chat_log: Any, result: Any, request_usage: RequestUsage | None
 ) -> AsyncIterator[Any]:
     """Apply usage before the Responses parser can yield, fail or be closed."""
-    async for event in result:
-        response = getattr(event, "response", None)
-        raw_usage = getattr(response, "usage", None)
-        if raw_usage is None:
-            raw_usage = getattr(event, "usage", None)
-        reported = _capture_provider_usage(request_usage, raw_usage)
-        if (
-            reported is not None
-            and _has_token_count(reported)
-            and getattr(event, "type", "")
-            not in {"response.completed", "response.incomplete"}
-        ):
-            _trace_provider_usage(chat_log, reported)
-        yield event
+    iterator = aiter(result)
+    try:
+        async for event in iterator:
+            response = getattr(event, "response", None)
+            raw_usage = getattr(response, "usage", None)
+            if raw_usage is None:
+                raw_usage = getattr(event, "usage", None)
+            reported = _capture_provider_usage(request_usage, raw_usage)
+            if (
+                reported is not None
+                and _has_token_count(reported)
+                and getattr(event, "type", "")
+                not in {"response.completed", "response.incomplete"}
+            ):
+                _trace_provider_usage(chat_log, reported)
+            yield event
+
+    finally:
+        if (close := getattr(iterator, "aclose", None)) is not None:
+            await close()
 
 
 def estimate_prepared_request(
