@@ -395,3 +395,46 @@ async def test_native_ha_interrupted_reasoning_history(hass):
     )
 
     await exercise_interrupted_response_history(hass)
+
+
+@pytest.mark.parametrize("persisted", [False, True], ids=["structured", "yaml"])
+@pytest.mark.parametrize("exporter", ["setup", "legacy"])
+async def test_native_http_params_and_template_exports_never_render_or_leak(
+    hass, monkeypatch, persisted, exporter
+):
+    import yaml
+    from homeassistant.helpers.template import Template
+    from custom_components.extended_openai_conversation_responses import backup
+    from tests.test_http_parameter_template_redaction import (
+        ALIASES,
+        SECRET,
+        configuration,
+    )
+
+    rest = configuration("params-key")["functions"][0]
+    rest["spec"]["name"] = "weather_params"
+    rest["function"]["params"] = {key: SECRET for key in ALIASES} | {"units": "c"}
+    scrape = configuration("jinja-userinfo", function_type="scrape")["functions"][0]
+    scrape["spec"]["name"] = "weather_template"
+    tools = [rest, scrape]
+    agent = await _agent(
+        hass, **{CONF_FUNCTION_TOOLS: yaml.safe_dump(tools) if persisted else tools}
+    )
+    original = deepcopy(dict(agent.subentry.data))
+
+    def never_render(*_args, **_kwargs):
+        raise AssertionError("Exports must not execute the configured HTTP templates")
+
+    monkeypatch.setattr(Template, "async_render", never_render)
+    private = backup.private_configuration_snapshot(agent.subentry.data)
+    assert SECRET in private["functions"]
+    if exporter == "setup":
+        result = await transfer.async_create_setup_export(
+            hass, agent.entry, agent.subentry
+        )
+    else:
+        result = await backup.async_create_backup(hass, agent.entry, agent.subentry)
+    assert SECRET not in result["json"]
+    assert SECRET not in json.dumps(result["document"])
+    assert agent.subentry.data == original
+    assert backup.private_configuration_snapshot(agent.subentry.data) == private
