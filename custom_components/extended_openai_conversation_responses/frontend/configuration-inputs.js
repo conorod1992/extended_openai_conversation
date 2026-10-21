@@ -77,7 +77,9 @@ export function bindConfigurationInputs(panel, handlers = {}) {
     if (!result || event.type !== "change") return;
     if (["chat_model", "azure_model"].includes(result.key)) void root.__eocConfigurationInputs.modelChanged?.(control);
     if (result.key === "reasoning_effort") root.__eocConfigurationInputs.reasoningChanged?.(control);
-    if (result.key === "api_mode" || result.key === "web_search") root.__eocConfigurationInputs.capabilityChanged?.(control);
+    // Recompute dependent choices on commit, including after an input event
+    // already updated the draft. Numeric keystrokes must not rebuild the form.
+    if (["api_mode", "web_search", "max_function_calls_per_conversation", "continue_conversation"].includes(result.key)) root.__eocConfigurationInputs.capabilityChanged?.(control);
   };
   root.addEventListener("input", handle);
   root.addEventListener("change", handle);
