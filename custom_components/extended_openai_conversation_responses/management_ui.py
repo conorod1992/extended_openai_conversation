@@ -134,6 +134,7 @@ from .management_function_quarantine import (
 )
 from .management_function_repair import (
     agent_config_revision as _agent_config_revision,  # noqa: F401 - test seam
+    async_prepare_persisted_function_tools,
     has_unavailable_native_tool,
     normalized_persisted_config_snapshot,
     peek_function_tool_health,
@@ -1470,13 +1471,16 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             return safe
 
         preflight_started = perf_counter()
+        prepared_options = await async_prepare_persisted_function_tools(
+            hass, projection
+        )
         repair_hint = False
         if projection.snapshot is None:
             health = peek_function_tool_health(dict(projection.data))
             repair_hint = (
                 projection.repair_state is not None
                 or bool(health and health.get("validation_error"))
-                or has_unavailable_native_tool(dict(projection.data))
+                or has_unavailable_native_tool(prepared_options)
             )
         if repair_hint:
             state, state_cache_hit = repair_state_for_projection(projection)

@@ -63,6 +63,7 @@ class _PersistedProjection:
     snapshot: dict[str, Any] | None
     revision: str
     retention: dict[str, Any]
+    preparsed_function_tools: Any = field(default_factory=lambda: _MISSING)
     repair_state: _RepairState | None = None
     repair_snapshot: dict[str, Any] | None = None
     snapshot_generation: int = field(default_factory=catalog_generation)
@@ -576,6 +577,8 @@ def normalized_persisted_config_snapshot(
     started = perf_counter()
     _refresh_catalog_snapshots(projection)
     hit = projection.snapshot is not None
+    if preparsed_function_tools is _MISSING:
+        preparsed_function_tools = projection.preparsed_function_tools
     reused_defaults = False
     if projection.snapshot is None:
         # An exact default persisted mapping has already passed the same
@@ -606,34 +609,56 @@ def normalized_persisted_config_snapshot(
     return snapshot, hit
 
 
-async def async_prewarm_persisted_config_projection(
-    hass: HomeAssistant, entry: Any, subentry: Any
-) -> None:
-    """Prime normal read state, parsing YAML off the event loop first."""
-    projection = persisted_config_projection(subentry)
-    if projection.snapshot is not None or projection.repair_state is not None:
-        return
-    original_data, original_title = projection.data, projection.title
-    options = dict(original_data)
+async def async_prepare_persisted_function_tools(
+    hass: HomeAssistant, projection: _PersistedProjection
+) -> dict[str, Any]:
+    """Decode cold persisted YAML once in a worker; validate HA objects on-loop."""
+    options = dict(projection.data)
     configured = options.get(CONF_FUNCTION_TOOLS)
-    parsed: Any = _MISSING
-    if isinstance(configured, str):
+    if (
+        projection.snapshot is None
+        and projection.repair_state is None
+        and projection.preparsed_function_tools is _MISSING
+        and isinstance(configured, str)
+    ):
         try:
             parsed = await hass.async_add_executor_job(
                 parse_configured_function_tools, options
             )
         except yaml.YAMLError:
-            # Let the authoritative validator report the original YAML error.
+            # Retain the authoritative repair validator's malformed-YAML report.
             parsed = configured
         if (
-            entry.state is not ConfigEntryState.LOADED
-            or entry.subentries.get(subentry.subentry_id) is not subentry
-            or subentry.data is not original_data
-            or subentry.title != original_title
+            projection.subentry.data is not projection.data
+            or projection.subentry.title != projection.title
+            or _persisted_projections.get(id(projection.subentry)) is not projection
         ):
+            raise HomeAssistantError(_STALE_CONFIGURATION_ERROR)
+        projection.preparsed_function_tools = parsed
+    if projection.preparsed_function_tools is not _MISSING:
+        options[CONF_FUNCTION_TOOLS] = projection.preparsed_function_tools
+    return options
+
+
+async def async_prewarm_persisted_config_projection(
+    hass: HomeAssistant, entry: Any, subentry: Any
+) -> None:
+    """Prime normal reads using the same worker preparation as a cold GET."""
+    projection = persisted_config_projection(subentry)
+    if projection.snapshot is not None or projection.repair_state is not None:
+        return
+    try:
+        options = await async_prepare_persisted_function_tools(hass, projection)
+    except HomeAssistantError:
+        if subentry.data is not projection.data or subentry.title != projection.title:
             return
-        options[CONF_FUNCTION_TOOLS] = parsed
-    health = peek_function_tool_health(dict(original_data))
+        raise
+    if (
+        entry.state is not ConfigEntryState.LOADED
+        or entry.subentries.get(subentry.subentry_id) is not subentry
+    ):
+        return
+    health = peek_function_tool_health(dict(projection.data))
     if bool(health and health.get("validation_error")) or has_unavailable_native_tool(
         options
     ):
@@ -641,9 +666,7 @@ async def async_prewarm_persisted_config_projection(
         if state is not None:
             return
     try:
-        normalized_persisted_config_snapshot(
-            projection, preparsed_function_tools=parsed
-        )
+        normalized_persisted_config_snapshot(projection)
     except AgentConfigError:
         state, _ = repair_state_for_projection(projection)
         if state is None:
