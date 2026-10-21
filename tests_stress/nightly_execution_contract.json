@@ -2727,7 +2727,13 @@
     "tests_real_ha/test_review_followup_replays.py::test_script_missing_service_uses_ha_refusal[missing_domain]",
     "tests_real_ha/test_review_followup_replays.py::test_script_missing_service_uses_ha_refusal[script_probe]",
     "tests_real_ha/test_management_typed_yaml.py::test_typed_function_websocket_editor_and_draft_roundtrip[secret-set]",
-    "tests_real_ha/test_management_typed_yaml.py::test_typed_function_websocket_editor_and_draft_roundtrip[literal-tag]"
+    "tests_real_ha/test_management_typed_yaml.py::test_typed_function_websocket_editor_and_draft_roundtrip[literal-tag]",
+    "tests_real_ha/test_quiet_hours_resilience.py::test_replacement_keeps_period_releases_but_reapplies_owned_controls[False-volume]",
+    "tests_real_ha/test_quiet_hours_resilience.py::test_replacement_keeps_period_releases_but_reapplies_owned_controls[False-switch]",
+    "tests_real_ha/test_quiet_hours_resilience.py::test_replacement_keeps_period_releases_but_reapplies_owned_controls[False-None]",
+    "tests_real_ha/test_quiet_hours_resilience.py::test_replacement_keeps_period_releases_but_reapplies_owned_controls[True-volume]",
+    "tests_real_ha/test_quiet_hours_resilience.py::test_replacement_keeps_period_releases_but_reapplies_owned_controls[True-switch]",
+    "tests_real_ha/test_quiet_hours_resilience.py::test_replacement_keeps_period_releases_but_reapplies_owned_controls[True-None]"
   ],
   "browser": {
     "browser": [
