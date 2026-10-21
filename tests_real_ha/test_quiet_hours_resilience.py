@@ -354,7 +354,7 @@ async def test_replacement_keeps_period_releases_but_reapplies_owned_controls(
         async_save=AsyncMock(side_effect=save),
         async_load=AsyncMock(side_effect=lambda: deepcopy(persisted)),
     )
-    monkeypatch.setattr(runtime, "Store", lambda *_args: store)
+    monkeypatch.setattr(runtime, "PropagatingWriteStore", lambda *_args: store)
     calls = []
 
     async def control(call):
@@ -398,6 +398,9 @@ async def test_replacement_keeps_period_releases_but_reapplies_owned_controls(
     if reconciled:
         await manager.async_reconcile(now=now)
     await manager.async_shutdown()
+    assert manager._store is store
+    if manual:
+        assert persisted["active"]["observed_controls"]
     assert _state(hass, "media_player.bedroom").attributes["volume_level"] == (
         0.4 if manual == "volume" else 0.6
     )
