@@ -650,12 +650,13 @@ async def test_archive_turn_write_failure_is_best_effort(hass) -> None:
 async def test_malformed_response_is_terminal_with_recovery_disabled(hass, monkeypatch):
     from custom_components.extended_openai_conversation_responses.functions import web
     from homeassistant.components.rest.data import RestData
-    from homeassistant.helpers.template import Template
 
     tools = [_tool("effect"), _tool("xml")]
     tools[0]["function"] = {
         "type": "template",
-        "value_template": Template("effect completed", hass),
+        "value_template": SimpleNamespace(
+            async_render=MagicMock(return_value="effect completed")
+        ),
     }
     tools[1]["function"] = {"type": "rest"}
     entity, client, _continuity, _logs, invoke = _provider_fixture(
@@ -688,3 +689,6 @@ async def test_malformed_response_is_terminal_with_recovery_disabled(hass, monke
         in result.response.speech["plain"]["speech"]
     )
     assert client.responses.create.await_count == 2
+    assert "effect completed" in json.dumps(
+        client.responses.create.await_args_list[1].kwargs["input"], default=str
+    )
