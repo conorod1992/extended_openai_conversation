@@ -21,6 +21,8 @@ _SECRET_KEY_FAMILIES = ("apikey", "clientsecret", "accesstoken", "refreshtoken")
 _CAMEL_CASE_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _KEY_SEPARATOR = re.compile(r"[^A-Za-z0-9]+")
 _LIKELY_SECRET = re.compile(r"\bsk-[A-Za-z0-9_-]{12,}\b")
+_HTTP_CREDENTIAL_NAMES = frozenset({"key", "sig", "signature", "credential"})
+_JINJA_DELIMITERS = ("{{", "{%", "{#")
 _DROP = object()
 
 
@@ -50,6 +52,12 @@ def _is_secret_key(key: Any) -> bool:
         return True
     canonical = "".join(parts)
     return any(family in canonical for family in _SECRET_KEY_FAMILIES)
+
+
+def _is_http_credential_key(key: Any) -> bool:
+    """Use one credential policy for HTTP query strings and request params."""
+    name = unquote_plus(str(key))
+    return _is_secret_key(name) or name.casefold() in _HTTP_CREDENTIAL_NAMES
 
 
 def _is_payload_secret_key(key: Any) -> bool:
@@ -85,6 +93,10 @@ def redact_http_url(value: str) -> dict[str, Any] | None:
     the entire public projection, including non-secret query values and order.
     Unsupported malformed URLs cannot authorize recovery of a local credential.
     """
+    if any(delimiter in value for delimiter in _JINJA_DELIMITERS):
+        # Never execute templates to export them, or let a hidden destination
+        # authorize recovery of local credentials, even for an identical source.
+        return {REDACTED_URL_KEY: None}
     if not value.lower().startswith(("http://", "https://")):
         return None
     try:
@@ -99,9 +111,7 @@ def redact_http_url(value: str) -> dict[str, Any] | None:
     for component in parsed.query.split("&"):
         name, separator, content = component.partition("=")
         if separator and (
-            _is_secret_key(unquote_plus(name))
-            or unquote_plus(name).casefold()
-            in {"key", "sig", "signature", "credential"}
+            _is_http_credential_key(name)
             or _LIKELY_SECRET.search(unquote_plus(content))
         ):
             content = "[redacted]"
@@ -158,6 +168,7 @@ def _redact_secrets(
     action: bool = False,
     payload: bool = False,
     rule_action: bool = False,
+    http_params: bool = False,
 ) -> Any:
     """Recursively redact secrets while tracking structural schema context."""
     if is_redacted_url(value):
@@ -181,7 +192,12 @@ def _redact_secrets(
     if isinstance(value, list):
         return [
             _redact_secrets(
-                item, schema=schema, path=(*path, index), action=action, payload=payload
+                item,
+                schema=schema,
+                path=(*path, index),
+                action=action,
+                payload=payload,
+                http_params=http_params,
             )
             for index, item in enumerate(value)
         ]
@@ -190,6 +206,11 @@ def _redact_secrets(
             redacted_url = redact_http_url(value)
             if redacted_url is not None:
                 return redacted_url
+            if path[-1] == "resource_template" and not value.lower().startswith(
+                ("http://", "https://")
+            ):
+                # Non-literal/unsupported template destinations require re-entry.
+                return {REDACTED_URL_KEY: None}
         # The entire leaf must be recoverable. Substring replacement loses the
         # credential while leaving a seemingly usable, permanently corrupt value.
         if _LIKELY_SECRET.search(value):
@@ -213,7 +234,9 @@ def _redact_secrets(
             and path[-1].casefold() == "headers"
             and str(key).casefold() in {"cookie", "set-cookie"}
         )
-        if not schema and (secret_key or http_cookie):
+        if not schema and (
+            secret_key or http_cookie or (http_params and _is_http_credential_key(key))
+        ):
             result[key] = _sentinel()
             continue
         result[key] = _redact_secrets(
@@ -244,6 +267,12 @@ def _redact_secrets(
             or (action and key in {"variables", "data", "service_data"})
             or (value.get("type") == "script" and key == "variables"),
             rule_action=value.get("action_type") == "local_action" and key == "action",
+            http_params=(
+                not schema
+                and not payload
+                and value.get("type") in ("rest", "scrape")
+                and key == "params"
+            ),
         )
     return result
 
