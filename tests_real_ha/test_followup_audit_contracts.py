@@ -1106,3 +1106,197 @@ async def test_repair_save_applies_real_runtime_updates_without_conversation(
             next(iter(current.device_info["identifiers"])), current.entry.entry_id
         )
         assert device is not None and device.name == changes["title"]
+from tests_stress.test_os_storage_faults import real_store_io  # noqa: E402, F401
+
+
+async def test_registered_catalogue_null_recovered_groups(hass, hass_ws_client):
+    from custom_components.extended_openai_conversation_responses import backup
+    from tests.test_management_request_boundaries import _tool
+    from tests_real_ha.test_management_backend_acceptance import (
+        _admin_client,
+        _management_call,
+    )
+    from tests_real_ha.test_identity_isolation_matrix import _catalog
+
+    broken = _tool("legacy_phone")
+    broken["spec"]["parameters"]["properties"] = {
+        "phone": {"type": "string", "minLength": "legacy"}
+    }
+    recovered = backup.recoverable_configuration_snapshot(
+        {"functions": [broken], "function_groups": None}
+    )
+    assert recovered["function_groups"] is None
+    agent = await _agent(hass, title="Recovered null Groups", **recovered)
+    healthy = await _agent(hass, title="Healthy catalogue sibling")
+    client = await _admin_client(hass, hass_ws_client)
+    result = await _catalog(client)
+    assert {row["entry_id"] for row in result} == {
+        agent.entry.entry_id,
+        healthy.entry.entry_id,
+    }
+    row = next(row for row in result if row["entry_id"] == agent.entry.entry_id)
+    assert row["function_group_count"] == 0
+    payload = await _management_call(
+        client, entry=agent.entry, section="configuration", action="get"
+    )
+    assert payload["function_repair"]["invalid_count"] == 1
+    assert agent.subentry.data["function_groups"] is None
+
+
+@pytest.mark.parametrize("kind", ["tools", "groups"])
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_registered_toggles_preserve_group_only_quarantine(hass, kind, enabled):
+    from copy import deepcopy
+    import yaml
+    from homeassistant.core import Context
+    from tests.test_management_request_boundaries import _tool
+
+    healthy = _tool()
+    healthy["enabled"] = not enabled
+    group = {
+        "id": "healthy-group",
+        "name": "Healthy",
+        "description": "Healthy",
+        "loading_mode": "always",
+        "enabled": not enabled,
+        "functions": ["healthy"],
+    }
+    damaged = {
+        **deepcopy(group),
+        "id": "damaged",
+        "name": "Damaged",
+        "enabled": False,
+        "functions": ["removed-old-tool"],
+    }
+    agent = await _agent(
+        hass, functions=yaml.safe_dump([healthy]), function_groups=[group, damaged]
+    )
+    await hass.services.async_call(
+        DOMAIN,
+        ("enable_" if enabled else "disable_") + "function_" + kind,
+        {
+            "config_entry": agent.entry.entry_id,
+            "agent_id": agent.entity_id,
+            "functions" if kind == "tools" else "function_groups": [
+                "healthy" if kind == "tools" else "healthy-group"
+            ],
+        },
+        blocking=True,
+        context=Context(),
+    )
+    assert agent.subentry.data["function_groups"][1] == damaged
+    if kind == "tools":
+        assert yaml.safe_load(agent.subentry.data["functions"])[0]["enabled"] is enabled
+    else:
+        assert agent.subentry.data["function_groups"][0]["enabled"] is enabled
+
+
+async def test_cold_runtime_and_migration_yaml_are_off_loop(hass, monkeypatch):
+    import threading
+    import yaml
+    from custom_components.extended_openai_conversation_responses import (
+        agent_config,
+        async_migrate_integration,
+    )
+    from custom_components.extended_openai_conversation_responses.management_function_repair import (
+        async_prewarm_persisted_config_projection,
+    )
+    from tests_real_ha.test_cross_feature_acceptance import _say, _speech
+
+    tools = []
+    for index in range(36):
+        tools.append(
+            {
+                "spec": {
+                    "name": f"cold_runtime_{index}",
+                    "description": "Read history",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            f"field_{i}": {
+                                "type": "string",
+                                "description": "Detailed schema " * 8,
+                            }
+                            for i in range(25)
+                        },
+                    },
+                },
+                "function": {"type": "native", "name": "get_history"},
+            }
+        )
+    raw = yaml.safe_dump(tools)
+    main, threads = threading.get_ident(), []
+    original = yaml.safe_load
+
+    def decode(value):
+        if value == raw:
+            threads.append(threading.get_ident())
+        return original(value)
+
+    monkeypatch.setattr(yaml, "safe_load", decode)
+    agent_config._cached_configured_tools.cache_clear()
+    agent_config._decoded_function_tools.cache_clear()
+    agent = await _agent(hass, functions=raw, max_function_calls_per_conversation=0)
+    await _agent(hass, title="Runtime sibling")
+    await async_prewarm_persisted_config_projection(hass, agent.entry, agent.subentry)
+    assert threads and main not in threads
+    before = len(threads)
+    await async_migrate_integration(hass)
+    assert len(threads) > before and main not in threads
+    assert agent.subentry.data["functions"] == raw
+    sent = _provider(monkeypatch, agent, ["First answer", "Second answer"])
+    assert _speech(await _say(hass, agent, "First")) == "First answer"
+    first = len(threads)
+    assert _speech(await _say(hass, agent, "Second")) == "Second answer"
+    assert len(threads) == first and main not in threads
+    assert len(sent) == 2
+
+
+@pytest.mark.parametrize("count", [10, 1000])
+async def test_native_memory_cold_preparation_worker(
+    hass, monkeypatch, real_store_io, count
+):
+    import threading
+    from custom_components.extended_openai_conversation_responses import memory
+    from tests.test_cold_state_boundaries import records
+
+    raw = records(count)
+    entry_id, subentry_id = "cold-memory-provider", "cold-memory-agent"
+    storage = memory.HomeAssistantMemoryStorage(hass, entry_id, subentry_id)
+    cache = memory.HomeAssistantEmbeddingCacheStorage(hass, entry_id, subentry_id)
+    await storage.async_save({"memories": [*raw, raw[0], {"bad": True}]})
+    await cache.async_save(
+        {
+            "embeddings": {
+                r["memory_id"]: {
+                    "model": "default",
+                    "fingerprint": "saved",
+                    "vector": [0.5] * 256,
+                }
+                for r in raw
+            }
+        }
+    )
+    main, validations, vectors = threading.get_ident(), [], []
+    validate, clean = memory._validate_persistent_memory_record, memory._clean_embedding
+
+    def check(value):
+        validations.append(threading.get_ident())
+        return validate(value)
+
+    def vector(value):
+        vectors.append(threading.get_ident())
+        return clean(value)
+
+    monkeypatch.setattr(memory, "_validate_persistent_memory_record", check)
+    monkeypatch.setattr(memory, "_clean_embedding", vector)
+    manager = await memory.async_get_memory(hass, entry_id, subentry_id)
+    assert len(manager._memories) == count
+    assert len(manager._key_index) == count
+    assert len(manager._embedding_cache) == count
+    assert validations and main not in validations
+    assert len(vectors) == count and main not in vectors
+    saved = await storage.async_load()
+    assert len(saved["memories"]) == count
+    assert await memory.async_get_memory(hass, entry_id, subentry_id) is manager
+    assert len(vectors) == count
