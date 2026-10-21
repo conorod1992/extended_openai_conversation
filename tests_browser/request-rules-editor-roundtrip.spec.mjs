@@ -207,3 +207,84 @@ for (const bundled of [false, true]) {
     await expectHarnessClean(page, errors);
   });
 }
+
+function sharingGroupPack() {
+  return {format:"extended_openai_request_rule_pack",version:1,
+    groups:[{id:"portable-group",name:"Imported group"}],
+    rules:[{id:"portable-rule",name:"Imported grouped rule",enabled:false,phrases:["shared group"],match_type:"equals",action_type:"model_routing",action:{model:"gpt-5-mini",scope:"conversation",continue_to_ai:false,success_response:"Updated"},matching_behavior:"defaults",matching:{},order:0,conditions:[],group_id:"portable-group",continue_matching:false,ai_input_mode:"original",ai_input_capture:null}]};
+}
+
+async function openSharingWithReview(page, bundled, seedGroup = false) {
+  await page.goto(fixtureUrl("capabilities/request-rules", bundled ? "&bundle=1" : ""));
+  const panel = panelFor(page);
+  if (seedGroup) await createGroup(panel, "Existing selection");
+  await panel.locator("#rule-sharing > summary").click();
+  await panel.locator("#rule-pack-file").setInputFiles({name:"group-pack.json",mimeType:"application/json",buffer:Buffer.from(JSON.stringify(sharingGroupPack()))});
+  await panel.locator("#rule-pack-review-button").click();
+  await expect(panel.locator(".rule-pack-review")).toBeVisible();
+  await panel.locator("#rule-pack-selection").selectOption("group");
+  await panel.evaluate(host => {
+    host.__sharingPreserved = [host.shadowRoot.querySelector("#rule-pack-file"),host.shadowRoot.querySelector("#rule-pack-review .rule-pack-review"),host.shadowRoot.querySelector("#rule-pack-group")];
+  });
+  return panel;
+}
+
+async function expectSharingPreserved(panel) {
+  expect(await panel.evaluate(host => {
+    const [file,review,select] = host.__sharingPreserved;
+    return file === host.shadowRoot.querySelector("#rule-pack-file") && file.files[0]?.name === "group-pack.json" && review === host.shadowRoot.querySelector("#rule-pack-review .rule-pack-review") && select === host.shadowRoot.querySelector("#rule-pack-group") && host.shadowRoot.querySelector("#rule-sharing").open;
+  })).toBe(true);
+}
+
+for (const bundled of [false, true]) {
+  test(`Sharing group choices follow create rename and delete without losing review (${bundled})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    const panel = await openSharingWithReview(page, bundled);
+    const id = await createGroup(panel, "Kitchen");
+    const select = panel.locator("#rule-pack-group");
+    await expect(select.locator(`option[value="${id}"]`)).toHaveText("Kitchen");
+    await select.selectOption(id);
+    await expectSharingPreserved(panel);
+    await panel.locator("#rule-groups-manage").click();
+    const row = panel.locator(`.rule-group-row[data-group-id="${id}"]`);
+    await row.locator(".rule-group-name").fill("Kitchen & <Dining>");
+    await row.locator(".rule-group-rename").click();
+    await expect(select.locator(`option[value="${id}"]`)).toHaveText("Kitchen & <Dining>");
+    await expect(select).toHaveValue(id);
+    await panel.locator("#rule-groups-done").click();
+    await expectSharingPreserved(panel);
+    await panel.locator("#rule-groups-manage").click();
+    await row.locator(".rule-group-delete").click();
+    await expect(panel.locator("#confirm-dialog")).toHaveJSProperty("open", true);
+    await panel.locator("#confirm-accept").click();
+    await expect(select.locator(`option[value="${id}"]`)).toHaveCount(0);
+    await expect(select).toHaveValue("");
+    await expect(select.locator('option[value=""]')).toHaveText("Ungrouped");
+    await panel.locator("#rule-groups-done").click();
+    await expectSharingPreserved(panel);
+    await expectHarnessClean(page, errors);
+  });
+
+  test(`Sharing group choices include an imported group immediately (${bundled})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    const panel = await openSharingWithReview(page, bundled, true);
+    const existingId = await panel.evaluate(host => host._result.groups.find(group => group.name === "Existing selection").id);
+    await panel.locator("#rule-pack-group").selectOption(existingId);
+    await panel.locator("#rule-pack-confirm").click();
+    await expect(panel.locator("#rule-pack-message")).toContainText("1 disabled rules imported");
+    const groupId = await panel.evaluate(host => host._result.groups.find(group => group.name === "Imported group")?.id);
+    expect(groupId).toBeTruthy();
+    await expect(panel.locator("#rule-pack-group")).toHaveValue(existingId);
+    await expect(panel.locator(`#rule-pack-group option[value="${groupId}"]`)).toHaveText("Imported group");
+    await panel.locator("#rule-pack-group").selectOption(groupId);
+    await expect(panel.locator("#rule-sharing")).toHaveJSProperty("open", true);
+    expect(await panel.locator("#rule-pack-file").evaluate(input => input.files[0].name)).toBe("group-pack.json");
+    const download = page.waitForEvent("download");
+    await panel.locator("#rule-pack-export").click();
+    await download;
+    const request = await page.evaluate(() => browserHarness.calls.filter(call => call.action === "rule_pack_export").at(-1));
+    expect(request.group_id).toBe(groupId);
+    expect(request.selection).toBe("group");
+    await expectHarnessClean(page, errors);
+  });
+}
