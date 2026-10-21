@@ -159,3 +159,51 @@ test("Request Rule editor round-trips local and routing forms through reopen and
 
   await expectHarnessClean(page, errors);
 });
+
+
+for (const bundled of [false, true]) {
+  test(`mounted Rule editor shares routing scope and reasoning controls (${bundled})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    await page.goto(fixtureUrl("capabilities/request-rules", bundled ? "&bundle=1" : ""));
+    const panel = panelFor(page);
+    await page.evaluate(() => {
+      const original = browserHarness.hass.callWS.bind(browserHarness.hass);
+      browserHarness.hass.callWS = async message => {
+        const result = await original(message);
+        if (message.type.endsWith("/model_catalog")) return {...result, reasoning_effort_options: message.model === "gpt-4o" ? [] : ["low", "high"]};
+        return result;
+      };
+    });
+    await panel.getByRole("button", {name: "Create rule", exact: true}).first().click();
+    await panel.locator("#rule-name").fill("Shared routing controls");
+    await panel.locator("#rule-phrases").fill("route command");
+    await panel.locator("#rule-action-type").selectOption("model_routing");
+    await panel.locator("#rule-advanced summary").click();
+    for (const match of ["equals", "starts_with", "ends_with", "contains", "sentence_pattern"]) {
+      await panel.locator("#rule-match").selectOption(match);
+      for (const ai of [false, true]) for (const matching of [false, true]) {
+        await panel.locator("#rule-continue-to-ai").check();
+        await panel.locator("#rule-scope").selectOption("request");
+        await panel.locator("#rule-continue-matching").setChecked(matching);
+        await panel.locator("#rule-continue-to-ai").setChecked(ai);
+        await expect(panel.locator('#rule-scope option[value="request"]')).toHaveJSProperty("disabled", !ai && !matching);
+        await expect(panel.locator("#rule-scope")).toHaveValue(!ai && !matching ? "conversation" : "request");
+      }
+    }
+    await panel.locator("#rule-model").fill("gpt-5.6");
+    await expect(panel.locator('#rule-reasoning option[value="high"]')).toHaveCount(1);
+    await panel.locator("#rule-reasoning").selectOption("high");
+    await panel.locator("#rule-model").fill("gpt-4o");
+    await expect(panel.locator("#rule-reasoning")).toHaveValue("");
+    await expect(panel.locator("#rule-reasoning option")).toHaveCount(1);
+    await panel.locator("#rule-match").selectOption("contains");
+    await panel.locator("#rule-continue-matching").uncheck();
+    await panel.locator("#rule-continue-to-ai").uncheck();
+    await panel.locator("#rule-save").click();
+    await expect(panel.locator("#rule-dialog")).not.toHaveJSProperty("open", true);
+    const saved = await page.evaluate(() => browserHarness.getState().requestRules.rules.find(rule => rule.name === "Shared routing controls"));
+    expect(saved.action.scope).toBe("conversation");
+    expect(saved.action.reasoning_effort || "").toBe("");
+    await expectHarnessClean(page, errors);
+  });
+}

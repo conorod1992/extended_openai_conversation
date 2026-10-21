@@ -1,3 +1,5 @@
+import {setReasoningOptions, syncRequestRuleRoutingControls} from "./request-rule-routing-controls.js";
+export {syncRequestRuleRoutingControls} from "./request-rule-routing-controls.js";
 import {applyRequestRuleMutation, fuzzyThresholdValue, matchingControls} from "./request-rules-ui-core.js";
 export {fuzzyThresholdValue, recoverRequestRuleMutation, reconcileRequestRules, renderRequestRules} from "./request-rules-ui-core.js";
 
@@ -268,56 +270,10 @@ function ensureModelCatalog() {
   return modelCatalogPromise;
 }
 
-function setReasoningOptions(root, efforts, selected = "") {
-  const select = root?.querySelector("#rule-reasoning");
-  if (!select) return;
-  const values = Array.isArray(efforts) ? efforts : [];
-  const keepCurrent = select.ownerDocument.createElement("option");
-  keepCurrent.value = "";
-  keepCurrent.textContent = "Keep current";
-  const options = [keepCurrent, ...values.map((value) => {
-    const option = select.ownerDocument.createElement("option");
-    option.value = value;
-    option.textContent = value.charAt(0).toUpperCase() + value.slice(1);
-    return option;
-  })];
-  if (selected && !values.includes(selected)) {
-    const saved = select.ownerDocument.createElement("option");
-    saved.value = selected;
-    saved.textContent = selected;
-    options.push(saved);
-  }
-  select.replaceChildren(...options);
-  select.value = selected;
-}
-
 export function requestRuleCapabilityModel(panel, override = "") {
   return String(override || panel._result?.effective_model || panel._result?.config?.azure_model || panel._result?.config?.chat_model || "").trim();
 }
 
-export function syncRequestRuleRoutingControls(root, efforts = null, selectedEffort = null) {
-  if (!root) return;
-  const actionType = root.querySelector("#rule-action-type");
-  const matchType = root.querySelector("#rule-match");
-  const scope = root.querySelector("#rule-scope");
-  const continueToAi = root.querySelector("#rule-continue-to-ai");
-  const reasoning = root.querySelector("#rule-reasoning");
-  const help = root.querySelector("#rule-routing-scope-help");
-  if (!actionType || !matchType || !scope) return;
-  const modelRouting = actionType.value === "model_routing";
-  const consumed = modelRouting && ["equals", "sentence_pattern"].includes(matchType.value) && !(continueToAi?.checked ?? false) && !(root.querySelector("#rule-continue-matching")?.checked ?? false);
-  const requestOption = scope.querySelector('option[value="request"]');
-  if (requestOption) requestOption.disabled = consumed;
-  if (consumed) scope.value = "conversation";
-  scope.disabled = consumed;
-  if (reasoning && efforts) {
-    const desired = selectedEffort ?? reasoning.value;
-    setReasoningOptions(root, efforts, desired);
-  }
-  if (help) help.textContent = consumed
-    ? "This is a complete routing command. It is acknowledged locally and is not sent to the AI provider, so it must change or reset the rest of this conversation."
-    : `This sends the ${root.querySelector("#rule-ai-input-mode")?.value === "capture" ? "selected captured value" : "original request"} to the AI after applying the route. This request only affects that provider call; Rest of this conversation also changes later requests.`;
-}
 
 function ensureDialog(panel) {
   const root = panel.shadowRoot;
