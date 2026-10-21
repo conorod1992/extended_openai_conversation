@@ -36,7 +36,6 @@ from homeassistant.helpers.typing import ConfigType
 from homeassistant.loader import async_get_integration
 
 from .agent_config import (
-    AgentConfigError,
     merge_agent_config,
     project_agent_config_updates,
     validate_function_groups,
@@ -277,18 +276,16 @@ async def async_set_function_tools_enabled(
         if entry is None:
             raise HomeAssistantError("Config entry not found")
         subentry = entry.subentries[subentry_id]
-        repair_state = None
-        try:
+        from .management_function_repair import function_configuration_repair_state
+
+        repair_state = function_configuration_repair_state(dict(subentry.data))
+        if repair_state is not None and repair_state.field_updates_allowed:
+            configured = deepcopy(repair_state.valid)
+        else:
+            # Unreadable/collection-wide Tool damage is not an editable projection.
             configured = validate_function_tools(
                 subentry.data.get(CONF_FUNCTION_TOOLS) or DEFAULT_CONF_FUNCTION_TOOLS
             )
-        except AgentConfigError:
-            from .management_function_repair import function_configuration_repair_state
-
-            repair_state = function_configuration_repair_state(dict(subentry.data))
-            if repair_state is None or not repair_state.field_updates_allowed:
-                raise
-            configured = deepcopy(repair_state.valid)
         requested = list(dict.fromkeys(function_names))
         configured_names = {tool["spec"]["name"] for tool in configured}
         missing = [name for name in requested if name not in configured_names]
@@ -332,18 +329,16 @@ async def async_set_function_groups_enabled(
         if entry is None:
             raise HomeAssistantError("Config entry not found")
         subentry = entry.subentries[subentry_id]
-        repair_state = None
-        try:
+        from .management_function_repair import function_configuration_repair_state
+
+        repair_state = function_configuration_repair_state(dict(subentry.data))
+        if repair_state is not None and repair_state.field_updates_allowed:
+            configured = deepcopy(repair_state.valid)
+        else:
+            # Unreadable/collection-wide Tool damage is not an editable projection.
             configured = validate_function_tools(
                 subentry.data.get(CONF_FUNCTION_TOOLS) or DEFAULT_CONF_FUNCTION_TOOLS
             )
-        except AgentConfigError:
-            from .management_function_repair import function_configuration_repair_state
-
-            repair_state = function_configuration_repair_state(dict(subentry.data))
-            if repair_state is None or not repair_state.field_updates_allowed:
-                raise
-            configured = deepcopy(repair_state.valid)
         groups = (
             deepcopy(repair_state.groups)
             if repair_state is not None
