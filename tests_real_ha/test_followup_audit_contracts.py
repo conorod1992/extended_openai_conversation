@@ -1394,3 +1394,166 @@ async def test_native_year_statistics_preserves_real_recorder_aggregate(
         [{"entity_id": statistic_id}],
     )
     assert result == expected
+
+
+@pytest.mark.parametrize(
+    "satellite", ["assist_satellite.kitchen", "assist_satellite.hall"]
+)
+async def test_public_model_broadcast_excludes_satellite_without_device(
+    hass, monkeypatch, satellite
+):
+    from homeassistant.const import ATTR_SUPPORTED_FEATURES
+    from custom_components.extended_openai_conversation_responses import intercom
+    from custom_components.extended_openai_conversation_responses.const import (
+        SERVICE_PROCESS,
+    )
+    from tests.test_management_request_boundaries import _tool
+    from custom_components.extended_openai_conversation_responses.request_origin import (
+        get_request_satellite,
+    )
+
+    monkeypatch.setattr(intercom, "async_call_later", lambda *_args, **_kwargs: None)
+    tool = _tool("send_broadcast")
+    tool["spec"]["parameters"]["properties"] = {
+        "message": {"type": "string"},
+        "whole_home": {"type": "boolean"},
+    }
+    tool["function"] = {"type": "native", "name": "send_broadcast"}
+    agent = await _agent(hass, functions=[tool])
+    manager = await intercom.async_get_intercom(hass)
+    await manager.async_set_enabled(True)
+    for target in ("assist_satellite.kitchen", "assist_satellite.hall"):
+        hass.states.async_set(
+            target, "responding", {ATTR_SUPPORTED_FEATURES: intercom.ANNOUNCE_FEATURE}
+        )
+    sent = _provider(
+        monkeypatch,
+        agent,
+        [
+            {
+                "index": 0,
+                "id": "broadcast-call",
+                "type": "function",
+                "function": {
+                    "name": "send_broadcast",
+                    "arguments": '{"whole_home":true,"message":"Dinner is ready"}',
+                },
+            },
+            "Queued for the other room",
+        ],
+    )
+    response = await _response_service_call(
+        hass,
+        SERVICE_PROCESS,
+        {
+            "agent_id": agent.entity_id,
+            "satellite_id": satellite,
+            "text": "Run the messaging task",
+            "language": "en",
+        },
+    )
+    assert response["successful"] is True
+    assert len(sent) == 2
+    queued = manager.history()
+    assert len(queued) == 1
+    assert queued[0]["targets"] == [
+        "assist_satellite.hall"
+        if satellite.endswith("kitchen")
+        else "assist_satellite.kitchen"
+    ]
+    assert queued[0]["origin_entity_id"] == satellite
+    assert queued[0]["source"] == "llm_tool"
+    assert get_request_satellite() is None
+
+
+@pytest.mark.parametrize("kind", ["tools", "groups"])
+async def test_registered_import_replaces_quarantine_after_preview(
+    hass, hass_ws_client, kind
+):
+    from copy import deepcopy
+    import yaml
+    from tests.test_origin_and_replacement_import import (
+        damaged_configuration,
+        import_document,
+    )
+    from tests.test_management_request_boundaries import _tool
+    from custom_components.extended_openai_conversation_responses.secret_redaction import (
+        REDACTED_SECRET_SENTINEL,
+    )
+    from tests_real_ha.test_management_backend_acceptance import (
+        _admin_client,
+        _management_call,
+        _management_response,
+    )
+
+    agent = await _agent(hass, **damaged_configuration(kind))
+    client = await _admin_client(hass, hass_ws_client)
+    before = await _management_call(
+        client, entry=agent.entry, section="configuration", action="get"
+    )
+    saved = deepcopy(dict(agent.subentry.data))
+    rest = _tool("missing_secret")
+    rest["function"] = {
+        "type": "rest",
+        "resource": "https://safe.test/api",
+        "headers": {"Authorization": REDACTED_SECRET_SENTINEL},
+    }
+    for action in ("import_preview", "import"):
+        rejected = await _management_response(
+            client,
+            entry=agent.entry,
+            section="configuration",
+            action=action,
+            document=import_document({"functions": [rest]}),
+            mode="current",
+            confirm=True,
+            revision=before["revision"],
+        )
+        assert rejected["success"] is False
+        assert "unavailable secrets" in rejected["error"]["message"]
+        assert dict(agent.subentry.data) == saved
+    preview = await _management_call(
+        client,
+        entry=agent.entry,
+        section="configuration",
+        action="import_preview",
+        document=import_document(),
+        mode="current",
+    )
+    assert preview["valid"] is True
+    assert dict(agent.subentry.data) == saved
+    unconfirmed = await _management_response(
+        client,
+        entry=agent.entry,
+        section="configuration",
+        action="import",
+        document=import_document(),
+        mode="current",
+        revision=before["revision"],
+    )
+    assert unconfirmed["success"] is False
+    assert "Explicit confirmation" in unconfirmed["error"]["message"]
+    assert dict(agent.subentry.data) == saved
+    result = await _management_call(
+        client,
+        entry=agent.entry,
+        section="configuration",
+        action="import",
+        document=import_document(),
+        mode="current",
+        confirm=True,
+        revision=before["revision"],
+    )
+    assert result["status"] == "updated"
+    await hass.async_block_till_done(wait_background_tasks=True)
+    subentry = next(
+        item
+        for item in agent.entry.subentries.values()
+        if item.subentry_type == "conversation"
+    )
+    assert yaml.safe_load(subentry.data["functions"]) == []
+    assert subentry.data["function_groups"] == []
+    subsequent = await _management_call(
+        client, entry=agent.entry, section="configuration", action="get"
+    )
+    assert not subsequent.get("function_repair")
