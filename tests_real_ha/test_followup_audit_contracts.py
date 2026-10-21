@@ -715,6 +715,11 @@ async def test_cold_multi_agent_websocket_get_reuses_worker_yaml(
     client = await _admin_client(hass, hass_ws_client)
     ui._configuration_defaults()
     repair.discard_persisted_config_projection(agent.subentry)
+    # Startup prewarming now shares pure decoding with runtime preparation.
+    # Keep this a genuinely cold projection/decode boundary test.
+    from custom_components.extended_openai_conversation_responses import agent_config
+
+    agent_config._decoded_function_tools.cache_clear()
     raw = agent.subentry.data[CONF_FUNCTION_TOOLS]
     main_thread = threading.get_ident()
     decode_threads, validation_threads = [], []

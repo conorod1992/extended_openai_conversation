@@ -723,6 +723,9 @@ class ExtendedOpenAIAgentEntity(
                                 await async_reconcile_runtime_configuration(self)
                                 reconciled_token = _ACTIVE_RUNTIME_RECONCILED.set(True)
                                 try:
+                                    await async_prepare_runtime_function_tools(
+                                        self.hass, self.subentry.data
+                                    )
                                     result = await self._async_process_with_continuity(
                                         user_input
                                     )
@@ -744,7 +747,6 @@ class ExtendedOpenAIAgentEntity(
         # later HA-tool bridge installs its provider projection.
         function_config_token = _ACTIVE_FUNCTION_CONFIG.set(None)
         try:
-            await async_prepare_runtime_function_tools(self.hass, self.subentry.data)
             llm_context = user_input.as_llm_context(DOMAIN)
             llm_context_token = _ACTIVE_LLM_CONTEXT.set(llm_context)
             request_policy = self._resolve_live_guest_policy()

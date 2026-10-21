@@ -230,3 +230,45 @@ async def test_memory_failed_self_heal_does_not_publish_partial_state():
     storage.async_save = save
     await manager.async_initialize()
     assert manager.initialized and len(manager._memories) == 2
+
+
+async def test_startup_worker_does_not_overwrite_a_newer_configuration(
+    hass, monkeypatch
+):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    import custom_components.extended_openai_conversation_responses as integration
+    from custom_components.extended_openai_conversation_responses.const import (
+        CONFIG_ENTRY_VERSION,
+    )
+
+    entered, release = threading.Event(), threading.Event()
+    original = {"functions": yaml.safe_dump([_tool("concurrent_migration")])}
+    subentry = SimpleNamespace(data=original, subentry_type="conversation")
+    entry = SimpleNamespace(
+        version=CONFIG_ENTRY_VERSION, disabled_by=None, subentries={"agent": subentry}
+    )
+    update = Mock()
+    fake = SimpleNamespace(
+        config_entries=SimpleNamespace(
+            async_entries=lambda _: [entry], async_update_subentry=update
+        )
+    )
+
+    def migrate(data, kind):
+        data["migration_marker"] = "stale candidate"
+        entered.set()
+        assert release.wait(10)
+        return True
+
+    monkeypatch.setattr(integration, "_migrate_saved_agent_defaults", migrate)
+    task = asyncio.create_task(integration.async_migrate_integration(fake))
+    try:
+        assert await asyncio.to_thread(entered.wait, 10)
+        replacement = {**original, "prompt": "A newer saved prompt"}
+        subentry.data = replacement
+    finally:
+        release.set()
+        await task
+    update.assert_not_called()
+    assert subentry.data is replacement
