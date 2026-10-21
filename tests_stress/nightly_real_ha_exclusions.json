@@ -111,7 +111,8 @@
     "tests_real_ha/test_completion_event_responsiveness.py",
     "tests_real_ha/test_followup_audit_contracts.py",
     "tests_real_ha/test_nested_same_conversation_lock.py",
-    "tests_real_ha/test_zero_budget_group_validation.py"
+    "tests_real_ha/test_zero_budget_group_validation.py",
+    "tests_real_ha/test_worker_boundary_followups.py"
   ],
   "partial_selected": {
     "tests_real_ha/test_management_backend_acceptance.py": {
@@ -810,6 +811,12 @@
       "job": "stable",
       "selector": "tests_real_ha/",
       "reason": "Native service/SDK regression acceptance runs on each PR; enhanced nightly retains separate stress coverage."
+    },
+    "tests_real_ha/test_worker_boundary_followups.py": {
+      "workflow": "real-ha.yml",
+      "job": "stable",
+      "selector": "tests_real_ha/",
+      "reason": "Focused Guest continuity, catalogue parsing and large attachment worker regressions run in ordinary genuine HA PR acceptance; enhanced nightly retains separate stress coverage."
     }
   }
 }
