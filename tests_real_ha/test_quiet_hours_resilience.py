@@ -333,12 +333,11 @@ async def test_replacement_keeps_period_releases_but_reapplies_owned_controls(
     hass, monkeypatch, manual, reconciled
 ):
     from copy import deepcopy
-    from datetime import UTC
     from custom_components.extended_openai_conversation_responses import (
         quiet_hours_runtime as runtime,
     )
 
-    now = datetime(2026, 10, 21, 22, 30, tzinfo=UTC)
+    now = datetime(2026, 10, 21, 22, 30, tzinfo=dt_util.DEFAULT_TIME_ZONE)
     monkeypatch.setattr(runtime.dt_util, "now", lambda: now)
     capability = _capability("bedroom")
     monkeypatch.setattr(
@@ -389,6 +388,9 @@ async def test_replacement_keeps_period_releases_but_reapplies_owned_controls(
         "overrides": {},
     }
     await manager.async_update_config(policy)
+    assert manager.active["controls"]
+    assert _state(hass, "media_player.bedroom").attributes["volume_level"] == 0.15
+    assert _state(hass, "switch.bedroom_wake_sound").state == "off"
     if manual == "volume":
         hass.states.async_set(
             "media_player.bedroom", "idle", {"volume_level": 0.4}, context=Context()

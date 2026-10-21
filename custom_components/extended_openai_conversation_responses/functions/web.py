@@ -37,6 +37,7 @@ from homeassistant.helpers.template import Template, render_complex
 from homeassistant.util.json import JSON_DECODE_EXCEPTIONS, json_loads
 
 from ..const import CONF_PAYLOAD_TEMPLATE
+from ..exceptions import FunctionResponseParseError
 from ..resource_limits import MAX_REMOTE_RESPONSE_BYTES
 from .base import Function
 
@@ -477,7 +478,7 @@ class RestFunction(Function):
         except ExpatError as parse_error:
             # Response content is untrusted. Keep parser diagnostics (which can
             # include response text) out of the public Function error.
-            raise HomeAssistantError(
+            raise FunctionResponseParseError(
                 "REST response parsing failed: ExpatError"
             ) from parse_error
         value_template = function_config.get(CONF_VALUE_TEMPLATE)

@@ -83,7 +83,11 @@ from .delayed_tools import (
     DATA_DELAYED_TOOL_MANAGER,
     DelayedToolManager,
 )
-from .exceptions import ParseArgumentsFailed, TokenLengthExceededError
+from .exceptions import (
+    FunctionResponseParseError,
+    ParseArgumentsFailed,
+    TokenLengthExceededError,
+)
 from .execution_outcomes import with_execution_receipt
 from .function_call_budget import FunctionCallBudget
 from .function_execution import (
@@ -2328,7 +2332,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
             if (
                 delayed
-                or isinstance(err, EffectReplayBlocked)
+                or isinstance(err, (EffectReplayBlocked, FunctionResponseParseError))
                 or strict_execution_failures_enabled()
                 or function_execution_errors_propagate()
             ):

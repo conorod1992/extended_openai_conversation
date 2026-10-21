@@ -645,3 +645,46 @@ async def test_archive_turn_write_failure_is_best_effort(hass) -> None:
         assistant_text="Persisting is best effort.",
         successful=True,
     )
+
+
+async def test_malformed_response_is_terminal_with_recovery_disabled(hass, monkeypatch):
+    from custom_components.extended_openai_conversation_responses.functions import web
+    from homeassistant.components.rest.data import RestData
+    from homeassistant.helpers.template import Template
+
+    tools = [_tool("effect"), _tool("xml")]
+    tools[0]["function"] = {
+        "type": "template",
+        "value_template": Template("effect completed", hass),
+    }
+    tools[1]["function"] = {"type": "rest"}
+    entity, client, _continuity, _logs, invoke = _provider_fixture(
+        hass,
+        monkeypatch,
+        [
+            _tool_stream(_function_call("effect", "{}", "effect-call")),
+            _tool_stream(_function_call("xml", "{}", "xml-call")),
+            _final_stream("Unexpected continuation after malformed XML"),
+        ],
+        tools=tools,
+        options={CONF_FUNCTION_TOOL_ERROR_RECOVERY: False},
+    )
+    # Use the real executor and legacy error classification, not the fixture's stub.
+    del entity._execute_function_tool
+    entity._configured_function_tools_from_data.return_value = tools
+    hass.config_entries.async_get_entry.return_value = None
+    data = SimpleNamespace(
+        data="<root><broken></root>",
+        headers={"Content-Type": "application/xml"},
+        async_update=AsyncMock(),
+        last_exception=None,
+    )
+    data.data_without_xml = lambda: RestData.data_without_xml(data)
+    monkeypatch.setattr(web, "get_rest_data", lambda *_args: data)
+    result = await invoke()
+    assert result.response.error_code is not None
+    assert (
+        "REST response parsing failed: ExpatError"
+        in result.response.speech["plain"]["speech"]
+    )
+    assert client.responses.create.await_count == 2
