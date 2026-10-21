@@ -150,7 +150,7 @@ def _new_journal(
     }
 
 
-def _load_journal(
+async def _async_load_journal(
     value: Any, entry_id: str, subentry_id: str
 ) -> tuple[dict[str, Any], backup.PreparedRestore, backup.PreparedRestore]:
     """Validate a pending transaction without trusting mutable journal fields."""
@@ -181,7 +181,7 @@ def _load_journal(
     journal = dict(value)
     try:
         try:
-            rollback = backup.inspect_backup(
+            rollback = await backup.async_inspect_backup(
                 value["rollback"],
                 subentry_id,
                 max_bytes=backup.MAX_BACKUP_BYTES,
@@ -192,14 +192,14 @@ def _load_journal(
             # only the target is authoritative; never replay that rollback.
             if phase != _PHASE_COMMITTED or "safety limit" not in str(err):
                 raise
-            rollback = backup.inspect_backup(
+            rollback = await backup.async_inspect_backup(
                 value["target"],
                 subentry_id,
                 max_bytes=backup.MAX_BACKUP_BYTES,
                 private_journal=True,
             )
         try:
-            target = backup.inspect_backup(
+            target = await backup.async_inspect_backup(
                 value["target"],
                 subentry_id,
                 max_bytes=backup.MAX_BACKUP_BYTES,
@@ -657,7 +657,9 @@ async def _async_recover_pending_restore(
         raw = await store.async_load()
         if raw is None:
             return False
-        journal, target, rollback = _load_journal(raw, entry_id, subentry_id)
+        journal, target, rollback = await _async_load_journal(
+            raw, entry_id, subentry_id
+        )
         managers = await _durable_managers(hass, entry_id, subentry_id)
         selected = target if journal["phase"] == _PHASE_COMMITTED else rollback
 

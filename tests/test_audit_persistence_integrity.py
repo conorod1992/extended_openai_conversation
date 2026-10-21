@@ -31,11 +31,11 @@ async def test_harmless_pin_suffix_and_legacy_memory_mode():
     assert normalize_agent_config({"functions": [], "memory_enabled": True, "memory_auto_create": True})["memory_mode"] == "automatic"
 
 
-def test_private_journal_preserves_literal_redaction_text():
+async def test_private_journal_preserves_literal_redaction_text():
     prepared = backup.inspect_backup(_document(), "agent-new")
     prepared.config["prompt"] = "Say [redacted] literally"
     journal = restore_recovery._new_journal("entry", "agent-new", prepared, prepared)
-    _, target, rollback = restore_recovery._load_journal(journal, "entry", "agent-new")
+    _, target, rollback = await restore_recovery._async_load_journal(journal, "entry", "agent-new")
     assert target.config["prompt"] == rollback.config["prompt"] == "Say [redacted] literally"
 
 
