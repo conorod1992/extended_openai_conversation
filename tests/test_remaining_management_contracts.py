@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from custom_components.extended_openai_conversation_responses import (
+    live_subentry_updates as live_updates,
     management_loading_performance as loading,
     management_ui as ui,
 )
@@ -400,14 +401,14 @@ async def test_configuration_update_refreshes_local_handling_metadata(
         request.subentry
     ).revision
     monkeypatch.setattr(
-        ui, "configuration_supports_live_update", lambda *_args, **_kwargs: True
+        live_updates, "configuration_supports_live_update", lambda *_args, **_kwargs: True
     )
 
     def update(_hass, _entry, subentry, *, data, title):
         subentry.data = data
         subentry.title = title
 
-    monkeypatch.setattr(ui, "update_live_subentry", update)
+    monkeypatch.setattr(live_updates, "update_live_subentry", update)
     handling = Mock(return_value={"exclusions": ["HassTurnOn"]})
     monkeypatch.setattr(ui, "local_handling_snapshot", handling)
     result = await ui.async_configuration_command(request)
@@ -425,10 +426,10 @@ async def test_settings_live_update_persists_validated_settings(hass, monkeypatc
         request.subentry
     ).revision
     monkeypatch.setattr(
-        ui, "configuration_supports_live_update", lambda *_args, **_kwargs: True
+        live_updates, "configuration_supports_live_update", lambda *_args, **_kwargs: True
     )
     updated = Mock()
-    monkeypatch.setattr(ui, "update_live_subentry", updated)
+    monkeypatch.setattr(live_updates, "update_live_subentry", updated)
     result = await ui.async_settings_command(request)
     assert result["settings"]["archive_enabled"] is True
     assert updated.call_args.kwargs["data"]["archive_enabled"] is True

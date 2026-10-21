@@ -132,7 +132,7 @@ test("Request Rule editor round-trips local and routing forms through reopen and
   // fields that the UI owns; backend normalization is covered by Python tests.
   await panel.locator("#rule-reset").check();
   await panel.locator("#rule-continue-to-ai").uncheck();
-  await panel.locator("#rule-scope").selectOption("conversation");
+  await expect(panel.locator("#rule-scope")).toBeDisabled();
   await expect(panel.locator("#rule-scope")).toHaveValue("conversation");
   await panel.locator("#rule-routing-success").fill("Defaults restored");
   await panel.locator("#rule-save").click();

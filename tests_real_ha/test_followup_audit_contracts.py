@@ -971,6 +971,7 @@ async def test_guest_permissions_follow_real_child_device_area(hass, selection):
         "guest-area-light",
         device_id=child.id,
         config_entry=agent.entry,
+        original_name="Inherited light",
         suggested_object_id="inherited_guest_light",
     )
     if selection == "entity_override":
@@ -1101,7 +1102,7 @@ async def test_repair_save_applies_real_runtime_updates_without_conversation(
         assert stored["requests"] == stored["runs"] == []
     if change == "title":
         assert current.device_info["name"] == changes["title"]
-        device = dr.async_get(hass).async_get_device(
-            identifiers=current.device_info["identifiers"]
+        device = dr.async_get(hass).async_get_device_by_identifier(
+            next(iter(current.device_info["identifiers"])), current.entry.entry_id
         )
         assert device is not None and device.name == changes["title"]
