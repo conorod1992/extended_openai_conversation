@@ -25,8 +25,7 @@ export function webSearchControlState(panel) {
 
 function toolsRequired(config) {
   return Number(config.max_function_calls_per_conversation ?? 10) !== 0
-    || config.continue_conversation === "conditional"
-    || (Array.isArray(config.function_groups) && config.function_groups.some((group) => group.enabled !== false && group.loading_mode === "on_demand"));
+    || config.continue_conversation === "conditional";
 }
 
 // Presentation only: the catalogue and backend still own capability semantics.
