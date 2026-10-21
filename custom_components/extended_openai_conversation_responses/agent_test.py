@@ -191,6 +191,9 @@ async def async_test_agent(
 
     try:
         function_count = _validate_function_schema(subentry)
+        # The implementation check alone does not validate legacy JSON input
+        # schemas. Keep complete configured-tool validation inside diagnostics.
+        configured_tools = configured_function_tools_from_data(subentry.data)
     except Exception as err:
         checks.append(_check("Configuration", "Failed", str(err)))
         return AgentTestResult(_overall(checks), checks)
@@ -201,7 +204,6 @@ async def async_test_agent(
     guest_status = (
         guest_mode.status() if guest_mode is not None else {"state": "inactive"}
     )
-    configured_tools = configured_function_tools_from_data(subentry.data)
     guest_policy = resolve_guest_policy(
         hass,
         subentry.data,
