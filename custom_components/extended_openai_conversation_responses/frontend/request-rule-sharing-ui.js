@@ -1,4 +1,4 @@
-import {applyRulePackImportMutation} from "./request-rules-ui-core.js";
+import {applyRulePackImportMutation, refreshRuleSharingGroups} from "./request-rules-ui-core.js";
 
 const MAX_PACK_BYTES=2*1024*1024;
 
@@ -19,7 +19,7 @@ export function bindRuleSharing(panel, host) {
   const q=(selector)=>content.querySelector(selector), message=q("#rule-pack-message");
   const setMessage=(value)=>{message.textContent=value;};
   const groupSelect=q("#rule-pack-group");
-  groupSelect.innerHTML=[{id:"",name:"Ungrouped"},...(panel._result?.groups||[])].map((group)=>`<option value="${panel._e(group.id)}">${panel._e(group.name)}</option>`).join("");
+  refreshRuleSharingGroups(panel);
   q("#rule-pack-selection").addEventListener("change",()=>{q("#rule-pack-group-label").hidden=q("#rule-pack-selection").value!=="group";});
   const exportSelected=async(ruleIds=null)=>{
     const selection=q("#rule-pack-selection").value;
