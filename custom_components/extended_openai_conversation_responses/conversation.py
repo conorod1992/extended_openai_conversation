@@ -36,7 +36,11 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_track_time_interval
 
 from . import ExtendedOpenAIConfigEntry, ha_actions
-from .agent_config import AgentConfigError, function_tool_enabled
+from .agent_config import (
+    AgentConfigError,
+    async_prepare_runtime_function_tools,
+    function_tool_enabled,
+)
 from .agent_configuration import (
     _archive_runtime_required,
     async_ensure_optional_manager,
@@ -740,6 +744,7 @@ class ExtendedOpenAIAgentEntity(
         # later HA-tool bridge installs its provider projection.
         function_config_token = _ACTIVE_FUNCTION_CONFIG.set(None)
         try:
+            await async_prepare_runtime_function_tools(self.hass, self.subentry.data)
             llm_context = user_input.as_llm_context(DOMAIN)
             llm_context_token = _ACTIVE_LLM_CONTEXT.set(llm_context)
             request_policy = self._resolve_live_guest_policy()

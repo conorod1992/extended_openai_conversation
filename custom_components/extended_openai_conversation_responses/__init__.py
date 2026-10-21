@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import suppress
 import logging
 from types import MappingProxyType
@@ -451,7 +452,9 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
             if subentry.subentry_type not in {"conversation", "ai_task_data"}:
                 continue
             data = dict(subentry.data)
-            changed = _migrate_saved_agent_defaults(data, subentry.subentry_type)
+            changed = await asyncio.to_thread(
+                _migrate_saved_agent_defaults, data, subentry.subentry_type
+            )
             if changed:
                 hass.config_entries.async_update_subentry(entry, subentry, data=data)
 
@@ -495,7 +498,9 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
             if subentry.subentry_type not in {"conversation", "ai_task_data"}:
                 continue
             data = dict(subentry.data)
-            changed = _migrate_saved_agent_defaults(data, subentry.subentry_type)
+            changed = await asyncio.to_thread(
+                _migrate_saved_agent_defaults, data, subentry.subentry_type
+            )
             if subentry.subentry_type == "ai_task_data":
                 if changed:
                     hass.config_entries.async_update_subentry(

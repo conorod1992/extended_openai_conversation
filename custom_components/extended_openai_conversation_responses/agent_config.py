@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from contextlib import suppress
 from copy import deepcopy
 from functools import lru_cache
 import json
@@ -12,6 +13,7 @@ from typing import Any, cast
 
 import yaml
 
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import template
 
@@ -625,13 +627,30 @@ def function_tool_enabled(tool: dict[str, Any]) -> bool:
     return tool.get("enabled", True) is True
 
 
+@lru_cache(maxsize=64)
+def _decoded_function_tools(raw_yaml: str) -> Any:
+    """Cache pure decoding separately from HA-aware validation/hydration."""
+    return yaml.safe_load(raw_yaml)
+
+
+async def async_prepare_runtime_function_tools(
+    hass: HomeAssistant, data: Mapping[str, Any]
+) -> None:
+    """Warm persisted YAML decoding before synchronous request policy lookups."""
+    raw = data.get(CONF_FUNCTION_TOOLS)
+    if isinstance(raw, str) and raw:
+        # Keep malformed saved YAML on the existing quarantine/error path.
+        with suppress(yaml.YAMLError):
+            await hass.async_add_executor_job(_decoded_function_tools, raw)
+
+
 def parse_configured_function_tools(data: Mapping[str, Any]) -> Any:
     """Decode supported persisted representations, retaining legacy default semantics."""
     configured = data.get(CONF_FUNCTION_TOOLS)
     if not configured:
         return deepcopy(DEFAULT_CONF_FUNCTION_TOOLS)
     return (
-        yaml.safe_load(configured)
+        deepcopy(_decoded_function_tools(configured))
         if isinstance(configured, str)
         else deepcopy(configured)
     )
