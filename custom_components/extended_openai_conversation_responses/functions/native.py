@@ -41,6 +41,7 @@ from ..intercom import async_get_intercom
 from ..intercom_permissions import async_authorized_broadcast_targets
 from ..operational_errors import log_handled_failure
 from ..recorder_budget import bounded_history, bounded_statistics
+from ..request_origin import get_request_satellite
 from ..safety_hardening import (
     _async_require_admin,
     _normalized_statistics_arguments,
@@ -352,16 +353,19 @@ class NativeFunction(Function):
         # Use the same resolved-target CONTROL boundary as the service and
         # WebSocket Broadcast entry points. Voice/system requests without an
         # authenticated HA user retain the existing trusted behavior.
+        origin_entity_id = get_request_satellite()
         targets = await async_authorized_broadcast_targets(
             hass,
             manager,
             context=get_active_ha_context(),
+            origin_entity_id=origin_entity_id,
             origin_device_id=origin_device_id,
             **target,
         )
         result = await manager.async_send(
             str(arguments.get("message", "")),
             entity_ids=targets,
+            origin_entity_id=origin_entity_id,
             origin_device_id=origin_device_id,
             source="llm_tool",
         )

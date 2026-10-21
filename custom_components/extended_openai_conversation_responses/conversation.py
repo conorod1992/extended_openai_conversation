@@ -212,6 +212,7 @@ from .request_diagnostics import (
     record_tool_assembly,
     record_tool_execution,
 )
+from .request_origin import bind_request_satellite
 from .request_rules import (
     RequestRuleRuntime,
     RequestRules,
@@ -711,7 +712,10 @@ class ExtendedOpenAIAgentEntity(
                 continue_conversation=False,
             )
 
-        with bind_active_ha_context(user_input.context):
+        with (
+            bind_active_ha_context(user_input.context),
+            bind_request_satellite(getattr(user_input, "satellite_id", None)),
+        ):
             async with conversation_request_lease(self):
                 with conversation_debug_trace(self, user_input) as trace:
                     with formatted_tool_cache():
