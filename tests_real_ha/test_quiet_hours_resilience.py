@@ -326,3 +326,110 @@ async def test_enable_disable_services_enforce_admin_but_allow_system_automation
         context=Context(user_id=hass_admin_user.id),
     )
     assert manager.config.enabled is False
+
+@pytest.mark.parametrize("manual", ["volume", "switch", None])
+@pytest.mark.parametrize("reconciled", [False, True])
+async def test_replacement_keeps_period_releases_but_reapplies_owned_controls(
+    hass, monkeypatch, manual, reconciled
+):
+    from copy import deepcopy
+    from datetime import UTC
+    from custom_components.extended_openai_conversation_responses import (
+        quiet_hours_runtime as runtime,
+    )
+
+    now = datetime(2026, 10, 21, 22, 30, tzinfo=UTC)
+    monkeypatch.setattr(runtime.dt_util, "now", lambda: now)
+    capability = _capability("bedroom")
+    monkeypatch.setattr(
+        QuietHoursManager, "_discover_capabilities", lambda self: [capability]
+    )
+    persisted = {}
+
+    async def save(data):
+        persisted.clear()
+        persisted.update(deepcopy(data))
+
+    store = SimpleNamespace(
+        async_save=AsyncMock(side_effect=save),
+        async_load=AsyncMock(side_effect=lambda: deepcopy(persisted)),
+    )
+    monkeypatch.setattr(runtime, "Store", lambda *_args: store)
+    calls = []
+
+    async def control(call):
+        entity_id = call.data["entity_id"]
+        calls.append((entity_id, call.service))
+        if call.domain == "media_player":
+            hass.states.async_set(
+                entity_id,
+                "idle",
+                {"volume_level": call.data["volume_level"]},
+                context=call.context,
+            )
+        else:
+            hass.states.async_set(
+                entity_id,
+                "on" if call.service == "turn_on" else "off",
+                context=call.context,
+            )
+
+    hass.services.async_register("media_player", "volume_set", control)
+    hass.services.async_register("switch", "turn_on", control)
+    hass.services.async_register("switch", "turn_off", control)
+    _seed(hass, "bedroom", volume=0.6)
+    hass.states.async_set("switch.unrelated", "on")
+    manager = await async_get_quiet_hours(hass)
+    policy = {
+        "enabled": True,
+        "start": "22:00",
+        "end": "23:00",
+        "max_volume": 0.15,
+        "wake_sound": "off",
+        "overrides": {},
+    }
+    await manager.async_update_config(policy)
+    if manual == "volume":
+        hass.states.async_set(
+            "media_player.bedroom", "idle", {"volume_level": 0.4}, context=Context()
+        )
+    elif manual == "switch":
+        hass.states.async_set("switch.bedroom_wake_sound", "on", context=Context())
+    if reconciled:
+        await manager.async_reconcile(now=now)
+    await manager.async_shutdown()
+    assert _state(hass, "media_player.bedroom").attributes["volume_level"] == (
+        0.4 if manual == "volume" else 0.6
+    )
+    assert _state(hass, "switch.bedroom_wake_sound").state == "on"
+    hass.data[DOMAIN].pop(runtime._RUNTIME_KEY)
+    replacement = await async_get_quiet_hours(hass)
+    try:
+        assert replacement is not manager
+        assert _state(hass, "media_player.bedroom").attributes["volume_level"] == (
+            0.4 if manual == "volume" else 0.15
+        )
+        assert _state(hass, "switch.bedroom_wake_sound").state == (
+            "on" if manual == "switch" else "off"
+        )
+        if manual:
+            entity_id = (
+                "media_player.bedroom"
+                if manual == "volume"
+                else "switch.bedroom_wake_sound"
+            )
+            assert entity_id not in replacement.active["controls"]
+        before = list(calls)
+        await manager._handle_discovery_tick(now)
+        await manager._handle_time_transition(now)
+        await replacement.async_update_config(policy)
+        await replacement.async_update_config(policy)
+        assert calls == before
+        assert _state(hass, "switch.unrelated").state == "on"
+        # A new period is eligible for catch-up, including the previously released control.
+        now += timedelta(days=1)
+        await replacement.async_reconcile(now=now)
+        assert _state(hass, "media_player.bedroom").attributes["volume_level"] == 0.15
+        assert _state(hass, "switch.bedroom_wake_sound").state == "off"
+    finally:
+        await replacement.async_shutdown()

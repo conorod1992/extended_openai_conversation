@@ -506,7 +506,7 @@ class QuietHoursManager:
         async with self._lock:
             self._cancel_scheduled_callbacks()
             try:
-                await self._async_restore_locked()
+                await self._async_restore_locked(preserve_released=True)
             finally:
                 # Recovery can rearm an authoritative generation while stopping.
                 self._cancel_scheduled_callbacks()
@@ -1433,10 +1433,18 @@ class QuietHoursManager:
             return left is not None and abs(left - right) <= _VOLUME_TOLERANCE
         return left is right
 
-    async def _async_restore_locked(self, *, pending_only: bool = False) -> None:
+    async def _async_restore_locked(
+        self, *, pending_only: bool = False, preserve_released: bool = False
+    ) -> None:
         if not await self._async_recover_configuration_locked():
             return
         await self._async_resolve_control_identities_locked()
+        # Manager replacement does not start a new policy period. Retain only
+        # independently released choices; successfully restored controls must
+        # remain eligible for the replacement manager's cold-start catch-up.
+        released = set((self._active or {}).get("observed_controls", [])) - set(
+            (self._active or {}).get("controls", {})
+        )
         if self._active is not None:
             controls = self._active.get("controls", {})
             for entity_id, control in list(controls.items()):
@@ -1452,6 +1460,7 @@ class QuietHoursManager:
                     # Ending a period must not restore a value merely because an
                     # unacknowledged intent happens to match an independent effect.
                     controls.pop(entity_id)
+                    released.add(entity_id)
         if self._active is None:
             return
         controls = self._active.get("controls", {})
@@ -1483,9 +1492,11 @@ class QuietHoursManager:
                         current = _current_volume(self.hass, entity_id)
                         if current is None:
                             continue
-                        if math.isclose(
+                        if not math.isclose(
                             current, float(quiet), abs_tol=_VOLUME_TOLERANCE
-                        ) and not math.isclose(
+                        ):
+                            released.add(entity_id)
+                        elif not math.isclose(
                             current, float(original), abs_tol=_VOLUME_TOLERANCE
                         ):
                             await self._async_set_volume(entity_id, float(original))
@@ -1497,7 +1508,9 @@ class QuietHoursManager:
                         current_switch = _current_switch(self.hass, entity_id)
                         if current_switch is None:
                             continue
-                        if current_switch is quiet and current_switch is not original:
+                        if current_switch is not quiet:
+                            released.add(entity_id)
+                        elif current_switch is not original:
                             await self._async_set_switch(entity_id, original)
                     # A confirmed independent value releases ownership too.
                     controls.pop(entity_id)
@@ -1510,8 +1523,11 @@ class QuietHoursManager:
                         "restore", entity_id, str(kind), err, ownership="retained"
                     )
         if not pending_only:
-            if controls:
-                self._active["observed_controls"] = list(controls)
+            retained_observations = set(controls)
+            if preserve_released:
+                retained_observations.update(released)
+            if retained_observations:
+                self._active["observed_controls"] = sorted(retained_observations)
                 self._active["pending_controls"] = {}
             else:
                 self._active = None

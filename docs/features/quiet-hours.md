@@ -48,7 +48,7 @@ These actions simply turn the saved daily schedule on or off; they do not create
 
 ### Retrying restoration
 
-If a controlled speaker or wake-sound switch is unavailable when Quiet Hours ends, its original value remains stored. EOAI retries restoration on discovery ticks, including while the schedule is disabled, and keeps the baseline across Home Assistant restarts. A confirmed independent device change releases ownership without overwriting that change.
+If a controlled speaker or wake-sound switch is unavailable when Quiet Hours ends, its original value remains stored. EOAI retries restoration on discovery ticks, including while the schedule is disabled, and keeps the baseline across Home Assistant restarts. A confirmed independent device change releases ownership without overwriting that change. Released choices remain respected if the Quiet Hours manager is replaced during the same policy period. Controls that EOAI still owns are restored on shutdown and can be reapplied by the replacement manager; a new policy period can apply the policy again.
 
 Saving a changed policy succeeds before EOAI restores or changes devices. A failed settings save leaves the existing policy and device values in place.
 
