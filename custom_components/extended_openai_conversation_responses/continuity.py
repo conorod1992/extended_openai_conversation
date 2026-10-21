@@ -20,10 +20,13 @@ from .const import (
     CONVERSATION_CONTINUITY_HA_DEFAULT,
     CONVERSATION_CONTINUITY_USER,
 )
+from .conversation_ids import (
+    GUEST_CONTINUITY_NAMESPACE as GUEST_CONTINUITY_NAMESPACE,
+    GUEST_CONVERSATION_ID_PREFIX,
+    create_conversation_id,
+)
 from .scope import ResolvedDataScope
 
-GUEST_CONTINUITY_NAMESPACE = "guest"
-GUEST_CONVERSATION_ID_PREFIX = "extended-openai-guest-"
 _MAX_IGNORED_CONVERSATION_IDS = 64
 
 
@@ -420,10 +423,7 @@ class ConversationContinuity:
 
     def _new_conversation_id(self, namespace: str | None) -> str:
         """Create an integration-owned ID with an inspectable privacy namespace."""
-        prefix = f"extended-openai-{self._agent_id}-"
-        if namespace is not None:
-            prefix = f"extended-openai-{namespace}-{self._agent_id}-"
-        return f"{prefix}{uuid4().hex}"
+        return create_conversation_id(self._agent_id, namespace)
 
     def _is_namespaced_conversation_id(
         self, conversation_id: str | None, namespace: str

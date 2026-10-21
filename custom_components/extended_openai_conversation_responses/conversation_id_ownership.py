@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from typing import Any
-from uuid import uuid4
 
 from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
+from .conversation_ids import GUEST_CONTINUITY_NAMESPACE, create_conversation_id
 from .scope import ResolvedDataScope
 
 _CONVERSATION_ID_OWNERS = f"{DOMAIN}.conversation_id_owners"
@@ -45,7 +45,9 @@ def claim_conversation_id(
         owners[conversation_id] = owner
         return conversation_id
 
-    claimed = f"extended-openai-{agent_id}-{uuid4().hex}"
+    claimed = create_conversation_id(
+        agent_id, GUEST_CONTINUITY_NAMESPACE if guest_active else None
+    )
     owners[claimed] = owner
     return claimed
 
