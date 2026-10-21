@@ -913,3 +913,195 @@ async def test_native_completed_responses_keep_indexed_item_text(hass):
     )
 
     await test_completed_responses_multiple_messages_preserve_indexed_text(hass)
+
+
+@pytest.mark.parametrize(
+    "selection",
+    [
+        "area",
+        "label",
+        "control",
+        "child_override",
+        "entity_override",
+        "legacy_read",
+        "legacy_control",
+    ],
+)
+async def test_guest_permissions_follow_real_child_device_area(hass, selection):
+    from homeassistant.helpers import (
+        area_registry as ar,
+        device_registry as dr,
+        entity_registry as er,
+        label_registry as lr,
+    )
+    from custom_components.extended_openai_conversation_responses.guest_mode import (
+        resolve_guest_policy,
+        _resolve_legacy_entity_ids,
+    )
+    from custom_components.extended_openai_conversation_responses.const import (
+        GUEST_POLICY_VERSION,
+    )
+    from types import SimpleNamespace
+
+    agent = await _agent(hass)
+    areas = ar.async_get(hass)
+    bedroom = areas.async_create("Inherited bedroom")
+    hall = areas.async_create("Override hall")
+    label = lr.async_get(hass).async_create("Private inherited area")
+    areas.async_update(bedroom.id, labels={label.label_id})
+    devices = dr.async_get(hass)
+    parent = devices.async_get_or_create(
+        config_entry_id=agent.entry.entry_id,
+        identifiers={(DOMAIN, "guest-area-parent")},
+        name="Parent",
+    )
+    devices.async_update_device(parent.id, area_id=bedroom.id)
+    child = devices.async_get_or_create_child(
+        config_entry_id=agent.entry.entry_id,
+        identifiers={(DOMAIN, "guest-area-child")},
+        name="Child",
+        parent_device_id=parent.id,
+    )
+    child = devices.async_update_child_device(
+        child.id, area_id=hall.id if selection == "child_override" else None
+    )
+    entity = er.async_get(hass).async_get_or_create(
+        "light",
+        DOMAIN,
+        "guest-area-light",
+        device_id=child.id,
+        config_entry=agent.entry,
+        suggested_object_id="inherited_guest_light",
+    )
+    if selection == "entity_override":
+        er.async_get(hass).async_update_entity(entity.entity_id, area_id=hall.id)
+    hass.states.async_set(entity.entity_id, "on", {"friendly_name": "Inherited light"})
+    async_expose_entity(hass, "conversation", entity.entity_id, True)
+    assert dr.async_get_effective_area_id(hass, child) == (
+        hall.id if selection == "child_override" else bedroom.id
+    )
+    if selection.startswith("legacy"):
+        control = selection == "legacy_control"
+        key = "guest_controllable_areas" if control else "guest_readable_areas"
+        assert entity.entity_id in _resolve_legacy_entity_ids(
+            hass, {key: [bedroom.id]}, control=control
+        )
+        return
+    settings = {
+        "guest_policy_version": GUEST_POLICY_VERSION,
+        "guest_separate_control_restrictions": True,
+    }
+    key = (
+        "guest_excluded_labels"
+        if selection == "label"
+        else "guest_control_excluded_areas"
+        if selection == "control"
+        else "guest_excluded_areas"
+    )
+    settings[key] = [label.label_id if selection == "label" else bedroom.id]
+    policy = resolve_guest_policy(
+        hass, settings, SimpleNamespace(is_active=lambda: True)
+    )
+    expected = (
+        (True, True)
+        if selection.endswith("override")
+        else (True, False)
+        if selection == "control"
+        else (False, False)
+    )
+    assert (
+        policy.allows_entity_read(entity.entity_id),
+        policy.allows_entity_control(entity.entity_id),
+    ) == expected
+
+
+@pytest.mark.parametrize("change", ["retention", "title", "live_tokens"])
+async def test_repair_save_applies_real_runtime_updates_without_conversation(
+    hass, hass_ws_client, change
+):
+    import yaml
+    from homeassistant.components import conversation
+    from homeassistant.helpers import device_registry as dr
+    from custom_components.extended_openai_conversation_responses.usage import (
+        RequestUsage,
+    )
+    from tests_real_ha.test_management_backend_acceptance import (
+        _admin_client,
+        _management_call,
+    )
+
+    valid = {
+        "spec": {
+            "name": "healthy_probe",
+            "description": "Probe",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "function": {"type": "template", "value_template": "OK"},
+    }
+    from copy import deepcopy
+
+    broken = deepcopy(valid)
+    broken["spec"]["name"] = "quarantined_probe"
+    broken["spec"]["parameters"]["description"] = 123
+    raw = yaml.safe_dump([valid, broken], sort_keys=False)
+    agent = await _agent(
+        hass,
+        **{
+            CONF_FUNCTION_TOOLS: raw,
+            "usage_request_retention_days": 30,
+            "usage_run_retention_days": 90,
+        },
+    )
+    if change == "retention":
+        async with agent._usage.async_run():
+            await agent._usage.async_record_request(
+                successful=True,
+                usage=RequestUsage(input_tokens=2, output_tokens=1, total_tokens=3),
+            )
+        await hass.async_block_till_done(wait_background_tasks=True)
+        assert agent._usage.requests and agent._usage.runs
+    client = await _admin_client(hass, hass_ws_client)
+    before = await _management_call(
+        client, entry=agent.entry, section="configuration", action="get"
+    )
+    assert before.get("function_repair")
+    changes = (
+        {"config": {"usage_request_retention_days": 0, "usage_run_retention_days": 0}}
+        if change == "retention"
+        else {"title": "Renamed quarantined assistant"}
+        if change == "title"
+        else {"config": {"max_tokens": 777}}
+    )
+    saved = await _management_call(
+        client,
+        entry=agent.entry,
+        section="function_repair",
+        action="configuration_save",
+        revision=before["revision"],
+        **changes,
+    )
+    assert saved["valid"] is True
+    await hass.async_block_till_done(wait_background_tasks=True)
+    current = conversation.async_get_agent(hass, agent.entry.entry_id)
+    assert current is not None
+    assert current.subentry.data[CONF_FUNCTION_TOOLS] == raw
+    if change == "live_tokens":
+        assert current is agent
+        assert current.subentry.data["max_tokens"] == 777
+    else:
+        assert current is not agent
+    if change == "retention":
+        assert (
+            current._usage.request_retention_days
+            == current._usage.run_retention_days
+            == 0
+        )
+        assert current._usage.requests == current._usage.runs == []
+        stored = await current._usage._detail_storage.async_load()
+        assert stored["requests"] == stored["runs"] == []
+    if change == "title":
+        assert current.device_info["name"] == changes["title"]
+        device = dr.async_get(hass).async_get_device(
+            identifiers=current.device_info["identifiers"]
+        )
+        assert device is not None and device.name == changes["title"]
