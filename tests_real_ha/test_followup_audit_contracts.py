@@ -900,3 +900,11 @@ async def test_native_responses_overlap_reaches_next_provider_request(hass, over
 
     async with completion_event_scope():
         await test_responses_tool_chain_preserves_reasoning(hass, "low", overlap)
+
+
+async def test_native_completed_responses_keep_indexed_item_text(hass):
+    from tests.test_responses_api import (
+        test_completed_responses_multiple_messages_preserve_indexed_text,
+    )
+
+    await test_completed_responses_multiple_messages_preserve_indexed_text(hass)

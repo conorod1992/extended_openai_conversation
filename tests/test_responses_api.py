@@ -1851,3 +1851,39 @@ async def test_responses_overlapping_items_keep_native_replay(
         )
     replay = _convert_content_to_responses_param(retained)
     assert replay == [item.model_dump(exclude_none=True) for item in items]
+
+
+async def test_completed_responses_multiple_messages_preserve_indexed_text(hass):
+    from openai.types.responses import ResponseOutputMessage, ResponseOutputText
+    from custom_components.extended_openai_conversation_responses.non_streaming import (
+        completed_responses_events,
+    )
+
+    items = [
+        ResponseOutputMessage(
+            type="message",
+            id=f"msg_{index}",
+            role="assistant",
+            status="completed",
+            content=[ResponseOutputText(type="output_text", text=text, annotations=[])],
+        )
+        for index, text in enumerate(["First message", "Second message"])
+    ]
+    result = SimpleNamespace(output=items, status="completed", usage=None)
+    entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
+    entity.subentry = SimpleNamespace(data={})
+    log = conversation.ChatLog(hass, "completed-indexed")
+    retained = [
+        content
+        async for content in log.async_add_delta_content_stream(
+            "conversation.test",
+            entity._transform_responses_stream(log, completed_responses_events(result)),
+        )
+    ]
+    assert [content.content for content in retained] == [
+        "First message",
+        "Second message",
+    ]
+    assert _convert_content_to_responses_param(retained) == [
+        item.model_dump(exclude_none=True) for item in items
+    ]
