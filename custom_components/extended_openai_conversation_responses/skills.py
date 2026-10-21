@@ -256,13 +256,17 @@ class SkillManager:
 
     async def _async_discover_skills_locked(self) -> dict[str, Skill]:
         """Build a complete catalogue while the filesystem boundary is owned."""
-        skills_data = await self._hass.async_add_executor_job(
-            self._load_skills_from_dir_sync, self.user_skills_dir
+        return await self._hass.async_add_executor_job(
+            self._discover_skills_sync, self.user_skills_dir
         )
+
+    def _discover_skills_sync(self, skills_dir: Path) -> dict[str, Skill]:
+        """Read and parse an owned catalogue without occupying HA's loop."""
+        skills_data = self._load_skills_from_dir_sync(skills_dir)
         loaded: dict[str, Skill] = {}
         for skill_path, content in skills_data:
             try:
-                skill = SkillMdParser.parse(content, skill_path, self.user_skills_dir)
+                skill = SkillMdParser.parse(content, skill_path, skills_dir)
                 if skill is not None:
                     loaded[skill.name] = skill
                     _LOGGER.debug("Loaded skill: %s from %s", skill.name, skill_path)

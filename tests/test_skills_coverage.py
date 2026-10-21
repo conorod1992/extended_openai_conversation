@@ -387,19 +387,21 @@ async def test_skill_load_publishes_complete_result_and_skips_bad_skill(
     class FakeManager(skills_module.SkillManager):
         _instance = None
 
-    hass = SimpleNamespace(
-        config=SimpleNamespace(config_dir="/config"),
-        data={},
-        async_add_executor_job=AsyncMock(
-            return_value=[
+        def _load_skills_from_dir_sync(self, _directory):
+            return [
                 (Path("/skills/good/SKILL.md"), "good"),
                 (Path("/skills/bad/SKILL.md"), "bad"),
                 (Path("/skills/ignored/SKILL.md"), "ignore"),
             ]
-        ),
+
+    hass = SimpleNamespace(
+        config=SimpleNamespace(config_dir="/config"),
+        data={},
+        async_add_executor_job=AsyncMock(side_effect=lambda function, *args: function(*args)),
     )
     monkeypatch.setattr(skills_module, "SkillManager", FakeManager)
     monkeypatch.setattr(skills_module, "SkillMdParser", FakeParser)
+    monkeypatch.setattr(skills_module, "recover_transactions", lambda *_args: None)
 
     manager = FakeManager(hass)
     await manager.async_load_skills()
