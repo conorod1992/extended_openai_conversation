@@ -13,6 +13,11 @@ from custom_components.extended_openai_conversation_responses.responses_stream_o
 
 
 def event(kind, **values):
+    if kind in {"response.output_item.added", "response.output_item.done"}:
+        values.setdefault(
+            "item",
+            SimpleNamespace(type="message", id=f"msg_{values.get('output_index', 0)}"),
+        )
     return SimpleNamespace(type=kind, **values)
 
 
@@ -72,7 +77,5 @@ async def test_failure_is_not_delayed_by_buffered_output(failure):
 
 async def test_repeated_completion_reaches_existing_validation():
     done = event("response.output_item.done", output_index=0)
-    assert [value async for value in ordered_output_events(stream([done, done]))] == [
-        done,
-        done,
-    ]
+    with pytest.raises(ProviderStreamError, match="repeated completed output item"):
+        _ = [value async for value in ordered_output_events(stream([done, done]))]

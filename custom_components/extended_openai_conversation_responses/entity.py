@@ -1962,93 +1962,13 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         response_refusal_lengths: dict[tuple[int | None, int | None], int] = {}
         url_citations: dict[tuple[int | None, int | None], list[dict[str, Any]]] = {}
         terminal_event_seen = False
-        completed_items: set[tuple[Any, Any]] = set()
-        output_items: dict[Any, tuple[Any, Any, Any]] = {}
         completed_calls: list[llm.ToolInput] = []
-        argument_fragments: dict[Any, str] = {}
         event_count = 0
         async for event in ordered_output_events(
             normalized_responses_stream(chat_log, result, request_usage)
         ):
             event_count += 1
             event_type = getattr(event, "type", "")
-            if (
-                terminal_event_seen
-                and event_type.startswith("response.")
-                and event_type not in {"response.usage", "response.usage.updated"}
-            ):
-                raise ProviderStreamError(
-                    "Provider returned malformed data: event after terminal response",
-                    error_type="invalid_event_sequence",
-                )
-
-            if event_type in {
-                "response.output_item.added",
-                "response.output_item.done",
-            }:
-                index = getattr(event, "output_index", None)
-                item = event.item
-                identity = (
-                    getattr(item, "id", None),
-                    getattr(item, "call_id", None),
-                    getattr(item, "name", None),
-                )
-                if (
-                    index is not None
-                    and index in output_items
-                    and output_items[index] != identity
-                ):
-                    raise ProviderStreamError(
-                        "Provider returned malformed data: conflicting output item",
-                        error_type="invalid_event_sequence",
-                    )
-                if index is not None:
-                    if identity[0] and any(
-                        other_index != index and other_identity[0] == identity[0]
-                        for other_index, other_identity in output_items.items()
-                    ):
-                        raise ProviderStreamError(
-                            "Provider returned malformed data: duplicate output item id",
-                            error_type="invalid_event_sequence",
-                        )
-                    output_items[index] = identity
-                    if (
-                        event_type == "response.output_item.done"
-                        and index in argument_fragments
-                        and getattr(item, "arguments", None)
-                        != argument_fragments[index]
-                    ):
-                        raise ProviderStreamError(
-                            "Provider returned malformed data: conflicting tool arguments",
-                            error_type="invalid_event_sequence",
-                        )
-            elif event_type in {
-                "response.function_call_arguments.delta",
-                "response.function_call_arguments.done",
-            }:
-                index = getattr(event, "output_index", None)
-                if (
-                    index in output_items
-                    and getattr(event, "item_id", None) != output_items[index][0]
-                ):
-                    raise ProviderStreamError(
-                        "Provider returned malformed data: conflicting argument item",
-                        error_type="invalid_event_sequence",
-                    )
-
-                if event_type == "response.function_call_arguments.delta":
-                    argument_fragments[index] = (
-                        argument_fragments.get(index, "") + event.delta
-                    )
-                elif (
-                    index in argument_fragments
-                    and event.arguments != argument_fragments[index]
-                ):
-                    raise ProviderStreamError(
-                        "Provider returned malformed data: conflicting tool arguments",
-                        error_type="invalid_event_sequence",
-                    )
-
             if event_type == "response.output_item.added":
                 item_type = getattr(event.item, "type", "")
                 if item_type in {
@@ -2127,14 +2047,6 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
             if event_type == "response.output_item.done":
                 item = event.item
-                key = (getattr(event, "output_index", None), getattr(item, "id", None))
-                if key != (None, None):
-                    if key in completed_items:
-                        raise ProviderStreamError(
-                            "Provider returned malformed data: repeated completed output item",
-                            error_type="invalid_event_sequence",
-                        )
-                    completed_items.add(key)
                 item_type = getattr(item, "type", "")
                 if item_type in {"reasoning", "web_search_call"}:
                     # Preserve native hosted-tool and reasoning output so stateless
