@@ -141,7 +141,7 @@ for (const bundled of [false, true]) {
       await panel.locator("#memory-type").selectOption("temporary");
       await panel.locator("#memory-owner").selectOption(destination);
       await panel.locator("#memory-content").fill("Legacy view short-term fact");
-      await panel.locator("#memory-expiry").fill("2099-01-01T12:00");
+      await panel.locator("#memory-expiry").fill(await page.evaluate(() => new Date(Date.now() + 86400000).toISOString().slice(0, 16)));
       await panel.locator("#memory-save").click();
       await expect(panel.locator("#memory-dialog")).not.toHaveJSProperty("open", true);
       const created = await page.evaluate(() => dataCollectionBackend.calls.filter(call => call.action === "temporary_add"));

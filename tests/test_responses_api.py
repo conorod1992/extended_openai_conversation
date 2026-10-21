@@ -413,6 +413,9 @@ async def test_responses_tool_chain_preserves_reasoning(
     """A Responses tool result is fed into a second streamed request."""
     reasoning_item = FakeReasoningItem()
     from openai.types.responses import ResponseFunctionToolCall
+    from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+        make_tool_result_content,
+    )
 
     function_call = ResponseFunctionToolCall(
         type="function_call",
@@ -476,7 +479,7 @@ async def test_responses_tool_chain_preserves_reasoning(
         async_record_request=AsyncMock(),
     )
     entity._execute_function_tool = AsyncMock(
-        return_value=conversation.ToolResultContent(
+        return_value=make_tool_result_content(
             agent_id=entity.entity_id,
             tool_call_id="call_1",
             tool_name="get_state",

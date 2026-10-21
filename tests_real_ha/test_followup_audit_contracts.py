@@ -841,6 +841,9 @@ async def test_short_term_creation_from_legacy_page_uses_destination(
         _management_response,
     )
 
+    from datetime import timedelta
+    from homeassistant.util import dt as dt_util
+
     agent = await _agent(hass)
     client = await _admin_client(hass, hass_ws_client)
     owner = f"user:{ADMIN_ID}" if destination == "personal" else "shared:household"
@@ -853,7 +856,7 @@ async def test_short_term_creation_from_legacy_page_uses_destination(
         target_scope_id=owner,
         content="Created from legacy page",
         category="home",
-        expires_at="2099-01-01T00:00:00Z",
+        expires_at=(dt_util.utcnow() + timedelta(days=1)).isoformat(),
     )
     assert created["scope_id"] == owner
     listed = await _management_call(
@@ -887,7 +890,9 @@ async def test_native_responses_overlap_preserves_replay(hass, overlap, mixed):
         test_responses_overlapping_items_keep_native_replay,
     )
 
-    await test_responses_overlapping_items_keep_native_replay(hass, overlap, mixed, True)
+    await test_responses_overlapping_items_keep_native_replay(
+        hass, overlap, mixed, True
+    )
 
 
 @pytest.mark.parametrize("overlap", [False, True])
