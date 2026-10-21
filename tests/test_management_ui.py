@@ -409,7 +409,7 @@ async def test_ha_tool_add_validation_refresh_and_group_assignment(
 
 @pytest.mark.asyncio
 async def test_function_tool_validation_and_save_boundaries(
-    monkeypatch: pytest.MonkeyPatch,
+    hass, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     entry, subentry = _entry_pair()
     hass = _hass(entry)

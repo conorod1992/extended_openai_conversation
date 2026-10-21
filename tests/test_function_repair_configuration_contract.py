@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 from types import SimpleNamespace
 from typing import Any
@@ -227,11 +228,11 @@ async def test_function_repair_configuration_get_defers_live_metadata(
 
 @pytest.mark.asyncio
 async def test_normal_configuration_read_quarantines_invalid_tools(
-    monkeypatch: pytest.MonkeyPatch,
+    hass, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     entry, subentry = _repairable_agent()
     original = deepcopy(subentry.data)
-    hass = SimpleNamespace(data={}, config_entries=_FakeConfigEntries())
+    hass = SimpleNamespace(data={}, config_entries=_FakeConfigEntries(), async_add_executor_job=asyncio.to_thread)
     monkeypatch.setattr(
         management_ui, "entry_and_agent", lambda *_args, **_kwargs: (entry, subentry)
     )
@@ -283,12 +284,12 @@ async def test_retention_read_stays_tolerant_of_invalid_tools(
 
 @pytest.mark.asyncio
 async def test_valid_configuration_read_keeps_normal_fast_path(
-    monkeypatch: pytest.MonkeyPatch,
+    hass, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     entry, subentry = _repairable_agent()
     defaults = agent_config_defaults()
     subentry.data[CONF_FUNCTION_TOOLS] = defaults[CONF_FUNCTION_TOOLS]
-    hass = SimpleNamespace(data={}, config_entries=_FakeConfigEntries())
+    hass = SimpleNamespace(data={}, config_entries=_FakeConfigEntries(), async_add_executor_job=asyncio.to_thread)
     monkeypatch.setattr(
         management_ui, "entry_and_agent", lambda *_args, **_kwargs: (entry, subentry)
     )

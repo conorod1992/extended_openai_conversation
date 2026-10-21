@@ -529,6 +529,9 @@ async def test_delegated_guest_child_retains_its_allowed_catalogue(
     hass, monkeypatch, child_service, guest_policy
 ):
     from tests_real_ha.test_cross_feature_acceptance import _say, _speech
+    from custom_components.extended_openai_conversation_responses.const import (
+        CONF_GUEST_POLICY_VERSION, GUEST_POLICY_VERSION,
+    )
 
     child_tool = {
         "spec": {
@@ -543,6 +546,7 @@ async def test_delegated_guest_child_retains_its_allowed_catalogue(
         title="Guest child",
         **{
             CONF_FUNCTION_TOOLS: [child_tool],
+            CONF_GUEST_POLICY_VERSION: GUEST_POLICY_VERSION,
             "guest_mode_enabled": True,
             "guest_function_policy": guest_policy,
             "guest_allowed_function_names": ["child_history"],

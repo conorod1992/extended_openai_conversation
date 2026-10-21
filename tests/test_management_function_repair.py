@@ -165,15 +165,7 @@ async def test_projection_prewarm_discards_yaml_after_subentry_replacement(
     original_data = {CONF_FUNCTION_TOOLS: "[]"}
     entry, subentry = _entry_and_subentry(original_data)
     entry.state = ConfigEntryState.LOADED
-    projection = SimpleNamespace(
-        snapshot=None,
-        repair_state=None,
-        data=original_data,
-        title=subentry.title,
-    )
-    monkeypatch.setattr(
-        repair, "persisted_config_projection", lambda _subentry: projection
-    )
+    projection = repair.persisted_config_projection(subentry)
 
     async def executor(function, configured):
         assert function is parse_configured_function_tools
