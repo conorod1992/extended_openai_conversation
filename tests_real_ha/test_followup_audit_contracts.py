@@ -402,6 +402,8 @@ async def test_native_ha_interrupted_reasoning_history(hass):
 async def test_native_http_params_and_template_exports_never_render_or_leak(
     hass, monkeypatch, persisted, exporter
 ):
+    from copy import deepcopy
+    import json
     import yaml
     from homeassistant.helpers.template import Template
     from custom_components.extended_openai_conversation_responses import backup
