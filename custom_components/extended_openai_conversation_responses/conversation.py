@@ -199,6 +199,7 @@ from .regex_execution import async_process_speech_text
 from .request import (
     assemble_integration_function_tools,
     build_provider_request_snapshot,
+    function_call_budget_available,
     provider_tool_limit,
 )
 from .request_diagnostics import (
@@ -734,6 +735,10 @@ class ExtendedOpenAIAgentEntity(
     ) -> ConversationResult:
         """Resolve the request policy/scope and release any claimed continuity turn."""
         cache_token = _PROMPT_CACHE_CONTEXT.set(None)
+        # Nested Assist/direct calls inherit ContextVars. The initial Guest
+        # policy must resolve against this invocation's catalogue, before the
+        # later HA-tool bridge installs its provider projection.
+        function_config_token = _ACTIVE_FUNCTION_CONFIG.set(None)
         try:
             llm_context = user_input.as_llm_context(DOMAIN)
             llm_context_token = _ACTIVE_LLM_CONTEXT.set(llm_context)
@@ -806,6 +811,7 @@ class ExtendedOpenAIAgentEntity(
                 _ACTIVE_GUEST_POLICY.reset(guest_policy_token)
                 _ACTIVE_LLM_CONTEXT.reset(llm_context_token)
         finally:
+            _ACTIVE_FUNCTION_CONFIG.reset(function_config_token)
             _PROMPT_CACHE_CONTEXT.reset(cache_token)
 
     def _agent_not_ready_result(
@@ -1163,7 +1169,13 @@ class ExtendedOpenAIAgentEntity(
             if is_ha_tool(tool) and function_tool_enabled(tool)
         ]
         snapshot = ToolSnapshot()
-        if references and not self._effective_guest_policy().guest_active:
+        if (
+            references
+            and function_call_budget_available(
+                {**config_data, **(request_options or {})}
+            )
+            and not self._effective_guest_policy().guest_active
+        ):
             snapshot = await async_discover(self.hass, llm_context, references)
         if self.subentry.data is not config_data:
             raise HomeAssistantError(
