@@ -41,7 +41,7 @@ from .const import (
     CONF_USAGE_RUN_RETENTION_DAYS,
     DEFAULT_FUNCTION_GROUPS,
 )
-from .live_subentry_updates import update_live_subentry
+from .live_subentry_updates import update_configuration_subentry, update_live_subentry
 from .model_catalog import catalog_generation
 from .request import canonical_json
 
@@ -1125,7 +1125,7 @@ async def async_function_repair(
             if isinstance(requested_title, str)
             else subentry.title
         )
-        update_live_subentry(
+        update_configuration_subentry(
             hass,
             entry,
             subentry,

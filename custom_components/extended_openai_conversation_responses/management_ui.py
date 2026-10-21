@@ -106,10 +106,7 @@ from .ha_llm_tools import (
 from .ha_schema import websocket_command as ha_websocket_command
 from .helpers import get_exposed_entities
 from .knowledge import async_get_knowledge, knowledge_source_as_dict
-from .live_subentry_updates import (
-    configuration_supports_live_update,
-    update_live_subentry,
-)
+from .live_subentry_updates import update_configuration_subentry, update_live_subentry
 from .local_intents import (
     CONF_LOCAL_INTENT_DELAYED_COMMANDS_TO_AI,
     CONF_LOCAL_INTENT_EXCLUSIONS,
@@ -1318,16 +1315,10 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
     )
     timings["persistence_preparation_ms"] = _elapsed_ms(phase)
     phase = perf_counter()
-    live_update = configuration_supports_live_update(
-        subentry.data, persisted, title_changed=saved_title != subentry.title
-    )
     title_update = {"title": saved_title} if isinstance(title, str) else {}
-    if live_update:
-        update_live_subentry(hass, entry, subentry, data=persisted, **title_update)
-    else:
-        hass.config_entries.async_update_subentry(
-            entry, subentry, data=persisted, **title_update
-        )
+    live_update = update_configuration_subentry(
+        hass, entry, subentry, data=persisted, **title_update
+    )
     timings["subentry_update_ms"] = _elapsed_ms(phase)
     timings["live_runtime_update"] = live_update
 
@@ -1643,16 +1634,9 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         refresh_local_handling = _local_handling_config_changed(
             subentry.data, normalized, updates
         )
-        if configuration_supports_live_update(
-            subentry.data, normalized, title_changed=saved_title != subentry.title
-        ):
-            update_live_subentry(
-                hass, entry, subentry, data=normalized, title=saved_title
-            )
-        else:
-            hass.config_entries.async_update_subentry(
-                entry, subentry, data=normalized, title=saved_title
-            )
+        update_configuration_subentry(
+            hass, entry, subentry, data=normalized, title=saved_title
+        )
         from .management_loading_performance import _snapshot_normalized_configuration
 
         snapshot = _snapshot_normalized_configuration(
@@ -2970,13 +2954,7 @@ async def async_settings_command(request: _ManagementRequest) -> dict[str, Any]:
         )
         await _async_validate_configuration_request(hass, entry, subentry, candidate)
         _require_agent_config_revision(subentry, message["revision"])
-        live = configuration_supports_live_update(
-            subentry.data, candidate, title_changed=False
-        )
-        if live:
-            update_live_subentry(hass, entry, subentry, data=candidate)
-        else:
-            hass.config_entries.async_update_subentry(entry, subentry, data=candidate)
+        update_configuration_subentry(hass, entry, subentry, data=candidate)
         return {
             "settings": settings_snapshot(candidate),
             "revision": saved_agent_config_revision(
