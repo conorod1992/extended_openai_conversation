@@ -522,3 +522,305 @@ async def test_malformed_rest_xml_returns_assist_error_after_completed_effect(
     assert _speech(recovered) == "Recovered."
     assert len(sent) == 3
     assert len(effects) == 1
+
+@pytest.mark.parametrize("child_service", ["conversation.process", f"{DOMAIN}.process"])
+@pytest.mark.parametrize("guest_policy", ["on", "custom"])
+async def test_delegated_guest_child_retains_its_allowed_catalogue(
+    hass, monkeypatch, child_service, guest_policy
+):
+    from tests_real_ha.test_cross_feature_acceptance import _say, _speech
+
+    child_tool = {
+        "spec": {
+            "name": "child_history",
+            "description": "Read history",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "function": {"type": "native", "name": "get_history"},
+    }
+    child = await _agent(
+        hass,
+        title="Guest child",
+        **{
+            CONF_FUNCTION_TOOLS: [child_tool],
+            "guest_mode_enabled": True,
+            "guest_function_policy": guest_policy,
+            "guest_allowed_function_names": ["child_history"],
+        },
+    )
+    await child._guest_mode.async_update_trusted(indefinite=True)
+    assert child._guest_mode.status()["currently_active"]
+    async_expose_entity(hass, "conversation", child.entity_id, True)
+    delegate = {
+        "spec": {
+            "name": "delegate",
+            "description": "Ask child",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "function": {
+            "type": "script",
+            "sequence": [
+                {
+                    "action": child_service,
+                    "data": {
+                        "agent_id": child.entity_id,
+                        "text": "child request",
+                        "language": "en",
+                    },
+                    "response_variable": "answer",
+                }
+            ],
+        },
+    }
+    parent = await _agent(
+        hass, title="Guest parent", **{CONF_FUNCTION_TOOLS: [delegate]}
+    )
+    child_sent = _provider(monkeypatch, child, ["Direct answer", "Nested answer"])
+    assert _speech(await _say(hass, child, "child request")) == "Direct answer"
+    parent_sent = _provider(
+        monkeypatch,
+        parent,
+        [
+            {
+                "index": 0,
+                "id": "delegate-call",
+                "type": "function",
+                "function": {"name": "delegate", "arguments": "{}"},
+            },
+            "Parent answer",
+        ],
+    )
+    assert _speech(await _say(hass, parent, "Delegate")) == "Parent answer"
+    assert len(child_sent) == 2
+
+    def names(request):
+        return {tool["function"]["name"] for tool in request["tools"]}
+
+    assert "child_history" in names(child_sent[0])
+    assert names(child_sent[0]) == names(child_sent[1])
+    assert "delegate" in names(parent_sent[-1])
+    assert "child_history" not in names(parent_sent[-1])
+
+
+@pytest.mark.parametrize("kind", ["tools", "groups"])
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_registered_toggle_services_preserve_quarantined_siblings(
+    hass, kind, enabled
+):
+    from copy import deepcopy
+    import yaml
+    from homeassistant.core import Context
+
+    healthy = {
+        "spec": {
+            "name": "healthy",
+            "description": "Healthy",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "function": {"type": "template", "value_template": "ok"},
+        "enabled": not enabled,
+    }
+    legacy = deepcopy(healthy)
+    legacy["spec"]["name"] = "legacy_script"
+    legacy["function"] = {
+        "type": "script",
+        "mode": "single",
+        "sequence": [{"delay": 1}],
+    }
+    group = {
+        "id": "healthy-group",
+        "name": "Healthy",
+        "description": "Healthy tools",
+        "loading_mode": "always",
+        "enabled": not enabled,
+        "functions": ["healthy"],
+    }
+    agent = await _agent(
+        hass,
+        **{
+            CONF_FUNCTION_TOOLS: yaml.safe_dump([healthy, legacy]),
+            "function_groups": [group],
+        },
+    )
+    service = ("enable_" if enabled else "disable_") + "function_" + kind
+    await hass.services.async_call(
+        DOMAIN,
+        service,
+        {
+            "config_entry": agent.entry.entry_id,
+            "agent_id": agent.entity_id,
+            "functions" if kind == "tools" else "function_groups": [
+                "healthy" if kind == "tools" else "healthy-group"
+            ],
+        },
+        blocking=True,
+        context=Context(),
+    )
+    saved = yaml.safe_load(agent.subentry.data[CONF_FUNCTION_TOOLS])
+    assert (
+        next(tool for tool in saved if tool["spec"]["name"] == "legacy_script")
+        == legacy
+    )
+    if kind == "tools":
+        assert (
+            next(tool for tool in saved if tool["spec"]["name"] == "healthy")["enabled"]
+            is enabled
+        )
+    else:
+        assert agent.subentry.data["function_groups"][0]["enabled"] is enabled
+
+
+async def test_cold_multi_agent_websocket_get_reuses_worker_yaml(
+    hass, hass_ws_client, monkeypatch
+):
+    import threading
+    import yaml
+    from custom_components.extended_openai_conversation_responses import (
+        management_function_repair as repair,
+        management_ui as ui,
+    )
+    from tests_real_ha.test_management_backend_acceptance import (
+        _admin_client,
+        _management_call,
+    )
+
+    tools = [
+        {
+            "spec": {
+                "name": f"cold_history_{index}",
+                "description": "Read history",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        f"field_{number}": {
+                            "type": "string",
+                            "description": "Detailed valid schema " * 5,
+                        }
+                        for number in range(30)
+                    },
+                },
+            },
+            "function": {"type": "native", "name": "get_history"},
+        }
+        for index in range(12)
+    ]
+    agent = await _agent(
+        hass, title="Cold target", **{CONF_FUNCTION_TOOLS: yaml.safe_dump(tools)}
+    )
+    await _agent(hass, title="Second saved agent")
+    client = await _admin_client(hass, hass_ws_client)
+    ui._configuration_defaults()
+    repair.discard_persisted_config_projection(agent.subentry)
+    raw = agent.subentry.data[CONF_FUNCTION_TOOLS]
+    main_thread = threading.get_ident()
+    decode_threads, validation_threads = [], []
+    original_load, original_snapshot = yaml.safe_load, repair.agent_config_snapshot
+
+    def load(value):
+        if value == raw:
+            decode_threads.append(threading.get_ident())
+        return original_load(value)
+
+    def snapshot(*args, **kwargs):
+        validation_threads.append(threading.get_ident())
+        return original_snapshot(*args, **kwargs)
+
+    monkeypatch.setattr(yaml, "safe_load", load)
+    monkeypatch.setattr(repair, "agent_config_snapshot", snapshot)
+    result = await _management_call(
+        client, entry=agent.entry, section="configuration", action="get"
+    )
+    assert len(result["config"]["functions"]) == 12
+    assert len(decode_threads) == 1 and decode_threads[0] != main_thread
+    assert validation_threads == [main_thread]
+    await _management_call(
+        client, entry=agent.entry, section="configuration", action="get"
+    )
+    assert len(decode_threads) == 1
+
+
+async def test_native_options_flow_reports_legacy_input_schema(hass, monkeypatch):
+    import yaml
+    from tests_real_ha.test_cross_feature_acceptance import _provider
+
+    bad = {
+        "spec": {
+            "name": "old_phone",
+            "description": "Legacy phone tool",
+            "parameters": {
+                "type": "object",
+                "properties": {"phone": {"type": "string", "minLength": "1"}},
+            },
+        },
+        "function": {"type": "template", "value_template": "ok"},
+    }
+    agent = await _agent(hass, **{CONF_FUNCTION_TOOLS: yaml.safe_dump([bad])})
+    sent = _provider(monkeypatch, agent, [])
+    menu = await hass.config_entries.options.async_init(agent.entry.entry_id)
+    selection = await hass.config_entries.options.async_configure(
+        menu["flow_id"], {"next_step_id": "test_agent"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        selection["flow_id"], {"agent_id": agent.subentry.subentry_id}
+    )
+    assert result["step_id"] == "test_result"
+    assert not sent
+    report = result["data_schema"]({})["report"]
+    assert "Configuration: Failed" in report and "minLength" in report
+
+
+@pytest.mark.parametrize("conditional", [False, True])
+async def test_zero_budget_request_never_constructs_external_api(
+    hass, monkeypatch, conditional
+):
+    from homeassistant.helpers import llm
+    from tests_real_ha.test_cross_feature_acceptance import _say, _speech
+
+    calls = []
+
+    class DormantAPI(llm.API):
+        def __init__(self):
+            super().__init__(hass=hass, id="dormant-source", name="Dormant source")
+
+        async def async_get_api_instance(self, context):
+            calls.append(context)
+            raise AssertionError("Dormant external API must not be constructed")
+
+    llm.async_register_api(hass, DormantAPI())
+    tool = {
+        "spec": {"name": "external"},
+        "enabled": True,
+        "function": {
+            "type": "ha_llm",
+            "source_type": "api",
+            "source_id": "external-implementation",
+            "api_id": "dormant-source",
+            "tool_name": "external",
+        },
+    }
+    agent = await _agent(
+        hass,
+        **{
+            CONF_FUNCTION_TOOLS: [tool],
+            "max_function_calls_per_conversation": 0,
+            "continue_conversation": "conditional" if conditional else "ha_default",
+        },
+    )
+    replies = (
+        [
+            {
+                "index": 0,
+                "id": "finish",
+                "type": "function",
+                "function": {
+                    "name": "set_continue_conversation",
+                    "arguments": '{"response":"Done","continue_conversation":false}',
+                },
+            }
+        ]
+        if conditional
+        else ["Done"]
+    )
+    _provider(monkeypatch, agent, replies)
+    assert _speech(await _say(hass, agent, "Text only")) == "Done"
+    assert calls == []
