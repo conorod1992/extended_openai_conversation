@@ -3,6 +3,7 @@
 import asyncio
 import base64
 from collections.abc import Mapping
+from copy import deepcopy
 import logging
 import mimetypes
 from pathlib import Path
@@ -35,6 +36,7 @@ from homeassistant.helpers.typing import ConfigType
 from homeassistant.loader import async_get_integration
 
 from .agent_config import (
+    AgentConfigError,
     merge_agent_config,
     project_agent_config_updates,
     validate_function_groups,
@@ -275,9 +277,18 @@ async def async_set_function_tools_enabled(
         if entry is None:
             raise HomeAssistantError("Config entry not found")
         subentry = entry.subentries[subentry_id]
-        configured = validate_function_tools(
-            subentry.data.get(CONF_FUNCTION_TOOLS) or DEFAULT_CONF_FUNCTION_TOOLS
-        )
+        repair_state = None
+        try:
+            configured = validate_function_tools(
+                subentry.data.get(CONF_FUNCTION_TOOLS) or DEFAULT_CONF_FUNCTION_TOOLS
+            )
+        except AgentConfigError:
+            from .management_function_repair import function_configuration_repair_state
+
+            repair_state = function_configuration_repair_state(dict(subentry.data))
+            if repair_state is None or not repair_state.field_updates_allowed:
+                raise
+            configured = deepcopy(repair_state.valid)
         requested = list(dict.fromkeys(function_names))
         configured_names = {tool["spec"]["name"] for tool in configured}
         missing = [name for name in requested if name not in configured_names]
@@ -288,6 +299,15 @@ async def async_set_function_tools_enabled(
         for tool in configured:
             if tool["spec"]["name"] in requested:
                 tool["enabled"] = enabled
+        if repair_state is not None:
+            from .management_function_quarantine import (
+                _tolerant_persist_function_configuration,
+            )
+
+            _tolerant_persist_function_configuration(
+                hass, entry, subentry, configured, repair_state.groups
+            )
+            return
         updates = {CONF_FUNCTION_TOOLS: configured}
         normalized = merge_agent_config(dict(subentry.data), updates)
         update_live_subentry(
@@ -312,11 +332,24 @@ async def async_set_function_groups_enabled(
         if entry is None:
             raise HomeAssistantError("Config entry not found")
         subentry = entry.subentries[subentry_id]
-        configured = validate_function_tools(
-            subentry.data.get(CONF_FUNCTION_TOOLS) or DEFAULT_CONF_FUNCTION_TOOLS
-        )
-        groups = validate_function_groups(
-            subentry.data.get(CONF_FUNCTION_GROUPS, []), configured
+        repair_state = None
+        try:
+            configured = validate_function_tools(
+                subentry.data.get(CONF_FUNCTION_TOOLS) or DEFAULT_CONF_FUNCTION_TOOLS
+            )
+        except AgentConfigError:
+            from .management_function_repair import function_configuration_repair_state
+
+            repair_state = function_configuration_repair_state(dict(subentry.data))
+            if repair_state is None or not repair_state.field_updates_allowed:
+                raise
+            configured = deepcopy(repair_state.valid)
+        groups = (
+            deepcopy(repair_state.groups)
+            if repair_state is not None
+            else validate_function_groups(
+                subentry.data.get(CONF_FUNCTION_GROUPS, []), configured
+            )
         )
         requested = list(dict.fromkeys(group_ids))
         configured_ids = {group["id"] for group in groups}
@@ -328,6 +361,15 @@ async def async_set_function_groups_enabled(
         for group in groups:
             if group["id"] in requested:
                 group["enabled"] = enabled
+        if repair_state is not None:
+            from .management_function_quarantine import (
+                _tolerant_persist_function_configuration,
+            )
+
+            _tolerant_persist_function_configuration(
+                hass, entry, subentry, configured, groups
+            )
+            return
         updates = {CONF_FUNCTION_GROUPS: groups}
         normalized = merge_agent_config(dict(subentry.data), updates)
         update_live_subentry(
