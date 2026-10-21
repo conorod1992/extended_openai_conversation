@@ -8,6 +8,7 @@ from http import HTTPStatus
 import logging
 from typing import Any, cast
 from uuid import uuid4
+from xml.parsers.expat import ExpatError
 import zlib
 
 import aiohttp
@@ -471,7 +472,14 @@ class RestFunction(Function):
             raise HomeAssistantError(
                 f"REST request failed: {type(error).__name__}"
             ) from error
-        value = await hass.async_add_executor_job(rest_data.data_without_xml)
+        try:
+            value = await hass.async_add_executor_job(rest_data.data_without_xml)
+        except ExpatError as parse_error:
+            # Response content is untrusted. Keep parser diagnostics (which can
+            # include response text) out of the public Function error.
+            raise HomeAssistantError(
+                "REST response parsing failed: ExpatError"
+            ) from parse_error
         value_template = function_config.get(CONF_VALUE_TEMPLATE)
 
         if value is not None and value_template is not None:

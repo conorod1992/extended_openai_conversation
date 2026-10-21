@@ -440,3 +440,85 @@ async def test_native_http_params_and_template_exports_never_render_or_leak(
     assert SECRET not in json.dumps(result["document"])
     assert agent.subentry.data == original
     assert backup.private_configuration_snapshot(agent.subentry.data) == private
+
+async def test_malformed_rest_xml_returns_assist_error_after_completed_effect(
+    hass, monkeypatch, aiohttp_server, socket_enabled
+):
+    from aiohttp import web
+    from custom_components.extended_openai_conversation_responses.const import (
+        CONF_FUNCTION_TOOL_ERROR_RECOVERY,
+    )
+    from tests_real_ha.test_cross_feature_acceptance import _say, _speech
+
+    async def malformed(_request):
+        return web.Response(
+            text="<root><broken></root>", content_type="application/xml"
+        )
+
+    app = web.Application()
+    app.router.add_get("/malformed", malformed)
+    server = await aiohttp_server(app)
+    effects = []
+
+    async def record(call):
+        effects.append(call.context.id)
+
+    hass.services.async_register("rest_boundary_probe", "record", record)
+
+    def tool(name, function):
+        return {
+            "spec": {
+                "name": name,
+                "description": name,
+                "parameters": {"type": "object", "properties": {}},
+            },
+            "function": function,
+        }
+
+    agent = await _agent(
+        hass,
+        **{
+            CONF_FUNCTION_TOOL_ERROR_RECOVERY: False,
+            CONF_FUNCTION_TOOLS: [
+                tool(
+                    "record_effect",
+                    {
+                        "type": "script",
+                        "sequence": [{"action": "rest_boundary_probe.record"}],
+                    },
+                ),
+                tool(
+                    "fetch_xml",
+                    {
+                        "type": "rest",
+                        "resource": str(server.make_url("/malformed")),
+                        "value_template": "{{ value_json.required }}",
+                    },
+                ),
+            ],
+        },
+    )
+
+    def call(name):
+        return {
+            "index": 0,
+            "id": name + "-call",
+            "type": "function",
+            "function": {"name": name, "arguments": "{}"},
+        }
+
+    sent = _provider(
+        monkeypatch, agent, [call("record_effect"), call("fetch_xml"), "Recovered."]
+    )
+    result = await _say(hass, agent, "Record then fetch")
+    assert result.response.error_code is not None
+    assert "REST response parsing failed: ExpatError" in _speech(
+        result, successful=False
+    )
+    assert "<root>" not in _speech(result, successful=False)
+    assert len(sent) == 2
+    assert len(effects) == 1
+    recovered = await _say(hass, agent, "Another turn")
+    assert _speech(recovered) == "Recovered."
+    assert len(sent) == 3
+    assert len(effects) == 1

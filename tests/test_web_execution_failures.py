@@ -4,6 +4,7 @@ import asyncio
 from compression import zstd
 import gzip
 import zlib
+from unittest.mock import AsyncMock
 
 import aiohttp
 from aiohttp import web as http_web
@@ -58,7 +59,7 @@ async def test_http_failure_stops_composite(hass, rest_server, status, kind):
         "sequence": [
             rest_server(status, kind),
             {"type": "template", "value_template": follow},
-        ]
+        ],
     }
     with pytest.raises(HomeAssistantError, match=f"HTTP {status}") as caught:
         await CompositeFunction().execute(hass, config, {}, None, [])
@@ -103,7 +104,7 @@ async def test_rest_template_failure_stops_composite(hass, rest_server):
                 "value_template": "{{ value_json.missing.child }}",
             },
             {"type": "template", "value_template": "{{ later.child }}"},
-        ]
+        ],
     }
     with pytest.raises(HomeAssistantError, match="missing"):
         await CompositeFunction().execute(hass, config, {}, None, [])
@@ -280,3 +281,78 @@ async def test_bounded_response_sanitizes_unknown_http_status_and_text_encoding(
     response.content.body = b"\xff"
     with pytest.raises(HomeAssistantError, match="cannot be decoded"):
         await web._BoundedResponse(response, 32).text(encoding="ascii")
+
+
+@pytest.mark.parametrize(
+    "body,expected",
+    [
+        ("<root><broken></root>", None),
+        ("<root><required>42</required></root>", '{"root":{"required":"42"}}'),
+        ('{"required":42}', '{"required":42}'),
+    ],
+)
+async def test_rest_response_xml_parse_boundary(hass, monkeypatch, body, expected):
+    from types import SimpleNamespace
+    from xml.parsers.expat import ExpatError
+    from homeassistant.components.rest.data import RestData
+
+    import threading
+
+    main_thread = threading.get_ident()
+    conversion_threads = []
+    monkeypatch.setattr(
+        hass, "async_add_executor_job", AsyncMock(side_effect=asyncio.to_thread)
+    )
+    # Execute HA's actual XML decoder, not an injected parsing exception.
+    data = SimpleNamespace(
+        data=body,
+        headers={
+            "Content-Type": "application/xml"
+            if body.startswith("<")
+            else "application/json"
+        },
+    )
+
+    def decode():
+        conversion_threads.append(threading.get_ident())
+        return RestData.data_without_xml(data)
+
+    data.data_without_xml = decode
+    data.async_update = AsyncMock()
+    data.last_exception = None
+    monkeypatch.setattr(web, "get_rest_data", lambda *_args: data)
+    if expected is None:
+        with pytest.raises(
+            HomeAssistantError, match="REST response parsing failed: ExpatError"
+        ) as caught:
+            await web.RestFunction().execute(hass, {}, {}, None, [])
+        assert isinstance(caught.value.__cause__, ExpatError)
+        assert body not in str(caught.value)
+    else:
+        import json
+
+        assert json.loads(
+            await web.RestFunction().execute(hass, {}, {}, None, [])
+        ) == json.loads(expected)
+    assert conversion_threads and all(
+        thread != main_thread for thread in conversion_threads
+    )
+
+
+@pytest.mark.parametrize(
+    "error", [RuntimeError("unexpected"), asyncio.CancelledError()]
+)
+async def test_rest_parse_boundary_preserves_unexpected_errors(
+    hass, monkeypatch, error
+):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    data = SimpleNamespace(
+        async_update=AsyncMock(),
+        last_exception=None,
+        data_without_xml=Mock(side_effect=error),
+    )
+    monkeypatch.setattr(web, "get_rest_data", lambda *_args: data)
+    with pytest.raises(type(error)):
+        await web.RestFunction().execute(hass, {}, {}, None, [])
