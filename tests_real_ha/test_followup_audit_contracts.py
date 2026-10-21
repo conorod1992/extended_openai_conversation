@@ -1305,3 +1305,92 @@ async def test_native_memory_cold_preparation_worker(
     assert len(saved["memories"]) == count
     assert await memory.async_get_memory(hass, entry_id, subentry_id) is manager
     assert len(vectors) == count
+
+
+@pytest.mark.parametrize("hours", [1440, 8784])
+async def test_native_year_statistics_preserves_real_recorder_aggregate(
+    hass, tmp_path, hours
+):
+    from datetime import UTC, datetime, timedelta
+    from homeassistant.components import recorder
+    from homeassistant.components.recorder import statistics
+    from homeassistant.components.recorder.models.statistics import StatisticMeanType
+    from homeassistant.setup import async_setup_component
+    from custom_components.extended_openai_conversation_responses.functions.native import (
+        NativeFunction,
+    )
+
+    assert await async_setup_component(
+        hass,
+        "recorder",
+        {"recorder": {"db_url": f"sqlite:///{tmp_path / 'annual-statistics.db'}"}},
+    )
+    start = datetime(2024, 1, 1, tzinfo=UTC)
+    statistic_id = "sensor.annual_acceptance"
+    metadata = {
+        "statistic_id": statistic_id,
+        "source": "recorder",
+        "name": "Annual sensor",
+        "unit_of_measurement": "°C",
+        "unit_class": "temperature",
+        "has_mean": True,
+        "mean_type": StatisticMeanType.ARITHMETIC,
+        "has_sum": False,
+    }
+    statistics.async_import_statistics(
+        hass,
+        metadata,
+        [
+            {
+                "start": start + timedelta(hours=i),
+                "mean": 10 + (i % 17),
+                "min": 5 + (i % 17),
+                "max": 20 + (i % 17),
+            }
+            for i in range(hours)
+        ],
+    )
+    instance = recorder.get_instance(hass)
+    await instance.async_block_till_done()
+    from sqlalchemy import func, select
+    from homeassistant.components.recorder.db_schema import Statistics, StatisticsMeta
+    from homeassistant.components.recorder.util import session_scope
+
+    def retained_hours():
+        with session_scope(hass=hass, read_only=True) as session:
+            return session.scalar(
+                select(func.count())
+                .select_from(Statistics)
+                .join(StatisticsMeta, Statistics.metadata_id == StatisticsMeta.id)
+                .where(StatisticsMeta.statistic_id == statistic_id)
+            )
+
+    assert await instance.async_add_executor_job(retained_hours) == hours
+    end = start + timedelta(hours=1)
+    types, units = {"mean", "min", "max"}, {"temperature": "°F"}
+    expected = await instance.async_add_executor_job(
+        statistics.statistics_during_period,
+        hass,
+        start,
+        end,
+        {statistic_id},
+        "year",
+        units,
+        types,
+    )
+    assert len(expected[statistic_id]) == 1
+    result = await NativeFunction().get_statistics(
+        hass,
+        {},
+        {
+            "statistic_ids": [statistic_id],
+            "start_time": start.isoformat(),
+            "end_time": end.isoformat(),
+            "period": "year",
+            "types": types,
+            "units": units,
+        },
+        None,
+        [{"entity_id": statistic_id}],
+    )
+    assert result == expected
