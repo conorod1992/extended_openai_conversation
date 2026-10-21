@@ -481,9 +481,6 @@ def _parse_import_document(value: Any, *, destination: Any = None) -> dict[str, 
         )
     from .transfer import _restore_section_secrets
 
-    fallback = (
-        agent_config_snapshot(dict(destination.data)) if destination is not None else {}
-    )
     raw_config = value.get("config")
     if isinstance(raw_config, dict):
         # Parent-entry credentials are outside the agent export contract.
@@ -492,7 +489,14 @@ def _parse_import_document(value: Any, *, destination: Any = None) -> dict[str, 
             for key, item in raw_config.items()
             if key != "api_key" or not is_redacted_secret(item)
         }
-    config, _preserved, missing = _restore_section_secrets(raw_config, fallback)
+    config, _preserved, missing = _restore_section_secrets(raw_config, {})
+    if missing and destination is not None:
+        # Only local credential recovery needs the old data. It may contain
+        # quarantined definitions being replaced, not a valid configuration.
+        # Structural destination matching remains owned by the shared restorer.
+        config, _preserved, missing = _restore_section_secrets(
+            raw_config, dict(destination.data)
+        )
     if missing:
         raise AgentConfigError(
             "config",
