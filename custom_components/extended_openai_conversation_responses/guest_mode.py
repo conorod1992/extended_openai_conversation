@@ -816,6 +816,20 @@ def guest_policy_editor_snapshot(
     }
 
 
+def _effective_guest_entity_area(
+    hass: HomeAssistant, entity: Any, device: Any
+) -> str | None:
+    """Respect entity overrides and HA child-device area inheritance."""
+    if area_id := getattr(entity, "area_id", None):
+        return cast(str, area_id)
+    if device is None:
+        return None
+    # Child-device inheritance is unavailable on our oldest supported HA.
+    if resolver := getattr(dr, "async_get_effective_area_id", None):
+        return cast(str | None, resolver(hass, device))
+    return cast(str | None, getattr(device, "area_id", None))
+
+
 def _resolve_legacy_entity_ids(
     hass: HomeAssistant, options: Mapping[str, Any], *, control: bool
 ) -> set[str]:
@@ -846,9 +860,7 @@ def _resolve_legacy_entity_ids(
             if registry_entry is not None and registry_entry.device_id
             else None
         )
-        effective_area = getattr(registry_entry, "area_id", None) or getattr(
-            device, "area_id", None
-        )
+        effective_area = _effective_guest_entity_area(hass, registry_entry, device)
         entity_areas = {effective_area} if effective_area else set()
         entity_labels = set(getattr(registry_entry, "labels", ()) or ()) | set(
             getattr(device, "labels", ()) or ()
@@ -901,9 +913,7 @@ def resolve_guest_selector_entity_ids(
             if registry_entry is not None and registry_entry.device_id
             else None
         )
-        effective_area = getattr(registry_entry, "area_id", None) or getattr(
-            device, "area_id", None
-        )
+        effective_area = _effective_guest_entity_area(hass, registry_entry, device)
         entity_areas = {effective_area} if effective_area else set()
         entity_labels = set(getattr(registry_entry, "labels", ()) or ()) | set(
             getattr(device, "labels", ()) or ()
