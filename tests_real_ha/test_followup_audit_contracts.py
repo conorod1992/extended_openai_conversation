@@ -36,6 +36,17 @@ async def test_native_normal_silent_chat_after_action_terminates(
     await exercise_normal_chat_completion(hass, monkeypatch, streaming, answer)
 
 
+@pytest.mark.parametrize("streaming", [True, False], ids=["streamed", "completed"])
+async def test_native_no_output_responses_after_action_fails_boundedly(
+    hass, monkeypatch, streaming
+):
+    from tests.test_empty_responses_completion import (
+        exercise_empty_responses_completion,
+    )
+
+    await exercise_empty_responses_completion(hass, monkeypatch, streaming)
+
+
 @pytest.mark.parametrize("child_service", ["conversation.process", f"{DOMAIN}.process"])
 async def test_standard_child_service_does_not_poison_parent_response(
     hass, monkeypatch, child_service
