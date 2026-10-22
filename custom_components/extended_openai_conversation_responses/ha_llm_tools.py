@@ -154,8 +154,9 @@ class LiveTool:
         matches = [tool for tool in self.instance.tools if tool.name == self.tool.name]
         if len(matches) != 1 or matches[0] is not self.tool:
             raise HomeAssistantError("HA tool changed before dispatch")
+        original_args = deepcopy(tool_input.tool_args)
         try:
-            args = self.tool.parameters(deepcopy(tool_input.tool_args))
+            args = self.tool.parameters(deepcopy(original_args))
         except SCHEMA_ERRORS:
             raise HomeAssistantError(
                 "Home Assistant tool arguments do not match the requested schema"
@@ -171,7 +172,11 @@ class LiveTool:
             kind="ha_tool", prepared={"reference": self.reference, "arguments": args}
         )
         result = await self.instance.async_call_tool(
-            llm.ToolInput(tool_name=self.tool.name, tool_args=args, id=tool_input.id)
+            # Schema transformations need not be idempotent (named colours
+            # become RGBColor). HA owns validation of the dispatched input.
+            llm.ToolInput(
+                tool_name=self.tool.name, tool_args=original_args, id=tool_input.id
+            )
         )
         execution_completed(receipt)
         return execution_tool_result(result)
