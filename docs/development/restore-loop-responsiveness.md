@@ -104,3 +104,10 @@ serial acceptance module exercises archive-heavy (6,000 turns), Knowledge-heavy
 (500 sources) and mixed (2,000 turns, 200 sources, 5,000 memories) full restores,
 using genuine disk I/O and the same 250ms heartbeat ceiling. It verifies restored
 content as well as successful delivery through the public archive protocol.
+
+Ownership mapping also keeps detached memory replacement, dictionary conversion
+and collision validation in a worker. Offloading only the initial copy left this
+second validation pass on the event loop, including identity and empty mappings.
+Configuration and Request Rule copying remain on-loop. The mapping regressions
+check worker placement for empty, same-user and cross-user mappings and preserve
+the rejection of canonical-key collisions without mutating the prepared transfer.

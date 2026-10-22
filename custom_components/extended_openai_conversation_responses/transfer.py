@@ -359,6 +359,13 @@ def apply_user_scope_mappings(
             mapped.raw_configuration, mapping
         )
 
+    return _map_transfer_data_owners(mapped, selected_set, mapping)
+
+
+def _map_transfer_data_owners(
+    mapped: PreparedTransfer, selected_set: frozenset[str], mapping: Mapping[str, str]
+) -> PreparedTransfer:
+    """Remap detached data and check owner collisions without HA objects."""
     if SECTION_PERSISTENT_MEMORY in selected_set and mapped.memories is not None:
         mapped.memories = [
             replace(record, user_id=str(_map_owner_value(record.user_id, mapping)))
@@ -410,9 +417,27 @@ def apply_user_scope_mappings(
 async def async_apply_user_scope_mappings(
     prepared: PreparedTransfer, selected: Iterable[str], mapping: Mapping[str, str]
 ) -> PreparedTransfer:
-    """Copy bulk data in a worker and retain HA-aware configuration copies on-loop."""
-    detached = await asyncio.to_thread(_copy_transfer_categories, prepared)
-    return apply_user_scope_mappings(detached, selected, mapping, copy_categories=False)
+    """Remap/validate bulk data off-loop; copy HA-aware configuration on-loop."""
+    selected_set = frozenset(selected)
+    detached = await asyncio.to_thread(
+        _copy_and_map_transfer_data, prepared, selected_set, dict(mapping)
+    )
+    # The worker already mapped data-only categories. This pass copies HA-aware
+    # fields and applies only the configuration selection, without revalidation.
+    return apply_user_scope_mappings(
+        detached,
+        selected_set & {SECTION_CONFIGURATION},
+        mapping,
+        copy_categories=False,
+    )
+
+
+def _copy_and_map_transfer_data(
+    prepared: PreparedTransfer, selected: frozenset[str], mapping: Mapping[str, str]
+) -> PreparedTransfer:
+    return _map_transfer_data_owners(
+        _copy_transfer_categories(prepared), selected, mapping
+    )
 
 
 def _safe_title(title: str) -> str:
