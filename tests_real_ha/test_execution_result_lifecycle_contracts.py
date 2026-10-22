@@ -487,7 +487,9 @@ async def test_ha_source_defaults_are_actual_replay_defaults(
     first = await _say(hass, agent, "echo")
     assert first.response.error_code is not None
     assert len(source.calls) == 1
-    assert source.calls[0][0].tool_args["repeat"] == 1
+    # Dispatch preserves the original input; the HA tool owns its defaults.
+    # The effect below and the explicit-default retry must still be equivalent.
+    assert source.calls[0][0].tool_args == {"value": "one"}
     import json
 
     body = wire.requests[-1]["body"]
