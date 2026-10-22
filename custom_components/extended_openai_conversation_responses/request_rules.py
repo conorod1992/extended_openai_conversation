@@ -3804,6 +3804,18 @@ async def _async_evaluate_matched_rule(
     if action["scope"] == "conversation" and (
         can_retain_conversation_route is None or can_retain_conversation_route()
     ):
+        # A request reset/override can mask an incompatible retained sibling.
+        # Validate what the next turn will inherit before mutating runtime state.
+        retained = {**runtime.get(session_id, timeout_minutes), **override}
+        if request_options is not None:
+            validate_routed_request_options(
+                {**request_options, **retained}, entry_data or {}
+            )
+        elif retained.get(CONF_REASONING_EFFORT):
+            _validate_effective_reasoning(
+                retained.get(CONF_CHAT_MODEL, configured_model),
+                retained[CONF_REASONING_EFFORT],
+            )
         runtime.set(session_id, override, timeout_minutes)
         request_override = None
     else:
