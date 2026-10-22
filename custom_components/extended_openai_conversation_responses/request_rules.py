@@ -1216,11 +1216,6 @@ class RequestRules:
         total_pattern_states = 0
         for stored_rule in self._rules:
             rule = deepcopy(stored_rule)
-            try:
-                _validate_action(rule["action_type"], rule["action"])
-            except ValueError as err:
-                diagnostics[rule["id"]] = f"Action is inactive: {err}"
-                continue
             settings = (
                 self._defaults
                 if rule["matching_behavior"] == "defaults"
@@ -1264,8 +1259,6 @@ class RequestRules:
                         err,
                     )
                     continue
-                if rule["enabled"]:
-                    total_pattern_states += state_count
             else:
                 phrases = [
                     CompiledPhrase(
@@ -1274,7 +1267,20 @@ class RequestRules:
                     for item in rule["phrases"]
                 ]
 
+            try:
+                _validate_action(
+                    rule["action_type"],
+                    rule["action"],
+                    capture_names=phrase_slots[0]
+                    if rule["match_type"] == "sentence_pattern"
+                    else set(),
+                )
+            except ValueError as err:
+                diagnostics[rule["id"]] = f"Action is inactive: {err}"
+                continue
             if rule["enabled"]:
+                if rule["match_type"] == "sentence_pattern":
+                    total_pattern_states += state_count
                 compiled_rules.extend(
                     (rule, dict(settings), phrase) for phrase in phrases
                 )
