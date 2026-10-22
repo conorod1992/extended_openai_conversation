@@ -108,7 +108,19 @@
       "ci/specialist_evidence.py",
       "ci/pr_validation.py",
       "ci/pr_workflows.json",
-      ".github/workflows/pr-validation.yml"
+      ".github/workflows/pr-validation.yml",
+      "tests_real_ha/test_frontend_backend_version_skew_acceptance.py",
+      "tests/test_frontend_backend_version_skew_contract.py",
+      "tests_browser/frontend-backend-version-skew.spec.mjs",
+      "tests_browser/real-ha-harness.mjs",
+      "tests_browser/real-ha-fixture.html",
+      "tests_browser/browser-helpers.mjs",
+      "playwright*.config.mjs"
+    ],
+    "dependency-groups": [
+      "frontend",
+      "management-contract",
+      "ha-test-environment"
     ]
   },
   "frontend": {
@@ -127,7 +139,17 @@
       "tests_real_ha/test_browser_backend_acceptance.py",
       "ci/pr_validation.py",
       "ci/pr_workflows.json",
-      ".github/workflows/pr-validation.yml"
+      ".github/workflows/pr-validation.yml",
+      "tests_browser/real-ha-fixture.html",
+      "tests_browser/real-ha-harness.mjs",
+      "tests_browser/browser-helpers.mjs",
+      "playwright*.config.mjs",
+      "hacs.json"
+    ],
+    "dependency-groups": [
+      "frontend",
+      "integration-runtime",
+      "ha-test-environment"
     ]
   },
   "ha-version-upgrade-acceptance": {
@@ -137,7 +159,15 @@
       "ci/specialist_evidence.py",
       "ci/pr_validation.py",
       "ci/pr_workflows.json",
-      ".github/workflows/pr-validation.yml"
+      ".github/workflows/pr-validation.yml",
+      "tests_real_ha/test_ha_version_upgrade_acceptance.py",
+      "tests_real_ha/test_release_upgrade_acceptance.py",
+      "tests/test_ha_version_upgrade_acceptance_contract.py",
+      "hacs.json"
+    ],
+    "dependency-groups": [
+      "integration-runtime",
+      "ha-test-environment"
     ]
   },
   "hacs-install-update-acceptance": {
@@ -147,7 +177,14 @@
       "ci/specialist_evidence.py",
       "ci/pr_validation.py",
       "ci/pr_workflows.json",
-      ".github/workflows/pr-validation.yml"
+      ".github/workflows/pr-validation.yml",
+      "tests_real_ha/test_hacs_install_update_acceptance.py",
+      "tests_real_ha/test_release_upgrade_acceptance.py",
+      "tests/test_hacs_install_update_acceptance_contract.py"
+    ],
+    "dependency-groups": [
+      "release-package",
+      "ha-test-environment"
     ]
   },
   "hacs": {
@@ -182,7 +219,14 @@
       "ci/specialist_evidence.py",
       "ci/pr_validation.py",
       "ci/pr_workflows.json",
-      ".github/workflows/pr-validation.yml"
+      ".github/workflows/pr-validation.yml",
+      "tests_real_ha/test_ipv6_only_networking_acceptance.py",
+      "tests_real_ha/test_provider_wire_e2e.py",
+      "tests/test_ipv6_only_networking_acceptance_contract.py"
+    ],
+    "dependency-groups": [
+      "provider-networking",
+      "ha-test-environment"
     ]
   },
   "official-ha-container": {
@@ -279,6 +323,11 @@
       "ci/pr_validation.py",
       "ci/pr_workflows.json",
       ".github/workflows/pr-validation.yml"
+    ],
+    "dependency-groups": [
+      "frontend",
+      "integration-runtime",
+      "ha-test-environment"
     ]
   },
   "version-check": {

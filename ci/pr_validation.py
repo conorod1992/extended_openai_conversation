@@ -8,9 +8,11 @@ import os
 from pathlib import Path, PurePosixPath
 
 POLICY = Path(__file__).with_name("pr_workflows.json")
+DEPENDENCY_GROUPS = Path(__file__).with_name("pr_dependency_groups.json")
 CONTROL_PATHS = {
     "ci/pr_validation.py",
     "ci/pr_workflows.json",
+    "ci/pr_dependency_groups.json",
     ".github/workflows/pr-validation.yml",
 }
 
@@ -19,23 +21,47 @@ def matches(path: str, patterns: list[str]) -> bool:
     return any(PurePosixPath(path).full_match(pattern) for pattern in patterns)
 
 
-def select(paths: list[str], base: str, policy: dict | None = None) -> dict[str, bool]:
+def select(
+    paths: list[str],
+    base: str,
+    policy: dict | None = None,
+    dependency_groups: dict | None = None,
+) -> dict[str, bool]:
     policy = (
         policy if policy is not None else json.loads(POLICY.read_text(encoding="utf-8"))
     )
+    groups = (
+        dependency_groups
+        if dependency_groups is not None
+        else json.loads(DEPENDENCY_GROUPS.read_text(encoding="utf-8"))
+    )
+    if not isinstance(groups, dict) or any(
+        not isinstance(name, str)
+        or not isinstance(patterns, list)
+        or not patterns
+        or any(not isinstance(pattern, str) or not pattern for pattern in patterns)
+        for name, patterns in groups.items()
+    ):
+        raise ValueError("PR dependency groups must contain nonempty path lists")
     paths = [path.replace("\\", "/") for path in paths if path]
     force = not paths or bool(CONTROL_PATHS.intersection(paths))
     selected = {}
     for lane, rule in policy.items():
+        names = rule.get("dependency-groups", [])
+        if not isinstance(names, list) or any(
+            not isinstance(name, str) or name not in groups for name in names
+        ):
+            raise ValueError(f"{lane}: unknown or malformed PR dependency group")
+        patterns = list(rule.get("paths", [])) + [
+            pattern for name in names for pattern in groups[name]
+        ]
         if force:
             selected[lane] = True
             continue
         branch_ok = not rule.get("branches") or matches(base, rule["branches"])
         if rule.get("branches-ignore") and matches(base, rule["branches-ignore"]):
             branch_ok = False
-        path_ok = not rule.get("paths") or any(
-            matches(path, rule["paths"]) for path in paths
-        )
+        path_ok = not patterns or any(matches(path, patterns) for path in paths)
         if rule.get("paths-ignore") and all(
             matches(path, rule["paths-ignore"]) for path in paths
         ):
