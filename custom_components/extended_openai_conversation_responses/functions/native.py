@@ -573,6 +573,10 @@ class NativeFunction(Function):
         async with lock:
             from ..execution_outcomes import execution_completed, execution_started
 
+            # Pin the destination once for the complete transaction. Replacing
+            # the configured symlink would detach HA from its shared file;
+            # resolving again during rollback could target a different file.
+            automation_path = await hass.async_add_executor_job(automation_path.resolve)
             receipt = execution_started(
                 kind="automation_update",
                 prepared={
