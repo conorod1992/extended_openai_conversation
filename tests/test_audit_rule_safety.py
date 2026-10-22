@@ -141,7 +141,7 @@ async def test_exported_template_actions_round_trip_on_loop(hass, monkeypatch):
     monkeypatch.setattr(
         management_ui, "async_get_request_rules", AsyncMock(return_value=target)
     )
-    monkeypatch.setattr(management_ui, "_validate_request_rule_conditions", AsyncMock())
+    monkeypatch.setattr(management_ui, "_validate_request_rule_conditions", AsyncMock(return_value=[]))
     hass.async_add_executor_job.side_effect = asyncio.to_thread
     request = _management_request(hass, "rule_pack_review", pack=exported)
     request.subentry.data = {"functions": []}

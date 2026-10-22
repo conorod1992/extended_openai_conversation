@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from contextlib import suppress
 from copy import deepcopy
 from dataclasses import dataclass
@@ -627,16 +627,69 @@ def _validate_request_rule_functions(
 
 
 async def _validate_request_rule_conditions(
-    hass: HomeAssistant, rule: Mapping[str, Any]
-) -> None:
-    """Validate only the edited rule against HA's current condition platforms."""
-    from homeassistant.helpers import condition as ha_condition
+    hass: HomeAssistant,
+    rule: Mapping[str, Any],
+    *,
+    require_available: bool | None = None,
+) -> list[str]:
+    """Reject malformed conditions; report known missing dependencies when inactive."""
+    from homeassistant.components.device_automation import (
+        DeviceAutomationType,
+        async_get_device_automation_platform,
+    )
+    from homeassistant.components.device_automation.exceptions import (
+        InvalidDeviceAutomationConfig,
+    )
+    from homeassistant.helpers import condition as ha_condition, config_validation as cv
 
-    for config in rule.get("conditions", []):
+    if require_available is None:
+        require_available = bool(rule.get("enabled", True))
+    conditions = rule.get("conditions", [])
+    # This validates every branch, even if an earlier live dependency is absent.
+    try:
+        cv.CONDITIONS_SCHEMA(deepcopy(conditions))
+    except Exception as err:
+        raise HomeAssistantError(f"Invalid Only when condition: {err}") from err
+
+    def leaves(config: Any) -> Iterator[Any]:
+        if isinstance(config, Mapping) and config.get("condition") in {
+            "and",
+            "or",
+            "not",
+        }:
+            for child in config["conditions"]:
+                yield from leaves(child)
+        else:
+            yield config
+
+    issues = []
+    configs = (
+        conditions
+        if require_available
+        else [leaf for item in conditions for leaf in leaves(item)]
+    )
+    for config in configs:
         try:
+            if (
+                not require_available
+                and isinstance(config, Mapping)
+                and config.get("condition") == "device"
+            ):
+                platform = await async_get_device_automation_platform(
+                    hass, config["domain"], DeviceAutomationType.CONDITION
+                )
+                # HA checks device existence before this platform schema. Check
+                # it separately so a missing device cannot hide malformed input.
+                if schema := getattr(platform, "CONDITION_SCHEMA", None):
+                    schema(deepcopy(config))
             await ha_condition.async_validate_condition_config(hass, deepcopy(config))
+        except InvalidDeviceAutomationConfig as err:
+            if require_available:
+                raise HomeAssistantError(f"Invalid Only when condition: {err}") from err
+            issues.append(f"Only when condition: {err}")
         except Exception as err:
             raise HomeAssistantError(f"Invalid Only when condition: {err}") from err
+    return list(dict.fromkeys(issues))
 
 
 async def _review_rule_pack(
@@ -663,7 +716,9 @@ async def _review_rule_pack(
     }
     summaries = []
     for rule in prepared["rules"]:
-        await _validate_request_rule_conditions(hass, rule)
+        condition_issues = await _validate_request_rule_conditions(
+            hass, rule, require_available=False
+        )
         actions = list(_rule_script_actions(rule))
         function_names = sorted(
             {
@@ -725,13 +780,17 @@ async def _review_rule_pack(
                     *missing_functions,
                     *missing_entities,
                     *missing_services,
+                    *condition_issues,
                 ],
                 "continue_to_ai": rule["action"]["continue_to_ai"],
                 "continue_matching": rule["continue_matching"],
                 "ai_input_mode": rule["ai_input_mode"],
                 "ai_input_capture": rule["ai_input_capture"],
                 "status": "needs_attention"
-                if missing_functions or missing_entities or missing_services
+                if missing_functions
+                or missing_entities
+                or missing_services
+                or condition_issues
                 else "ready",
             }
         )
