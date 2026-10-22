@@ -86,7 +86,7 @@ def is_redacted_url(value: Any) -> bool:
     )
 
 
-def redact_http_url(value: str) -> dict[str, Any] | None:
+def redact_http_url(value: str, *, require_http: bool = False) -> dict[str, Any] | None:
     """Hide HTTP user information/query credentials, retaining public URL bytes.
 
     The marker is a scalar replacement, not a runnable URL. Recovery compares
@@ -97,12 +97,18 @@ def redact_http_url(value: str) -> dict[str, Any] | None:
         # Never execute templates to export them, or let a hidden destination
         # authorize recovery of local credentials, even for an identical source.
         return {REDACTED_URL_KEY: None}
-    if not value.lower().startswith(("http://", "https://")):
-        return None
+    if require_http and not value.lower().startswith(("http://", "https://")):
+        # Template fields retain the conservative literal-source restriction:
+        # hide ambiguous input without authorizing local credential recovery.
+        return {REDACTED_URL_KEY: None}
     try:
+        # Like the HTTP client's URL parser, urlsplit removes leading C0/space
+        # and embedded tab/newline characters before interpreting the scheme.
         parsed = urlsplit(value)
     except ValueError:
         return {REDACTED_URL_KEY: None}
+    if parsed.scheme.lower() not in {"http", "https"}:
+        return {REDACTED_URL_KEY: None} if require_http else None
     authority = parsed.netloc
     changed = "@" in authority
     if changed:
@@ -203,14 +209,11 @@ def _redact_secrets(
         ]
     if isinstance(value, str):
         if not schema and path and path[-1] in {"resource", "url", "resource_template"}:
-            redacted_url = redact_http_url(value)
+            redacted_url = redact_http_url(
+                value, require_http=path[-1] == "resource_template"
+            )
             if redacted_url is not None:
                 return redacted_url
-            if path[-1] == "resource_template" and not value.lower().startswith(
-                ("http://", "https://")
-            ):
-                # Non-literal/unsupported template destinations require re-entry.
-                return {REDACTED_URL_KEY: None}
         # The entire leaf must be recoverable. Substring replacement loses the
         # credential while leaving a seemingly usable, permanently corrupt value.
         if _LIKELY_SECRET.search(value):
