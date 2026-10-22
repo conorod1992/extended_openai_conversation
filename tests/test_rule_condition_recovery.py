@@ -32,7 +32,7 @@ async def condition_management(hass, monkeypatch):
     devices = {DEVICE: SimpleNamespace(id=DEVICE)}
     registry = SimpleNamespace(
         devices=devices,
-        async_get=lambda key: devices.get(key),
+        async_get=lambda key, *, include_composite_devices=True: devices.get(key),
         async_get_devices_for_composite_device_id=lambda _: [],
     )
     monkeypatch.setattr(dr, "async_get", lambda _: registry)
