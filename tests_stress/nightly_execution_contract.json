@@ -2750,6 +2750,8 @@
     "tests_real_ha/test_quiet_hours_resilience.py::test_replacement_keeps_period_releases_but_reapplies_owned_controls[True-None]",
     "tests_real_ha/test_ai_task_exclusive_bounds.py::test_public_ai_task_exclusive_bounds_and_authoritative_validation[chat_completions]",
     "tests_real_ha/test_ai_task_exclusive_bounds.py::test_public_ai_task_exclusive_bounds_and_authoritative_validation[responses]",
+    "tests_real_ha/test_ai_task_exclusive_bounds.py::test_composed_exclusive_bounds_cleanup_preserves_caller_optionality[chat_completions]",
+    "tests_real_ha/test_ai_task_exclusive_bounds.py::test_composed_exclusive_bounds_cleanup_preserves_caller_optionality[responses]",
     "tests_real_ha/test_rule_payload_structure.py::test_event_payloads_and_iteration_items_survive_native_execution[False-payload0]",
     "tests_real_ha/test_rule_payload_structure.py::test_event_payloads_and_iteration_items_survive_native_execution[False-payload1]",
     "tests_real_ha/test_rule_payload_structure.py::test_event_payloads_and_iteration_items_survive_native_execution[False-payload2]",

@@ -136,6 +136,7 @@ from .request import (
 from .request_static_cache import cached_format_tools
 from .resource_limits import MAX_ATTACHMENT_COUNT, read_bounded_local_file
 from .responses_stream_order import ordered_output_events
+from .schema_normalization import normalize_exclusive_bounds
 from .speech import async_streaming_speech_cleanup
 from .tool_exchange import (
     append_unresolved_tool_results,
@@ -366,22 +367,7 @@ def _adjust_schema(
             "maxItems",
         ):
             schema.pop(keyword, None)
-    for exclusive, inclusive in (
-        ("exclusiveMinimum", "minimum"),
-        ("exclusiveMaximum", "maximum"),
-    ):
-        # HA serializes OpenAPI's boolean flags. Modern JSON Schema carries
-        # the bound itself in the exclusive keyword; numeric bounds stay intact.
-        flag = schema.get(exclusive)
-        if flag is False:
-            schema.pop(exclusive)
-        elif flag is True:
-            bound = schema.get(inclusive)
-            if not isinstance(bound, (int, float)) or isinstance(bound, bool):
-                raise HomeAssistantError(
-                    f"{exclusive} requires a numeric {inclusive} bound"
-                )
-            schema[exclusive] = schema.pop(inclusive)
+    normalize_exclusive_bounds(schema)
     if root and (
         schema.get("type") != "object" or "anyOf" in schema or "oneOf" in schema
     ):

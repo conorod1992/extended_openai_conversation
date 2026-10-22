@@ -65,3 +65,48 @@ async def test_public_ai_task_exclusive_bounds_and_authoritative_validation(
         with pytest.raises(vol.Invalid):
             structure({"duration": invalid})
     assert len(wire.requests) == 3
+
+
+@pytest.mark.parametrize("mode", MODES)
+async def test_composed_exclusive_bounds_cleanup_preserves_caller_optionality(
+    hass, monkeypatch, mode
+):
+    entry, entity_id = await _task_entity(hass, mode)
+    structure = vol.Schema(
+        {
+            vol.Required("result"): vol.All(
+                vol.Any(
+                    {
+                        vol.Required("duration"): vol.All(
+                            float,
+                            vol.Range(
+                                min=0, max=1, min_included=False, max_included=False
+                            ),
+                        ),
+                        vol.Optional("note"): str,
+                    },
+                    {vol.Required("code"): str},
+                )
+            )
+        }
+    )
+    response = {"result": {"duration": 0.5, "note": None}}
+    import json
+
+    wire = _wire(monkeypatch, entry, [_text_reply(mode, json.dumps(response))])
+    result = await ai_task.async_generate_data(
+        hass,
+        task_name="Composed exclusive bounds",
+        entity_id=entity_id,
+        instructions="Return a duration",
+        structure=structure,
+    )
+    body = wire.requests[0]["body"]
+    schema = (
+        body["text"]["format"]
+        if mode == API_MODE_RESPONSES
+        else body["response_format"]["json_schema"]
+    )["schema"]
+    Draft202012Validator.check_schema(schema)
+    Draft202012Validator(schema).validate(response)
+    assert result.data == structure({"result": {"duration": 0.5}})
