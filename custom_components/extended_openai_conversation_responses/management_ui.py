@@ -83,6 +83,7 @@ from .exposed_attributes import exposed_attribute_catalog
 from .frontend_assets import async_register_frontend_assets, frontend_entry_url
 from .function_dependency_integrity import (
     _TOOL_MUTATIONS,
+    _is_template_string,
     _rule_script_actions,
     async_validate_request_rule_functions,
     group_reference_updates,
@@ -177,6 +178,7 @@ from .request_rules import (
     validate_rule,
 )
 from .scope import SHARED_HOUSEHOLD_SCOPE_ID
+from .script_payload import effective_service_payload, set_effective_service_field
 from .secret_redaction import is_redacted_secret, redact_secrets
 from .temporary_memory import async_get_temporary_memory, temporary_memory_as_dict
 from .usage import async_get_usage
@@ -548,7 +550,7 @@ def _request_rule_function_tools(
     for step in _rule_script_actions(rule):
         if step.get("action", step.get("service")) != service:
             continue
-        call = step.get("data")
+        call = effective_service_payload(step)
         if not isinstance(call, Mapping) or not isinstance(call.get("function"), str):
             raise HomeAssistantError("Configured Function action is invalid")
         names.add(call["function"])
@@ -586,11 +588,11 @@ def _validate_request_rule_functions(
             continue
         if action.get("action", action.get("service")) != service_action:
             continue
-        data = action.get("data")
+        data = effective_service_payload(action)
         if not isinstance(data, Mapping) or not isinstance(data.get("function"), str):
             raise HomeAssistantError("Configured Function action is invalid")
         arguments = data.get("arguments", {})
-        if not isinstance(arguments, Mapping):
+        if not isinstance(arguments, Mapping) and not _is_template_string(arguments):
             raise HomeAssistantError("Configured Function arguments must be an object")
         calls.append(data)
 
@@ -613,7 +615,10 @@ def _validate_request_rule_functions(
         required = (
             parameters.get("required", []) if isinstance(parameters, dict) else []
         )
-        missing_inputs = set(required) - set(call.get("arguments", {}))
+        arguments = call.get("arguments", {})
+        missing_inputs = (
+            set(required) - set(arguments) if isinstance(arguments, Mapping) else set()
+        )
         if missing_inputs:
             raise HomeAssistantError(
                 f"Function Tool `{function_name}` needs input: "
@@ -662,12 +667,12 @@ async def _review_rule_pack(
         actions = list(_rule_script_actions(rule))
         function_names = sorted(
             {
-                str(action["data"]["function"])
+                str(data["function"])
                 for action in actions
                 if action.get("action", action.get("service"))
                 == f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
-                and isinstance(action.get("data"), Mapping)
-                and isinstance(action["data"].get("function"), str)
+                and isinstance(data := effective_service_payload(action), Mapping)
+                and isinstance(data.get("function"), str)
             }
         )
         missing_functions = sorted(set(function_names) - available)
@@ -1831,13 +1836,14 @@ async def _async_validate_configuration_dependencies(
         old_name, new_name = renamed_function
         for rule in document.get("rules", []):
             for action in _rule_script_actions(rule):
-                data = action.get("data", {})
+                data = effective_service_payload(action)
                 if (
                     action.get("action", action.get("service"))
                     == f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
+                    and isinstance(data, Mapping)
                     and data.get("function") == old_name
                 ):
-                    data["function"] = new_name
+                    set_effective_service_field(action, "function", new_name)
     # Deepcopy dehydrates runtime templates to their persisted source. Disabling
     # a retained definition intentionally inactivates its rules; it is distinct
     # from removing it or making its argument schema incompatible.

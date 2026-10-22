@@ -13,6 +13,7 @@ from . import request_rules
 from .agent_config import function_tool_enabled
 from .const import CONF_GUEST_ALLOWED_GROUP_IDS, DOMAIN, SERVICE_CALL_FUNCTION
 from .function_execution import async_validate_function_arguments
+from .script_payload import effective_service_payload, set_effective_service_field
 from .script_structure import iter_script_actions
 
 _TOOL_MUTATIONS = frozenset(
@@ -216,8 +217,8 @@ def recursive_function_references(
     for rule in manager._rules:
         if any(
             action.get("action", action.get("service")) == service_action
-            and isinstance(action.get("data"), Mapping)
-            and action["data"].get("function") == function_name
+            and isinstance(data := effective_service_payload(action), Mapping)
+            and data.get("function") == function_name
             for action in _rule_script_actions(rule)
         ):
             references.append({"id": rule["id"], "name": rule["name"]})
@@ -242,7 +243,7 @@ async def async_rename_function_reference_recursive(
         for rule in manager._rules:
             updated = deepcopy(rule)
             for action in _rule_script_actions(updated):
-                data = action.get("data")
+                data = effective_service_payload(action)
                 if (
                     action.get("action", action.get("service")) == service_action
                     and isinstance(data, Mapping)
@@ -250,7 +251,7 @@ async def async_rename_function_reference_recursive(
                 ):
                     if not isinstance(action, dict):
                         raise ValueError("Request Rule action is not mutable")
-                    action["data"] = {**data, "function": new_name}
+                    set_effective_service_field(action, "function", new_name)
                     changed += 1
             if updated == rule:
                 updated_rules.append(updated)
@@ -295,11 +296,11 @@ async def async_validate_request_rule_functions(
     for action in _rule_script_actions(rule):
         if action.get("action", action.get("service")) != service_action:
             continue
-        data = action.get("data")
+        data = effective_service_payload(action)
         if not isinstance(data, Mapping) or not isinstance(data.get("function"), str):
             raise HomeAssistantError("Configured Function action is invalid")
         arguments = data.get("arguments", {})
-        if not isinstance(arguments, Mapping):
+        if not isinstance(arguments, Mapping) and not _is_template_string(arguments):
             raise HomeAssistantError("Configured Function arguments must be an object")
         function_name = str(data["function"])
         tool = by_name.get(function_name)
@@ -309,9 +310,10 @@ async def async_validate_request_rule_functions(
             raise HomeAssistantError(
                 f"Function Tool is unavailable or disabled: {function_name}"
             )
-        await async_validate_static_function_arguments(
-            hass, cast(Mapping[str, Any], tool["spec"]), arguments
-        )
+        if isinstance(arguments, Mapping):
+            await async_validate_static_function_arguments(
+                hass, cast(Mapping[str, Any], tool["spec"]), arguments
+            )
 
 
 def group_reference_updates(

@@ -13,6 +13,44 @@ async function setActions(panel, value) {
   }, value);
 }
 
+for (const bundle of [false, true]) {
+  test(`data_template Function aliases preserve winning payload and stable references (${bundle ? "bundle" : "source"})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    await page.goto(fixtureUrl("capabilities/request-rules", bundle ? "&bundle=1" : ""));
+    const panel = page.locator("extended-openai-management-panel");
+    await panel.getByRole("button", {name:"Create rule", exact:true}).first().click();
+    await panel.locator("#rule-name").fill("Template alias");
+    await panel.locator("#rule-phrases").fill("template alias");
+    const actions = [{
+      action:"extended_openai_conversation_responses.call_function",
+      data:{function:"shadowed_tool", arguments:{message:"{{ request.text }}"}, result_alias:"shadowed", step_id:"shadowed-step"},
+      data_template:{function:"baseline_tool", result_alias:"answer", step_id:"winning-step"},
+    }];
+    await setActions(panel, actions);
+    await expect(panel.locator(".rule-result-alias")).toHaveValue("answer");
+    await expect(panel.locator("#rule-result-aliases")).toContainText("baseline_tool");
+    await panel.locator("#rule-success").fill("Value {answer.value}");
+    await panel.locator("#rule-save").click();
+    const card = panel.locator(".request-rule-card").filter({hasText:"Template alias"});
+    await card.locator(".rule-edit").click();
+    await panel.locator(".rule-result-alias").fill("renamed");
+    await panel.locator(".rule-result-alias").press("Tab");
+    await panel.locator("#rule-save").click();
+    await card.locator(".rule-edit").click();
+    await expect(panel.locator("#rule-success")).toHaveValue("Value {renamed.value}");
+    let saved = await panel.locator("#rule-action-sequence-host ha-selector").evaluate((node) => node.value);
+    expect(saved[0].data).toEqual(actions[0].data);
+    expect(saved[0].data_template).toEqual({...actions[0].data_template, result_alias:"renamed"});
+    await panel.locator(".rule-result-alias").fill("");
+    await panel.locator(".rule-result-alias").press("Tab");
+    saved = await panel.locator("#rule-action-sequence-host ha-selector").evaluate((node) => node.value);
+    expect(saved[0].data.result_alias).toBeUndefined();
+    expect(saved[0].data_template.result_alias).toBeUndefined();
+    expect(saved[0].data.arguments).toEqual(actions[0].data.arguments);
+    await expectHarnessClean(page, errors);
+  });
+}
+
 test("captured AI input stays valid only while every sentence pattern provides the selected slot", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/request-rules"));

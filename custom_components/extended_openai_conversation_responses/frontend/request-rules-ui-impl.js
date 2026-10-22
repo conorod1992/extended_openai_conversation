@@ -1,4 +1,5 @@
 import {setReasoningOptions, syncRequestRuleRoutingControls} from "./request-rule-routing-controls.js";
+import {effectiveServicePayload, setEffectiveServiceField} from "./script-payload.js";
 export {syncRequestRuleRoutingControls} from "./request-rule-routing-controls.js";
 import {applyRequestRuleMutation, fuzzyThresholdValue, matchingControls} from "./request-rules-ui-core.js";
 export {fuzzyThresholdValue, recoverRequestRuleMutation, reconcileRequestRules, renderRequestRules} from "./request-rules-ui-core.js";
@@ -229,20 +230,18 @@ function renderResultAliases(panel, selector) {
   const host = panel.shadowRoot.querySelector("#rule-result-aliases");
   if (!host) return;
   const actions = selector.value || [];
-  const calls = actions.map((action, index) => ({action, index})).filter(({action}) => action?.action === "extended_openai_conversation_responses.call_function" && action?.data?.function);
-  const suggested = new Set(calls.map(({action}) => action.data.result_alias).filter(Boolean));
-  host.innerHTML = calls.map(({action, index}) => {
-    const alias = action.data.result_alias || "";
-    const suggestion = suggestResultAlias(action.data.function, suggested);
+  const calls = actions.map((action, index) => ({action, index, data:effectiveServicePayload(action)})).filter(({action, data}) => (action?.action || action?.service) === "extended_openai_conversation_responses.call_function" && data?.function);
+  const suggested = new Set(calls.map(({data}) => data.result_alias).filter(Boolean));
+  host.innerHTML = calls.map(({data, index}) => {
+    const alias = data.result_alias || "";
+    const suggestion = suggestResultAlias(data.function, suggested);
     suggested.add(suggestion);
-    return `<label>Result alias for ${panel._e(action.data.function)} (step ${index + 1})<input class="rule-result-alias" data-index="${index}" value="${panel._e(alias)}" placeholder="${panel._e(suggestion)}" pattern="[A-Za-z_][A-Za-z0-9_]*"><small>Optional. Name the result to use it in later steps or the local response. Each captured result needs a unique alias.</small></label>`;
+    return `<label>Result alias for ${panel._e(data.function)} (step ${index + 1})<input class="rule-result-alias" data-index="${index}" value="${panel._e(alias)}" placeholder="${panel._e(suggestion)}" pattern="[A-Za-z_][A-Za-z0-9_]*"><small>Optional. Name the result to use it in later steps or the local response. Each captured result needs a unique alias.</small></label>`;
   }).join("");
   host.querySelectorAll(".rule-result-alias").forEach((input) => input.addEventListener("change", () => {
     const index = Number(input.dataset.index), actions = structuredClone(selector.value || []);
     if (!actions[index]) return;
-    actions[index].data ||= {};
-    if (input.value.trim()) actions[index].data.result_alias = input.value.trim();
-    else delete actions[index].data.result_alias;
+    setEffectiveServiceField(actions[index], "result_alias", input.value.trim() || undefined);
     selector.value = actions;
   }));
 }
@@ -393,11 +392,12 @@ export function bindRequestRuleEditor(panel) {
       const previous=(panel._result?.rules||[]).find((item)=>item.id===panel._editingRuleId);
       const aliasMappings = new Map();
       for (const oldStep of previous?.action?.actions || []) {
-        const oldAlias=oldStep?.data?.result_alias, stepId=oldStep?.data?.step_id;
+        const oldData=effectiveServicePayload(oldStep);
+        const oldAlias=oldData?.result_alias, stepId=oldData?.step_id;
         if (!oldAlias || !stepId) continue;
-        const edited=actions.find((step)=>step?.data?.step_id===stepId);
-        if (edited?.data?.result_alias && edited.data.result_alias!==oldAlias) {
-          aliasMappings.set(oldAlias, edited.data.result_alias);
+        const edited=actions.map(effectiveServicePayload).find((data)=>data?.step_id===stepId);
+        if (edited?.result_alias && edited.result_alias!==oldAlias) {
+          aliasMappings.set(oldAlias, edited.result_alias);
         }
       }
       actions=renameResultReferenceMap(actions,aliasMappings);

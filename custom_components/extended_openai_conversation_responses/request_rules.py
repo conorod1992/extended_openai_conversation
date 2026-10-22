@@ -75,6 +75,7 @@ from .request_rule_patterns import (
     sentence_capture_names,
     validate_match_input,
 )
+from .script_payload import effective_service_payload, set_effective_service_field
 from .script_structure import (
     MAX_SCRIPT_DEPTH,
     MAX_SCRIPT_NODES,
@@ -1754,9 +1755,10 @@ def validate_rule(
     if action_type == "local_action":
         _validate_result_dependencies(action, set(slot_names))
         aliases = {
-            step.get("data", {}).get("result_alias")
+            data.get("result_alias")
             for step in action["actions"]
-            if isinstance(step, Mapping) and isinstance(step.get("data"), Mapping)
+            if isinstance(step, Mapping)
+            and isinstance(data := effective_service_payload(step), Mapping)
         }
         referenced_slots -= aliases
     unknown_slots = referenced_slots - set(slot_names)
@@ -2141,7 +2143,7 @@ def _assign_missing_result_step_ids(value: Any) -> Any:
             if step.get("result_alias") and not step.get("step_id"):
                 step["step_id"] = uuid4().hex
             continue
-        data = step.get("data")
+        data = effective_service_payload(step)
         if (
             step.get("action", step.get("service"))
             == f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
@@ -2149,7 +2151,7 @@ def _assign_missing_result_step_ids(value: Any) -> Any:
             and data.get("result_alias")
             and not data.get("step_id")
         ):
-            data["step_id"] = uuid4().hex
+            set_effective_service_field(step, "step_id", uuid4().hex)
     return rule
 
 
@@ -2200,7 +2202,7 @@ def _validate_result_dependencies(action: Mapping[str, Any], slots: set[str]) ->
     step_ids: set[str] = set()
     top_level_ids = {id(step) for step in action["actions"]}
     for nested in _iter_script_actions(action["actions"]):
-        data = nested.get("data")
+        data = effective_service_payload(nested)
         if (
             _is_function_action(nested)
             and isinstance(data, Mapping)
@@ -2209,11 +2211,11 @@ def _validate_result_dependencies(action: Mapping[str, Any], slots: set[str]) ->
         ):
             raise ValueError("Function results can be captured only by top-level steps")
     all_aliases = {
-        step.get("data", {}).get("result_alias")
+        data.get("result_alias")
         for step in action["actions"]
         if isinstance(step, Mapping)
         and _is_function_action(step)
-        and isinstance(step.get("data"), Mapping)
+        and isinstance(data := effective_service_payload(step), Mapping)
     }
     for step in action["actions"]:
         if not isinstance(step, Mapping):
@@ -2226,7 +2228,7 @@ def _validate_result_dependencies(action: Mapping[str, Any], slots: set[str]) ->
                 "Function result must be produced by an earlier step: "
                 + ", ".join(sorted(missing))
             )
-        data = step.get("data", {})
+        data = effective_service_payload(step)
         if not _is_function_action(step) or not isinstance(data, Mapping):
             continue
         alias = data.get("result_alias")
@@ -2607,11 +2609,11 @@ def _native_result_sequence(
 ) -> list[dict[str, Any]]:
     """Keep HA variables and waits in one script while exposing captured results."""
     aliases = {
-        step["data"]["result_alias"]
+        data["result_alias"]
         for step in actions
         if _is_function_action(step)
-        and isinstance(step.get("data"), Mapping)
-        and step["data"].get("result_alias")
+        and isinstance(data := effective_service_payload(step), Mapping)
+        and data.get("result_alias")
     }
     # Each frozen script owns its helper; captured/native names cannot shadow it.
     lookup_name = f"__eoai_result_value_{uuid4().hex}"
@@ -2645,7 +2647,7 @@ def _native_result_sequence(
     sequence: list[dict[str, Any]] = []
     for step in actions:
         rendered = native_templates(_prepare_concrete_captures(step, slots))
-        data = step.get("data")
+        data = effective_service_payload(step)
         alias = (
             data.get("result_alias")
             if _is_function_action(step) and isinstance(data, Mapping)
@@ -2822,7 +2824,7 @@ def _guest_script_allowed(
             if not isinstance(action_name, str):
                 return False
             if action_name == f"{DOMAIN}.{SERVICE_CALL_FUNCTION}":
-                data = item.get("data", {})
+                data = effective_service_payload(item)
                 if not isinstance(data, Mapping):
                     return False
                 function_name = data.get("function")
@@ -2888,7 +2890,7 @@ async def _async_guest_functions_allowed(
                 if function_tool_enabled(tool) and tool["spec"]["name"] not in disabled
             ]
         data = resolve_slot_values(
-            _resolve_guest_slot_templates(step.get("data", {}), slots), slots
+            _resolve_guest_slot_templates(effective_service_payload(step), slots), slots
         )
         if not isinstance(data, Mapping):
             return False
@@ -3518,8 +3520,8 @@ async def _async_evaluate_matched_rule(
             captures_results = any(
                 isinstance(step, Mapping)
                 and _is_function_action(step)
-                and isinstance(step.get("data"), Mapping)
-                and step["data"].get("result_alias")
+                and isinstance(data := effective_service_payload(step), Mapping)
+                and data.get("result_alias")
                 for step in executable_actions
             )
             alias_bindings: dict[str, tuple[str, str]] = {}
