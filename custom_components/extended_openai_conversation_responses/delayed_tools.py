@@ -37,6 +37,7 @@ from .persistence_hardening import (
     _async_repair_private_store_mode,
     _async_settle_transactional_save,
 )
+from .request_origin import bind_request_satellite, get_request_satellite
 from .strict_store import PropagatingWriteStore, _async_settle_store_io
 
 _LOGGER = logging.getLogger(__name__)
@@ -149,6 +150,7 @@ class DelayedToolCall:
     status: str = _PENDING
     retry_count: int = 0
     definition_fingerprint: str | None = None
+    satellite_id: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         """Serialize the call for Home Assistant storage."""
@@ -187,6 +189,7 @@ class DelayedToolCall:
                 )
         user_id = raw.get("user_id")
         device_id = raw.get("device_id")
+        satellite_id = raw.get("satellite_id")
         fingerprint = raw.get("definition_fingerprint")
         if fingerprint is not None and (
             not isinstance(fingerprint, str)
@@ -198,6 +201,8 @@ class DelayedToolCall:
             raise ValueError("stored delayed call has invalid user_id")
         if device_id is not None and not isinstance(device_id, str):
             raise ValueError("stored delayed call has invalid device_id")
+        if satellite_id is not None and not isinstance(satellite_id, str):
+            raise ValueError("stored delayed call has invalid satellite_id")
         return cls(
             call_id=raw["call_id"],
             entry_id=raw["entry_id"],
@@ -211,6 +216,7 @@ class DelayedToolCall:
             status=status,
             retry_count=retry_count,
             definition_fingerprint=fingerprint,
+            satellite_id=satellite_id,
         )
 
 
@@ -430,6 +436,7 @@ class DelayedToolManager:
                     created_at=now.isoformat(),
                     user_id=getattr(context, "user_id", None),
                     device_id=getattr(llm_context, "device_id", None),
+                    satellite_id=get_request_satellite(),
                     definition_fingerprint=tool_definition_fingerprint(function_tool)
                     if function_tool is not None
                     else None,
@@ -448,6 +455,7 @@ class DelayedToolManager:
                         "definition": record.definition_fingerprint,
                         "user_id": record.user_id,
                         "device_id": record.device_id,
+                        "satellite_id": record.satellite_id,
                     },
                 ) as operation:
                     await self._async_save_records_transactionally(updated)
@@ -726,7 +734,10 @@ class DelayedToolManager:
                 **{_DELAYED_EXECUTION_MARKER: True},
             )
             try:
-                with bind_active_ha_context(execution_context):
+                with (
+                    bind_active_ha_context(execution_context),
+                    bind_request_satellite(record.satellite_id),
+                ):
                     await agent._execute_function_tool(
                         current_tool,
                         llm.ToolInput(
