@@ -19,10 +19,15 @@ def cjk_terms(value: str) -> set[str]:
 _LEXICAL_TOKEN = re.compile(r"\w+(?:[+#]+|(?:['-]\w+)*)", re.UNICODE)
 
 
+def lexical_tokens(value: str) -> list[str]:
+    """Preserve meaningful token punctuation before compound expansion."""
+    normalized = unicodedata.normalize("NFC", value).casefold().replace("\u2019", "'")
+    return _LEXICAL_TOKEN.findall(normalized)
+
+
 def lexical_terms(value: str) -> list[str]:
     """Keep short identifiers and index compounds alongside their components."""
-    normalized = unicodedata.normalize("NFC", value).casefold().replace("\u2019", "'")
-    return lexical_terms_from_tokens(_LEXICAL_TOKEN.findall(normalized))
+    return lexical_terms_from_tokens(lexical_tokens(value))
 
 
 def lexical_terms_from_tokens(tokens: Iterable[str]) -> list[str]:
