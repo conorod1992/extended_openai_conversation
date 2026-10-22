@@ -1,8 +1,11 @@
 import {expect, test} from "@playwright/test";
+import fs from "node:fs";
 import {fixtureUrl, trackPageErrors, expectHarnessClean} from "./browser-helpers.mjs";
 
-for (const bundled of [false, true]) test(`Usage request pages expose later failures (${bundled})`, async ({page}) => {
+const reachabilityInventory = JSON.parse(fs.readFileSync(new URL("../tests_stress/frontend_control_reachability_inventory.json", import.meta.url), "utf8"));
+for (const viewport of reachabilityInventory.viewports) for (const bundled of [false, true]) test(`Usage request pages expose later failures (${viewport.name}, ${bundled})`, async ({page}) => {
   const errors = trackPageErrors(page);
+  await page.setViewportSize({width:viewport.width,height:viewport.height});
   await page.clock.install({time:new Date("2026-09-29T12:00:00Z")});
   await page.goto(fixtureUrl("overview", bundled ? "&bundle=1" : ""));
   const panel = page.locator("extended-openai-management-panel");
