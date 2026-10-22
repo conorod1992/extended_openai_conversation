@@ -154,7 +154,11 @@ class DelayedToolCall:
 
     def as_dict(self) -> dict[str, Any]:
         """Serialize the call for Home Assistant storage."""
-        return asdict(self)
+        payload = asdict(self)
+        if self.satellite_id is None:
+            # Preserve legacy queue shape when there is no physical origin.
+            payload.pop("satellite_id")
+        return payload
 
     @classmethod
     def from_dict(cls, raw: Any) -> DelayedToolCall:
