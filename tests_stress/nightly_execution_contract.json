@@ -2747,7 +2747,9 @@
     "tests_real_ha/test_quiet_hours_resilience.py::test_replacement_keeps_period_releases_but_reapplies_owned_controls[False-None]",
     "tests_real_ha/test_quiet_hours_resilience.py::test_replacement_keeps_period_releases_but_reapplies_owned_controls[True-volume]",
     "tests_real_ha/test_quiet_hours_resilience.py::test_replacement_keeps_period_releases_but_reapplies_owned_controls[True-switch]",
-    "tests_real_ha/test_quiet_hours_resilience.py::test_replacement_keeps_period_releases_but_reapplies_owned_controls[True-None]"
+    "tests_real_ha/test_quiet_hours_resilience.py::test_replacement_keeps_period_releases_but_reapplies_owned_controls[True-None]",
+    "tests_real_ha/test_ai_task_exclusive_bounds.py::test_public_ai_task_exclusive_bounds_and_authoritative_validation[chat_completions]",
+    "tests_real_ha/test_ai_task_exclusive_bounds.py::test_public_ai_task_exclusive_bounds_and_authoritative_validation[responses]"
   ],
   "browser": {
     "browser": [
@@ -3720,7 +3722,8 @@
       "tests_stress/test_ai_task_mixed_campaign.py",
       "tests_stress/test_conversation_tool_ai_task_runtime_semantics.py",
       "tests/test_ai_task_replay_lifecycle.py",
-      "tests_real_ha/test_ai_task_replay_lifecycle.py"
+      "tests_real_ha/test_ai_task_replay_lifecycle.py",
+      "tests_real_ha/test_ai_task_exclusive_bounds.py"
     ],
     "archive": [
       "tests/test_conversation_archive.py",
