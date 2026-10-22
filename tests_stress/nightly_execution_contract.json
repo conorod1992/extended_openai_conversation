@@ -2749,7 +2749,16 @@
     "tests_real_ha/test_quiet_hours_resilience.py::test_replacement_keeps_period_releases_but_reapplies_owned_controls[True-switch]",
     "tests_real_ha/test_quiet_hours_resilience.py::test_replacement_keeps_period_releases_but_reapplies_owned_controls[True-None]",
     "tests_real_ha/test_ai_task_exclusive_bounds.py::test_public_ai_task_exclusive_bounds_and_authoritative_validation[chat_completions]",
-    "tests_real_ha/test_ai_task_exclusive_bounds.py::test_public_ai_task_exclusive_bounds_and_authoritative_validation[responses]"
+    "tests_real_ha/test_ai_task_exclusive_bounds.py::test_public_ai_task_exclusive_bounds_and_authoritative_validation[responses]",
+    "tests_real_ha/test_rule_payload_structure.py::test_event_payloads_and_iteration_items_survive_native_execution[False-payload0]",
+    "tests_real_ha/test_rule_payload_structure.py::test_event_payloads_and_iteration_items_survive_native_execution[False-payload1]",
+    "tests_real_ha/test_rule_payload_structure.py::test_event_payloads_and_iteration_items_survive_native_execution[False-payload2]",
+    "tests_real_ha/test_rule_payload_structure.py::test_event_payloads_and_iteration_items_survive_native_execution[True-payload0]",
+    "tests_real_ha/test_rule_payload_structure.py::test_event_payloads_and_iteration_items_survive_native_execution[True-payload1]",
+    "tests_real_ha/test_rule_payload_structure.py::test_event_payloads_and_iteration_items_survive_native_execution[True-payload2]",
+    "tests_real_ha/test_rule_payload_structure.py::test_real_selectors_still_require_preexecution_captures[action0]",
+    "tests_real_ha/test_rule_payload_structure.py::test_real_selectors_still_require_preexecution_captures[action1]",
+    "tests_real_ha/test_rule_payload_structure.py::test_real_selectors_still_require_preexecution_captures[action2]"
   ],
   "browser": {
     "browser": [
@@ -4011,7 +4020,8 @@
       "tests_stress/test_request_rules_matrix.py",
       "tests_stress/test_request_rules_provider_wire.py",
       "tests_real_ha/test_action_failure_safety.py",
-      "tests_real_ha/test_action_target_safety.py"
+      "tests_real_ha/test_action_target_safety.py",
+      "tests_real_ha/test_rule_payload_structure.py"
     ],
     "runtime": [
       "tests_real_ha/test_management_typed_yaml.py",

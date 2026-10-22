@@ -83,6 +83,7 @@ from .script_structure import (
     iter_script_actions,
     normalize_script_containers as _normalize_script_containers,
     rewrite_script_actions,
+    script_selector_fields,
 )
 from .strict_store import PropagatingWriteStore
 
@@ -2284,25 +2285,21 @@ def _prepare_concrete_captures(
     validation: bool = False,
     concrete: bool = False,
     key: str | None = None,
-    native_context: bool = True,
+    _selectors: dict[int, frozenset[str]] | None = None,
 ) -> Any:
     """Resolve concrete HA selectors; leave native lazy fields to HA templates."""
+    if _selectors is None:
+        _selectors = script_selector_fields(value)
     if isinstance(value, Mapping):
-        selector_context = native_context and (
-            "condition" in value or "platform" in value or "trigger" in value
-        )
+        selector_fields = _selectors.get(id(value), frozenset())
         return {
             name: _prepare_concrete_captures(
                 item,
                 slots,
                 validation=validation,
                 key=str(name),
-                concrete=(
-                    selector_context and name in {"entity_id", "zone", "device_id"}
-                )
-                or (native_context and name == "scene"),
-                native_context=native_context
-                and name not in {"data", "data_template", "variables", "target"},
+                concrete=name in selector_fields,
+                _selectors=_selectors,
             )
             for name, item in value.items()
         }
@@ -2314,7 +2311,7 @@ def _prepare_concrete_captures(
                 validation=validation,
                 concrete=concrete,
                 key=key,
-                native_context=native_context,
+                _selectors=_selectors,
             )
             for item in value
         ]
