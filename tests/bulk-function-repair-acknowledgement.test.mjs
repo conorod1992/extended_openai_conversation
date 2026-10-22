@@ -1,11 +1,19 @@
 import assert from "node:assert/strict";
-import {bindFallbackRepair} from "../custom_components/extended_openai_conversation_responses/frontend/management-function-repair.js";
+import * as sourceRepair from "../custom_components/extended_openai_conversation_responses/frontend/management-function-repair.js";
 
-async function repairScenario({refresh, reject = false}) {
+async function repairScenario({refresh, reject = false, yaml = false, api}) {
+  const {bindFallbackRepair, renderFallbackRepair} = api;
   let click;
   const button = {dataset:{}, disabled:false, addEventListener:(_type, listener) => { click = listener; }};
   const repaired = {spec:{name:"repaired"}};
   const saved = {valid:true, revision:"acknowledged", tools:[repaired], config:{functions:[repaired], function_groups:[]}};
+  const source = yaml ? "- spec:\n    name: repaired\n    description: Repaired template\n    parameters:\n      type: object\n      properties: {}\n  function:\n    type: template\n    value_template: done\n" : JSON.stringify([repaired]);
+  if (yaml) {
+    const malformed = source.replace("type: object", "type: [object");
+    const html = renderFallbackRepair({_result:{function_repair:{tools:malformed, isolatable:false, validation_error:"invalid YAML"}}}, {message:"Needs repair"});
+    assert.ok(html.includes(malformed), "recovery must display the original broken YAML");
+    assert.ok(html.includes("YAML or JSON"));
+  }
   const calls = [], toasts = [];
   let finish;
   const completed = new Promise(resolve => { finish = resolve; });
@@ -14,8 +22,9 @@ async function repairScenario({refresh, reject = false}) {
     _configData:{revision:"old", title:"Saved title", config:{prompt:"Saved prompt", functions:[], function_groups:[]}},
     _draft:{prompt:"Newer unsaved prompt", functions:[], function_groups:[]}, _draftTitle:"Unsaved title",
     _result:{revision:"old"},
-    shadowRoot:{querySelector:selector => selector === "#function-repair-save" ? button : {value:JSON.stringify([repaired])}},
-    _call:async (section, action) => {
+    shadowRoot:{querySelector:selector => selector === "#function-repair-save" ? button : {value:source}},
+    _call:async (section, action, payload) => {
+      assert.equal(payload.tools, source);
       calls.push([section, action]);
       assert.equal(section, "function_repair", "the acknowledgement must not require a configuration reread");
       assert.equal(action, "save");
@@ -57,7 +66,17 @@ async function repairScenario({refresh, reject = false}) {
   }
 }
 
-await repairScenario({});
-await repairScenario({refresh:"throws"});
-await repairScenario({refresh:"handled"});
-await repairScenario({reject:true});
+// Exercise the served asset as well as the source handler.
+const {readFile} = await import("node:fs/promises");
+const dist = new URL("../custom_components/extended_openai_conversation_responses/frontend/dist/", import.meta.url);
+const manifest = JSON.parse(await readFile(new URL("manifest.json", dist), "utf8"));
+const entry = Object.values(manifest).find(item => item.file.startsWith("assets/management-function-repair-"));
+assert.ok(entry);
+const bundledRepair = await import(new URL(entry.file, dist));
+for (const api of [sourceRepair, bundledRepair]) {
+  await repairScenario({api});
+  await repairScenario({api, refresh:"throws"});
+  await repairScenario({api, refresh:"handled"});
+  await repairScenario({api, reject:true});
+  await repairScenario({api, yaml:true});
+}

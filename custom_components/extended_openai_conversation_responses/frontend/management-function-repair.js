@@ -79,7 +79,7 @@ function renderFallbackRepair(panel, issue) {
     <h2 id="function-repair-title">Function Tools need repair</h2>
     <div class="error" role="alert">${escapeHtml(panel, validationError)}</div>
     <p>This recovery editor appears only when the saved Function Tools cannot be repaired individually.</p>
-    <label class="field"><span>Saved Function Tools</span><textarea id="function-repair-editor" rows="20" spellcheck="false">${escapeHtml(panel, editableToolsText(repair.tools ?? result.tools))}</textarea></label>
+    <label class="field"><span>Saved Function Tools (YAML or JSON)</span><textarea id="function-repair-editor" rows="20" spellcheck="false">${escapeHtml(panel, editableToolsText(repair.tools ?? result.tools))}</textarea></label>
     <div class="actions"><button id="function-repair-save" type="button">Validate and save repair</button></div>
   </section>`;
 }
@@ -273,14 +273,9 @@ function bindFallbackRepair(panel) {
   button.addEventListener("click", () => {
     void (async () => {
       const submission = captureConfigurationSubmission(panel);
-      let tools;
-      try {
-        tools = JSON.parse(panel.shadowRoot?.querySelector?.("#function-repair-editor")?.value || "");
-        if (!Array.isArray(tools)) throw new Error("Function Tools must be a JSON array");
-      } catch (err) {
-        panel._toast(`Function Tools must be valid JSON: ${err.message || String(err)}`, true);
-        return;
-      }
+      // Malformed persisted YAML is displayed verbatim. The backend owns YAML/JSON
+      // parsing and validation so the repair can be saved in the displayed format.
+      const tools = panel.shadowRoot?.querySelector?.("#function-repair-editor")?.value || "";
       button.disabled = true;
       try {
         const saved = await panel._call("function_repair", "save", {tools, revision: panel._result?.revision});

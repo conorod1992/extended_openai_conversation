@@ -1317,8 +1317,8 @@ async def async_function_repair(
     require_repair_revision(subentry, message.get("revision"))
     operation_revision = repair_revision(subentry)
     candidate = message.get("tools")
-    if not isinstance(candidate, list):
-        raise HomeAssistantError("tools must be a JSON array")
+    if not isinstance(candidate, (str, list)):
+        raise HomeAssistantError("tools must be a list or YAML/JSON text")
     validated_tools = validate_function_tools(candidate)
     # Bulk Tool repair owns Tools only. Validate surviving usable Groups against
     # the proposed Tools while retaining unrelated raw Group damage for repair.
