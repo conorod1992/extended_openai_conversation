@@ -2361,11 +2361,8 @@ def _prepare_concrete_captures(
             and key in {"entity_id", "scene", "zone"}
             and rendered == "request_rule_template"
         ):
-            rendered = (
-                "zone.request_rule_template"
-                if key == "zone"
-                else "light.request_rule_template"
-            )
+            domain = {"zone": "zone", "scene": "scene"}.get(key, "light")
+            rendered = f"{domain}.request_rule_template"
         return rendered
     if validation:
         # Native HA accepts templates only in its supported lazy fields. Do not
