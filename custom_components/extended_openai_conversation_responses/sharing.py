@@ -41,6 +41,28 @@ _SCHEMA_MAP_KEYWORDS = frozenset(
 _SCHEMA_INSTANCE_KEYWORDS = frozenset(
     {"default", "example", "examples", "enum", "const"}
 )
+# These are schema locations, not a list of fields considered secret-free.
+# Everything else (including future extension objects) is ordinary data.
+_SCHEMA_CHILD_KEYWORDS = frozenset(
+    {
+        "additionalProperties",
+        "unevaluatedProperties",
+        "propertyNames",
+        "contains",
+        "additionalItems",
+        "unevaluatedItems",
+        "not",
+        "if",
+        "then",
+        "else",
+        "contentSchema",
+        "items",
+        "prefixItems",
+        "allOf",
+        "anyOf",
+        "oneOf",
+    }
+)
 _INVALID_PERCENT_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
 _INVALID_POINTER_ESCAPE = re.compile(r"~(?:[^01]|$)")
 _LITERAL_PROPERTY_PATTERN = re.compile(r"\^([A-Za-z0-9_-]+)\$")
@@ -259,11 +281,18 @@ def _schema_annotations(
     root: Any,
     *,
     sensitive: bool = False,
+    schema_node: bool = True,
     references: frozenset[_ReferenceKey] = frozenset(),
     reference_results: dict[_ReferenceKey, bool] | None = None,
     single_resource: bool | None = None,
 ) -> Any:
-    """Separate structural schema names from credential-bearing instance data."""
+    """Grant name exemptions only at explicitly classified schema locations.
+
+    Unclassified annotations enter as ordinary data with designated-key checks.
+    Their nested schema-looking fields cannot reacquire structural privileges.
+    URI checks remain defensive in both contexts, without resolving references
+    or treating opaque data as schema authority.
+    """
     if reference_results is None:
         reference_results = {}
     if single_resource is None:
@@ -274,6 +303,7 @@ def _schema_annotations(
                 item,
                 root,
                 sensitive=sensitive,
+                schema_node=schema_node,
                 references=references,
                 reference_results=reference_results,
                 single_resource=single_resource,
@@ -282,11 +312,15 @@ def _schema_annotations(
         ]
     if not isinstance(value, dict):
         return redact_text(value) if isinstance(value, str) else value
-    if sensitive and any(key in value for key in _SCHEMA_REFERENCES - {"$ref"}):
+    if (
+        schema_node
+        and sensitive
+        and any(key in value for key in _SCHEMA_REFERENCES - {"$ref"})
+    ):
         # Dynamic/recursive scope cannot be proved by following a local pointer.
         # Keep the live/private definition intact; omit its public review unit.
         return dict(REDACTED_SECRET_SENTINEL)
-    if sensitive and "$ref" in value:
+    if schema_node and sensitive and "$ref" in value:
         pointer = _local_schema_pointer(value["$ref"])
         reference = (id(root), pointer) if pointer is not None else None
         target = root
@@ -335,6 +369,14 @@ def _schema_annotations(
                 )
                 else dict(REDACTED_SECRET_SENTINEL)
             )
+        elif not schema_node:
+            result[key] = _schema_annotations(
+                item,
+                root,
+                schema_node=False,
+                reference_results=reference_results,
+                single_resource=single_resource,
+            )
         elif key in _SCHEMA_INSTANCE_KEYWORDS:
             # Instance data cannot acquire schema exemptions by using keys such
             # as functions/spec/parameters. No user content is executed here.
@@ -362,12 +404,37 @@ def _schema_annotations(
                 )
                 for name, definition in item.items()
             }
-        else:
+        elif key == "dependentRequired":
+            # Both keys and list members are property names, not instance data
+            # or schema keywords (a property named $id remains a name).
+            result[key] = (
+                deepcopy(item)
+                if isinstance(item, dict)
+                and all(
+                    isinstance(name, str)
+                    and isinstance(names, list)
+                    and all(isinstance(member, str) for member in names)
+                    for name, names in item.items()
+                )
+                else dict(REDACTED_SECRET_SENTINEL)
+            )
+        elif key in _SCHEMA_CHILD_KEYWORDS:
             result[key] = _schema_annotations(
                 item,
                 root,
                 sensitive=sensitive,
                 references=references,
+                reference_results=reference_results,
+                single_resource=single_resource,
+            )
+        else:
+            # Include the annotation's own key: api_key at a schema node is
+            # not the structural property declaration properties.api_key.
+            data = _structured_payloads(redact_secrets({key: item}, schema_roots=False))
+            result[key] = _schema_annotations(
+                data[key],
+                root,
+                schema_node=False,
                 reference_results=reference_results,
                 single_resource=single_resource,
             )
