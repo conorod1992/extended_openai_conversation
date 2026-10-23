@@ -26,11 +26,64 @@ from custom_components.extended_openai_conversation_responses.model_tool_results
     OwnedJSONPayload,
     project_tool_result,
 )
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.core import SupportsResponse
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 
 from .test_model_tool_result_boundary import wire_result  # noqa: F401
+
+
+@pytest.mark.parametrize(
+    "value", [b"ordinary binary response", {"ordinary set response"}, 2**128]
+)
+async def test_mixed_native_batch_fallback_preserves_private_failure(
+    hass, exposed_entities, wire_result, value
+):
+    secret = "FABRICATED-private-service-credential-42"
+    hass.services.async_call.side_effect = [
+        HomeAssistantError("Backend password=" + secret),
+        {"report": value},
+    ]
+    hass.services.supports_response.return_value = SupportsResponse.OPTIONAL
+    argument = {
+        "domain": "light",
+        "service": "turn_on",
+        "service_data": {"entity_id": "light.living_room"},
+    }
+    content = await execute_configured(
+        hass, exposed_entities, "execute_service", {"list": [argument, argument]}
+    )
+    retained = tool_result_data(content)["result"]
+    assert retained[0]["error"] == "Backend password=" + secret
+    assert isinstance(retained[0], ExecutionFailure)
+    assert retained[1]["response"]["report"] == str(value)
+    for prepared in (content, await project_tool_result(content, prepare_wire=True)):
+        wire = wire_result(prepared)["result"]
+        assert secret not in json.dumps(wire)
+        assert "Check the tool configuration and permissions" in wire[0]["error"]
+        assert wire[1]["response"]["report"] == str(value)
+    assert hass.services.async_call.await_count == 2
+
+
+def test_recursive_and_deep_fallback_cannot_erase_failure_provenance():
+    from custom_components.extended_openai_conversation_responses.entity import (
+        _normalize_function_result,
+    )
+    from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+        BackendExecutionFailure,
+    )
+
+    recursive = []
+    recursive.append(recursive)
+    result = _normalize_function_result(recursive)
+    assert isinstance(result[0], BackendExecutionFailure)
+    nested = b"unsupported"
+    for _ in range(40):
+        nested = [nested]
+    result = _normalize_function_result(nested)
+    for _ in range(32):
+        result = result[0]
+    assert isinstance(result, BackendExecutionFailure)
 
 
 async def execute_configured(hass, exposed_entities, name, arguments):

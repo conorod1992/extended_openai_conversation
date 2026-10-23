@@ -215,16 +215,37 @@ def _normalize_url_citation(annotation: object) -> dict[str, Any] | None:
     }
 
 
-def _normalize_function_result(result: Any) -> Any:
+def _normalize_function_result(
+    result: Any, *, _ancestors: frozenset[int] = frozenset()
+) -> Any:
     """Preserve provider-serializable Function results, falling back compatibly."""
     try:
         orjson.dumps(result)
     except TypeError, OverflowError:
-        from .ha_tool_result_compat import BackendExecutionFailure
+        from .ha_tool_result_compat import BackendExecutionFailure, ExecutionFailure
 
-        if isinstance(result, BackendExecutionFailure):
-            # A fallback string must not erase diagnostic privacy provenance.
-            return BackendExecutionFailure(status="error", error=str(result))
+        if isinstance(result, (dict, list, tuple)):
+            # Normalize unsupported leaves, never stringify a container carrying
+            # private failure markers. Keep successful siblings and failure status.
+            if id(result) in _ancestors or len(_ancestors) >= 32:
+                return BackendExecutionFailure(
+                    error="Function result is recursive or too deep"
+                )
+            ancestors = _ancestors | {id(result)}
+            if isinstance(result, dict):
+                normalized = {
+                    str(key): _normalize_function_result(value, _ancestors=ancestors)
+                    for key, value in result.items()
+                }
+                if isinstance(result, BackendExecutionFailure):
+                    return BackendExecutionFailure(normalized)
+                if isinstance(result, ExecutionFailure):
+                    return ExecutionFailure(normalized)
+                return normalized
+            return [
+                _normalize_function_result(value, _ancestors=ancestors)
+                for value in result
+            ]
         return str(result)
     return result
 
