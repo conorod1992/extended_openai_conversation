@@ -1,6 +1,6 @@
-"""Source-free HA diagnostics within EOAI-owned rendering tasks.
+"""Source-free HA diagnostics within EOAI-owned backend tasks.
 
-HA logs template source before an exception can reach our public-error boundary.
+HA can log template source or complete Scrape responses before our boundaries.
 Project at record creation: parent logger filters do not cover child loggers.
 Context-local activation leaves unrelated HA tasks' diagnostics intact, without
 changing logger levels or suppressing records. Existing record factories chain.
@@ -11,15 +11,17 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import wraps
 import logging
-from typing import Any
+from typing import Any, cast
 
 _PRIVATE_RENDERING: ContextVar[bool] = ContextVar(
     "eoai_private_rendering", default=False
 )
+_SCRAPE_LOGGER = "homeassistant.components.scrape.coordinator"
 _LOGGERS = (
     "homeassistant.helpers.template",
     "homeassistant.helpers.script",
     "custom_components.extended_openai_conversation_responses.functions.script",
+    _SCRAPE_LOGGER,
 )
 
 
@@ -40,6 +42,9 @@ class _PrivateRenderingFilter(logging.Filter):
         if family is None:
             return True
         record._eoai_private_template_projected = True
+        if family == _SCRAPE_LOGGER:
+            _project_scrape_record(record)
+            return True
         category = "template" if family == _LOGGERS[0] else "script"
         # Dynamic Script logger suffixes can be administrator-authored names.
         record.name = family
@@ -77,6 +82,55 @@ class _PrivateRenderingFilter(logging.Filter):
         record.exc_text = None
         record.stack_info = None
         return True
+
+
+def _project_scrape_record(record: logging.LogRecord) -> None:
+    """Keep coordinator health information without formatting response content."""
+    record.name = _SCRAPE_LOGGER
+    args = record.args
+    if (
+        record.msg == "Finished fetching %s data in %.3f seconds (success: %s)"
+        and isinstance(args, tuple)
+        and len(args) == 3
+        and type(args[1]) in (int, float)
+        # Bound before formatting: even exact integers can overflow %.3f's
+        # float conversion. Comparisons also reject NaN and infinities safely.
+        and 0 <= cast(float, args[1]) <= 31_536_000
+        and type(args[2]) is bool
+    ):
+        record.msg = "EOAI private scrape refresh; duration=%.3f seconds success=%s"
+        record.args = (args[1], args[2])
+    else:
+        error_type = (
+            type(record.exc_info[1]).__name__
+            if record.exc_info and record.exc_info[1] is not None
+            else "unavailable"
+        )
+        if (
+            record.msg
+            in (
+                "Error fetching %s data: %s",
+                "Error requesting %s data: %s",
+                "Authentication failed while fetching %s data: %s",
+                "Config entry setup failed while fetching %s data: %s",
+            )
+            and isinstance(args, tuple)
+            and len(args) == 2
+            and isinstance(args[1], BaseException)
+        ):
+            error_type = type(args[1]).__name__
+        elif record.msg == "Timeout fetching %s data":
+            error_type = "timeout"
+        elif record.msg == "Fetching %s data recovered":
+            error_type = "recovered"
+        record.msg = (
+            "EOAI private scrape diagnostic; error_type=%s. "
+            "Response omitted; check Function Tool endpoint and extraction settings."
+        )
+        record.args = (error_type,)
+    record.exc_info = None
+    record.exc_text = None
+    record.stack_info = None
 
 
 def _install_record_projection() -> None:

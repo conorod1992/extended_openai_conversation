@@ -42,6 +42,7 @@ from ..const import CONF_PAYLOAD_TEMPLATE
 from ..exceptions import FunctionResponseParseError
 from ..public_errors import SanitizedRequestError
 from ..resource_limits import MAX_REMOTE_RESPONSE_BYTES
+from ..template_diagnostics import private_template_diagnostics
 from .base import Function
 
 _ZSTD_COMPAT: Any = None
@@ -589,6 +590,7 @@ class ScrapeFunction(Function):
             )
         )
 
+    @private_template_diagnostics
     async def execute(
         self,
         hass: HomeAssistant,
