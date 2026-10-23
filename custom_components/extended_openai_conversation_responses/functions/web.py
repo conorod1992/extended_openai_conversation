@@ -360,6 +360,60 @@ def _payload_template(value: Any) -> Template:
     return result
 
 
+async def _private_rest_update(data: rest.data.RestData) -> None:
+    """Use HA's parsed request and bounded session without URL-bearing HA logs.
+
+    The request URL is unchanged. No process-global logger state is modified.
+    Keep this narrow adapter covered against supported HA dependency versions.
+    """
+    headers = render_complex(data._headers, parse_result=False)
+    params = render_complex(data._params)
+    if params:
+        params = {
+            key: str(value).lower()
+            if isinstance(value, bool)
+            else (
+                value
+                if isinstance(value, (str, int, float, type(None)))
+                else str(value)
+            )
+            for key, value in params.items()
+        }
+    kwargs: dict[str, Any] = {
+        "headers": headers,
+        "params": params,
+        "timeout": data._timeout,
+    }
+    if isinstance(data._auth, aiohttp.BasicAuth):
+        kwargs["auth"] = data._auth
+    elif data._auth is not None:
+        kwargs["middlewares"] = (data._auth,)
+    if data._request_data:
+        kwargs["data"] = data._request_data
+    data.last_exception = None
+    try:
+        async with data._session.request(
+            data._method, data._resource, **kwargs
+        ) as response:
+            if not data._force_use_set_encoding and response.charset:
+                try:
+                    data.data = await response.text()
+                except UnicodeDecodeError:
+                    data._force_use_set_encoding = True
+            if data._force_use_set_encoding or not response.charset:
+                data.data = await response.text(encoding=data._encoding)
+            data.headers = response.headers
+            _LOGGER.debug(
+                "REST Function response received; status=%d characters=%d",
+                response.status,
+                len(data.data or ""),
+            )
+    except (aiohttp.ClientError, TimeoutError) as error:
+        data.last_exception = error
+        data.data = None
+        data.headers = None
+
+
 def _render_payload(
     template: Template, arguments: dict[str, Any], hass: HomeAssistant
 ) -> str:
@@ -409,12 +463,11 @@ def get_rest_data(
     rest_data = rest.create_rest_data_from_config(hass, rendered_config)
     if isinstance(rest_data, rest.data.RestData):
         _install_bounded_session(hass, rest_data)
-        original_update = rest_data.async_update
 
         async def sanitized_update(log_errors: bool = False) -> None:
             # ScrapeCoordinator also calls this entry point without arguments.
             # HA's ordinary error logger includes the credential-bearing URL.
-            await original_update(log_errors=False)
+            await _private_rest_update(rest_data)
 
         cast(Any, rest_data).async_update = sanitized_update
     return rest_data

@@ -375,9 +375,9 @@ async def execute_backend(
                 )
             ):
                 execution_rejected(before_dispatch=True)
-            from .public_errors import sanitize_template_error
+            from .public_errors import sanitize_backend_error
 
-            public_error = sanitize_template_error(error)
+            public_error = sanitize_backend_error(error)
             if public_error is not error:
                 raise public_error from None
             raise

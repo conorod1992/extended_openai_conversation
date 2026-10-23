@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock, Mock
 
 import httpx
 from openai import AuthenticationError
-
 import pytest
 
 from custom_components.extended_openai_conversation_responses.provider_errors import (
@@ -18,8 +17,8 @@ from custom_components.extended_openai_conversation_responses.provider_errors im
     classify_config_provider_error,
     ensure_successful_responses_result,
     log_provider_failure,
-    provider_error_metadata,
     provider_authentication_snapshot,
+    provider_error_metadata,
     provider_log_remediation,
     provider_stream_error,
     provider_transport_error,
@@ -166,7 +165,7 @@ def test_provider_error_metadata_classifies_root_causes(
 
     metadata = provider_error_metadata(error)
 
-    assert metadata["message"] == "provider failed"
+    assert metadata["message"] == "Provider request failed"
     assert metadata["root_cause_type"] == cause_name
     assert metadata["root_cause_category"] == expected_category
     assert "sensitive nested detail" not in json.dumps(metadata)
@@ -188,16 +187,16 @@ def test_provider_error_metadata_preserves_safe_fields_and_redacts_credentials()
     metadata = provider_error_metadata(error)
 
     assert metadata["status_code"] == 429
-    assert metadata["code"] == "rate_limit_exceeded"
-    assert metadata["provider_error_type"] == "rate_limit_error"
-    assert metadata["provider_request_id"] == "req-123"
-    assert metadata["provider_response_id"] == "resp-123"
+    assert metadata["code"] == "provider_rate_limited"
+    assert "provider_error_type" not in metadata
+    assert "provider_request_id" not in metadata
+    assert "provider_response_id" not in metadata
     assert "secret-token" not in metadata["message"]
     assert "other-secret" not in metadata["message"]
     assert "password" not in metadata["message"]
     assert "url-secret" not in metadata["message"]
     assert "sk-abcdefghijklmnop" not in metadata["message"]
-    assert "[redacted]" in metadata["message"]
+    assert metadata["message"] == "Provider rate limit reached"
 
 
 def test_blank_unknown_exception_uses_type_name_without_inventing_metadata() -> None:
@@ -206,8 +205,8 @@ def test_blank_unknown_exception_uses_type_name_without_inventing_metadata() -> 
 
     metadata = provider_error_metadata(error)
 
-    assert metadata == {"message": "RuntimeError"}
-    assert provider_user_message(error) == "RuntimeError"
+    assert metadata == {"message": "Provider request failed", "code": "provider_error"}
+    assert provider_user_message(error) == "Provider request failed (code provider_error)"
 
 
 def test_provider_user_message_includes_only_supported_diagnostic_fields() -> None:
@@ -221,7 +220,7 @@ def test_provider_user_message_includes_only_supported_diagnostic_fields() -> No
     message = provider_user_message(error)
 
     assert message == (
-        "provider rejected request (HTTP 403, code policy_denied, request req-safe)"
+        "Provider access was refused (HTTP 403, code provider_forbidden)"
     )
     assert "resp-diagnostic-only" not in message
 
@@ -328,7 +327,9 @@ def test_setup_validation_policy_does_not_supersede_authentication():
 @pytest.mark.parametrize("surface", ["responses", "chat", "embeddings"])
 @pytest.mark.parametrize("replace", [False, True])
 async def test_sdk_error_retains_authentication_of_actual_call(surface, replace):
-    from custom_components.extended_openai_conversation_responses.debug import DebugOpenAIClientProxy
+    from custom_components.extended_openai_conversation_responses.debug import (
+        DebugOpenAIClientProxy,
+    )
 
     entry = SimpleNamespace(entry_id="entry", data={"api_key": "original-secret"},
                             async_start_reauth=Mock())

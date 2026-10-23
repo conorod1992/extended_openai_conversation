@@ -6,7 +6,6 @@ from collections.abc import Mapping
 import hashlib
 import json
 import logging
-import re
 from typing import Any
 
 from openai import APIConnectionError, AuthenticationError, OpenAIError
@@ -24,12 +23,6 @@ from .const import (
 _MAX_MESSAGE = 1000
 _MAX_FIELD = 200
 _LOGGER = logging.getLogger(__name__)
-_OPENAI_API_KEY = re.compile(r"\bsk-[A-Za-z0-9_-]{12,}\b")
-_LABELED_CREDENTIAL = re.compile(
-    r"(?i)(\b(?:authorization|api[-_ ]?key)\b\s*[:=]\s*)(?:bearer\s+)?([^\s,;]+)"
-)
-_QUERY_CREDENTIAL = re.compile(r"(?i)([?&](?:api[-_]?key|access_token)=)([^&#\s]+)")
-_BASIC_AUTH_URL = re.compile(r"(?i)(https?://)([^\s/@:]+):([^\s/@]+)@")
 
 
 def _value(source: object | None, name: str) -> Any:
@@ -50,21 +43,18 @@ def _text(value: object | None, limit: int = _MAX_FIELD) -> str | None:
 
 
 def _safe_error_message(error: BaseException) -> str:
-    """Return bounded provider text with known credential forms removed.
-
-    Provider SDK errors are useful diagnostics, but some compatible providers echo
-    request URLs or authentication headers in exception strings. Keep this deliberately
-    targeted to credential shapes that can occur in provider errors instead of trying
-    to classify arbitrary application text as a secret.
-    """
-    normalized = " ".join(str(error).split())
-    if not normalized:
-        return type(error).__name__
-    normalized = _OPENAI_API_KEY.sub("[redacted]", normalized)
-    normalized = _LABELED_CREDENTIAL.sub(r"\1[redacted]", normalized)
-    normalized = _QUERY_CREDENTIAL.sub(r"\1[redacted]", normalized)
-    normalized = _BASIC_AUTH_URL.sub(r"\1[redacted]@", normalized)
-    return normalized[:_MAX_MESSAGE]
+    """Return a fixed category message, never remote prose or opaque identifiers."""
+    return {
+        "invalid_auth": "Provider authentication failed",
+        "cannot_connect": "Could not connect to provider",
+        "provider_forbidden": "Provider access was refused",
+        "provider_rate_limited": "Provider rate limit reached",
+        "provider_unavailable": "Provider is temporarily unavailable",
+        "model_unavailable": "The configured model is unavailable",
+        "insufficient_quota": "Provider quota or billing limit reached",
+        "context_length": "Provider context limit exceeded",
+        "unsupported_parameter": "Provider rejected an unsupported parameter",
+    }.get(provider_failure_category(error), "Provider request failed")
 
 
 def _integer(value: object | None) -> int | None:
@@ -181,14 +171,7 @@ def provider_error_metadata(error: BaseException) -> dict[str, Any]:
     status = _integer(getattr(error, "status_code", None))
     if status is not None:
         metadata["status_code"] = status
-    for attribute, key in (
-        ("code", "code"),
-        ("type", "provider_error_type"),
-        ("request_id", "provider_request_id"),
-        ("response_id", "provider_response_id"),
-    ):
-        if value := _text(getattr(error, attribute, None)):
-            metadata[key] = value
+    metadata["code"] = provider_failure_category(error)
     cause_type, cause_category = _root_cause_category(error)
     if cause_type:
         metadata["root_cause_type"] = cause_type

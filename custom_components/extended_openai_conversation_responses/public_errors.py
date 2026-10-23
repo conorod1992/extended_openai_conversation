@@ -12,6 +12,26 @@ class SanitizedTemplateError(HomeAssistantError):
         )
 
 
+class SanitizedBackendError(HomeAssistantError):
+    """A backend failed; its arbitrary exception payload is private."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Function execution failed. Check the tool configuration and permissions."
+        )
+
+
+def sanitize_backend_error(error: BaseException) -> BaseException:
+    public = sanitize_template_error(error)
+    if public is not error or isinstance(
+        error, (SanitizedTemplateError, SanitizedBackendError)
+    ):
+        return public
+    if isinstance(error, HomeAssistantError):
+        return SanitizedBackendError()
+    return error
+
+
 def sanitize_template_error(error: BaseException) -> BaseException:
     """Contain wrapped HA template errors without guessing credential formats."""
     current: BaseException | None = error
