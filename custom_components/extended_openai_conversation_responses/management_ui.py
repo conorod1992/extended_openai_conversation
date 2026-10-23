@@ -806,6 +806,7 @@ async def _review_rule_pack(
         "will_append": True,
         "will_disable": True,
         "new_groups": len(added_group_names),
+        "security": prepared.get("security"),
         "revision": snapshot["revision"],
     }
 
@@ -908,6 +909,7 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
             message.get("selection"),
             message.get("group_id"),
             message.get("rule_ids"),
+            reviewed=message.get("reviewed_custom") is True,
         )
     if action in {"rule_pack_review", "rule_pack_import"}:
         parsed = await hass.async_add_executor_job(

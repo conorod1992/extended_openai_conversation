@@ -15,6 +15,7 @@ from .request_rules import (
     validate_rule,
     validate_rule_groups,
 )
+from .sharing import SHARING_VERSION, project_rules, security_summary
 
 PACK_FORMAT = "extended_openai_request_rule_pack"
 PACK_VERSION = 1
@@ -26,6 +27,8 @@ def export_rule_pack(
     selection: str | None,
     group_id: str | None = None,
     rule_ids: Sequence[str] | None = None,
+    *,
+    reviewed: bool = False,
 ) -> dict[str, Any]:
     """Export selected canonical rules in relative global priority order."""
     snapshot = manager.snapshot()
@@ -75,7 +78,7 @@ def export_rule_pack(
         )
     pack = {
         "format": PACK_FORMAT,
-        "version": PACK_VERSION,
+        "version": SHARING_VERSION,
         "groups": deepcopy(groups),
         "rules": portable_rules,
     }
@@ -83,12 +86,22 @@ def export_rule_pack(
         raise ValueError("Choose at least one rule to export")
     if len(json.dumps(pack, ensure_ascii=False).encode("utf-8")) > MAX_PACK_BYTES:
         raise ValueError("Rule pack exceeds the 2 MB safety limit")
+    security = security_summary(reviewed)
+    projected = project_rules(pack, security, reviewed=reviewed)
+    pack["rules"] = projected["rules"]
+    pack["groups"] = projected["groups"]
+    pack["security"] = security
+    if len(json.dumps(pack, ensure_ascii=False).encode("utf-8")) > MAX_PACK_BYTES:
+        raise ValueError("Rule pack exceeds the 2 MB safety limit")
     return pack
 
 
 def _migrate_pack(value: Mapping[str, Any]) -> Mapping[str, Any]:
     """Version dispatch point for future portable formats."""
-    if type(value.get("version")) is not int or value["version"] != PACK_VERSION:
+    if type(value.get("version")) is not int or value["version"] not in {
+        PACK_VERSION,
+        SHARING_VERSION,
+    }:
         raise ValueError("Unsupported Request Rule pack version")
     return value
 
@@ -104,7 +117,10 @@ def prepare_rule_pack(value: Any) -> dict[str, Any]:
             raise ValueError("Rule pack is not valid JSON") from err
     if not isinstance(value, Mapping):
         raise ValueError("Rule pack must be an object")
-    if set(value) != {"format", "version", "groups", "rules"}:
+    expected = {"format", "version", "groups", "rules"}
+    if value.get("version") == SHARING_VERSION:
+        expected.add("security")
+    if set(value) != expected:
         raise ValueError("Rule pack has missing or unknown fields")
     try:
         size = len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
@@ -117,7 +133,18 @@ def prepare_rule_pack(value: Any) -> dict[str, Any]:
     migrated = _migrate_pack(value)
     groups = validate_rule_groups(migrated["groups"])
     raw_rules = migrated["rules"]
-    if not isinstance(raw_rules, list) or not raw_rules or len(raw_rules) > MAX_RULES:
+    if (
+        not isinstance(raw_rules, list)
+        or len(raw_rules) > MAX_RULES
+        or (
+            not raw_rules
+            and not (
+                value["version"] == SHARING_VERSION
+                and isinstance(value.get("security"), dict)
+                and value["security"].get("omitted")
+            )
+        )
+    ):
         raise ValueError("Rule pack must contain 1 to 500 rules")
     required_rule_fields = {
         "id",
@@ -149,9 +176,14 @@ def prepare_rule_pack(value: Any) -> dict[str, Any]:
         raise ValueError("Rule pack action is missing Continue to AI")
     return {
         "format": PACK_FORMAT,
-        "version": PACK_VERSION,
+        "version": value["version"],
         "groups": groups,
         "rules": raw_rules,
+        **(
+            {"security": value["security"]}
+            if value["version"] == SHARING_VERSION
+            else {}
+        ),
     }
 
 
@@ -177,6 +209,7 @@ def validate_prepared_rule_pack(prepared: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "groups": groups,
         "rules": sorted(rules, key=lambda rule: rule["order"]),
+        "security": prepared.get("security"),
     }
 
 

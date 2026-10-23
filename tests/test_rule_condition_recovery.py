@@ -141,7 +141,7 @@ async def test_missing_condition_is_reported_and_pack_imported_disabled(
 ):
     devices, rules, command = condition_management
     await command("create", rule=device_rule(True), revision=rules.revision())
-    pack = export_rule_pack(rules, "all")
+    pack = export_rule_pack(rules, "all", reviewed=True)
     devices.clear()
     review = await command("rule_pack_review", pack=pack)
     assert review["needs_attention"] == 1 and review["ready"] == 0
@@ -209,7 +209,7 @@ async def test_missing_earlier_condition_does_not_hide_malformed_later_branch(
 async def test_pack_review_rejects_malformed_platform_fields(condition_management):
     devices, rules, command = condition_management
     await command("create", rule=device_rule(), revision=rules.revision())
-    pack = export_rule_pack(rules, "all")
+    pack = export_rule_pack(rules, "all", reviewed=True)
     pack["rules"][0]["conditions"][0]["type"] = "invalid_condition"
     devices.clear()
     revision = rules.revision()

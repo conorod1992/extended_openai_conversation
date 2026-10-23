@@ -114,7 +114,7 @@ async def test_management_rule_pack_export_forwards_selection(hass, monkeypatch)
         )
     )
     assert result == {"rules": ["selected"]}
-    export.assert_called_once_with(rules, "group", "lights", ["one"])
+    export.assert_called_once_with(rules, "group", "lights", ["one"], reviewed=False)
 
 
 async def test_live_rule_test_rejects_unavailable_agent(hass, monkeypatch):
@@ -401,7 +401,9 @@ async def test_configuration_update_refreshes_local_handling_metadata(
         request.subentry
     ).revision
     monkeypatch.setattr(
-        live_updates, "configuration_supports_live_update", lambda *_args, **_kwargs: True
+        live_updates,
+        "configuration_supports_live_update",
+        lambda *_args, **_kwargs: True,
     )
 
     def update(_hass, _entry, subentry, *, data, title):
@@ -426,7 +428,9 @@ async def test_settings_live_update_persists_validated_settings(hass, monkeypatc
         request.subentry
     ).revision
     monkeypatch.setattr(
-        live_updates, "configuration_supports_live_update", lambda *_args, **_kwargs: True
+        live_updates,
+        "configuration_supports_live_update",
+        lambda *_args, **_kwargs: True,
     )
     updated = Mock()
     monkeypatch.setattr(live_updates, "update_live_subentry", updated)
