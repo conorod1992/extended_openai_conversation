@@ -21,7 +21,9 @@ _SECRET_KEY_FAMILIES = ("apikey", "clientsecret", "accesstoken", "refreshtoken")
 _CAMEL_CASE_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _KEY_SEPARATOR = re.compile(r"[^A-Za-z0-9]+")
 _LIKELY_SECRET = re.compile(r"\bsk-[A-Za-z0-9_-]{12,}\b")
-_HTTP_CREDENTIAL_NAMES = frozenset({"key", "sig", "signature", "credential"})
+_HTTP_CREDENTIAL_NAMES = frozenset(
+    {"key", "sig", "signature", "credential", "x-amz-signature", "x-amz-credential"}
+)
 _JINJA_DELIMITERS = ("{{", "{%", "{#")
 _DROP = object()
 
