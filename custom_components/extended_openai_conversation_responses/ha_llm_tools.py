@@ -28,6 +28,7 @@ from homeassistant.helpers import llm
 
 from .ha_tool_result_compat import HAToolResultError, execution_tool_result
 from .schema_errors import SCHEMA_ERRORS
+from .template_diagnostics import private_template_diagnostics
 
 _LOGGER = logging.getLogger(__name__)
 TOOL_TYPE = "ha_llm"
@@ -149,6 +150,7 @@ class LiveTool:
     prompt: str
     spec: dict[str, Any]
 
+    @private_template_diagnostics
     async def async_call(self, tool_input: llm.ToolInput) -> Any:
         """Validate with HA's authoritative schema, then dispatch exactly once."""
         matches = [tool for tool in self.instance.tools if tool.name == self.tool.name]

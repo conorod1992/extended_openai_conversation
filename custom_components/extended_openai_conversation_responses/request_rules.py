@@ -86,6 +86,7 @@ from .script_structure import (
     script_selector_fields,
 )
 from .strict_store import PropagatingWriteStore
+from .template_diagnostics import private_template_diagnostics
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -1048,6 +1049,7 @@ class RequestRules:
                 }
             )
 
+    @private_template_diagnostics
     async def _async_conditions_pass(
         self, hass: HomeAssistant, match: RuleMatch
     ) -> bool:
@@ -3461,6 +3463,7 @@ async def async_evaluate_rule(
     return last
 
 
+@private_template_diagnostics
 async def _async_evaluate_matched_rule(
     hass: HomeAssistant,
     match: RuleMatch,

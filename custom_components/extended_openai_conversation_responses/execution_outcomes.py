@@ -12,6 +12,8 @@ from uuid import uuid4
 
 from homeassistant.exceptions import HomeAssistantError
 
+from .template_diagnostics import private_template_diagnostics
+
 _MAX_EFFECT_RECEIPTS = 4096
 _MAX_RETAINED_EFFECT_RECEIPTS = 4096
 
@@ -352,6 +354,7 @@ def execution_rejected(
         )
 
 
+@private_template_diagnostics
 async def execute_backend(
     function: Any,
     hass: Any,
