@@ -325,7 +325,7 @@ async def test_restore_reload_decision_uses_effective_configuration(
     if change == "model":
         config["chat_model"] = "gpt-4o"
     title = "Restored Assistant" if change == "title" else "Assistant"
-    prepared = SimpleNamespace(config=config, title=title)
+    prepared = SimpleNamespace(config=config, title=title, authoritative_config=False)
     monkeypatch.setattr(restore_recovery, "_async_persist_config_entries", AsyncMock())
     await restore_recovery._update_configuration(hass, entry, subentry, prepared)
     assert ("entry" in hass.data.get(f"{DOMAIN}.restore_reload_pending", set())) == (
