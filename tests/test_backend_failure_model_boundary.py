@@ -34,7 +34,7 @@ from .test_model_tool_result_boundary import wire_result  # noqa: F401
 
 
 @pytest.mark.parametrize(
-    "value", [b"ordinary binary response", {"ordinary set response"}, 2**128]
+    "value", [b"ordinary binary response", {"ordinary set response"}, 2**128, {1: "one"}]
 )
 async def test_mixed_native_batch_fallback_preserves_private_failure(
     hass, exposed_entities, wire_result, value
@@ -54,14 +54,15 @@ async def test_mixed_native_batch_fallback_preserves_private_failure(
         hass, exposed_entities, "execute_service", {"list": [argument, argument]}
     )
     retained = tool_result_data(content)["result"]
+    expected = {"1": "one"} if isinstance(value, dict) else str(value)
     assert retained[0]["error"] == "Backend password=" + secret
     assert isinstance(retained[0], ExecutionFailure)
-    assert retained[1]["response"]["report"] == str(value)
+    assert retained[1]["response"]["report"] == expected
     for prepared in (content, await project_tool_result(content, prepare_wire=True)):
         wire = wire_result(prepared)["result"]
         assert secret not in json.dumps(wire)
         assert "Check the tool configuration and permissions" in wire[0]["error"]
-        assert wire[1]["response"]["report"] == str(value)
+        assert wire[1]["response"]["report"] == expected
     assert hass.services.async_call.await_count == 2
 
 

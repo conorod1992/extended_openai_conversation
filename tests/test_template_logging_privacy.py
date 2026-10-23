@@ -40,8 +40,9 @@ async def test_successful_template_warning_contains_no_source(hass, caplog):
 
 
 @pytest.mark.parametrize("owned", [False, True])
-async def test_actual_ha_child_template_warning_is_private(hass, caplog, owned):
-    source = '{% set api_key = "' + SECRET + '" %}{{ pack(api_key, "I") }}'
+@pytest.mark.parametrize("expression", ['pack(api_key, "I")', "distance(api_key)"])
+async def test_actual_ha_child_template_warning_is_private(hass, caplog, owned, expression):
+    source = '{% set api_key = "' + SECRET + '" %}{{ ' + expression + " }}"
     config = {"type": "template", "value_template": Template(source, hass)}
     if owned:
         result = await execute_backend(TemplateFunction(), hass, config, {}, None, [])
