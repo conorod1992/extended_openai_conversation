@@ -18,6 +18,8 @@ Local pointer checks decode URI fragments before JSON Pointer escapes and bind c
 
 URI credential checks cover schema identifiers and dialect declarations (`$id`, legacy `id` and `$schema`) as well as reference keywords. Public URI values stay unchanged. Names of entries in schema maps such as `$defs` are labels, so a definition named `$id` is not mistaken for a URI value.
 
+Standard `$vocabulary` maps contain URI keys and boolean declarations. Reviewed sharing checks those keys with the same URI credential policy and omits the containing tool if credentials are detected or the map cannot be classified. Public vocabulary declarations and ordinary schema definition labels remain portable. No vocabulary is fetched, and private backups retain the original map exactly.
+
 Only the configured Function's actual parameter schema receives structural exemptions. Script variables, Rule action data and other instance payloads stay data even when they contain keys such as `functions`, `spec` and `parameters`. Credential-bearing units are omitted from sharing; private backups retain the complete original values.
 
 New sharing documents and Rule Packs use version 2. Historical version 1 imports remain supported. All production sharing writers use the same policy. Unsupported future fields are omitted by default; adding a provider-specific pattern is only an additional defense.

@@ -300,6 +300,19 @@ def _schema_annotations(
     for key, item in value.items():
         if key in _SCHEMA_URI_KEYWORDS:
             result[key] = _schema_reference_uri(item)
+        elif key == "$vocabulary":
+            # Vocabulary names are URIs, not ordinary schema-map labels. Keep
+            # the boolean declarations intact, but omit the coherent tool if a
+            # URI carries credentials or the map cannot be classified safely.
+            result[key] = (
+                deepcopy(item)
+                if isinstance(item, dict)
+                and all(
+                    type(required) is bool and _schema_reference_uri(uri) == uri
+                    for uri, required in item.items()
+                )
+                else dict(REDACTED_SECRET_SENTINEL)
+            )
         elif key in _SCHEMA_INSTANCE_KEYWORDS:
             # Instance data cannot acquire schema exemptions by using keys such
             # as functions/spec/parameters. No user content is executed here.
