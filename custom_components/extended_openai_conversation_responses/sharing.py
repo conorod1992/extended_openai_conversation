@@ -28,7 +28,14 @@ SHARING_VERSION = 2
 _SCHEMA_REFERENCES = frozenset({"$ref", "$dynamicRef", "$recursiveRef"})
 _SCHEMA_URI_KEYWORDS = _SCHEMA_REFERENCES | {"$id", "$schema", "id"}
 _SCHEMA_MAP_KEYWORDS = frozenset(
-    {"properties", "patternProperties", "$defs", "definitions", "dependentSchemas"}
+    {
+        "properties",
+        "patternProperties",
+        "$defs",
+        "definitions",
+        "dependentSchemas",
+        "dependencies",
+    }
 )
 _SCHEMA_INSTANCE_KEYWORDS = frozenset(
     {"default", "example", "examples", "enum", "const"}
@@ -171,31 +178,38 @@ def _single_schema_resource(root: Any) -> bool:
     omit sensitive references in those schemas rather than inspecting a shadow
     target in the outer resource. Walk shared containers once, without expansion.
     """
-    pending = [iter((root,))]
-    seen: set[int] = set()
+    pending = [iter(((root, True),))]
+    seen: set[tuple[int, bool]] = set()
     while pending:
         try:
-            value = next(pending[-1])
+            value, schema_node = next(pending[-1])
         except StopIteration:
             pending.pop()
             continue
-        if not isinstance(value, (dict, list)) or id(value) in seen:
+        identity = (id(value), schema_node)
+        if not isinstance(value, (dict, list)) or identity in seen:
             continue
-        seen.add(id(value))
+        seen.add(identity)
         if isinstance(value, dict):
-            if value is not root and any(
-                isinstance(value.get(key), str) for key in ("$id", "id")
+            if (
+                schema_node
+                and value is not root
+                and any(isinstance(value.get(key), str) for key in ("$id", "id"))
             ):
                 return False
-            pending.append(
-                iter(
-                    item
-                    for key, item in value.items()
-                    if key not in _SCHEMA_INSTANCE_KEYWORDS
+            if schema_node:
+                pending.append(
+                    iter(
+                        (item, key not in _SCHEMA_MAP_KEYWORDS)
+                        for key, item in value.items()
+                        if key not in _SCHEMA_INSTANCE_KEYWORDS
+                    )
                 )
-            )
+            else:
+                # Map entries are schema names, including default/examples/id.
+                pending.append(iter((item, True) for item in value.values()))
         else:
-            pending.append(iter(value))
+            pending.append(iter((item, True) for item in value))
     return True
 
 

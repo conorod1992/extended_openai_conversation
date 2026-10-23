@@ -126,6 +126,29 @@ def test_nested_resource_without_sensitive_references_stays_portable(hass):
 
 
 @pytest.mark.parametrize(
+    "mapping",
+    ["properties", "$defs", "definitions", "dependentSchemas", "dependencies"],
+)
+@pytest.mark.parametrize("name", ["default", "examples", "const", "$id", "id"])
+def test_schema_map_labels_cannot_hide_resource_identities(hass, mapping, name):
+    nested = {
+        "$id": "https://schema.example.invalid/private-resource",
+        "$defs": {"shared": {"type": "string", "const": SECRET}},
+        "properties": {"password": {"$ref": "#/$defs/shared"}},
+    }
+    schema = {
+        "type": "object",
+        "$defs": {"shared": {"type": "string"}},
+    }
+    if mapping == "$defs":
+        schema["$defs"][name] = nested
+    else:
+        schema[mapping] = {name: nested}
+    Draft202012Validator.check_schema(schema)
+    assert_omitted({"functions": [tool_with_schema(schema)]}, "setup")
+
+
+@pytest.mark.parametrize(
     "pointer",
     ["#/$defs/bad%ZZ", "#/$defs/bad%FF", "#/$defs/bad~2", "#%2F$defs%2Fplain"],
 )
