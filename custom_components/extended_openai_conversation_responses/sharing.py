@@ -22,6 +22,7 @@ from .secret_redaction import (
     is_redacted_secret,
     redact_http_url,
     redact_secrets,
+    redact_text,
 )
 
 SHARING_VERSION = 2
@@ -127,10 +128,14 @@ def record_omission(summary: dict[str, Any], field: str, *, count: int = 1) -> N
 def _unsafe(value: Any) -> bool:
     if is_redacted_secret(value):
         return True
+    if isinstance(value, str):
+        # Final unit admission is independent of every walker's schema context.
+        # This is the same value policy, not a second collection of patterns.
+        return is_redacted_secret(redact_text(value))
     if isinstance(value, dict):
         return any(
             not isinstance(key, str)
-            or is_redacted_secret(redact_secrets(key))
+            or is_redacted_secret(redact_text(key))
             or _unsafe(item)
             for key, item in value.items()
         )
@@ -276,7 +281,7 @@ def _schema_annotations(
             for item in value
         ]
     if not isinstance(value, dict):
-        return value
+        return redact_text(value) if isinstance(value, str) else value
     if sensitive and any(key in value for key in _SCHEMA_REFERENCES - {"$ref"}):
         # Dynamic/recursive scope cannot be proved by following a local pointer.
         # Keep the live/private definition intact; omit its public review unit.
@@ -401,6 +406,43 @@ def _structured_payloads(
     return result
 
 
+def _reviewed_content(value: Any, *, configuration: bool = False) -> Any:
+    """One pipeline for reviewed configuration, Rule bodies and Rule metadata.
+
+    Stages: credential values/keys, schema semantics and structured request
+    payloads, then coherent-unit admission by _unsafe. No renderer is invoked.
+    Configuration is the only context that owns Function parameter schemas.
+    """
+    return _structured_payloads(
+        redact_secrets(value, schema_roots=configuration),
+        function_schemas=configuration,
+    )
+
+
+def project_sharing_sections(
+    sections: dict[str, Any], *, reviewed: bool = False
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Sole public-writer boundary; new sections require explicit classification.
+
+    Private/legacy writers deliberately do not use this lossy projection.
+    Writers must build their envelopes from these sections and public metadata,
+    without merging source fields back into the artifact afterward.
+    """
+    projected: dict[str, Any] = {}
+    summary = security_summary(reviewed)
+    if "configuration" in sections:
+        projected["configuration"], summary = project_configuration(
+            sections["configuration"], reviewed=reviewed
+        )
+    if "request_rules" in sections:
+        projected["request_rules"] = project_rules(
+            sections["request_rules"], summary, reviewed=reviewed
+        )
+    if sections.keys() - {"configuration", "request_rules"}:
+        record_omission(summary, "unclassified_section")
+    return projected, summary
+
+
 def project_configuration(
     config: dict[str, Any], *, reviewed: bool = False
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -410,11 +452,7 @@ def project_configuration(
     summary = security_summary(reviewed)
     result: dict[str, Any] = {"functions": [], "function_groups": [], "skills": []}
     decoded = decoded_function_fields(config)
-    redacted = (
-        _structured_payloads(redact_secrets(decoded), function_schemas=True)
-        if reviewed
-        else {}
-    )
+    redacted = _reviewed_content(decoded, configuration=True) if reviewed else {}
     # Typed YAML is valid private data, but not a supported reviewed public codec.
     if isinstance(redacted.get("functions"), str):
         redacted["functions"] = []
@@ -483,9 +521,7 @@ def project_rules(
     retained = []
     if reviewed:
         for rule in rules:
-            candidate = _structured_payloads(
-                redact_secrets({"rules": [rule]}, schema_roots=False)
-            )["rules"][0]
+            candidate = _reviewed_content({"rules": [rule]})["rules"][0]
             if not _unsafe(candidate):
                 retained.append(candidate)
             else:
@@ -505,7 +541,7 @@ def project_rules(
             result["defaults"] = dict(DEFAULT_MATCHING)
         if "wording_groups" in result:
             result["wording_groups"] = deepcopy(DEFAULT_WORDING_GROUPS)
-    elif _unsafe(redact_secrets(result, schema_roots=False)):
+    elif _unsafe(_reviewed_content(result)):
         # Includes credential-bearing group/wording metadata.
         record_omission(summary, "rule_metadata")
         return project_rules(data, summary, reviewed=False)

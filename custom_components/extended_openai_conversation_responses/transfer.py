@@ -55,7 +55,7 @@ from .secret_redaction import (
     redact_secrets,
     restore_redacted_secrets,
 )
-from .sharing import SHARING_VERSION, project_configuration, project_rules
+from .sharing import SHARING_VERSION, project_sharing_sections
 from .temporary_memory import TemporaryMemoryRecord, async_get_temporary_memory
 from .usage import UsageRequest, UsageRun, UsageTotals, async_get_usage
 
@@ -601,24 +601,21 @@ def finalize_setup_export(
     try:
         check_redaction_budget(document, backup.MAX_LEGACY_EXPORT_BYTES)
         if document.get("version") == SHARING_VERSION:
-            configuration, security = project_configuration(
-                document["sections"][SECTION_CONFIGURATION], reviewed=reviewed
+            sections, security = project_sharing_sections(
+                document["sections"], reviewed=reviewed
             )
             redacted = {
-                **document,
+                "format": TRANSFER_FORMAT,
+                "version": SHARING_VERSION,
+                "mode": "setup",
+                "created_at": document["created_at"],
+                "integration_version": document["integration_version"],
                 "agent": {
                     "title": "Shared conversation agent",
                     "source_entry_id": "shared-entry",
                     "source_subentry_id": "shared-agent",
                 },
-                "sections": {
-                    SECTION_CONFIGURATION: configuration,
-                    SECTION_REQUEST_RULES: project_rules(
-                        document["sections"][SECTION_REQUEST_RULES],
-                        security,
-                        reviewed=reviewed,
-                    ),
-                },
+                "sections": sections,
                 "security": security,
             }
         else:

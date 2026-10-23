@@ -28,6 +28,8 @@ Literal HTTP URL values receive the same credential check regardless of their fi
 
 New sharing documents and Rule Packs use version 2. Historical version 1 imports remain supported. All production sharing writers use the same policy. Unsupported future fields are omitted by default; adding a provider-specific pattern is only an additional defense.
 
+Setup, configuration and Rule Sharing use one section-projection boundary. Credential classification, schema/instance interpretation, structured request inspection and whole-unit admission are shared stages. Schema structure exempts property names from credential-name matching, not ordinary scalar values: recognised credential URLs in descriptions, titles, comments and other nested annotations cause the containing tool to be omitted. Public URLs and type-only credential properties remain portable. Setup envelopes select fields explicitly, so adding source metadata does not automatically publish it. Historical redacted-backup schema semantics and private codecs remain separate and unchanged.
+
 The shared HTTP credential policy covers both query parameters and parameter-form fragments, including OAuth access tokens. Public fragment content remains visible and participates in destination-bound legacy recovery; changing the host, path, public query or public fragment cannot recover a local credential. Private backups retain the original URL exactly.
 
 ## Complete private backups

@@ -453,17 +453,19 @@ def _redact_export_secrets(value: Any, *, schema: bool = False) -> Any:
 
 def _export_agent(subentry, *, reviewed: bool = False) -> dict[str, Any]:
     """Build a conservative, versioned public configuration projection."""
-    from .sharing import SHARING_VERSION, project_configuration
+    from .sharing import SHARING_VERSION, project_sharing_sections
 
     snapshot = project_agent_config_transfer(
         dict(subentry.data), agent_config_snapshot(dict(subentry.data))
     )
-    config, security = project_configuration(snapshot, reviewed=reviewed)
+    sections, security = project_sharing_sections(
+        {"configuration": snapshot}, reviewed=reviewed
+    )
     return {
         "schema": "extended_openai_conversation.agent",
         "version": SHARING_VERSION,
         "title": "Shared conversation agent",
-        "config": config,
+        "config": sections["configuration"],
         "security": security,
     }
 

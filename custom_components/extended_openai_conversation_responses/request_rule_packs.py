@@ -15,7 +15,7 @@ from .request_rules import (
     validate_rule,
     validate_rule_groups,
 )
-from .sharing import SHARING_VERSION, project_rules, security_summary
+from .sharing import SHARING_VERSION, project_sharing_sections
 
 PACK_FORMAT = "extended_openai_request_rule_pack"
 PACK_VERSION = 1
@@ -86,11 +86,17 @@ def export_rule_pack(
         raise ValueError("Choose at least one rule to export")
     if len(json.dumps(pack, ensure_ascii=False).encode("utf-8")) > MAX_PACK_BYTES:
         raise ValueError("Rule pack exceeds the 2 MB safety limit")
-    security = security_summary(reviewed)
-    projected = project_rules(pack, security, reviewed=reviewed)
-    pack["rules"] = projected["rules"]
-    pack["groups"] = projected["groups"]
-    pack["security"] = security
+    sections, security = project_sharing_sections(
+        {"request_rules": pack}, reviewed=reviewed
+    )
+    projected = sections["request_rules"]
+    pack = {
+        "format": PACK_FORMAT,
+        "version": SHARING_VERSION,
+        "rules": projected["rules"],
+        "groups": projected["groups"],
+        "security": security,
+    }
     if len(json.dumps(pack, ensure_ascii=False).encode("utf-8")) > MAX_PACK_BYTES:
         raise ValueError("Rule pack exceeds the 2 MB safety limit")
     return pack

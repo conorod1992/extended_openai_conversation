@@ -160,6 +160,26 @@ def _sentinel() -> dict[str, bool]:
     return dict(REDACTED_SECRET_SENTINEL)
 
 
+def redact_text(value: str, *, url_field: str | None = None) -> Any:
+    """Classify a value independently of schema/name exemptions.
+
+    Structural context controls how mapping keys are interpreted, never whether
+    ordinary string values receive the shared credential checks. Opaque prose
+    and non-URL templates remain explicitly uncertain reviewed content.
+    """
+    if url_field in {"resource", "url", "resource_template"} or _is_literal_http_url(
+        value
+    ):
+        redacted_url = redact_http_url(
+            value, require_http=url_field == "resource_template"
+        )
+        if redacted_url is not None:
+            return redacted_url
+    if _LIKELY_SECRET.search(value):
+        return _sentinel()
+    return {LITERAL_TEXT_KEY: value} if "[redacted]" in value else value
+
+
 def is_redacted_secret(value: Any) -> bool:
     """Recognize structured markers and whole/embedded legacy text markers."""
     return (
@@ -237,21 +257,17 @@ def _redact_secrets(
             for index, item in enumerate(value)
         ]
     if isinstance(value, str):
-        if not schema and (
-            (path and path[-1] in {"resource", "url", "resource_template"})
-            or _is_literal_http_url(value)
-        ):
-            redacted_url = redact_http_url(
-                value, require_http=bool(path and path[-1] == "resource_template")
-            )
-            if redacted_url is not None:
-                return redacted_url
-        # The entire leaf must be recoverable. Substring replacement loses the
-        # credential while leaving a seemingly usable, permanently corrupt value.
-        if _LIKELY_SECRET.search(value):
-            return _sentinel()
-        # New exports must distinguish literal prose from ambiguous old markers.
-        return {LITERAL_TEXT_KEY: value} if "[redacted]" in value else value
+        if schema:
+            # Historical redacted backups preserve schema literals. Reviewed
+            # sharing owns a separate schema walk that applies redact_text to
+            # every scalar before admission; private backups bypass both paths.
+            if _LIKELY_SECRET.search(value):
+                return _sentinel()
+            return {LITERAL_TEXT_KEY: value} if "[redacted]" in value else value
+        return redact_text(
+            value,
+            url_field=path[-1] if path and isinstance(path[-1], str) else None,
+        )
     if not isinstance(value, dict):
         return value
     result: dict[Any, Any] = {}
