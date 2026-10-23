@@ -21,6 +21,9 @@ from custom_components.extended_openai_conversation_responses.ha_llm_tools impor
 from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
     tool_result_data,
 )
+from custom_components.extended_openai_conversation_responses.public_errors import (
+    SanitizedUnexpectedBackendError,
+)
 from custom_components.extended_openai_conversation_responses.tool_exchange import (
     async_execute_tool_exchange,
 )
@@ -80,12 +83,16 @@ async def test_ha_private_failure_on_both_wires(
         external=True,
     )
     with tool_snapshot_scope(snapshot):
-        if strict and failure != "success":
+        if (strict and failure != "success") or failure == "dependency":
             log = conversation.ChatLog(hass, "privacy")
             log.async_add_assistant_content_without_tools(
                 conversation.AssistantContent(agent_id="agent", tool_calls=[call])
             )
-            with pytest.raises(HomeAssistantError):
+            with pytest.raises(
+                SanitizedUnexpectedBackendError
+                if failure == "dependency"
+                else HomeAssistantError
+            ):
                 await async_execute_tool_exchange(
                     entity,
                     log,

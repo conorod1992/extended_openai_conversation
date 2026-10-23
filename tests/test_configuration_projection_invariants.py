@@ -463,10 +463,10 @@ async def test_rollback_preparation_preserves_function_runtime_interpretation(ha
         subentry_id="rollback-projection", title="Projection", data={"functions": saved}
     )
     rollback = await backup._snapshot_for_restore(managers, subentry)
+    assert rollback.config == subentry.data
     assert config.parse_configured_function_tools(rollback.config) == (
-        config.parse_configured_function_tools(subentry.data) or []
+        config.parse_configured_function_tools(subentry.data)
     )
-    assert isinstance(rollback.config["functions"], str)
 
 
 @pytest.mark.parametrize("api", ["responses", "chat_completions"])

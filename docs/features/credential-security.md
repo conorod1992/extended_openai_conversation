@@ -38,4 +38,6 @@ HA-owned LLM tool failures use the same public error boundary: raised backend er
 
 Ordinary dependency exceptions are contained as well as Home Assistant exceptions, including when a failed exchange is retained in history. Cancellation and process-control exceptions retain their control semantics. Unsupported result leaves use compatibility text while nested private failures retain their provenance; successful siblings remain available. Safe operational logs retain original failure classes and stack locations without exception prose.
 
+Unexpected programming/dependency failures still propagate as source-free runtime exceptions rather than masquerading as ordinary failed tool results. Cancellation history retains a fixed cancellation category without copying the cancellation payload. Rollback checks compare the exact stored configuration and its effective behavior separately, including omitted fields and legacy empty/null Function values.
+
 Template/Script log projection runs at record creation so descendant and dynamically created loggers reach every handler with safe text. The hook chains existing logging factories, activates only in EOAI-owned execution contexts, and leaves unrelated records and logger levels unchanged. Dynamic logger suffixes are omitted because they can contain authored names.

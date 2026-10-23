@@ -21,7 +21,7 @@ from custom_components.extended_openai_conversation_responses.function_tool_reco
 )
 from custom_components.extended_openai_conversation_responses.functions import web
 from custom_components.extended_openai_conversation_responses.public_errors import (
-    SanitizedBackendError,
+    SanitizedUnexpectedBackendError,
     sanitize_backend_error,
 )
 from custom_components.extended_openai_conversation_responses.tool_exchange import (
@@ -94,10 +94,7 @@ async def test_scrape_selector_failure_is_private_in_retained_history(
             recovery_state=ToolRecoveryState(enabled=strict),
         )
 
-    if strict:
-        with pytest.raises(SanitizedBackendError):
-            await execute()
-    else:
+    with pytest.raises(SanitizedUnexpectedBackendError):
         await execute()
     public = json.dumps(wire_result(log.content[-1]))
     assert secret not in public

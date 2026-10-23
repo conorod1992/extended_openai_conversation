@@ -77,7 +77,7 @@ def test_error_text_handles_interruption_empty_detail_and_bounded_output() -> No
         tool_exchange._error_text(None)
         == "Tool execution was interrupted before completion"
     )
-    safe = "SanitizedBackendError: Function execution failed. Check the tool configuration and permissions."
+    safe = "SanitizedUnexpectedBackendError: Function execution failed. Check the tool configuration and permissions."
     assert tool_exchange._error_text(RuntimeError()) == safe
 
     text = tool_exchange._error_text(ValueError("x" * 1000))
@@ -122,7 +122,7 @@ def test_append_unresolved_results_preserves_completed_and_marks_failure_then_sk
     assert tool_result_data(chat_log.added[0]) == {
         "result": {
             "status": "error",
-            "error": "SanitizedBackendError: Function execution failed. Check the tool configuration and permissions.",
+            "error": "SanitizedUnexpectedBackendError: Function execution failed. Check the tool configuration and permissions.",
         }
     }
     assert tool_result_data(chat_log.added[1])["result"]["status"] == "skipped"
@@ -611,7 +611,7 @@ async def test_parallel_exchange_records_success_and_failure_then_raises_first_e
     assert by_id["a"] is success
     assert tool_result_data(by_id["b"])["result"] == {
         "status": "error",
-        "error": "SanitizedBackendError: Function execution failed. Check the tool configuration and permissions.",
+        "error": "SanitizedUnexpectedBackendError: Function execution failed. Check the tool configuration and permissions.",
     }
 
 
@@ -724,3 +724,4 @@ async def test_recovery_parallel_mixes_correctable_success_and_runtime_failure(
     assert by_id["ok"] is success
     assert tool_result_data(by_id["bad"])["result"]["status"] == "error"
     assert state.used == 1
+

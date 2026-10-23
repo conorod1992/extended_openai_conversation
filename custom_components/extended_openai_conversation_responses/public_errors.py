@@ -25,6 +25,13 @@ class SanitizedBackendError(HomeAssistantError):
         )
 
 
+class SanitizedUnexpectedBackendError(RuntimeError):
+    """Keep unexpected failures propagating without exposing dependency prose."""
+
+    def __init__(self) -> None:
+        super().__init__(str(SanitizedBackendError()))
+
+
 class SanitizedRequestError(HomeAssistantError):
     """Preserve bounded HTTP status information without remote prose."""
 
@@ -42,7 +49,13 @@ class SanitizedRequestError(HomeAssistantError):
 def sanitize_backend_error(error: BaseException) -> BaseException:
     public = sanitize_template_error(error)
     if public is not error or isinstance(
-        error, (SanitizedTemplateError, SanitizedBackendError, SanitizedRequestError)
+        error,
+        (
+            SanitizedTemplateError,
+            SanitizedBackendError,
+            SanitizedUnexpectedBackendError,
+            SanitizedRequestError,
+        ),
     ):
         return public
     # These types control recovery and must retain their semantics through
@@ -53,8 +66,10 @@ def sanitize_backend_error(error: BaseException) -> BaseException:
         )
     if isinstance(error, FunctionResponseParseError):
         return FunctionResponseParseError("REST response parsing failed")
-    if isinstance(error, Exception):
+    if isinstance(error, HomeAssistantError):
         return SanitizedBackendError()
+    if isinstance(error, Exception):
+        return SanitizedUnexpectedBackendError()
     return error
 
 

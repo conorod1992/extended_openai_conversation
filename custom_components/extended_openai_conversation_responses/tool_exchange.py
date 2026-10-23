@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from asyncio import CancelledError
 from collections.abc import Callable, Iterable
 from typing import Any, cast
 
@@ -48,6 +49,8 @@ _MAX_ERROR_TEXT = 512
 
 def _error_text(error: BaseException | None) -> str:
     """Return a bounded model-visible description for a failed exchange."""
+    if isinstance(error, CancelledError):
+        return "CancelledError: Tool execution was interrupted before completion"
     if error is None or not isinstance(error, Exception):
         return "Tool execution was interrupted before completion"
     # History repair is a last public boundary, including non-HA dependency

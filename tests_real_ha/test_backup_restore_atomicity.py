@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 import pytest
@@ -113,9 +114,9 @@ async def test_loaded_restore_rolls_back_earlier_subsystems_when_later_apply_fai
 
     memory_before = await memory.async_backup_data()
     knowledge_before = await knowledge.async_backup_data()
-    # Recovery applies persistence-shaped YAML directly, rather than the parsed
-    # frontend list (whose empty value has different legacy runtime semantics).
-    subentry_data_before = backup.private_configuration_snapshot(subentry.data)
+    # Rollback preserves stored source and omissions exactly, without adopting
+    # normalized defaults. Effective runtime behavior is checked independently.
+    subentry_data_before = deepcopy(dict(subentry.data))
     runtime_functions_before = parse_configured_function_tools(subentry.data)
     subentry_title_before = subentry.title
 

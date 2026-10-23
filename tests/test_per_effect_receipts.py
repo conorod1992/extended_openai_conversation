@@ -158,7 +158,7 @@ def test_settled_and_foreign_receipts_cannot_be_changed():
 
 async def test_validation_failure_cannot_reject_previous_unknown_child():
     from custom_components.extended_openai_conversation_responses.public_errors import (
-        SanitizedBackendError,
+        SanitizedUnexpectedBackendError,
     )
 
     entity, call = SimpleNamespace(), _call("first", "effect")
@@ -168,7 +168,8 @@ async def test_validation_failure_cannot_reject_previous_unknown_child():
     with receipts.execution_attempt(entity, call, _tool()):
         unknown = receipts.execution_started()
         with pytest.raises(
-            SanitizedBackendError, match="Check the tool configuration and permissions"
+            SanitizedUnexpectedBackendError,
+            match="Check the tool configuration and permissions",
         ):
             await receipts.execute_backend(function, None, NATIVE, {}, None, [])
         assert unknown.outcome == "uncertain"

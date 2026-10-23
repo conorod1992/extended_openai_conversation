@@ -135,7 +135,10 @@ async def test_expected_execution_failure_becomes_tool_result(monkeypatch) -> No
     )
 
     assert tool_result_data(result) == {
-        "result": {"status": "error", "error": "Function execution failed. Check the tool configuration and permissions."}
+        "result": {
+            "status": "error",
+            "error": "Function execution failed. Check the tool configuration and permissions.",
+        }
     }
 
 
@@ -167,7 +170,14 @@ async def test_programming_error_still_propagates(monkeypatch) -> None:
 
     monkeypatch.setattr(entity_module, "get_function", lambda _type: Function())
 
-    with pytest.raises(TypeError, match="programming bug"):
+    from custom_components.extended_openai_conversation_responses.public_errors import (
+        SanitizedUnexpectedBackendError,
+    )
+
+    with pytest.raises(
+        SanitizedUnexpectedBackendError,
+        match="Check the tool configuration and permissions",
+    ) as caught:
         await ExtendedOpenAIBaseLLMEntity._execute_function_tool(
             _entity(),
             _function_tool(),
@@ -175,6 +185,8 @@ async def test_programming_error_still_propagates(monkeypatch) -> None:
             None,
             [],
         )
+    assert "programming bug" not in str(caught.value)
+    assert caught.value.__suppress_context__
 
 
 async def test_real_delay_argument_reaches_function(monkeypatch) -> None:
