@@ -42,6 +42,7 @@ _SCHEMA_INSTANCE_KEYWORDS = frozenset(
 )
 _INVALID_PERCENT_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
 _INVALID_POINTER_ESCAPE = re.compile(r"~(?:[^01]|$)")
+_LITERAL_PROPERTY_PATTERN = re.compile(r"\^([A-Za-z0-9_-]+)\$")
 type _ReferenceKey = tuple[int, tuple[str, ...]]
 SECURITY_CONTRACT = (
     "Shareable exports exclude designated credentials and unclassified custom "
@@ -232,6 +233,22 @@ def _local_schema_pointer(reference: Any) -> tuple[str, ...] | None:
     )
 
 
+def _sensitive_schema_property(name: Any, *, pattern: bool) -> bool:
+    """Classify literal names; never infer regex meaning from its spelling.
+
+    An anchored literal is a bounded proof of the matched field name. Other
+    authored patterns are unclassified, so their instance literals and sensitive
+    references require omission. Type/shape-only schemas remain portable without
+    executing an authored regex or changing the live/private definition.
+    """
+    if not pattern:
+        return _is_secret_key(name)
+    literal = (
+        _LITERAL_PROPERTY_PATTERN.fullmatch(name) if isinstance(name, str) else None
+    )
+    return literal is None or _is_secret_key(literal[1])
+
+
 def _schema_annotations(
     value: Any,
     root: Any,
@@ -330,7 +347,9 @@ def _schema_annotations(
                     sensitive=sensitive
                     or (
                         key in {"properties", "patternProperties"}
-                        and _is_secret_key(name)
+                        and _sensitive_schema_property(
+                            name, pattern=key == "patternProperties"
+                        )
                     ),
                     references=references,
                     reference_results=reference_results,
