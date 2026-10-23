@@ -74,7 +74,8 @@ async def test_provider_failure_recovers_on_next_turn_same_loaded_agent(
     assert "problem talking to OpenAI" in failed_speech
     assert "Provider request failed" in failed_speech
     assert "provider recovery acceptance failure" not in failed_speech
-    assert "provider_recovery_test" in failed_speech
+    assert "provider_recovery_test" not in failed_speech
+    assert "provider_error" in failed_speech
     assert len(wire.requests) == 1
     assert wire.requests[0]["path"] == expected_path
     assert conversation.async_get_agent(hass, agent.entry.entry_id) is agent

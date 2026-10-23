@@ -40,6 +40,7 @@ from .memory import ANONYMOUS_USER_ID, MemoryRecord, PersistentMemory, async_get
 from .private_backup import (
     PRIVATE_BACKUP_VERSION,
     PRIVATE_TRANSFER_VERSION,
+    DecodedPrivateDocument,
     decode_document,
     is_private_document,
 )
@@ -553,7 +554,7 @@ async def async_collect_transfer_snapshot(
             hass, entry.entry_id, subentry.subentry_id
         )
         payload[SECTION_GUEST_MODE] = await guest_mode_manager.async_backup_data()
-    return document
+    return DecodedPrivateDocument(document) if mode == "custom" else document
 
 
 def _is_redacted_placeholder(value: Any) -> bool:

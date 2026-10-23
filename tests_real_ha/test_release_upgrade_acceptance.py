@@ -749,10 +749,11 @@ async def _candidate_migration_phase(hass: Any, config_dir: Path) -> None:
     state["candidate_title"] = reloaded.title
     state["candidate_entry_version"] = entry.version
     from custom_components.extended_openai_conversation_responses import backup
+    from custom_components.extended_openai_conversation_responses.private_backup import encode_document
 
     snapshot = await backup.async_collect_backup_snapshot(hass, entry, reloaded)
     (config_dir / _BACKUP_FILE).write_text(
-        json.dumps(snapshot, ensure_ascii=False), encoding="utf-8"
+        json.dumps(encode_document(snapshot), ensure_ascii=False), encoding="utf-8"
     )
     (config_dir / _STATE_FILE).write_text(json.dumps(state), encoding="utf-8")
 

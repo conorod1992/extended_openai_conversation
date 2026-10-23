@@ -232,26 +232,28 @@ async def async_collect_backup_snapshot(
         request_rules,
     ) = await _managers(hass, entry.entry_id, subentry.subentry_id)
     config_snapshot = deepcopy(dict(subentry.data))
-    return {
-        "format": BACKUP_FORMAT,
-        "version": PRIVATE_BACKUP_VERSION,
-        "created_at": dt_util.utcnow().isoformat(),
-        "integration_version": _integration_version(),
-        "provider_connection": deepcopy(dict(getattr(entry, "data", {}))),
-        "agent": {
-            "title": subentry.title,
-            "source_entry_id": entry.entry_id,
-            "source_subentry_id": subentry.subentry_id,
-            "config": config_snapshot,
-        },
-        "memories": await memory.async_backup_data(),
-        "temporary_memories": await temporary.async_backup_data(),
-        "knowledge": await knowledge.async_backup_data(),
-        "archive": await archive.async_backup_data(),
-        "usage": await usage.async_backup_data(),
-        "guest_mode": await guest_mode.async_backup_data(),
-        "request_rules": await request_rules.async_backup_data(),
-    }
+    return DecodedPrivateDocument(
+        {
+            "format": BACKUP_FORMAT,
+            "version": PRIVATE_BACKUP_VERSION,
+            "created_at": dt_util.utcnow().isoformat(),
+            "integration_version": _integration_version(),
+            "provider_connection": deepcopy(dict(getattr(entry, "data", {}))),
+            "agent": {
+                "title": subentry.title,
+                "source_entry_id": entry.entry_id,
+                "source_subentry_id": subentry.subentry_id,
+                "config": config_snapshot,
+            },
+            "memories": await memory.async_backup_data(),
+            "temporary_memories": await temporary.async_backup_data(),
+            "knowledge": await knowledge.async_backup_data(),
+            "archive": await archive.async_backup_data(),
+            "usage": await usage.async_backup_data(),
+            "guest_mode": await guest_mode.async_backup_data(),
+            "request_rules": await request_rules.async_backup_data(),
+        }
+    )
 
 
 def finalize_backup_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:

@@ -54,7 +54,8 @@ def is_private_document(value: Any) -> bool:
 
 
 def encode_document(snapshot: dict[str, Any]) -> dict[str, Any]:
-    result = deepcopy(snapshot)
+    # Wire documents must never retain the internal already-decoded subtype.
+    result = deepcopy(dict(snapshot))
     if result["format"] == "extended_openai_conversation_backup":
         result["agent"]["config"] = encode_field(result["agent"]["config"])
         result["request_rules"] = encode_field(result["request_rules"])

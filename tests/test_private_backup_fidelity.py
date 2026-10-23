@@ -19,6 +19,7 @@ from custom_components.extended_openai_conversation_responses import (
 from custom_components.extended_openai_conversation_responses.private_backup import (
     PRIVATE_BACKUP_VERSION,
     PRIVATE_TRANSFER_VERSION,
+    DecodedPrivateDocument,
     decode_document,
     decode_field,
     encode_document,
@@ -115,6 +116,20 @@ def test_legacy_full_backup_semantics_remain_redacted():
     artifact = backup.finalize_backup_snapshot(document)
     assert "fabricated-old-password" not in artifact["json"]
     assert artifact["document"]["version"] == backup.BACKUP_VERSION
+
+
+def test_private_memory_snapshot_and_wire_document_have_distinct_provenance(hass):
+    raw = DecodedPrivateDocument(private_document())
+    assert backup.inspect_backup(raw, "fresh-target").config == raw["agent"]["config"]
+    assert transfer.inspect_transfer(raw, "fresh-target").private is True
+    encoded = encode_document(raw)
+    assert type(encoded) is dict
+    assert decode_document(encoded) == raw
+    assert (
+        backup.inspect_backup(encoded, "fresh-target").config == raw["agent"]["config"]
+    )
+    with pytest.raises(backup.BackupError, match="encoding is invalid"):
+        backup.inspect_backup(json.loads(json.dumps(raw)), "fresh-target")
 
 
 def test_connection_restore_requires_scope_confirmation_and_unchanged_target():

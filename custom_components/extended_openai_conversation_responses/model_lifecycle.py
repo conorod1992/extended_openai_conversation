@@ -71,7 +71,9 @@ def retirement_provider_error(error: BaseException) -> bool:
     # Classification may inspect remote text privately. Public metadata contains
     # only fixed categories, so it cannot provide the legacy wording fallback.
     code = str(getattr(error, "code", "") or "").casefold()
-    error_type = str(getattr(error, "type", "") or "").casefold()
+    error_type = str(
+        getattr(error, "error_type", None) or getattr(error, "type", "") or ""
+    ).casefold()
     message = str(error).casefold()
     status = metadata.get("status_code")
     if code in {
