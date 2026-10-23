@@ -22,6 +22,8 @@ Standard `$vocabulary` maps contain URI keys and boolean declarations. Reviewed 
 
 Only the configured Function's actual parameter schema receives structural exemptions. Script variables, Rule action data and other instance payloads stay data even when they contain keys such as `functions`, `spec` and `parameters`. Credential-bearing units are omitted from sharing; private backups retain the complete original values.
 
+Literal HTTP URL values receive the same credential check regardless of their field name, including nested Script variables and Rule action data. Classification uses URL-parser normalization for leading whitespace/control characters and embedded tabs/newlines. Public literal URLs retain their original bytes. HTTP URL sources containing templates are conservatively omitted as coherent custom units without rendering them; ordinary non-URL templates remain portable. Existing destination-bound recovery of historical redacted exports remains in force, and private backups retain every original URL byte.
+
 New sharing documents and Rule Packs use version 2. Historical version 1 imports remain supported. All production sharing writers use the same policy. Unsupported future fields are omitted by default; adding a provider-specific pattern is only an additional defense.
 
 ## Complete private backups

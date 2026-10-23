@@ -87,6 +87,22 @@ def is_redacted_url(value: Any) -> bool:
     )
 
 
+def _is_literal_http_url(value: str) -> bool:
+    """Use URL-parser normalization without guessing from a field's name.
+
+    Inspect only the scheme so a malformed authority still reaches credential
+    redaction, while ordinary prose, scripts and non-URL templates remain data.
+    The parser handles leading C0/space and embedded tab/newline characters.
+    """
+    scheme_end = value.find(":")
+    if scheme_end < 0:
+        return False
+    try:
+        return urlsplit(value[: scheme_end + 1]).scheme.lower() in {"http", "https"}
+    except ValueError:
+        return False
+
+
 def redact_http_url(value: str, *, require_http: bool = False) -> dict[str, Any] | None:
     """Hide HTTP user information/query credentials, retaining public URL bytes.
 
@@ -217,7 +233,7 @@ def _redact_secrets(
     if isinstance(value, str):
         if not schema and (
             (path and path[-1] in {"resource", "url", "resource_template"})
-            or (not schema_roots and value.lower().startswith(("http://", "https://")))
+            or _is_literal_http_url(value)
         ):
             redacted_url = redact_http_url(
                 value, require_http=bool(path and path[-1] == "resource_template")
