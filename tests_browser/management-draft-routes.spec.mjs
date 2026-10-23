@@ -76,3 +76,36 @@ test("dirty retention projection joins the full agent draft without losing its c
   await expect(panel.locator("#confirm-dialog")).toHaveJSProperty("open", false);
   await expectHarnessClean(page, errors);
 });
+
+
+for (const legacyDraft of [false, true]) {
+  test(`archive retention survives navigation with matching saved value (legacy draft: ${legacyDraft})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    await page.goto(fixtureUrl("assistant/basics"));
+    const panel = page.locator("extended-openai-management-panel");
+    await expect(panel.locator('[data-config="__title"]')).toHaveValue("Jarvis");
+    // Seed only the fixture transport's persisted configuration, then mount the
+    // actual route. Navigation, editing and save all use production handlers.
+    await page.evaluate(() => {
+      const state = browserHarness.getState();
+      Object.assign(state.configuration.config, {archive_enabled:true, archive_retention_days:30});
+      state.configuration.options.archive_retention_days = [7, 30, 365].map(value => ({value, label:`${value} days`}));
+      localStorage.setItem("extended-openai-browser-harness-state-v3", JSON.stringify(state));
+    });
+    await page.goto(fixtureUrl("data-memory/conversations"));
+    const retention = panel.locator('[data-config="archive_retention_days"]');
+    await expect(retention).toHaveValue("30");
+    await retention.selectOption("365");
+    expect(await panel.evaluate(host => host._draft.archive_retention_days)).toBe(365);
+    await panel.locator('.top-nav button[data-page="assistant"]').click();
+    await expect(panel.locator('[data-config="__title"]')).toBeVisible();
+    if (legacyDraft) await panel.evaluate(host => {host._draft.archive_retention_days = "365";});
+    await panel.evaluate(host => host._navigate("data-memory", "conversations"));
+    await expect(retention).toHaveValue("365");
+    await panel.locator("#save-config").click();
+    await expect.poll(() => page.evaluate(() => browserHarness.calls.filter(call => call.section === "configuration" && call.action === "save").length)).toBe(1);
+    expect(await page.evaluate(() => browserHarness.calls.find(call => call.section === "configuration" && call.action === "save").config.archive_retention_days)).toBe(legacyDraft ? "365" : 365);
+    await expect(retention).toHaveValue("365");
+    await expectHarnessClean(page, errors);
+  });
+}

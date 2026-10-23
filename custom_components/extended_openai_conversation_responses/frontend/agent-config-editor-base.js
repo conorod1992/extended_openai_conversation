@@ -24,7 +24,7 @@ export function invalidateImportPreview(panel, applyButton, summary) {
   if (applyButton) applyButton.disabled = true;
   if (summary) summary.textContent = "Validate the document to preview it.";
 }
-export const option = (panel, value, selected, label = null, disabled = false) => `<option value="${panel._e(value)}" ${disabled ? "disabled" : ""} ${value === selected ? "selected" : ""}>${panel._e(label || panel._titleCase(value))}</option>`;
+export const option = (panel, value, selected, label = null, disabled = false) => `<option value="${panel._e(value)}" ${disabled ? "disabled" : ""} ${String(value) === String(selected) ? "selected" : ""}>${panel._e(label || panel._titleCase(value))}</option>`;
 const CHOICE_LABELS = Object.freeze({
   conversation_continuity: Object.freeze({
     ha_default: "Use Home Assistant sessions",
@@ -75,8 +75,10 @@ export const select = (panel, key, label, value, options, description = "", disa
   disabled = forceVisible || disabled;
   value = presentation.value ?? value;
   options = presentation.options ?? options;
-  return `<div class="setting ${forceVisible ? "is-disabled eoc-unavailable-model-setting" : ""}" data-field="${key}" data-setting data-search="${panel._e(settingSearch(label, description, key, helpKey))}">${labelRow(panel, label, key, helpKey, false, value, disabled)}<select id="config-${key}" data-config="${key}" ${disabled ? "disabled" : ""}>${options.map((item) => {
-    const choice = typeof item === "string" ? item : item.value;
+  // Numeric choices keep numeric draft values; DOM option values are strings.
+  const numeric = options.length > 0 && options.every(item => typeof (typeof item === "object" ? item.value : item) === "number");
+  return `<div class="setting ${forceVisible ? "is-disabled eoc-unavailable-model-setting" : ""}" data-field="${key}" data-setting data-search="${panel._e(settingSearch(label, description, key, helpKey))}">${labelRow(panel, label, key, helpKey, false, value, disabled)}<select id="config-${key}" data-config="${key}" ${numeric ? 'data-type="number"' : ""} ${disabled ? "disabled" : ""}>${options.map((item) => {
+    const choice = typeof item === "object" ? item.value : item;
     return option(panel, choice, value, friendlySettingValue(key, choice) || (typeof item === "string" ? null : item.label), presentation.disabledOption?.(choice));
   }).join("")}</select>${description ? `<small>${description}</small>` : ""}<span class="field-error" data-error="${key}"></span>${modelFieldNotes(panel, presentation)}</div>`;
 };
