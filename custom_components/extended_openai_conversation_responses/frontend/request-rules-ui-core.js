@@ -373,7 +373,7 @@ export function bindRequestRulesCore(panel,{openEditor,activateSafeTester,activa
       const input=event.target;if(!input.matches?.(".rule-enabled")||input.disabled)return;
       const rule=(panel._result?.rules||[]).find(item=>item.id===input.dataset.id);if(!rule)return;
       const previous=!input.checked;input.disabled=true;
-      try{const result=await panel._call("request_rules","update",{rule_id:rule.id,rule:{...rule,enabled:input.checked,sensitive_matching_warning:undefined}});applyRequestRuleMutation(panel,"update",result,{ruleId:rule.id});panel._toast("Changes saved");}
+      try{const result=await panel._call("request_rules","update",{rule_id:rule.id,rule:{enabled:input.checked}});applyRequestRuleMutation(panel,"update",result,{ruleId:rule.id});panel._toast("Changes saved");}
       catch(err){input.checked=previous;await recoverRequestRuleMutation(panel,err,"Unable to update Request Rule");}
       finally{input.disabled=false;}
     });

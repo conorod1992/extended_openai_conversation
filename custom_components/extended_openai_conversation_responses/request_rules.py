@@ -621,6 +621,10 @@ class RequestRules:
             "diagnostics": dict(self._diagnostics),
         }
 
+    def rule_snapshot(self, rule_id: str) -> dict[str, Any]:
+        """Detach one exact stored Rule for field-only management validation."""
+        return deepcopy(self._rules[self._index(rule_id)])
+
     def function_references(self, function_name: str) -> list[dict[str, str]]:
         """Return references throughout the native script tree."""
         from .function_dependency_integrity import recursive_function_references
@@ -835,6 +839,7 @@ class RequestRules:
             raw["id"] = rule_id
             raw.setdefault("order", self._rules[index]["order"])
             previous = self._rules[index]
+            _require_exact_integer_update(previous, raw)
             preserve_inactive = self.preserves_inactive_pattern(rule_id, raw)
             rule = validate_rule(
                 _assign_missing_result_step_ids(raw),
@@ -2542,6 +2547,34 @@ def _bounded_function_result(
     ):
         raise HomeAssistantError("Function result is too large")
     return result
+
+
+def _require_exact_integer_update(previous: Any, updated: Any) -> None:
+    """Reject lossy whole-rule edits without changing private restoration data.
+
+    Browser JSON numbers cannot represent every stored integer. A native caller
+    can retain an exact value, but a rounded/removed/retyped value must not silently
+    replace it. Field-only toggles hydrate their full candidate on the server.
+    """
+    pending = [(previous, updated)]
+    while pending:
+        before, after = pending.pop()
+        if type(before) is int and abs(before) > 2**53 - 1:
+            if type(after) is not int or after != before:
+                raise ValueError(
+                    "This edit would change an integer outside the browser's exact "
+                    "range. Reload the Rule; enable/disable remains available. "
+                    "Use a lossless private import to change those values."
+                )
+        elif isinstance(before, Mapping):
+            mapping = after if isinstance(after, Mapping) else {}
+            pending.extend((item, mapping.get(key)) for key, item in before.items())
+        elif isinstance(before, list):
+            items = after if isinstance(after, list) else []
+            pending.extend(
+                (item, items[index] if index < len(items) else None)
+                for index, item in enumerate(before)
+            )
 
 
 class RuleResponseValueError(ValueError):

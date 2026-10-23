@@ -527,6 +527,11 @@ def _prepare_request_rule(
         raise HomeAssistantError("rule must be an object")
     raw = dict(value)
     if rule_id is not None:
+        if rules is not None and set(raw) == {"enabled"}:
+            # A checkbox owns only enabled. Never round-trip arbitrary action
+            # values through the browser to change this one field.
+            stored = rules.rule_snapshot(rule_id)
+            raw = {**stored, "enabled": raw["enabled"]}
         raw["id"] = rule_id
     elif not isinstance(raw.get("id"), str) or not str(raw["id"]).strip():
         raw["id"] = uuid4().hex
@@ -1017,6 +1022,14 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
     if not isinstance(rule_id, str):
         raise HomeAssistantError("rule_id is required")
     if action == "update":
+        field_only = isinstance(message.get("rule"), Mapping) and set(
+            message["rule"]
+        ) == {"enabled"}
+        # Validation awaits HA. Bind the server-owned snapshot to its revision
+        # even for older callers that did not supply an optimistic revision.
+        update_revision = message.get("revision")
+        if field_only and update_revision is None:
+            update_revision = rules.revision()
         candidate = _prepare_request_rule(message.get("rule"), rule_id, rules)
         await _validate_request_rule_conditions(hass, candidate)
         _validate_request_rule_functions(
@@ -1031,7 +1044,7 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
             candidate, subentry.data, getattr(request.entry, "data", {})
         )
         rule = await rules.async_update(
-            rule_id, candidate, expected_revision=message.get("revision")
+            rule_id, candidate, expected_revision=update_revision
         )
         return {
             "rule": rule,
