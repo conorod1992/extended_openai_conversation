@@ -259,7 +259,7 @@ async def test_cancelled_native_automation_retains_ownership_until_settled(
     if phase == "rollback":
         # A settled native failure retains precedence over deferred cancellation.
         assert isinstance(outcomes[0], HomeAssistantError)
-        assert "controlled initial reload failure" in str(outcomes[0])
+        assert str(outcomes[0]) == "Function execution failed. Check the tool configuration and permissions."
     else:
         assert isinstance(outcomes[0], asyncio.CancelledError)
     assert outcomes[1] == {"result": "Success"}

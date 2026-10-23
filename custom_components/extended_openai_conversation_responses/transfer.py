@@ -461,7 +461,7 @@ def _safe_title(title: str) -> str:
 
 
 def _new_transfer_document(entry: Any, subentry: Any, mode: str) -> dict[str, Any]:
-    return {
+    document = {
         "format": TRANSFER_FORMAT,
         "version": SHARING_VERSION if mode == "setup" else PRIVATE_TRANSFER_VERSION,
         "mode": mode,
@@ -479,6 +479,7 @@ def _new_transfer_document(entry: Any, subentry: Any, mode: str) -> dict[str, An
             else {}
         ),
     }
+    return DecodedPrivateDocument(document) if mode == "custom" else document
 
 
 async def async_collect_transfer_snapshot(

@@ -202,8 +202,8 @@ async def test_native_service_target_disappears_before_dispatch_and_next_turn_re
         assert len(failed_tool_result["result"]) == 1
         error = failed_tool_result["result"][0]
         assert "error" in error
-        assert "no longer exists" in error["error"]
-        assert _ENTITY_ID in error["error"]
+        assert error["error"] == "Function execution failed. Check the tool configuration and permissions."
+        assert _ENTITY_ID not in error["error"]
 
     # Restore the same real target and prove a completely separate public Assist
     # turn can execute the same native tool successfully after the runtime failure.

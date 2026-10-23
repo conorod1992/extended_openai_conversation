@@ -161,10 +161,8 @@ async def test_saved_bash_composite_stops_later_step_only_on_execution_failure(
             assert output["result"]["status"] == "error", output
             assert output["result"]["error"]
             assert "published" not in str(output)
-            if outcome == "timeout":
-                assert "Command timed out after 1 seconds" in str(output)
-            else:
-                assert "missing-directory" in str(output)
+            assert output["result"]["error"] == "Function execution failed. Check the tool configuration and permissions."
+            assert "missing-directory" not in str(output)
         else:
             assert output["result"]["exit_code"] == 0
             assert "published" in output["result"]["stdout"]

@@ -387,7 +387,7 @@ async def test_failed_ai_task_does_not_leak_request_state_to_next_task(
             structure=vol.Schema({vol.Required("answer"): str}),
             attachments=[attachment],
         )
-    with pytest.raises(HomeAssistantError, match="provider rejected request"):
+    with pytest.raises(HomeAssistantError, match="Provider request failed"):
         await ai_task.async_generate_data(
             hass,
             task_name="Provider Failure Task",

@@ -98,6 +98,20 @@ def test_private_custom_transfer_uses_separate_version(hass):
     assert prepared.raw_configuration is None
 
 
+def test_custom_snapshot_builder_marks_private_memory_data_before_wire_encoding(hass):
+    full = private_document()
+    entry = SimpleNamespace(entry_id="entry", data=full["provider_connection"])
+    subentry = SimpleNamespace(subentry_id="agent", title="Private")
+    snapshot = transfer._new_transfer_document(entry, subentry, "custom")
+    snapshot["sections"]["configuration"] = full["agent"]["config"]
+    assert isinstance(snapshot, DecodedPrivateDocument)
+    for value in (snapshot, json.loads(json.dumps(encode_document(snapshot)))):
+        prepared = transfer.inspect_transfer(value, "fresh-target")
+        assert prepared.private is True
+        assert prepared.config == full["agent"]["config"]
+        assert prepared.provider_connection == full["provider_connection"]
+
+
 @pytest.mark.parametrize(
     "value",
     [

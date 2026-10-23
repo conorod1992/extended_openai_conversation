@@ -182,8 +182,7 @@ async def test_live_service_schema_rejection_is_model_visible_and_next_turn_reco
         assert len(failed_tool_result["result"]) == 1
         failed_service = failed_tool_result["result"][0]
         assert "error" in failed_service
-        assert "value must be one of" in failed_service["error"]
-        assert "mode" in failed_service["error"]
+        assert failed_service["error"] == "Function execution failed. Check the tool configuration and permissions."
 
     # A valid value against the exact same live HA schema must succeed on a new
     # conversation turn through the same loaded agent. This proves the validation

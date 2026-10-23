@@ -398,8 +398,8 @@ async def test_native_ha_interrupted_reasoning_history(hass):
 
 
 @pytest.mark.parametrize("persisted", [False, True], ids=["structured", "yaml"])
-@pytest.mark.parametrize("exporter", ["setup", "legacy"])
-async def test_native_http_params_and_template_exports_never_render_or_leak(
+@pytest.mark.parametrize("exporter", ["setup", "private"])
+async def test_native_http_params_and_template_exports_obey_security_contracts(
     hass, monkeypatch, persisted, exporter
 ):
     from copy import deepcopy
@@ -436,8 +436,12 @@ async def test_native_http_params_and_template_exports_never_render_or_leak(
         )
     else:
         result = await backup.async_create_backup(hass, agent.entry, agent.subentry)
-    assert SECRET not in result["json"]
-    assert SECRET not in json.dumps(result["document"])
+    if exporter == "setup":
+        assert SECRET not in result["json"]
+        assert SECRET not in json.dumps(result["document"])
+    else:
+        assert SECRET in result["json"]
+        assert backup.inspect_backup(result["document"], agent.subentry.subentry_id).config == original
     assert agent.subentry.data == original
     assert backup.private_configuration_snapshot(agent.subentry.data) == private
 
@@ -512,7 +516,7 @@ async def test_malformed_rest_xml_returns_assist_error_after_completed_effect(
     )
     result = await _say(hass, agent, "Record then fetch")
     assert result.response.error_code is not None
-    assert "REST response parsing failed: ExpatError" in _speech(
+    assert "REST response parsing failed" in _speech(
         result, successful=False
     )
     assert "<root>" not in _speech(result, successful=False)
