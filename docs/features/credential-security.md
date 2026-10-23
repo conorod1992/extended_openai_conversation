@@ -26,6 +26,8 @@ Literal HTTP URL values receive the same credential check regardless of their fi
 
 New sharing documents and Rule Packs use version 2. Historical version 1 imports remain supported. All production sharing writers use the same policy. Unsupported future fields are omitted by default; adding a provider-specific pattern is only an additional defense.
 
+The shared HTTP credential policy covers both query parameters and parameter-form fragments, including OAuth access tokens. Public fragment content remains visible and participates in destination-bound legacy recovery; changing the host, path, public query or public fragment cannot recover a local credential. Private backups retain the original URL exactly.
+
 ## Complete private backups
 
 New full backups use payload version 6; new custom private transfers use version 3. Their private configuration and Rule fields use a versioned safe-YAML envelope inside the JSON/ZIP transport. This preserves opaque YAML source, typed data, inline credentials, signed URLs, and literal text/dictionaries resembling old redaction markers. Those markers are not interpreted in new private formats. Existing backup versions 1–5 and transfer version 1 keep their original redaction/recovery semantics.

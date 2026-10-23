@@ -103,8 +103,24 @@ def _is_literal_http_url(value: str) -> bool:
         return False
 
 
+def _redact_url_parameters(value: str) -> tuple[str, bool]:
+    """Apply one credential policy to query and OAuth fragment parameters."""
+    components = []
+    changed = False
+    for component in value.split("&"):
+        name, separator, content = component.partition("=")
+        if separator and (
+            _is_http_credential_key(name)
+            or _LIKELY_SECRET.search(unquote_plus(content))
+        ):
+            content = "[redacted]"
+            changed = True
+        components.append(name + separator + content)
+    return "&".join(components), changed
+
+
 def redact_http_url(value: str, *, require_http: bool = False) -> dict[str, Any] | None:
-    """Hide HTTP user information/query credentials, retaining public URL bytes.
+    """Hide HTTP user information/parameter credentials, retaining public URL bytes.
 
     The marker is a scalar replacement, not a runnable URL. Recovery compares
     the entire public projection, including non-secret query values and order.
@@ -130,21 +146,11 @@ def redact_http_url(value: str, *, require_http: bool = False) -> dict[str, Any]
     changed = "@" in authority
     if changed:
         authority = "%5Bredacted%5D@" + authority.rsplit("@", 1)[1]
-    query = []
-    for component in parsed.query.split("&"):
-        name, separator, content = component.partition("=")
-        if separator and (
-            _is_http_credential_key(name)
-            or _LIKELY_SECRET.search(unquote_plus(content))
-        ):
-            content = "[redacted]"
-            changed = True
-        query.append(name + separator + content)
-    if not changed:
+    query, query_changed = _redact_url_parameters(parsed.query)
+    fragment, fragment_changed = _redact_url_parameters(parsed.fragment)
+    if not (changed or query_changed or fragment_changed):
         return None
-    public = urlunsplit(
-        (parsed.scheme, authority, parsed.path, "&".join(query), parsed.fragment)
-    )
+    public = urlunsplit((parsed.scheme, authority, parsed.path, query, fragment))
     # Do not emit a second credential detected outside the supported URL parts.
     return {REDACTED_URL_KEY: None if _LIKELY_SECRET.search(public) else public}
 
