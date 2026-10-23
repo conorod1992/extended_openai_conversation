@@ -6,6 +6,8 @@ from dataclasses import fields, is_dataclass
 from inspect import signature
 from typing import Any, cast
 
+import orjson
+
 from homeassistant.components import conversation
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
@@ -62,6 +64,17 @@ class HAToolResultError(HomeAssistantError):
     def __init__(self, data: Any) -> None:
         super().__init__("HA tool reported an execution failure")
         self.data = data
+
+    def private_result(self, message: str) -> BackendExecutionFailure:
+        """Retain upstream diagnostics locally with explicit private provenance."""
+        data = self.data
+        try:
+            orjson.dumps(data)
+        except TypeError, OverflowError:
+            # Match Function result compatibility without stringifying away the
+            # enclosing private marker, including strict retained-history repair.
+            data = str(data)
+        return BackendExecutionFailure(status="error", error=message, data=data)
 
 
 def _is_ha_tool_result(value: Any) -> bool:

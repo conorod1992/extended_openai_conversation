@@ -200,7 +200,10 @@ def _public_backend_failures(value: Any) -> Any:
     from .public_errors import SanitizedBackendError
 
     if isinstance(value, BackendExecutionFailure):
-        return {"error": str(SanitizedBackendError())}
+        public = {"error": str(SanitizedBackendError())}
+        if value.get("status") == "error":
+            public["status"] = "error"
+        return public
     if isinstance(value, dict):
         projected = {key: _public_backend_failures(item) for key, item in value.items()}
         # Explicit integration-owned JSON retains its parsed value for this

@@ -220,6 +220,11 @@ def _normalize_function_result(result: Any) -> Any:
     try:
         orjson.dumps(result)
     except TypeError, OverflowError:
+        from .ha_tool_result_compat import BackendExecutionFailure
+
+        if isinstance(result, BackendExecutionFailure):
+            # A fallback string must not erase diagnostic privacy provenance.
+            return BackendExecutionFailure(status="error", error=str(result))
         return str(result)
     return result
 
@@ -2276,7 +2281,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             result = {"status": "error", "error": str(err)}
             execution_error = True
             if isinstance(err, HAToolResultError):
-                result["data"] = _normalize_function_result(err.data)
+                result = err.private_result(str(err))
 
         return make_tool_result_content(
             agent_id=self.entity_id,

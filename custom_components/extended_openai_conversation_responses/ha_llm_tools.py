@@ -26,7 +26,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 
-from .ha_tool_result_compat import execution_tool_result
+from .ha_tool_result_compat import HAToolResultError, execution_tool_result
 from .schema_errors import SCHEMA_ERRORS
 
 _LOGGER = logging.getLogger(__name__)
@@ -171,13 +171,25 @@ class LiveTool:
         receipt = execution_started(
             kind="ha_tool", prepared={"reference": self.reference, "arguments": args}
         )
-        result = await self.instance.async_call_tool(
-            # Schema transformations need not be idempotent (named colours
-            # become RGBColor). HA owns validation of the dispatched input.
-            llm.ToolInput(
-                tool_name=self.tool.name, tool_args=original_args, id=tool_input.id
+        try:
+            result = await self.instance.async_call_tool(
+                # Schema transformations need not be idempotent (named colours
+                # become RGBColor). HA owns validation of the dispatched input.
+                llm.ToolInput(
+                    tool_name=self.tool.name, tool_args=original_args, id=tool_input.id
+                )
             )
-        )
+        except HomeAssistantError as error:
+            # HA-owned implementations can echo private configuration too.
+            # Keep flagged data private until the shared model-result boundary.
+            if isinstance(error, HAToolResultError):
+                raise
+            from .public_errors import sanitize_backend_error
+
+            public = sanitize_backend_error(error)
+            if public is not error:
+                raise public from None
+            raise
         execution_completed(receipt)
         return execution_tool_result(result)
 

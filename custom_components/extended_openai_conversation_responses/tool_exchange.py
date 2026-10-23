@@ -144,7 +144,7 @@ def append_unresolved_tool_results(
         if tool_call.id == actual_failed_id:
             result = {"status": "error", "error": failure_text}
             if isinstance(error, HAToolResultError):
-                result["data"] = error.data
+                result = error.private_result(failure_text)
         else:
             result = {
                 "status": "skipped",
