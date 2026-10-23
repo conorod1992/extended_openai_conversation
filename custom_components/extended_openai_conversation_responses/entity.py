@@ -60,6 +60,7 @@ from .const import (
     MAX_FUNCTION_GROUP_LOAD_ROUNDS,
 )
 from .context import (
+    HistoryEstimator,
     history_as_summary_text,
     keep_recent_messages,
     partition_history,
@@ -1033,6 +1034,21 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
                 # Tool outputs and the live tool catalogue can grow between rounds.
                 # Trim complete older turns before submitting the next request.
+                def estimate_history(
+                    content: list[conversation.Content],
+                    tools: Any = tool_kwargs.get("tools"),
+                ) -> int:
+                    prepared = (
+                        _convert_content_to_responses_param(
+                            content, prepared_user_content
+                        )
+                        if api_mode == API_MODE_RESPONSES
+                        else _convert_content_to_param(
+                            content, shorten_tool_call_id, prepared_user_content
+                        )
+                    )
+                    return estimate_provider_input_tokens(prepared, tools)
+
                 round_estimate = estimate_provider_input_tokens(
                     messages, tool_kwargs.get("tools")
                 )
@@ -1043,6 +1059,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     await self._truncate_message_history(
                         chat_log,
                         observed_input_tokens=round_estimate,
+                        estimate=estimate_history,
                         model=model,
                         api_mode=api_mode,
                     )
@@ -1065,7 +1082,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     )
                     if immediate_estimate > threshold:
                         keep_recent_messages(
-                            chat_log.content, immediate_estimate, threshold
+                            chat_log.content,
+                            immediate_estimate,
+                            threshold,
+                            estimate_history,
                         )
                         messages = (
                             _convert_content_to_responses_param(
@@ -1504,6 +1524,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 await self._truncate_message_history(
                     chat_log,
                     observed_input_tokens=observed_input_tokens,
+                    estimate=estimate_history,
                     model=model,
                     api_mode=api_mode,
                 )
@@ -2327,6 +2348,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         chat_log: conversation.ChatLog,
         *,
         observed_input_tokens: int | None = None,
+        estimate: HistoryEstimator | None = None,
         model: str | None = None,
         api_mode: str | None = None,
     ) -> None:
@@ -2336,6 +2358,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             self,
             chat_log,
             observed_input_tokens=observed_input_tokens,
+            estimate=estimate,
             model=model,
             api_mode=api_mode,
         ):
@@ -2358,7 +2381,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
         if strategy == CONTEXT_TRUNCATE_SUMMARIZE:
             selected = select_summary_history(
-                chat_log.content, observed_input_tokens, threshold
+                chat_log.content, observed_input_tokens, threshold, estimate
             )
             if selected is not None:
                 older, retained = selected
@@ -2394,7 +2417,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             CONTEXT_TRUNCATE_SUMMARIZE,
         }:
             strategy = DEFAULT_CONTEXT_TRUNCATE_STRATEGY
-        if keep_recent_messages(chat_log.content, observed_input_tokens, threshold):
+        if keep_recent_messages(
+            chat_log.content, observed_input_tokens, threshold, estimate
+        ):
             _LOGGER.info(
                 "Context threshold exceeded, oldest conversation turns removed"
             )

@@ -14,6 +14,7 @@ from typing import Any
 from homeassistant.components import conversation
 
 from .context import (
+    HistoryEstimator,
     history_as_summary_text,
     keep_recent_messages,
     partition_history,
@@ -69,6 +70,7 @@ class DeferredContextSummaryManager:
         api_mode: str,
         summarize: SummaryCallback,
         scheduler: SummaryTaskScheduler,
+        estimate: HistoryEstimator | None = None,
     ) -> bool:
         """Schedule one bounded summary without mutating the live chat log."""
         if not conversation_id or conversation_id in self._pending:
@@ -79,13 +81,13 @@ class DeferredContextSummaryManager:
 
         snapshot = list(content)
         selected = select_summary_history(
-            snapshot, observed_input_tokens, target_tokens
+            snapshot, observed_input_tokens, target_tokens, estimate
         )
         if selected is None:
             return False
 
         fallback = list(snapshot)
-        keep_recent_messages(fallback, observed_input_tokens, target_tokens)
+        keep_recent_messages(fallback, observed_input_tokens, target_tokens, estimate)
         task = scheduler(
             self._async_build_result(
                 snapshot,
