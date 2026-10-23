@@ -804,9 +804,11 @@ async def _candidate_restart_phase(hass: Any, config_dir: Path) -> None:
     await hass.async_block_till_done()
     restored = _conversation_subentry(entry)
     assert restored.title == state["candidate_title"]
-    assert (
-        backup.export_configuration_snapshot(restored.data) == saved["agent"]["config"]
-    )
+    # Compare restored persistence data with the decoded private artifact, not
+    # with its wire envelope or the former normalized public projection.
+    assert dict(restored.data) == backup.inspect_backup(
+        saved, restored.subentry_id
+    ).config
     await _assert_populated_release_state(hass, entry.entry_id, state)
     await _exercise_release_rule(hass, entry.entry_id, state)
     await _exercise_populated_provider_journey(
