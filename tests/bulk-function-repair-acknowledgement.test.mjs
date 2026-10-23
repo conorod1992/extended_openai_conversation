@@ -45,6 +45,7 @@ async function repairScenario({refresh, reject = false, yaml = false, api}) {
   await completed;
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(button.disabled, false);
+  assert.equal(panel._unsavedState.scopes.get("function-repair").dirty(), reject);
   assert.equal(panel._draft.prompt, "Newer unsaved prompt");
   assert.equal(panel._draftTitle, "Unsaved title");
   assert.deepEqual(calls, [["function_repair", "save"]]);

@@ -1,3 +1,4 @@
+import {watchSelectorYaml, assertSelectorYamlReady} from "./native-selector-drafts.js";
 import {setReasoningOptions, syncRequestRuleRoutingControls} from "./request-rule-routing-controls.js";
 import {effectiveServicePayload, setEffectiveServiceField} from "./script-payload.js";
 export {syncRequestRuleRoutingControls} from "./request-rule-routing-controls.js";
@@ -145,9 +146,11 @@ export function createRequestRuleActionSelector(panel, host) {
   actionSelector.selector = {action:{}};
   actionSelector.value = [];
   actionSelector.addEventListener("value-changed", (event) => {
-    actionSelector.value = event.detail.value || [];
+    if ((event.composedPath?.()[0] ?? event.target ?? actionSelector) === actionSelector) actionSelector.value = event.detail.value || [];
   });
+  host.querySelector?.("ha-selector")?.__eocStopYamlDraft?.();
   host.replaceChildren(actionSelector);
+  watchSelectorYaml(actionSelector);
   return actionSelector;
 }
 
@@ -156,8 +159,10 @@ export function createRequestRuleConditionSelector(panel, host) {
   selector.hass = panel._hass;
   selector.selector = {condition:{}};
   selector.value = [];
-  selector.addEventListener("value-changed", (event) => { selector.value = event.detail.value || []; void labelConditionAddControl(panel, selector); });
+  selector.addEventListener("value-changed", (event) => { if ((event.composedPath?.()[0] ?? event.target ?? selector) !== selector) return; selector.value = event.detail.value || []; void labelConditionAddControl(panel, selector); });
+  host.querySelector?.("ha-selector")?.__eocStopYamlDraft?.();
   host.replaceChildren(selector);
+  watchSelectorYaml(selector);
   void labelConditionAddControl(panel, selector);
   return selector;
 }
@@ -387,6 +392,8 @@ export function bindRequestRuleEditor(panel) {
     panel._setSaving(save,true);
     try{
       const actionType=q("#rule-action-type").value;
+      if (actionType === "local_action") assertSelectorYamlReady(state.actionSelector);
+      assertSelectorYamlReady(state.conditionSelector);
       let actions=readRequestRuleActions(state.actionSelector);
       if(actionType==="local_action"&&!actions.length)throw new Error("Add at least one action before saving this rule.");
       const previous=(panel._result?.rules||[]).find((item)=>item.id===panel._editingRuleId);

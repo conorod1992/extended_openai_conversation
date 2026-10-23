@@ -95,6 +95,7 @@ function restoreDraftSource(panel, source, key) {
       panel._render();
     }
   }
+  for (const scope of ownScopes(source)) if (scope.dirty() && scope.restore) scope.restore(panel);
   // Page drafts and editors keep their original route, baseline and revision.
   // Restore only after that route has passed the new panel's access checks.
   if (source._viewKey() === panel._viewKey() && source._scopeId === panel._scopeId

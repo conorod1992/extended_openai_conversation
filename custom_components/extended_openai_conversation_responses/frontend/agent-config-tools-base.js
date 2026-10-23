@@ -1109,6 +1109,7 @@ export function bindTools(panel) {
       bindHALlmTools(panel, (result, submission, refresh) => completeFunctionMutation(panel, result, submission, "Home Assistant tools added", refresh));
     }
   });
+  panel._ensureHALlmTools = attachHA;
   if ((panel._draft?.functions || []).some(isHALlmTool)) void attachHA().catch(() => {});
   for (const id of ["add-ha-tools", "refresh-ha-tools"]) {
     const button = root.querySelector(`#${id}`);

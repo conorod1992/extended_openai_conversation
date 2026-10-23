@@ -121,6 +121,7 @@ function editorControls(dialog) {
 
 function dialogState(dialog) {
   if (!dialog) return [];
+  if (dialog.__eocReadDraft) return dialog.__eocReadDraft();
   return editorControls(dialog)
     .map((control) => {
       const isSelector = String(control.tagName || "").toUpperCase() === "HA-SELECTOR";
@@ -129,6 +130,7 @@ function dialogState(dialog) {
         type: control.type || control.tagName,
         checked: "checked" in control ? Boolean(control.checked) : undefined,
         value: isSelector ? clone(control.value ?? null) : control.value,
+        ...(isSelector && control.__eocYamlDraft?.().length ? {yaml:control.__eocYamlDraft()} : {}),
       };
     });
 }
@@ -142,7 +144,7 @@ export function dialogHasUnsavedChanges(dialog, baseline, toolInitialYaml = null
       return dialog.querySelector("#tool-yaml")?.value !== toolInitialYaml;
     }
   }
-  return Array.isArray(baseline) && !same(dialogState(dialog), baseline);
+  return baseline != null && !same(dialogState(dialog), baseline);
 }
 
 export function syncGuestDirty(panel) {
@@ -246,19 +248,30 @@ export async function recoverDisconnectedEditor(panel, source) {
       if (!current()) return;
       openTemporaryMemory(panel, source._temporaryMemoryDraft?.memory_id);
     } else if (old.id === "ha-llm-tools-dialog") {
-      panel.shadowRoot.querySelector("#add-ha-tools")?.click();
-      await panel._haCatalogLoad?.promise;
-      await Promise.resolve();
+      await panel._ensureHALlmTools?.();
+      await panel._openHALlmTools?.();
     } else return;
     if (!current()) return;
     const dialog = panel.shadowRoot.querySelector(`#${old.id}`);
     if (!dialog?.open) return;
     // A changed saved baseline needs review, not an automatic rebase of an
     // editor's revision or selectors. Keep the original work available to copy.
-    const changed = old.id === "tool-dialog" ? source._toolInitialYaml !== panel._toolInitialYaml
+    const changed = old.id === "ha-llm-tools-dialog" ? false : old.id === "tool-dialog" ? source._toolInitialYaml !== panel._toolInitialYaml
       : ["memory-dialog", "knowledge-dialog"].includes(old.id) ? !same(source._editorInitial, panel._editorInitial)
       : baseline && !same(baseline, panel._eocDialogBaselines?.get(old.id));
     if (changed) {
+      dialog.close();
+      showRecoveredEditorValues(panel, old, values);
+      return;
+    }
+    if (dialog.__eocRestoreDraft) {
+      dialog.__eocRestoreDraft(values);
+      old.close();
+      return;
+    }
+    // Never turn an invalid native YAML draft into the last parsed valid value.
+    // If its native editing mode cannot be recreated safely, keep the raw copy.
+    if (values.some(value => value.yaml?.length)) {
       dialog.close();
       showRecoveredEditorValues(panel, old, values);
       return;

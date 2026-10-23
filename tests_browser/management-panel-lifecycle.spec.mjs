@@ -254,3 +254,143 @@ test("a save acknowledged after teardown is not restored as a dirty draft", asyn
   expect(await panel.evaluate(host => host._configDirty)).toBe(false);
   await expectHarnessClean(page, errors);
 });
+
+
+test("bulk repair keeps raw invalid drafts across routes and panel replacement", async ({page}) => {
+  await page.goto(fixtureUrl("capabilities/functions"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator("#function-add")).toBeVisible();
+  await identify(page);
+  await panel.evaluate(async host => {
+    const call = host.hass.callWS.bind(host.hass);
+    host.hass.callWS = async message => {
+      const result = await call(message);
+      if (message.section === "configuration" && message.action === "get") {
+        result.function_repair = {isolatable:false, tools_valid:false, validation_error:"Invalid YAML", tools:"- spec: [broken"};
+      }
+      return result;
+    };
+    host._invalidateCleanConfiguration(host._agentId);
+    host._configData = null;
+    host._eocSectionCache?.clear?.();
+    await host._loadSection(true);
+  });
+  const raw = "- spec: [unfinished repair\n  important: retain this text";
+  await panel.locator("#function-repair-editor").fill(raw);
+  await panel.evaluate(host => host._navigate("guide"));
+  await panel.evaluate(host => host._navigate("capabilities", "functions"));
+  await expect(panel.locator("#function-repair-editor")).toHaveValue(raw);
+  await replacePanel(page);
+  await expect(panel.locator("#function-repair-editor")).toHaveValue(raw);
+  expect(await page.evaluate(() => !window.dispatchEvent(new Event("beforeunload", {cancelable:true})))).toBe(true);
+  await panel.locator("#function-repair-discard").click();
+  await expect(panel.locator("#function-repair-editor")).toHaveValue("- spec: [broken");
+  await replacePanel(page);
+  await expect(panel.locator("#function-repair-editor")).toHaveValue("- spec: [broken");
+});
+
+test("HA tool chooser retains filtered selections by identity and selected group", async ({page}) => {
+  await page.goto(fixtureUrl("capabilities/functions"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator("#function-add")).toBeVisible();
+  await identify(page);
+  await panel.evaluate(host => {
+    const call = host.hass.callWS.bind(host.hass);
+    host.hass.callWS = async message => {
+      if (message.section === "tools" && message.action === "ha_catalog") return {tools:["Alpha", "Beta"].map(name => ({name, description:name, source:name, reference:{source_id:name, api_id:name, tool_name:name}}))};
+      if (message.section === "tools" && message.action === "ha_add") {
+        window.__addedReferences = message.tools;
+        return call({...message, section:"configuration", action:"get"});
+      }
+      return call(message);
+    };
+  });
+  await panel.locator("#function-add").click();
+  await panel.locator("#add-ha-tools").click();
+  let dialog = panel.locator("#ha-llm-tools-dialog");
+  await dialog.locator('[data-search]').fill("Alpha");
+  await dialog.locator('input[type="checkbox"]').check();
+  await dialog.locator('[data-search]').fill("Beta");
+  await dialog.locator('input[type="checkbox"]').check();
+  await dialog.locator('[data-group]').evaluate(select => { const option=new Option("Retained group", "retained-group"); select.append(option); select.value=option.value; select.dispatchEvent(new Event("change")); });
+  await replacePanel(page);
+  dialog = panel.locator("#ha-llm-tools-dialog");
+  await expect(dialog).toHaveJSProperty("open", true);
+  await expect(dialog.locator('input[type="checkbox"]:checked')).toHaveCount(2);
+  await expect(dialog.locator('[data-group]')).toHaveValue("retained-group");
+  await expect(dialog.locator('[data-add]')).toBeDisabled(); // Missing group needs review.
+  await dialog.locator('[data-group]').selectOption("");
+  await dialog.locator('[data-add]').click();
+  await expect(panel.locator("#ha-llm-tools-dialog")).toHaveCount(0);
+  expect(await page.evaluate(() => window.__addedReferences.map(tool => tool.tool_name))).toEqual(["Alpha", "Beta"]);
+  await replacePanel(page);
+  await expect(panel.locator("#ha-llm-tools-dialog")).toHaveCount(0);
+});
+
+test("invalid native Rule YAML blocks stale saves, marks dirty and survives replacement", async ({page}) => {
+  await page.goto(fixtureUrl("capabilities/request-rules"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator(".rule-edit").first()).toBeVisible();
+  await identify(page);
+  await panel.locator(".rule-edit").first().click();
+  await panel.locator("#rule-action-type").selectOption("local_action");
+  const selector = panel.locator("#rule-action-sequence-host ha-selector");
+  await selector.evaluate(element => {
+    element.value = [{event:"before_edit"}];
+    element.dispatchEvent(new CustomEvent("value-changed", {detail:{value:element.value}, bubbles:true}));
+  });
+  await panel.evaluate(host => host._captureDialogBaseline(host.shadowRoot.querySelector("#rule-dialog")));
+  await selector.evaluate(element => {
+    const root=element.shadowRoot || element.attachShadow({mode:"open"});
+    const yaml=document.createElement("ha-yaml-editor"); root.append(yaml);
+  });
+  await selector.evaluate(element => {
+    const yaml=element.shadowRoot.querySelector("ha-yaml-editor");
+    yaml.yaml="- action: light.turn_on\n  data: [invalid";
+    yaml.dispatchEvent(new CustomEvent("value-changed", {detail:{isValid:false}, bubbles:true, composed:true}));
+  });
+  await panel.locator("#rule-save").click();
+  await expect(panel.locator("#rule-error")).toContainText("Correct the YAML");
+  expect(await panel.evaluate(host => host._unsavedState.hasChanges())).toBe(true);
+  await panel.evaluate(host => { host._confirm = async () => false; });
+  await page.keyboard.press("Escape");
+  await expect(panel.locator("#rule-dialog")).toHaveJSProperty("open", true);
+  // Reject the discard decision, preserving the editor's raw text.
+  await panel.evaluate(host => host.shadowRoot.querySelector("#confirm-dialog")?.close());
+  await replacePanel(page);
+  await expect(panel.getByRole("heading", {name:"Recovered unsaved editor"})).toBeVisible();
+  expect(await panel.locator('[aria-label="Recovered editor values"]').inputValue()).toContain("data: [invalid");
+});
+
+
+test("correcting native Rule YAML saves the intended actions and clears the draft", async ({page}) => {
+  await page.goto(fixtureUrl("capabilities/request-rules"));
+  const panel = page.locator("extended-openai-management-panel");
+  await panel.locator(".rule-edit").first().click();
+  await panel.locator("#rule-action-type").selectOption("local_action");
+  const selector=panel.locator("#rule-action-sequence-host ha-selector");
+  await selector.evaluate(element => {
+    const root=element.shadowRoot || element.attachShadow({mode:"open"});
+    const yaml=document.createElement("ha-yaml-editor"); root.append(yaml);
+    yaml.yaml="- event: [invalid";
+    yaml.dispatchEvent(new CustomEvent("value-changed", {detail:{isValid:false}, bubbles:true, composed:true}));
+  });
+  await panel.locator("#rule-save").click();
+  await expect(panel.locator("#rule-error")).toContainText("Correct the YAML");
+  const actions=[{event:"intended_corrected_event", event_data:{message:"Intended new actions"}}];
+  await selector.evaluate((element, actions) => {
+    const yaml=element.shadowRoot.querySelector("ha-yaml-editor");
+    yaml.yaml="- event: intended_corrected_event";
+    yaml.dispatchEvent(new CustomEvent("value-changed", {detail:{isValid:true, value:actions}, bubbles:true, composed:true}));
+  }, actions);
+  await panel.locator("#rule-save").click();
+  await expect(panel.locator("#rule-error")).toContainText("Correct the YAML"); // Valid but not yet applied by the selector.
+  await selector.evaluate((element, actions) => {
+    element.value=actions;
+    element.dispatchEvent(new CustomEvent("value-changed", {detail:{value:actions}, bubbles:true, composed:true}));
+  }, actions);
+  await panel.locator("#rule-save").click();
+  await expect(panel.locator("#rule-dialog")).toHaveJSProperty("open", false);
+  expect(await page.evaluate(() => window.browserHarness.calls.filter(call => call.section === "request_rules" && call.action === "update").at(-1).rule.action.actions)).toEqual(actions);
+  expect(await panel.evaluate(host => host._unsavedState.hasChanges())).toBe(false);
+});
