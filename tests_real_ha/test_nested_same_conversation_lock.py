@@ -114,7 +114,14 @@ async def test_blocking_nested_request_does_not_reenter_parent_conversation(
     )
     if target == "same":
         assert effects == []
-        assert "Function execution failed. Check the tool configuration and permissions." in json.dumps(sent) + str(result)
+        # Core's conversation service returns the fixed guard as response data;
+        # EOAI's service raises a backend exception, contained at dispatch.
+        expected = (
+            "Nested processing cannot reuse an active parent conversation"
+            if route == "conversation.process"
+            else "Function execution failed. Check the tool configuration and permissions."
+        )
+        assert expected in json.dumps(sent) + str(result)
         # The rejected child must leave no stale lock/claim after parent cleanup.
         independent = await _response_service_call(
             hass,
