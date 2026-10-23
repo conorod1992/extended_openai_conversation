@@ -10,6 +10,8 @@ Choose **Include custom content** to make reviewed sharing useful for legitimate
 
 No combination of key-name rules, regular expressions or entropy checks can distinguish all arbitrary secrets from legitimate content. Even an innocent-looking short string can be a credential. EOAI therefore promises structural exclusions in restricted mode, not that every export is universally secret-free. Reviewed inclusion is a deliberate author decision, not a certification.
 
+Schema property definitions remain structural, but defaults, examples, enum values and constants are checked as instance data. Sensitive property classification follows composed schemas and bounded local references. Unresolved or recursive sensitive references cause the coherent tool to be omitted rather than being fetched or guessed safe. This does not certify arbitrary custom annotations or source strings as secret-free.
+
 New sharing documents and Rule Packs use version 2. Historical version 1 imports remain supported. All production sharing writers use the same policy. Unsupported future fields are omitted by default; adding a provider-specific pattern is only an additional defense.
 
 ## Complete private backups
@@ -19,6 +21,8 @@ New full backups use payload version 6; new custom private transfers use version
 Private backups preserve the selected agent's configuration and saved data. Provider connection data, including credentials and credential-bearing URLs, is captured when configuration is included. In the restore interface, **Also restore the provider connection** is a separate explicit choice: the connection can be shared by multiple agents. It is applied after agent restoration, and a concurrent connection edit prevents overwriting it. A connection-update failure does not undo an already committed agent restore; the interface reports that distinction and asks you to import/preview again. Ordinary restoration does not silently replace a shared connection.
 
 The package cannot recreate external HA scripts, secrets, files or remote services. Preserve those dependencies with an appropriate Home Assistant backup. Tokens and signed URLs are preserved exactly, but expiration or provider revocation can still require attention. Expired temporary memories retain their existing restore policy; transient locks/caches and active requests are not restoration data.
+
+Selective restore preserves authoritative unselected configuration verbatim. Private backup and recovery-journal inspection validate a separate effective projection without replacing the stored configuration, including valid and quarantined Function YAML. Internal raw-source provenance is not an import-file flag; historical public backup formats retain their prior semantics.
 
 **These files are private and unencrypted. Keep them private and store them securely.** ZIP compression, base64 and checksums do not provide confidentiality or prove who authored a file. Shareable export is the route for public sharing; a private backup is the route for complete credential-bearing restoration.
 
@@ -31,3 +35,7 @@ Template and arbitrary backend exception prose is excluded from public tool erro
 Normal diagnostics remain allowlisted. Administrator request debugging remains opt-in, transient and potentially private: it may contain prompts, arguments, results and provider material. Do not treat debug captures or copied logs as shareable setups. Administrator access to their own configuration remains available.
 
 HA-owned LLM tool failures use the same public error boundary: raised backend errors become source-free guidance, and flagged failure data stays local rather than being forwarded to the provider. Successful tool data keeps its existing meaning. Within EOAI-owned Function Tool, HA tool and Request Rule execution, HA template and Script log records retain their severity, diagnostic category, call site and recognized numeric action position, but omit source, raw exception prose and traceback attachments. This includes undefined-variable warnings from otherwise successful renders. Unrelated Home Assistant tasks keep their normal logging behavior; external integrations and deliberately emitted application logs still require review before sharing.
+
+Ordinary dependency exceptions are contained as well as Home Assistant exceptions, including when a failed exchange is retained in history. Cancellation and process-control exceptions retain their control semantics. Unsupported result leaves use compatibility text while nested private failures retain their provenance; successful siblings remain available. Safe operational logs retain original failure classes and stack locations without exception prose.
+
+Template/Script log projection runs at record creation so descendant and dynamically created loggers reach every handler with safe text. The hook chains existing logging factories, activates only in EOAI-owned execution contexts, and leaves unrelated records and logger levels unchanged. Dynamic logger suffixes are omitted because they can contain authored names.

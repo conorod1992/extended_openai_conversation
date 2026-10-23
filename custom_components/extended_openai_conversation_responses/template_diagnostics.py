@@ -1,8 +1,9 @@
 """Source-free HA diagnostics within EOAI-owned rendering tasks.
 
 HA logs template source before an exception can reach our public-error boundary.
-Filters keep those records useful without suppressing a logger or changing its
-level. Context-local activation leaves unrelated HA tasks' diagnostics intact.
+Project at record creation: parent logger filters do not cover child loggers.
+Context-local activation leaves unrelated HA tasks' diagnostics intact, without
+changing logger levels or suppressing records. Existing record factories chain.
 """
 
 from collections.abc import Callable, Coroutine, Iterator
@@ -24,9 +25,24 @@ _LOGGERS = (
 
 class _PrivateRenderingFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
-        if not _PRIVATE_RENDERING.get():
+        if not _PRIVATE_RENDERING.get() or getattr(
+            record, "_eoai_private_template_projected", False
+        ):
             return True
-        category = "template" if record.name == _LOGGERS[0] else "script"
+        family = next(
+            (
+                name
+                for name in _LOGGERS
+                if record.name == name or record.name.startswith(name + ".")
+            ),
+            None,
+        )
+        if family is None:
+            return True
+        record._eoai_private_template_projected = True
+        category = "template" if family == _LOGGERS[0] else "script"
+        # Dynamic Script logger suffixes can be administrator-authored names.
+        record.name = family
         # Only a recognized HA format supplies a numeric action position. Never
         # format the original message: names, arguments and exceptions are private.
         step = None
@@ -35,6 +51,7 @@ class _PrivateRenderingFilter(logging.Filter):
             record.msg == "%s: Error executing script. %s for %s at pos %s: %s"
             and isinstance(record.args, tuple)
             and len(record.args) == 5
+            and isinstance(record.args[1], str)
             and type(record.args[3]) is int
         ):
             step = record.args[3]
@@ -62,15 +79,27 @@ class _PrivateRenderingFilter(logging.Filter):
         return True
 
 
+def _install_record_projection() -> None:
+    """One context-aware creation hook covers all handlers and future children."""
+    previous = logging.getLogRecordFactory()
+    if getattr(previous, "_eoai_private_template_factory", False):
+        return
+    projector = _PrivateRenderingFilter()
+
+    @wraps(previous)
+    def factory(*args: Any, **kwargs: Any) -> logging.LogRecord:
+        record = previous(*args, **kwargs)
+        projector.filter(record)
+        return record
+
+    factory.__dict__["_eoai_private_template_factory"] = True
+    logging.setLogRecordFactory(factory)
+
+
 @contextmanager
 def private_rendering_diagnostics() -> Iterator[None]:
     """Contain source-bearing dependency logs only during this owned execution."""
-    for name in _LOGGERS:
-        logger = logging.getLogger(name)
-        if not any(
-            isinstance(item, _PrivateRenderingFilter) for item in logger.filters
-        ):
-            logger.addFilter(_PrivateRenderingFilter())
+    _install_record_projection()
     token = _PRIVATE_RENDERING.set(True)
     try:
         yield

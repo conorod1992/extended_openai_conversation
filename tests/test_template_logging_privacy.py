@@ -40,6 +40,80 @@ async def test_successful_template_warning_contains_no_source(hass, caplog):
 
 
 @pytest.mark.parametrize("owned", [False, True])
+async def test_actual_ha_child_template_warning_is_private(hass, caplog, owned):
+    source = '{% set api_key = "' + SECRET + '" %}{{ pack(api_key, "I") }}'
+    config = {"type": "template", "value_template": Template(source, hass)}
+    if owned:
+        result = await execute_backend(TemplateFunction(), hass, config, {}, None, [])
+    else:
+        result = await TemplateFunction().execute(hass, config, {}, None, [])
+    assert result == "None"  # Existing parse_result=False rendering semantics.
+    assert SECRET not in caplog.text
+    assert "EOAI private template diagnostic" in caplog.text
+    assert any(record.levelno == logging.WARNING for record in caplog.records)
+
+
+def test_dynamic_script_loggers_and_all_handlers_receive_safe_records(caplog):
+    captured = []
+
+    class Capture(logging.Handler):
+        def emit(self, record):
+            captured.append((record.name, record.getMessage()))
+
+    with private_rendering_diagnostics():
+        # Create the child after the scope starts, including a private suffix.
+        logger = logging.getLogger("homeassistant.helpers.script." + SECRET)
+        handler = Capture()
+        logger.addHandler(handler)
+        try:
+            logger.warning("Private action %s", SECRET)
+        finally:
+            logger.removeHandler(handler)
+    assert captured
+    assert all(
+        SECRET not in name and SECRET not in message for name, message in captured
+    )
+    assert SECRET not in caplog.text
+    assert "EOAI private script diagnostic" in caplog.text
+
+
+def test_record_factory_chaining_and_unrelated_logs_are_preserved(monkeypatch, caplog):
+    original = logging.getLogRecordFactory()
+    calls = []
+
+    def custom_factory(*args, **kwargs):
+        calls.append(args[0])
+        record = original(*args, **kwargs)
+        record.custom_field = "still present"
+        return record
+
+    monkeypatch.setattr(logging, "_logRecordFactory", custom_factory)
+    with private_rendering_diagnostics():
+        logging.getLogger("unrelated.integration").warning("Unrelated %s", SECRET)
+        logging.getLogger("homeassistant.helpers.template.new_child").warning(
+            "Private %s", SECRET
+        )
+        logging.getLogger("homeassistant.helpers.script.dynamic").error(
+            "%s: Error executing script. %s for %s at pos %s: %s",
+            SECRET,
+            "Error rendering template",
+            "variables",
+            2,
+            SECRET,
+        )
+    unrelated, private, script = caplog.records[-3:]
+    assert SECRET in unrelated.getMessage()
+    assert SECRET not in private.getMessage()
+    assert unrelated.custom_field == private.custom_field == "still present"
+    assert "step=2 error_type=template" in script.getMessage()
+    assert calls == [
+        "unrelated.integration",
+        "homeassistant.helpers.template.new_child",
+        "homeassistant.helpers.script.dynamic",
+    ]
+
+
+@pytest.mark.parametrize("owned", [False, True])
 async def test_real_script_error_logging_is_contained(tmp_path, caplog, owned):
     caplog.set_level(logging.DEBUG, logger="homeassistant.helpers.template")
     caplog.set_level(
