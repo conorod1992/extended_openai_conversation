@@ -158,13 +158,17 @@ def is_literal_text(value: Any) -> bool:
 
 
 def _is_function_tool_schema_root(path: tuple[Any, ...]) -> bool:
-    """Return whether *path* is a configured Function Tool JSON Schema root."""
+    """Recognize schemas only relative to a caller-owned configuration root.
+
+    Export writers extract configuration before calling us. A matching suffix
+    inside Script variables or service data does not make that data a schema.
+    """
     return (
-        len(path) >= 4
-        and path[-4] == "functions"
-        and isinstance(path[-3], int)
-        and path[-2] == "spec"
-        and path[-1] == "parameters"
+        len(path) == 4
+        and path[0] == "functions"
+        and isinstance(path[1], int)
+        and path[2] == "spec"
+        and path[3] == "parameters"
     )
 
 

@@ -215,16 +215,20 @@ def _schema_annotations(
     return result
 
 
-def _structured_payloads(value: Any, *, path: tuple[Any, ...] = ()) -> Any:
+def _structured_payloads(
+    value: Any, *, path: tuple[Any, ...] = (), function_schemas: bool = False
+) -> Any:
     """Do not put redaction markers inside executable opaque request strings."""
     if isinstance(value, list):
         return [
-            _structured_payloads(item, path=(*path, index))
+            _structured_payloads(
+                item, path=(*path, index), function_schemas=function_schemas
+            )
             for index, item in enumerate(value)
         ]
     if not isinstance(value, dict):
         return value
-    if _is_function_tool_schema_root(path):
+    if function_schemas and _is_function_tool_schema_root(path):
         return _schema_annotations(value, value)
     result = {}
     for key, item in value.items():
@@ -237,7 +241,9 @@ def _structured_payloads(value: Any, *, path: tuple[Any, ...] = ()) -> Any:
                 if _unsafe(redact_secrets(structured, schema_roots=False)):
                     result[key] = dict(REDACTED_SECRET_SENTINEL)
                     continue
-        result[key] = _structured_payloads(item, path=(*path, key))
+        result[key] = _structured_payloads(
+            item, path=(*path, key), function_schemas=function_schemas
+        )
     return result
 
 
@@ -250,7 +256,11 @@ def project_configuration(
     summary = security_summary(reviewed)
     result: dict[str, Any] = {"functions": [], "function_groups": [], "skills": []}
     decoded = decoded_function_fields(config)
-    redacted = _structured_payloads(redact_secrets(decoded)) if reviewed else {}
+    redacted = (
+        _structured_payloads(redact_secrets(decoded), function_schemas=True)
+        if reviewed
+        else {}
+    )
     # Typed YAML is valid private data, but not a supported reviewed public codec.
     if isinstance(redacted.get("functions"), str):
         redacted["functions"] = []
@@ -319,9 +329,9 @@ def project_rules(
     retained = []
     if reviewed:
         for rule in rules:
-            candidate = _structured_payloads(redact_secrets({"rules": [rule]}))[
-                "rules"
-            ][0]
+            candidate = _structured_payloads(
+                redact_secrets({"rules": [rule]}, schema_roots=False)
+            )["rules"][0]
             if not _unsafe(candidate):
                 retained.append(candidate)
             else:
@@ -341,7 +351,7 @@ def project_rules(
             result["defaults"] = dict(DEFAULT_MATCHING)
         if "wording_groups" in result:
             result["wording_groups"] = deepcopy(DEFAULT_WORDING_GROUPS)
-    elif _unsafe(redact_secrets(result)):
+    elif _unsafe(redact_secrets(result, schema_roots=False)):
         # Includes credential-bearing group/wording metadata.
         record_omission(summary, "rule_metadata")
         return project_rules(data, summary, reviewed=False)
