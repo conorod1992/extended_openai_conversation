@@ -787,9 +787,10 @@ async def test_provider_failure_script_respects_continue_on_error(
         await script.async_run(context=Context())
     else:
         with pytest.raises(
-            HomeAssistantError, match="Optional summary rate limited"
+            HomeAssistantError, match="Provider rate limit reached"
         ) as raised:
             await script.async_run(context=Context())
+        assert "Optional summary rate limited" not in str(raised.value)
         assert isinstance(raised.value.__cause__, RateLimitError)
     await hass.async_block_till_done()
     assert len(followups) == int(continue_on_error)
