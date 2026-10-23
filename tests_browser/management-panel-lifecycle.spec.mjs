@@ -38,6 +38,7 @@ for (const navigation of ["sidebar", "back-forward", "suspension"]) {
       const old = document.querySelector("extended-openai-management-panel");
       window.__oldPanel = old;
       old.remove();
+      window.__outsideUnloadProtected = !window.dispatchEvent(new Event("beforeunload", {cancelable:true}));
       if (navigation === "back-forward") {
         const traverse = action => new Promise(resolve => {
           window.addEventListener("popstate", resolve, {once:true});
@@ -49,6 +50,7 @@ for (const navigation of ["sidebar", "back-forward", "suspension"]) {
       } else history.replaceState(null, "", window.__returnPath || location.pathname);
       document.body.append(old);
     }, navigation);
+    expect(await page.evaluate(() => window.__outsideUnloadProtected)).toBe(true);
     await expect(panel.locator('[data-config="prompt"]')).toHaveValue("Long unsaved private prompt");
     await replacePanel(page);
     await expect(panel.locator('[data-config="prompt"]')).toHaveValue("Long unsaved private prompt");
@@ -57,6 +59,7 @@ for (const navigation of ["sidebar", "back-forward", "suspension"]) {
     await replacePanel(page);
     await expect(panel.locator('[data-config="prompt"]')).toHaveValue("Long unsaved private prompt");
     expect(await panel.evaluate(host => host._configDirty)).toBe(false);
+    expect(await page.evaluate(() => !window.dispatchEvent(new Event("beforeunload", {cancelable:true})))).toBe(false);
     await expectHarnessClean(page, errors);
   });
 }

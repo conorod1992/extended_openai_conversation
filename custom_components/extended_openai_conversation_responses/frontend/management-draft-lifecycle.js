@@ -10,6 +10,25 @@ const retained = new Map();
 const ownScopes = panel => [...pageCoordinator(panel).scopes.entries()]
   .filter(([id]) => id !== "retained-drafts").map(([, scope]) => scope);
 const hasOwnChanges = panel => ownScopes(panel).some(scope => scope.dirty());
+let unloadBound = false;
+
+function hasRetainedChanges() {
+  return [...retained].some(([key, sources]) => [...sources].some(source => owner(source) === key && hasOwnChanges(source)));
+}
+
+function retainedBeforeUnload(event) {
+  if (!hasRetainedChanges()) return;
+  event.preventDefault();
+  event.returnValue = "";
+}
+
+function synchronizeUnloadGuard() {
+  const dirty = hasRetainedChanges();
+  if (dirty === unloadBound) return;
+  if (dirty) window.addEventListener("beforeunload", retainedBeforeUnload);
+  else window.removeEventListener("beforeunload", retainedBeforeUnload);
+  unloadBound = dirty;
+}
 
 function owner(panel) {
   const user = panel.hass?.user?.id;
@@ -26,6 +45,7 @@ export function retainPanelDrafts(panel) {
   else sources.delete(panel);
   if (sources.size) retained.set(key, sources);
   else retained.delete(key);
+  synchronizeUnloadGuard();
 }
 
 export function restorePanelDrafts(panel) {
@@ -44,9 +64,11 @@ export function restorePanelDrafts(panel) {
       for (const source of sources) for (const scope of ownScopes(source)) if (scope.dirty()) scope.discard?.();
       sources.clear();
       retained.delete(key);
+      synchronizeUnloadGuard();
     },
   });
   if (!sources?.size) retained.delete(key);
+  synchronizeUnloadGuard();
 }
 
 function restoreDraftSource(panel, source, key) {
