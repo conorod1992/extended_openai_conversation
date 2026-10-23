@@ -9,8 +9,9 @@ from __future__ import annotations
 from copy import deepcopy
 import json
 import math
+import re
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 from .function_yaml import decoded_function_fields
 from .model_catalog import BUNDLED_CATALOG
@@ -25,6 +26,12 @@ from .secret_redaction import (
 
 SHARING_VERSION = 2
 _SCHEMA_REFERENCES = frozenset({"$ref", "$dynamicRef", "$recursiveRef"})
+_SCHEMA_INSTANCE_KEYWORDS = frozenset(
+    {"default", "example", "examples", "enum", "const"}
+)
+_INVALID_PERCENT_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
+_INVALID_POINTER_ESCAPE = re.compile(r"~(?:[^01]|$)")
+type _ReferenceKey = tuple[int, tuple[str, ...]]
 SECURITY_CONTRACT = (
     "Shareable exports exclude designated credentials and unclassified custom "
     "content by default, and check included content for recognized secret patterns. "
@@ -153,17 +160,74 @@ def _schema_reference_uri(value: Any) -> Any:
     )
 
 
+def _single_schema_resource(root: Any) -> bool:
+    """Prove the local-pointer subset without guessing resource resolution.
+
+    Embedded resource identities need a dialect-aware resolver. Conservatively
+    omit sensitive references in those schemas rather than inspecting a shadow
+    target in the outer resource. Walk shared containers once, without expansion.
+    """
+    pending = [iter((root,))]
+    seen: set[int] = set()
+    while pending:
+        try:
+            value = next(pending[-1])
+        except StopIteration:
+            pending.pop()
+            continue
+        if not isinstance(value, (dict, list)) or id(value) in seen:
+            continue
+        seen.add(id(value))
+        if isinstance(value, dict):
+            if value is not root and any(
+                isinstance(value.get(key), str) for key in ("$id", "id")
+            ):
+                return False
+            pending.append(
+                iter(
+                    item
+                    for key, item in value.items()
+                    if key not in _SCHEMA_INSTANCE_KEYWORDS
+                )
+            )
+        else:
+            pending.append(iter(value))
+    return True
+
+
+def _local_schema_pointer(reference: Any) -> tuple[str, ...] | None:
+    """Decode URI fragments before JSON Pointer escapes, rejecting ambiguity."""
+    if (
+        not isinstance(reference, str)
+        or not reference.startswith("#/")
+        or _INVALID_PERCENT_ESCAPE.search(reference)
+    ):
+        return None
+    try:
+        pointer = unquote(reference[1:], errors="strict")
+    except UnicodeDecodeError:
+        return None
+    if not pointer.startswith("/") or _INVALID_POINTER_ESCAPE.search(pointer):
+        return None
+    return tuple(
+        part.replace("~1", "/").replace("~0", "~") for part in pointer[1:].split("/")
+    )
+
+
 def _schema_annotations(
     value: Any,
     root: Any,
     *,
     sensitive: bool = False,
-    references: frozenset[str] = frozenset(),
-    reference_results: dict[str, bool] | None = None,
+    references: frozenset[_ReferenceKey] = frozenset(),
+    reference_results: dict[_ReferenceKey, bool] | None = None,
+    single_resource: bool | None = None,
 ) -> Any:
     """Separate structural schema names from credential-bearing instance data."""
     if reference_results is None:
         reference_results = {}
+    if single_resource is None:
+        single_resource = _single_schema_resource(root)
     if isinstance(value, list):
         return [
             _schema_annotations(
@@ -172,6 +236,7 @@ def _schema_annotations(
                 sensitive=sensitive,
                 references=references,
                 reference_results=reference_results,
+                single_resource=single_resource,
             )
             for item in value
         ]
@@ -182,19 +247,20 @@ def _schema_annotations(
         # Keep the live/private definition intact; omit its public review unit.
         return dict(REDACTED_SECRET_SENTINEL)
     if sensitive and "$ref" in value:
-        reference = value["$ref"]
+        pointer = _local_schema_pointer(value["$ref"])
+        reference = (id(root), pointer) if pointer is not None else None
         target = root
         if (
-            not isinstance(reference, str)
-            or not reference.startswith("#/")
+            not single_resource
+            or reference is None
             or reference in references
             or len(references) >= 16
         ):
             return dict(REDACTED_SECRET_SENTINEL)
         if reference not in reference_results:
             try:
-                for part in reference[2:].split("/"):
-                    target = target[part.replace("~1", "/").replace("~0", "~")]
+                for part in reference[1]:
+                    target = target[part]
             except KeyError, TypeError:
                 return dict(REDACTED_SECRET_SENTINEL)
             # Memoize proofs per schema: repeated reference fan-out must not
@@ -207,6 +273,7 @@ def _schema_annotations(
                     sensitive=True,
                     references=references | {reference},
                     reference_results=reference_results,
+                    single_resource=single_resource,
                 )
             )
         if reference_results[reference]:
@@ -215,7 +282,7 @@ def _schema_annotations(
     for key, item in value.items():
         if key in _SCHEMA_REFERENCES:
             result[key] = _schema_reference_uri(item)
-        elif key in {"default", "example", "examples", "enum", "const"}:
+        elif key in _SCHEMA_INSTANCE_KEYWORDS:
             # Instance data cannot acquire schema exemptions by using keys such
             # as functions/spec/parameters. No user content is executed here.
             classified = _structured_payloads(redact_secrets(item, schema_roots=False))
@@ -232,6 +299,7 @@ def _schema_annotations(
                     sensitive=sensitive or _is_secret_key(name),
                     references=references,
                     reference_results=reference_results,
+                    single_resource=single_resource,
                 )
                 for name, definition in item.items()
             }
@@ -242,6 +310,7 @@ def _schema_annotations(
                 sensitive=sensitive,
                 references=references,
                 reference_results=reference_results,
+                single_resource=single_resource,
             )
     return result
 
