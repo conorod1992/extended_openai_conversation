@@ -32,6 +32,76 @@ from homeassistant.exceptions import HomeAssistantError
 from tests.test_backup import _document
 
 
+def valid_credential_config(config, secret, quarantined=False):
+    from tests.test_secret_restore_context import _rest_tool
+
+    result = deepcopy(config)
+    tool = _rest_tool()
+    tool["function"]["headers"]["Authorization"] = secret
+    if quarantined:
+        tool["function"]["future"] = {"opaque": secret}
+    result["functions"] = yaml.safe_dump([tool], allow_unicode=False)
+    result["function_groups"] = []
+    result["future_field"] = {"__extended_openai_redacted_secret__": True}
+    return result
+
+
+@pytest.mark.parametrize("quarantined", [False, True])
+async def test_unselected_configuration_is_exact_during_selective_restore(
+    monkeypatch, hass, quarantined
+):
+    from tests.test_selective_restore_concurrency import RestoreHarness
+
+    tx = RestoreHarness(monkeypatch)
+    secret = "fabricated-current-password-before\x85after"
+    tx.subentry.data = valid_credential_config(tx.subentry.data, secret, quarantined)
+    before = deepcopy(tx.subentry.data)
+    await tx.restore()  # Knowledge only; configuration is unselected.
+    assert tx.subentry.data == before
+    assert (
+        yaml.safe_load(tx.subentry.data["functions"])[0]["function"]["headers"][
+            "Authorization"
+        ]
+        == secret
+    )
+
+
+@pytest.mark.parametrize("phase", ["committed", "applying"])
+@pytest.mark.parametrize("quarantined", [False, True])
+async def test_private_journal_replay_preserves_valid_and_quarantined_source(
+    monkeypatch, hass, phase, quarantined
+):
+    from custom_components.extended_openai_conversation_responses import (
+        restore_recovery,
+    )
+    from tests.test_selective_restore_concurrency import RestoreHarness
+
+    tx = RestoreHarness(monkeypatch)
+    tx.subentry.data = valid_credential_config(
+        tx.subentry.data, "fabricated-old\x85credential", quarantined
+    )
+    before = deepcopy(tx.subentry.data)
+    document = private_document()
+    incoming = valid_credential_config(
+        document["agent"]["config"], "fabricated-new\x85credential", quarantined
+    )
+    document["agent"]["config"] = incoming
+    artifact = backup.finalize_backup_snapshot(document)["document"]
+    await transfer.async_restore_transfer(
+        tx.hass,
+        tx.entry,
+        tx.subentry,
+        artifact,
+        sections=[transfer.SECTION_CONFIGURATION],
+    )
+    assert tx.subentry.data == incoming
+    journal = json.loads(json.dumps(tx.journal.saved[-1]))
+    journal["phase"] = phase
+    tx.journal.data = journal
+    await restore_recovery.async_recover_pending_restore(tx.hass, tx.entry, tx.subentry)
+    assert tx.subentry.data == (incoming if phase == "committed" else before)
+
+
 def private_document():
     document = _document()
     document["version"] = PRIVATE_BACKUP_VERSION

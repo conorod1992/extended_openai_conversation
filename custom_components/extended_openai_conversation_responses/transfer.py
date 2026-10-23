@@ -1370,10 +1370,14 @@ def _prepared_restore_from_selection(
         else:
             raise backup.BackupError("Transferred configuration is unavailable")
     else:
-        # Recovery snapshots are persistence-shaped; older/prepared callers may
-        # still supply parsed Functions. Normalize that decoded representation,
-        # without reapplying legacy raw-value fallbacks.
-        config = backup.recoverable_configuration_snapshot(current.config)
+        # Unselected configuration is authoritative private source. Validate a
+        # separate projection without rewriting credentials, YAML or omissions.
+        backup.private_configuration_snapshot(current.config)
+        config = (
+            deepcopy(current.config)
+            if current.authoritative_config
+            else backup.private_configuration_snapshot(current.config)
+        )
 
     rules = current.request_rules
     if SECTION_REQUEST_RULES in selected:
@@ -1459,6 +1463,7 @@ def _prepared_restore_from_selection(
             if SECTION_CONVERSATION_ARCHIVE in selected
             else deepcopy(current.archive_active)
         ),
+        authoritative_config=True,
     )
     return target, tuple(preserved), tuple(missing)
 

@@ -111,6 +111,8 @@ class PreparedRestore:
     integration_version: str
     # Same-agent recovery only; portable archive imports deliberately have none.
     archive_active: dict[str, str] | None = None
+    # Internal provenance, never accepted as an import-document switch.
+    authoritative_config: bool = False
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -539,10 +541,12 @@ def _inspect_decoded_backup(
             raise ValueError("agent config must be an object")
         config = (
             deepcopy(raw_config)
-            if version == PRIVATE_BACKUP_VERSION
+            if private_journal or version == PRIVATE_BACKUP_VERSION
             else recoverable_configuration_snapshot(raw_config)
         )
-        if version == PRIVATE_BACKUP_VERSION:
+        if private_journal or version == PRIVATE_BACKUP_VERSION:
+            # Validate an effective projection, never replace authoritative
+            # private source with reserialized YAML or injected defaults.
             private_configuration_snapshot(raw_config)
         categories = (
             validated_categories
@@ -587,6 +591,7 @@ def _inspect_decoded_backup(
         created_at,
         integration_version,
         archive_active=archive_active,
+        authoritative_config=private_journal or version == PRIVATE_BACKUP_VERSION,
     )
 
 
@@ -652,11 +657,12 @@ async def _snapshot_for_restore(
     request_rule_backup = RequestRules.validate_backup_data(
         await request_rules.async_backup_data()
     )
+    private_configuration_snapshot(subentry.data)
     return PreparedRestore(
         subentry.title,
         # Recovery applies this mapping directly, including during same-process
         # rollback. A frontend [] must not become a legacy persisted default.
-        private_configuration_snapshot(subentry.data),
+        deepcopy(dict(subentry.data)),
         categories["memories"],
         categories["temporary_memories"],
         categories["knowledge"],
@@ -671,6 +677,7 @@ async def _snapshot_for_restore(
         dt_util.utcnow().isoformat(),
         _integration_version(),
         archive_active=archive_active,
+        authoritative_config=True,
     )
 
 
