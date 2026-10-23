@@ -68,6 +68,69 @@ _SCHEMA_CHILD_KEYWORDS = frozenset(
 # Apply the sensitive-value policy even when the containing object is public;
 # type/shape-only schemas still survive, while literals and unproved refs do not.
 _SCHEMA_VALUE_WILDCARDS = frozenset({"additionalProperties", "unevaluatedProperties"})
+# At sensitive schema nodes, unknown fields are not presumed annotations. A
+# numeric bound or authored regex can encode the same credential as const.
+# These closed classifications describe shape/names, never instance values.
+_SCHEMA_TYPES = frozenset(
+    {"null", "boolean", "object", "array", "number", "integer", "string"}
+)
+_SCHEMA_SHAPE_COUNTS = frozenset(
+    {
+        "minLength",
+        "maxLength",
+        "minItems",
+        "maxItems",
+        "minProperties",
+        "maxProperties",
+        "minContains",
+        "maxContains",
+    }
+)
+_SCHEMA_SHAPE_FLAGS = frozenset(
+    {
+        "uniqueItems",
+        "nullable",
+        "readOnly",
+        "writeOnly",
+        "deprecated",
+        "$recursiveAnchor",
+    }
+)
+_SCHEMA_TEXT_ANNOTATIONS = frozenset(
+    {"title", "description", "$comment", "$anchor", "$dynamicAnchor"}
+)
+# Standard format labels are classified vocabulary, not arbitrary authored
+# constraints. Custom formats need an explicit policy before sensitive sharing.
+_SCHEMA_PUBLIC_FORMATS = frozenset(
+    {
+        "date-time",
+        "date",
+        "time",
+        "duration",
+        "email",
+        "idn-email",
+        "hostname",
+        "idn-hostname",
+        "ipv4",
+        "ipv6",
+        "uuid",
+        "uri",
+        "uri-reference",
+        "iri",
+        "iri-reference",
+        "uri-template",
+        "json-pointer",
+        "relative-json-pointer",
+        "regex",
+        "int32",
+        "int64",
+        "float",
+        "double",
+        "byte",
+        "binary",
+        "password",
+    }
+)
 _INVALID_PERCENT_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
 _INVALID_POINTER_ESCAPE = re.compile(r"~(?:[^01]|$)")
 _LITERAL_PROPERTY_PATTERN = re.compile(r"\^([A-Za-z0-9_-]+)\$")
@@ -281,6 +344,37 @@ def _sensitive_schema_property(name: Any, *, pattern: bool) -> bool:
     return literal is None or _is_secret_key(literal[1])
 
 
+def _classified_sensitive_schema_field(key: str, value: Any) -> bool:
+    """Admit only declared shape/name fields and reviewed standard annotations.
+
+    Structural children, references and instance literals have dedicated paths.
+    Never execute a regex, infer equivalent constants or guess custom semantics.
+    Annotation prose remains explicitly uncertain reviewed content and still
+    passes the shared scalar/credential checks below and at final admission.
+    """
+    if key == "type":
+        types = value if isinstance(value, list) else [value]
+        return bool(types) and all(
+            isinstance(item, str) and item in _SCHEMA_TYPES for item in types
+        )
+    if key in _SCHEMA_SHAPE_COUNTS:
+        return (type(value) is int and value >= 0) or (
+            type(value) is float
+            and math.isfinite(value)
+            and value >= 0
+            and value.is_integer()
+        )
+    if key in _SCHEMA_SHAPE_FLAGS:
+        return type(value) is bool
+    if key == "required":
+        return isinstance(value, list) and all(isinstance(item, str) for item in value)
+    if key in _SCHEMA_TEXT_ANNOTATIONS:
+        return isinstance(value, str)
+    if key == "format":
+        return isinstance(value, str) and value in _SCHEMA_PUBLIC_FORMATS
+    return False
+
+
 def _schema_annotations(
     value: Any,
     root: Any,
@@ -293,8 +387,9 @@ def _schema_annotations(
 ) -> Any:
     """Grant name exemptions only at explicitly classified schema locations.
 
-    Unclassified annotations enter as ordinary data with designated-key checks.
-    Their nested schema-looking fields cannot reacquire structural privileges.
+    Unclassified fields at sensitive nodes require omission; elsewhere they
+    enter ordinary data with designated-key checks. Nested schema-looking
+    fields in data cannot reacquire structural privileges.
     URI checks remain defensive in both contexts, without resolving references
     or treating opaque data as schema authority.
     """
@@ -432,6 +527,11 @@ def _schema_annotations(
                 reference_results=reference_results,
                 single_resource=single_resource,
             )
+        elif sensitive and not _classified_sensitive_schema_field(key, item):
+            # A schema position is not proof that a constraint carries no
+            # credential. Omit the whole reviewed unit, preserving its source
+            # for live execution and private restoration.
+            result[key] = dict(REDACTED_SECRET_SENTINEL)
         else:
             # Include the annotation's own key: api_key at a schema node is
             # not the structural property declaration properties.api_key.
