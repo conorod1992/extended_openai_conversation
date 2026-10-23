@@ -84,6 +84,111 @@ def test_reviewed_innocent_custom_tool_and_schema_are_portable(hass):
     assert summary["review_required"] is True
 
 
+@pytest.mark.parametrize("annotation", ["default", "examples", "enum", "const"])
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("format", ["setup", "configuration"])
+def test_schema_instance_annotations_cannot_retain_designated_credentials(
+    hass, annotation, nested, format
+):
+    from custom_components.extended_openai_conversation_responses.agent_config import (
+        agent_config_snapshot,
+    )
+
+    secret = "FABRICATED-reviewed-annotation-password-42"
+    schema = {
+        "type": "object",
+        "properties": {"password": {"type": "string"}},
+        annotation: [{"password": secret}]
+        if annotation in {"examples", "enum"}
+        else {"password": secret},
+    }
+    if nested:
+        schema = {"type": "object", "properties": {"auth": schema}}
+    tool = _rest_tool()
+    tool["function"]["headers"] = {}
+    tool["spec"]["parameters"] = schema
+    config = {"functions": [tool]}
+    agent_config_snapshot(config)
+    if format == "setup":
+        document = _portable_document(mode="setup")
+        document["version"] = SHARING_VERSION
+        document["sections"]["configuration"] = config
+        artifact = transfer.finalize_setup_export(document, reviewed=True)["document"]
+        public = artifact["sections"]["configuration"]
+    else:
+        artifact = management_ui._export_agent(
+            SimpleNamespace(title="Test", data=config), reviewed=True
+        )
+        public = artifact["config"]
+    assert secret not in json.dumps(artifact)
+    assert public["functions"] == []
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "composed",
+        "reference",
+        "recursive_reference",
+        "remote_reference",
+        "signed_reference",
+        "instance_schema_shape",
+    ],
+)
+def test_sensitive_schema_composition_and_references_are_coherent_review_units(
+    hass, kind
+):
+    secret = "FABRICATED-reviewed-schema-password-42"
+    schema = {
+        "type": "object",
+        "properties": {"password": {"allOf": [{"type": "string", "default": secret}]}},
+    }
+    if kind in {"reference", "recursive_reference"}:
+        schema = {
+            "type": "object",
+            "properties": {"password": {"$ref": "#/$defs/shared"}},
+            "$defs": {
+                "shared": {"type": "string", "default": secret}
+                if kind == "reference"
+                else {"$ref": "#/$defs/shared"}
+            },
+        }
+    elif kind == "remote_reference":
+        schema = {
+            "type": "object",
+            "properties": {"password": {"$ref": "https://example.invalid/schema"}},
+        }
+    elif kind == "signed_reference":
+        schema = {"$ref": "https://example.invalid/schema?sig=" + secret}
+    elif kind == "instance_schema_shape":
+        schema = {
+            "type": "object",
+            "default": {"functions": [{"spec": {"parameters": {"password": secret}}}]},
+        }
+    tool = _rest_tool()
+    tool["function"]["headers"] = {}
+    tool["spec"]["parameters"] = schema
+    config, summary = project_configuration({"functions": [tool]}, reviewed=True)
+    assert config["functions"] == []
+    assert secret not in json.dumps([config, summary])
+
+
+def test_safe_schema_annotations_and_local_references_remain_portable(hass):
+    tool = _rest_tool()
+    tool["function"]["headers"] = {}
+    tool["spec"]["parameters"] = {
+        "type": "object",
+        "properties": {
+            "password": {"$ref": "#/$defs/plain"},
+            "units": {"type": "string", "default": "c"},
+        },
+        "$defs": {"plain": {"type": "string", "minLength": 1}},
+        "examples": [{"units": "c"}],
+    }
+    config, _summary = project_configuration({"functions": [tool]}, reviewed=True)
+    assert config["functions"] == [tool]
+
+
 def test_new_configuration_export_is_safe_and_importable(hass):
     source = SimpleNamespace(
         title="private opaque value",
@@ -110,3 +215,34 @@ def test_safe_behavior_values_survive_without_approving_arbitrary_identifiers():
     assert config["archive_enabled"] is True
     assert "chat_model" not in config
     assert "future_field" not in config
+
+
+def test_repeated_schema_references_have_bounded_review_work(hass, monkeypatch):
+    from custom_components.extended_openai_conversation_responses import sharing
+
+    tool = _rest_tool()
+    tool["function"]["headers"] = {}
+    definitions = {"level10": {"type": "string"}}
+    for level in reversed(range(10)):
+        definitions[f"level{level}"] = {
+            "allOf": [{"$ref": f"#/$defs/level{level + 1}"}] * 4
+        }
+    tool["spec"]["parameters"] = {
+        "type": "object",
+        "properties": {"password": {"$ref": "#/$defs/level0"}},
+        "$defs": definitions,
+    }
+    original = sharing._schema_annotations
+    calls = 0
+
+    def counted(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        assert calls < 1000
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(sharing, "_schema_annotations", counted)
+    config, _summary = sharing.project_configuration(
+        {"functions": [tool]}, reviewed=True
+    )
+    assert config["functions"] == [tool]

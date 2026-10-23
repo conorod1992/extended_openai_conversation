@@ -13,7 +13,14 @@ from typing import Any
 
 from .function_yaml import decoded_function_fields
 from .model_catalog import BUNDLED_CATALOG
-from .secret_redaction import _is_secret_key, is_redacted_secret, redact_secrets
+from .secret_redaction import (
+    REDACTED_SECRET_SENTINEL,
+    _is_function_tool_schema_root,
+    _is_secret_key,
+    is_redacted_secret,
+    redact_http_url,
+    redact_secrets,
+)
 
 SHARING_VERSION = 2
 SECURITY_CONTRACT = (
@@ -115,39 +122,122 @@ def _unsafe(value: Any) -> bool:
     )
 
 
-def _structured_payloads(value: Any) -> Any:
-    """Do not put redaction markers inside executable opaque request strings."""
+def _schema_annotations(
+    value: Any,
+    root: Any,
+    *,
+    sensitive: bool = False,
+    references: frozenset[str] = frozenset(),
+    reference_results: dict[str, bool] | None = None,
+) -> Any:
+    """Separate structural schema names from credential-bearing instance data."""
+    if reference_results is None:
+        reference_results = {}
     if isinstance(value, list):
-        return [_structured_payloads(item) for item in value]
+        return [
+            _schema_annotations(
+                item,
+                root,
+                sensitive=sensitive,
+                references=references,
+                reference_results=reference_results,
+            )
+            for item in value
+        ]
     if not isinstance(value, dict):
         return value
+    if sensitive and "$ref" in value:
+        reference = value["$ref"]
+        target = root
+        if (
+            not isinstance(reference, str)
+            or not reference.startswith("#/")
+            or reference in references
+            or len(references) >= 16
+        ):
+            return dict(REDACTED_SECRET_SENTINEL)
+        if reference not in reference_results:
+            try:
+                for part in reference[2:].split("/"):
+                    target = target[part.replace("~1", "/").replace("~0", "~")]
+            except KeyError, TypeError:
+                return dict(REDACTED_SECRET_SENTINEL)
+            # Memoize proofs per schema: repeated reference fan-out must not
+            # expand exponentially. An in-progress proof is conservative.
+            reference_results[reference] = True
+            reference_results[reference] = _unsafe(
+                _schema_annotations(
+                    target,
+                    root,
+                    sensitive=True,
+                    references=references | {reference},
+                    reference_results=reference_results,
+                )
+            )
+        if reference_results[reference]:
+            return dict(REDACTED_SECRET_SENTINEL)
     result = {}
     for key, item in value.items():
-        if key == "properties" and isinstance(item, dict):
-            item = deepcopy(item)
-            for name, definition in item.items():
-                if _is_secret_key(name) and isinstance(definition, dict):
-                    for annotation in {
-                        "default",
-                        "examples",
-                        "enum",
-                        "const",
-                    } & definition.keys():
-                        from .secret_redaction import REDACTED_SECRET_SENTINEL
+        if (
+            key == "$ref"
+            and isinstance(item, str)
+            and item.lower().startswith(("http://", "https://"))
+        ):
+            result[key] = redact_http_url(item) or item
+        elif key in {"default", "examples", "enum", "const"}:
+            # Instance data cannot acquire schema exemptions by using keys such
+            # as functions/spec/parameters. No user content is executed here.
+            classified = _structured_payloads(redact_secrets(item, schema_roots=False))
+            result[key] = (
+                dict(REDACTED_SECRET_SENTINEL)
+                if sensitive or _unsafe(classified)
+                else deepcopy(item)
+            )
+        elif key in {"properties", "patternProperties"} and isinstance(item, dict):
+            result[key] = {
+                name: _schema_annotations(
+                    definition,
+                    root,
+                    sensitive=sensitive or _is_secret_key(name),
+                    references=references,
+                    reference_results=reference_results,
+                )
+                for name, definition in item.items()
+            }
+        else:
+            result[key] = _schema_annotations(
+                item,
+                root,
+                sensitive=sensitive,
+                references=references,
+                reference_results=reference_results,
+            )
+    return result
 
-                        definition[annotation] = dict(REDACTED_SECRET_SENTINEL)
+
+def _structured_payloads(value: Any, *, path: tuple[Any, ...] = ()) -> Any:
+    """Do not put redaction markers inside executable opaque request strings."""
+    if isinstance(value, list):
+        return [
+            _structured_payloads(item, path=(*path, index))
+            for index, item in enumerate(value)
+        ]
+    if not isinstance(value, dict):
+        return value
+    if _is_function_tool_schema_root(path):
+        return _schema_annotations(value, value)
+    result = {}
+    for key, item in value.items():
         if key in {"payload", "payload_template"} and isinstance(item, str):
             try:
                 structured = json.loads(item)
             except ValueError, RecursionError:
                 pass  # Arbitrary reviewed source remains explicitly uncertain.
             else:
-                if _unsafe(redact_secrets(structured)):
-                    from .secret_redaction import REDACTED_SECRET_SENTINEL
-
+                if _unsafe(redact_secrets(structured, schema_roots=False)):
                     result[key] = dict(REDACTED_SECRET_SENTINEL)
                     continue
-        result[key] = _structured_payloads(item)
+        result[key] = _structured_payloads(item, path=(*path, key))
     return result
 
 

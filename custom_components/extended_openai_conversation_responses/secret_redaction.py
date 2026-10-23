@@ -177,6 +177,7 @@ def _redact_secrets(
     payload: bool = False,
     rule_action: bool = False,
     http_params: bool = False,
+    schema_roots: bool = True,
 ) -> Any:
     """Recursively redact secrets while tracking structural schema context."""
     if is_redacted_url(value):
@@ -206,13 +207,17 @@ def _redact_secrets(
                 action=action,
                 payload=payload,
                 http_params=http_params,
+                schema_roots=schema_roots,
             )
             for index, item in enumerate(value)
         ]
     if isinstance(value, str):
-        if not schema and path and path[-1] in {"resource", "url", "resource_template"}:
+        if not schema and (
+            (path and path[-1] in {"resource", "url", "resource_template"})
+            or (not schema_roots and value.lower().startswith(("http://", "https://")))
+        ):
             redacted_url = redact_http_url(
-                value, require_http=path[-1] == "resource_template"
+                value, require_http=bool(path and path[-1] == "resource_template")
             )
             if redacted_url is not None:
                 return redacted_url
@@ -231,7 +236,9 @@ def _redact_secrets(
             # rebuilds it from actions; exporting it would duplicate credentials.
             continue
         child_path = (*path, key)
-        child_schema = schema or _is_function_tool_schema_root(child_path)
+        child_schema = schema or (
+            schema_roots and _is_function_tool_schema_root(child_path)
+        )
         secret_key = _is_payload_secret_key(key) if payload else _is_secret_key(key)
         http_cookie = (
             path
@@ -278,15 +285,25 @@ def _redact_secrets(
                 and value.get("type") in ("rest", "scrape")
                 and key == "params"
             ),
+            schema_roots=schema_roots,
         )
     return result
 
 
-def redact_secrets(value: Any, *, schema: bool = False) -> Any:
+def redact_secrets(
+    value: Any, *, schema: bool = False, schema_roots: bool = True
+) -> Any:
     """Redact credential values without deleting their surrounding keys/structure."""
-    redacted = _redact_secrets(decoded_function_fields(value), schema=schema, path=())
+    redacted = _redact_secrets(
+        decoded_function_fields(value) if schema_roots else value,
+        schema=schema,
+        path=(),
+        schema_roots=schema_roots,
+    )
     return (
-        json_safe_function_fields(redacted) if isinstance(redacted, dict) else redacted
+        json_safe_function_fields(redacted)
+        if schema_roots and isinstance(redacted, dict)
+        else redacted
     )
 
 
