@@ -35,3 +35,14 @@ assert.match(requestRulesGuide, /response_variable stay within the action sequen
 assert.match(requestRulesGuide, /Newly created rules start enabled/);
 assert.match(requestRulesGuide, /groups only help organise and filter rules/i);
 assert.doesNotMatch(requestRulesGuide, /Home Assistant sentence patterns|Hassil sentence format/);
+
+
+const {GUIDE_TOPICS} = await import("../custom_components/extended_openai_conversation_responses/frontend/guide-content.js");
+const backupPrivacyTopics = GUIDE_TOPICS.filter(topic => /privacy|backup/.test(topic.id));
+assert.equal(backupPrivacyTopics.length, 2);
+for (const topic of backupPrivacyTopics) {
+  const text = topic.body.map(block => block.text || "").join(" ");
+  assert.match(text, /include provider (?:connection settings and API |API )credentials/i);
+  assert.match(text, /not encrypted/);
+  assert.doesNotMatch(text, /credentials.*(?:are excluded|are not included)/);
+}

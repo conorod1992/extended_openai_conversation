@@ -53,7 +53,7 @@ Home Assistant Assist exposure determines which normal entities are available to
 
 When model processing is needed, relevant request text, prompts/context, tool definitions and retrieved memory or Knowledge content may be sent to the provider you configure. Provider-side retention and processing are governed by that provider's policies.
 
-Memories, Knowledge Library content, Request Rules, optional archived conversations, usage data and related integration state are stored locally in Home Assistant. Full backup files can contain sensitive retained data even though provider credentials are excluded, so treat them as private.
+Memories, Knowledge Library content, Request Rules, optional archived conversations, usage data and related integration state are stored locally in Home Assistant. Private full backups include provider connection settings and API credentials alongside sensitive retained data. They are not encrypted: store them securely and use redacted Shareable Setup exports when sharing configuration.
 
 ## Reliability
 
