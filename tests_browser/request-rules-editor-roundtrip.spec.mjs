@@ -1,5 +1,5 @@
 import {expect, test} from "@playwright/test";
-import {expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
+import {acceptSharingReview, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
 const panelFor = (page) => page.locator("extended-openai-management-panel");
 
@@ -280,7 +280,9 @@ for (const bundled of [false, true]) {
     await expect(panel.locator("#rule-sharing")).toHaveJSProperty("open", true);
     expect(await panel.locator("#rule-pack-file").evaluate(input => input.files[0].name)).toBe("group-pack.json");
     const download = page.waitForEvent("download");
+    await panel.locator("#rule-pack-reviewed-custom").check();
     await panel.locator("#rule-pack-export").click();
+    await acceptSharingReview(panel);
     await download;
     const request = await page.evaluate(() => browserHarness.calls.filter(call => call.action === "rule_pack_export").at(-1));
     expect(request.group_id).toBe(groupId);

@@ -1,7 +1,7 @@
 // Register dependent cross-feature journeys in the established real-HA browser CI lane.
 import {registerDependentJourneys} from "./real-ha-dependent-journeys.mjs";
 import {expect, test} from "@playwright/test";
-import {acceptConfirmation, browserToolYaml, expectHarnessClean, trackPageErrors} from "./browser-helpers.mjs";
+import {acceptConfirmation, acceptSharingReview, browserToolYaml, expectHarnessClean, trackPageErrors} from "./browser-helpers.mjs";
 import {expectContractCalls} from "./real-ha-contract.mjs";
 
 const backendUrl = process.env.REAL_HA_BACKEND_URL;
@@ -290,7 +290,9 @@ test("real browser exports, reviews, and imports a Request Rule Pack through HA"
 
   await panel.locator("#rule-sharing summary").click();
   const downloadPromise = page.waitForEvent("download");
+  await panel.locator("#rule-pack-reviewed-custom").check();
   await panel.locator("#rule-pack-export").click();
+  await acceptSharingReview(panel);
   const download = await downloadPromise;
   const packPath = await download.path();
   expect(packPath).toBeTruthy();

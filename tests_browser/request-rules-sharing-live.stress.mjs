@@ -1,6 +1,6 @@
 import {expect, test} from "@playwright/test";
 import {readFile} from "node:fs/promises";
-import {acceptConfirmation, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
+import {acceptConfirmation, acceptSharingReview, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
 const panelFor = (page) => page.locator("extended-openai-management-panel");
 const RULE_PACK_FORMAT = "extended_openai_request_rule_pack";
@@ -102,7 +102,9 @@ test("nightly Rule Pack UI rejects malformed and oversized files, preserves revi
   await panel.locator("#rule-pack-export").click();
   await panel.locator("#rule-pack-rule-list label").filter({hasText:"Nightly shared first"}).locator("input").check();
   const downloadPromise = page.waitForEvent("download");
+  await panel.locator("#rule-pack-reviewed-custom").check();
   await panel.locator("#rule-pack-select-done").click();
+  await acceptSharingReview(panel);
   const download = await downloadPromise;
   const exported = JSON.parse(await readFile(await download.path(), "utf8"));
   expect(exported.format).toBe(RULE_PACK_FORMAT);

@@ -184,9 +184,14 @@ def project_configuration(
             if not _unsafe(candidate):
                 result[key] = deepcopy(candidate)
             else:
-                record_omission(summary, "configuration_field")
+                record_omission(summary, key)
         elif key != "functions":
-            record_omission(summary, "configuration_field")
+            record_omission(
+                summary,
+                key
+                if key in AGENT_CONFIG_FIELDS
+                else "unclassified_configuration_field",
+            )
     tools = decoded.get("functions", [])
     if isinstance(tools, list):
         candidates = redacted.get("functions", []) if reviewed else []
@@ -195,7 +200,7 @@ def project_configuration(
             if reviewed and candidate is not None and not _unsafe(candidate):
                 result["functions"].append(deepcopy(candidate))
             else:
-                record_omission(summary, "function_tool")
+                record_omission(summary, f"function_tool_{index + 1}")
         if len(result["functions"]) != len(tools):
             result["function_groups"] = []
     elif tools:

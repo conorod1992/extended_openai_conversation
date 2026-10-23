@@ -1,4 +1,4 @@
-export const BACKUP_CREDENTIAL_WARNING = "Recognised API keys, tokens, passwords, authorization headers and other common secrets are redacted from full backups. Re-enter any required credentials after restore. Redaction is best-effort, so review backup files before sharing them.";
+export const BACKUP_CREDENTIAL_WARNING = "New private backups preserve credentials exactly and are not encrypted. Keep them private. Older redacted backups may require credential re-entry. Restoring a shared provider connection requires a separate explicit choice.";
 
 export function baseBackupSummaryLines(summary = {}) {
   return [
@@ -14,5 +14,8 @@ export function baseBackupSummaryLines(summary = {}) {
 }
 
 export function backupSummaryLines(summary) {
+  if (summary?.security) return [...baseBackupSummaryLines(summary), SHARING_CONTRACT, sharingSummary(summary.security)];
   return [...baseBackupSummaryLines(summary), BACKUP_CREDENTIAL_WARNING];
 }
+import {SHARING_CONTRACT, sharingSummary} from "./sharing-review.js";
+
