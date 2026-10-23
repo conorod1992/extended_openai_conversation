@@ -985,7 +985,7 @@ function editableFunctionGroup(panel, groupId) {
   return usable || (Array.isArray(raw) ? raw.find(item => item && item.id === groupId) : null);
 }
 
-function openFunctionGroup(panel, groupId = null, repair = false) {
+export function openFunctionGroup(panel, groupId = null, repair = false) {
   const root=panel.shadowRoot;
   const group=editableFunctionGroup(panel, groupId);
   panel._groupOriginalId=group?.id??null;

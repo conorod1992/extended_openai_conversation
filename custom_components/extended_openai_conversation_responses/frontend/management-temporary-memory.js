@@ -126,7 +126,7 @@ function temporaryDialog(panel) {
   </dialog>`;
 }
 
-function openTemporaryMemory(panel, memoryId) {
+export function openTemporaryMemory(panel, memoryId) {
   const memory = (panel._result?.memories || []).find((item) => item.memory_id === memoryId);
   if (!memory) return;
   panel._ensureOwnedDialog("temporary-memory-dialog");
