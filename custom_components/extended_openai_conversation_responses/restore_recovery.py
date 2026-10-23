@@ -476,10 +476,14 @@ async def _update_configuration(
     # configuration through the normal live-update path instead of starting an
     # unowned entry reload while exclusive recovery is still settling.
     if not configuration_supports_live_update(
-        # Current data is persisted; the candidate is already decoded/prepared.
-        # A raw legacy [] must not look like an empty edit and force a reload.
+        # Interpret authoritative private data as persisted on both sides.
+        # A raw legacy [] must not look like a decoded empty edit and reload.
         backup.private_configuration_snapshot(subentry.data),
-        backup.recoverable_configuration_snapshot(prepared.config),
+        (
+            backup.private_configuration_snapshot(prepared.config)
+            if prepared.authoritative_config
+            else backup.recoverable_configuration_snapshot(prepared.config)
+        ),
         title_changed=subentry.title != prepared.title,
     ):
         hass.data.setdefault(f"{DOMAIN}.restore_reload_pending", set()).add(

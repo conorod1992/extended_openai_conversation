@@ -15,6 +15,9 @@ from custom_components.extended_openai_conversation_responses.const import (
 from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
     tool_result_data,
 )
+from custom_components.extended_openai_conversation_responses.public_errors import (
+    SanitizedUnexpectedBackendError,
+)
 from homeassistant.components import conversation
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers import llm
@@ -143,7 +146,7 @@ async def test_native_add_automation_validates_reloads_and_triggers_once(
         "triggers": [{"trigger": "event"}],
         "actions": added["actions"],
     }
-    with pytest.raises(vol.Invalid):
+    with pytest.raises(SanitizedUnexpectedBackendError):
         await _call_tool(hass, agent, user, yaml.safe_dump(invalid))
     assert automation_file.read_bytes() == before_invalid
     hass.bus.async_fire("new_acceptance_event")
