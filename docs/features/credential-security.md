@@ -12,6 +12,8 @@ No combination of key-name rules, regular expressions or entropy checks can dist
 
 Schema property definitions remain structural, but defaults, examples, enum values and constants are checked as instance data. Sensitive property classification follows composed schemas and bounded local references. Unresolved or recursive sensitive references cause the coherent tool to be omitted rather than being fetched or guessed safe. This does not certify arbitrary custom annotations or source strings as secret-free.
 
+Static `$ref` targets can be checked through bounded local pointers. Sensitive `$dynamicRef` and `$recursiveRef` scopes cannot be established by that check, so the containing tool is omitted from reviewed sharing. Non-sensitive references remain portable, and all three reference URI forms are checked for recognized query credentials and user information, including relative references. The accepted singular `example` annotation is checked as instance data too. These sharing restrictions do not change the live tool or private backup.
+
 Only the configured Function's actual parameter schema receives structural exemptions. Script variables, Rule action data and other instance payloads stay data even when they contain keys such as `functions`, `spec` and `parameters`. Credential-bearing units are omitted from sharing; private backups retain the complete original values.
 
 New sharing documents and Rule Packs use version 2. Historical version 1 imports remain supported. All production sharing writers use the same policy. Unsupported future fields are omitted by default; adding a provider-specific pattern is only an additional defense.

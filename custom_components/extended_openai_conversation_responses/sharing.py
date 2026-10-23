@@ -10,6 +10,7 @@ from copy import deepcopy
 import json
 import math
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from .function_yaml import decoded_function_fields
 from .model_catalog import BUNDLED_CATALOG
@@ -23,6 +24,7 @@ from .secret_redaction import (
 )
 
 SHARING_VERSION = 2
+_SCHEMA_REFERENCES = frozenset({"$ref", "$dynamicRef", "$recursiveRef"})
 SECURITY_CONTRACT = (
     "Shareable exports exclude designated credentials and unclassified custom "
     "content by default, and check included content for recognized secret patterns. "
@@ -122,6 +124,35 @@ def _unsafe(value: Any) -> bool:
     )
 
 
+def _schema_reference_uri(value: Any) -> Any:
+    """Check all URI-reference forms with the shared HTTP credential policy.
+
+    Relative, network-path and custom-scheme references can carry the same
+    query credentials as HTTP URLs. The synthetic scheme/authority is used only
+    for classification, never resolution, transport or the exported value.
+    """
+    if not isinstance(value, str):
+        return dict(REDACTED_SECRET_SENTINEL)
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return dict(REDACTED_SECRET_SENTINEL)
+    candidate = urlunsplit(
+        (
+            "https",
+            parsed.netloc or "schema.invalid",
+            parsed.path,
+            parsed.query,
+            parsed.fragment,
+        )
+    )
+    return (
+        dict(REDACTED_SECRET_SENTINEL)
+        if redact_http_url(candidate) is not None
+        else value
+    )
+
+
 def _schema_annotations(
     value: Any,
     root: Any,
@@ -146,6 +177,10 @@ def _schema_annotations(
         ]
     if not isinstance(value, dict):
         return value
+    if sensitive and any(key in value for key in _SCHEMA_REFERENCES - {"$ref"}):
+        # Dynamic/recursive scope cannot be proved by following a local pointer.
+        # Keep the live/private definition intact; omit its public review unit.
+        return dict(REDACTED_SECRET_SENTINEL)
     if sensitive and "$ref" in value:
         reference = value["$ref"]
         target = root
@@ -178,13 +213,9 @@ def _schema_annotations(
             return dict(REDACTED_SECRET_SENTINEL)
     result = {}
     for key, item in value.items():
-        if (
-            key == "$ref"
-            and isinstance(item, str)
-            and item.lower().startswith(("http://", "https://"))
-        ):
-            result[key] = redact_http_url(item) or item
-        elif key in {"default", "examples", "enum", "const"}:
+        if key in _SCHEMA_REFERENCES:
+            result[key] = _schema_reference_uri(item)
+        elif key in {"default", "example", "examples", "enum", "const"}:
             # Instance data cannot acquire schema exemptions by using keys such
             # as functions/spec/parameters. No user content is executed here.
             classified = _structured_payloads(redact_secrets(item, schema_roots=False))

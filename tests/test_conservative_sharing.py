@@ -84,7 +84,7 @@ def test_reviewed_innocent_custom_tool_and_schema_are_portable(hass):
     assert summary["review_required"] is True
 
 
-@pytest.mark.parametrize("annotation", ["default", "examples", "enum", "const"])
+@pytest.mark.parametrize("annotation", ["default", "example", "examples", "enum", "const"])
 @pytest.mark.parametrize("nested", [False, True])
 @pytest.mark.parametrize("format", ["setup", "configuration"])
 def test_schema_instance_annotations_cannot_retain_designated_credentials(
