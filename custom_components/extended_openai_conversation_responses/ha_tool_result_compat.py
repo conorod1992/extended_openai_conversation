@@ -21,6 +21,10 @@ class ExecutionFailure(ToolResultPayload):
     """Failure provenance that preserves the existing JSON/local dictionary shape."""
 
 
+class BackendExecutionFailure(ExecutionFailure):
+    """Backend-owned diagnostic prose; retain locally, contain at the model boundary."""
+
+
 def make_tool_result_content(
     *,
     agent_id: str,

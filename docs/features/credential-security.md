@@ -26,6 +26,6 @@ Optional password protection is a follow-up, not part of this implementation. It
 
 ## Errors, logs and support information
 
-Template and arbitrary backend exception prose is excluded from public tool errors; safe failure categories and guidance remain. Provider errors expose status/category/remediation rather than arbitrary remote messages or IDs. REST execution uses a bounded transport adapter that preserves the actual request while avoiding the inherited HA logger's credential-bearing URL messages.
+Template and arbitrary backend exception prose is excluded from public tool errors; safe failure categories and guidance remain. Backend-owned returned failure diagnostics are also contained at provider serialization, including nested batch results; ordinary successful business data and local dataflow retain their existing semantics. Provider errors expose status/category/remediation rather than arbitrary remote messages or IDs. REST execution uses a bounded transport adapter that preserves the actual request while avoiding the inherited HA logger's credential-bearing URL and response-body messages.
 
 Normal diagnostics remain allowlisted. Administrator request debugging remains opt-in, transient and potentially private: it may contain prompts, arguments, results and provider material. Do not treat debug captures or copied logs as shareable setups. Administrator access to their own configuration remains available.

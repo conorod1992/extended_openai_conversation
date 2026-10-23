@@ -11,6 +11,7 @@ from typing import Any
 import orjson
 
 from .ha_tool_result_compat import (
+    BackendExecutionFailure,
     ExecutionFailure,
     ToolResultPayload,
     is_tool_result_content,
@@ -121,7 +122,7 @@ def _project_tool_payload(payload: Any, *, error: bool = False) -> Any:
     # dict subclasses with an iterator, incompatible with its value constructor.
     if owned or projected is not value:
         if owned:
-            projected = compact_tool_json(projected)
+            projected = compact_tool_json(_public_backend_failures(projected))
         return {**payload, "result": projected}
     return payload
 
@@ -185,12 +186,38 @@ def _prepare_tool_result(content: Any) -> tuple[Any, bool, str, bool]:
             payload = {"result": _overflow_result(error=error)}
     elif len(compact_tool_json(payload)) > MAX_MODEL_TOOL_RESULT_CHARACTERS:
         payload = _overflow_result(error=error)
+    payload = _public_backend_failures(payload)
     wire = orjson.dumps(payload, option=orjson.OPT_SORT_KEYS).decode()
     changed = payload is not retained
     if isinstance(retained, dict):
         retained = ExecutionFailure(retained) if error else ToolResultPayload(retained)
         retained.model_wire = wire
     return retained, error, wire, changed
+
+
+def _public_backend_failures(value: Any) -> Any:
+    """Contain only producer-owned failure prose, never infer from business keys."""
+    from .public_errors import SanitizedBackendError
+
+    if isinstance(value, BackendExecutionFailure):
+        return {"error": str(SanitizedBackendError())}
+    if isinstance(value, dict):
+        projected = {key: _public_backend_failures(item) for key, item in value.items()}
+        # Explicit integration-owned JSON retains its parsed value for this
+        # boundary. Its string representation must be rebuilt after projection.
+        if isinstance(value, OwnedJSONPayload):
+            return {"result": compact_tool_json(_public_backend_failures(value.value))}
+        return (
+            projected
+            if any(projected[key] is not item for key, item in value.items())
+            else value
+        )
+    if isinstance(value, (list, tuple)):
+        items = [_public_backend_failures(item) for item in value]
+        if all(projected is item for projected, item in zip(items, value, strict=True)):
+            return value
+        return tuple(items) if isinstance(value, tuple) else items
+    return value
 
 
 def serialize_model_tool_result(content: Any) -> str:

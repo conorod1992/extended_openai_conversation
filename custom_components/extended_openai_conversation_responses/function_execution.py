@@ -17,7 +17,7 @@ from homeassistant.helpers import llm
 
 from .exceptions import EffectReplayBlocked, FunctionValidationInfrastructureError
 from .function_tool_recovery import strict_execution_failures_enabled
-from .ha_tool_result_compat import ExecutionFailure
+from .ha_tool_result_compat import BackendExecutionFailure
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ def backend_failure(message: str, cause: Exception | None = None) -> dict[str, s
         if isinstance(cause, HomeAssistantError):
             raise cause
         raise HomeAssistantError(message) from cause
-    return ExecutionFailure(error=message)
+    return BackendExecutionFailure(error=message)
 
 
 _JSON_TYPES = {"array", "boolean", "integer", "null", "number", "object", "string"}

@@ -53,6 +53,55 @@ async def execute_configured(hass, exposed_entities, name, arguments):
 
 
 @pytest.mark.parametrize("batch", [False, True])
+async def test_small_native_failure_diagnostics_are_private_on_both_wires(
+    hass, exposed_entities, wire_result, batch
+):
+    secret = "unfamiliar private backend credential 42"
+    hass.services.async_call.side_effect = HomeAssistantError(secret)
+    argument = {
+        "domain": "light",
+        "service": "turn_on",
+        "service_data": {"entity_id": "light.living_room"},
+    }
+    content = await execute_configured(
+        hass,
+        exposed_entities,
+        "execute_service" if batch else "execute_service_single",
+        {"list": [argument]} if batch else argument,
+    )
+    retained = deepcopy(tool_result_data(content))
+    assert secret in json.dumps(retained)  # Local diagnostics remain complete.
+    for result in (content, await project_tool_result(content, prepare_wire=True)):
+        public = json.dumps(wire_result(result))
+        assert secret not in public
+        assert "Check the tool configuration and permissions" in public
+    assert tool_result_data(content) == retained
+
+
+@pytest.mark.parametrize("owned", [False, True])
+async def test_nested_marked_failure_is_contained_without_rewriting_business_data(
+    wire_result, owned
+):
+    secret = "unfamiliar private backend credential 42"
+    value = {
+        "items": [{"nested": backend_failure(secret)}],
+        "business": {"error": "legitimate result"},
+    }
+    content = make_tool_result_content(
+        agent_id="probe",
+        tool_call_id="nested",
+        tool_name="native",
+        tool_result=OwnedJSONPayload(value) if owned else {"result": value},
+    )
+    for result in (content, await project_tool_result(content, prepare_wire=True)):
+        payload = wire_result(result)["result"]
+        payload = json.loads(payload) if isinstance(payload, str) else payload
+        assert secret not in json.dumps(payload)
+        assert payload["business"] == {"error": "legitimate result"}
+    assert value["items"][0]["nested"]["error"] == secret
+
+
+@pytest.mark.parametrize("batch", [False, True])
 async def test_native_handled_failures_survive_both_model_boundaries(
     hass, exposed_entities, wire_result, batch
 ):
