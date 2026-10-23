@@ -99,6 +99,25 @@
         "#usage-request-retry"
       ],
       "browser_spec": "tests_browser/usage-request-pagination.spec.mjs"
+    },
+    {
+      "source": "sharing-review.js",
+      "reason": "Sharing review and explicit acknowledgement before download",
+      "selectors": [
+        "[data-artifact]",
+        "[data-ack]",
+        "[data-download]",
+        "[data-cancel]"
+      ],
+      "browser_spec": "tests_browser/sharing-security.spec.mjs"
+    },
+    {
+      "source": "backup-transfer-ui.js",
+      "reason": "Optional shared-provider credential restoration in private backups",
+      "selectors": [
+        "#restore-provider-connection"
+      ],
+      "browser_spec": "tests_browser/sharing-security.spec.mjs"
     }
   ]
 }
