@@ -36,6 +36,7 @@ from .parallel_tool_execution import (
     async_execute_parallel_safe_batch_outcomes,
     resolve_parallel_safe_batch,
 )
+from .public_errors import sanitize_backend_error
 from .tool_replay_guard import (
     bind_dispatch_origin,
     was_unacknowledged_equivalent,
@@ -47,8 +48,11 @@ _MAX_ERROR_TEXT = 512
 
 def _error_text(error: BaseException | None) -> str:
     """Return a bounded model-visible description for a failed exchange."""
-    if error is None:
+    if error is None or not isinstance(error, Exception):
         return "Tool execution was interrupted before completion"
+    # History repair is a last public boundary, including non-HA dependency
+    # failures and errors escaping callers outside the backend adapter.
+    error = sanitize_backend_error(error)
     name = type(error).__name__
     detail = str(error).strip()
     text = f"{name}: {detail}" if detail else name

@@ -203,8 +203,7 @@ async def test_dirty_session_recovers_across_ha_failure_config_mutation_and_relo
 
     assert failed.response.error_code is not None
     failed_speech = failed.response.as_dict()["speech"]["plain"]["speech"]
-    assert entity_b in failed_speech
-    assert "unavailable" in failed_speech
+    assert "Check the tool configuration and permissions" in failed_speech
     assert ha_tool.attempts == [entity_a, entity_b]
     assert ha_tool.calls == [entity_a]
     assert len(failing_wire.requests) == 1

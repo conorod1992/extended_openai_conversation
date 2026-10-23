@@ -53,7 +53,7 @@ def sanitize_backend_error(error: BaseException) -> BaseException:
         )
     if isinstance(error, FunctionResponseParseError):
         return FunctionResponseParseError("REST response parsing failed")
-    if isinstance(error, HomeAssistantError):
+    if isinstance(error, Exception):
         return SanitizedBackendError()
     return error
 

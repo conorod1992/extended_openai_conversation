@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from functools import wraps
+import logging
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -382,6 +383,11 @@ async def execute_backend(
 
             public_error = sanitize_backend_error(error)
             if public_error is not error:
+                from .operational_errors import log_handled_failure
+
+                log_handled_failure(
+                    logging.getLogger(__name__), "Function backend failed", error
+                )
                 raise public_error from None
             raise
         if not owns_receipts:

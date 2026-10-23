@@ -181,7 +181,7 @@ class LiveTool:
                     tool_name=self.tool.name, tool_args=original_args, id=tool_input.id
                 )
             )
-        except HomeAssistantError as error:
+        except Exception as error:
             # HA-owned implementations can echo private configuration too.
             # Keep flagged data private until the shared model-result boundary.
             if isinstance(error, HAToolResultError):
@@ -190,6 +190,9 @@ class LiveTool:
 
             public = sanitize_backend_error(error)
             if public is not error:
+                from .operational_errors import log_handled_failure
+
+                log_handled_failure(_LOGGER, "HA tool backend failed", error)
                 raise public from None
             raise
         execution_completed(receipt)

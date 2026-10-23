@@ -157,13 +157,19 @@ def test_settled_and_foreign_receipts_cannot_be_changed():
 
 
 async def test_validation_failure_cannot_reject_previous_unknown_child():
+    from custom_components.extended_openai_conversation_responses.public_errors import (
+        SanitizedBackendError,
+    )
+
     entity, call = SimpleNamespace(), _call("first", "effect")
     function = SimpleNamespace(
         execute=AsyncMock(side_effect=ValueError("invalid child"))
     )
     with receipts.execution_attempt(entity, call, _tool()):
         unknown = receipts.execution_started()
-        with pytest.raises(ValueError, match="invalid child"):
+        with pytest.raises(
+            SanitizedBackendError, match="Check the tool configuration and permissions"
+        ):
             await receipts.execute_backend(function, None, NATIVE, {}, None, [])
         assert unknown.outcome == "uncertain"
     assert [r.outcome for r in entity._execution_effect_receipts[id(call)]] == [
@@ -834,7 +840,10 @@ async def test_nested_provider_exchange_overrides_independent_ownership(
             # The nested conversation owns the error, as its request boundary
             # does when the local caller propagates Function execution failures.
             assert handler_failure
-            assert str(err) == "Function execution failed. Check the tool configuration and permissions."
+            assert (
+                str(err)
+                == "Function execution failed. Check the tool configuration and permissions."
+            )
 
     try:
         if source == "local_rule":

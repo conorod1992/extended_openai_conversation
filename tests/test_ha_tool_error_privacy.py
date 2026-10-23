@@ -34,13 +34,14 @@ from .test_model_tool_result_boundary import wire_result  # noqa: F401
 
 
 @pytest.mark.parametrize(
-    "failure", ["template", "raised", "flagged", "typed_flagged", "success"]
+    "failure",
+    ["template", "raised", "dependency", "flagged", "typed_flagged", "success"],
 )
 @pytest.mark.parametrize("strict", [False, True])
 async def test_ha_private_failure_on_both_wires(
     hass,
-    result_type,  # noqa: F811
-    wire_result,  # noqa: F811
+    result_type,
+    wire_result,
     failure,
     strict,
 ):
@@ -59,6 +60,8 @@ async def test_ha_private_failure_on_both_wires(
                 )
             if failure == "raised":
                 raise HomeAssistantError("Remote backend password=" + secret)
+            if failure == "dependency":
+                raise ValueError("Remote backend password=" + secret)
             return result_type(data=data, error=failure != "success")
 
     tool = FailingTool()
