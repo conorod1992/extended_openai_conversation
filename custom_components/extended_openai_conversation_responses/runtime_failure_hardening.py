@@ -23,6 +23,7 @@ from .provider_errors import (
     provider_user_message,
     request_reauthentication,
 )
+from .public_errors import sanitize_template_error
 
 _LOGGER = logging.getLogger(__name__)
 _USE_INPUT_CONVERSATION_ID = object()
@@ -44,6 +45,7 @@ def _conversation_error_result(
         stream_error = ProviderTransportError("Provider stream interrupted")
         stream_error.__cause__ = err
         err = stream_error
+    err = sanitize_template_error(err)
     active_logger = logger or _LOGGER
     entry_id = getattr(getattr(entity, "entry", None), "entry_id", "unknown")
     subentry = getattr(entity, "subentry", None)

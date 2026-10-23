@@ -367,7 +367,7 @@ async def execute_backend(
         receipt = None if owns_receipts else execution_started()
         try:
             result = await function.execute(hass, config, arguments, context, exposed)
-        except BaseException:
+        except BaseException as error:
             if attempt is not None and (
                 len(attempt.receipts) == before
                 or all(
@@ -375,6 +375,11 @@ async def execute_backend(
                 )
             ):
                 execution_rejected(before_dispatch=True)
+            from .public_errors import sanitize_template_error
+
+            public_error = sanitize_template_error(error)
+            if public_error is not error:
+                raise public_error from None
             raise
         if not owns_receipts:
             execution_completed(receipt)
