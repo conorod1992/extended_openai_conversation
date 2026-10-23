@@ -48,6 +48,7 @@ from .secret_redaction import (
     redact_secrets,
     restore_redacted_secrets,
 )
+from .sharing import SHARING_VERSION, project_configuration, project_rules
 from .temporary_memory import TemporaryMemoryRecord, async_get_temporary_memory
 from .usage import UsageRequest, UsageRun, UsageTotals, async_get_usage
 
@@ -127,6 +128,7 @@ class PreparedTransfer:
     raw_configuration: Any = None
     raw_request_rules: Any = None
     redacted_sensitive_fields: tuple[str, ...] = ()
+    security: dict[str, Any] | None = None
 
     def summary(self) -> dict[str, Any]:
         """Return a bounded, frontend-friendly description of available content."""
@@ -161,6 +163,7 @@ class PreparedTransfer:
             "integration_version": self.integration_version,
             "redacted_sensitive_fields": list(self.redacted_sensitive_fields[:50]),
             "redacted_sensitive_field_count": len(self.redacted_sensitive_fields),
+            "security": self.security,
         }
 
 
@@ -449,7 +452,7 @@ def _safe_title(title: str) -> str:
 def _new_transfer_document(entry: Any, subentry: Any, mode: str) -> dict[str, Any]:
     return {
         "format": TRANSFER_FORMAT,
-        "version": TRANSFER_VERSION,
+        "version": SHARING_VERSION if mode == "setup" else TRANSFER_VERSION,
         "mode": mode,
         "created_at": dt_util.utcnow().isoformat(),
         "integration_version": _integration_version(),
@@ -570,11 +573,36 @@ def redact_transfer_document(document: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def finalize_setup_export(document: dict[str, Any]) -> dict[str, Any]:
+def finalize_setup_export(
+    document: dict[str, Any], *, reviewed: bool = False
+) -> dict[str, Any]:
     """Serialize a lightweight shareable setup document."""
     try:
         check_redaction_budget(document, backup.MAX_LEGACY_EXPORT_BYTES)
-        redacted = redact_transfer_document(document)
+        if document.get("version") == SHARING_VERSION:
+            configuration, security = project_configuration(
+                document["sections"][SECTION_CONFIGURATION], reviewed=reviewed
+            )
+            redacted = {
+                **document,
+                "agent": {
+                    "title": "Shared conversation agent",
+                    "source_entry_id": "shared-entry",
+                    "source_subentry_id": "shared-agent",
+                },
+                "sections": {
+                    SECTION_CONFIGURATION: configuration,
+                    SECTION_REQUEST_RULES: project_rules(
+                        document["sections"][SECTION_REQUEST_RULES],
+                        security,
+                        reviewed=reviewed,
+                    ),
+                },
+                "security": security,
+            }
+        else:
+            # Explicit legacy v1 semantics retained for old clients/fixtures.
+            redacted = redact_transfer_document(document)
         serialized = bounded_json_dumps(redacted, backup.MAX_LEGACY_EXPORT_BYTES)
     except JSONBudgetExceeded as err:
         raise backup.BackupError(
@@ -586,13 +614,14 @@ def finalize_setup_export(document: dict[str, Any]) -> dict[str, Any]:
         "document": redacted,
         "json": serialized,
         "filename": f"{_safe_title(title)}-shareable-setup-{date}.json",
+        "security": redacted.get("security"),
         "mode": "setup",
         "sections": list(SECTION_ORDER[:2]),
     }
 
 
 async def async_create_setup_export(
-    hass: HomeAssistant, entry: Any, subentry: Any
+    hass: HomeAssistant, entry: Any, subentry: Any, *, reviewed: bool = False
 ) -> dict[str, Any]:
     """Build a lightweight, redacted setup-sharing document."""
     from .agent_maintenance import get_agent_maintenance_gate
@@ -602,7 +631,7 @@ async def async_create_setup_export(
         document = await async_collect_transfer_snapshot(
             hass, entry, subentry, mode="setup"
         )
-    return await asyncio.to_thread(finalize_setup_export, document)
+    return await asyncio.to_thread(finalize_setup_export, document, reviewed=reviewed)
 
 
 def _secret_path(path: tuple[Any, ...]) -> str:
@@ -871,9 +900,11 @@ def _validate_transfer_document(
         "agent",
         "sections",
     }
+    if value.get("version") == SHARING_VERSION and value.get("mode") == "setup":
+        expected.add("security")
     if set(value) != expected:
         raise backup.BackupError("The transfer file is incomplete or corrupted")
-    if value.get("version") != TRANSFER_VERSION:
+    if value.get("version") not in {TRANSFER_VERSION, SHARING_VERSION}:
         version = value.get("version")
         if isinstance(version, int) and version > TRANSFER_VERSION:
             raise backup.BackupError(
@@ -903,6 +934,7 @@ def _validate_transfer_document(
         available_sections=available,
         created_at=created_at,
         integration_version=integration_version,
+        security=value.get("security"),
     )
     redacted: list[str] = []
     try:
@@ -966,9 +998,9 @@ def _validate_transfer_document(
 def _inspect_legacy_setup(
     value: Mapping[str, Any], *, inspect_only: bool = False
 ) -> PreparedTransfer:
-    if value.get("version") != AGENT_CONFIG_EXPORT_VERSION:
+    if value.get("version") not in {AGENT_CONFIG_EXPORT_VERSION, SHARING_VERSION}:
         raise backup.BackupError("This setup export uses an unsupported version")
-    unknown = set(value) - {"schema", "version", "title", "config"}
+    unknown = set(value) - {"schema", "version", "title", "config", "security"}
     if unknown:
         raise backup.BackupError(
             "The setup export contains unknown fields: " + ", ".join(sorted(unknown))
@@ -1001,6 +1033,7 @@ def _inspect_legacy_setup(
         config=config,
         raw_configuration=deepcopy(raw_config),
         redacted_sensitive_fields=redacted,
+        security=value.get("security"),
     )
 
 

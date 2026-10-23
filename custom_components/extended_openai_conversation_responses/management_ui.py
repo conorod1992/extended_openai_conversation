@@ -451,16 +451,20 @@ def _redact_export_secrets(value: Any, *, schema: bool = False) -> Any:
     return redact_secrets(value, schema=schema)
 
 
-def _export_agent(subentry) -> dict[str, Any]:
-    """Build a versioned configuration document with best-effort redaction."""
+def _export_agent(subentry, *, reviewed: bool = False) -> dict[str, Any]:
+    """Build a conservative, versioned public configuration projection."""
+    from .sharing import SHARING_VERSION, project_configuration
+
     snapshot = project_agent_config_transfer(
         dict(subentry.data), agent_config_snapshot(dict(subentry.data))
     )
+    config, security = project_configuration(snapshot, reviewed=reviewed)
     return {
         "schema": "extended_openai_conversation.agent",
-        "version": AGENT_CONFIG_EXPORT_VERSION,
-        "title": subentry.title,
-        "config": _redact_export_secrets(snapshot),
+        "version": SHARING_VERSION,
+        "title": "Shared conversation agent",
+        "config": config,
+        "security": security,
     }
 
 
@@ -474,9 +478,9 @@ def _parse_import_document(value: Any, *, destination: Any = None) -> dict[str, 
         raise AgentConfigError("document", "must be an object")
     if value.get("schema") != "extended_openai_conversation.agent":
         raise AgentConfigError("schema", "unsupported or missing export schema")
-    if value.get("version") != AGENT_CONFIG_EXPORT_VERSION:
+    if value.get("version") not in {AGENT_CONFIG_EXPORT_VERSION, 2}:
         raise AgentConfigError("version", "unsupported export version")
-    unknown = set(value) - {"schema", "version", "title", "config"}
+    unknown = set(value) - {"schema", "version", "title", "config", "security"}
     if unknown:
         raise AgentConfigError(
             "document", "unknown fields: " + ", ".join(sorted(unknown))
@@ -1764,7 +1768,9 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             "title": duplicate.title,
         }
     if action == "export":
-        document = _export_agent(subentry)
+        document = _export_agent(
+            subentry, reviewed=message.get("reviewed_custom") is True
+        )
         return {
             "document": document,
             "json": json.dumps(document, indent=2, ensure_ascii=False),
@@ -3302,6 +3308,7 @@ def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
         vol.Optional("enabled"): bool,
         vol.Optional("yaml"): str,
         vol.Optional("document"): vol.Any(str, dict),
+        vol.Optional("reviewed_custom"): bool,
         vol.Optional("sample_text"): str,
         vol.Optional("mode"): str,
         vol.Optional("subject"): str,

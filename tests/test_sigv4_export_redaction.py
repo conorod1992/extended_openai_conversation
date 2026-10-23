@@ -70,8 +70,13 @@ def test_sigv4_credentials_absent_from_all_serialized_exports(
         serialized = result["json"]
     assert SIGNATURE not in serialized
     assert KEY_ID not in serialized
-    assert "bucket.s3.eu-west-1.amazonaws.com/private/object.txt" in serialized
-    assert "AWS4-HMAC-SHA256" in serialized
+    if exporter == "agent":
+        assert document["config"]["functions"] == []
+        assert document["security"]["omitted"]
+    else:
+        assert "bucket.s3.eu-west-1.amazonaws.com/private/object.txt" in serialized
+    if exporter != "agent":
+        assert "AWS4-HMAC-SHA256" in serialized
     assert config == original
 
 
@@ -149,9 +154,9 @@ def test_aws_field_names_in_script_data_and_schema_are_not_http_credentials(
     }
     config = {"chat_model": "gpt-4o", "functions": [tool]}
     if exporter == "agent":
-        public = _export_agent(SimpleNamespace(title="Public labels", data=config))[
-            "config"
-        ]
+        public = _export_agent(
+            SimpleNamespace(title="Public labels", data=config), reviewed=True
+        )["config"]
     else:
         _, public = export(config, exporter)
     assert public["functions"][0] == tool

@@ -169,7 +169,9 @@ async def test_shareable_setup_reads_only_setup_state_and_round_trips_ha_llm_ref
     ):
         monkeypatch.setattr(transfer, name, forbidden)
 
-    result = await transfer.async_create_setup_export(hass, entry, subentry)
+    result = await transfer.async_create_setup_export(
+        hass, entry, subentry, reviewed=True
+    )
     document = result["document"]
     assert set(document["sections"]) == transfer.SETUP_SECTIONS
 
@@ -923,7 +925,7 @@ def test_redaction_placeholder_detection_accepts_structured_and_legacy_forms() -
 def test_future_transfer_version_is_rejected_cleanly() -> None:
     document = {
         "format": transfer.TRANSFER_FORMAT,
-        "version": transfer.TRANSFER_VERSION + 1,
+        "version": max(transfer.TRANSFER_VERSION, transfer.SHARING_VERSION) + 1,
         "mode": "setup",
         "created_at": "2026-09-08T20:00:00+00:00",
         "integration_version": "99.0.0",
