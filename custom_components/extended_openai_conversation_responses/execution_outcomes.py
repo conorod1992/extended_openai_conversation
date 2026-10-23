@@ -366,7 +366,7 @@ async def execute_backend(
 ) -> Any:
     """Native effects/composite children own precise boundaries; opaque backends are conservative."""
     with execution_operation("backend", {"function": config, "arguments": arguments}):
-        owns_receipts = config.get("type") in {"native", "composite", "bash"}
+        owns_receipts = config.get("type") in {"native", "composite", "bash", "rest"}
         before = len(attempt.receipts) if (attempt := _ATTEMPT.get()) else 0
         receipt = None if owns_receipts else execution_started()
         try:

@@ -454,3 +454,44 @@ async def test_real_rule_stops_after_backend_failure(
     assert len(agent._usage.runs) == 1
     assert agent._usage.runs[0].successful is (backend == "business")
     assert sent == []
+
+
+@pytest.mark.parametrize("retry,blocked", [({"amount":1}, True), ({"ignored":"different"}, True), ({"amount":2}, False)])
+async def test_rest_receipts_recover_rendered_defaults(hass, monkeypatch, retry, blocked):
+    """Exercise real HA RestData and ChatLog at the failed-continuation boundary."""
+    from tests.test_execution_http_audit_regressions import test_rest_recovery_matches_rendered_operation
+
+    await test_rest_recovery_matches_rendered_operation(hass, monkeypatch, retry, blocked)
+
+
+async def test_public_rest_default_retry_does_not_repeat_completed_post(hass, monkeypatch):
+    """A real Assist request recovers a failed SDK continuation without another POST."""
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from custom_components.extended_openai_conversation_responses.functions import web
+
+    sent=[]
+    class Session:
+        @asynccontextmanager
+        async def request(self, method, resource, **kwargs):
+            sent.append((method, resource, kwargs.get("data")))
+            yield SimpleNamespace(status=200, charset="utf-8", headers={"Content-Type":"text/plain"}, text=AsyncMock(return_value="ok"))
+    monkeypatch.setattr(web, "_install_bounded_session", lambda _hass, data: setattr(data, "_session", Session()))
+    tool={"spec":{"name":"dispense", "description":"Test rendered default receipt", "strict":False, "parameters":{"type":"object", "properties":{"amount":{"type":"integer"}}}},
+          "function":{"type":"rest", "method":"POST", "resource":"https://example.invalid/dispense", "payload_template":"{{ amount | default(1) }}"}}
+    agent=await _agent(hass, functions=[tool], function_tool_error_recovery=False)
+    user=await hass.auth.async_create_user("REST replay admin", group_ids=[GROUP_ID_ADMIN])
+    async def say(text, conversation_id=None):
+        return await conversation.async_converse(hass=hass,text=text,conversation_id=conversation_id,context=Context(user_id=user.id),language="en",agent_id=agent.entry.entry_id)
+    replies=[_chat_sse_tool_call("dispense-first", "dispense", {}), (500,{"error":{"message":"Continuation failed", "type":"server_error"}}), _chat_sse_tool_call("dispense-retry", "dispense", {"amount":1})]
+    async with _transport(agent.entry, replies) as wire:
+        failed=await say("Dispense once")
+        assert failed.response.error_code is not None
+        assert sent==[("POST", "https://example.invalid/dispense", "1")]
+        recovered=await say("Retry",failed.conversation_id)
+        assert recovered.response.error_code is not None
+        assert sent==[("POST", "https://example.invalid/dispense", "1")]
+        spec=wire.requests[0]["body"]["tools"][0]["function"]
+        assert spec["strict"] is False
+        wire.assert_complete(3)

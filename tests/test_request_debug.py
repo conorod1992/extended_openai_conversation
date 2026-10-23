@@ -338,3 +338,22 @@ async def test_client_proxy_redacts_explicit_auth_headers() -> None:
     headers = trace.provider_requests[0].request["kwargs"]["extra_headers"]
     assert headers["Authorization"] == "<redacted credential>"
     assert headers["X-Test"] == "visible"
+
+
+@pytest.mark.parametrize("surface,event", [
+    ("chat_completions", {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"effect"}}]}}]}),
+    ("responses", {"type":"response.output_item.added", "item":{"type":"function_call"}}),
+])
+def test_first_action_timing_covers_both_provider_formats(monkeypatch, surface, event):
+    from custom_components.extended_openai_conversation_responses import debug
+    request=DebugProviderRequest(request_id="timing",api_surface=surface,started_at="now",started_offset_ms=0,request={},metrics={})
+    request._started_monotonic=10.0
+    monkeypatch.setattr(debug.time,"monotonic", lambda:10.125)
+    request.add_event({"choices":[{"delta":{"tool_calls":[]}}, {}]})
+    assert request.first_action_ms is None
+    request.add_event(event)
+    assert request.first_action_ms==125
+    monkeypatch.setattr(debug.time,"monotonic", lambda:10.250)
+    request.add_event(event)
+    assert request.first_action_ms==125
+    assert request.response_events[-1]==event

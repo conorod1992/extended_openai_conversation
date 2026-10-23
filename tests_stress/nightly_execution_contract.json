@@ -1,6 +1,10 @@
 {
   "schema": "eoai-nightly-execution-contract/v1",
   "pytest": [
+    "tests_real_ha/test_action_failure_safety.py::test_public_rest_default_retry_does_not_repeat_completed_post",
+    "tests_real_ha/test_action_failure_safety.py::test_rest_receipts_recover_rendered_defaults[retry0-True]",
+    "tests_real_ha/test_action_failure_safety.py::test_rest_receipts_recover_rendered_defaults[retry1-True]",
+    "tests_real_ha/test_action_failure_safety.py::test_rest_receipts_recover_rendered_defaults[retry2-False]",
     "tests_real_ha/test_review_followup_replays.py::test_script_retry_matches_actual_service_effect[completed-identical]",
     "tests_real_ha/test_review_followup_replays.py::test_script_retry_matches_actual_service_effect[completed-string-list]",
     "tests_real_ha/test_review_followup_replays.py::test_script_retry_matches_actual_service_effect[completed-list-string]",
