@@ -16,6 +16,8 @@ Static `$ref` targets can be checked through bounded local pointers. Sensitive `
 
 Local pointer checks decode URI fragments before JSON Pointer escapes and bind cached proofs to the schema resource and decoded target. Schemas with nested resource identities (`$id` or legacy `id`) are outside this limited proof: if they contain a sensitive reference, the containing tool is omitted from reviewed sharing. Ordinary local references and custom schemas without sensitive references remain portable. No remote schema is fetched; live tools and private backups retain the full definitions.
 
+URI credential checks cover schema identifiers and dialect declarations (`$id`, legacy `id` and `$schema`) as well as reference keywords. Public URI values stay unchanged. Names of entries in schema maps such as `$defs` are labels, so a definition named `$id` is not mistaken for a URI value.
+
 Only the configured Function's actual parameter schema receives structural exemptions. Script variables, Rule action data and other instance payloads stay data even when they contain keys such as `functions`, `spec` and `parameters`. Credential-bearing units are omitted from sharing; private backups retain the complete original values.
 
 New sharing documents and Rule Packs use version 2. Historical version 1 imports remain supported. All production sharing writers use the same policy. Unsupported future fields are omitted by default; adding a provider-specific pattern is only an additional defense.

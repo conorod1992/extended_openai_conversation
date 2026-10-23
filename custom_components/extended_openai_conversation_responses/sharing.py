@@ -26,6 +26,10 @@ from .secret_redaction import (
 
 SHARING_VERSION = 2
 _SCHEMA_REFERENCES = frozenset({"$ref", "$dynamicRef", "$recursiveRef"})
+_SCHEMA_URI_KEYWORDS = _SCHEMA_REFERENCES | {"$id", "$schema", "id"}
+_SCHEMA_MAP_KEYWORDS = frozenset(
+    {"properties", "patternProperties", "$defs", "definitions", "dependentSchemas"}
+)
 _SCHEMA_INSTANCE_KEYWORDS = frozenset(
     {"default", "example", "examples", "enum", "const"}
 )
@@ -280,7 +284,7 @@ def _schema_annotations(
             return dict(REDACTED_SECRET_SENTINEL)
     result = {}
     for key, item in value.items():
-        if key in _SCHEMA_REFERENCES:
+        if key in _SCHEMA_URI_KEYWORDS:
             result[key] = _schema_reference_uri(item)
         elif key in _SCHEMA_INSTANCE_KEYWORDS:
             # Instance data cannot acquire schema exemptions by using keys such
@@ -291,12 +295,16 @@ def _schema_annotations(
                 if sensitive or _unsafe(classified)
                 else deepcopy(item)
             )
-        elif key in {"properties", "patternProperties"} and isinstance(item, dict):
+        elif key in _SCHEMA_MAP_KEYWORDS and isinstance(item, dict):
             result[key] = {
                 name: _schema_annotations(
                     definition,
                     root,
-                    sensitive=sensitive or _is_secret_key(name),
+                    sensitive=sensitive
+                    or (
+                        key in {"properties", "patternProperties"}
+                        and _is_secret_key(name)
+                    ),
                     references=references,
                     reference_results=reference_results,
                     single_resource=single_resource,
