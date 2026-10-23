@@ -15,6 +15,7 @@ from .const import CONF_FUNCTION_TOOLS
 from .management_function_repair import (
     isolated_function_tools as _isolated_function_tools,
 )
+from .operational_errors import failure_diagnostic
 from .yaml_serialization import dump_yaml
 
 _LOGGER = logging.getLogger(__name__)
@@ -50,7 +51,7 @@ def _runtime_configured_function_tools(data: Any) -> list[dict[str, Any]]:
         tools = configured_function_tools_from_data(safe)
         # Parser/validation messages may echo private YAML values or templates.
         # The management repair view already exposes details explicitly.
-        detail = f"field={getattr(err, 'field', CONF_FUNCTION_TOOLS)} error_type={type(err).__name__}"
+        detail = f"field={CONF_FUNCTION_TOOLS} {failure_diagnostic(err).summary()}"
         if quarantine_all:
             _LOGGER.warning(
                 "All configured Function Tools are invalid and were disabled for this "

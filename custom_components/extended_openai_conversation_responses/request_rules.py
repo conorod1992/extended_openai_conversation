@@ -3752,7 +3752,14 @@ async def _async_evaluate_matched_rule(
                 "Review the rule's Success response/template in Extended OpenAI > Request Rules. "
                 "Actions were not retried."
             )
-            _LOGGER.warning("%s", message)
+            log_handled_failure(
+                _LOGGER,
+                f"Request Rule '{rule.get('name') or rule['id']}': action execution "
+                "succeeded, but response construction failed. Review the rule's "
+                "Success response/template in Extended OpenAI > Request Rules. "
+                "Actions were not retried.",
+                err,
+            )
             return RuleEvaluation(
                 match,
                 True,
