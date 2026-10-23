@@ -120,7 +120,7 @@ def test_existing_export_import_keeps_unavailable_references():
     subentry = SimpleNamespace(
         title="Agent", data=normalize_agent_config({"functions": [saved]})
     )
-    exported = management_ui._export_agent(subentry)
+    exported = management_ui._export_agent(subentry, reviewed=True)
     imported = management_ui._parse_import_document(exported)
     assert configured_function_tools_from_data(imported["config"]) == [saved]
 

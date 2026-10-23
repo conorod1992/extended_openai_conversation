@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
-from http import HTTPStatus
 import logging
 from typing import Any, cast
 from uuid import uuid4
@@ -13,7 +12,9 @@ import zlib
 
 import aiohttp
 from bs4 import BeautifulSoup
+from multidict import CIMultiDict
 import voluptuous as vol
+import xmltodict
 
 from homeassistant.components import rest, scrape
 from homeassistant.const import (
@@ -33,11 +34,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv, llm
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.json import json_dumps
 from homeassistant.helpers.template import Template, render_complex
 from homeassistant.util.json import JSON_DECODE_EXCEPTIONS, json_loads
 
 from ..const import CONF_PAYLOAD_TEMPLATE
 from ..exceptions import FunctionResponseParseError
+from ..public_errors import SanitizedRequestError
 from ..resource_limits import MAX_REMOTE_RESPONSE_BYTES
 from .base import Function
 
@@ -247,11 +250,7 @@ class _BoundedResponse:
             # Use only a standard reason, never the URL, headers or remote body.
             # Raising here keeps the underlying request's __aexit__ in charge
             # of cleanup, including when HA catches a transport exception.
-            try:
-                reason = HTTPStatus(status).phrase
-            except ValueError:
-                reason = "Unsuccessful response"
-            raise HomeAssistantError(f"REST request failed: HTTP {status} {reason}")
+            raise SanitizedRequestError(status)
         if self._body is not None:
             return self._body
 
@@ -384,17 +383,29 @@ async def _private_rest_update(data: rest.data.RestData) -> None:
         "params": params,
         "timeout": data._timeout,
     }
-    if isinstance(data._auth, aiohttp.BasicAuth):
-        kwargs["auth"] = data._auth
-    elif data._auth is not None:
-        kwargs["middlewares"] = (data._auth,)
+    # HA moved from _auth to separate basic/digest fields. Preserve its
+    # case-insensitive explicit Authorization precedence on newer releases.
+    basic_auth = getattr(data, "_basic_auth", None)
+    digest_auth = getattr(data, "_digest_auth", None)
+    legacy_auth = getattr(data, "_auth", None)
+    if basic_auth is not None:
+        auth_headers = CIMultiDict(headers or {})
+        auth_headers.setdefault("Authorization", basic_auth)
+        kwargs["headers"] = auth_headers
+    elif digest_auth is not None:
+        kwargs["middlewares"] = (digest_auth,)
+    elif isinstance(legacy_auth, aiohttp.BasicAuth):
+        kwargs["auth"] = legacy_auth
+    elif legacy_auth is not None:
+        kwargs["middlewares"] = (legacy_auth,)
     if data._request_data:
         kwargs["data"] = data._request_data
     data.last_exception = None
+    session = data._session
+    if session is None:
+        raise HomeAssistantError("REST session is unavailable")
     try:
-        async with data._session.request(
-            data._method, data._resource, **kwargs
-        ) as response:
+        async with session.request(data._method, data._resource, **kwargs) as response:
             if not data._force_use_set_encoding and response.charset:
                 try:
                     data.data = await response.text()
@@ -470,6 +481,19 @@ def get_rest_data(
             await _private_rest_update(rest_data)
 
         cast(Any, rest_data).async_update = sanitized_update
+
+        # HA's data_without_xml logs the complete response even on success.
+        # Keep conversion semantics without passing private content to its logger.
+        def private_data_without_xml() -> str | None:
+            value = rest_data.data
+            content_type = (
+                rest_data.headers.get("Content-Type", "") if rest_data.headers else ""
+            )
+            if value is not None and content_type.startswith(rest.const.XML_MIME_TYPES):
+                return json_dumps(xmltodict.parse(value))
+            return value
+
+        cast(Any, rest_data).data_without_xml = private_data_without_xml
     return rest_data
 
 

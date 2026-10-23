@@ -476,7 +476,7 @@ async def test_conversation_provider_failure_before_output(hass, monkeypatch) ->
 
     assert client.responses.create.await_count == 1
     assert result.response.error_code is not None
-    assert "Provider request timed out" in result.response.speech["plain"]["speech"]
+    assert "Could not connect to provider" in result.response.speech["plain"]["speech"]
     entity._execute_function_tool.assert_not_awaited()
     continuity.async_record_success.assert_not_awaited()
     continuity.async_release.assert_awaited_once_with("device:kitchen", "claim-token")
@@ -554,7 +554,7 @@ async def test_conversation_followup_provider_failure(hass, monkeypatch) -> None
     assert client.responses.create.await_count == 2
     entity._execute_function_tool.assert_awaited_once()
     assert result.response.error_code is not None
-    assert "Provider request timed out" in result.response.speech["plain"]["speech"]
+    assert "Could not connect to provider" in result.response.speech["plain"]["speech"]
     tool_results = [
         item
         for item in logs[0].content
@@ -685,7 +685,7 @@ async def test_malformed_response_is_terminal_with_recovery_disabled(hass, monke
     result = await invoke()
     assert result.response.error_code is not None
     assert (
-        "REST response parsing failed: ExpatError"
+        "REST response parsing failed"
         in result.response.speech["plain"]["speech"]
     )
     assert client.responses.create.await_count == 2

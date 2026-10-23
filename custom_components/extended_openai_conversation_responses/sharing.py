@@ -12,6 +12,7 @@ import math
 from typing import Any
 
 from .function_yaml import decoded_function_fields
+from .model_catalog import BUNDLED_CATALOG
 from .secret_redaction import _is_secret_key, is_redacted_secret, redact_secrets
 
 SHARING_VERSION = 2
@@ -66,14 +67,15 @@ PUBLIC_NUMBERS = frozenset(
     ]
 )
 PUBLIC_ENUMS = {
+    "chat_model": frozenset(BUNDLED_CATALOG.resolved),
     "api_mode": {"auto", "responses", "chat_completions"},
     "reasoning_effort": {"", "none", "minimal", "low", "medium", "high", "xhigh"},
     "service_tier": {"", "auto", "default", "flex", "priority"},
     "context_truncate_strategy": {"clear", "truncate"},
-    "memory_mode": {"off", "personal", "shared"},
-    "guest_knowledge_policy": {"off", "all", "selected"},
-    "guest_function_policy": {"off", "all", "selected"},
-    "guest_shared_memory_policy": {"off", "read", "read_write"},
+    "memory_mode": {"off", "manual", "automatic"},
+    "guest_knowledge_policy": {"off", "on", "custom"},
+    "guest_function_policy": {"off", "on", "custom"},
+    "guest_shared_memory_policy": {"off", "read_only", "read_write"},
 }
 
 
@@ -208,6 +210,9 @@ def project_configuration(
     # Skills contain arbitrary external/custom content and dependency references.
     if not reviewed:
         result["function_groups"] = []
+        if "chat_model" not in result:
+            result.pop("reasoning_effort", None)
+            result.pop("service_tier", None)
     return result, summary
 
 

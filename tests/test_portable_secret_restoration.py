@@ -136,6 +136,8 @@ async def test_export_inspect_materialize_round_trip(monkeypatch, kind, old):
     else:
         entry, subentry = _entry_and_subentry()
         document = transfer._new_transfer_document(entry, subentry, "custom")
+        document["version"] = 1
+        document.pop("provider_connection", None)
         document["sections"] = {transfer.SECTION_CONFIGURATION: exported_config}
     imported = transfer.inspect_transfer(json.loads(json.dumps(document)), "agent-1")
     monkeypatch.setattr(transfer, "_current_snapshot", AsyncMock(return_value=current))

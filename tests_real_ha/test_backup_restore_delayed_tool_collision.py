@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 from pytest_homeassistant_custom_component.common import MockUser
 
+from custom_components.extended_openai_conversation_responses.private_backup import encode_document
 from custom_components.extended_openai_conversation_responses import backup
 from custom_components.extended_openai_conversation_responses.agent_config import (
     configured_function_tools_from_data,
@@ -223,11 +224,14 @@ async def test_restore_wins_collision_and_due_tool_uses_restored_configuration(
     target_snapshot = await backup.async_collect_backup_snapshot(
         hass, agent.entry, subentry
     )
-    restored_tools = target_snapshot["agent"]["config"][CONF_FUNCTION_TOOLS]
+    import yaml
+
+    restored_tools = yaml.safe_load(target_snapshot["agent"]["config"][CONF_FUNCTION_TOOLS])
     restored_tool = next(
         tool for tool in restored_tools if tool["spec"]["name"] == _TOOL_NAME
     )
     restored_tool["enabled"] = False
+    target_snapshot["agent"]["config"][CONF_FUNCTION_TOOLS] = yaml.safe_dump(restored_tools)
 
     call_id = await _schedule_delayed_call(
         agent,
@@ -256,7 +260,7 @@ async def test_restore_wins_collision_and_due_tool_uses_restored_configuration(
     monkeypatch.setattr(gate, "exclusive", blocking_exclusive)
 
     restore_task = asyncio.create_task(
-        backup.async_restore_backup(hass, agent.entry, subentry, target_snapshot)
+        backup.async_restore_backup(hass, agent.entry, subentry, encode_document(target_snapshot))
     )
     await restore_entered.wait()
     assert calls == []
@@ -346,7 +350,7 @@ async def test_due_tool_wins_collision_and_restore_waits_for_exactly_once_comple
     assert calls == []
 
     restore_task = asyncio.create_task(
-        backup.async_restore_backup(hass, agent.entry, subentry, target_snapshot)
+        backup.async_restore_backup(hass, agent.entry, subentry, encode_document(target_snapshot))
     )
     await _wait_for_writer(gate)
 

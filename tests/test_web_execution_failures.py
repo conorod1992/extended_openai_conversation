@@ -91,7 +91,7 @@ async def test_status_failure_closes_request_without_reading_body():
         async with web._BoundedRequestContext(TrackingContext(), 10) as bounded:
             await bounded.text()
     assert len(exits) == 1
-    assert exits[0][0] is HomeAssistantError
+    assert issubclass(exits[0][0], HomeAssistantError)
     assert response.content.requested == []
 
 
@@ -106,7 +106,7 @@ async def test_rest_template_failure_stops_composite(hass, rest_server):
             {"type": "template", "value_template": "{{ later.child }}"},
         ],
     }
-    with pytest.raises(HomeAssistantError, match="missing"):
+    with pytest.raises(HomeAssistantError, match="Template rendering failed"):
         await CompositeFunction().execute(hass, config, {}, None, [])
 
 

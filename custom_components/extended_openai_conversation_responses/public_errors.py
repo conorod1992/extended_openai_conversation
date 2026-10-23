@@ -1,6 +1,10 @@
 """Public errors must not contain backend configuration or template source."""
 
+from http import HTTPStatus
+
 from homeassistant.exceptions import HomeAssistantError, TemplateError
+
+from .exceptions import EffectReplayBlocked, FunctionResponseParseError
 
 
 class SanitizedTemplateError(HomeAssistantError):
@@ -21,12 +25,34 @@ class SanitizedBackendError(HomeAssistantError):
         )
 
 
+class SanitizedRequestError(HomeAssistantError):
+    """Preserve bounded HTTP status information without remote prose."""
+
+    def __init__(self, status: int) -> None:
+        message = "REST request failed. Check remote service availability."
+        if type(status) is int and 100 <= status <= 599:
+            try:
+                reason = HTTPStatus(status).phrase
+            except ValueError:
+                reason = "Unsuccessful response"
+            message = f"REST request failed: HTTP {status} {reason}"
+        super().__init__(message)
+
+
 def sanitize_backend_error(error: BaseException) -> BaseException:
     public = sanitize_template_error(error)
     if public is not error or isinstance(
-        error, (SanitizedTemplateError, SanitizedBackendError)
+        error, (SanitizedTemplateError, SanitizedBackendError, SanitizedRequestError)
     ):
         return public
+    # These types control recovery and must retain their semantics through
+    # nested/composite calls. Reconstruct them using fixed, source-free text.
+    if isinstance(error, EffectReplayBlocked):
+        return EffectReplayBlocked(
+            "A prior effect was not acknowledged, so this operation cannot safely repeat."
+        )
+    if isinstance(error, FunctionResponseParseError):
+        return FunctionResponseParseError("REST response parsing failed")
     if isinstance(error, HomeAssistantError):
         return SanitizedBackendError()
     return error

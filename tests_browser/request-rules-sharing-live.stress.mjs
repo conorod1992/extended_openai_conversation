@@ -99,10 +99,10 @@ test("nightly Rule Pack UI rejects malformed and oversized files, preserves revi
   await panel.locator("#rule-pack-select-cancel").click();
   expect(await page.evaluate(() => window.browserHarness.calls.filter((call) => call.action === "rule_pack_export").length)).toBe(exportsBeforeCancel);
 
+  await panel.locator("#rule-pack-reviewed-custom").check();
   await panel.locator("#rule-pack-export").click();
   await panel.locator("#rule-pack-rule-list label").filter({hasText:"Nightly shared first"}).locator("input").check();
   const downloadPromise = page.waitForEvent("download");
-  await panel.locator("#rule-pack-reviewed-custom").check();
   await panel.locator("#rule-pack-select-done").click();
   await acceptSharingReview(panel);
   const download = await downloadPromise;

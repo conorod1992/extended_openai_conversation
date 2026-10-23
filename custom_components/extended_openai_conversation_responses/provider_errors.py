@@ -169,7 +169,7 @@ def provider_error_metadata(error: BaseException) -> dict[str, Any]:
         "message": _safe_error_message(error),
     }
     status = _integer(getattr(error, "status_code", None))
-    if status is not None:
+    if status is not None and 100 <= status <= 599:
         metadata["status_code"] = status
     metadata["code"] = provider_failure_category(error)
     cause_type, cause_category = _root_cause_category(error)

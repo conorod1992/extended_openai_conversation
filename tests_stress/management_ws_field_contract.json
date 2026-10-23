@@ -317,6 +317,10 @@
     "yaml": {
       "required": false,
       "kind": "string"
+    },
+    "reviewed_custom": {
+      "required": false,
+      "kind": "boolean"
     }
   },
   "backup_transfer": {

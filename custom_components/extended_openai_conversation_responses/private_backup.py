@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any
 
@@ -21,7 +22,8 @@ class DecodedPrivateDocument(dict[str, Any]):
 
 def encode_field(value: Any) -> dict[str, Any]:
     check_redaction_budget(value, _LIMIT)
-    content = yaml.safe_dump(value, sort_keys=False, allow_unicode=True)
+    # Escape Unicode line separators: YAML otherwise folds NEL into spaces.
+    content = yaml.safe_dump(value, sort_keys=False, allow_unicode=False)
     check_utf8_budget(content, _LIMIT)
     return {"encoding": _ENCODING, "content": content}
 
@@ -64,10 +66,10 @@ def encode_document(snapshot: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def decode_document(document: dict[str, Any]) -> dict[str, Any]:
+def decode_document(document: Mapping[str, Any]) -> dict[str, Any]:
     if isinstance(document, DecodedPrivateDocument):
         return document
-    result = DecodedPrivateDocument(deepcopy(document))
+    result = DecodedPrivateDocument(deepcopy(dict(document)))
     if result["format"] == "extended_openai_conversation_backup":
         result["agent"]["config"] = decode_field(result["agent"]["config"])
         result["request_rules"] = decode_field(result["request_rules"])

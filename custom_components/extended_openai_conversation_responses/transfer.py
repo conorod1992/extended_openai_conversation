@@ -1482,6 +1482,7 @@ async def async_materialize_restore(
     *,
     sections: Iterable[str] | None = None,
     current_snapshot: backup.PreparedRestore | None = None,
+    provider_connection: Mapping[str, Any] | None = None,
 ) -> tuple[backup.PreparedRestore, dict[str, Any]]:
     """Build and validate a complete restore target from a selective transfer."""
     prepared = await async_inspect_transfer(
@@ -1511,11 +1512,16 @@ async def async_materialize_restore(
     )
 
     try:
-        validate_routed_request_options(target.config, getattr(entry, "data", {}))
+        provider_data = (
+            provider_connection
+            if provider_connection is not None
+            else getattr(entry, "data", {})
+        )
+        validate_routed_request_options(target.config, provider_data)
         validate_saved_model_routes(
             target.request_rules.get("rules", []),
             target.config,
-            getattr(entry, "data", {}),
+            provider_data,
         )
     except HomeAssistantError as err:
         raise backup.BackupError(
@@ -1548,6 +1554,8 @@ async def async_restore_transfer(
     *,
     sections: Iterable[str] | None = None,
     precondition: Callable[[], Awaitable[None]] | None = None,
+    provider_connection: dict[str, Any] | None = None,
+    expected_provider_data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Preserve unselected state and commit under one shielded exclusive lease."""
     from .agent_maintenance import (
@@ -1562,13 +1570,49 @@ async def async_restore_transfer(
     async def restore_exclusively_owned() -> dict[str, Any]:
         if precondition is not None:
             await precondition()
+        if (
+            provider_connection is not None
+            and dict(entry.data) != expected_provider_data
+        ):
+            raise backup.BackupError(
+                "The provider connection changed after preview; preview again"
+            )
+        provider_options: dict[str, Any] = (
+            {"provider_connection": provider_connection}
+            if provider_connection is not None
+            else {}
+        )
         target, preview = await async_materialize_restore(
-            hass, entry, subentry, imported, sections=sections
+            hass,
+            entry,
+            subentry,
+            imported,
+            sections=sections,
+            **provider_options,
         )
         # Exclusivity already covers the destination snapshot. Call the journaled
         # inner restore directly: the public backup wrapper would reacquire this
         # non-reentrant gate. Lock order remains maintenance gate -> backup lock.
         result = await async_restore_backup_recoverably(hass, entry, subentry, target)
+        if provider_connection is not None:
+            from .provider_credentials import restore_private_provider_connection
+
+            assert expected_provider_data is not None
+            try:
+                restore_private_provider_connection(
+                    hass,
+                    entry,
+                    provider_connection,
+                    expected_provider_data,
+                    confirmed=True,
+                )
+            except HomeAssistantError:
+                result["provider_connection_restored"] = False
+                result["provider_connection_message"] = (
+                    "Agent data restored; provider connection was not changed. Import and preview again."
+                )
+            else:
+                result["provider_connection_restored"] = True
         return {**result, "transfer": preview}
 
     gate = get_agent_maintenance_gate(hass, entry.entry_id, subentry.subentry_id)

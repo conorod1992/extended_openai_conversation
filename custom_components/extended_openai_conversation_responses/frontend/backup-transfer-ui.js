@@ -397,7 +397,7 @@ function sendLatestImportPreview(panel) {
     const status = panel.shadowRoot?.querySelector(`#${RESTORE_STATUS_ID}`);
     const apply = panel.shadowRoot?.querySelector(`#${APPLY_ID}`);
     try {
-      const result = await callBackupTransfer(panel, "import_inspect", {session_id: request.session.session_id, sections: request.sections, user_scope_mappings: request.userScopeMappings}, request.session.owner);
+      const result = await callBackupTransfer(panel, "import_inspect", {session_id: request.session.session_id, sections: request.sections, user_scope_mappings: request.userScopeMappings, ...(request.restoreProvider ? {restore_provider_connection:true} : {})}, request.session.owner);
       if (!current()) return;
       panel._backupTransferPreview = result.preview;
       panel._backupTransferPreviewToken = result.preview_token;
@@ -431,6 +431,11 @@ export function refreshImportPreview(panel) {
   if (!session) return false;
   if (!ownsTransfer(panel, session)) { void cancelBackupImport(panel, session); return false; }
   const sections = selectedValues(root, ".transfer-restore-section");
+  const providerControl = root.querySelector("#restore-provider-connection");
+  if (providerControl) {
+    providerControl.disabled = !sections.includes("configuration");
+    if (providerControl.disabled) providerControl.checked = false;
+  }
   const status = root.querySelector(`#${RESTORE_STATUS_ID}`);
   if (!sections.length) {
     if (status) {
@@ -444,7 +449,7 @@ export function refreshImportPreview(panel) {
     status.textContent = "Validating selected sections…";
   }
   const work = previewWork(panel);
-  work.latest = {session, sections, token, userScopeMappings: selectedUserScopeMappings(root)};
+  work.latest = {session, sections, token, userScopeMappings: selectedUserScopeMappings(root), restoreProvider:Boolean(providerControl?.checked)};
   work.timer = setTimeout(() => {
     work.timer = null;
     sendLatestImportPreview(panel);
@@ -453,6 +458,7 @@ export function refreshImportPreview(panel) {
 }
 
 export function bindBackupTransfer(panel) {
+  panel.shadowRoot?.querySelector("#restore-provider-connection")?.addEventListener("change", () => refreshImportPreview(panel));
   const root = panel?.shadowRoot;
   if (!root) return;
   panel._eocBackupTransferCleanup = () => retireBackupImports(panel);

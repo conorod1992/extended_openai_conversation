@@ -12,12 +12,12 @@ from custom_components.extended_openai_conversation_responses.agent_config impor
     normalize_agent_config,
 )
 from custom_components.extended_openai_conversation_responses.management_ui import (
-    _export_agent,
     _parse_import_document,
 )
 from custom_components.extended_openai_conversation_responses.secret_redaction import (
     redact_secrets,
 )
+from tests.helpers import legacy_agent_export
 from tests.test_backup import _document
 from tests.test_secret_restore_context import _rest_tool
 from tests.test_transfer import _portable_document
@@ -74,7 +74,7 @@ def test_agent_roundtrip_preserves_destination_headers_and_rejects_new_secrets(h
     config["functions"] = [_rest_tool()]
     config["function_groups"] = []
     agent = SimpleNamespace(title="Agent", data=config)
-    exported = _export_agent(agent)
+    exported = legacy_agent_export(agent)
     imported = _parse_import_document(exported, destination=agent)
     assert (
         yaml.safe_load(imported["config"]["functions"])[0]["function"]["headers"][
@@ -96,7 +96,7 @@ def test_required_template_secrets_are_restored_before_validation(hass):
     config["functions"] = [tool]
     config["function_groups"] = []
     agent = SimpleNamespace(title="Agent", data=config)
-    parsed = _parse_import_document(_export_agent(agent), destination=agent)
+    parsed = _parse_import_document(legacy_agent_export(agent), destination=agent)
     assert (
         yaml.safe_load(parsed["config"]["functions"])[0]["function"]["value_template"]
         == "sk-privatebbbbbbbbbbbb"
@@ -123,10 +123,10 @@ def test_agent_roundtrip_retains_secrets_with_duplicate_public_list_values(
     config["functions"] = [tool]
     config["function_groups"] = []
     agent = SimpleNamespace(title="Agent", data=normalize_agent_config(config))
-    parsed = _parse_import_document(_export_agent(agent), destination=agent)
+    parsed = _parse_import_document(legacy_agent_export(agent), destination=agent)
     restored = yaml.safe_load(parsed["config"]["functions"])[0]["function"]
     assert restored == tool["function"]
-    changed = _export_agent(agent)
+    changed = legacy_agent_export(agent)
     data = changed["config"]["functions"][0]["function"]["sequence"][0]["data"]
     data["channels"][0] = "different-destination"
     with pytest.raises(AgentConfigError, match="unavailable secrets"):

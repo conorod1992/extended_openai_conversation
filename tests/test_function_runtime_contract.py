@@ -135,7 +135,7 @@ async def test_expected_execution_failure_becomes_tool_result(monkeypatch) -> No
     )
 
     assert tool_result_data(result) == {
-        "result": {"status": "error", "error": "action is unavailable"}
+        "result": {"status": "error", "error": "Function execution failed. Check the tool configuration and permissions."}
     }
 
 

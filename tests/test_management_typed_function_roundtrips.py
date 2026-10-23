@@ -20,6 +20,7 @@ from custom_components.extended_openai_conversation_responses.function_yaml impo
 )
 from homeassistant.components.websocket_api.messages import message_to_json_bytes
 from homeassistant.exceptions import HomeAssistantError
+from tests.helpers import legacy_agent_export
 from tests.test_configuration_projection_invariants import projection_rules  # noqa: F401
 
 
@@ -182,7 +183,7 @@ async def test_export_uses_lossless_yaml_for_non_json_values(hass, value):
     subentry = SimpleNamespace(
         title="Typed tool", data={"functions": yaml.safe_dump([original])}
     )
-    document = json.loads(json.dumps(ui._export_agent(subentry)))
+    document = json.loads(json.dumps(legacy_agent_export(subentry)))
     response = _wire({"document": document, "json": json.dumps(document)})
     assert response["document"] == json.loads(response["json"])
     document = response["document"]
@@ -207,7 +208,7 @@ async def test_yaml_set_exports_redact_recognizable_credentials_and_recover(hass
     subentry = SimpleNamespace(
         title="Typed tool", data={"functions": yaml.safe_dump([original])}
     )
-    document = json.loads(json.dumps(ui._export_agent(subentry)))
+    document = json.loads(json.dumps(legacy_agent_export(subentry)))
     assert secret not in json.dumps(document)
     exported = document["config"]["functions"]
     exported = yaml.safe_load(exported) if isinstance(exported, str) else exported
@@ -230,7 +231,7 @@ async def test_yaml_set_export_keeps_nonsecret_literal_redaction_text(hass):
     subentry = SimpleNamespace(
         title="Typed tool", data={"functions": yaml.safe_dump([original])}
     )
-    document = json.loads(json.dumps(ui._export_agent(subentry)))
+    document = json.loads(json.dumps(legacy_agent_export(subentry)))
     restored = ui._parse_import_document(document)
     assert (
         yaml.safe_load(restored["config"]["functions"])[0]["function"]

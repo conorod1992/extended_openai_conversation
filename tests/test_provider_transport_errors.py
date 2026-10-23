@@ -185,5 +185,5 @@ async def test_conversation_returns_retryable_provider_error_for_timeout() -> No
 
     assert entity._usage.failed == ["ProviderTransportError"]
     assert result.conversation_id == "conversation"
-    assert "Provider request timed out" in result.response.speech["plain"]["speech"]
+    assert "Could not connect to provider" in result.response.speech["plain"]["speech"]
     entity.entry.async_start_reauth.assert_not_called()

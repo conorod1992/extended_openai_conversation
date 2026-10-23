@@ -11,6 +11,7 @@ from homeassistant.const import CONF_API_KEY
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.extended_openai_conversation_responses.private_backup import encode_document
 from custom_components.extended_openai_conversation_responses import backup
 from custom_components.extended_openai_conversation_responses.agent_config import (
     parse_configured_function_tools,
@@ -140,7 +141,7 @@ async def test_loaded_restore_rolls_back_earlier_subsystems_when_later_apply_fai
     with pytest.raises(
         backup.BackupError, match="previous agent state was recovered"
     ):
-        await backup.async_restore_backup(hass, entry, subentry, target_snapshot)
+        await backup.async_restore_backup(hass, entry, subentry, encode_document(target_snapshot))
 
     assert knowledge_apply_calls == 2
     assert len(memory_apply_contents) == 2

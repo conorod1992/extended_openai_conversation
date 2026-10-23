@@ -123,6 +123,7 @@ class ImportSession:
     preview_sections: tuple[str, ...] | None = None
     preview_user_scope_mappings: tuple[tuple[str, str], ...] | None = None
     preview_provider_data: dict[str, Any] | None = None
+    preview_restore_provider: bool = False
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     inspection_tasks: set[asyncio.Task[Any]] = field(default_factory=set, repr=False)
 
@@ -1152,6 +1153,15 @@ async def _inspect_import_owned(
             allowed=prepared.available_sections,
             default=prepared.available_sections,
         )
+        restore_provider = data.get("restore_provider_connection") is True
+        if restore_provider and (
+            not prepared.private
+            or not prepared.provider_connection
+            or transfer.SECTION_CONFIGURATION not in selected
+        ):
+            raise backup.BackupError(
+                "Provider restoration requires private configuration"
+            )
         mapping_plan = await transfer.async_user_scope_mapping_plan(
             hass,
             prepared,
@@ -1192,6 +1202,11 @@ async def _inspect_import_owned(
                 mapped,
                 sections=selected,
                 current_snapshot=current,
+                **(
+                    {"provider_connection": prepared.provider_connection}
+                    if restore_provider
+                    else {}
+                ),
             )
             preview["user_scope_mapping"] = mapping_plan
             token = uuid4().hex
@@ -1204,6 +1219,7 @@ async def _inspect_import_owned(
                 _forget_preview(hass, session)
                 session.preview_token = token
                 session.preview_revision = revision
+                session.preview_restore_provider = restore_provider
                 session.preview_provider_data = deepcopy(
                     dict(getattr(entry, "data", {}))
                 )
@@ -1270,6 +1286,12 @@ async def _restore_import(
         )
 
     async def validate_preview() -> None:
+        if (
+            data.get("restore_provider_connection") is True
+        ) != session.preview_restore_provider:
+            raise backup.BackupError(
+                "The provider restoration choice changed; preview again"
+            )
         selected = data.get("sections")
         if selected is not None and (
             not isinstance(selected, list)
@@ -1323,25 +1345,15 @@ async def _restore_import(
             if data.get("sections") is not None
             else session.preview_sections,
             precondition=validate_preview,
+            **(
+                {
+                    "provider_connection": prepared.provider_connection,
+                    "expected_provider_data": session.preview_provider_data,
+                }
+                if restore_provider
+                else {}
+            ),
         )
-        if restore_provider:
-            from .provider_credentials import restore_private_provider_connection
-
-            try:
-                restore_private_provider_connection(
-                    hass,
-                    entry,
-                    prepared.provider_connection,
-                    session.preview_provider_data,
-                    confirmed=True,
-                )
-            except HomeAssistantError:
-                restored["provider_connection_restored"] = False
-                restored["provider_connection_message"] = (
-                    "Agent data restored; provider connection was not changed. Import and preview again."
-                )
-            else:
-                restored["provider_connection_restored"] = True
     finally:
         if _imports(hass).get(session.session_id) is not session:
             _retire(hass, session)

@@ -72,7 +72,8 @@ async def test_provider_failure_recovers_on_next_turn_same_loaded_agent(
     assert failed.response.error_code is not None
     failed_speech = failed.response.as_dict()["speech"]["plain"]["speech"]
     assert "problem talking to OpenAI" in failed_speech
-    assert "provider recovery acceptance failure" in failed_speech
+    assert "Provider request failed" in failed_speech
+    assert "provider recovery acceptance failure" not in failed_speech
     assert "provider_recovery_test" in failed_speech
     assert len(wire.requests) == 1
     assert wire.requests[0]["path"] == expected_path

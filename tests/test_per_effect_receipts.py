@@ -834,7 +834,7 @@ async def test_nested_provider_exchange_overrides_independent_ownership(
             # The nested conversation owns the error, as its request boundary
             # does when the local caller propagates Function execution failures.
             assert handler_failure
-            assert str(err) == "handler failed after its effect"
+            assert str(err) == "Function execution failed. Check the tool configuration and permissions."
 
     try:
         if source == "local_rule":
