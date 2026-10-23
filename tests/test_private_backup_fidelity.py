@@ -44,7 +44,7 @@ def private_document():
     config["future_field"] = {"__extended_openai_redacted_secret__": True}
     tools = deepcopy(config["functions"])
     tools[0]["function"]["future"] = {
-        "password": "opaque-custom-42",
+        "password": "opaque-custom-42\x85literal",
         "binary": b"sk-FABRICATED123456789012345",
         "date": date(2026, 10, 23),
     }
@@ -169,6 +169,13 @@ async def test_private_restore_commits_exact_configuration_without_local_secret(
     assert tx.subentry.data == incoming
     assert tx.journal.data is None
     assert [item["phase"] for item in tx.journal.saved] == ["applying", "committed"]
+    # Recovery after the durable commit must retain the same source and
+    # credentials, rather than reinterpret them through a legacy projection.
+    committed = json.loads(json.dumps(tx.journal.saved[-1]))
+    recovered = backup.inspect_backup(
+        committed["target"], "fresh-target", private_journal=True
+    )
+    assert recovered.config == incoming
 
 
 async def test_private_provider_restore_precedes_reload_and_preserves_exact_data(
