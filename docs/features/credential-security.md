@@ -60,4 +60,6 @@ Unexpected programming/dependency failures still propagate as source-free runtim
 
 Template/Script log projection runs at record creation so descendant and dynamically created loggers reach every handler with safe text. The hook chains existing logging factories, activates only in EOAI-owned execution contexts, and leaves unrelated records and logger levels unchanged. Dynamic logger suffixes are omitted because they can contain authored names.
 
+The shared prompt renderer uses that same scoped protection for custom system prompts, current-date/time templates and exposed-entity templates, including previews and cached templates. Undefined-variable warnings and render errors retain their severity and safe diagnostics without copying private source that was absent from the rendered prompt. Rendering results, public error handling and unrelated HA template logs keep their existing semantics.
+
 The same scoped protection covers HA's Scrape coordinator, including DEBUG logging of otherwise unselected HTML. Raw response bodies, exception prose and traceback attachments are omitted before handlers receive records. Refresh duration, success, failure/recovery categories, severity, call sites and extraction diagnostics remain available. Other Home Assistant Scrape tasks keep their normal logging behavior.
