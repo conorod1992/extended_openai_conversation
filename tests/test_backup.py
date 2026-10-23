@@ -320,7 +320,7 @@ def test_backup_rejects_malformed_and_newer_versions() -> None:
         inspect_backup(malformed, "agent-new")
 
     newer = _document()
-    newer["version"] = BACKUP_VERSION + 1
+    newer["version"] = backup.PRIVATE_BACKUP_VERSION + 1
     with pytest.raises(BackupError, match="newer unsupported"):
         inspect_backup(newer, "agent-new")
 
@@ -436,7 +436,7 @@ async def test_create_full_backup_contains_only_durable_safe_state(
 
     result = await async_create_backup(hass, entry, subentry)
 
-    document = result["document"]
+    document = backup.decode_document(result["document"])
     assert document["format"] == BACKUP_FORMAT
     assert document["agent"]["config"]["function_groups"][0]["id"] == "lighting"
     assert document["memories"]["memories"][0]["memory_id"] == "memory-1"
@@ -445,7 +445,7 @@ async def test_create_full_backup_contains_only_durable_safe_state(
         {"canonical": "activate", "alternatives": ["power up"]}
     ]
     assert document["request_rules"]["rules"][0]["group_id"] == "home"
-    assert "sk-1234567890abcdef" not in result["json"]
+    assert "sk-1234567890abcdef" in result["json"]
     assert "loaded_function_groups" not in result["json"]
     assert result["filename"].startswith("jarvis-full-backup-")
 
@@ -536,7 +536,7 @@ async def test_unsupported_restore_does_not_access_agent_stores(
     monkeypatch, hass
 ) -> None:
     document = _document()
-    document["version"] = BACKUP_VERSION + 1
+    document["version"] = backup.PRIVATE_BACKUP_VERSION + 1
     managers = AsyncMock()
     monkeypatch.setattr(
         "custom_components.extended_openai_conversation_responses.restore_recovery._durable_managers",

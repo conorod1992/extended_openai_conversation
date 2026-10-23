@@ -37,6 +37,12 @@ from .function_yaml import decoded_function_fields
 from .guest_mode import GuestModeManager, GuestModeSchedule, async_get_guest_mode
 from .knowledge import KnowledgeSource, async_get_knowledge
 from .memory import ANONYMOUS_USER_ID, MemoryRecord, PersistentMemory, async_get_memory
+from .private_backup import (
+    PRIVATE_BACKUP_VERSION,
+    PRIVATE_TRANSFER_VERSION,
+    decode_document,
+    is_private_document,
+)
 from .request_rules import RequestRules, async_get_request_rules
 from .secret_redaction import (
     LITERAL_TEXT_KEY,
@@ -129,6 +135,8 @@ class PreparedTransfer:
     raw_request_rules: Any = None
     redacted_sensitive_fields: tuple[str, ...] = ()
     security: dict[str, Any] | None = None
+    private: bool = False
+    provider_connection: dict[str, Any] | None = None
 
     def summary(self) -> dict[str, Any]:
         """Return a bounded, frontend-friendly description of available content."""
@@ -164,6 +172,8 @@ class PreparedTransfer:
             "redacted_sensitive_fields": list(self.redacted_sensitive_fields[:50]),
             "redacted_sensitive_field_count": len(self.redacted_sensitive_fields),
             "security": self.security,
+            "private_backup": self.private,
+            "provider_connection_available": bool(self.provider_connection),
         }
 
 
@@ -452,7 +462,7 @@ def _safe_title(title: str) -> str:
 def _new_transfer_document(entry: Any, subentry: Any, mode: str) -> dict[str, Any]:
     return {
         "format": TRANSFER_FORMAT,
-        "version": SHARING_VERSION if mode == "setup" else TRANSFER_VERSION,
+        "version": SHARING_VERSION if mode == "setup" else PRIVATE_TRANSFER_VERSION,
         "mode": mode,
         "created_at": dt_util.utcnow().isoformat(),
         "integration_version": _integration_version(),
@@ -462,6 +472,11 @@ def _new_transfer_document(entry: Any, subentry: Any, mode: str) -> dict[str, An
             "source_subentry_id": subentry.subentry_id,
         },
         "sections": {},
+        **(
+            {"provider_connection": deepcopy(dict(getattr(entry, "data", {})))}
+            if mode == "custom"
+            else {}
+        ),
     }
 
 
@@ -490,10 +505,14 @@ async def async_collect_transfer_snapshot(
     document = await hass.async_add_executor_job(
         _new_transfer_document, entry, subentry, mode
     )
+    if SECTION_CONFIGURATION not in selected:
+        document.pop("provider_connection", None)
     payload = document["sections"]
     if SECTION_CONFIGURATION in selected:
-        payload[SECTION_CONFIGURATION] = backup.export_configuration_snapshot(
-            subentry.data
+        payload[SECTION_CONFIGURATION] = (
+            deepcopy(dict(subentry.data))
+            if mode == "custom"
+            else backup.export_configuration_snapshot(subentry.data)
         )
     if SECTION_REQUEST_RULES in selected:
         request_rules_manager = await async_get_request_rules(
@@ -900,11 +919,25 @@ def _validate_transfer_document(
         "agent",
         "sections",
     }
+    private = (
+        value.get("version") == PRIVATE_TRANSFER_VERSION
+        and value.get("mode") == "custom"
+    )
+    if (value.get("version") == PRIVATE_TRANSFER_VERSION and not private) or (
+        value.get("version") == SHARING_VERSION and value.get("mode") != "setup"
+    ):
+        raise backup.BackupError("This transfer uses an unsupported format version")
+    if private and "provider_connection" in value:
+        expected.add("provider_connection")
     if value.get("version") == SHARING_VERSION and value.get("mode") == "setup":
         expected.add("security")
     if set(value) != expected:
         raise backup.BackupError("The transfer file is incomplete or corrupted")
-    if value.get("version") not in {TRANSFER_VERSION, SHARING_VERSION}:
+    if value.get("version") not in {
+        TRANSFER_VERSION,
+        SHARING_VERSION,
+        PRIVATE_TRANSFER_VERSION,
+    }:
         version = value.get("version")
         if isinstance(version, int) and version > TRANSFER_VERSION:
             raise backup.BackupError(
@@ -935,33 +968,43 @@ def _validate_transfer_document(
         created_at=created_at,
         integration_version=integration_version,
         security=value.get("security"),
+        private=private,
+        provider_connection=deepcopy(value.get("provider_connection"))
+        if private
+        else None,
     )
     redacted: list[str] = []
     try:
         if SECTION_CONFIGURATION in validating:
             raw = raw_sections[SECTION_CONFIGURATION]
-            prepared.raw_configuration = deepcopy(raw)
-            redacted.extend(
-                f"configuration.{path}" for path in _collect_secret_paths(raw)
-            )
-            restored = restore_redacted_secrets(raw)
+            prepared.raw_configuration = None if private else deepcopy(raw)
+            if not private:
+                redacted.extend(
+                    f"configuration.{path}" for path in _collect_secret_paths(raw)
+                )
+            restored = deepcopy(raw) if private else restore_redacted_secrets(raw)
             if not isinstance(restored, dict):
                 raise ValueError("configuration must be an object")
+            if private:
+                backup.private_configuration_snapshot(restored)
             prepared.config = (
                 restored
-                if _collect_secret_paths(raw)
+                if private or _collect_secret_paths(raw)
                 else backup.recoverable_configuration_snapshot(restored)
             )
         if SECTION_REQUEST_RULES in validating:
             raw = raw_sections[SECTION_REQUEST_RULES]
-            prepared.raw_request_rules = deepcopy(raw)
-            redacted.extend(
-                f"request_rules.{path}" for path in _collect_secret_paths(raw)
-            )
+            prepared.raw_request_rules = None if private else deepcopy(raw)
+            if not private:
+                redacted.extend(
+                    f"request_rules.{path}" for path in _collect_secret_paths(raw)
+                )
             prepared.request_rules = (
                 None
-                if _collect_secret_paths(raw)
-                else RequestRules.validate_backup_data(restore_redacted_secrets(raw))
+                if not private and _collect_secret_paths(raw)
+                else RequestRules.validate_backup_data(
+                    raw if private else restore_redacted_secrets(raw)
+                )
             )
         categories = validated_categories
         if categories is None:
@@ -1047,6 +1090,9 @@ def _inspect_full_backup(
     header = backup._inspect_decoded_backup(
         dict(value), target_agent_id, header_only=True
     )
+    private = value.get("version") == PRIVATE_BACKUP_VERSION
+    if private:
+        value = decode_document(value)
     sections = {
         SECTION_CONFIGURATION: value["agent"]["config"],
         SECTION_PERSISTENT_MEMORY: value["memories"],
@@ -1060,12 +1106,17 @@ def _inspect_full_backup(
             sections[key] = value[key]
     portable = {
         "format": TRANSFER_FORMAT,
-        "version": TRANSFER_VERSION,
+        "version": PRIVATE_TRANSFER_VERSION if private else TRANSFER_VERSION,
         "mode": "custom",
         "created_at": header.created_at,
         "integration_version": header.integration_version,
         "agent": {key: item for key, item in value["agent"].items() if key != "config"},
         "sections": sections,
+        **(
+            {"provider_connection": value["provider_connection"]}
+            if "provider_connection" in value
+            else {}
+        ),
     }
     prepared = _validate_transfer_document(
         portable, target_agent_id, selected, validated_categories=validated_categories
@@ -1109,7 +1160,7 @@ def _decode_transfer_input(value: Any) -> Mapping[str, Any]:
         )
     if value.get("format") == backup.BACKUP_FORMAT:
         value = backup._decode_backup_document(value, backup.MAX_BACKUP_BYTES)
-    return dict(value)
+    return decode_document(value) if is_private_document(value) else dict(value)
 
 
 async def async_inspect_transfer(
@@ -1132,6 +1183,8 @@ async def async_inspect_decoded_transfer(
     inspect_only: bool = False,
 ) -> PreparedTransfer:
     """Validate HA schemas on-loop, but bulk data categories in a worker."""
+    if is_private_document(value):
+        value = await asyncio.to_thread(decode_document, value)
     header = _inspect_decoded_transfer(value, target_agent_id, inspect_only=True)
     if inspect_only:
         return header
@@ -1193,6 +1246,8 @@ def _inspect_decoded_transfer(
     Re-encoding their decoded document on HA's loop would block unrelated work.
     """
     if value.get("format") == TRANSFER_FORMAT:
+        if value.get("version") == PRIVATE_TRANSFER_VERSION:
+            value = decode_document(value)
         return _validate_transfer_document(
             value,
             target_agent_id,

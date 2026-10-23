@@ -6,6 +6,7 @@ import asyncio
 import base64
 import binascii
 from contextlib import suppress
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 import hashlib
 import json
@@ -121,6 +122,7 @@ class ImportSession:
     preview_revision: str | None = None
     preview_sections: tuple[str, ...] | None = None
     preview_user_scope_mappings: tuple[tuple[str, str], ...] | None = None
+    preview_provider_data: dict[str, Any] | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     inspection_tasks: set[asyncio.Task[Any]] = field(default_factory=set, repr=False)
 
@@ -369,6 +371,10 @@ def _resolve_agent(
 
 
 def _redacted_document(snapshot: dict[str, Any]) -> dict[str, Any]:
+    from .private_backup import encode_document, is_private_document
+
+    if is_private_document(snapshot):
+        return encode_document(snapshot)
     if snapshot.get("format") == transfer.TRANSFER_FORMAT:
         return transfer.redact_transfer_document(snapshot)
     return {
@@ -1198,6 +1204,9 @@ async def _inspect_import_owned(
                 _forget_preview(hass, session)
                 session.preview_token = token
                 session.preview_revision = revision
+                session.preview_provider_data = deepcopy(
+                    dict(getattr(entry, "data", {}))
+                )
                 session.preview_sections = tuple(preview["selected_sections"])
                 session.preview_user_scope_mappings = tuple(
                     sorted(mapping_plan["resolved"].items())
@@ -1294,6 +1303,16 @@ async def _restore_import(
             _retire(hass, session)
 
     restored: dict[str, Any] | None = None
+    restore_provider = data.get("restore_provider_connection") is True
+    if restore_provider and (
+        not prepared.private
+        or not prepared.provider_connection
+        or transfer.SECTION_CONFIGURATION not in selected_sections
+        or session.preview_provider_data is None
+    ):
+        raise backup.BackupError(
+            "Select private configuration and preview the shared provider connection before restoring it"
+        )
     try:
         restored = await transfer.async_restore_transfer(
             hass,
@@ -1305,6 +1324,24 @@ async def _restore_import(
             else session.preview_sections,
             precondition=validate_preview,
         )
+        if restore_provider:
+            from .provider_credentials import restore_private_provider_connection
+
+            try:
+                restore_private_provider_connection(
+                    hass,
+                    entry,
+                    prepared.provider_connection,
+                    session.preview_provider_data,
+                    confirmed=True,
+                )
+            except HomeAssistantError:
+                restored["provider_connection_restored"] = False
+                restored["provider_connection_message"] = (
+                    "Agent data restored; provider connection was not changed. Import and preview again."
+                )
+            else:
+                restored["provider_connection_restored"] = True
     finally:
         if _imports(hass).get(session.session_id) is not session:
             _retire(hass, session)

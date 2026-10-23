@@ -55,6 +55,12 @@ from .function_yaml import json_safe_function_fields
 from .guest_mode import GuestModeManager, GuestModeSchedule, async_get_guest_mode
 from .knowledge import KnowledgeLibrary, KnowledgeSource, async_get_knowledge
 from .memory import MemoryRecord, PersistentMemory, async_get_memory
+from .private_backup import (
+    PRIVATE_BACKUP_VERSION,
+    DecodedPrivateDocument,
+    decode_document,
+    encode_document,
+)
 from .request_rules import RequestRules, async_get_request_rules
 from .secret_redaction import redact_secrets, restore_redacted_secrets
 from .temporary_memory import (
@@ -225,12 +231,13 @@ async def async_collect_backup_snapshot(
         guest_mode,
         request_rules,
     ) = await _managers(hass, entry.entry_id, subentry.subentry_id)
-    config_snapshot = export_configuration_snapshot(subentry.data)
+    config_snapshot = deepcopy(dict(subentry.data))
     return {
         "format": BACKUP_FORMAT,
-        "version": BACKUP_VERSION,
+        "version": PRIVATE_BACKUP_VERSION,
         "created_at": dt_util.utcnow().isoformat(),
         "integration_version": _integration_version(),
+        "provider_connection": deepcopy(dict(getattr(entry, "data", {}))),
         "agent": {
             "title": subentry.title,
             "source_entry_id": entry.entry_id,
@@ -248,7 +255,7 @@ async def async_collect_backup_snapshot(
 
 
 def finalize_backup_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
-    """Redact and serialize a small legacy one-message JSON backup."""
+    """Serialize private v6 data; retain the redacted semantics of legacy versions."""
     try:
         check_redaction_budget(snapshot, MAX_LEGACY_EXPORT_BYTES)
     except JSONBudgetExceeded as err:
@@ -256,14 +263,18 @@ def finalize_backup_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
             "This backup is too large for the legacy one-message JSON export; "
             "use the full backup transfer interface"
         ) from err
-    document = {
-        **snapshot,
-        "agent": {
-            **snapshot["agent"],
-            "config": _safe_configuration(snapshot["agent"]["config"]),
-        },
-        "request_rules": _safe_configuration(snapshot["request_rules"]),
-    }
+    document = (
+        encode_document(snapshot)
+        if snapshot.get("version") == PRIVATE_BACKUP_VERSION
+        else {
+            **snapshot,
+            "agent": {
+                **snapshot["agent"],
+                "config": _safe_configuration(snapshot["agent"]["config"]),
+            },
+            "request_rules": _safe_configuration(snapshot["request_rules"]),
+        }
+    )
     try:
         serialized = bounded_json_dumps(document, MAX_LEGACY_EXPORT_BYTES)
     except JSONBudgetExceeded as err:
@@ -384,6 +395,8 @@ def _validate_data_categories(
 
 def _decode_backup_document(value: Any, max_bytes: int) -> dict[str, Any]:
     """Perform only context-free JSON processing and transport size checks."""
+    if isinstance(value, DecodedPrivateDocument):
+        return value
     if (
         isinstance(max_bytes, bool)
         or not isinstance(max_bytes, int)
@@ -415,7 +428,14 @@ def _decode_backup_document(value: Any, max_bytes: int) -> dict[str, Any]:
             raise BackupError("The backup is incomplete or corrupted") from err
     if not isinstance(value, dict):
         raise BackupError("This file is not an Extended OpenAI Conversation backup")
-    return value
+    try:
+        return (
+            decode_document(value)
+            if value.get("version") == PRIVATE_BACKUP_VERSION
+            else value
+        )
+    except (ValueError, TypeError, KeyError, yaml.YAMLError) as err:
+        raise BackupError("The private backup encoding is invalid") from err
 
 
 def _inspect_decoded_backup(
@@ -430,7 +450,7 @@ def _inspect_decoded_backup(
     if value.get("format") != BACKUP_FORMAT:
         raise BackupError("This file is not an Extended OpenAI Conversation backup")
     version = value.get("version")
-    if version not in {1, 2, 3, 4, BACKUP_VERSION}:
+    if version not in {1, 2, 3, 4, BACKUP_VERSION, PRIVATE_BACKUP_VERSION}:
         if isinstance(version, int) and version > BACKUP_VERSION:
             raise BackupError(
                 "This backup was created using a newer unsupported backup format"
@@ -450,6 +470,8 @@ def _inspect_decoded_backup(
     }
     required = expected | ({"request_rules"} if version >= 3 else set())
     allowed = required | ({"guest_mode"} if version >= 2 else set())
+    if version == PRIVATE_BACKUP_VERSION:
+        allowed.add("provider_connection")
     # Version 4 contained one retired feature section. Ignore only that legacy
     # payload while retaining strict validation for every other top-level section.
     unexpected = set(value) - allowed
@@ -503,14 +525,23 @@ def _inspect_decoded_backup(
             integration_version,
         )
     try:
+        if version == PRIVATE_BACKUP_VERSION and not private_journal:
+            value = decode_document(value)
+            agent = value["agent"]
         raw_config = (
             deepcopy(agent["config"])
-            if private_journal
+            if private_journal or version == PRIVATE_BACKUP_VERSION
             else restore_redacted_secrets(agent["config"])
         )
         if not isinstance(raw_config, dict):
             raise ValueError("agent config must be an object")
-        config = recoverable_configuration_snapshot(raw_config)
+        config = (
+            deepcopy(raw_config)
+            if version == PRIVATE_BACKUP_VERSION
+            else recoverable_configuration_snapshot(raw_config)
+        )
+        if version == PRIVATE_BACKUP_VERSION:
+            private_configuration_snapshot(raw_config)
         categories = (
             validated_categories
             if validated_categories is not None
@@ -530,7 +561,7 @@ def _inspect_decoded_backup(
         )
         request_rules = RequestRules.validate_backup_data(
             deepcopy(value.get("request_rules", {"defaults": {}, "rules": []}))
-            if private_journal
+            if private_journal or version == PRIVATE_BACKUP_VERSION
             else restore_redacted_secrets(
                 value.get("request_rules", {"defaults": {}, "rules": []})
             )

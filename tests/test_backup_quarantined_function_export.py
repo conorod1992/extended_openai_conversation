@@ -99,7 +99,7 @@ async def test_full_backup_collection_succeeds_with_quarantined_function(
     )
 
     exported = snapshot["agent"]["config"]
-    assert exported[CONF_FUNCTION_TOOLS] == yaml.safe_load(config[CONF_FUNCTION_TOOLS])
+    assert exported[CONF_FUNCTION_TOOLS] == config[CONF_FUNCTION_TOOLS]
     assert exported[CONF_FUNCTION_GROUPS] == config[CONF_FUNCTION_GROUPS]
 
 

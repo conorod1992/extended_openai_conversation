@@ -925,7 +925,7 @@ def test_redaction_placeholder_detection_accepts_structured_and_legacy_forms() -
 def test_future_transfer_version_is_rejected_cleanly() -> None:
     document = {
         "format": transfer.TRANSFER_FORMAT,
-        "version": max(transfer.TRANSFER_VERSION, transfer.SHARING_VERSION) + 1,
+        "version": transfer.PRIVATE_TRANSFER_VERSION + 1,
         "mode": "setup",
         "created_at": "2026-09-08T20:00:00+00:00",
         "integration_version": "99.0.0",
