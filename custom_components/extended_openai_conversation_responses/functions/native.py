@@ -48,6 +48,7 @@ from ..safety_hardening import (
     _validate_execute_service_request,
     _validate_history_request,
 )
+from ..yaml_serialization import dump_yaml
 from .base import Function
 
 _LOGGER = logging.getLogger(__name__)
@@ -211,7 +212,7 @@ def _append_automation_atomic(
     else:
         current = []
 
-    raw_config = yaml.safe_dump([config], allow_unicode=True, sort_keys=False)
+    raw_config = dump_yaml([config], sort_keys=False)
     if not current:
         prefix = existing_text if current_node is None else ""
         if prefix and not prefix.endswith("\n"):

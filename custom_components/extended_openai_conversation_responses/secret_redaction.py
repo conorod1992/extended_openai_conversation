@@ -6,9 +6,8 @@ import re
 from typing import Any
 from urllib.parse import unquote_plus, urlsplit, urlunsplit
 
-import yaml
-
 from .function_yaml import decoded_function_fields, json_safe_function_fields
+from .yaml_serialization import dump_yaml
 
 REDACTED_SECRET_SENTINEL = {"__extended_openai_redacted_secret__": True}
 REDACTED_URL_KEY = "__extended_openai_redacted_url__"
@@ -344,8 +343,6 @@ def restore_redacted_secrets(value: Any) -> Any:
         restored["functions"] = (
             value["functions"]
             if restored["functions"] == decoded["functions"]
-            else yaml.safe_dump(
-                restored["functions"], sort_keys=False, allow_unicode=True
-            )
+            else dump_yaml(restored["functions"], sort_keys=False)
         )
     return None if restored is _DROP else restored

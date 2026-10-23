@@ -39,6 +39,7 @@ from .persistence_hardening import (
 )
 from .request_origin import bind_request_satellite, get_request_satellite
 from .strict_store import PropagatingWriteStore, _async_settle_store_io
+from .yaml_serialization import dump_yaml
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -107,7 +108,7 @@ def _represent_fingerprint_set(
     # A set then hashes differently across process restarts/PYTHONHASHSEEDs.
     ordered = sorted(
         value,
-        key=lambda item: yaml.safe_dump(item, sort_keys=True, allow_unicode=True),
+        key=lambda item: dump_yaml(item, sort_keys=True),
     )
     return dumper.represent_mapping(
         "tag:yaml.org,2002:set", ((item, None) for item in ordered)

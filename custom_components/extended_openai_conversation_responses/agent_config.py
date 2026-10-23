@@ -197,6 +197,7 @@ from .local_intents import (
 )
 from .memory import get_memory_mode
 from .skill_availability import skill_loader_status
+from .yaml_serialization import dump_yaml
 
 CONF_GUEST_WEB_SEARCH = "guest_web_search"
 DEFAULT_GUEST_WEB_SEARCH = False
@@ -231,7 +232,7 @@ def validate_agent_title(value: Any, *, default: str | None = None) -> str:
 
 def _tools_yaml(value: Any) -> str:
     tools = validate_function_tools(value)
-    return yaml.safe_dump(tools, sort_keys=False, allow_unicode=True)
+    return dump_yaml(tools, sort_keys=False)
 
 
 AGENT_CONFIG_DEFAULTS = MappingProxyType(
@@ -251,9 +252,7 @@ AGENT_CONFIG_DEFAULTS = MappingProxyType(
         CONF_TEMPERATURE: DEFAULT_TEMPERATURE,
         CONF_REASONING_EFFORT: DEFAULT_REASONING_EFFORT,
         CONF_SERVICE_TIER: DEFAULT_SERVICE_TIER,
-        CONF_FUNCTION_TOOLS: yaml.safe_dump(
-            DEFAULT_CONF_FUNCTION_TOOLS, sort_keys=False, allow_unicode=True
-        ),
+        CONF_FUNCTION_TOOLS: dump_yaml(DEFAULT_CONF_FUNCTION_TOOLS, sort_keys=False),
         CONF_FUNCTION_GROUPS: list(DEFAULT_FUNCTION_GROUPS),
         CONF_FUNCTION_TOOL_ERROR_RECOVERY: DEFAULT_FUNCTION_TOOL_ERROR_RECOVERY,
         CONF_CONTEXT_THRESHOLD: DEFAULT_CONTEXT_THRESHOLD,
@@ -813,12 +812,12 @@ def validate_single_function_tool(value: Any) -> dict[str, Any]:
 def function_tool_yaml(value: Any) -> str:
     """Serialize one validated function tool as readable YAML."""
     tool = validate_single_function_tool(value)
-    return yaml.safe_dump(tool, sort_keys=False, allow_unicode=True)
+    return dump_yaml(tool, sort_keys=False)
 
 
 def starter_function_tool_yaml() -> str:
     """Return the generic YAML-first editor template for a new function tool."""
-    return yaml.safe_dump(
+    return dump_yaml(
         {
             "spec": {
                 "name": "my_tool",
@@ -828,7 +827,6 @@ def starter_function_tool_yaml() -> str:
             "function": {"type": "native", "name": ""},
         },
         sort_keys=False,
-        allow_unicode=True,
     )
 
 
@@ -1265,9 +1263,7 @@ def normalize_agent_config(
     elif CONF_FUNCTION_TOOLS in data and (
         validated_functions is None or not isinstance(data[CONF_FUNCTION_TOOLS], str)
     ):
-        result[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
-            function_tools, sort_keys=False, allow_unicode=True
-        )
+        result[CONF_FUNCTION_TOOLS] = dump_yaml(function_tools, sort_keys=False)
     result[CONF_SPEECH_REGEX_REPLACEMENTS] = validate_speech_regex_replacements(
         result.get(CONF_SPEECH_REGEX_REPLACEMENTS, [])
     )
@@ -1392,10 +1388,9 @@ def _configured_tools_yaml(data: Mapping[str, Any]) -> str | None:
     except TypeError, ValueError:
         # Runtime-only hydrated configs may contain objects such as HA Templates.
         # Preserve the established fallback for those uncommon call sites.
-        return yaml.safe_dump(
+        return dump_yaml(
             configured,
             sort_keys=True,
-            allow_unicode=True,
         )
 
 
@@ -1437,7 +1432,7 @@ def configured_function_tools_from_data(
 
 
 def _groups_cache_key(value: Any) -> str:
-    return yaml.safe_dump(value, sort_keys=True, allow_unicode=True)
+    return dump_yaml(value, sort_keys=True)
 
 
 @lru_cache(maxsize=128)

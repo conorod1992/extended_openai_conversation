@@ -44,6 +44,7 @@ from .const import (
 from .live_subentry_updates import update_configuration_subentry, update_live_subentry
 from .model_catalog import catalog_generation
 from .request import canonical_json
+from .yaml_serialization import dump_yaml
 
 _STALE_CONFIGURATION_ERROR = (
     "Agent configuration changed in another tab; reload before saving"
@@ -139,7 +140,7 @@ def _function_tools_cache_key(options: dict[str, Any]) -> tuple[str, str]:
     try:
         return ("json", canonical_json(raw))
     except TypeError, ValueError:
-        return ("yaml", yaml.safe_dump(raw, sort_keys=True, allow_unicode=True))
+        return ("yaml", dump_yaml(raw, sort_keys=True))
 
 
 def _options_from_function_tools_cache_key(kind: str, payload: str) -> dict[str, Any]:
@@ -183,9 +184,7 @@ def _isolate_function_tools_uncached(
                     "index": index,
                     "name": name,
                     "tool": deepcopy(candidate),
-                    "yaml": yaml.safe_dump(
-                        candidate, sort_keys=False, allow_unicode=True
-                    ),
+                    "yaml": dump_yaml(candidate, sort_keys=False),
                     "validation_error": str(err) or type(err).__name__,
                 }
             )
@@ -325,9 +324,7 @@ def effective_function_configuration(
     state = function_configuration_repair_state(options)
     safe = dict(options)
     valid = state.valid if state else function_tools_issue(options)[0]
-    safe[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
-        valid, sort_keys=False, allow_unicode=True
-    )
+    safe[CONF_FUNCTION_TOOLS] = dump_yaml(valid, sort_keys=False)
     safe[CONF_FUNCTION_GROUPS] = (
         state.groups
         if state
@@ -793,8 +790,8 @@ def persist_valid_function_configuration(
         else:
             candidate.pop(CONF_FUNCTION_TOOLS, None)
     else:
-        candidate[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
-            candidate[CONF_FUNCTION_TOOLS], sort_keys=False, allow_unicode=True
+        candidate[CONF_FUNCTION_TOOLS] = dump_yaml(
+            candidate[CONF_FUNCTION_TOOLS], sort_keys=False
         )
     # Function edits must not turn implicit model-dependent defaults into saved
     # settings. For example, an absent effort follows each routed model's profile;
@@ -953,9 +950,7 @@ def _persist_raw_tools(
 ) -> dict[str, Any]:
     """Persist a partially invalid collection without normalizing untouched siblings."""
     persisted = dict(subentry.data)
-    persisted[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
-        tools, sort_keys=False, allow_unicode=True
-    )
+    persisted[CONF_FUNCTION_TOOLS] = dump_yaml(tools, sort_keys=False)
     persisted[CONF_FUNCTION_GROUPS] = deepcopy(groups)
     if extra_updates:
         persisted.update(deepcopy(extra_updates))
@@ -1325,9 +1320,7 @@ async def async_function_repair(
     validate_function_groups(state.groups, validated_tools)
 
     persisted = dict(subentry.data)
-    persisted[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
-        validated_tools, sort_keys=False, allow_unicode=True
-    )
+    persisted[CONF_FUNCTION_TOOLS] = dump_yaml(validated_tools, sort_keys=False)
     await management_ui._async_validate_configuration_request(
         hass, entry, subentry, safe_function_configuration(persisted)
     )

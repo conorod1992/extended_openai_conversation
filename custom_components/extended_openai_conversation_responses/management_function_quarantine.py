@@ -9,8 +9,6 @@ from copy import deepcopy
 from types import SimpleNamespace
 from typing import Any, cast
 
-import yaml
-
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
@@ -40,6 +38,7 @@ from .management_function_repair import (
     repair_state_for_projection,
     safe_function_configuration as _safe_function_configuration,
 )
+from .yaml_serialization import dump_yaml
 
 _ALLOW_QUARANTINED_TOOLS: ContextVar[bool] = ContextVar(
     "extended_openai_management_allow_quarantined_tools", default=False
@@ -401,10 +400,9 @@ def _tolerant_persist_function_configuration(
         ]
         persisted_groups.extend(restored_groups)
     persisted = dict(raw)
-    persisted[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
+    persisted[CONF_FUNCTION_TOOLS] = dump_yaml(
         [*deepcopy(tools), *quarantined_raw],
         sort_keys=False,
-        allow_unicode=True,
     )
     if deepcopy(tools) == state.valid:
         # Group-only edits must not reserialize untouched Tools.

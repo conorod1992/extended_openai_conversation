@@ -32,6 +32,8 @@ The package cannot recreate external HA scripts, secrets, files or remote servic
 
 Selective restore preserves authoritative unselected configuration verbatim. Private backup and recovery-journal inspection validate a separate effective projection without replacing the stored configuration, including valid and quarantined Function YAML. Internal raw-source provenance is not an import-file flag; historical public backup formats retain their prior semantics.
 
+Function edits and Management editor transport use a shared safe YAML writer that preserves Unicode line separators rather than folding them into spaces. Toggling, editing or repairing a restored Function therefore retains its exact scalar values, including passwords and literal redaction-marker text. Ordinary Unicode remains readable. This does not change the private backup format or reinterpret existing backup data.
+
 **These files are private and unencrypted. Keep them private and store them securely.** ZIP compression, base64 and checksums do not provide confidentiality or prove who authored a file. Shareable export is the route for public sharing; a private backup is the route for complete credential-bearing restoration.
 
 Optional password protection is a follow-up, not part of this implementation. It needs a reviewed authenticated container, a password KDF calibrated for supported HA hardware, bounded KDF/file parameters, authentication before archive parsing, wrong-password/corruption tests and careful plaintext staging cleanup. Encryption will wrap the same lossless payload rather than redact it. No ad-hoc ZIP password scheme or custom streaming cryptography is introduced here.
