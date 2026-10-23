@@ -19,6 +19,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
 from .const import DEFAULT_SKILLS_DIRECTORY, DEFAULT_WORKING_DIRECTORY, SKILL_FILE_NAME
+from .operational_errors import log_handled_failure
 from .skill_resource_limits import (
     MAX_DISCOVERED_SKILLS,
     MAX_SKILL_DISCOVERY_ENTRIES,
@@ -80,12 +81,11 @@ class SkillMdParser:
         try:
             frontmatter = yaml.safe_load(match.group(1))
         except yaml.YAMLError as err:
-            _LOGGER.warning(
-                "Skill '%s' was not loaded because its SKILL.md YAML frontmatter is "
-                "invalid. Fix or reinstall the Skill in Extended OpenAI > Skills. "
-                "File: %s. Reason: %s",
-                skill_path.parent.name,
-                skill_path,
+            log_handled_failure(
+                _LOGGER,
+                f"Skill '{skill_path.parent.name}' was not loaded because its "
+                "SKILL.md YAML frontmatter is invalid. Fix or reinstall the Skill "
+                f"in Extended OpenAI > Skills. File: {skill_path}",
                 err,
             )
             return None
@@ -116,11 +116,12 @@ class SkillMdParser:
         try:
             return Skill(name=name, description=description, path=skill_path)
         except ValueError as err:
-            _LOGGER.warning(
-                "Skill '%s' was not loaded because its metadata is invalid. Fix or "
-                "reinstall the Skill in Extended OpenAI > Skills. File: %s. Reason: %s",
-                skill_path.parent.name,
-                skill_path,
+            log_handled_failure(
+                _LOGGER,
+                f"Skill '{skill_path.parent.name}' was not loaded because its "
+                "metadata is invalid. Check the name (1-64 characters) and "
+                "description (text, at most 1024 characters) in Extended OpenAI "
+                f"> Skills. File: {skill_path}",
                 err,
             )
             return None
@@ -270,8 +271,13 @@ class SkillManager:
                 if skill is not None:
                     loaded[skill.name] = skill
                     _LOGGER.debug("Loaded skill: %s from %s", skill.name, skill_path)
-            except Exception:
-                _LOGGER.exception("Unexpected error loading skill from %s", skill_path)
+            except Exception as err:
+                log_handled_failure(
+                    _LOGGER,
+                    f"Unexpected error loading Skill: {skill_path}",
+                    err,
+                    level=logging.ERROR,
+                )
         return loaded
 
     @asynccontextmanager
@@ -444,11 +450,11 @@ class SkillManager:
             try:
                 results.append((skill_file, read_bounded_skill_text(skill_file)))
             except HomeAssistantError as err:
-                _LOGGER.warning(
-                    "Skill '%s' could not be read and was skipped. Check the Skill file "
-                    "or reinstall it in Extended OpenAI > Skills. File: %s. Reason: %s",
-                    skill_dir.name,
-                    skill_file,
+                log_handled_failure(
+                    _LOGGER,
+                    f"Skill '{skill_dir.name}' could not be read and was skipped. "
+                    "Check the Skill file or reinstall it in Extended OpenAI "
+                    f"> Skills. File: {skill_file}",
                     err,
                 )
         return results

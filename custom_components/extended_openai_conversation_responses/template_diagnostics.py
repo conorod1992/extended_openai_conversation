@@ -71,7 +71,7 @@ class _PrivateRenderingFilter(logging.Filter):
         error_type = (
             type(record.exc_info[1]).__name__
             if record.exc_info and record.exc_info[1] is not None
-            else failure
+            else getattr(record, "_eoai_error_type", failure)
         )
         record.msg = (
             "EOAI private %s diagnostic; step=%s error_type=%s. "
