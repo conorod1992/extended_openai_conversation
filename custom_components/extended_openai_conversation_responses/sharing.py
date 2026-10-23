@@ -63,6 +63,11 @@ _SCHEMA_CHILD_KEYWORDS = frozenset(
         "oneOf",
     }
 )
+# These select instance values by unclassified property names. Neither sibling
+# declarations nor composed schemas establish that those values are public.
+# Apply the sensitive-value policy even when the containing object is public;
+# type/shape-only schemas still survive, while literals and unproved refs do not.
+_SCHEMA_VALUE_WILDCARDS = frozenset({"additionalProperties", "unevaluatedProperties"})
 _INVALID_PERCENT_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
 _INVALID_POINTER_ESCAPE = re.compile(r"~(?:[^01]|$)")
 _LITERAL_PROPERTY_PATTERN = re.compile(r"\^([A-Za-z0-9_-]+)\$")
@@ -422,7 +427,7 @@ def _schema_annotations(
             result[key] = _schema_annotations(
                 item,
                 root,
-                sensitive=sensitive,
+                sensitive=sensitive or key in _SCHEMA_VALUE_WILDCARDS,
                 references=references,
                 reference_results=reference_results,
                 single_resource=single_resource,
