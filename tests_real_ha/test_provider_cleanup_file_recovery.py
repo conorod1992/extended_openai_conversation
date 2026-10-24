@@ -196,31 +196,33 @@ async def test_repeated_output_cleanup_preserves_file_and_safe_followup(
     assert target.read_text(encoding="utf-8") == "changed"
     assert writes == [target]
     assert agent._usage.requests[-1].total_tokens == 240
-    with async_get_chat_session(hass, failed.conversation_id) as session:
-        with conversation.async_get_chat_log(hass, session) as log:
-            calls = [
-                call
+    with (
+        async_get_chat_session(hass, failed.conversation_id) as session,
+        conversation.async_get_chat_log(hass, session) as log,
+    ):
+        calls = [
+            call
+            for item in log.content
+            if isinstance(item, conversation.AssistantContent)
+            for call in item.tool_calls or []
+        ]
+        results = [item for item in log.content if is_tool_result_content(item)]
+        assert len(calls) == len(results) == 1
+        original = calls[0]
+        assert original.tool_name == "write"
+        assert tool_result_data(results[0])["result"]["success"] is True
+        assert agent._execution_tool_outcomes[id(original)] == "completed"
+        receipt = agent._execution_effect_receipts[id(original)][0]
+        assert (receipt.kind, receipt.outcome) == ("file_write", "completed")
+        assert agent._unacknowledged_effects[failed.conversation_id]
+        if mode == "responses":
+            natives = [
+                getattr(item.native, "id", None)
                 for item in log.content
                 if isinstance(item, conversation.AssistantContent)
-                for call in item.tool_calls or []
             ]
-            results = [item for item in log.content if is_tool_result_content(item)]
-            assert len(calls) == len(results) == 1
-            original = calls[0]
-            assert original.tool_name == "write"
-            assert tool_result_data(results[0])["result"]["success"] is True
-            assert agent._execution_tool_outcomes[id(original)] == "completed"
-            receipt = agent._execution_effect_receipts[id(original)][0]
-            assert (receipt.kind, receipt.outcome) == ("file_write", "completed")
-            assert agent._unacknowledged_effects[failed.conversation_id]
-            if mode == "responses":
-                natives = [
-                    getattr(item.native, "id", None)
-                    for item in log.content
-                    if isinstance(item, conversation.AssistantContent)
-                ]
-                assert "fc-provider-wire" in natives
-                assert "rs-current" not in natives and "fc-current" not in natives
+            assert "fc-provider-wire" in natives
+            assert "rs-current" not in natives and "fc-current" not in natives
     _install_wire(
         monkeypatch,
         agent,
@@ -261,9 +263,13 @@ async def test_repeated_output_cleanup_preserves_file_and_safe_followup(
 
 
 @pytest.mark.parametrize("mode", ["chat_completions", "responses"])
-async def test_finalizer_cannot_acknowledge_a_file_with_a_repeated_call_id(
+async def test_finalizer_id_collision_follows_api_retained_history_contract(
     hass, monkeypatch, mode
 ):
+    from custom_components.extended_openai_conversation_responses.functions import (
+        file as files,
+    )
+
     root = Path(hass.config.config_dir) / DOMAIN
     root.mkdir(parents=True, exist_ok=True)
     tool = {
@@ -285,6 +291,15 @@ async def test_finalizer_cannot_acknowledge_a_file_with_a_repeated_call_id(
         continue_conversation="conditional",
         function_tool_error_recovery=False,
     )
+    writes = []
+    atomic_write = files._atomic_replace_text
+
+    def write(path, content, **kwargs):
+        result = atomic_write(path, content, **kwargs)
+        writes.append(path)
+        return result
+
+    monkeypatch.setattr(files, "_atomic_replace_text", write)
     call = _responses_sse_tool_call if mode == "responses" else _chat_sse_tool_call
     wire = _install_wire(
         monkeypatch,
@@ -299,19 +314,229 @@ async def test_finalizer_cannot_acknowledge_a_file_with_a_repeated_call_id(
         ],
     )
     result = await _say(hass, agent, "write")
+    assert len(wire.requests) == 2
+    target = root / "finalizer.txt"
+    assert target.read_text(encoding="utf-8") == "changed"
+    assert writes == [target]
+    if mode == "chat_completions":
+        # Chat consumes the finalizer as ordinary text, so its reused ID never
+        # enters retained call/result history and safely acknowledges the file.
+        assert _speech(result) == "Done"
+        assert not getattr(agent, "_unacknowledged_effects", {}).get(
+            result.conversation_id
+        )
+        assert not agent._execution_effect_receipts
+    else:
+        # Responses retains the native finalizer and its handling result. Its
+        # ID collision must be rejected without losing the earlier file receipt.
+        assert result.response.error_code is not None
+        assert agent._unacknowledged_effects[result.conversation_id]
+    with (
+        async_get_chat_session(hass, result.conversation_id) as session,
+        conversation.async_get_chat_log(hass, session) as log,
+    ):
+        calls = [
+            call
+            for item in log.content
+            if isinstance(item, conversation.AssistantContent)
+            for call in item.tool_calls or []
+        ]
+        results = [item for item in log.content if is_tool_result_content(item)]
+        assert len(calls) == len(results) == 1
+        assert calls[0].tool_name == "write"
+        assert tool_result_data(results[0])["result"]["success"] is True
+    if mode == "responses":
+        _install_wire(
+            monkeypatch,
+            agent,
+            [
+                call(
+                    "acknowledge",
+                    "set_continue_conversation",
+                    {"response": "Acknowledged", "continue_conversation": False},
+                )
+            ],
+        )
+        acknowledged = await _say(hass, agent, "acknowledge", result.conversation_id)
+        assert _speech(acknowledged) == "Acknowledged"
+        assert not agent._unacknowledged_effects.get(result.conversation_id)
+        assert not agent._execution_effect_receipts
+    _install_wire(
+        monkeypatch,
+        agent,
+        [
+            call("intentional", "write", {}),
+            call(
+                "final-intentional",
+                "set_continue_conversation",
+                {"response": "Repeated", "continue_conversation": False},
+            ),
+        ],
+    )
+    repeated = await _say(hass, agent, "repeat intentionally", result.conversation_id)
+    assert _speech(repeated) == "Repeated"
+    assert writes == [target, target]
+
+
+@pytest.mark.parametrize("mode", ["chat_completions", "responses"])
+async def test_group_loader_cannot_reuse_a_retained_file_call_id(
+    hass, monkeypatch, mode
+):
+    root = Path(hass.config.config_dir) / DOMAIN
+    root.mkdir(parents=True, exist_ok=True)
+    tools = [
+        {
+            "spec": {
+                "name": name,
+                "description": name,
+                "parameters": {"type": "object", "properties": {}},
+            },
+            "function": config,
+        }
+        for name, config in (
+            (
+                "write",
+                {"type": "write_file", "path": "loader.txt", "content": "changed"},
+            ),
+            ("hidden", {"type": "template", "value_template": "hidden"}),
+        )
+    ]
+    agent = await _agent(
+        hass,
+        api_mode=mode,
+        functions=tools,
+        function_groups=[
+            {
+                "id": "extra",
+                "name": "Extra",
+                "description": "Load extra tools",
+                "enabled": True,
+                "loading_mode": "on_demand",
+                "functions": ["hidden"],
+            }
+        ],
+        function_tool_error_recovery=False,
+    )
+    call = _responses_sse_tool_call if mode == "responses" else _chat_sse_tool_call
+    text = _responses_sse_text if mode == "responses" else _chat_sse_text
+    wire = _install_wire(
+        monkeypatch,
+        agent,
+        [
+            call("same", "write", {}),
+            call("same", "load_function_groups", {"groups": ["extra"]}),
+        ],
+    )
+    result = await _say(hass, agent, "write then load")
     assert result.response.error_code is not None
     assert len(wire.requests) == 2
-    assert (root / "finalizer.txt").read_text(encoding="utf-8") == "changed"
+    assert (root / "loader.txt").read_text(encoding="utf-8") == "changed"
     assert agent._unacknowledged_effects[result.conversation_id]
-    with async_get_chat_session(hass, result.conversation_id) as session:
-        with conversation.async_get_chat_log(hass, session) as log:
-            calls = [
-                call
-                for item in log.content
-                if isinstance(item, conversation.AssistantContent)
-                for call in item.tool_calls or []
-            ]
-            results = [item for item in log.content if is_tool_result_content(item)]
-            assert len(calls) == len(results) == 1
-            assert calls[0].tool_name == "write"
-            assert tool_result_data(results[0])["result"]["success"] is True
+    with (
+        async_get_chat_session(hass, result.conversation_id) as session,
+        conversation.async_get_chat_log(hass, session) as log,
+    ):
+        calls = [
+            call
+            for item in log.content
+            if isinstance(item, conversation.AssistantContent)
+            for call in item.tool_calls or []
+        ]
+        results = [item for item in log.content if is_tool_result_content(item)]
+        assert len(calls) == len(results) == 1
+        assert calls[0].tool_name == "write"
+        assert agent._execution_effect_receipts[id(calls[0])]
+    wire = _install_wire(monkeypatch, agent, [text("Acknowledged")])
+    recovered = await _say(hass, agent, "acknowledge", result.conversation_id)
+    assert _speech(recovered) == "Acknowledged"
+    exposed_names = {
+        tool["name"] if mode == "responses" else tool["function"]["name"]
+        for tool in wire.requests[0]["body"]["tools"]
+    }
+    assert "load_function_groups" in exposed_names
+    assert "hidden" not in exposed_names  # The rejected loader never ran.
+
+
+@pytest.mark.parametrize("mode", ["chat_completions", "responses"])
+async def test_consumed_chat_control_does_not_relax_same_round_id_validation(
+    hass, monkeypatch, mode
+):
+    root = Path(hass.config.config_dir) / DOMAIN
+    root.mkdir(parents=True, exist_ok=True)
+    tool = {
+        "spec": {
+            "name": "write",
+            "description": "Write",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "function": {
+            "type": "write_file",
+            "path": "invalid-batch.txt",
+            "content": "must not be written",
+        },
+    }
+    agent = await _agent(
+        hass,
+        api_mode=mode,
+        functions=[tool],
+        continue_conversation="conditional",
+        function_tool_error_recovery=False,
+    )
+    finalizer = {"response": "Done", "continue_conversation": False}
+    if mode == "chat_completions":
+        action = json.loads(
+            _chat_sse_tool_call("same", "write", {}).split(b"\n\n")[0][6:]
+        )
+        control = json.loads(
+            _chat_sse_tool_call("same", "set_continue_conversation", finalizer).split(
+                b"\n\n"
+            )[0][6:]
+        )["choices"][0]["delta"]["tool_calls"][0]
+        action["choices"][0]["delta"]["tool_calls"].append({**control, "index": 1})
+        payload = f"data: {json.dumps(action)}\n\ndata: [DONE]\n\n".encode()
+    else:
+        items = [
+            {
+                "id": f"fc-{index}",
+                "type": "function_call",
+                "call_id": "same",
+                "name": name,
+                "arguments": json.dumps(arguments),
+                "status": "completed",
+            }
+            for index, (name, arguments) in enumerate(
+                (("write", {}), ("set_continue_conversation", finalizer))
+            )
+        ]
+        events = []
+        for index, item in enumerate(items):
+            events.extend(
+                [
+                    {
+                        "type": "response.output_item.added",
+                        "output_index": index,
+                        "item": item,
+                    },
+                    {
+                        "type": "response.output_item.done",
+                        "output_index": index,
+                        "item": item,
+                    },
+                ]
+            )
+        events.append(
+            {
+                "type": "response.completed",
+                "response": _response_object("invalid-batch", items),
+            }
+        )
+        payload = "".join(
+            f"data: {json.dumps({**event, 'sequence_number': index})}\n\n"
+            for index, event in enumerate(events)
+        ).encode()
+    wire = _install_wire(monkeypatch, agent, [payload])
+    rejected = await _say(hass, agent, "reject ambiguous IDs")
+    assert rejected.response.error_code is not None
+    assert len(wire.requests) == 1
+    assert not (root / "invalid-batch.txt").exists()
+    assert not getattr(agent, "_unacknowledged_effects", {})

@@ -1,10 +1,14 @@
 {
   "schema": "eoai-nightly-execution-contract/v1",
   "pytest": [
+    "tests_real_ha/test_provider_cleanup_file_recovery.py::test_consumed_chat_control_does_not_relax_same_round_id_validation[chat_completions]",
+    "tests_real_ha/test_provider_cleanup_file_recovery.py::test_consumed_chat_control_does_not_relax_same_round_id_validation[responses]",
+    "tests_real_ha/test_provider_cleanup_file_recovery.py::test_finalizer_id_collision_follows_api_retained_history_contract[chat_completions]",
+    "tests_real_ha/test_provider_cleanup_file_recovery.py::test_finalizer_id_collision_follows_api_retained_history_contract[responses]",
+    "tests_real_ha/test_provider_cleanup_file_recovery.py::test_group_loader_cannot_reuse_a_retained_file_call_id[chat_completions]",
+    "tests_real_ha/test_provider_cleanup_file_recovery.py::test_group_loader_cannot_reuse_a_retained_file_call_id[responses]",
     "tests_real_ha/test_file_effect_recovery_precision.py::test_repeated_cancellation_settles_usage_and_preserves_file_recovery[chat_completions]",
     "tests_real_ha/test_file_effect_recovery_precision.py::test_repeated_cancellation_settles_usage_and_preserves_file_recovery[responses]",
-    "tests_real_ha/test_provider_cleanup_file_recovery.py::test_finalizer_cannot_acknowledge_a_file_with_a_repeated_call_id[chat_completions]",
-    "tests_real_ha/test_provider_cleanup_file_recovery.py::test_finalizer_cannot_acknowledge_a_file_with_a_repeated_call_id[responses]",
     "tests_real_ha/test_provider_cleanup_file_recovery.py::test_repeated_output_cleanup_preserves_file_and_safe_followup[False-chat_completions]",
     "tests_real_ha/test_provider_cleanup_file_recovery.py::test_repeated_output_cleanup_preserves_file_and_safe_followup[False-responses]",
     "tests_real_ha/test_provider_cleanup_file_recovery.py::test_repeated_output_cleanup_preserves_file_and_safe_followup[True-chat_completions]",

@@ -38,6 +38,7 @@ from custom_components.extended_openai_conversation_responses.provider_errors im
 from custom_components.extended_openai_conversation_responses.tool_exchange import (
     append_unresolved_tool_results,
     async_execute_tool_exchange,
+    validate_retained_tool_calls,
 )
 from homeassistant.components import conversation
 from homeassistant.exceptions import HomeAssistantError
@@ -736,3 +737,21 @@ def test_completed_response_cleanup_uses_round_boundary_before_dispatch(
     assert log.content[-3:] == [old_native, old_call, old_result]
     assert old_call.tool_calls[0] is original
     assert _retained_results(log) == [old_result]
+
+
+def test_consumed_call_exemption_cannot_mask_a_different_object_with_the_same_id(hass):
+    log = _chat_log(hass)
+    entity = SimpleNamespace(entity_id="conversation.test")
+    original = _call("same", "first")
+    log.content.extend(
+        [
+            conversation.AssistantContent(
+                agent_id=entity.entity_id, tool_calls=[original]
+            ),
+            _result(entity, original),
+        ]
+    )
+    ordinary = _call("same", "first")
+    consumed = _call("same", "set_continue_conversation")
+    with pytest.raises(HomeAssistantError, match="repeated a completed tool call id"):
+        validate_retained_tool_calls(entity, log, [ordinary], consumed_calls=[consumed])

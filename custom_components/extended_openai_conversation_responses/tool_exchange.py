@@ -243,6 +243,7 @@ def validate_retained_tool_calls(
     *,
     request_config_data: Any | None = None,
     existing_content_ids: set[int] | None = None,
+    consumed_calls: Iterable[llm.ToolInput] = (),
 ) -> None:
     """Validate the whole provider round before ordinary or control dispatch."""
     if not calls:
@@ -263,13 +264,19 @@ def validate_retained_tool_calls(
         )
         raise error
     validate_tool_call_ids(calls)
+    # Some API adapters consume control occurrences into ordinary text instead
+    # of retaining a call/result pair. Only those exact objects may reuse an
+    # earlier ID; configuration and within-round validation still cover them.
+    consumed_objects = {id(call) for call in consumed_calls}
     prior_results = {
         call_id
         for content in getattr(chat_log, "content", ())
         if is_tool_result_content(content)
         and isinstance((call_id := getattr(content, "tool_call_id", None)), str)
     }
-    if any(call.id in prior_results for call in calls):
+    if any(
+        id(call) not in consumed_objects and call.id in prior_results for call in calls
+    ):
         _prune_repeated_completed_calls(chat_log, calls, existing_content_ids)
         error = HomeAssistantError("Provider repeated a completed tool call id")
         append_unresolved_tool_results(

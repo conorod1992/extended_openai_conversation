@@ -32,6 +32,7 @@ from homeassistant.helpers.entity import Entity
 from homeassistant.util import slugify
 
 from .const import (
+    API_MODE_CHAT_COMPLETIONS,
     API_MODE_RESPONSES,
     CONF_API_MODE,
     CONF_API_PROVIDER,
@@ -1339,18 +1340,21 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             existing_content_ids=existing_content_ids,
                         )
                         raise error
+                pending_tool_calls, loader_calls, control_calls = (
+                    _partition_provider_tool_calls(
+                        pending_tool_calls,
+                        integration_loader_seen=integration_loader_seen,
+                    )
+                )
                 validate_retained_tool_calls(
                     self,
                     chat_log,
                     round_tool_calls,
                     request_config_data=request_config_data,
                     existing_content_ids=existing_content_ids,
-                )
-                pending_tool_calls, loader_calls, control_calls = (
-                    _partition_provider_tool_calls(
-                        pending_tool_calls,
-                        integration_loader_seen=integration_loader_seen,
-                    )
+                    consumed_calls=(
+                        control_calls if api_mode == API_MODE_CHAT_COMPLETIONS else ()
+                    ),
                 )
 
                 if loader_calls:
