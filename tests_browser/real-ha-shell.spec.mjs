@@ -586,6 +586,9 @@ test("cold native Guest and Request Rule editors receive HA context and discard 
   await expect.poll(()=>yaml.evaluate(element=>element.yaml)).toContain("false");
   await yaml.locator(".cm-content").fill("condition: template\nvalue_template: '{{ true }}'");
   await expect.poll(()=>condition.evaluate(selector=>selector.value[0]?.value_template)).toBe("{{ true }}");
+  await expect.poll(()=>condition.evaluate(selector=>selector.__eocYamlDraft())).toEqual([
+    expect.objectContaining({valid:true, pending:false}),
+  ]);
   await panel.locator("#rule-save").click();
   await expect(panel.locator("#rule-dialog")).toHaveJSProperty("open",false);
   await card.locator(".rule-edit").click();

@@ -36,6 +36,7 @@ export function watchSelectorYaml(selector) {
         const record = {edited:element.isValid === false, raw:String(element.yaml ?? ""), valid:element.isValid !== false, pending:false};
         records.set(element, record);
         const onChange = event => {
+          if ((event.composedPath?.()[0] ?? event.target) !== element) return;
           record.edited = true;
           record.raw = String(element.yaml ?? "");
           record.valid = event.detail?.isValid === true;
@@ -46,6 +47,15 @@ export function watchSelectorYaml(selector) {
           record.edited = true;
           record.raw = String(element.yaml ?? "");
           record.pending = true;
+          // CodeMirror can publish its parsed/applied change before forwarding
+          // the DOM input event. After its DOM observer runs, an exact match
+          // with the acknowledged document is already synchronized. Editors
+          // without a document snapshot remain conservatively pending.
+          queueMicrotask(() => {
+            if (stopped || !owns(element) || record.appliedRaw === undefined) return;
+            if (record.valid && String(element.yaml ?? "") === record.appliedRaw
+              && element.codemirror?.state?.doc?.toString() === record.appliedRaw) record.pending = false;
+          });
         };
         element.addEventListener("value-changed", onChange, true);
         element.addEventListener("input", onInput, true);
@@ -70,7 +80,10 @@ export function watchSelectorYaml(selector) {
   };
   selector.addEventListener("value-changed", event => {
     if (!isSelectorValueEvent(selector, event)) return;
-    for (const record of records.values()) if (record.valid) record.pending = false;
+    for (const [element, record] of records) if (record.valid) {
+      record.pending = false;
+      record.appliedRaw = String(element.yaml ?? "");
+    }
   });
   selector.addEventListener("value-changed", () => scan(selector), true);
   selector.addEventListener("input", () => scan(selector), true);

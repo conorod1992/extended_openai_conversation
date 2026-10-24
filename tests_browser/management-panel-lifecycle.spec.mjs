@@ -391,6 +391,25 @@ test("correcting native Rule YAML saves the intended actions and clears the draf
   await selector.evaluate((element, actions) => {
     const collection=element.shadowRoot.querySelector("ha-selector-action").shadowRoot.querySelector("ha-automation-action");
     collection.dispatchEvent(new CustomEvent("value-changed", {detail:{value:actions}, bubbles:true, composed:true}));
+    const yaml=collection.shadowRoot.querySelector("ha-yaml-editor");
+    yaml.codemirror={state:{doc:{toString:()=>yaml.yaml}}};
+    yaml.dispatchEvent(new Event("input", {bubbles:true, composed:true}));
+  }, actions);
+  await expect.poll(()=>selector.evaluate(element=>element.__eocYamlDraft()[0]?.pending)).toBe(false);
+  await selector.evaluate(element => {
+    const collection=element.shadowRoot.querySelector("ha-selector-action").shadowRoot.querySelector("ha-automation-action");
+    const yaml=collection.shadowRoot.querySelector("ha-yaml-editor");
+    yaml.codemirror={state:{doc:{toString:()=>"- event: still_unparsed"}}};
+    yaml.dispatchEvent(new Event("input", {bubbles:true, composed:true}));
+  });
+  await panel.locator("#rule-save").click();
+  await expect(panel.locator("#rule-error")).toContainText("Correct the YAML");
+  await selector.evaluate((element, actions) => {
+    const collection=element.shadowRoot.querySelector("ha-selector-action").shadowRoot.querySelector("ha-automation-action");
+    const yaml=collection.shadowRoot.querySelector("ha-yaml-editor");
+    yaml.codemirror={state:{doc:{toString:()=>yaml.yaml}}};
+    yaml.dispatchEvent(new CustomEvent("value-changed", {detail:{isValid:true, value:actions}, bubbles:true, composed:true}));
+    collection.dispatchEvent(new CustomEvent("value-changed", {detail:{value:actions}, bubbles:true, composed:true}));
   }, actions);
   await panel.locator("#rule-save").click();
   await expect(panel.locator("#rule-dialog")).toHaveJSProperty("open", false);
