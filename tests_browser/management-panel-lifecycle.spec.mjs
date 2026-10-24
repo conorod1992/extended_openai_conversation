@@ -394,3 +394,57 @@ test("correcting native Rule YAML saves the intended actions and clears the draf
   expect(await page.evaluate(() => window.browserHarness.calls.filter(call => call.section === "request_rules" && call.action === "update").at(-1).rule.action.actions)).toEqual(actions);
   expect(await panel.evaluate(host => host._unsavedState.hasChanges())).toBe(false);
 });
+
+
+for (const kind of ["action", "condition"]) {
+  test(`deleting invalid nested ${kind} YAML preserves other edits and permits Save`, async ({page}) => {
+    await page.goto(fixtureUrl("capabilities/request-rules"));
+    const panel = page.locator("extended-openai-management-panel");
+    await panel.locator(".rule-edit").first().click();
+    await panel.locator("#rule-action-type").selectOption("local_action");
+    await panel.locator("#rule-name").fill("Keep my other unsaved edits");
+    const actions=[{event:"removed_action"}, {event:"retained_action"}];
+    const conditions=[{condition:"state", entity_id:"light.first", state:"on"}, {condition:"state", entity_id:"light.second", state:"on"}];
+    await panel.locator("#rule-action-sequence-host ha-selector").evaluate((element, value) => {
+      element.value=value;
+      element.dispatchEvent(new CustomEvent("value-changed", {detail:{value}, bubbles:true, composed:true}));
+    }, actions);
+    await panel.locator("#rule-condition-host ha-selector").evaluate((element, value) => {
+      element.value=value;
+      element.dispatchEvent(new CustomEvent("value-changed", {detail:{value}, bubbles:true, composed:true}));
+    }, conditions);
+    const selector=panel.locator(kind === "action" ? "#rule-action-sequence-host ha-selector" : "#rule-condition-host ha-selector");
+    await selector.evaluate(element => {
+      const root=element.shadowRoot || element.attachShadow({mode:"open"});
+      const wrapper=document.createElement("div"); wrapper.dataset.testWrapper=""; root.append(wrapper);
+      const nested=wrapper.attachShadow({mode:"open"});
+      const action=document.createElement("div"); action.dataset.testDeleted=""; nested.append(action);
+      const editorRoot=action.attachShadow({mode:"open"});
+      editorRoot.append(document.createElement("ha-yaml-editor"));
+    });
+    await selector.evaluate(element => {
+      const wrapper=element.shadowRoot.querySelector("[data-test-wrapper]");
+      const yaml=wrapper.shadowRoot.querySelector("[data-test-deleted]").shadowRoot.querySelector("ha-yaml-editor");
+      yaml.yaml="- invalid: [unfinished";
+      yaml.dispatchEvent(new CustomEvent("value-changed", {detail:{isValid:false}, bubbles:true, composed:true}));
+    });
+    await panel.locator("#rule-save").click();
+    await expect(panel.locator("#rule-error")).toContainText("Correct the YAML");
+    expect(await selector.evaluate(element => element.__eocYamlDraft())).toEqual([{raw:"- invalid: [unfinished", valid:false, pending:false}]);
+    await selector.evaluate(element => element.dispatchEvent(new CustomEvent("value-changed", {detail:{value:element.value}, bubbles:true, composed:true})));
+    await panel.locator("#rule-save").click();
+    await expect(panel.locator("#rule-error")).toContainText("Correct the YAML");
+    const remaining=(kind === "action" ? actions : conditions).slice(1);
+    await selector.evaluate((element, value) => {
+      element.shadowRoot.querySelector("[data-test-wrapper]").shadowRoot.querySelector("[data-test-deleted]").remove();
+      element.value=value;
+      element.dispatchEvent(new CustomEvent("value-changed", {detail:{value}, bubbles:true, composed:true}));
+    }, remaining);
+    expect(await selector.evaluate(element => element.__eocYamlDraft())).toEqual([]);
+    await panel.locator("#rule-save").click();
+    await expect(panel.locator("#rule-dialog")).toHaveJSProperty("open", false);
+    const saved=await page.evaluate(() => window.browserHarness.calls.filter(call => call.section === "request_rules" && call.action === "update").at(-1).rule);
+    expect(saved.name).toBe("Keep my other unsaved edits");
+    expect(kind === "action" ? saved.action.actions : saved.conditions).toEqual(remaining);
+  });
+}
