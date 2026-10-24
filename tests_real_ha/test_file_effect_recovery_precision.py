@@ -1,7 +1,10 @@
 """Prepared file identities stay precise through interrupted Composite executions."""
 
+import asyncio
+import json
 from pathlib import Path
 
+import httpx
 import pytest
 
 from custom_components.extended_openai_conversation_responses.const import (
@@ -16,6 +19,7 @@ from tests_real_ha.test_provider_wire_e2e import (
     _chat_sse_text,
     _chat_sse_tool_call,
     _install_wire,
+    _raw_client,
     _responses_sse_text,
     _responses_sse_tool_call,
 )
@@ -182,3 +186,104 @@ async def test_file_recovery_matches_effects_after_partial_or_uncertain_executio
     )
     await _say(hass, agent, "repeat intentionally", failed.conversation_id)
     assert len(writes) == 4
+
+
+@pytest.mark.parametrize("mode", ["chat_completions", "responses"])
+async def test_repeated_cancellation_settles_usage_and_preserves_file_recovery(
+    hass, monkeypatch, mode
+):
+    root = Path(hass.config.config_dir) / DOMAIN
+    root.mkdir(parents=True, exist_ok=True)
+    target = root / "cancelled.txt"
+    agent = await _agent(
+        hass,
+        api_mode=mode,
+        **{
+            CONF_FUNCTION_TOOLS: [
+                {
+                    "spec": {
+                        "name": "write_note",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                    "function": {
+                        "type": "write_file",
+                        "path": "cancelled.txt",
+                        "content": "written once",
+                    },
+                }
+            ]
+        },
+    )
+    writes = []
+    original = files._atomic_replace_text
+
+    def counted(path, content, **kwargs):
+        writes.append((path, content))
+        return original(path, content, **kwargs)
+
+    monkeypatch.setattr(files, "_atomic_replace_text", counted)
+    call = _responses_sse_tool_call if mode == "responses" else _chat_sse_tool_call
+    text = _responses_sse_text if mode == "responses" else _chat_sse_text
+    _install_wire(monkeypatch, agent, [text("Ready")])
+    seed = await _say(hass, agent, "hello")
+    manager = agent._usage
+    assert manager is not None
+    continuation_started = asyncio.Event()
+    requests = []
+
+    async def send(request, *args, **kwargs):
+        requests.append(json.loads(request.content))
+        if len(requests) == 1:
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content=call("original", "write_note", {}),
+                request=request,
+            )
+        assert target.read_text(encoding="utf-8") == "written once"
+        continuation_started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(_raw_client(agent)._client, "send", send)
+    task = asyncio.create_task(_say(hass, agent, "write", seed.conversation_id))
+    await asyncio.wait_for(continuation_started.wait(), 5)
+    requests_before = manager.totals.api_request_count
+    failed_before = manager.totals.failed_request_count
+    await manager._lock.acquire()
+    try:
+        task.cancel()
+        async with asyncio.timeout(5):
+            while not manager._lock._waiters:
+                await asyncio.sleep(0)
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done()
+    finally:
+        manager._lock.release()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, 5)
+    assert manager.totals.api_request_count == requests_before + 1
+    assert manager.totals.failed_request_count == failed_before + 1
+    failed_request = manager.requests[-1]
+    failed_run = manager.runs[-1]
+    assert failed_request.run_id == failed_run.run_id
+    assert failed_request.request_stage == "after_tool"
+    assert failed_request.successful is False
+    assert failed_request.error_type == "CancelledError"
+    assert failed_run.request_count == 2
+    assert failed_run.failed_request_count == 1
+    assert failed_run.error_type == "CancelledError"
+    assert agent._unacknowledged_effects[seed.conversation_id]
+    assert agent._execution_effect_receipts
+    assert writes == [(target, "written once")]
+
+    _install_wire(monkeypatch, agent, [call("retry", "write_note", {})])
+    blocked = await _say(hass, agent, "retry", seed.conversation_id)
+    assert blocked.response.error_code is not None
+    assert target.read_text(encoding="utf-8") == "written once"
+    assert writes == [(target, "written once")]
+    _install_wire(monkeypatch, agent, [text("Acknowledged")])
+    acknowledged = await _say(hass, agent, "acknowledge", seed.conversation_id)
+    assert acknowledged.response.error_code is None
+    assert not agent._unacknowledged_effects.get(seed.conversation_id)
+    assert not agent._execution_effect_receipts

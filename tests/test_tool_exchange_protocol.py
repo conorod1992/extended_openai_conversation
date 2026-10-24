@@ -626,3 +626,113 @@ def test_failed_outputs_are_valid_in_both_provider_conversion_formats(hass) -> N
     ]
     assert [item["call_id"] for item in response_calls] == ["call-1", "call-2"]
     assert [item["call_id"] for item in response_outputs] == ["call-1", "call-2"]
+
+
+@pytest.mark.parametrize("same_object", [False, True])
+@pytest.mark.parametrize("text", [None, "Keep the current explanation"])
+def test_failure_cleanup_prunes_only_later_answered_id_occurrence(
+    hass, same_object, text
+) -> None:
+    log = _chat_log(hass)
+    original = _call("same", "first")
+    original_content = conversation.AssistantContent(
+        agent_id="conversation.test", tool_calls=[original]
+    )
+    result = _result(SimpleNamespace(entity_id="conversation.test"), original)
+    log.async_add_assistant_content_without_tools(original_content)
+    log.async_add_assistant_content_without_tools(result)
+    duplicate = original if same_object else _call("same", "unavailable")
+    other = _call("other", "unavailable")
+    current = conversation.AssistantContent(
+        agent_id="conversation.test", content=text, tool_calls=[duplicate, other]
+    )
+    log.async_add_assistant_content_without_tools(current)
+    requested = [original, duplicate, other]
+
+    for _ in range(2):
+        append_unresolved_tool_results(
+            log,
+            "conversation.test",
+            requested,
+            failed_call_id=other.id,
+            error=HomeAssistantError("Current response failed"),
+        )
+        assert original_content.tool_calls == [original]
+        assert original_content.tool_calls[0] is original
+        assert current.tool_calls == [other]
+        assert current.content == text
+        results = _retained_results(log)
+        assert results[0] is result
+        assert len(results) == 2
+        assert results[1].tool_call_id == "other"
+        assert tool_result_data(results[1])["result"]["status"] == "error"
+
+
+def test_failure_cleanup_does_not_answer_an_unretained_call_with_matching_id(hass):
+    log = _chat_log(hass)
+    retained = _call("same", "first")
+    log.async_add_assistant_content_without_tools(
+        conversation.AssistantContent(
+            agent_id="conversation.test", tool_calls=[retained]
+        )
+    )
+    append_unresolved_tool_results(
+        log,
+        "conversation.test",
+        [_call("same", "first")],
+        error=HomeAssistantError("A different occurrence failed"),
+    )
+    assert _retained_results(log) == []
+
+
+@pytest.mark.parametrize("configuration_changed", [False, True])
+def test_completed_response_cleanup_uses_round_boundary_before_dispatch(
+    hass, configuration_changed
+):
+    from custom_components.extended_openai_conversation_responses.tool_exchange import (
+        validate_retained_tool_calls,
+    )
+
+    entity = _entity(hass, [])
+    log = _chat_log(hass)
+    original = _call("same", "first")
+    old_native = conversation.AssistantContent(
+        agent_id=entity.entity_id, native=_NativeReasoning()
+    )
+    old_call = conversation.AssistantContent(
+        agent_id=entity.entity_id, tool_calls=[original]
+    )
+    old_result = _result(entity, original)
+    log.content.extend([old_native, old_call, old_result])
+    boundary = {id(item) for item in log.content}
+    duplicate = _call("same", "unavailable")
+    log.content.extend(
+        [
+            conversation.AssistantContent(
+                agent_id=entity.entity_id, native=_NativeReasoning()
+            ),
+            conversation.AssistantContent(
+                agent_id=entity.entity_id, tool_calls=[duplicate]
+            ),
+        ]
+    )
+    if configuration_changed:
+        with pytest.raises(HomeAssistantError, match="configuration changed"):
+            validate_retained_tool_calls(
+                entity,
+                log,
+                [duplicate],
+                request_config_data={},
+                existing_content_ids=boundary,
+            )
+    else:
+        append_unresolved_tool_results(
+            log,
+            entity.entity_id,
+            [duplicate],
+            error=asyncio.CancelledError(),
+            existing_content_ids=boundary,
+        )
+    assert log.content[-3:] == [old_native, old_call, old_result]
+    assert old_call.tool_calls[0] is original
+    assert _retained_results(log) == [old_result]

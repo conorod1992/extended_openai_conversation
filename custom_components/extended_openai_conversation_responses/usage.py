@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Coroutine
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timedelta
+from functools import wraps
 import logging
 import time
 from typing import Any, Protocol
@@ -32,6 +33,7 @@ from .operational_errors import log_handled_failure
 from .strict_store import (
     PropagatingWriteStore,
     RecoveryGuardedStore,
+    _async_settle_store_io,
     async_storage_lock,
 )
 
@@ -48,6 +50,18 @@ _LOGGER = logging.getLogger(__name__)
 _EXPLICIT_USAGE_SAVE: ContextVar[bool] = ContextVar(
     "explicit_usage_save", default=False
 )
+
+
+def _settle_accounting[**P](
+    operation: Callable[P, Coroutine[Any, Any, None]],
+) -> Callable[P, Coroutine[Any, Any, None]]:
+    """Finish accounting with its inherited run before propagating cancellation."""
+
+    @wraps(operation)
+    async def settled(*args: P.args, **kwargs: P.kwargs) -> None:
+        await _async_settle_store_io(operation(*args, **kwargs))
+
+    return settled
 
 
 class _UsageStore(PropagatingWriteStore):
@@ -472,6 +486,7 @@ class UsageManager:
             run.successful = False
             run.error_type = error_type[:128]
 
+    @_settle_accounting
     async def async_record_request(
         self,
         *,
@@ -565,6 +580,7 @@ class UsageManager:
                 )
             self._notify()
 
+    @_settle_accounting
     async def _async_finalize_run(self, run: UsageRun) -> None:
         if not run.successful:
             record_current_run_failure(run.error_type or "RequestFailed")

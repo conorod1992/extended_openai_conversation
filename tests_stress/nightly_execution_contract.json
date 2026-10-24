@@ -1,6 +1,14 @@
 {
   "schema": "eoai-nightly-execution-contract/v1",
   "pytest": [
+    "tests_real_ha/test_file_effect_recovery_precision.py::test_repeated_cancellation_settles_usage_and_preserves_file_recovery[chat_completions]",
+    "tests_real_ha/test_file_effect_recovery_precision.py::test_repeated_cancellation_settles_usage_and_preserves_file_recovery[responses]",
+    "tests_real_ha/test_provider_cleanup_file_recovery.py::test_finalizer_cannot_acknowledge_a_file_with_a_repeated_call_id[chat_completions]",
+    "tests_real_ha/test_provider_cleanup_file_recovery.py::test_finalizer_cannot_acknowledge_a_file_with_a_repeated_call_id[responses]",
+    "tests_real_ha/test_provider_cleanup_file_recovery.py::test_repeated_output_cleanup_preserves_file_and_safe_followup[False-chat_completions]",
+    "tests_real_ha/test_provider_cleanup_file_recovery.py::test_repeated_output_cleanup_preserves_file_and_safe_followup[False-responses]",
+    "tests_real_ha/test_provider_cleanup_file_recovery.py::test_repeated_output_cleanup_preserves_file_and_safe_followup[True-chat_completions]",
+    "tests_real_ha/test_provider_cleanup_file_recovery.py::test_repeated_output_cleanup_preserves_file_and_safe_followup[True-responses]",
     "tests_real_ha/test_file_effect_recovery_precision.py::test_file_recovery_matches_effects_after_partial_or_uncertain_execution[partial-edit_file-chat_completions]",
     "tests_real_ha/test_file_effect_recovery_precision.py::test_file_recovery_matches_effects_after_partial_or_uncertain_execution[partial-edit_file-responses]",
     "tests_real_ha/test_file_effect_recovery_precision.py::test_file_recovery_matches_effects_after_partial_or_uncertain_execution[partial-write_file-chat_completions]",
@@ -4145,6 +4153,7 @@
       "tests_stress/test_filesystem_process_recovery.py"
     ],
     "provider-resilience": [
+      "tests_real_ha/test_provider_cleanup_file_recovery.py",
       "tests/test_openai_sdk_catalog_matrix.py",
       "tests/test_openai_sdk_error_matrix.py",
       "tests/test_openai_sdk_malformed_wire.py",

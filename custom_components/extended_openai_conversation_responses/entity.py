@@ -144,7 +144,9 @@ from .speech import async_streaming_speech_cleanup
 from .tool_exchange import (
     append_unresolved_tool_results,
     async_execute_tool_exchange,
+    downgrade_native_response_output,
     retained_tool_calls_since,
+    validate_retained_tool_calls,
 )
 from .usage import RequestUsage, UsageManager, extract_usage
 
@@ -1222,6 +1224,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         self.entity_id,
                         retained_tool_calls_since(chat_log, existing_content_ids),
                         error=err,
+                        existing_content_ids=existing_content_ids,
                     )
                     if self._usage is not None:
                         await self._usage.async_record_request(
@@ -1274,6 +1277,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             self.entity_id,
                             pending_tool_calls,
                             error=err,
+                            existing_content_ids=existing_content_ids,
                         )
                         raise
                     context_measurement = ContextInputMeasurement(
@@ -1332,8 +1336,16 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             round_tool_calls,
                             failed_call_id=unexpected.id,
                             error=error,
+                            existing_content_ids=existing_content_ids,
                         )
                         raise error
+                validate_retained_tool_calls(
+                    self,
+                    chat_log,
+                    round_tool_calls,
+                    request_config_data=request_config_data,
+                    existing_content_ids=existing_content_ids,
+                )
                 pending_tool_calls, loader_calls, control_calls = (
                     _partition_provider_tool_calls(
                         pending_tool_calls,
@@ -1366,6 +1378,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                 round_tool_calls,
                                 failed_call_id=loader_call.id,
                                 error=err,
+                                existing_content_ids=existing_content_ids,
                             )
                             raise
                         chat_log.async_add_assistant_content_without_tools(
@@ -1397,6 +1410,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             round_tool_calls,
                             failed_call_id=control_call.id,
                             error=parse_error,
+                            existing_content_ids=existing_content_ids,
                         )
                         raise parse_error
 
@@ -1430,6 +1444,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     function_tools_factory=function_tools_factory,
                     recovery_state=recovery_state,
                     request_config_data=request_config_data,
+                    existing_content_ids=existing_content_ids,
                 )
                 await async_prepare_tool_results(chat_log.content)
 
@@ -2048,18 +2063,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             # and replay protection, without retaining dependent provider IDs.
             content = getattr(chat_log, "content", None)
             if content is not None:
-                retained = []
-                for item in content:
-                    if (
-                        id(item) not in existing
-                        and isinstance(item, conversation.AssistantContent)
-                        and item.native is not None
-                    ):
-                        if item.tool_calls or item.content:
-                            retained.append(replace(item, native=None))
-                    else:
-                        retained.append(item)
-                content[:] = retained
+                downgrade_native_response_output(chat_log, existing)
             raise
 
     async def _transform_responses_stream_events(

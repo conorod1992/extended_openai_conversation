@@ -41,12 +41,23 @@ async def test_restore_prepares_retained_history_in_workers(monkeypatch, count, 
     # Seed legitimate records through the accounting API, outside the timed interval.
     manager = UsageManager(WorkerStore(), agent_subentry_id="agent-new")
     await manager.async_initialize()
-    for _ in range(count):
-        async with manager.async_run():
-            await manager.async_record_request(
-                successful=True,
-                usage=RequestUsage(input_tokens=30, output_tokens=10, total_tokens=40),
-            )
+    loop = asyncio.get_running_loop()
+    original_debug = loop.get_debug()
+    # Thousands of synthetic accounting tasks otherwise spend this setup phase
+    # collecting debug tracebacks and statting source files on WSL's DrvFS.
+    # Restore the original instrumentation before backup and every restore check.
+    loop.set_debug(False)
+    try:
+        for _ in range(count):
+            async with manager.async_run():
+                await manager.async_record_request(
+                    successful=True,
+                    usage=RequestUsage(
+                        input_tokens=30, output_tokens=10, total_tokens=40
+                    ),
+                )
+    finally:
+        loop.set_debug(original_debug)
     document = _document()
     document["usage"] = await manager.async_backup_data()
     document.setdefault("guest_mode", {"schedule": None})

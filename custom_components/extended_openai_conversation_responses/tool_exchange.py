@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from asyncio import CancelledError
+from collections import deque
 from collections.abc import Callable, Iterable
+from dataclasses import replace
 from typing import Any, cast
 
 from homeassistant.components import conversation
@@ -94,6 +96,64 @@ def validate_tool_call_ids(tool_calls: Iterable[llm.ToolInput]) -> None:
         seen.add(tool_call.id)
 
 
+def downgrade_native_response_output(
+    chat_log: conversation.ChatLog, existing_content_ids: set[int]
+) -> None:
+    """Keep text/calls while discarding one incomplete native output graph."""
+    retained: list[conversation.Content] = []
+    for content in chat_log.content:
+        if (
+            id(content) not in existing_content_ids
+            and isinstance(content, conversation.AssistantContent)
+            and content.native is not None
+        ):
+            if content.tool_calls or content.content:
+                retained.append(replace(content, native=None))
+        else:
+            retained.append(content)
+    chat_log.content[:] = retained
+
+
+def _prune_repeated_completed_calls(
+    chat_log: conversation.ChatLog,
+    calls: list[llm.ToolInput],
+    existing_content_ids: set[int] | None = None,
+) -> bool:
+    """Remove only requested occurrences that follow an earlier answered ID.
+
+    Parser failures can retain a duplicate before dispatch validation runs. Share
+    its cleanup with that validation, preserving the original call and result.
+    A completed native response needs its explicit round boundary when pruning
+    would otherwise leave dependent reasoning or hosted-tool items behind.
+    """
+    requested = {id(call) for call in calls}
+    answered: set[str] = set()
+    retained = []
+    changed = False
+    for content in chat_log.content:
+        if isinstance(content, conversation.AssistantContent) and content.tool_calls:
+            remaining = [
+                call
+                for call in content.tool_calls
+                if not (id(call) in requested and call.id in answered)
+            ]
+            if len(remaining) != len(content.tool_calls):
+                content.tool_calls[:] = remaining
+                changed = True
+                if not remaining and not getattr(content, "content", None):
+                    continue
+        elif is_tool_result_content(content):
+            call_id = getattr(content, "tool_call_id", None)
+            if isinstance(call_id, str):
+                answered.add(call_id)
+        retained.append(content)
+    if changed:
+        chat_log.content[:] = retained
+        if existing_content_ids is not None:
+            downgrade_native_response_output(chat_log, existing_content_ids)
+    return changed
+
+
 def append_unresolved_tool_results(
     chat_log: conversation.ChatLog,
     agent_id: str,
@@ -101,6 +161,7 @@ def append_unresolved_tool_results(
     *,
     failed_call_id: str | None = None,
     error: BaseException | None = None,
+    existing_content_ids: set[int] | None = None,
 ) -> None:
     """Close every still-retained call exactly once before an error escapes.
 
@@ -114,22 +175,26 @@ def append_unresolved_tool_results(
     if not calls:
         return
 
-    retained_ids = {
-        tool_call.id
-        for content in chat_log.content
-        if isinstance(content, conversation.AssistantContent) and content.tool_calls
-        for tool_call in content.tool_calls
-    }
-    completed_ids = {
-        tool_call_id
-        for content in chat_log.content
-        if is_tool_result_content(content)
-        and isinstance((tool_call_id := getattr(content, "tool_call_id", None)), str)
+    _prune_repeated_completed_calls(chat_log, calls, existing_content_ids)
+    # A malformed later response can retain a new occurrence of an earlier ID
+    # before the dispatch-time duplicate guard runs. Pair each result only with
+    # an earlier unanswered occurrence, never with every call sharing that ID.
+    pending: dict[str, deque[llm.ToolInput]] = {}
+    for content in chat_log.content:
+        if isinstance(content, conversation.AssistantContent) and content.tool_calls:
+            for tool_call in content.tool_calls:
+                pending.setdefault(tool_call.id, deque()).append(tool_call)
+        elif is_tool_result_content(content):
+            tool_call_id = getattr(content, "tool_call_id", None)
+            if isinstance(tool_call_id, str) and (
+                matching := pending.get(tool_call_id)
+            ):
+                matching.popleft()
+    unresolved_objects = {
+        id(tool_call) for matching in pending.values() for tool_call in matching
     }
     unresolved = [
-        tool_call
-        for tool_call in calls
-        if tool_call.id in retained_ids and tool_call.id not in completed_ids
+        tool_call for tool_call in calls if id(tool_call) in unresolved_objects
     ]
     if not unresolved:
         return
@@ -169,6 +234,52 @@ def append_unresolved_tool_results(
                 error=True,
             )
         )
+
+
+def validate_retained_tool_calls(
+    entity: Any,
+    chat_log: conversation.ChatLog,
+    calls: list[llm.ToolInput],
+    *,
+    request_config_data: Any | None = None,
+    existing_content_ids: set[int] | None = None,
+) -> None:
+    """Validate the whole provider round before ordinary or control dispatch."""
+    if not calls:
+        return
+    if (
+        request_config_data is not None
+        and current_configuration_data(entity) is not request_config_data
+    ):
+        error = HomeAssistantError(
+            "Function Tool configuration changed during the provider request; the pending tool call was stopped"
+        )
+        append_unresolved_tool_results(
+            chat_log,
+            entity.entity_id,
+            calls,
+            error=error,
+            existing_content_ids=existing_content_ids,
+        )
+        raise error
+    validate_tool_call_ids(calls)
+    prior_results = {
+        call_id
+        for content in getattr(chat_log, "content", ())
+        if is_tool_result_content(content)
+        and isinstance((call_id := getattr(content, "tool_call_id", None)), str)
+    }
+    if any(call.id in prior_results for call in calls):
+        _prune_repeated_completed_calls(chat_log, calls, existing_content_ids)
+        error = HomeAssistantError("Provider repeated a completed tool call id")
+        append_unresolved_tool_results(
+            chat_log,
+            entity.entity_id,
+            calls,
+            error=error,
+            existing_content_ids=existing_content_ids,
+        )
+        raise error
 
 
 def _index_tools(function_tools: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -501,55 +612,18 @@ async def async_execute_tool_exchange(
     function_tools_factory: Callable[[], list[dict[str, Any]]] | None = None,
     recovery_state: ToolRecoveryState | None = None,
     request_config_data: Any | None = None,
+    existing_content_ids: set[int] | None = None,
 ) -> None:
     """Execute one provider tool batch while keeping retained history complete."""
     if not pending_tool_calls:
         return
-    if (
-        request_config_data is not None
-        and current_configuration_data(entity) is not request_config_data
-    ):
-        append_unresolved_tool_results(
-            chat_log,
-            entity.entity_id,
-            pending_tool_calls,
-            error=HomeAssistantError(
-                "Function Tool configuration changed during the provider request; the pending tool call was stopped"
-            ),
-        )
-        raise HomeAssistantError(
-            "Function Tool configuration changed during the provider request; the pending tool call was stopped"
-        )
-    validate_tool_call_ids(pending_tool_calls)
-    prior_results = {
-        call_id
-        for content in getattr(chat_log, "content", ())
-        if is_tool_result_content(content)
-        and isinstance((call_id := getattr(content, "tool_call_id", None)), str)
-    }
-    if any(call.id in prior_results for call in pending_tool_calls):
-        # Remove the newly retained duplicate occurrence; the original call/result
-        # pair must remain intact and must not gain a second result with that ID.
-        for content in reversed(list(chat_log.content)):
-            if (
-                isinstance(content, conversation.AssistantContent)
-                and content.tool_calls
-                and any(
-                    call is retained
-                    for call in pending_tool_calls
-                    for retained in content.tool_calls
-                )
-            ):
-                content.tool_calls[:] = [
-                    call for call in content.tool_calls if call.id not in prior_results
-                ]
-                if not content.tool_calls and not getattr(content, "content", None):
-                    chat_log.content.remove(content)
-        error = HomeAssistantError("Provider repeated a completed tool call id")
-        append_unresolved_tool_results(
-            chat_log, entity.entity_id, pending_tool_calls, error=error
-        )
-        raise error
+    validate_retained_tool_calls(
+        entity,
+        chat_log,
+        pending_tool_calls,
+        request_config_data=request_config_data,
+        existing_content_ids=existing_content_ids,
+    )
     if any(
         was_unacknowledged_equivalent(entity, chat_log, call)
         for call in pending_tool_calls
