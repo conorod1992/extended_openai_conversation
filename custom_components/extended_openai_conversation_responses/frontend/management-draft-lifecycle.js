@@ -114,7 +114,10 @@ function restoreDraftSource(panel, source, key) {
         panel._render();
       }
     }
-    void recoverDisconnectedEditor(panel, source).catch(() => panel._toast?.("Unsaved editor recovery is pending. Return to its original page to retry.", true));
+    // A newer HA panel can arrive while an older destination awaits imports.
+    // Retry through the complete lifecycle gate, including ownership, access,
+    // pending mutations and the current route, rather than bypassing it.
+    void recoverDisconnectedEditor(panel, source, () => restorePanelDrafts(panel)).catch(() => panel._toast?.("Unsaved editor recovery is pending. Return to its original page to retry.", true));
   }
 }
 

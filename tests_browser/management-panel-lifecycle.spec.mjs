@@ -19,6 +19,78 @@ async function replacePanel(page, user = "admin") {
   }, user);
 }
 
+for (const bundled of [false, true]) {
+  test(`Rule editor stays protected after switching assistants (${bundled ? "bundle" : "source"})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    await page.goto(fixtureUrl("capabilities/request-rules", `&agents=2${bundled ? "&bundle=1" : ""}`));
+    const panel = page.locator("extended-openai-management-panel");
+    await expect(panel.locator(".rule-edit").first()).toBeVisible();
+    await identify(page);
+    await panel.locator("#agent").selectOption("scale-agent-1");
+    await expect.poll(() => panel.evaluate(host => host._agentId)).toBe("scale-agent-1");
+    await panel.locator(".rule-edit").first().click();
+    await panel.locator("#rule-name").fill("Rule draft after switching assistants");
+    expect(await panel.evaluate(host => host._unsavedState.hasChanges())).toBe(true);
+    expect(await page.evaluate(() => !window.dispatchEvent(new Event("beforeunload", {cancelable:true})))).toBe(true);
+    await panel.evaluate(host => {host._confirm = async () => false;});
+    await panel.locator("#agent").selectOption("agent-1");
+    expect(await panel.evaluate(host => host._agentId)).toBe("scale-agent-1");
+    await replacePanel(page);
+    await expect(panel.locator("#rule-dialog")).toHaveJSProperty("open", true);
+    await expect(panel.locator("#rule-name")).toHaveValue("Rule draft after switching assistants");
+    expect(await panel.locator("#agent").inputValue()).toBe("scale-agent-1");
+    await panel.locator("#rule-save").click();
+    await expect(panel.locator("#rule-dialog")).toHaveJSProperty("open", false);
+    const saves = await page.evaluate(() => browserHarness.calls.filter(call => call.section === "request_rules" && call.action === "update"));
+    expect(saves).toHaveLength(1);
+    expect(saves[0].subentry_id).toBe("scale-agent-1");
+    await expectHarnessClean(page, errors);
+  });
+
+  test(`Function recovery follows a second replacement during asynchronous preparation (${bundled ? "bundle" : "source"})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    await page.goto(fixtureUrl("capabilities/functions", bundled ? "&bundle=1" : ""));
+    const panel = page.locator("extended-openai-management-panel");
+    await panel.getByText("Show member functions", {exact:true}).click();
+    await identify(page);
+    await panel.locator(".edit-tool").first().click();
+    await expect.poll(() => panel.evaluate(host => typeof host._toolInitialYaml)).toBe("string");
+    await panel.evaluate(host => {
+      const textarea = host.shadowRoot.querySelector("#tool-yaml");
+      textarea.value += "\n# Original draft through two replacements\n";
+      textarea.dispatchEvent(new Event("input", {bubbles:true}));
+      window.__originalEditorPanel = host;
+      const call = host.hass.callWS.bind(host.hass);
+      const gate = new Promise(resolve => {window.__releaseEditorRecovery = resolve;});
+      let held = false;
+      host.hass.callWS = async message => {
+        if (!held && message.section === "tools" && message.action === "serialize") {
+          held = true;
+          window.__editorRecoveryWaiting = true;
+          await gate;
+        }
+        return call(message);
+      };
+    });
+    await replacePanel(page);
+    await expect.poll(() => page.evaluate(() => Boolean(window.__editorRecoveryWaiting))).toBe(true);
+    await replacePanel(page);
+    await expect(panel.locator("#function-add")).toBeVisible();
+    await page.evaluate(() => window.__releaseEditorRecovery());
+    await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", true);
+    await expect(panel.locator("#tool-yaml")).toHaveValue(/Original draft through two replacements/);
+    expect(await page.evaluate(() => window.__originalEditorPanel.shadowRoot.querySelector("#tool-dialog").open)).toBe(false);
+    await panel.locator("#tool-save").click();
+    await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", false);
+    const saves = await page.evaluate(() => browserHarness.calls.filter(call => call.section === "tools" && call.action === "save"));
+    expect(saves).toHaveLength(1);
+    await replacePanel(page);
+    await expect(panel.locator("#function-add")).toBeVisible();
+    await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", false);
+    await expectHarnessClean(page, errors);
+  });
+}
+
 for (const navigation of ["sidebar", "back-forward", "suspension"]) {
   test(`unsaved prompt survives ${navigation} panel replacement`, async ({page}) => {
     const errors = trackPageErrors(page);

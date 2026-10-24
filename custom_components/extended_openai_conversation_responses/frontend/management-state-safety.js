@@ -216,16 +216,32 @@ function showRecoveredEditorValues(panel, old, values) {
   recovery.showModal();
 }
 
-export async function recoverDisconnectedEditor(panel, source) {
+export async function recoverDisconnectedEditor(panel, source, retry = () => recoverDisconnectedEditor(panel, source)) {
   const old = modifiedOpenDialog(source);
-  if (!old || source._eocRecoveringEditor || panel.shadowRoot.querySelector("dialog[open]")) return;
-  if (!["memory-dialog", "knowledge-dialog", "temporary-memory-dialog"].includes(old.id) && !panel._data?.is_admin) return;
+  if (!old || source.isConnected || !panel.isConnected) return;
   const user = panel.hass?.user?.id, agent = panel._agentId, view = panel._viewKey(), scope = panel._scopeId;
-  const current = () => panel.isConnected && panel.hass?.user?.id === user && panel._agentId === agent
-    && panel._viewKey() === view && panel._scopeId === scope;
-  source._eocRecoveringEditor = true;
+  const entry = panel._selectedAgent?.()?.entry_id, memoryKind = panel._memoryKind;
+  const adminRequired = !["memory-dialog", "knowledge-dialog", "temporary-memory-dialog"].includes(old.id);
+  const current = () => panel.isConnected && !source.isConnected && panel.hass?.user?.id === user
+    && source.hass?.user?.id === user && panel._agentId === agent && source._agentId === agent
+    && panel._selectedAgent?.()?.entry_id === entry && source._selectedAgent?.()?.entry_id === entry
+    && panel._viewKey() === view && source._viewKey() === view
+    && panel._scopeId === scope && source._scopeId === scope
+    && (!adminRequired || panel._data?.is_admin)
+    && (view !== "data-memory/memories" || (panel._memoryKind === memoryKind && source._memoryKind === memoryKind));
+  if (!user || !entry || !agent || !current()) return;
+  const pending = source._eocRecoveringEditor || panel._eocReceivingEditor;
+  if (pending) {
+    // Repeated restore points from the active attempt must not displace a
+    // replacement panel that has already requested the retained source.
+    if (panel !== pending.panel || !pending.retry) pending.retry = {panel, run: retry};
+    return;
+  }
+  if (panel.shadowRoot.querySelector("dialog[open]")) return;
   const values = dialogState(old);
   const baseline = source._eocDialogBaselines?.get(old.id);
+  const attempt = {panel, retry:null};
+  source._eocRecoveringEditor = panel._eocReceivingEditor = attempt;
   try {
     if (old.id === "rule-dialog") {
       const {openRequestRuleEditor} = await import("./request-rules-ui-impl.js");
@@ -252,6 +268,14 @@ export async function recoverDisconnectedEditor(panel, source) {
       await panel._openHALlmTools?.();
     } else return;
     if (!current()) return;
+    // Finish asynchronous preparation before checking the fresh baseline or
+    // publishing edits. A detach must never retain a half-transferred source.
+    let toolEditor;
+    if (old.id === "tool-dialog") {
+      const {getToolYamlEditor} = await import("./tool-yaml-editor-adapter.js");
+      if (!current()) return;
+      toolEditor = getToolYamlEditor(panel);
+    }
     const dialog = panel.shadowRoot.querySelector(`#${old.id}`);
     if (!dialog?.open) return;
     // A changed saved baseline needs review, not an automatic rebase of an
@@ -285,18 +309,25 @@ export async function recoverDisconnectedEditor(panel, source) {
       control.dispatchEvent(new CustomEvent(control.tagName === "HA-SELECTOR" ? "value-changed" : "change", {bubbles:true, detail:{value:clone(value.value)}}));
     }
     if (old.id === "group-dialog") panel._groupIdEdited = source._groupIdEdited;
-    if (old.id === "tool-dialog") {
-      const {getToolYamlEditor} = await import("./tool-yaml-editor-adapter.js");
-      if (!current()) return;
-      getToolYamlEditor(panel).setYaml(old.querySelector("#tool-yaml").value);
-    }
+    if (toolEditor) toolEditor.setYaml(old.querySelector("#tool-yaml").value);
     old.close();
   } catch (_err) {
     if (current()) {
       panel.shadowRoot.querySelector(`#${old.id}`)?.close();
       showRecoveredEditorValues(panel, old, values);
     }
-  } finally { source._eocRecoveringEditor = false; }
+  } finally {
+    if (source._eocRecoveringEditor === attempt) source._eocRecoveringEditor = null;
+    if (panel._eocReceivingEditor === attempt) panel._eocReceivingEditor = null;
+    const next = attempt.retry;
+    // A repeated restore point on this same, still-current panel must not
+    // reopen an editor the user just cancelled. Wake a replacement destination
+    // only when this attempt lost its context or a newer panel requested it.
+    if (next && (!current() || next.panel !== panel)) queueMicrotask(() => {
+      if (!next.panel.isConnected) return;
+      void Promise.resolve().then(next.run).catch(() => next.panel._toast?.("Unsaved editor recovery is pending. Return to its original page to retry.", true));
+    });
+  }
 }
 
 export async function confirmDialogClose(panel, dialog) {

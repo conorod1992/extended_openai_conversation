@@ -162,7 +162,12 @@ function bindDynamicBase(panel) {
       control.value = panel._agentId;
       if (!await panel._confirmUnsavedNavigation(null)) return;
       control.value = nextAgent;
-      panel._unsavedState?.scopes.clear();
+      // Editor protection belongs to the panel, not the selected assistant.
+      // The confirmed transition closed its old dialogs; future editors still
+      // need this scope even though connectedCallback will not run again.
+      panel._unsavedState?.scopes.forEach((_scope, key, scopes) => {
+        if (key !== "editors") scopes.delete(key);
+      });
       panel._agentId = nextAgent;
       panel._ruleGroupFilter = "all";
       writeOptionalStorage("extended-openai-agent", panel._agentId);
