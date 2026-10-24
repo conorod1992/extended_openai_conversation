@@ -124,6 +124,7 @@ async def _async_try_targeted_broadcast(
         origin_entity_id=getattr(user_input, "satellite_id", None),
         origin_device_id=getattr(user_input, "device_id", None),
         source="local_voice",
+        context=user_input.context,
     )
     response = ha_intent.IntentResponse(
         language=getattr(user_input, "language", None) or "en"

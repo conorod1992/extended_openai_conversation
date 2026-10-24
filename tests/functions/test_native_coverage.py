@@ -135,11 +135,13 @@ async def test_broadcast_resolves_destination_and_passes_origin(
         native_module, "async_authorized_broadcast_targets", authorized_targets
     )
 
+    context = Context(parent_id="broadcast-origin")
+    monkeypatch.setattr(native_module, "get_active_ha_context", lambda: None)
     result = await NativeFunction().send_broadcast(
         hass,
         {},
         {"destination": "Kitchen", "message": "Dinner is ready"},
-        SimpleNamespace(device_id="origin-device"),
+        SimpleNamespace(device_id="origin-device", context=context),
         [],
     )
 
@@ -152,7 +154,7 @@ async def test_broadcast_resolves_destination_and_passes_origin(
     authorized_targets.assert_awaited_once_with(
         hass,
         manager,
-        context=ANY,
+        context=context,
         origin_entity_id=None,
         origin_device_id="origin-device",
         whole_home=False,
@@ -164,6 +166,7 @@ async def test_broadcast_resolves_destination_and_passes_origin(
         origin_entity_id=None,
         origin_device_id="origin-device",
         source="llm_tool",
+        context=context,
     )
 
 

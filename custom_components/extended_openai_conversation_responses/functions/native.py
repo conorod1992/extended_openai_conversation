@@ -335,6 +335,10 @@ class NativeFunction(Function):
         manager = await async_get_intercom(hass)
         destination = arguments.get("destination")
         whole_home = bool(arguments.get("whole_home", False))
+        if whole_home and destination:
+            raise HomeAssistantError(
+                "Choose either whole_home or a Broadcast destination"
+            )
         target: dict[str, Any] = {"whole_home": whole_home}
         if destination:
             resolved = manager.resolve_named_target(str(destination))
@@ -355,10 +359,11 @@ class NativeFunction(Function):
         # WebSocket Broadcast entry points. Voice/system requests without an
         # authenticated HA user retain the existing trusted behavior.
         origin_entity_id = get_request_satellite()
+        context = get_active_ha_context() or getattr(llm_context, "context", None)
         targets = await async_authorized_broadcast_targets(
             hass,
             manager,
-            context=get_active_ha_context(),
+            context=context,
             origin_entity_id=origin_entity_id,
             origin_device_id=origin_device_id,
             **target,
@@ -369,6 +374,7 @@ class NativeFunction(Function):
             origin_entity_id=origin_entity_id,
             origin_device_id=origin_device_id,
             source="llm_tool",
+            context=context,
         )
         return {
             "success": True,

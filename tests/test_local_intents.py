@@ -358,13 +358,14 @@ async def test_targeted_broadcast_queues_resolved_target_with_origin_context(
         ),
     )
 
+    context = SimpleNamespace(user_id=None)
     result = await local_intents._async_try_targeted_broadcast(
         hass,
         cast(
             Any,
             SimpleNamespace(
                 text="Broadcast to kitchen that dinner is ready",
-                context=SimpleNamespace(user_id=None),
+                context=context,
                 language="en-IE",
                 satellite_id="assist_satellite.hall",
                 device_id="device-1",
@@ -382,9 +383,12 @@ async def test_targeted_broadcast_queues_resolved_target_with_origin_context(
                 "origin_entity_id": "assist_satellite.hall",
                 "origin_device_id": "device-1",
                 "source": "local_voice",
+                "context": context,
             },
         )
     ]
+
+    assert calls[0][1]["context"] is context
 
 
 @pytest.mark.asyncio

@@ -93,3 +93,71 @@ test("Broadcast pending history settles without device refresh or draft replacem
   await expect(panel.locator("#broadcast-message")).toHaveValue("Keep this unsent draft");
   await expectHarnessClean(page,errors);
 });
+
+
+test("Broadcast keeps polling pending deliveries beyond recent history", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("overview"));
+  const panel = page.locator("extended-openai-management-panel");
+  await panel.locator("#broadcast-enabled").check();
+  await expect(panel.locator("#broadcast-refresh")).toBeVisible();
+  await panel.evaluate(host => {
+    const original = host._hass.callWS;
+    host._pendingBroadcastReads = 0;
+    host._pendingBroadcastReleased = false;
+    host._hass = {...host._hass, callWS: async message => {
+      if (message.type?.endsWith("/broadcast") && message.action === "snapshot") {
+        host._pendingBroadcastReads++;
+        const item = {id: "old-pending", message: "Old pending announcement", created_at: new Date().toISOString(),
+          deliveries: {"assist_satellite.kitchen": {status: "queued_busy"}}};
+        return {enabled: true, can_manage: true, catalog: {satellites: [], areas: []},
+          pending: host._pendingBroadcastReleased ? [] : [item],
+          history: Array.from({length: 50}, (_, i) => ({id: `new-${i}`, message: `Finished ${i}`,
+            created_at: new Date().toISOString(), deliveries: {"assist_satellite.hall": {status: "delivered"}}}))};
+      }
+      return original(message);
+    }};
+  });
+  await panel.locator("#broadcast-refresh").click();
+  await expect(panel.locator(".broadcast-history")).toContainText("Old pending announcement");
+  await panel.locator("#broadcast-message").fill("Keep this draft");
+  await expect.poll(() => panel.evaluate(host => host._pendingBroadcastReads)).toBeGreaterThanOrEqual(3);
+  await panel.evaluate(host => host._pendingBroadcastReleased = true);
+  await expect(panel.locator(".broadcast-history")).not.toContainText("Old pending announcement");
+  const settled = await panel.evaluate(host => host._pendingBroadcastReads);
+  await page.waitForTimeout(1300);
+  expect(await panel.evaluate(host => host._pendingBroadcastReads)).toBe(settled);
+  await expect(panel.locator("#broadcast-message")).toHaveValue("Keep this draft");
+  await expectHarnessClean(page, errors);
+});
+
+test("Whole-home Broadcast omits retained specific selections", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("overview"));
+  const panel = page.locator("extended-openai-management-panel");
+  await panel.locator("#broadcast-enabled").check();
+  await panel.evaluate(host => {
+    const original = host._hass.callWS;
+    host._hass = {...host._hass, callWS: async message => {
+      if (message.type?.endsWith("/broadcast") && message.action === "snapshot") return {
+        enabled: true, can_manage: true, catalog: {satellites: [{id: "assist_satellite.hall", name: "Hall"}], areas: []},
+        history: [], pending: [],
+      };
+      if (message.type?.endsWith("/broadcast") && message.action === "send") {
+        host._sentBroadcast = message;
+        return {id: "sent"};
+      }
+      return original(message);
+    }};
+  });
+  await panel.locator("#broadcast-refresh").click();
+  await panel.locator('[data-broadcast-entity="assist_satellite.hall"]').check();
+  await panel.locator('input[value="whole"]').check();
+  await panel.locator("#broadcast-message").fill("Dinner is ready");
+  await panel.locator("#broadcast-send").click();
+  await expect.poll(() => panel.evaluate(host => host._sentBroadcast?.whole_home)).toBe(true);
+  expect(await panel.evaluate(host => host._sentBroadcast.entity_ids)).toEqual([]);
+  await panel.locator('input[value="selected"]').check();
+  await expect(panel.locator('[data-broadcast-entity="assist_satellite.hall"]')).toBeChecked();
+  await expectHarnessClean(page, errors);
+});

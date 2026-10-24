@@ -284,6 +284,10 @@ class IntercomManager:
         origin_entity_id: str | None = None,
         origin_device_id: str | None = None,
     ) -> list[str]:
+        if whole_home and any((entity_ids, device_ids, area_ids, floor_ids, label_ids)):
+            raise HomeAssistantError(
+                "Choose either whole_home or specific Broadcast destinations"
+            )
         self._refresh_state_listener()
         entities = set(entity_ids or [])
         devices = set(device_ids or [])
@@ -394,16 +398,15 @@ class IntercomManager:
         from .execution_outcomes import execution_completed, execution_started
 
         # This receipt describes queue admission, not eventual announcement.
+        # Route, caller context and origin are metadata: the resolved recipients
+        # already encode origin exclusion, regardless of how this send arrived.
         # No await separates these validated inputs from the first mutation.
         receipt = execution_started(
             kind="broadcast",
             prepared={
                 "message": text,
                 "targets": targets,
-                "origin_entity_id": origin_entity_id,
-                "origin_device_id": origin_device_id,
                 "ttl_seconds": bounded_ttl,
-                "source": source,
             },
         )
         self._history.appendleft(item)
@@ -589,6 +592,17 @@ class IntercomManager:
 
     def history(self) -> list[dict[str, Any]]:
         return [item.as_dict() for item in self._history]
+
+    def pending(self) -> list[dict[str, Any]]:
+        """Return active deliveries independently of the bounded recent history."""
+        messages = {
+            item.id: item
+            for entity_id, queue in self._queues.items()
+            for item in queue
+            if item.deliveries[entity_id].status
+            not in {"delivered", "failed", "expired"}
+        }
+        return [item.as_dict() for item in messages.values()]
 
     def catalog(self, *, entity_ids: set[str] | None = None) -> dict[str, Any]:
         areas = ar.async_get(self.hass)

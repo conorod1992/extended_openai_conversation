@@ -154,3 +154,12 @@ them. Omitted and explicit template defaults therefore cannot repeat an unresolv
 completed HTTP effect. Opaque authentication uses conservative recovery protection.
 Only digests are retained; a successful provider acknowledgement clears them and
 permits intentional repeated requests. Transport failures keep uncertain receipts.
+
+## Broadcast queue admission
+
+Broadcast receipts identify the trimmed message, resolved recipient set and bounded
+TTL. Native tools, HA services and Script Functions share that identity; route
+labels, caller contexts and origin selectors remain delivery metadata. Origin
+exclusion has already been applied to the resolved recipients. A failed provider
+continuation therefore cannot repeat the same queued announcement through another
+route. Successful acknowledgement still permits a deliberate later repetition.

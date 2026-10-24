@@ -36,7 +36,7 @@ const WS_BROADCAST = "extended_openai_conversation_responses/broadcast";
 
 export function hasPendingBroadcast(snapshot) {
   const pending = new Set(["pending", "queued", "queued_idle", "queued_busy", "waiting_idle", "delivering"]);
-  return (snapshot?.history || []).some(item => pending.has(item.status)
+  return [...(snapshot?.pending || []), ...(snapshot?.history || [])].some(item => pending.has(item.status)
     || Object.values(item.deliveries || {}).some(delivery => pending.has(delivery.status)));
 }
 
@@ -63,7 +63,9 @@ function broadcastMarkup(panel, snapshot) {
   const message = panel._broadcastMessage || "";
   const enabled = snapshot.enabled === true;
   const canManage = snapshot.can_manage === true;
-  const history = snapshot.history || [];
+  const active = snapshot.pending || [];
+  const activeIds = new Set(active.map(item => item.id));
+  const history = [...active, ...(snapshot.history || []).filter(item => !activeIds.has(item.id))];
   return `
     <div class="section-heading broadcast-heading"><div><span class="section-kicker"><ha-icon icon="mdi:bullhorn-outline"></ha-icon> Home messaging</span><h2>Broadcast</h2><p>Send a spoken message to selected Assist satellites or the whole home. Busy satellites wait until they are free.</p></div></div>
     <div class="broadcast-toggle-row">
@@ -148,7 +150,7 @@ function bindBroadcastControls(panel, snapshot) {
         action: "send",
         message,
         whole_home: wholeHome,
-        entity_ids: selected,
+        entity_ids: wholeHome ? [] : selected,
       });
       if ((panel._broadcastDraftRevision || 0) === draftRevision) panel._broadcastMessage = "";
       await loadBroadcast(panel);
