@@ -78,7 +78,9 @@ async def test_captured_ai_handoff_and_preview_share_resolved_input(hass) -> Non
     }
 
 
-async def test_captured_ai_input_survives_backup_and_old_rules_default_original() -> None:
+async def test_captured_ai_input_survives_backup_and_old_rules_default_original() -> (
+    None
+):
     stored = RequestRules(MemoryStore({"rules": [captured_routing_rule()]}))
     await stored.async_initialize()
     backup = await stored.async_backup_data()
@@ -152,7 +154,7 @@ async def test_pack_export_import_appends_disabled_in_relative_order() -> None:
     second["continue_matching"] = True
     source = RequestRules(MemoryStore({"rules": [first, second]}))
     await source.async_initialize()
-    pack = export_rule_pack(source, "all")
+    pack = export_rule_pack(source, "all", reviewed=True)
     assert pack["format"] == "extended_openai_request_rule_pack"
     assert [rule["order"] for rule in pack["rules"]] == [0, 1]
     assert pack["rules"][1]["ai_input_capture"] == "question"
@@ -163,7 +165,9 @@ async def test_pack_export_import_appends_disabled_in_relative_order() -> None:
         target, prepared, expected_revision=target.revision()
     )
     assert [rule["name"] for rule in target.snapshot()["rules"]] == [
-        "Existing", "First", "Deep think"
+        "Existing",
+        "First",
+        "Deep think",
     ]
     assert all(not rule["enabled"] for rule in result["rules"])
     assert all(rule["id"] not in {"first", "deep-think"} for rule in result["rules"])
@@ -172,19 +176,29 @@ async def test_pack_export_import_appends_disabled_in_relative_order() -> None:
 
 
 async def test_pack_import_does_not_change_destination_wording_alternatives() -> None:
-    source = RequestRules(MemoryStore({
-        "wording_groups": [{"canonical": "turn on", "alternatives": ["switch on"]}],
-        "rules": [local_rule("Shared", phrases=["turn on lights"])],
-    }))
+    source = RequestRules(
+        MemoryStore(
+            {
+                "wording_groups": [
+                    {"canonical": "turn on", "alternatives": ["switch on"]}
+                ],
+                "rules": [local_rule("Shared", phrases=["turn on lights"])],
+            }
+        )
+    )
     await source.async_initialize()
-    pack = export_rule_pack(source, "all")
+    pack = export_rule_pack(source, "all", reviewed=True)
     assert "wording_groups" not in pack
 
     target_wording = [{"canonical": "tv", "alternatives": ["television"]}]
-    target = RequestRules(MemoryStore({
-        "wording_groups": target_wording,
-        "rules": [local_rule("Existing")],
-    }))
+    target = RequestRules(
+        MemoryStore(
+            {
+                "wording_groups": target_wording,
+                "rules": [local_rule("Existing")],
+            }
+        )
+    )
     await target.async_initialize()
     prepared = validate_rule_pack(pack)
     await async_append_rule_pack(target, prepared, expected_revision=target.revision())
@@ -196,18 +210,26 @@ async def test_pack_group_and_selected_exports_keep_subset_order() -> None:
     second = local_rule("Second", phrases=["good night"], order=1)
     third = local_rule("Third", phrases=["power up lights"], order=2)
     first["group_id"] = third["group_id"] = "lighting"
-    source = RequestRules(MemoryStore({
-        "groups": [{"id": "lighting", "name": "Lighting"}],
-        "wording_groups": [{"canonical": "activate", "alternatives": ["power up"]}],
-        "rules": [first, second, third],
-    }))
+    source = RequestRules(
+        MemoryStore(
+            {
+                "groups": [{"id": "lighting", "name": "Lighting"}],
+                "wording_groups": [
+                    {"canonical": "activate", "alternatives": ["power up"]}
+                ],
+                "rules": [first, second, third],
+            }
+        )
+    )
     await source.async_initialize()
-    group = export_rule_pack(source, "group", "lighting")
+    group = export_rule_pack(source, "group", "lighting", reviewed=True)
     assert [rule["name"] for rule in group["rules"]] == ["First", "Third"]
     assert [rule["order"] for rule in group["rules"]] == [0, 1]
     assert [item["name"] for item in group["groups"]] == ["Lighting"]
     assert "wording_groups" not in group
-    selected = export_rule_pack(source, "selected", rule_ids=[third["id"], second["id"]])
+    selected = export_rule_pack(
+        source, "selected", rule_ids=[third["id"], second["id"]], reviewed=True
+    )
     assert [rule["name"] for rule in selected["rules"]] == ["Second", "Third"]
     assert selected["groups"][0]["name"] == "Lighting"
 
@@ -215,18 +237,28 @@ async def test_pack_group_and_selected_exports_keep_subset_order() -> None:
 async def test_pack_group_id_collision_creates_a_distinct_group() -> None:
     source_rule = local_rule("Imported")
     source_rule["group_id"] = "shared-id"
-    source = RequestRules(MemoryStore({
-        "groups": [{"id": "shared-id", "name": "Lighting"}],
-        "rules": [source_rule],
-    }))
+    source = RequestRules(
+        MemoryStore(
+            {
+                "groups": [{"id": "shared-id", "name": "Lighting"}],
+                "rules": [source_rule],
+            }
+        )
+    )
     await source.async_initialize()
-    pack = validate_rule_pack(export_rule_pack(source, "all"))
-    target = RequestRules(MemoryStore({
-        "groups": [{"id": "shared-id", "name": "Different"}],
-        "rules": [local_rule("Existing")],
-    }))
+    pack = validate_rule_pack(export_rule_pack(source, "all", reviewed=True))
+    target = RequestRules(
+        MemoryStore(
+            {
+                "groups": [{"id": "shared-id", "name": "Different"}],
+                "rules": [local_rule("Existing")],
+            }
+        )
+    )
     await target.async_initialize()
-    result = await async_append_rule_pack(target, pack, expected_revision=target.revision())
+    result = await async_append_rule_pack(
+        target, pack, expected_revision=target.revision()
+    )
     assert {group["name"] for group in result["groups"]} == {"Different", "Lighting"}
     assert result["rules"][0]["group_id"] != "shared-id"
     assert target.snapshot()["rules"][0]["group_id"] is None
@@ -236,7 +268,7 @@ def test_pack_rejects_newer_version_unknown_executable_and_duplicate_ids() -> No
     rule = validate_rule(local_rule())
     pack = {
         "format": "extended_openai_request_rule_pack",
-        "version": 2,
+        "version": 3,
         "groups": [],
         "rules": [rule],
     }
@@ -258,7 +290,9 @@ def test_import_requires_one_review_of_the_exact_pack_and_revision() -> None:
     pack = {"rules": [{"name": "First"}]}
     token = _register_rule_pack_review(manager, pack, "revision-1")
     with pytest.raises(HomeAssistantError, match="Review this exact"):
-        _consume_rule_pack_review(manager, token, {"rules": [{"name": "Changed"}]}, "revision-1")
+        _consume_rule_pack_review(
+            manager, token, {"rules": [{"name": "Changed"}]}, "revision-1"
+        )
     token = _register_rule_pack_review(manager, pack, "revision-1")
     _consume_rule_pack_review(manager, token, pack, "revision-1")
     with pytest.raises(HomeAssistantError, match="Review this exact"):
@@ -271,7 +305,7 @@ async def test_pack_validation_rejects_structural_and_reference_boundaries(
 ) -> None:
     source = RequestRules(MemoryStore({"rules": [local_rule("Portable")]}))
     await source.async_initialize()
-    valid = export_rule_pack(source, "all")
+    valid = export_rule_pack(source, "all", reviewed=True)
 
     malformed = deepcopy(valid)
     malformed.pop("groups")
@@ -330,15 +364,15 @@ async def test_pack_export_rejects_empty_unknown_and_duplicate_selections() -> N
     await source.async_initialize()
 
     with pytest.raises(ValueError, match="Choose at least one"):
-        export_rule_pack(source, "selected", rule_ids=[])
+        export_rule_pack(source, "selected", rule_ids=[], reviewed=True)
     with pytest.raises(ValueError, match="Unknown or duplicate"):
-        export_rule_pack(source, "selected", rule_ids=["only", "only"])
+        export_rule_pack(source, "selected", rule_ids=["only", "only"], reviewed=True)
     with pytest.raises(ValueError, match="Unknown or duplicate"):
-        export_rule_pack(source, "selected", rule_ids=["missing"])
+        export_rule_pack(source, "selected", rule_ids=["missing"], reviewed=True)
     with pytest.raises(ValueError, match="Unknown group"):
-        export_rule_pack(source, "group", group_id="missing")
+        export_rule_pack(source, "group", group_id="missing", reviewed=True)
     with pytest.raises(ValueError, match="Choose All rules"):
-        export_rule_pack(source, "unexpected")
+        export_rule_pack(source, "unexpected", reviewed=True)
 
 
 @pytest.mark.asyncio
@@ -353,7 +387,7 @@ async def test_pack_append_rolls_back_live_state_when_durable_save_fails() -> No
 
     source = RequestRules(MemoryStore({"rules": [local_rule("Imported")]}))
     await source.async_initialize()
-    prepared = validate_rule_pack(export_rule_pack(source, "all"))
+    prepared = validate_rule_pack(export_rule_pack(source, "all", reviewed=True))
 
     store = FailingSaveStore({"rules": [local_rule("Existing")]})
     target = RequestRules(store)

@@ -118,7 +118,7 @@ async def test_import_export_round_trip_preserves_preferences_without_live_value
     data[CONF_EXPOSED_ENTITY_ATTRIBUTES] = {
         "registry:stable": ["brightness", "color_temp"]
     }
-    document = _export_agent(SimpleNamespace(title="Jarvis", data=data))
+    document = _export_agent(SimpleNamespace(title="Jarvis", data=data), reviewed=True)
     parsed = _parse_import_document(document)
 
     assert parsed["config"][CONF_EXPOSED_ENTITY_ATTRIBUTES] == {

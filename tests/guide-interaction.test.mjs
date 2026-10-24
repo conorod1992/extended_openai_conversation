@@ -35,3 +35,24 @@ assert.match(requestRulesGuide, /response_variable stay within the action sequen
 assert.match(requestRulesGuide, /Newly created rules start enabled/);
 assert.match(requestRulesGuide, /groups only help organise and filter rules/i);
 assert.doesNotMatch(requestRulesGuide, /Home Assistant sentence patterns|Hassil sentence format/);
+
+
+const {GUIDE_TOPICS} = await import("../custom_components/extended_openai_conversation_responses/frontend/guide-content.js");
+const backupPrivacyTopics = GUIDE_TOPICS.filter(topic => /privacy|backup/.test(topic.id));
+assert.equal(backupPrivacyTopics.length, 2);
+for (const topic of backupPrivacyTopics) {
+  const text = topic.body.map(block => block.text || "").join(" ");
+  assert.match(text, /include provider (?:connection settings and API |API )credentials/i);
+  assert.match(text, /not encrypted/);
+  assert.doesNotMatch(text, /credentials.*(?:are excluded|are not included)/);
+}
+
+
+const configurationGuide = await readFile(new URL("../docs/configuration.md", import.meta.url), "utf8");
+const backupSection = configurationGuide.split("## Backup & Restore")[1].split("## Speech cleanup")[0];
+assert.match(backupSection, /preserve inline credentials and include the parent provider connection/);
+assert.match(backupSection, /when configuration is selected/);
+assert.match(backupSection, /not encrypted/);
+assert.match(backupSection, /explicit shared-connection choice/);
+assert.doesNotMatch(backupSection, /Provider API keys, OAuth tokens, parent config-entry credentials.*are excluded/);
+assert.doesNotMatch(backupSection, /Re-enter provider credentials separately|Reconnect or re-enter provider credentials separately/);

@@ -10,6 +10,7 @@ import yaml
 from custom_components.extended_openai_conversation_responses import backup, transfer
 from custom_components.extended_openai_conversation_responses.secret_redaction import (
     REDACTED_SECRET_SENTINEL as MARKER,
+    REDACTED_URL_KEY,
     redact_secrets,
     restore_redacted_secrets,
 )
@@ -78,7 +79,12 @@ def test_idless_item_cannot_borrow_identified_item_secret():
 def test_embedded_secret_preserves_container_and_recovers_entire_leaf(value):
     original = {"items": [{"id": "a", "text": value, "ordinary": "keep"}]}
     exported = json.loads(json.dumps(redact_secrets(original)))
-    assert exported == {"items": [{"id": "a", "text": MARKER, "ordinary": "keep"}]}
+    expected = (
+        {REDACTED_URL_KEY: "https://example.test/?key=[redacted]&format=json"}
+        if value.startswith("https://")
+        else MARKER
+    )
+    assert exported == {"items": [{"id": "a", "text": expected, "ordinary": "keep"}]}
     restored, kept, missing = transfer._restore_section_secrets(exported, original)
     assert restored == original
     assert kept == ("items[0].text",)
@@ -136,6 +142,8 @@ async def test_export_inspect_materialize_round_trip(monkeypatch, kind, old):
     else:
         entry, subentry = _entry_and_subentry()
         document = transfer._new_transfer_document(entry, subentry, "custom")
+        document["version"] = 1
+        document.pop("provider_connection", None)
         document["sections"] = {transfer.SECTION_CONFIGURATION: exported_config}
     imported = transfer.inspect_transfer(json.loads(json.dumps(document)), "agent-1")
     monkeypatch.setattr(transfer, "_current_snapshot", AsyncMock(return_value=current))

@@ -15,6 +15,9 @@ from custom_components.extended_openai_conversation_responses.const import (
 from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
     tool_result_data,
 )
+from custom_components.extended_openai_conversation_responses.public_errors import (
+    SanitizedUnexpectedBackendError,
+)
 from homeassistant.components import conversation
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers import llm
@@ -70,8 +73,10 @@ async def _call_tool(hass, agent, user, automation_config: str):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("symlinked", [False, True])
 async def test_native_add_automation_validates_reloads_and_triggers_once(
     hass: HomeAssistant,
+    symlinked: bool,
 ) -> None:
     config_dir = hass.config.config_dir
     from pathlib import Path
@@ -81,7 +86,12 @@ async def test_native_add_automation_validates_reloads_and_triggers_once(
     original = _automation(
         "Existing acceptance", "existing_acceptance_event", "existing"
     )
-    automation_file.write_text(yaml.safe_dump([original]), encoding="utf-8")
+    automation_target = automation_file
+    if symlinked:
+        automation_target = Path(config_dir) / "shared" / "automations.yaml"
+        automation_target.parent.mkdir()
+        automation_file.symlink_to(automation_target.relative_to(config_dir))
+    automation_target.write_text(yaml.safe_dump([original]), encoding="utf-8")
     configuration_file.write_text(
         "automation: !include automations.yaml\n", encoding="utf-8"
     )
@@ -113,6 +123,8 @@ async def test_native_add_automation_validates_reloads_and_triggers_once(
     added = _automation("New acceptance", "new_acceptance_event", "new")
     result = await _call_tool(hass, agent, user, yaml.safe_dump(added))
     assert result == {"result": "Success"}
+    assert automation_file.is_symlink() is symlinked
+    assert automation_target.read_bytes() == automation_file.read_bytes()
     saved = yaml.safe_load(automation_file.read_text(encoding="utf-8"))
     assert [item["alias"] for item in saved] == [
         "Existing acceptance",
@@ -134,7 +146,7 @@ async def test_native_add_automation_validates_reloads_and_triggers_once(
         "triggers": [{"trigger": "event"}],
         "actions": added["actions"],
     }
-    with pytest.raises(vol.Invalid):
+    with pytest.raises(SanitizedUnexpectedBackendError):
         await _call_tool(hass, agent, user, yaml.safe_dump(invalid))
     assert automation_file.read_bytes() == before_invalid
     hass.bus.async_fire("new_acceptance_event")
@@ -250,7 +262,7 @@ async def test_cancelled_native_automation_retains_ownership_until_settled(
     if phase == "rollback":
         # A settled native failure retains precedence over deferred cancellation.
         assert isinstance(outcomes[0], HomeAssistantError)
-        assert "controlled initial reload failure" in str(outcomes[0])
+        assert str(outcomes[0]) == "Function execution failed. Check the tool configuration and permissions."
     else:
         assert isinstance(outcomes[0], asyncio.CancelledError)
     assert outcomes[1] == {"result": "Success"}

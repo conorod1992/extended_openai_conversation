@@ -110,14 +110,14 @@ async def test_xml_conversion_runs_on_executor_thread(hass, monkeypatch):
     monkeypatch.setattr(
         web, "async_get_clientsession", lambda *a, **kw: _FakeSession(response)
     )
-    original = web.rest.data.RestData.data_without_xml
+    original = web.xmltodict.parse
     threads = []
 
-    def convert(self):
+    def convert(*args, **kwargs):
         threads.append(threading.get_ident())
-        return original(self)
+        return original(*args, **kwargs)
 
-    monkeypatch.setattr(web.rest.data.RestData, "data_without_xml", convert)
+    monkeypatch.setattr(web.xmltodict, "parse", convert)
     hass.async_add_executor_job.side_effect = asyncio.to_thread
     result = await web.RestFunction().execute(hass, _rest_config(), {}, None, [])
     assert json.loads(result) == {"root": {"answer": "42"}}

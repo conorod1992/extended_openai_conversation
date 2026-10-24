@@ -26,18 +26,18 @@ def allocated_staging_directory(monkeypatch, tmp_path):
     monkeypatch.setattr(backup_transfer, "_schedule_expiry", lambda _hass: None)
 
 
-def test_restore_journal_uses_scalable_backup_limit(monkeypatch) -> None:
+async def test_restore_journal_uses_scalable_backup_limit(monkeypatch) -> None:
     """Pending recovery must accept the same bounded payload size as chunked restore."""
     calls: list[tuple[object, str, int]] = []
     target = object()
     rollback = object()
 
-    def inspect(value, subentry_id, *, max_bytes, private_journal):
+    async def inspect(value, subentry_id, *, max_bytes, private_journal):
         assert private_journal is True
         calls.append((value, subentry_id, max_bytes))
         return target if value["large"] == "target" else rollback
 
-    monkeypatch.setattr(backup, "inspect_backup", inspect)
+    monkeypatch.setattr(backup, "async_inspect_backup", inspect)
     journal = {
         "transaction_id": "transaction-1",
         "entry_id": "entry-1",
@@ -48,7 +48,7 @@ def test_restore_journal_uses_scalable_backup_limit(monkeypatch) -> None:
         "rollback": {"large": "rollback"},
     }
 
-    loaded, loaded_target, loaded_rollback = restore_recovery._load_journal(
+    loaded, loaded_target, loaded_rollback = await restore_recovery._async_load_journal(
         journal, "entry-1", "agent-1"
     )
 

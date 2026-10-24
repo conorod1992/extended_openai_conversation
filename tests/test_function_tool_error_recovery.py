@@ -119,7 +119,11 @@ def _entity(hass: Any) -> Any:
 
 
 def _result(entity: Any, tool_input: llm.ToolInput, value: Any = "ok") -> Any:
-    return conversation.ToolResultContent(
+    from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+        make_tool_result_content,
+    )
+
+    return make_tool_result_content(
         agent_id=entity.entity_id,
         tool_call_id=tool_input.id,
         tool_name=tool_input.tool_name,

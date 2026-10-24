@@ -200,3 +200,95 @@ async def test_script_all_target_cannot_skip_exposure_authorization(hass, target
         )
     assert hass.states.get(private.entity_id).state == "off"
     assert hass.states.get(public.entity_id).state == "off"
+
+
+@pytest.mark.parametrize("domain_name", ["light", "homeassistant"])
+@pytest.mark.parametrize("spelling", ["lower", "domain", "service", "both"])
+@pytest.mark.parametrize("selector", ["area_id", "entity_id"])
+@pytest.mark.parametrize("route", ["single", "batch", "shared"])
+async def test_service_casing_preserves_participants_and_previous_state(
+    hass, monkeypatch, domain_name, spelling, selector, route
+):
+    """HA-equivalent names keep policy targets, state and dispatch identical."""
+    from copy import deepcopy
+
+    from custom_components.extended_openai_conversation_responses.built_in_functions import (
+        BUILT_IN_FUNCTION_PRESETS,
+    )
+    from custom_components.extended_openai_conversation_responses.function_execution import (
+        validate_function_arguments,
+    )
+    from custom_components.extended_openai_conversation_responses.ha_actions import (
+        async_call_ha_action,
+    )
+
+    component = EntityComponent(logging.getLogger(__name__), "light", hass)
+    light = AuditLight()
+    effects = []
+    turn_on = light.async_turn_on
+
+    async def record_turn_on(**kwargs):
+        effects.append(dict(kwargs))
+        await turn_on(**kwargs)
+
+    monkeypatch.setattr(light, "async_turn_on", record_turn_on)
+    await component.async_add_entities([light])
+    component.async_register_entity_service("turn_on", {}, "async_turn_on")
+    area = ar.async_get(hass).async_create("Casing Kitchen")
+    registry = er.async_get(hass)
+    registry.async_update_entity(light.entity_id, area_id=area.id)
+    sensor = registry.async_get_or_create("sensor", "audit_probe", "casing_temperature")
+    registry.async_update_entity(sensor.entity_id, area_id=area.id)
+    hass.states.async_set(sensor.entity_id, "20")
+    exposed = [{"entity_id": light.entity_id}]
+    domain = domain_name.upper() if spelling in {"domain", "both"} else domain_name
+    service = "TURN_ON" if spelling in {"service", "both"} else "turn_on"
+    data = {selector: area.id if selector == "area_id" else light.entity_id}
+    arguments = {"domain": domain, "service": service, "service_data": data}
+    original = deepcopy(arguments)
+    seen = []
+
+    def revalidate(current_hass, entity_ids):
+        assert entity_ids == {light.entity_id}
+        NativeFunction().validate_entity_ids(current_hass, sorted(entity_ids), exposed)
+        seen.append(entity_ids)
+
+    with action_target_revalidation(revalidate):
+        if route == "shared":
+            result = await async_call_ha_action(
+                hass, domain, service, data=data, blocking=True, include_response=True
+            )
+        else:
+            implementation = (
+                "execute_service_single" if route == "single" else "execute_service"
+            )
+            tool = next(
+                item["tool"]
+                for item in BUILT_IN_FUNCTION_PRESETS
+                if item["tool"]["function"]["name"] == implementation
+            )
+            supplied = arguments if route == "single" else {"list": [arguments]}
+            validate_function_arguments(tool["spec"], supplied)
+            result = await NativeFunction().execute(
+                hass, tool["function"], supplied, None, exposed
+            )
+            if route == "batch":
+                result = result[0]
+            assert result["success"] is True
+    assert seen == [{light.entity_id}]
+    assert result["previous_state"] == {light.entity_id: {"state": "off"}}
+    assert hass.states.get(light.entity_id).state == "on"
+    assert hass.states.get(sensor.entity_id).state == "20"
+    assert arguments == original
+
+    # Casing must never hide a genuine exposure denial or dispatch another effect.
+    assert len(effects) == 1
+    exposed.clear()
+    with action_target_revalidation(revalidate), pytest.raises(HomeAssistantError):
+        if route == "shared":
+            await async_call_ha_action(hass, domain, service, data=data, blocking=True)
+        else:
+            await NativeFunction().execute(
+                hass, tool["function"], supplied, None, exposed
+            )
+    assert len(effects) == 1

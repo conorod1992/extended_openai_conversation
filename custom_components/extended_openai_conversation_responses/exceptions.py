@@ -122,6 +122,10 @@ class ParseArgumentsFailed(HomeAssistantError):
         return "The provider returned malformed or unparseable tool-call arguments."
 
 
+class FunctionResponseParseError(HomeAssistantError):
+    """A backend response cannot be safely interpreted as a Function result."""
+
+
 class FunctionValidationInfrastructureError(HomeAssistantError):
     """When local Function Tool validation cannot complete safely."""
 

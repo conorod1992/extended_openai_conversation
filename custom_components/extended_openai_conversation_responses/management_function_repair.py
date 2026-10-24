@@ -41,9 +41,10 @@ from .const import (
     CONF_USAGE_RUN_RETENTION_DAYS,
     DEFAULT_FUNCTION_GROUPS,
 )
-from .live_subentry_updates import update_live_subentry
+from .live_subentry_updates import update_configuration_subentry, update_live_subentry
 from .model_catalog import catalog_generation
 from .request import canonical_json
+from .yaml_serialization import dump_yaml
 
 _STALE_CONFIGURATION_ERROR = (
     "Agent configuration changed in another tab; reload before saving"
@@ -63,6 +64,7 @@ class _PersistedProjection:
     snapshot: dict[str, Any] | None
     revision: str
     retention: dict[str, Any]
+    preparsed_function_tools: Any = field(default_factory=lambda: _MISSING)
     repair_state: _RepairState | None = None
     repair_snapshot: dict[str, Any] | None = None
     snapshot_generation: int = field(default_factory=catalog_generation)
@@ -138,7 +140,7 @@ def _function_tools_cache_key(options: dict[str, Any]) -> tuple[str, str]:
     try:
         return ("json", canonical_json(raw))
     except TypeError, ValueError:
-        return ("yaml", yaml.safe_dump(raw, sort_keys=True, allow_unicode=True))
+        return ("yaml", dump_yaml(raw, sort_keys=True))
 
 
 def _options_from_function_tools_cache_key(kind: str, payload: str) -> dict[str, Any]:
@@ -182,9 +184,7 @@ def _isolate_function_tools_uncached(
                     "index": index,
                     "name": name,
                     "tool": deepcopy(candidate),
-                    "yaml": yaml.safe_dump(
-                        candidate, sort_keys=False, allow_unicode=True
-                    ),
+                    "yaml": dump_yaml(candidate, sort_keys=False),
                     "validation_error": str(err) or type(err).__name__,
                 }
             )
@@ -324,9 +324,7 @@ def effective_function_configuration(
     state = function_configuration_repair_state(options)
     safe = dict(options)
     valid = state.valid if state else function_tools_issue(options)[0]
-    safe[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
-        valid, sort_keys=False, allow_unicode=True
-    )
+    safe[CONF_FUNCTION_TOOLS] = dump_yaml(valid, sort_keys=False)
     safe[CONF_FUNCTION_GROUPS] = (
         state.groups
         if state
@@ -576,6 +574,8 @@ def normalized_persisted_config_snapshot(
     started = perf_counter()
     _refresh_catalog_snapshots(projection)
     hit = projection.snapshot is not None
+    if preparsed_function_tools is _MISSING:
+        preparsed_function_tools = projection.preparsed_function_tools
     reused_defaults = False
     if projection.snapshot is None:
         # An exact default persisted mapping has already passed the same
@@ -606,34 +606,56 @@ def normalized_persisted_config_snapshot(
     return snapshot, hit
 
 
-async def async_prewarm_persisted_config_projection(
-    hass: HomeAssistant, entry: Any, subentry: Any
-) -> None:
-    """Prime normal read state, parsing YAML off the event loop first."""
-    projection = persisted_config_projection(subentry)
-    if projection.snapshot is not None or projection.repair_state is not None:
-        return
-    original_data, original_title = projection.data, projection.title
-    options = dict(original_data)
+async def async_prepare_persisted_function_tools(
+    hass: HomeAssistant, projection: _PersistedProjection
+) -> dict[str, Any]:
+    """Decode cold persisted YAML once in a worker; validate HA objects on-loop."""
+    options = dict(projection.data)
     configured = options.get(CONF_FUNCTION_TOOLS)
-    parsed: Any = _MISSING
-    if isinstance(configured, str):
+    if (
+        projection.snapshot is None
+        and projection.repair_state is None
+        and projection.preparsed_function_tools is _MISSING
+        and isinstance(configured, str)
+    ):
         try:
             parsed = await hass.async_add_executor_job(
                 parse_configured_function_tools, options
             )
         except yaml.YAMLError:
-            # Let the authoritative validator report the original YAML error.
+            # Retain the authoritative repair validator's malformed-YAML report.
             parsed = configured
         if (
-            entry.state is not ConfigEntryState.LOADED
-            or entry.subentries.get(subentry.subentry_id) is not subentry
-            or subentry.data is not original_data
-            or subentry.title != original_title
+            projection.subentry.data is not projection.data
+            or projection.subentry.title != projection.title
+            or _persisted_projections.get(id(projection.subentry)) is not projection
         ):
+            raise HomeAssistantError(_STALE_CONFIGURATION_ERROR)
+        projection.preparsed_function_tools = parsed
+    if projection.preparsed_function_tools is not _MISSING:
+        options[CONF_FUNCTION_TOOLS] = projection.preparsed_function_tools
+    return options
+
+
+async def async_prewarm_persisted_config_projection(
+    hass: HomeAssistant, entry: Any, subentry: Any
+) -> None:
+    """Prime normal reads using the same worker preparation as a cold GET."""
+    projection = persisted_config_projection(subentry)
+    if projection.snapshot is not None or projection.repair_state is not None:
+        return
+    try:
+        options = await async_prepare_persisted_function_tools(hass, projection)
+    except HomeAssistantError:
+        if subentry.data is not projection.data or subentry.title != projection.title:
             return
-        options[CONF_FUNCTION_TOOLS] = parsed
-    health = peek_function_tool_health(dict(original_data))
+        raise
+    if (
+        entry.state is not ConfigEntryState.LOADED
+        or entry.subentries.get(subentry.subentry_id) is not subentry
+    ):
+        return
+    health = peek_function_tool_health(dict(projection.data))
     if bool(health and health.get("validation_error")) or has_unavailable_native_tool(
         options
     ):
@@ -641,9 +663,7 @@ async def async_prewarm_persisted_config_projection(
         if state is not None:
             return
     try:
-        normalized_persisted_config_snapshot(
-            projection, preparsed_function_tools=parsed
-        )
+        normalized_persisted_config_snapshot(projection)
     except AgentConfigError:
         state, _ = repair_state_for_projection(projection)
         if state is None:
@@ -770,8 +790,8 @@ def persist_valid_function_configuration(
         else:
             candidate.pop(CONF_FUNCTION_TOOLS, None)
     else:
-        candidate[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
-            candidate[CONF_FUNCTION_TOOLS], sort_keys=False, allow_unicode=True
+        candidate[CONF_FUNCTION_TOOLS] = dump_yaml(
+            candidate[CONF_FUNCTION_TOOLS], sort_keys=False
         )
     # Function edits must not turn implicit model-dependent defaults into saved
     # settings. For example, an absent effort follows each routed model's profile;
@@ -930,9 +950,7 @@ def _persist_raw_tools(
 ) -> dict[str, Any]:
     """Persist a partially invalid collection without normalizing untouched siblings."""
     persisted = dict(subentry.data)
-    persisted[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
-        tools, sort_keys=False, allow_unicode=True
-    )
+    persisted[CONF_FUNCTION_TOOLS] = dump_yaml(tools, sort_keys=False)
     persisted[CONF_FUNCTION_GROUPS] = deepcopy(groups)
     if extra_updates:
         persisted.update(deepcopy(extra_updates))
@@ -1102,7 +1120,7 @@ async def async_function_repair(
             if isinstance(requested_title, str)
             else subentry.title
         )
-        update_live_subentry(
+        update_configuration_subentry(
             hass,
             entry,
             subentry,
@@ -1294,17 +1312,15 @@ async def async_function_repair(
     require_repair_revision(subentry, message.get("revision"))
     operation_revision = repair_revision(subentry)
     candidate = message.get("tools")
-    if not isinstance(candidate, list):
-        raise HomeAssistantError("tools must be a JSON array")
+    if not isinstance(candidate, (str, list)):
+        raise HomeAssistantError("tools must be a list or YAML/JSON text")
     validated_tools = validate_function_tools(candidate)
     # Bulk Tool repair owns Tools only. Validate surviving usable Groups against
     # the proposed Tools while retaining unrelated raw Group damage for repair.
     validate_function_groups(state.groups, validated_tools)
 
     persisted = dict(subentry.data)
-    persisted[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
-        validated_tools, sort_keys=False, allow_unicode=True
-    )
+    persisted[CONF_FUNCTION_TOOLS] = dump_yaml(validated_tools, sort_keys=False)
     await management_ui._async_validate_configuration_request(
         hass, entry, subentry, safe_function_configuration(persisted)
     )

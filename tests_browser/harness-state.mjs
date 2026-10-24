@@ -306,12 +306,19 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
       const review={review_token:"fixture-review",count:pack.rules.length,ready:pack.rules.length,needs_attention:0,will_append:true,will_disable:true,new_groups:pack.groups.length,revision:state.requestRules.revision,rules:pack.rules.map(rule=>({name:rule.name,triggers:rule.phrases,group:pack.groups.find(group=>group.id===rule.group_id)?.name||"Ungrouped",action_type:rule.action_type,conditions:rule.conditions?.length||0,function_tools:[],entities:[],services:[],missing_dependencies:[],continue_to_ai:Boolean(rule.action?.continue_to_ai),continue_matching:Boolean(rule.continue_matching),ai_input_mode:rule.ai_input_mode||"original",ai_input_capture:rule.ai_input_capture||null,status:"ready"}))};
       if(key.endsWith("review"))return review;
       if(!message.confirm||message.review_token!=="fixture-review"||message.revision!==state.requestRules.revision)throw new Error("Review again");
-      const imported=pack.rules.map(rule=>({...clone(rule),id:`rule-${state.nextRuleId++}`,enabled:false,order:state.requestRules.rules.length}));
+      // Match the backend's authoritative group reconciliation on pack import.
+      const groupIds=new Map();
+      for(const incoming of pack.groups){
+        let current=state.requestRules.groups.find(group=>group.name.toLowerCase()===incoming.name.toLowerCase());
+        if(!current){current={id:`group-${state.nextRuleGroupId++}`,name:incoming.name};state.requestRules.groups.push(current);}
+        groupIds.set(incoming.id,current.id);
+      }
+      const imported=pack.rules.map(rule=>({...clone(rule),id:`rule-${state.nextRuleId++}`,enabled:false,order:state.requestRules.rules.length,group_id:groupIds.get(rule.group_id)||null}));
       state.requestRules.rules.push(...imported);normalizeRules();state.requestRules.revision++;save();
       return {rules:clone(imported),groups:clone(state.requestRules.groups),revision:state.requestRules.revision,review};
     }
     if (key === "request_rules/create") { requireFields([["rule", "object"]]); const rule = {...clone(message.rule), id: `rule-${state.nextRuleId++}`}; state.requestRules.rules.push(rule); normalizeRules(); state.requestRules.revision++; save(); return {rule: clone(rule), revision: state.requestRules.revision}; }
-    if (key === "request_rules/update") { requireFields([["rule_id", "string"], ["rule", "object"]]); const i = state.requestRules.rules.findIndex((r) => r.id === message.rule_id); if (i < 0) throw new Error("Request Rule not found"); state.requestRules.rules[i] = {...clone(message.rule), id: message.rule_id}; normalizeRules(); state.requestRules.revision++; save(); return {rule: clone(state.requestRules.rules[i]), revision: state.requestRules.revision}; }
+    if (key === "request_rules/update") { requireFields([["rule_id", "string"], ["rule", "object"]]); const i = state.requestRules.rules.findIndex((r) => r.id === message.rule_id); if (i < 0) throw new Error("Request Rule not found"); const fieldOnly=Object.keys(message.rule).length===1 && Object.hasOwn(message.rule,"enabled"); if(fieldOnly && typeof message.rule.enabled!=="boolean") throw new Error("enabled must be true or false"); state.requestRules.rules[i] = {...(fieldOnly?state.requestRules.rules[i]:{}), ...clone(message.rule), id: message.rule_id}; normalizeRules(); state.requestRules.revision++; save(); return {rule: clone(state.requestRules.rules[i]), revision: state.requestRules.revision}; }
     if (key === "request_rules/delete") { state.requestRules.rules = state.requestRules.rules.filter((r) => r.id !== message.rule_id); normalizeRules(); state.requestRules.revision++; save(); return {revision: state.requestRules.revision}; }
     if (key === "request_rules/duplicate") {
       if (message.revision !== state.requestRules.revision) throw new Error("Saved data changed; reload before saving.");

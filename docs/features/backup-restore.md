@@ -19,9 +19,9 @@ A full backup contains the selected agent's:
 
 ## What it does not include
 
-Provider API keys, OAuth tokens and parent config-entry credentials are excluded. Temporary runtime state such as requests currently in progress, Function Groups loaded only for the active conversation, caches and locks is also excluded.
+New private backups preserve inline credentials and include the parent provider connection when configuration is selected. Historical backup versions excluded parent credentials and redacted recognized inline secrets; their import semantics remain unchanged. Temporary runtime state such as requests currently in progress, Function Groups loaded only for the active conversation, caches and locks is excluded.
 
-When moving a backup to another Home Assistant installation, reconnect or recreate the provider connection separately.
+Provider restoration requires an explicit shared-connection choice because other agents may use that connection. It runs after agent restoration and refuses to overwrite concurrent connection edits. External HA scripts/files/services and expired credentials may still require attention. See [credential security](credential-security.md) for scope, format versions and limitations.
 
 ## What happens when you restore
 
@@ -41,7 +41,7 @@ Files created by older versions in the system temporary directory have no reliab
 
 ## Security
 
-Full backup files can contain prompts, memories, Knowledge sources, conversation history and detailed usage information. Treat them as private data even though provider credentials are excluded.
+Full and custom private backup files preserve credentials, prompts, memories, Knowledge sources, conversation history and usage information. They are not encrypted. Keep them private. Use Shareable Setup for conservative public sharing and review any custom content you explicitly include. See the [sharing security contract](credential-security.md).
 
 
 Selective restores preserve active Archive privacy bindings when Archive is not

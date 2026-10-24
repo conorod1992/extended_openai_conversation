@@ -10,6 +10,9 @@ const satellite = (id = "assist_satellite.kitchen", suffix = "kitchen") => ({
 
 async function installSatelliteFixture(panel, satellites = [satellite()]) {
   await panel.evaluate((host, items) => {
+    // This harness tests draft lifecycle; genuine native component loading is
+    // covered by the fresh-document real-ha-shell Quiet Hours regression.
+    if (!customElements.get("ha-entity-picker")) customElements.define("ha-entity-picker", class extends HTMLElement {});
     host._result.satellites = items;
     host._hass.states ||= {};
     for (const item of items) {

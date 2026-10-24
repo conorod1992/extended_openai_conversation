@@ -145,3 +145,12 @@ The new regression file fails three cases on the preceding head and passes on
 the simplified implementation. Assertions check actual handler effects and HA
 state, in addition to bookkeeping. Passing these tests does not prove every
 custom service or adapter supplies a complete semantic operation identity.
+
+
+REST Functions own receipts at the prepared HTTP dispatch boundary. Recovery
+compares method, normalized destination and query, rendered headers (including
+authentication identity), and payload, rather than the arguments that rendered
+them. Omitted and explicit template defaults therefore cannot repeat an unresolved
+completed HTTP effect. Opaque authentication uses conservative recovery protection.
+Only digests are retained; a successful provider acknowledgement clears them and
+permits intentional repeated requests. Transport failures keep uncertain receipts.

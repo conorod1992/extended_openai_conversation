@@ -61,3 +61,25 @@ def configuration_supports_live_update(
         != candidate.get(key, defaults.get(key, missing))
     }
     return changed <= _LIVE_REQUEST_FIELDS
+
+
+def update_configuration_subentry(
+    hass: Any,
+    entry: Any,
+    subentry: Any,
+    *,
+    data: Mapping[str, Any],
+    title: str | None = None,
+) -> bool:
+    """Persist configuration with the same reload contract for every save route."""
+    live = configuration_supports_live_update(
+        subentry.data, data, title_changed=title is not None and title != subentry.title
+    )
+    changes: dict[str, Any] = {"data": data}
+    if title is not None:
+        changes["title"] = title
+    if live:
+        update_live_subentry(hass, entry, subentry, **changes)
+    else:
+        hass.config_entries.async_update_subentry(entry, subentry, **changes)
+    return live

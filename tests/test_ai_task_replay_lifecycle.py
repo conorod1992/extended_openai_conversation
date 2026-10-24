@@ -213,12 +213,15 @@ async def test_failed_ai_task_continuations_retain_effects_until_acknowledged(
         task_driver.tool.fail_after_effect = True
         with (
             propagate_function_execution_errors(),
-            pytest.raises(HomeAssistantError, match="handler failed after increment"),
+            pytest.raises(
+                HomeAssistantError, match="Check the tool configuration and permissions"
+            ) as caught,
         ):
             await task_driver.run(log)
+        assert "handler failed after increment" not in str(caught.value)
         task_driver.tool.fail_after_effect = False
     else:
-        with pytest.raises(HomeAssistantError, match="continuation was lost"):
+        with pytest.raises(HomeAssistantError, match="Provider request failed"):
             await task_driver.run(log)
     entity = task_driver.entity
     assert task_driver.hass.states.get("sensor.ai_task_effects").state == "1"

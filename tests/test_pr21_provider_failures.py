@@ -63,8 +63,8 @@ def test_provider_metadata_is_bounded_and_body_free() -> None:
         _status_error(RateLimitError, 429, code="rate_limit_exceeded")
     )
     assert metadata["status_code"] == 429
-    assert metadata["code"] == "rate_limit_exceeded"
-    assert metadata["provider_request_id"] == "req_test_123"
+    assert metadata["code"] == "provider_rate_limited"
+    assert "provider_request_id" not in metadata
     assert "body" not in metadata
     assert "secret" not in str(metadata)
 
@@ -165,7 +165,7 @@ def test_debug_provider_request_records_safe_failure_metadata() -> None:
     payload = request.as_dict()
     assert payload["error_type"] == "RateLimitError"
     assert payload["error"]["status_code"] == 429
-    assert payload["error"]["provider_request_id"] == "req_test_123"
+    assert "provider_request_id" not in payload["error"]
     assert "body" not in payload["error"]
 
 

@@ -809,3 +809,12 @@ async def test_lost_tool_ack_replay_does_not_reuse_revoked_guest_exposure(
     assert _speech(recovered) == "Recovered without repeating the action."
     assert len(calls) == 1
     assert len(requests) == 5
+
+
+@pytest.mark.parametrize("kind", ["chat_image", "responses_image", "responses_reasoning"])
+@pytest.mark.parametrize("strategy", ["keep_recent", "summary", "summary_failure"])
+async def test_native_chat_log_eviction_keeps_fitting_recent_turns(hass, kind, strategy):
+    """Run the provider-handler matrix with genuine HA content accumulation."""
+    from tests.test_context_followup_chat import test_prepared_eviction_preserves_newer_turns
+
+    await test_prepared_eviction_preserves_newer_turns(hass, kind, strategy)

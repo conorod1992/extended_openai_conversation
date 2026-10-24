@@ -36,9 +36,12 @@ def test_export_is_versioned_and_excludes_history_and_credentials(hass) -> None:
     ]
     subentry = SimpleNamespace(title="Jarvis", data=data)
     document = _export_agent(subentry)
-    assert document["version"] == 1
-    assert document["config"]["prompt"] == "Custom"
-    assert document["config"]["function_groups"][0]["id"] == "general"
+    assert document["version"] == 2
+    assert "prompt" not in document["config"]
+    assert document["config"]["function_groups"] == []
+    reviewed = _export_agent(subentry, reviewed=True)
+    assert reviewed["config"]["prompt"] == "Custom"
+    assert reviewed["config"]["function_groups"][0]["id"] == "general"
     serialized = str(document)
     assert "api_key" not in serialized
     assert "memory_contents" not in serialized
@@ -131,7 +134,7 @@ def test_import_export_round_trip_preserves_disabled_tool_state(hass) -> None:
             }
         ]
     )
-    exported = _export_agent(SimpleNamespace(title="Jarvis", data=data))
+    exported = _export_agent(SimpleNamespace(title="Jarvis", data=data), reviewed=True)
     parsed = _parse_import_document(exported)
     assert yaml.safe_load(parsed["config"]["functions"])[0]["enabled"] is False
 

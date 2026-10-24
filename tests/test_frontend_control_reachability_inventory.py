@@ -108,3 +108,21 @@ def test_conditional_group_repair_controls_have_reviewed_browser_coverage() -> N
         assert selector in spec
     assert "acceptConfirmation(panel)" in spec
     assert "#group-save" in spec
+
+
+def test_usage_pagination_controls_have_reviewed_browser_coverage() -> None:
+    controls = next(
+        item
+        for item in _payload()["conditional_controls"]
+        if item["source"] == "usage-chart.js"
+    )
+    assert controls["selectors"] == [
+        "#usage-request-previous",
+        "#usage-request-next",
+        "#usage-request-retry",
+    ]
+    spec = (ROOT / controls["browser_spec"]).read_text(encoding="utf-8")
+    assert "reachabilityInventory.viewports" in spec
+    assert "page.setViewportSize" in spec
+    for selector in controls["selectors"]:
+        assert selector in spec

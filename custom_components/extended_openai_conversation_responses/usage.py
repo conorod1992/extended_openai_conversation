@@ -634,12 +634,8 @@ class UsageManager:
         """Persist one candidate detail state before publishing it in memory."""
         if self._detail_storage is None:
             return
-        await self._detail_storage.async_save(
-            {
-                "requests": [asdict(request) for request in requests],
-                "runs": [asdict(run) for run in runs],
-            }
-        )
+        details = await asyncio.to_thread(_serialize_usage_details, requests, runs)
+        await self._detail_storage.async_save(details)
 
     async def async_prune_details(self, *, save: bool = True) -> dict[str, int]:
         """Apply retention transactionally, persisting survivors before publication."""
@@ -839,12 +835,12 @@ class UsageManager:
         async with async_storage_lock(self._storage, self._lock):
             if not self._initialized:
                 raise RuntimeError("usage statistics have not been initialized")
-            return {
-                "totals": self.as_dict(),
-                "daily": deepcopy(self.daily),
-                "requests": [asdict(request) for request in self.requests],
-                "runs": [asdict(run) for run in self.runs],
-            }
+            # Completed records are immutable after publication. Capture their
+            # membership under the manager lock; serialize only local references.
+            requests, runs = list(self.requests), list(self.runs)
+            totals, daily = self.as_dict(), deepcopy(self.daily)
+            details = await asyncio.to_thread(_serialize_usage_details, requests, runs)
+            return {"totals": totals, "daily": daily, **details}
 
     @staticmethod
     def validate_backup_data(
@@ -947,12 +943,10 @@ class UsageManager:
 
     async def _async_save_details(self) -> None:
         if self._detail_storage is not None:
-            await self._detail_storage.async_save(
-                {
-                    "requests": [asdict(r) for r in self.requests],
-                    "runs": [asdict(r) for r in self.runs],
-                }
+            details = await asyncio.to_thread(
+                _serialize_usage_details, list(self.requests), list(self.runs)
             )
+            await self._detail_storage.async_save(details)
 
     def _usage_snapshot(self, category: str) -> dict[str, Any]:
         """Capture the current Usage state for one persistence category."""
@@ -1312,12 +1306,16 @@ def _register_usage_maintenance(hass: HomeAssistant, manager: UsageManager) -> N
     async def prune(_now: datetime) -> None:
         await manager._async_prune_usage_if_due()
 
+    async def stop(event: Any) -> None:
+        # HA removes a one-shot listener before invoking its coroutine. Release
+        # our handle so shutdown only cancels callbacks that are still owned.
+        manager._cancel_stop = None
+        await manager.async_shutdown(event)
+
     manager._cancel_retention = async_track_time_interval(
         hass, prune, timedelta(days=1)
     )
-    manager._cancel_stop = hass.bus.async_listen_once(
-        EVENT_HOMEASSISTANT_STOP, manager.async_shutdown
-    )
+    manager._cancel_stop = hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, stop)
     manager._shutdown_registered = True
 
 
@@ -1425,3 +1423,13 @@ async def async_get_usage(
             fallbacks[key] = manager
             _register_usage_maintenance(hass, manager)
             return manager
+
+
+def _serialize_usage_details(
+    requests: list[UsageRequest], runs: list[UsageRun]
+) -> dict[str, Any]:
+    """Convert stable completed records without occupying the HA event loop."""
+    return {
+        "requests": [asdict(request) for request in requests],
+        "runs": [asdict(run) for run in runs],
+    }

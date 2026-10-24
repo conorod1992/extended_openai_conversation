@@ -387,7 +387,7 @@ async def test_failed_ai_task_does_not_leak_request_state_to_next_task(
             structure=vol.Schema({vol.Required("answer"): str}),
             attachments=[attachment],
         )
-    with pytest.raises(HomeAssistantError, match="provider rejected request"):
+    with pytest.raises(HomeAssistantError, match="Provider request failed"):
         await ai_task.async_generate_data(
             hass,
             task_name="Provider Failure Task",
@@ -787,9 +787,10 @@ async def test_provider_failure_script_respects_continue_on_error(
         await script.async_run(context=Context())
     else:
         with pytest.raises(
-            HomeAssistantError, match="Optional summary rate limited"
+            HomeAssistantError, match="Provider rate limit reached"
         ) as raised:
             await script.async_run(context=Context())
+        assert "Optional summary rate limited" not in str(raised.value)
         assert isinstance(raised.value.__cause__, RateLimitError)
     await hass.async_block_till_done()
     assert len(followups) == int(continue_on_error)

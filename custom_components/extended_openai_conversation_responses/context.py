@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 import json
 import math
@@ -10,6 +11,8 @@ from typing import Any
 from homeassistant.components import conversation
 
 from .model_tool_results import model_tool_result_data
+
+HistoryEstimator = Callable[[list[conversation.Content]], int]
 
 
 @dataclass(slots=True)
@@ -67,10 +70,24 @@ def retained_turns(
     parts: HistoryParts,
     observed_input_tokens: int,
     target_tokens: int,
+    estimate: HistoryEstimator | None = None,
 ) -> list[list[conversation.Content]]:
-    """Choose newest complete turns using provider-reported input token usage."""
+    """Remeasure prepared requests after removing each complete oldest turn.
+
+    The proportional fallback supports callers without a prepared provider input.
+    Conversation requests supply the API-specific estimator, including attachments.
+    """
     if len(parts.turns) <= 1:
         return parts.turns
+
+    if estimate is not None:
+        retained = list(parts.turns)
+        while len(retained) > 1:
+            candidate = [*parts.prefix, *(item for turn in retained for item in turn)]
+            if estimate(candidate) <= target_tokens:
+                break
+            retained.pop(0)
+        return retained
 
     all_items = [*parts.prefix, *(item for turn in parts.turns for item in turn)]
     total_weight = _weight(all_items)
@@ -91,10 +108,11 @@ def keep_recent_messages(
     content: list[conversation.Content],
     observed_input_tokens: int,
     target_tokens: int,
+    estimate: HistoryEstimator | None = None,
 ) -> bool:
     """Discard oldest complete turns while keeping system and recent context."""
     parts = partition_history(content)
-    retained = retained_turns(parts, observed_input_tokens, target_tokens)
+    retained = retained_turns(parts, observed_input_tokens, target_tokens, estimate)
     updated = [*parts.prefix, *(item for turn in retained for item in turn)]
     if len(updated) == len(content):
         return False
@@ -106,6 +124,7 @@ def select_summary_history(
     content: list[conversation.Content],
     observed_input_tokens: int,
     target_tokens: int,
+    estimate: HistoryEstimator | None = None,
 ) -> tuple[list[conversation.Content], list[conversation.Content]] | None:
     """Return older content to summarize and recent valid raw content to retain."""
     parts = partition_history(content)
@@ -114,7 +133,7 @@ def select_summary_history(
 
     # Reserve roughly one third of the configured context for the generated summary.
     recent = retained_turns(
-        parts, observed_input_tokens, max(1, target_tokens * 2 // 3)
+        parts, observed_input_tokens, max(1, target_tokens * 2 // 3), estimate
     )
     recent_count = max(1, len(recent))
     older_turns = parts.turns[:-recent_count]

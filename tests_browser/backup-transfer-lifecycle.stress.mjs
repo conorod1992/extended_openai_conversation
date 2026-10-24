@@ -1,5 +1,5 @@
 import {expect, test} from "@playwright/test";
-import {acceptConfirmation, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
+import {acceptConfirmation, acceptSharingReview, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
 test("Backup export modes validate selection, preserve settings and reset on reopen", async ({page}) => {
   const errors = trackPageErrors(page);
@@ -10,6 +10,7 @@ test("Backup export modes validate selection, preserve settings and reset on reo
     if (mode === "setup") {
       await panel.locator("#create-backup-transfer").click();
       await expect.poll(() => page.evaluate(() => browserHarness.calls.filter(call => call.action === "setup_export").length)).toBe(1);
+      await acceptSharingReview(panel);
     } else if (mode === "custom") {
       await expect(panel.locator("#transfer-custom-options")).toBeVisible();
       for (const input of await panel.locator(".transfer-custom-section").all()) await input.uncheck();

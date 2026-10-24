@@ -486,7 +486,17 @@ class ModelCatalogManager:
                         and model
                         and not SLOT_REFERENCE.search(model)
                     ):
-                        metadata = catalog_model_metadata(None, model)
+                        effective = {
+                            **subentry.data,
+                            CONF_CHAT_MODEL: model,
+                            CONF_REASONING_EFFORT: effort,
+                        }
+                        metadata = catalog_model_metadata(
+                            None,
+                            capability_model_identity(
+                                effective, getattr(entry, "data", {})
+                            ),
+                        )
                         if (
                             not metadata["reasoning"]["supported"]
                             or effort not in metadata["reasoning"]["efforts"]

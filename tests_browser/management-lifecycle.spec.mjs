@@ -784,6 +784,9 @@ test("Quiet Hours and request debugging initialize on first entry without global
   const panel = page.locator("extended-openai-management-panel");
   await expect(panel.locator(".dashboard-grid")).toBeVisible();
   await panel.evaluate(host => {
+    // This isolated harness checks route binding and request ownership. Native
+    // HA registration is exercised by the cold real-ha-shell picker journey.
+    if (!customElements.get("ha-entity-picker")) customElements.define("ha-entity-picker", class extends HTMLElement {});
     const original = host._hass.callWS;
     window.featureCalls = [];
     window.originalDataLoader = host._loadSectionData;

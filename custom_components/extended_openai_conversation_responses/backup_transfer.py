@@ -6,6 +6,7 @@ import asyncio
 import base64
 import binascii
 from contextlib import suppress
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 import hashlib
 import json
@@ -121,6 +122,8 @@ class ImportSession:
     preview_revision: str | None = None
     preview_sections: tuple[str, ...] | None = None
     preview_user_scope_mappings: tuple[tuple[str, str], ...] | None = None
+    preview_provider_data: dict[str, Any] | None = None
+    preview_restore_provider: bool = False
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     inspection_tasks: set[asyncio.Task[Any]] = field(default_factory=set, repr=False)
 
@@ -369,6 +372,10 @@ def _resolve_agent(
 
 
 def _redacted_document(snapshot: dict[str, Any]) -> dict[str, Any]:
+    from .private_backup import encode_document, is_private_document
+
+    if is_private_document(snapshot):
+        return encode_document(snapshot)
     if snapshot.get("format") == transfer.TRANSFER_FORMAT:
         return transfer.redact_transfer_document(snapshot)
     return {
@@ -787,12 +794,12 @@ async def _async_load_prepared_restore(
     sections: Any = None,
     inspect_only: bool = False,
 ) -> transfer.PreparedTransfer:
-    """Decode an upload off-loop, then run HA-aware validation on the event loop."""
+    """Process upload bytes and Usage off-loop; validate HA schemas on-loop."""
     document = await hass.async_add_executor_job(_load_uploaded_document, path, kind)
     # inspect_transfer ultimately validates configured Function Tools. Some Home
     # Assistant validators used by those schemas (notably cv.template) require the
-    # event-loop context, so only file I/O/decompression belongs in the executor.
-    return transfer._inspect_decoded_transfer(
+    # event-loop context. The async validator isolates data-only Usage work.
+    return await transfer.async_inspect_decoded_transfer(
         document, target_subentry_id, sections=sections, inspect_only=inspect_only
     )
 
@@ -1146,6 +1153,15 @@ async def _inspect_import_owned(
             allowed=prepared.available_sections,
             default=prepared.available_sections,
         )
+        restore_provider = data.get("restore_provider_connection") is True
+        if restore_provider and (
+            not prepared.private
+            or not prepared.provider_connection
+            or transfer.SECTION_CONFIGURATION not in selected
+        ):
+            raise backup.BackupError(
+                "Provider restoration requires private configuration"
+            )
         mapping_plan = await transfer.async_user_scope_mapping_plan(
             hass,
             prepared,
@@ -1176,7 +1192,7 @@ async def _inspect_import_owned(
                 _schedule_expiry(hass)
             token = None
         else:
-            mapped = transfer.apply_user_scope_mappings(
+            mapped = await transfer.async_apply_user_scope_mappings(
                 prepared, selected, mapping_plan["resolved"]
             )
             _target, preview = await transfer.async_materialize_restore(
@@ -1186,9 +1202,15 @@ async def _inspect_import_owned(
                 mapped,
                 sections=selected,
                 current_snapshot=current,
+                **(
+                    {"provider_connection": prepared.provider_connection}
+                    if restore_provider
+                    else {}
+                ),
             )
             preview["user_scope_mapping"] = mapping_plan
             token = uuid4().hex
+            revision = await asyncio.to_thread(_snapshot_revision, current)
             async with _registry_lock(hass):
                 if _imports(hass).get(session.session_id) is not session:
                     raise backup.BackupError(
@@ -1196,7 +1218,11 @@ async def _inspect_import_owned(
                     )
                 _forget_preview(hass, session)
                 session.preview_token = token
-                session.preview_revision = _snapshot_revision(current)
+                session.preview_revision = revision
+                session.preview_restore_provider = restore_provider
+                session.preview_provider_data = deepcopy(
+                    dict(getattr(entry, "data", {}))
+                )
                 session.preview_sections = tuple(preview["selected_sections"])
                 session.preview_user_scope_mappings = tuple(
                     sorted(mapping_plan["resolved"].items())
@@ -1255,11 +1281,17 @@ async def _restore_import(
         )
         selected_sections = tuple(session.preview_sections or ())
         resolved_user_mappings = dict(session.preview_user_scope_mappings or ())
-        prepared = transfer.apply_user_scope_mappings(
+        prepared = await transfer.async_apply_user_scope_mappings(
             prepared, selected_sections, resolved_user_mappings
         )
 
     async def validate_preview() -> None:
+        if (
+            data.get("restore_provider_connection") is True
+        ) != session.preview_restore_provider:
+            raise backup.BackupError(
+                "The provider restoration choice changed; preview again"
+            )
         selected = data.get("sections")
         if selected is not None and (
             not isinstance(selected, list)
@@ -1280,7 +1312,8 @@ async def _restore_import(
             ):
                 raise backup.BackupError("The backup preview is stale; preview again")
         current = await transfer._current_snapshot(hass, entry, subentry)
-        if _snapshot_revision(current) != session.preview_revision:
+        revision = await asyncio.to_thread(_snapshot_revision, current)
+        if revision != session.preview_revision:
             raise backup.BackupError("The target changed after preview; preview again")
         async with _registry_lock(hass):
             if _imports(hass).get(session.session_id) is not session:
@@ -1292,6 +1325,16 @@ async def _restore_import(
             _retire(hass, session)
 
     restored: dict[str, Any] | None = None
+    restore_provider = data.get("restore_provider_connection") is True
+    if restore_provider and (
+        not prepared.private
+        or not prepared.provider_connection
+        or transfer.SECTION_CONFIGURATION not in selected_sections
+        or session.preview_provider_data is None
+    ):
+        raise backup.BackupError(
+            "Select private configuration and preview the shared provider connection before restoring it"
+        )
     try:
         restored = await transfer.async_restore_transfer(
             hass,
@@ -1302,6 +1345,14 @@ async def _restore_import(
             if data.get("sections") is not None
             else session.preview_sections,
             precondition=validate_preview,
+            **(
+                {
+                    "provider_connection": prepared.provider_connection,
+                    "expected_provider_data": session.preview_provider_data,
+                }
+                if restore_provider
+                else {}
+            ),
         )
     finally:
         if _imports(hass).get(session.session_id) is not session:
@@ -1328,7 +1379,9 @@ async def async_backup_transfer_command(
         raise backup.BackupError("Backup transfer data must be an object")
 
     if action == "setup_export":
-        return await transfer.async_create_setup_export(hass, entry, subentry)
+        return await transfer.async_create_setup_export(
+            hass, entry, subentry, reviewed=data.get("reviewed_custom") is True
+        )
     if action == "export_start":
         return await _start_export(hass, entry, subentry, data)
     if action == "export_chunk":

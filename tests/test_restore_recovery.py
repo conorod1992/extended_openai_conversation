@@ -19,6 +19,10 @@ from custom_components.extended_openai_conversation_responses.const import DOMAI
 from tests.test_backup import _document
 
 
+# Template configuration validation needs HA's event-loop context.
+pytestmark = pytest.mark.usefixtures("hass")
+
+
 class MemoryJournalStore:
     """Small durable-journal stand-in that survives simulated recovery passes."""
 
@@ -745,13 +749,13 @@ async def test_local_archive_bindings_validate_without_entering_portable_backup(
     target.archive_active = {"conversation:browser": session.session_id}
     assert "active" not in await archive.async_backup_data()
     journal = restore_recovery._new_journal("entry-1", "agent-new", target, rollback)
-    _, recovered, _ = restore_recovery._load_journal(journal, "entry-1", "agent-new")
+    _, recovered, _ = await restore_recovery._async_load_journal(journal, "entry-1", "agent-new")
     assert recovered.archive_active == target.archive_active
     with pytest.raises(backup.BackupError, match="archive"):
         backup.inspect_backup(journal["target"], "agent-new")
     journal["rollback"]["archive"]["active"] = invalid
     with pytest.raises(backup.BackupError, match="corrupted"):
-        restore_recovery._load_journal(journal, "entry-1", "agent-new")
+        await restore_recovery._async_load_journal(journal, "entry-1", "agent-new")
 
 
 async def test_unretained_archive_sessions_are_local_content_free_recovery_only():
@@ -783,7 +787,7 @@ async def test_unretained_archive_sessions_are_local_content_free_recovery_only(
     target.archive_turns = []
     target.archive_active = {"conversation:browser": session.session_id}
     journal = restore_recovery._new_journal("entry-1", "agent-new", target, rollback)
-    _, recovered, _ = restore_recovery._load_journal(journal, "entry-1", "agent-new")
+    _, recovered, _ = await restore_recovery._async_load_journal(journal, "entry-1", "agent-new")
     await archive.async_replace_backup(
         recovered.archive_sessions,
         recovered.archive_turns,

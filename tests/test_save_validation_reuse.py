@@ -88,11 +88,11 @@ def test_function_save_validates_once_and_reuses_group_only_tools(
         groups[0]["functions"] = []
     normalization = Mock(wraps=agent_config.normalize_agent_config)
     validation = Mock(wraps=agent_config.validate_function_tools)
-    emission = Mock(wraps=yaml.safe_dump)
+    emission = Mock(wraps=repair.dump_yaml)
     parsing = Mock(wraps=yaml.safe_load)
     monkeypatch.setattr(agent_config, "normalize_agent_config", normalization)
     monkeypatch.setattr(agent_config, "validate_function_tools", validation)
-    monkeypatch.setattr(yaml, "safe_dump", emission)
+    monkeypatch.setattr(repair, "dump_yaml", emission)
     monkeypatch.setattr(yaml, "safe_load", parsing)
     saved = repair.persist_valid_function_configuration(
         hass, entry, subentry, tools, groups, expected_revision=revision

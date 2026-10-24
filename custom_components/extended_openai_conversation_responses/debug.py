@@ -208,6 +208,14 @@ def _event_has_action(event: Any) -> bool:
     event_type = str(data.get("type", ""))
     if "function_call" in event_type or "web_search_call" in event_type:
         return True
+    choices = data.get("choices")
+    if isinstance(choices, list) and any(
+        isinstance(choice, dict)
+        and isinstance(choice.get("delta"), dict)
+        and choice["delta"].get("tool_calls")
+        for choice in choices
+    ):
+        return True
     item = data.get("item")
     return isinstance(item, dict) and item.get("type") in {
         "function_call",

@@ -27,6 +27,7 @@ for (const surface of ["functions", "request-rules"]) {
     const diagnostics = trackPageErrors(page);
     const panel = await openCollection(page, `capabilities/${surface}`);
     const isTools = surface === "functions";
+    const originalRule = !isTools ? await page.evaluate(() => browserHarness.getState().requestRules.rules.find(rule => rule.id === "rule-1")) : null;
     const selector = isTools ? '[data-tool-key="tool_1"]' : '[data-rule-key="rule-2"]';
     const input = isTools ? tool(panel, "tool_0").locator(".tool-enabled") : rule(panel, "rule-1").locator(".rule-enabled");
     await remember(page, selector);
@@ -44,7 +45,12 @@ for (const surface of ["functions", "request-rules"]) {
     }
     const mutations = await calls(page, isTools ? "tools" : "request_rules", isTools ? "set_enabled" : "update");
     expect(mutations).toHaveLength(4);
-    if (!isTools) expect(mutations.map(c => c.revision)).toEqual([3, 4, 5, 6]);
+    if (!isTools) {
+      expect(mutations.map(c => c.revision)).toEqual([3, 4, 5, 6]);
+      expect(mutations.map(c => c.rule)).toEqual([false, true, false, true].map(enabled => ({enabled})));
+      const saved = await page.evaluate(() => browserHarness.getState().requestRules.rules.find(rule => rule.id === "rule-1"));
+      expect({...saved, enabled: originalRule.enabled}).toEqual(originalRule);
+    }
     await expectHarnessClean(page, diagnostics);
   });
 

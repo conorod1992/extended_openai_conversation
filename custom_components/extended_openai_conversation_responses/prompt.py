@@ -55,6 +55,7 @@ from .model_payload import (
     temporary_memory_guidance,
 )
 from .scope import resolve_data_scope
+from .template_diagnostics import private_rendering_diagnostics
 from .temporary_memory import TemporaryMemoryRecord
 from .voice_identity_runtime import voice_source_device_id
 
@@ -119,18 +120,19 @@ def _render_template(
 
     token = _ACTIVE_GUEST_POLICY.set(guest_policy) if guest_policy is not None else None
     try:
-        return str(
-            rendered_template.async_render(
-                {
-                    "ha_name": hass.config.location_name,
-                    "exposed_entities": exposed_entities,
-                    "current_device_id": current_device_id,
-                    "user_input": user_input,
-                    "skills": skills,
-                },
-                parse_result=False,
+        with private_rendering_diagnostics():
+            return str(
+                rendered_template.async_render(
+                    {
+                        "ha_name": hass.config.location_name,
+                        "exposed_entities": exposed_entities,
+                        "current_device_id": current_device_id,
+                        "user_input": user_input,
+                        "skills": skills,
+                    },
+                    parse_result=False,
+                )
             )
-        )
     finally:
         if token is not None:
             _ACTIVE_GUEST_POLICY.reset(token)

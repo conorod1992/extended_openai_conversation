@@ -59,7 +59,9 @@ Use the built-in preset to retain the current parameter schema.
 
 `get_statistics` requires `statistic_ids`, `start_time`, and `end_time`. Optional `period` values currently include `5minute`, `hour`, `day`, `week`, `month`, and `year`; `types` can select supported statistic values, and `units` maps Home Assistant unit classes to unit names. Use the current preset for the full schema.
 
-Recorder tools apply a shared budget of 1,000 database rows (including helper reads), 256,000 raw text bytes, 8,000 characters per state/attribute cell, and 24,000 UTF-8 bytes in the serialized result. Oversized requests fail explicitly without returning a partial series. Reduce the number of IDs or the time range; for Statistics, a coarser period can reduce output size, though its underlying hourly reads are also bounded. History conversion and size checking run in Recorder's executor. Limits apply before large SQL results or attribute values are materialized.
+History and hourly/5-minute Statistics reads allow 1,000 database rows, including helper reads. Daily, weekly, monthly and yearly Statistics allow up to 25,000 underlying database rows across the whole request, so hourly inputs can be reduced by Home Assistant into a small aggregate result. All Statistics results remain limited to 1,000 aggregate records. The shared byte limits remain 256,000 raw text bytes, 8,000 characters per state/attribute cell, and 24,000 UTF-8 bytes in the serialized result.
+
+Oversized requests fail explicitly without returning a partial series. Reduce the number of IDs or the number of requested calendar periods. Home Assistant expands coarse-period dates to calendar boundaries: shortening dates within the same year does not reduce an annual query's work. A coarser period can reduce the output, but not the underlying hourly work. Queries, Home Assistant aggregation/conversion and size checking run in Recorder's executor. SQL limits bound raw reads before conversion; final record and byte limits apply after aggregation.
 
 ## Automation creation and Broadcast
 

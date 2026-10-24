@@ -23,6 +23,7 @@ import {loadAgentsWithOverviewPrefetch, loadRoute, bindRequestRuleSearch, applyR
 import {getConfigurationEditor, getConfigurationTools, getRouteFeature, routeAssetKind, routeFeaturesReady, isRestrictedManagementView, nonAdminOverviewKnowledgeSnapshot} from "./management-route.js";
 import {NAVIGATION, pageMetadata, routeFromPath, routePath, focusManagementSetting} from "./frontend-navigation.js";
 import {clone, same, mergeAcknowledgedDraft} from "./unsaved-state.js";
+import {retainPanelDrafts, restorePanelDrafts, stopDraftRecovery} from "./management-draft-lifecycle.js";
 import {bindGuide, renderGuide} from "./guide-page.js";
 import {bindOverview, renderOverview, enhanceOverviewHealthClarity, startOverviewDetailReads} from "./overview-page.js";
 import {formatUsageNumber} from "./usage-format.js";
@@ -344,6 +345,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   disconnectedCallback() {
+    retainPanelDrafts(this);
+    stopDraftRecovery(this);
     if (this._onHistoryNavigation) {
       window.removeEventListener("popstate", this._onHistoryNavigation);
       this._onHistoryNavigation = null;
@@ -1053,6 +1056,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._markColdLifecycle("agents-start");
     try {
       await loadAgentsWithOverviewPrefetch(this, selectedId, owner);
+      restorePanelDrafts(this);
       this._markColdLifecycle("agents-complete", {status: "fulfilled"});
     } catch (err) {
       this._markColdLifecycle("agents-complete", {status: "rejected"});
@@ -1103,6 +1107,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     prepareMemoryBrowser(this);
     const value = await trackAsync(this, LOAD_MARK_PREFIX, () => loadRoute(this, silent));
     await getRouteFeature("memory-browser")?.finishMemoryBrowserLoad(this);
+    restorePanelDrafts(this);
     return value;
   }
 

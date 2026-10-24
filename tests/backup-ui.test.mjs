@@ -28,7 +28,8 @@ assert.deepEqual(lines, [
   BACKUP_CREDENTIAL_WARNING,
 ]);
 assert.match(BACKUP_CREDENTIAL_WARNING, /redacted/i);
-assert.match(BACKUP_CREDENTIAL_WARNING, /re-enter/i);
-assert.match(BACKUP_CREDENTIAL_WARNING, /best-effort/i);
+assert.match(BACKUP_CREDENTIAL_WARNING, /re-entry/i);
+assert.match(BACKUP_CREDENTIAL_WARNING, /preserve credentials exactly/i);
+assert.match(BACKUP_CREDENTIAL_WARNING, /not encrypted/i);
 assert.deepEqual(transferSummaryLines(summary), lines);
 assert.deepEqual(baseBackupSummaryLines(summary), lines.slice(0, -1));

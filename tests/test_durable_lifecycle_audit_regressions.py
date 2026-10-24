@@ -97,7 +97,7 @@ async def test_oversized_rollback_is_rejected_before_journal_or_mutation(monkeyp
 async def test_older_committed_oversized_rollback_recovers_authoritative_target(monkeypatch):
     _, _, journal = _oversized_states(monkeypatch)
     with pytest.raises(backup.BackupError, match="corrupted"):
-        restore_recovery._load_journal(journal, "entry-1", "agent-new")
+        await restore_recovery._async_load_journal(journal, "entry-1", "agent-new")
     journal["phase"] = "committed"
     _, _, subentry, store, selected, recovered = await _recover_with_journal(monkeypatch, journal)
     assert recovered

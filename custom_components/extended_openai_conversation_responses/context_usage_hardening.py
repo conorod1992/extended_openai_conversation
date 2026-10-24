@@ -40,6 +40,11 @@ def prepared_input_revision(input_value: Any) -> str:
     return digest.hexdigest()
 
 
+async def async_prepared_input_revision(input_value: Any) -> str:
+    """Fingerprint a stable prepared request off-loop, including attachment bytes."""
+    return await asyncio.to_thread(prepared_input_revision, input_value)
+
+
 @dataclass(frozen=True, slots=True)
 class ContextInputMeasurement:
     """A request-local count, independent of cumulative usage accounting."""
@@ -48,9 +53,11 @@ class ContextInputMeasurement:
     history_length: int
     input_revision: str
 
-    def applies_to(self, prepared_prefix: Any) -> bool:
+    async def async_applies_to(self, prepared_prefix: Any) -> bool:
         """Allow appended output, but never a rewritten or reduced input prefix."""
-        return prepared_input_revision(prepared_prefix) == self.input_revision
+        return (
+            await async_prepared_input_revision(prepared_prefix) == self.input_revision
+        )
 
 
 def _has_token_count(usage: RequestUsage) -> bool:
@@ -392,20 +399,26 @@ async def normalized_responses_stream(
     chat_log: Any, result: Any, request_usage: RequestUsage | None
 ) -> AsyncIterator[Any]:
     """Apply usage before the Responses parser can yield, fail or be closed."""
-    async for event in result:
-        response = getattr(event, "response", None)
-        raw_usage = getattr(response, "usage", None)
-        if raw_usage is None:
-            raw_usage = getattr(event, "usage", None)
-        reported = _capture_provider_usage(request_usage, raw_usage)
-        if (
-            reported is not None
-            and _has_token_count(reported)
-            and getattr(event, "type", "")
-            not in {"response.completed", "response.incomplete"}
-        ):
-            _trace_provider_usage(chat_log, reported)
-        yield event
+    iterator = aiter(result)
+    try:
+        async for event in iterator:
+            response = getattr(event, "response", None)
+            raw_usage = getattr(response, "usage", None)
+            if raw_usage is None:
+                raw_usage = getattr(event, "usage", None)
+            reported = _capture_provider_usage(request_usage, raw_usage)
+            if (
+                reported is not None
+                and _has_token_count(reported)
+                and getattr(event, "type", "")
+                not in {"response.completed", "response.incomplete"}
+            ):
+                _trace_provider_usage(chat_log, reported)
+            yield event
+
+    finally:
+        if (close := getattr(iterator, "aclose", None)) is not None:
+            await close()
 
 
 def estimate_prepared_request(

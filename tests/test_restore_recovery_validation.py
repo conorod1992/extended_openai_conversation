@@ -41,28 +41,28 @@ def _journal():
         lambda value: {**value, "created_at": "not-a-timestamp"},
     ],
 )
-def test_load_journal_rejects_corrupt_envelope(mutate) -> None:
+async def test_load_journal_rejects_corrupt_envelope(mutate) -> None:
     with pytest.raises(
         backup.BackupError, match="Pending restore transaction is corrupted"
     ):
-        restore_recovery._load_journal(mutate(_journal()), "entry-1", "agent-new")
+        await restore_recovery._async_load_journal(mutate(_journal()), "entry-1", "agent-new")
 
 
-def test_load_journal_allows_valid_rollback_for_invalid_uncommitted_target() -> None:
+async def test_load_journal_allows_valid_rollback_for_invalid_uncommitted_target() -> None:
     journal = _journal()
     journal["target"] = {"not": "a valid backup"}
 
-    _, target, rollback = restore_recovery._load_journal(journal, "entry-1", "agent-new")
+    _, target, rollback = await restore_recovery._async_load_journal(journal, "entry-1", "agent-new")
     assert target == rollback
     journal["phase"] = "committed"
     with pytest.raises(backup.BackupError, match="corrupted"):
-        restore_recovery._load_journal(journal, "entry-1", "agent-new")
+        await restore_recovery._async_load_journal(journal, "entry-1", "agent-new")
 
 
-def test_load_journal_returns_validated_target_and_rollback() -> None:
+async def test_load_journal_returns_validated_target_and_rollback() -> None:
     journal = _journal()
 
-    loaded, target, rollback = restore_recovery._load_journal(
+    loaded, target, rollback = await restore_recovery._async_load_journal(
         journal, "entry-1", "agent-new"
     )
 

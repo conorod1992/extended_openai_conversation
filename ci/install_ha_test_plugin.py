@@ -18,18 +18,18 @@ import zipfile
 
 try:
     from .resolve_ha_test_plugin import (
-        CORE_SHA,
+        GENERATED_FIXTURES,
         GENERATED_HA_VERSION,
-        GENERATED_PLUGIN_VERSION,
-        GENERATOR_SHA,
+        GeneratedFixture,
     )
 except ImportError:
     from resolve_ha_test_plugin import (
-        CORE_SHA,
+        GENERATED_FIXTURES,
         GENERATED_HA_VERSION,
-        GENERATED_PLUGIN_VERSION,
-        GENERATOR_SHA,
+        GeneratedFixture,
     )
+
+DEFAULT_FIXTURE = GENERATED_FIXTURES[GENERATED_HA_VERSION]
 
 
 def extract_source(repository: str, sha: str, destination: Path) -> None:
@@ -44,18 +44,18 @@ def extract_source(repository: str, sha: str, destination: Path) -> None:
     (destination.parent / f"{repository.rsplit('/', 1)[-1]}-{sha}").rename(destination)
 
 
-def verify_wheel(wheel: Path) -> None:
+def verify_wheel(wheel: Path, fixture: GeneratedFixture = DEFAULT_FIXTURE) -> None:
     """Fail closed if regenerated metadata or actual fixture version drift."""
     with zipfile.ZipFile(wheel) as package:
         metadata_path = next(
             name for name in package.namelist() if name.endswith(".dist-info/METADATA")
         )
         metadata = Parser().parsestr(package.read(metadata_path).decode())
-        if metadata["Version"] != GENERATED_PLUGIN_VERSION:
+        if metadata["Version"] != fixture.plugin_version:
             raise RuntimeError(
                 "Generated fixture package version differs from its identity"
             )
-        if f"homeassistant=={GENERATED_HA_VERSION}" not in metadata.get_all(
+        if f"homeassistant=={fixture.ha_version}" not in metadata.get_all(
             "Requires-Dist", []
         ):
             raise RuntimeError(
@@ -73,7 +73,7 @@ def verify_wheel(wheel: Path) -> None:
             str(constants.get(name, ""))
             for name in ("MAJOR_VERSION", "MINOR_VERSION", "PATCH_VERSION")
         )
-        if fixture_version != GENERATED_HA_VERSION:
+        if fixture_version != fixture.ha_version:
             raise RuntimeError(
                 "Generated fixtures do not come from the expected Core version"
             )
@@ -82,24 +82,24 @@ def verify_wheel(wheel: Path) -> None:
                 "pytest_homeassistant_custom_component/eoai_source_identity.json"
             )
         )
-        if provenance != {
-            "generator_sha": GENERATOR_SHA,
-            "core_sha": CORE_SHA,
-            "homeassistant": GENERATED_HA_VERSION,
-        }:
+        if provenance != fixture.provenance:
             raise RuntimeError("Generated fixture source provenance differs")
 
 
-def build_generated_plugin(destination: Path) -> Path:
+def build_generated_plugin(
+    destination: Path, fixture: GeneratedFixture = DEFAULT_FIXTURE
+) -> Path:
     """Run the unmodified upstream generator on exact released Core sources."""
     destination.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="eoai-ha-fixtures-") as temporary:
         root = Path(temporary)
         source = root / "generator"
         extract_source(
-            "MatthewFlamm/pytest-homeassistant-custom-component", GENERATOR_SHA, source
+            "MatthewFlamm/pytest-homeassistant-custom-component",
+            fixture.generator_sha,
+            source,
         )
-        extract_source("home-assistant/core", CORE_SHA, source / "tmp_dir")
+        extract_source("home-assistant/core", fixture.core_sha, source / "tmp_dir")
         environment = root / "build-env"
         venv.EnvBuilder(with_pip=True).create(environment)
         python = environment / (
@@ -125,18 +125,14 @@ def build_generated_plugin(destination: Path) -> Path:
             "import runpy, sys\n"
             "sys.path[:0] = ['generate_phacc', 'src']\n"
             "import ha\n"
-            f"ha.prepare_homeassistant = lambda: {GENERATED_HA_VERSION!r}\n"
+            f"ha.prepare_homeassistant = lambda: {fixture.ha_version!r}\n"
             "sys.argv = ['generate_phacc/generate_phacc.py', '--regen']\n"
             "runpy.run_path(sys.argv[0], run_name='__main__')\n",
             encoding="utf-8",
         )
         subprocess.run([str(python), str(launcher)], cwd=source, check=True)
-        (source / "version").write_text(GENERATED_PLUGIN_VERSION, encoding="utf-8")
-        provenance = {
-            "generator_sha": GENERATOR_SHA,
-            "core_sha": CORE_SHA,
-            "homeassistant": GENERATED_HA_VERSION,
-        }
+        (source / "version").write_text(fixture.plugin_version, encoding="utf-8")
+        provenance = fixture.provenance
         (
             source
             / "src/pytest_homeassistant_custom_component/eoai_source_identity.json"
@@ -159,10 +155,10 @@ def build_generated_plugin(destination: Path) -> Path:
         )
     wheel = next(
         destination.glob(
-            f"pytest_homeassistant_custom_component-{GENERATED_PLUGIN_VERSION}-*.whl"
+            f"pytest_homeassistant_custom_component-{fixture.plugin_version}-*.whl"
         )
     )
-    verify_wheel(wheel)
+    verify_wheel(wheel, fixture)
     print("Generated exact released fixtures: " + json.dumps(provenance), flush=True)
     return wheel
 
@@ -173,7 +169,15 @@ def main() -> None:
     parser.add_argument("plugin_version")
     parser.add_argument("--build-only", type=Path)
     args = parser.parse_args()
-    if args.plugin_version != GENERATED_PLUGIN_VERSION:
+    fixture = next(
+        (
+            item
+            for item in GENERATED_FIXTURES.values()
+            if item.plugin_version == args.plugin_version
+        ),
+        None,
+    )
+    if fixture is None:
         if args.build_only:
             parser.error("--build-only is only valid for the pinned generated bridge")
         subprocess.run(
@@ -188,15 +192,15 @@ def main() -> None:
             check=True,
         )
         return
-    if args.ha_version != GENERATED_HA_VERSION:
+    if args.ha_version != fixture.ha_version:
         parser.error(
             "Generated fixtures require their exact released Home Assistant version"
         )
     if args.build_only:
-        build_generated_plugin(args.build_only)
+        build_generated_plugin(args.build_only, fixture)
         return
     with tempfile.TemporaryDirectory(prefix="eoai-ha-wheel-") as temporary:
-        wheel = build_generated_plugin(Path(temporary))
+        wheel = build_generated_plugin(Path(temporary), fixture)
         subprocess.run(
             [
                 sys.executable,

@@ -17,6 +17,7 @@ from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
 from tests_real_ha.test_cross_feature_acceptance import _speech
 from tests_real_ha.test_provider_input_history import _transport
 from tests_real_ha.test_provider_wire_e2e import _chat_sse_text, _chat_sse_tool_call
+from tests_stress.test_os_storage_faults import real_store_io  # noqa: F401
 
 
 class FaultStorage:
@@ -135,3 +136,48 @@ async def test_loaded_memory_recovers_on_next_assist_without_config_change(
         assert fact in output
     await ask([_chat_sse_text("Done")])
     assert storage.reads == reads + 1
+
+
+@pytest.mark.parametrize(
+    "category",
+    [
+        "myApiKey: PRIVATE_MEMORY_VALUE",
+        "myapikey: private_memory_value",
+        "deviceaccesstoken=private_memory_value",
+    ],
+)
+async def test_cold_memory_storage_removes_credential_categories_before_publication(
+    hass, monkeypatch, caplog, category, real_store_io
+):
+    from copy import deepcopy
+    from threading import get_ident
+
+    storage = memory.HomeAssistantMemoryStorage(hass, "privacy-entry", "privacy-agent")
+    manager = memory.PersistentMemory(storage)
+    await manager.async_initialize()
+    await manager.async_add("alice", "My plant is purple", "Preferences", "explicit")
+    raw = await manager.async_backup_data()
+    unsafe = deepcopy(raw["memories"][0])
+    unsafe.update(memory_id="legacy-unsafe", category=category, key="unsafe.key")
+    raw["memories"].append(unsafe)
+    await storage.async_save(raw)
+    calls = []
+    original = memory._clean_category
+    loop_thread = get_ident()
+
+    def checked(value):
+        calls.append(get_ident())
+        return original(value)
+
+    monkeypatch.setattr(memory, "_clean_category", checked)
+    loaded = memory.PersistentMemory(storage)
+    await loaded.async_initialize()
+    assert calls and loop_thread not in calls
+    retained = await loaded.async_backup_data()
+    assert len(retained["memories"]) == 1
+    assert retained["memories"][0]["content"] == "My plant is purple"
+    assert (await storage.async_load()) == retained
+    assert not loaded._key_index
+    assert "Ignoring malformed persistent memory record" in caplog.text
+    assert "PRIVATE_MEMORY_VALUE" not in caplog.text
+    assert "private_memory_value" not in caplog.text

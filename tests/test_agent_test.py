@@ -332,7 +332,7 @@ async def test_responses_failed_status_is_reported() -> None:
     assert result.status == "Failed"
     assert result.authentication_rejected is False
     assert model.status == "Failed"
-    assert "server_error" in model.message
+    assert "Provider request failed" in model.message
     usage.async_record_request.assert_awaited_once_with(
         successful=False,
         **_usage_attribution(model="gpt-5.6", api_mode=API_MODE_RESPONSES),

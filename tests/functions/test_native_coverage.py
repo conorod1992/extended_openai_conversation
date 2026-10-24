@@ -153,6 +153,7 @@ async def test_broadcast_resolves_destination_and_passes_origin(
         hass,
         manager,
         context=ANY,
+        origin_entity_id=None,
         origin_device_id="origin-device",
         whole_home=False,
         entity_ids=["assist_satellite.kitchen"],
@@ -160,6 +161,7 @@ async def test_broadcast_resolves_destination_and_passes_origin(
     manager.async_send.assert_awaited_once_with(
         "Dinner is ready",
         entity_ids=["assist_satellite.kitchen"],
+        origin_entity_id=None,
         origin_device_id="origin-device",
         source="llm_tool",
     )
@@ -192,6 +194,7 @@ async def test_broadcast_whole_home_without_context(hass, monkeypatch) -> None:
         hass,
         manager,
         context=ANY,
+        origin_entity_id=None,
         origin_device_id=None,
         whole_home=True,
     )
@@ -222,6 +225,7 @@ async def test_broadcast_named_area_target_keeps_indirect_selection(
         hass,
         manager,
         context=ANY,
+        origin_entity_id=None,
         origin_device_id=None,
         whole_home=False,
         area_id="upstairs",

@@ -182,10 +182,10 @@ async def test_restricted_user_cannot_bypass_ha_entity_or_management_permissions
         denied_wire.requests[1]["body"], denied_call_id
     )
     assert "error" in denied_tool_result["result"][0]
-    assert "does not have permission to control" in denied_tool_result["result"][0][
-        "error"
-    ]
-    assert _DENIED_ENTITY in denied_tool_result["result"][0]["error"]
+    assert denied_tool_result["result"][0]["error"] == (
+        "Function execution failed. Check the tool configuration and permissions."
+    )
+    assert _DENIED_ENTITY not in denied_tool_result["result"][0]["error"]
 
     allowed_call_id = "call-permission-allowed"
     allowed_wire = _install_wire(

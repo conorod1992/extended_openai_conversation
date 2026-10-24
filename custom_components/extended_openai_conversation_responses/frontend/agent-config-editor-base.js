@@ -1,3 +1,4 @@
+import {downloadConfigurationSharing} from "./sharing-review.js";
 import {searchTokens, matchesFunctionSearchTokens} from "./function-search.js";
 import {beginOperation, invalidateOperation} from "./operation-ownership.js";
 import {bindOwnedEvent} from "./management-owned-events.js";
@@ -24,7 +25,7 @@ export function invalidateImportPreview(panel, applyButton, summary) {
   if (applyButton) applyButton.disabled = true;
   if (summary) summary.textContent = "Validate the document to preview it.";
 }
-export const option = (panel, value, selected, label = null, disabled = false) => `<option value="${panel._e(value)}" ${disabled ? "disabled" : ""} ${value === selected ? "selected" : ""}>${panel._e(label || panel._titleCase(value))}</option>`;
+export const option = (panel, value, selected, label = null, disabled = false) => `<option value="${panel._e(value)}" ${disabled ? "disabled" : ""} ${String(value) === String(selected) ? "selected" : ""}>${panel._e(label || panel._titleCase(value))}</option>`;
 const CHOICE_LABELS = Object.freeze({
   conversation_continuity: Object.freeze({
     ha_default: "Use Home Assistant sessions",
@@ -75,8 +76,10 @@ export const select = (panel, key, label, value, options, description = "", disa
   disabled = forceVisible || disabled;
   value = presentation.value ?? value;
   options = presentation.options ?? options;
-  return `<div class="setting ${forceVisible ? "is-disabled eoc-unavailable-model-setting" : ""}" data-field="${key}" data-setting data-search="${panel._e(settingSearch(label, description, key, helpKey))}">${labelRow(panel, label, key, helpKey, false, value, disabled)}<select id="config-${key}" data-config="${key}" ${disabled ? "disabled" : ""}>${options.map((item) => {
-    const choice = typeof item === "string" ? item : item.value;
+  // Numeric choices keep numeric draft values; DOM option values are strings.
+  const numeric = options.length > 0 && options.every(item => typeof (typeof item === "object" ? item.value : item) === "number");
+  return `<div class="setting ${forceVisible ? "is-disabled eoc-unavailable-model-setting" : ""}" data-field="${key}" data-setting data-search="${panel._e(settingSearch(label, description, key, helpKey))}">${labelRow(panel, label, key, helpKey, false, value, disabled)}<select id="config-${key}" data-config="${key}" ${numeric ? 'data-type="number"' : ""} ${disabled ? "disabled" : ""}>${options.map((item) => {
+    const choice = typeof item === "object" ? item.value : item;
     return option(panel, choice, value, friendlySettingValue(key, choice) || (typeof item === "string" ? null : item.label), presentation.disabledOption?.(choice));
   }).join("")}</select>${description ? `<small>${description}</small>` : ""}<span class="field-error" data-error="${key}"></span>${modelFieldNotes(panel, presentation)}</div>`;
 };
@@ -381,7 +384,7 @@ export function bindConfiguration(panel) {
   root.querySelector("#add-regex")?.addEventListener("click", () => { readConfig(panel); panel._draft.speech_regex_replacements.push({pattern:"",replacement:""}); panel._setConfigDirty(true); renderRegexRules(panel,panel._draft.speech_regex_replacements.length-1); });
   root.querySelector("#preview-speech")?.addEventListener("click", async () => { const token=(panel._eocSpeechPreviewToken||0)+1;panel._eocSpeechPreviewToken=token;const agentId=panel._agentId,view=panel._viewKey?.(),output=root.querySelector("#speech-output");output.value="";const current=()=>panel._eocSpeechPreviewToken===token&&panel._agentId===agentId&&panel._viewKey?.()===view&&root.querySelector("#speech-output")===output;try { const response=await panel._call("configuration","speech_preview",{config:readConfig(panel),sample_text:root.querySelector("#speech-sample").value});if(current())output.value=response.speech_text; } catch(err){if(current())panel._toast(`Unable to preview speech: ${err.message||String(err)}`,true);} });
   bindOwnedEvent(root.querySelector("#duplicate-agent"), "click", "assistant-actions", async (event) => { const button=event.currentTarget; if(panel._configDirty||button.disabled||panel._eocAssistantDuplicatePending)return; panel._eocAssistantDuplicatePending=true; button.disabled=true; try { const result=await panel._call("configuration","duplicate"); await panel._loadAgents(result.subentry_id); panel._toast(`Created ${result.title}`); } catch(err){panel._toast(`Unable to duplicate agent: ${err.message||String(err)}`,true);} finally {panel._eocAssistantDuplicatePending=false;button.disabled=false;} });
-  bindOwnedEvent(root.querySelector("#export-agent"), "click", "assistant-actions", async () => { if(panel._configDirty)return; if(!await panel._confirm("Export saved agent configuration?","Export applies best-effort secret redaction, but Function Tool definitions may contain embedded credentials. Review the downloaded file before sharing it.","Export"))return; const result=await panel._call("configuration","export"); const blob=new Blob([result.json],{type:"application/json"}); const url=URL.createObjectURL(blob); const link=document.createElement("a"); link.href=url; link.download=`${(panel._draftTitle||"agent").replace(/[^a-z0-9]+/gi,"-").toLowerCase()}.json`; link.click(); URL.revokeObjectURL(url); });
+  bindOwnedEvent(root.querySelector("#export-agent"), "click", "assistant-actions", async () => { if(panel._configDirty)return; try { await downloadConfigurationSharing(panel); } catch(err) { panel._toast(`Unable to export: ${err.message||String(err)}`,true); } });
   const importDocument = root.querySelector("#import-document"), importApply = root.querySelector("#import-apply"), importSummary = root.querySelector("#import-summary");
   bindOwnedEvent(root.querySelector("#import-agent"), "click", "assistant-actions", () => { invalidateImportPreview(panel, importApply, importSummary); root.querySelector("#import-dialog")?.showModal(); });
   bindOwnedEvent(importDocument, "input", "assistant-actions", () => invalidateImportPreview(panel, importApply, importSummary));

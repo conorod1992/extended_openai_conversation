@@ -150,6 +150,9 @@
       },
       "abort": {
         "agent_configuration_managed_in_panel": "Conversation-agent behaviour is managed from Extended OpenAI > Configuration in the sidebar."
+      },
+      "error": {
+        "invalid_name": "Enter an agent name of at most 255 characters."
       }
     },
     "ai_task_data": {

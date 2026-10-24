@@ -1247,23 +1247,14 @@ def test_skill_transaction_remove_unlinks_regular_file(tmp_path) -> None:
     assert not path.exists()
 
 
-def test_model_retirement_provider_error_accepts_provider_error_type(monkeypatch) -> None:
+def test_model_retirement_provider_error_accepts_provider_error_type() -> None:
     from custom_components.extended_openai_conversation_responses import model_lifecycle
-
-    monkeypatch.setattr(
-        model_lifecycle,
-        "provider_error_metadata",
-        Mock(
-            return_value={
-                "provider_error_type": "model_deprecated",
-                "code": "",
-                "message": "",
-                "status_code": 400,
-            }
-        ),
+    from custom_components.extended_openai_conversation_responses.provider_errors import (
+        ProviderStreamError,
     )
 
-    assert model_lifecycle.retirement_provider_error(RuntimeError("retired")) is True
+    error = ProviderStreamError("retired", error_type="model_deprecated", status_code=400)
+    assert model_lifecycle.retirement_provider_error(error) is True
 
 
 def test_model_retirement_rule_override_returns_rule_specific_message(

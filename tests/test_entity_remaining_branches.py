@@ -296,7 +296,10 @@ async def test_truncation_fallback_and_summary_success(monkeypatch) -> None:
     }
     calls: list[tuple[int | None, int]] = []
 
-    def fake_keep(content: list[Any], observed: int | None, threshold: int) -> bool:
+    def fake_keep(
+        content: list[Any], observed: int | None, threshold: int, estimate=None
+    ) -> bool:
+        assert estimate is None
         calls.append((observed, threshold))
         return False
 

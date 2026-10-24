@@ -3,6 +3,19 @@ import {formatWordingAlternatives} from "./wording-alternatives.js";
 import {adoptKeyedElements, elementFromMarkup, keyedElement, placeChildren, pruneKeys} from "./keyed-collection.js";
 import {requestRuleEmptyContent, updateRequestRuleEmptyState} from "./request-rule-empty-state.js";
 
+const sharingGroupOptions = new WeakMap();
+export function refreshRuleSharingGroups(panel) {
+  const select = panel.shadowRoot?.querySelector("#rule-pack-group");
+  if (!select) return;
+  const groups = [{id:"",name:"Ungrouped"},...(panel._result?.groups || [])];
+  const signature = JSON.stringify(groups.map(group => [group.id,group.name]));
+  if (sharingGroupOptions.get(select) === signature) return;
+  const selected = select.value;
+  select.innerHTML = groups.map(group => `<option value="${panel._e(group.id)}">${panel._e(group.name)}</option>`).join("");
+  select.value = groups.some(group => group.id === selected) ? selected : "";
+  sharingGroupOptions.set(select,signature);
+}
+
 export const fuzzyThresholdValue = (value) => {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed >= 70 && parsed <= 100 ? parsed : 90;
@@ -117,6 +130,7 @@ function prepareRequestRulesCollection(panel) {
   reconcileRequestRules(panel);
 }
 export function reconcileRequestRules(panel) {
+  refreshRuleSharingGroups(panel);
   const list=panel.shadowRoot.querySelector(".rule-list"), state=ruleCollections.get(list);
   if (!state || state.settings !== ruleSettingsSignature(panel)) return false;
   const result=panel._result || {}, rules=result.rules || [], filter=panel._ruleGroupFilter || "all", query=String(panel._query || "").trim().toLowerCase();
@@ -359,7 +373,7 @@ export function bindRequestRulesCore(panel,{openEditor,activateSafeTester,activa
       const input=event.target;if(!input.matches?.(".rule-enabled")||input.disabled)return;
       const rule=(panel._result?.rules||[]).find(item=>item.id===input.dataset.id);if(!rule)return;
       const previous=!input.checked;input.disabled=true;
-      try{const result=await panel._call("request_rules","update",{rule_id:rule.id,rule:{...rule,enabled:input.checked,sensitive_matching_warning:undefined}});applyRequestRuleMutation(panel,"update",result,{ruleId:rule.id});panel._toast("Changes saved");}
+      try{const result=await panel._call("request_rules","update",{rule_id:rule.id,rule:{enabled:input.checked}});applyRequestRuleMutation(panel,"update",result,{ruleId:rule.id});panel._toast("Changes saved");}
       catch(err){input.checked=previous;await recoverRequestRuleMutation(panel,err,"Unable to update Request Rule");}
       finally{input.disabled=false;}
     });

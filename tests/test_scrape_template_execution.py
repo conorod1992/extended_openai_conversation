@@ -231,7 +231,7 @@ async def test_runtime_template_errors_are_tool_errors(execute_scrape, field):
     _set_template(config, field, "{{ missing.attribute }}")
     result = await execute_scrape[0](config)
     assert result["status"] == "error"
-    assert "missing" in result["error"]
+    assert result["error"] == "Template rendering failed. Check the tool template and argument types."
 
 
 async def test_json_value_context_and_literal_selector(execute_scrape):

@@ -232,11 +232,7 @@ async def test_broadcast_admission_refusal(hass, refusal):
                 "whole_home": True,
             }
         )
-        expected_error = {
-            "empty": "Broadcast message cannot be empty",
-            "disabled": "Broadcast is disabled",
-            "capacity": "Broadcast satellite queue capacity reached",
-        }[refusal]
+        expected_error = "Function execution failed. Check the tool configuration and permissions."
         assert expected_error in str(tool_result_data(log.content[-1]))
         assert sum(map(len, manager._queues.values())) == before
         original = next(iter(entity._execution_tool_outcomes.values()))

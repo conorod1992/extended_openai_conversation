@@ -80,7 +80,7 @@ async def test_rule_pack_review_reports_missing_dependencies_without_execution(
     monkeypatch.setattr(
         management_ui,
         "_validate_request_rule_conditions",
-        AsyncMock(),
+        AsyncMock(return_value=[]),
     )
     function_validation = AsyncMock()
     monkeypatch.setattr(
@@ -142,7 +142,7 @@ async def test_rule_pack_review_does_not_count_existing_group_name_as_new(
         "rules": [rule],
     }
     rules = _Rules(groups=[{"id": "target-group", "name": "Lighting"}])
-    monkeypatch.setattr(management_ui, "_validate_request_rule_conditions", AsyncMock())
+    monkeypatch.setattr(management_ui, "_validate_request_rule_conditions", AsyncMock(return_value=[]))
     monkeypatch.setattr(
         management_ui, "async_validate_request_rule_functions", AsyncMock()
     )

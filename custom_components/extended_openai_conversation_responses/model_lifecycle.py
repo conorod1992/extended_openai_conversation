@@ -68,9 +68,13 @@ def confirmed_retirement_failure(
 def retirement_provider_error(error: BaseException) -> bool:
     """Recognize provider failures that can plausibly mean a model is unavailable."""
     metadata = provider_error_metadata(error)
-    code = str(metadata.get("code") or "").casefold()
-    error_type = str(metadata.get("provider_error_type") or "").casefold()
-    message = str(metadata.get("message") or "").casefold()
+    # Classification may inspect remote text privately. Public metadata contains
+    # only fixed categories, so it cannot provide the legacy wording fallback.
+    code = str(getattr(error, "code", "") or "").casefold()
+    error_type = str(
+        getattr(error, "error_type", None) or getattr(error, "type", "") or ""
+    ).casefold()
+    message = str(error).casefold()
     status = metadata.get("status_code")
     if code in {
         "model_not_found",

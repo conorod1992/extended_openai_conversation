@@ -143,6 +143,58 @@ test("a late model catalog response does not redirect typing from the title into
   await expect(model).toHaveValue(originalModel);
 });
 
+for (const scenario of [
+  {name:"positive budget to zero", key:"max_function_calls_per_conversation", before:1, after:0, disabled:false},
+  {name:"zero budget to positive", key:"max_function_calls_per_conversation", before:0, after:1, disabled:true},
+  {name:"Conditional to HA default", key:"continue_conversation", before:"conditional", after:"ha_default", disabled:false},
+  {name:"HA default to Conditional", key:"continue_conversation", before:"ha_default", after:"conditional", disabled:true},
+]) test(`committed tool compatibility edit refreshes API choices: ${scenario.name}`, async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("assistant/basics"));
+  const host = page.locator("extended-openai-management-panel");
+  await expect(host.locator('[data-config="chat_model"]')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => Boolean(window.browserHarness.panel._modelCatalogData))).toBe(true);
+  await page.evaluate(({key, before}) => {
+    const {panel} = window.browserHarness;
+    const initial = {max_function_calls_per_conversation:0, continue_conversation:"ha_default", api_mode:"responses", [key]:before};
+    Object.assign(panel._draft, initial);
+    Object.assign(panel._configData.config, initial);
+    panel._result.options.continue_conversation = [{value:"ha_default", label:"HA default"}, {value:"conditional", label:"Conditional"}];
+    const metadata = {api:{responses:true, chat_completions:true}, function_calling:{responses:true, chat_completions:false}};
+    panel._modelCatalogData = {requested_model:panel._draft.chat_model, model_capabilities:metadata};
+    panel._render();
+    window.compatibilityDraft = panel._draft;
+    window.compatibilityRenders = 0;
+    const render = panel._render.bind(panel);
+    panel._render = (...args) => { window.compatibilityRenders++; return render(...args); };
+  }, scenario);
+  const api = host.locator('[data-config="api_mode"]');
+  const choice = api.locator('option[value="chat_completions"]');
+  await expect(choice).toHaveJSProperty("disabled", !scenario.disabled);
+  const control = host.locator(`[data-config="${scenario.key}"]`);
+  await control.locator('xpath=ancestor::details').evaluateAll((details) => details.forEach((node) => { node.open = true; }));
+  if (scenario.key === "max_function_calls_per_conversation") {
+    await control.fill(String(scenario.after));
+    // Numeric keystrokes update the draft without replacing the form.
+    expect(await page.evaluate(() => window.compatibilityRenders)).toBe(0);
+    await expect(choice).toHaveJSProperty("disabled", !scenario.disabled);
+    await control.press("Tab");
+  } else {
+    await control.selectOption(scenario.after);
+  }
+  await expect(choice).toHaveJSProperty("disabled", scenario.disabled, {timeout:2000});
+  expect(await page.evaluate(() => window.browserHarness.panel._draft === window.compatibilityDraft)).toBe(true);
+  expect(await page.evaluate(() => window.compatibilityRenders)).toBeGreaterThan(0);
+  if (!scenario.disabled) {
+    const advanced = host.locator("details.general-advanced");
+    if (!await advanced.evaluate((node) => node.open)) await advanced.locator(":scope > summary").click();
+    await api.selectOption("chat_completions");
+    await expect(api).toHaveValue("chat_completions");
+  }
+  expect(await page.evaluate(() => window.browserHarness.calls.filter((call) => call.section === "configuration" && call.action === "save").length)).toBe(0);
+  await expectHarnessClean(page, errors);
+});
+
 test("a Web Search toggle refreshes capability controls", async ({page}) => {
   await page.goto(fixtureUrl("capabilities/web-skills"));
   const web = page.locator('extended-openai-management-panel [data-config="web_search"]');

@@ -7,6 +7,7 @@ from unittest.mock import Mock
 
 from custom_components.extended_openai_conversation_responses import (
     conversation_id_ownership as ownership,
+    conversation_ids,
 )
 from custom_components.extended_openai_conversation_responses.scope import user_scope
 
@@ -43,7 +44,7 @@ def test_claim_reuses_same_owner_but_isolates_scope_agent_and_guest(
 ) -> None:
     sequence = iter(["generated-one", "generated-two", "generated-three"])
     monkeypatch.setattr(
-        ownership,
+        conversation_ids,
         "uuid4",
         lambda: SimpleNamespace(hex=next(sequence)),
     )
@@ -70,7 +71,7 @@ def test_claim_reuses_same_owner_but_isolates_scope_agent_and_guest(
     assert first == same == "shared-id"
     assert other_scope == "extended-openai-agent-a-generated-one"
     assert other_agent == "extended-openai-agent-b-generated-two"
-    assert guest == "extended-openai-agent-a-generated-three"
+    assert guest == "extended-openai-guest-agent-a-generated-three"
 
     owners = hass.data[ownership._CONVERSATION_ID_OWNERS]
     assert owners["shared-id"] == ("agent-a", "user:a")

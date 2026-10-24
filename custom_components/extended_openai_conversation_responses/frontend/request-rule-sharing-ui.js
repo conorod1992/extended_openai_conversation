@@ -1,4 +1,5 @@
-import {applyRulePackImportMutation} from "./request-rules-ui-core.js";
+import {applyRulePackImportMutation, refreshRuleSharingGroups} from "./request-rules-ui-core.js";
+import {reviewSharingExport, SHARING_CONTRACT} from "./sharing-review.js";
 
 const MAX_PACK_BYTES=2*1024*1024;
 
@@ -17,14 +18,21 @@ export function bindRuleSharing(panel, host) {
   const content=host.querySelector("#rule-sharing-content");
   content.innerHTML=`<div class="rule-sharing-grid"><div><h3>Import rule pack</h3><p class="help">Review a rule pack before anything is added.</p><input id="rule-pack-file" type="file" accept=".json,application/json" aria-label="Choose rule pack"><button type="button" class="secondary" id="rule-pack-review-button">Import</button></div><div><h3>Export rule pack</h3><p class="help">Choose which rules to include.</p><label>Include<select id="rule-pack-selection"><option value="all">All rules</option><option value="group">A group</option><option value="selected">Selected rules</option></select></label><label id="rule-pack-group-label" hidden>Group<select id="rule-pack-group"></select></label><button type="button" class="secondary" id="rule-pack-export">Export</button></div></div><div id="rule-pack-message" role="status"></div><div id="rule-pack-review"></div><dialog id="rule-pack-select-dialog" class="editor-dialog" aria-label="Select rules to export"><div class="dialog-header"><h2>Selected rules</h2></div><div class="dialog-body" id="rule-pack-rule-list"></div><div class="dialog-actions"><button type="button" class="secondary" id="rule-pack-select-cancel">Cancel</button><button type="button" id="rule-pack-select-done">Export selected</button></div></dialog>`;
   const q=(selector)=>content.querySelector(selector), message=q("#rule-pack-message");
+  const sharingOptions=document.createElement("div");
+  const contract=document.createElement("p");contract.className="help";contract.textContent=SHARING_CONTRACT;
+  sharingOptions.append(contract);
+  const customChoice=document.createElement("label");
+  customChoice.innerHTML='<input type="checkbox" id="rule-pack-reviewed-custom"> Include custom rule content for manual review';
+  sharingOptions.append(customChoice);q("#rule-pack-export").before(sharingOptions);
   const setMessage=(value)=>{message.textContent=value;};
   const groupSelect=q("#rule-pack-group");
-  groupSelect.innerHTML=[{id:"",name:"Ungrouped"},...(panel._result?.groups||[])].map((group)=>`<option value="${panel._e(group.id)}">${panel._e(group.name)}</option>`).join("");
+  refreshRuleSharingGroups(panel);
   q("#rule-pack-selection").addEventListener("change",()=>{q("#rule-pack-group-label").hidden=q("#rule-pack-selection").value!=="group";});
   const exportSelected=async(ruleIds=null)=>{
     const selection=q("#rule-pack-selection").value;
     try{
-      const pack=await panel._call("request_rules","rule_pack_export",{selection,group_id:selection==="group"?(groupSelect.value||null):null,rule_ids:ruleIds});
+      const pack=await panel._call("request_rules","rule_pack_export",{selection,group_id:selection==="group"?(groupSelect.value||null):null,rule_ids:ruleIds,reviewed_custom:Boolean(q("#rule-pack-reviewed-custom")?.checked)});
+      if(!await reviewSharingExport(panel,{json:JSON.stringify(pack,null,2),security:pack.security}))return;
       downloadPack(pack);setMessage(`${pack.rules.length} rules exported.`);
     }catch(err){setMessage(err.message||String(err));}
   };

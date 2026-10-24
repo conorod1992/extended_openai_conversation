@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import suppress
 import logging
 from types import MappingProxyType
@@ -447,11 +448,24 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
     for entry in entries:
         if entry.version < CONFIG_ENTRY_VERSION:
             continue
-        for subentry in entry.subentries.values():
+        for subentry in tuple(entry.subentries.values()):
             if subentry.subentry_type not in {"conversation", "ai_task_data"}:
                 continue
-            data = dict(subentry.data)
-            changed = _migrate_saved_agent_defaults(data, subentry.subentry_type)
+            source = subentry.data
+            data = dict(source)
+            changed = await asyncio.to_thread(
+                _migrate_saved_agent_defaults, data, subentry.subentry_type
+            )
+            # Preparation yields: preserve any newer save or agent/entry removal.
+            if (
+                subentry.data is not source
+                or not any(current is subentry for current in entry.subentries.values())
+                or not any(
+                    current is entry
+                    for current in hass.config_entries.async_entries(DOMAIN)
+                )
+            ):
+                continue
             if changed:
                 hass.config_entries.async_update_subentry(entry, subentry, data=data)
 
@@ -491,11 +505,24 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
                 entry, title=entry.title, options={}, version=2
             )
 
-        for subentry in entry.subentries.values():
+        for subentry in tuple(entry.subentries.values()):
             if subentry.subentry_type not in {"conversation", "ai_task_data"}:
                 continue
-            data = dict(subentry.data)
-            changed = _migrate_saved_agent_defaults(data, subentry.subentry_type)
+            source = subentry.data
+            data = dict(source)
+            changed = await asyncio.to_thread(
+                _migrate_saved_agent_defaults, data, subentry.subentry_type
+            )
+            # Preparation yields: preserve any newer save or agent/entry removal.
+            if (
+                subentry.data is not source
+                or not any(current is subentry for current in entry.subentries.values())
+                or not any(
+                    current is entry
+                    for current in hass.config_entries.async_entries(DOMAIN)
+                )
+            ):
+                continue
             if subentry.subentry_type == "ai_task_data":
                 if changed:
                     hass.config_entries.async_update_subentry(

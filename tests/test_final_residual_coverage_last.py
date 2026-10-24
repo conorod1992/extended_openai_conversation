@@ -55,7 +55,7 @@ async def test_repair_configuration_save_preserves_absent_function_fields(
         Mock(return_value={"valid": True, "config": {}}),
     )
     update = Mock()
-    monkeypatch.setattr(repair, "update_live_subentry", update)
+    monkeypatch.setattr(repair, "update_configuration_subentry", update)
     monkeypatch.setattr(repair, "saved_agent_config_revision", Mock(return_value="rev"))
     monkeypatch.setattr(
         loading,

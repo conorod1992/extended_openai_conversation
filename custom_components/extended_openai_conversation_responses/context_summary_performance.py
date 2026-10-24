@@ -15,6 +15,7 @@ from .const import (
     DEFAULT_CONTEXT_THRESHOLD,
     LEGACY_CONTEXT_TRUNCATE_STRATEGY,
 )
+from .context import HistoryEstimator
 from .context_summary import ContextSummaryResult, DeferredContextSummaryManager
 
 _DEFER_CONTEXT_SUMMARY: ContextVar[bool] = ContextVar(
@@ -71,6 +72,7 @@ def schedule_context_summary(
     observed_input_tokens: int | None = None,
     model: str | None = None,
     api_mode: str | None = None,
+    estimate: HistoryEstimator | None = None,
 ) -> bool:
     """Schedule eligible optional maintenance, leaving direct truncation synchronous."""
     options = self.subentry.data
@@ -109,6 +111,7 @@ def schedule_context_summary(
                 _summarize_detached(self, older, summary_model, summary_api_mode)
             ),
             scheduler=schedule,
+            estimate=estimate,
         ):
             return True
 

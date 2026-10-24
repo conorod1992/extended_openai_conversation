@@ -16,7 +16,9 @@ async def completed_responses_events(
     """Emit only the events consumed by EOAI's Responses transformer."""
     _capture_provider_usage(request_usage, getattr(response, "usage", None))
     for output_index, item in enumerate(getattr(response, "output", ())):
-        yield SimpleNamespace(type="response.output_item.added", item=item)
+        yield SimpleNamespace(
+            type="response.output_item.added", item=item, output_index=output_index
+        )
         if getattr(item, "type", None) == "message":
             for content_index, part in enumerate(getattr(item, "content", ())):
                 part_type = getattr(part, "type", None)
@@ -43,7 +45,9 @@ async def completed_responses_events(
                         output_index=output_index,
                         content_index=content_index,
                     )
-        yield SimpleNamespace(type="response.output_item.done", item=item)
+        yield SimpleNamespace(
+            type="response.output_item.done", item=item, output_index=output_index
+        )
     status = getattr(response, "status", "completed")
     event_type = {
         "completed": "response.completed",

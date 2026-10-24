@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -26,6 +27,135 @@ async def _disable_automation_validation(monkeypatch) -> None:
         "_async_validate_config_item",
         AsyncMock(),
     )
+
+
+def _symlink(path: Path, target: Path) -> None:
+    try:
+        path.symlink_to(target)
+    except OSError as err:
+        if os.name == "nt" and getattr(err, "winerror", None) == 1314:
+            pytest.skip("Windows requires Developer Mode or symlink privileges")
+        raise
+
+
+@pytest.mark.parametrize("link_kind", ["absolute", "relative", "chain"])
+@pytest.mark.parametrize("target_exists", [False, True])
+@pytest.mark.parametrize("reload_fails", [False, True])
+async def test_symlinked_automation_target_survives_write_and_rollback(
+    hass, tmp_path, monkeypatch, link_kind, target_exists, reload_fails
+):
+    await _disable_automation_validation(monkeypatch)
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    hass.config.config_dir = str(config_dir)
+    target = tmp_path / "shared" / "rules.yaml"
+    target.parent.mkdir()
+    original = "# Shared automations\n- id: existing\n  alias: Existing\n"
+    if target_exists:
+        target.write_text(original, encoding="utf-8")
+    path = config_dir / "automations.yaml"
+    if link_kind == "chain":
+        intermediate = config_dir / "shared-automations.yaml"
+        _symlink(intermediate, target)
+        _symlink(path, Path(intermediate.name))
+    else:
+        _symlink(
+            path,
+            target
+            if link_kind == "absolute"
+            else Path(os.path.relpath(target, config_dir)),
+        )
+    original_link = path.readlink()
+    reloads = 0
+    destinations = []
+    replace = native.os.replace
+
+    def record_replace(source, destination):
+        destinations.append(Path(destination))
+        return replace(source, destination)
+
+    monkeypatch.setattr(native.os, "replace", record_replace)
+
+    async def reload(*args, **kwargs):
+        nonlocal reloads
+        reloads += 1
+        if reload_fails and reloads == 1:
+            raise HomeAssistantError("reload failed")
+        saved = (
+            yaml.safe_load(path.read_text(encoding="utf-8")) if path.exists() else []
+        )
+        hass.data[native.automation.DOMAIN] = SimpleNamespace(
+            entities=[SimpleNamespace(unique_id=item["id"]) for item in saved]
+        )
+
+    hass.services.async_call = AsyncMock(side_effect=reload)
+    call = NativeFunction().add_automation(
+        hass,
+        {},
+        {"automation_config": "alias: New\ntriggers: []\nactions: []\n"},
+        None,
+        [],
+    )
+    if reload_fails:
+        with pytest.raises(HomeAssistantError, match="reload failed"):
+            await call
+    else:
+        assert await call == "Success"
+    assert path.is_symlink()
+    assert path.readlink() == original_link
+    if link_kind == "chain":
+        assert intermediate.is_symlink()
+    assert destinations and all(destination == target for destination in destinations)
+    if reload_fails:
+        assert target.exists() is target_exists
+        if target_exists:
+            assert target.read_text(encoding="utf-8") == original
+        hass.bus.async_fire.assert_not_called()
+    else:
+        saved = yaml.safe_load(target.read_text(encoding="utf-8"))
+        assert [item["alias"] for item in saved] == (
+            ["Existing", "New"] if target_exists else ["New"]
+        )
+        assert path.read_bytes() == target.read_bytes()
+        hass.bus.async_fire.assert_called_once()
+    assert not list(target.parent.glob(".*.tmp-*"))
+
+
+async def test_symlink_rollback_keeps_the_original_canonical_destination(
+    hass, tmp_path, monkeypatch
+):
+    await _disable_automation_validation(monkeypatch)
+    path = Path(hass.config.config_dir) / "automations.yaml"
+    first, second = tmp_path / "first.yaml", tmp_path / "second.yaml"
+    original = "- id: first\n  alias: First\n"
+    other = "- id: second\n  alias: Second\n"
+    first.write_text(original, encoding="utf-8")
+    second.write_text(other, encoding="utf-8")
+    _symlink(path, first)
+    reloads = 0
+
+    async def reload(*args, **kwargs):
+        nonlocal reloads
+        reloads += 1
+        if reloads == 1:
+            path.unlink()
+            _symlink(path, second)
+            raise HomeAssistantError("initial reload failed")
+
+    hass.services.async_call = AsyncMock(side_effect=reload)
+    with pytest.raises(HomeAssistantError, match="initial reload failed"):
+        await NativeFunction().add_automation(
+            hass,
+            {},
+            {"automation_config": "alias: New\ntriggers: []\nactions: []\n"},
+            None,
+            [],
+        )
+    assert path.is_symlink() and path.resolve() == second
+    assert first.read_text(encoding="utf-8") == original
+    assert second.read_text(encoding="utf-8") == other
+    assert reloads == 2
+    hass.bus.async_fire.assert_not_called()
 
 
 @pytest.mark.parametrize("component_present", [False, True])

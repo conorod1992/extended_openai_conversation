@@ -16,6 +16,7 @@ from homeassistant.helpers.script import Script, async_validate_actions_config
 from .. import ha_actions
 from ..const import DOMAIN
 from ..script_structure import iter_unvalidated_script_actions
+from ..template_diagnostics import private_template_diagnostics
 from .base import Function, copy_runtime_function_config
 
 _LOGGER = logging.getLogger(__name__)
@@ -137,6 +138,7 @@ class ScriptFunction(Function):
         _reject_device_actions(validated["sequence"])
         return validated
 
+    @private_template_diagnostics
     async def execute(
         self,
         hass: HomeAssistant,

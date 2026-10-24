@@ -21,4 +21,5 @@ assert.equal(reasoning.value,"{effort}");
 assert.ok(reasoning.options.some((entry)=>entry.value==="{effort}"));
 reasoning.value="xhigh";
 syncRequestRuleRoutingControls(root, []);
-assert.equal(reasoning.value,"xhigh");
+assert.equal(reasoning.value,"");
+assert.ok(!reasoning.options.some(entry => entry.value === "xhigh"));

@@ -22,6 +22,7 @@ def _older_release_child() -> None:
     package.__path__ = [str(component.parent)]
     sys.modules["custom_components"] = package
     from custom_components.extended_openai_conversation_responses import backup
+    from custom_components.extended_openai_conversation_responses.private_backup import encode_document
     from homeassistant.exceptions import HomeAssistantError
 
     document = json.loads(Path(os.environ[_DOCUMENT]).read_text(encoding="utf-8"))
@@ -79,7 +80,7 @@ async def test_current_export_is_rejected_by_published_older_release(
     subentry = next(iter(entry.subentries.values()))
     snapshot = await backup.async_collect_backup_snapshot(hass, entry, subentry)
     document = tmp_path / "current-backup.json"
-    document.write_text(json.dumps(snapshot), encoding="utf-8")
+    document.write_text(json.dumps(encode_document(snapshot)), encoding="utf-8")
     before = document.read_bytes()
     result = subprocess.run(
         [sys.executable, str(Path(__file__).resolve())],

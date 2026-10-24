@@ -18,6 +18,7 @@ from custom_components.extended_openai_conversation_responses.management_functio
     repair_state_for_projection,
 )
 from tests.test_save_validation_reuse import _hass_with_agent
+from custom_components.extended_openai_conversation_responses.private_backup import decode_document
 
 
 @pytest.fixture(params=["missing-name", "object-member", "list-member"])
@@ -135,7 +136,7 @@ async def test_group_only_backup_export_preserves_raw_definition(
         },
     )
     assert (
-        document["document"]["agent"]["config"]["function_groups"]
+        decode_document(document["document"])["agent"]["config"]["function_groups"]
         == original["function_groups"]
     )
     assert subentry.data == original

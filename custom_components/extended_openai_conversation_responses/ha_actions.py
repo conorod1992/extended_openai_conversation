@@ -63,6 +63,7 @@ async def async_call_ha_action(
     Both model-driven native service calls and administrator-configured local
     Request Rules pass through this backend-enforced policy seam.
     """
+    domain, service = domain.lower(), service.lower()
     context = context or get_active_ha_context()
     await async_authorize_ha_action(
         hass, domain, service, data=data, target=target, context=context
@@ -89,6 +90,7 @@ async def async_authorize_ha_action(
     context: Context | None = None,
 ) -> set[str]:
     """Authorize the exact dispatch without replacing native service responses."""
+    domain, service = domain.lower(), service.lower()
     context = context or get_active_ha_context()
     entity_ids = resolve_action_entity_ids(hass, domain, service, data, target)
     target_identity = _target_identity(hass, entity_ids)
@@ -126,6 +128,7 @@ async def async_dispatch_ha_service(
     Script and native callers retain their own authorization and response policy.
     Return HA's actual response unchanged, including nonblocking call semantics.
     """
+    domain, service = domain.lower(), service.lower()
     context = kwargs.get("context")
     request_response = bool(kwargs.get("return_response", False))
     from .execution_outcomes import (
@@ -526,6 +529,7 @@ def _registered_entity_service(
     hass: HomeAssistant, domain: str, service: str
 ) -> tuple[partial, Mapping[str, Any]] | None:
     """Read known HA entity-service registrations across Core versions."""
+    domain, service = domain.lower(), service.lower()
     services_for_domain = getattr(hass.services, "async_services_for_domain", None)
     if services_for_domain is None:
         return None
@@ -622,6 +626,8 @@ def explicit_service_refusal_entity_ids(
 
 def action_requires_available_entities(domain: str | None, service: str | None) -> bool:
     """Recovery operations must be able to target an unavailable entity."""
+    domain = domain.lower() if domain is not None else None
+    service = service.lower() if service is not None else None
     return (domain, service) not in {
         ("homeassistant", "update_entity"),
         ("homeassistant", "reload_config_entry"),
@@ -644,6 +650,7 @@ def service_target_entity_ids(
     Other generic/custom services must retain every selected entity: filtering
     them by the service domain would hide targets they can actually affect.
     """
+    domain, service = domain.lower(), service.lower()
     participants = participants or _service_participants
     explicit = explicit or set()
 

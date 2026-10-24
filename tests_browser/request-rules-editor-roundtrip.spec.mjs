@@ -1,5 +1,5 @@
 import {expect, test} from "@playwright/test";
-import {expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
+import {acceptSharingReview, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
 const panelFor = (page) => page.locator("extended-openai-management-panel");
 
@@ -132,7 +132,7 @@ test("Request Rule editor round-trips local and routing forms through reopen and
   // fields that the UI owns; backend normalization is covered by Python tests.
   await panel.locator("#rule-reset").check();
   await panel.locator("#rule-continue-to-ai").uncheck();
-  await panel.locator("#rule-scope").selectOption("conversation");
+  await expect(panel.locator("#rule-scope")).toBeDisabled();
   await expect(panel.locator("#rule-scope")).toHaveValue("conversation");
   await panel.locator("#rule-routing-success").fill("Defaults restored");
   await panel.locator("#rule-save").click();
@@ -159,3 +159,134 @@ test("Request Rule editor round-trips local and routing forms through reopen and
 
   await expectHarnessClean(page, errors);
 });
+
+
+for (const bundled of [false, true]) {
+  test(`mounted Rule editor shares routing scope and reasoning controls (${bundled})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    await page.goto(fixtureUrl("capabilities/request-rules", bundled ? "&bundle=1" : ""));
+    const panel = panelFor(page);
+    await page.evaluate(() => {
+      const original = browserHarness.hass.callWS.bind(browserHarness.hass);
+      browserHarness.hass.callWS = async message => {
+        const result = await original(message);
+        if (message.type.endsWith("/model_catalog")) return {...result, reasoning_effort_options: message.model === "gpt-4o" ? [] : ["low", "high"]};
+        return result;
+      };
+    });
+    await panel.getByRole("button", {name: "Create rule", exact: true}).first().click();
+    await panel.locator("#rule-name").fill("Shared routing controls");
+    await panel.locator("#rule-phrases").fill("route command");
+    await panel.locator("#rule-action-type").selectOption("model_routing");
+    await panel.locator("#rule-advanced summary").click();
+    for (const match of ["equals", "starts_with", "ends_with", "contains", "sentence_pattern"]) {
+      await panel.locator("#rule-match").selectOption(match);
+      for (const ai of [false, true]) for (const matching of [false, true]) {
+        await panel.locator("#rule-continue-to-ai").check();
+        await panel.locator("#rule-scope").selectOption("request");
+        await panel.locator("#rule-continue-matching").setChecked(matching);
+        await panel.locator("#rule-continue-to-ai").setChecked(ai);
+        await expect(panel.locator('#rule-scope option[value="request"]')).toHaveJSProperty("disabled", !ai && !matching);
+        await expect(panel.locator("#rule-scope")).toHaveValue(!ai && !matching ? "conversation" : "request");
+      }
+    }
+    await panel.locator("#rule-model").fill("gpt-5.6");
+    await expect(panel.locator('#rule-reasoning option[value="high"]')).toHaveCount(1);
+    await panel.locator("#rule-reasoning").selectOption("high");
+    await panel.locator("#rule-model").fill("gpt-4o");
+    await expect(panel.locator("#rule-reasoning")).toHaveValue("");
+    await expect(panel.locator("#rule-reasoning option")).toHaveCount(1);
+    await panel.locator("#rule-match").selectOption("contains");
+    await panel.locator("#rule-continue-matching").uncheck();
+    await panel.locator("#rule-continue-to-ai").uncheck();
+    await panel.locator("#rule-save").click();
+    await expect(panel.locator("#rule-dialog")).not.toHaveJSProperty("open", true);
+    const saved = await page.evaluate(() => browserHarness.getState().requestRules.rules.find(rule => rule.name === "Shared routing controls"));
+    expect(saved.action.scope).toBe("conversation");
+    expect(saved.action.reasoning_effort || "").toBe("");
+    await expectHarnessClean(page, errors);
+  });
+}
+
+function sharingGroupPack() {
+  return {format:"extended_openai_request_rule_pack",version:1,
+    groups:[{id:"portable-group",name:"Imported group"}],
+    rules:[{id:"portable-rule",name:"Imported grouped rule",enabled:false,phrases:["shared group"],match_type:"equals",action_type:"model_routing",action:{model:"gpt-5-mini",scope:"conversation",continue_to_ai:false,success_response:"Updated"},matching_behavior:"defaults",matching:{},order:0,conditions:[],group_id:"portable-group",continue_matching:false,ai_input_mode:"original",ai_input_capture:null}]};
+}
+
+async function openSharingWithReview(page, bundled, seedGroup = false) {
+  await page.goto(fixtureUrl("capabilities/request-rules", bundled ? "&bundle=1" : ""));
+  const panel = panelFor(page);
+  if (seedGroup) await createGroup(panel, "Existing selection");
+  await panel.locator("#rule-sharing > summary").click();
+  await panel.locator("#rule-pack-file").setInputFiles({name:"group-pack.json",mimeType:"application/json",buffer:Buffer.from(JSON.stringify(sharingGroupPack()))});
+  await panel.locator("#rule-pack-review-button").click();
+  await expect(panel.locator(".rule-pack-review")).toBeVisible();
+  await panel.locator("#rule-pack-selection").selectOption("group");
+  await panel.evaluate(host => {
+    host.__sharingPreserved = [host.shadowRoot.querySelector("#rule-pack-file"),host.shadowRoot.querySelector("#rule-pack-review .rule-pack-review"),host.shadowRoot.querySelector("#rule-pack-group")];
+  });
+  return panel;
+}
+
+async function expectSharingPreserved(panel) {
+  expect(await panel.evaluate(host => {
+    const [file,review,select] = host.__sharingPreserved;
+    return file === host.shadowRoot.querySelector("#rule-pack-file") && file.files[0]?.name === "group-pack.json" && review === host.shadowRoot.querySelector("#rule-pack-review .rule-pack-review") && select === host.shadowRoot.querySelector("#rule-pack-group") && host.shadowRoot.querySelector("#rule-sharing").open;
+  })).toBe(true);
+}
+
+for (const bundled of [false, true]) {
+  test(`Sharing group choices follow create rename and delete without losing review (${bundled})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    const panel = await openSharingWithReview(page, bundled);
+    const id = await createGroup(panel, "Kitchen");
+    const select = panel.locator("#rule-pack-group");
+    await expect(select.locator(`option[value="${id}"]`)).toHaveText("Kitchen");
+    await select.selectOption(id);
+    await expectSharingPreserved(panel);
+    await panel.locator("#rule-groups-manage").click();
+    const row = panel.locator(`.rule-group-row[data-group-id="${id}"]`);
+    await row.locator(".rule-group-name").fill("Kitchen & <Dining>");
+    await row.locator(".rule-group-rename").click();
+    await expect(select.locator(`option[value="${id}"]`)).toHaveText("Kitchen & <Dining>");
+    await expect(select).toHaveValue(id);
+    await panel.locator("#rule-groups-done").click();
+    await expectSharingPreserved(panel);
+    await panel.locator("#rule-groups-manage").click();
+    await row.locator(".rule-group-delete").click();
+    await expect(panel.locator("#confirm-dialog")).toHaveJSProperty("open", true);
+    await panel.locator("#confirm-accept").click();
+    await expect(select.locator(`option[value="${id}"]`)).toHaveCount(0);
+    await expect(select).toHaveValue("");
+    await expect(select.locator('option[value=""]')).toHaveText("Ungrouped");
+    await panel.locator("#rule-groups-done").click();
+    await expectSharingPreserved(panel);
+    await expectHarnessClean(page, errors);
+  });
+
+  test(`Sharing group choices include an imported group immediately (${bundled})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    const panel = await openSharingWithReview(page, bundled, true);
+    const existingId = await panel.evaluate(host => host._result.groups.find(group => group.name === "Existing selection").id);
+    await panel.locator("#rule-pack-group").selectOption(existingId);
+    await panel.locator("#rule-pack-confirm").click();
+    await expect(panel.locator("#rule-pack-message")).toContainText("1 disabled rules imported");
+    const groupId = await panel.evaluate(host => host._result.groups.find(group => group.name === "Imported group")?.id);
+    expect(groupId).toBeTruthy();
+    await expect(panel.locator("#rule-pack-group")).toHaveValue(existingId);
+    await expect(panel.locator(`#rule-pack-group option[value="${groupId}"]`)).toHaveText("Imported group");
+    await panel.locator("#rule-pack-group").selectOption(groupId);
+    await expect(panel.locator("#rule-sharing")).toHaveJSProperty("open", true);
+    expect(await panel.locator("#rule-pack-file").evaluate(input => input.files[0].name)).toBe("group-pack.json");
+    const download = page.waitForEvent("download");
+    await panel.locator("#rule-pack-reviewed-custom").check();
+    await panel.locator("#rule-pack-export").click();
+    await acceptSharingReview(panel);
+    await download;
+    const request = await page.evaluate(() => browserHarness.calls.filter(call => call.action === "rule_pack_export").at(-1));
+    expect(request.group_id).toBe(groupId);
+    expect(request.selection).toBe("group");
+    await expectHarnessClean(page, errors);
+  });
+}

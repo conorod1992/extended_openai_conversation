@@ -7,8 +7,9 @@ function, event listener, or shared session is modified.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import datetime
 import json
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -21,6 +22,9 @@ from homeassistant.core import State
 from homeassistant.exceptions import HomeAssistantError
 
 MAX_RECORDER_ROWS = 1000
+# Coarse periods consume hourly inputs before HA reduces them. Permit at least
+# two full leap years of inputs, while keeping a separate finite SQL work cap.
+MAX_STATISTICS_AGGREGATION_ROWS = 25_000
 MAX_RECORDER_RAW_BYTES = 256_000
 MAX_RECORDER_CELL_CHARACTERS = 8000
 MAX_RECORDER_RESULT_BYTES = 24_000
@@ -33,25 +37,37 @@ def _limit_error() -> HomeAssistantError:
     )
 
 
+def _statistics_work_limit_error() -> HomeAssistantError:
+    return HomeAssistantError(
+        "Recorder statistics aggregation exceeds the row or byte safety budget; "
+        "request fewer IDs or fewer calendar periods. Day, week, month and year "
+        "queries expand to whole calendar periods. No partial result was returned."
+    )
+
+
 class _ReadBudget:
-    def __init__(self) -> None:
+    def __init__(
+        self, max_rows: int = MAX_RECORDER_ROWS, *, aggregation: bool = False
+    ) -> None:
+        self.max_rows = max_rows
+        self._error = _statistics_work_limit_error if aggregation else _limit_error
         self.rows = 0
         self.bytes = 0
 
     def consume(self, row: Any) -> None:
         self.rows += 1
-        if self.rows > MAX_RECORDER_ROWS:
-            raise _limit_error()
+        if self.rows > self.max_rows:
+            raise self._error()
         values = row if isinstance(row, tuple) or hasattr(row, "_mapping") else (row,)
         for value in values:
             if isinstance(value, str):
                 if len(value) > MAX_RECORDER_CELL_CHARACTERS:
-                    raise _limit_error()
+                    raise self._error()
                 self.bytes += len(value.encode("utf-8"))
             elif isinstance(value, bytes):
                 self.bytes += len(value)
         if self.bytes > MAX_RECORDER_RAW_BYTES:
-            raise _limit_error()
+            raise self._error()
 
     def statement(self, statement: Any) -> Any:
         # Resolve a cached HA lambda without mutating its shared statement.
@@ -83,7 +99,7 @@ class _ReadBudget:
             Select[Any] | CompoundSelect,
             visitors.replacement_traverse(statement, {}, bounded_column),
         )
-        remaining = MAX_RECORDER_ROWS - self.rows + 1
+        remaining = self.max_rows - self.rows + 1
         previous = getattr(getattr(statement, "_limit_clause", None), "value", None)
         if isinstance(previous, int):
             remaining = min(remaining, previous)
@@ -138,9 +154,9 @@ class _BoundedConnection:
 
 
 class _BoundedSession:
-    def __init__(self, session: Any) -> None:
+    def __init__(self, session: Any, budget: _ReadBudget | None = None) -> None:
         self._session = session
-        self._budget = _ReadBudget()
+        self._budget = budget if budget is not None else _ReadBudget()
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._session, name)
@@ -181,10 +197,32 @@ def bounded_history(hass: Any, *args: Any) -> list[list[dict[str, Any]]]:
         return _checked_result(rows)
 
 
-def bounded_statistics(hass: Any, *args: Any) -> dict[str, Any]:
-    """Preserve HA aggregation/units while bounding its underlying raw reads."""
+def bounded_statistics(
+    hass: Any,
+    start_time: datetime,
+    end_time: datetime | None,
+    statistic_ids: set[str] | None,
+    period: Literal["5minute", "hour", "day", "week", "month", "year"],
+    units: dict[str, str] | None,
+    types: set[Any],
+) -> dict[str, Any]:
+    """Bound aggregate input work separately from the final returned series."""
+    aggregation = period in {"day", "week", "month", "year"}
+    budget = _ReadBudget(
+        MAX_STATISTICS_AGGREGATION_ROWS if aggregation else MAX_RECORDER_ROWS,
+        aggregation=aggregation,
+    )
     with session_scope(hass=hass, read_only=True) as session:
         result = statistics._statistics_during_period_with_session(
-            hass, cast(Session, _BoundedSession(session)), *args
+            hass,
+            cast(Session, _BoundedSession(session, budget)),
+            start_time,
+            end_time,
+            statistic_ids,
+            period,
+            units,
+            types,
         )
+        if sum(len(rows) for rows in result.values()) > MAX_RECORDER_ROWS:
+            raise _limit_error()
         return _checked_result(result)

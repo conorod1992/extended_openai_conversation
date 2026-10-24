@@ -47,7 +47,7 @@ test("mutation declarations preserve real revisions and cached projections", asy
   } else if (scenario === "rule_pack") {
     const pack = await panel.evaluate(async host => {
       await host._call("request_rules", "create", {rule:{name:"Original pack rule", enabled:true, phrases:["pack phrase"], match_type:"equals", action_type:"model_routing", action:{model:"gpt-5-mini", scope:"conversation"}}});
-      return host._call("request_rules", "rule_pack_export", {selection:"all"});
+      return host._call("request_rules", "rule_pack_export", {selection:"all", reviewed_custom:true});
     });
     pack.rules[0].name = "Imported pack rule";
     await panel.evaluate(host => host._loadSection());

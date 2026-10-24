@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import os
 import shlex
 import subprocess
@@ -161,10 +162,8 @@ async def test_saved_bash_composite_stops_later_step_only_on_execution_failure(
             assert output["result"]["status"] == "error", output
             assert output["result"]["error"]
             assert "published" not in str(output)
-            if outcome == "timeout":
-                assert "Command timed out after 1 seconds" in str(output)
-            else:
-                assert "missing-directory" in str(output)
+            assert output["result"]["error"] == "Function execution failed. Check the tool configuration and permissions."
+            assert "missing-directory" not in str(output)
         else:
             assert output["result"]["exit_code"] == 0
             assert "published" in output["result"]["stdout"]
@@ -244,6 +243,44 @@ async def test_origin_only_targeted_broadcast_is_handled_failure(hass, monkeypat
     turns = [turn for values in agent._archive._turns.values() for turn in values]
     assert len(turns) == 1
     assert turns[0].successful is False
+
+
+async def test_public_rule_repeat_count_keeps_rendered_value_private(
+    hass, monkeypatch, caplog
+):
+    secret = "FABRICATED-RULE-SECRET-repeat-count-42"
+    hass.states.async_set("sensor.private_repeat_input", secret)
+    agent = await _agent(hass)
+    sent = _provider(monkeypatch, agent, ["Unexpected fallback"])
+    await agent._request_rules.async_create(
+        _rule(
+            "local_action",
+            {
+                "actions": [
+                    {
+                        "repeat": {
+                            "count": "{{ states('sensor.private_repeat_input') }}",
+                            "sequence": [{"delay": {"milliseconds": 0}}],
+                        }
+                    }
+                ],
+                "success_response": "Done",
+                "failure_response": "Failed safely",
+            },
+            phrase="run rule",
+        )
+    )
+    caplog.clear()
+    result = await _authenticated_say(hass, agent, "run rule", is_admin=True)
+    await hass.async_block_till_done()
+    assert _speech(result, successful=False) == "Failed safely"
+    assert not sent
+    assert secret not in caplog.text
+    assert any(
+        record.levelno >= logging.ERROR
+        and "EOAI private script diagnostic" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 async def _authenticated_say(hass, agent, text, *, is_admin=False):
@@ -417,3 +454,44 @@ async def test_real_rule_stops_after_backend_failure(
     assert len(agent._usage.runs) == 1
     assert agent._usage.runs[0].successful is (backend == "business")
     assert sent == []
+
+
+@pytest.mark.parametrize("retry,blocked", [({"amount":1}, True), ({"ignored":"different"}, True), ({"amount":2}, False)])
+async def test_rest_receipts_recover_rendered_defaults(hass, monkeypatch, retry, blocked):
+    """Exercise real HA RestData and ChatLog at the failed-continuation boundary."""
+    from tests.test_execution_http_audit_regressions import test_rest_recovery_matches_rendered_operation
+
+    await test_rest_recovery_matches_rendered_operation(hass, monkeypatch, retry, blocked)
+
+
+async def test_public_rest_default_retry_does_not_repeat_completed_post(hass, monkeypatch):
+    """A real Assist request recovers a failed SDK continuation without another POST."""
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from custom_components.extended_openai_conversation_responses.functions import web
+
+    sent=[]
+    class Session:
+        @asynccontextmanager
+        async def request(self, method, resource, **kwargs):
+            sent.append((method, resource, kwargs.get("data")))
+            yield SimpleNamespace(status=200, charset="utf-8", headers={"Content-Type":"text/plain"}, text=AsyncMock(return_value="ok"))
+    monkeypatch.setattr(web, "_install_bounded_session", lambda _hass, data: setattr(data, "_session", Session()))
+    tool={"spec":{"name":"dispense", "description":"Test rendered default receipt", "strict":False, "parameters":{"type":"object", "properties":{"amount":{"type":"integer"}}}},
+          "function":{"type":"rest", "method":"POST", "resource":"https://example.invalid/dispense", "payload_template":"{{ amount | default(1) }}"}}
+    agent=await _agent(hass, functions=[tool], function_tool_error_recovery=False)
+    user=await hass.auth.async_create_user("REST replay admin", group_ids=[GROUP_ID_ADMIN])
+    async def say(text, conversation_id=None):
+        return await conversation.async_converse(hass=hass,text=text,conversation_id=conversation_id,context=Context(user_id=user.id),language="en",agent_id=agent.entry.entry_id)
+    replies=[_chat_sse_tool_call("dispense-first", "dispense", {}), (500,{"error":{"message":"Continuation failed", "type":"server_error"}}), _chat_sse_tool_call("dispense-retry", "dispense", {"amount":1})]
+    async with _transport(agent.entry, replies) as wire:
+        failed=await say("Dispense once")
+        assert failed.response.error_code is not None
+        assert sent==[("POST", "https://example.invalid/dispense", "1")]
+        recovered=await say("Retry",failed.conversation_id)
+        assert recovered.response.error_code is not None
+        assert sent==[("POST", "https://example.invalid/dispense", "1")]
+        spec=wire.requests[0]["body"]["tools"][0]["function"]
+        assert spec["strict"] is False
+        wire.assert_complete(3)

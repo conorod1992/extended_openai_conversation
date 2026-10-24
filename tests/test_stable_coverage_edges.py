@@ -33,12 +33,14 @@ def _valid_model() -> dict:
     [
         lambda model: model.__setitem__("status", "invalid"),
         lambda model: model["api"].__setitem__("responses", "yes"),
-        lambda model: model.__setitem__(
-            "auto_api",
-            next(api for api, enabled in model["api"].items() if not enabled),
-        )
-        if any(not enabled for enabled in model["api"].values())
-        else model["api"].__setitem__("responses", False),
+        lambda model: (
+            model.__setitem__(
+                "auto_api",
+                next(api for api, enabled in model["api"].items() if not enabled),
+            )
+            if any(not enabled for enabled in model["api"].values())
+            else model["api"].__setitem__("responses", False)
+        ),
         lambda model: model["function_calling"].__setitem__("preferred_api", "invalid"),
         lambda model: model["reasoning"].__setitem__(
             "supported", not bool(model["reasoning"]["efforts"])
@@ -118,7 +120,7 @@ async def test_rule_pack_group_export_rejects_known_but_empty_group() -> None:
     await source.async_initialize()
 
     with pytest.raises(ValueError, match="Choose at least one"):
-        export_rule_pack(source, "group", group_id="unused")
+        export_rule_pack(source, "group", group_id="unused", reviewed=True)
 
 
 @pytest.mark.asyncio
@@ -128,14 +130,14 @@ async def test_rule_pack_export_applies_encoded_size_limit(monkeypatch) -> None:
     monkeypatch.setattr(request_rule_packs, "MAX_PACK_BYTES", 32)
 
     with pytest.raises(ValueError, match="2 MB safety limit"):
-        export_rule_pack(source, "all")
+        export_rule_pack(source, "all", reviewed=True)
 
 
 @pytest.mark.asyncio
 async def test_rule_pack_validation_rejects_rule_missing_required_field() -> None:
     source = RequestRules(MemoryStore({"rules": [local_rule("Only")]}))
     await source.async_initialize()
-    pack = export_rule_pack(source, "all")
+    pack = export_rule_pack(source, "all", reviewed=True)
     pack["rules"][0].pop("conditions")
 
     with pytest.raises(ValueError, match="missing required fields"):
@@ -155,7 +157,7 @@ async def test_rule_pack_import_reuses_group_name_case_insensitively() -> None:
         )
     )
     await source.async_initialize()
-    prepared = validate_rule_pack(export_rule_pack(source, "all"))
+    prepared = validate_rule_pack(export_rule_pack(source, "all", reviewed=True))
 
     target = RequestRules(
         MemoryStore(
@@ -178,7 +180,9 @@ async def test_rule_pack_import_reuses_group_name_case_insensitively() -> None:
 
 
 @pytest.mark.asyncio
-async def test_management_scope_catalog_rejects_unknown_scope_before_loading(hass) -> None:
+async def test_management_scope_catalog_rejects_unknown_scope_before_loading(
+    hass,
+) -> None:
     with pytest.raises(ValueError, match="scope_kind"):
         await management_loading_performance.async_scope_catalog(
             hass,
@@ -254,7 +258,7 @@ async def test_rule_pack_append_enforces_destination_rule_limit() -> None:
     target._rules = [{} for _ in range(request_rule_packs.MAX_RULES)]
     source = RequestRules(MemoryStore({"rules": [local_rule("Imported")]}))
     await source.async_initialize()
-    prepared = validate_rule_pack(export_rule_pack(source, "all"))
+    prepared = validate_rule_pack(export_rule_pack(source, "all", reviewed=True))
 
     with pytest.raises(ValueError, match="Request Rule limit reached"):
         await async_append_rule_pack(

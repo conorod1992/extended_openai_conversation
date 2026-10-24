@@ -5,49 +5,51 @@ import pytest
 
 from ci.historical_runtime_identity import identity
 from ci.install_ha_test_plugin import verify_wheel
-from ci.resolve_ha_test_plugin import (
-    CORE_SHA,
-    GENERATED_HA_VERSION,
-    GENERATED_PLUGIN_VERSION,
-    GENERATOR_SHA,
-    resolve_ha_test_plugin,
-)
+from ci.resolve_ha_test_plugin import GENERATED_FIXTURES, resolve_ha_test_plugin
 
 
-def test_release_day_bridge_yields_to_exact_published_fixtures():
+@pytest.mark.parametrize("ha_version", list(GENERATED_FIXTURES))
+def test_release_day_bridge_yields_to_exact_published_fixtures(ha_version):
+    fixture = GENERATED_FIXTURES[ha_version]
     project = {"releases": {"0.13.371": [{"yanked": False}]}}
     assert (
         resolve_ha_test_plugin(
-            GENERATED_HA_VERSION,
+            ha_version,
             project,
-            lambda _: {"info": {"requires_dist": [f"homeassistant=={GENERATED_HA_VERSION}"]}},
+            lambda _: {"info": {"requires_dist": [f"homeassistant=={ha_version}"]}},
         )
         == "0.13.371"
     )
     assert (
         resolve_ha_test_plugin(
-            GENERATED_HA_VERSION,
+            ha_version,
             project,
             lambda _: {"info": {"requires_dist": ["homeassistant==2026.10.0b4"]}},
         )
-        == GENERATED_PLUGIN_VERSION
+        == fixture.plugin_version
     )
 
 
-@pytest.mark.parametrize("drift", [None, "metadata", "fixtures", "provenance"])
-def test_generated_fixtures_reject_beta_relabeling_or_wrong_source(tmp_path, drift):
+@pytest.mark.parametrize("ha_version", list(GENERATED_FIXTURES))
+@pytest.mark.parametrize(
+    "drift", [None, "metadata", "fixtures", "provenance", "generator", "plugin"]
+)
+def test_generated_fixtures_reject_beta_relabeling_or_wrong_source(
+    tmp_path, drift, ha_version
+):
+    fixture = GENERATED_FIXTURES[ha_version]
     wheel = tmp_path / "fixtures.whl"
-    ha_pin = "2026.10.0b4" if drift == "metadata" else GENERATED_HA_VERSION
-    patch = "0b4" if drift == "fixtures" else GENERATED_HA_VERSION.rsplit(".", 1)[-1]
+    ha_pin = "2026.10.0b4" if drift == "metadata" else ha_version
+    patch = "0b4" if drift == "fixtures" else ha_version.rsplit(".", 1)[-1]
     provenance = {
-        "generator_sha": GENERATOR_SHA,
-        "core_sha": "a" * 40 if drift == "provenance" else CORE_SHA,
-        "homeassistant": GENERATED_HA_VERSION,
+        "generator_sha": "b" * 40 if drift == "generator" else fixture.generator_sha,
+        "core_sha": "a" * 40 if drift == "provenance" else fixture.core_sha,
+        "homeassistant": ha_version,
     }
     with zipfile.ZipFile(wheel, "w") as package:
         package.writestr(
             "fixtures.dist-info/METADATA",
-            f"Version: {GENERATED_PLUGIN_VERSION}\nRequires-Dist: homeassistant=={ha_pin}\n",
+            f"Version: {'0.0.0' if drift == 'plugin' else fixture.plugin_version}\nRequires-Dist: homeassistant=={ha_pin}\n",
         )
         package.writestr(
             "pytest_homeassistant_custom_component/const.py",
@@ -59,9 +61,9 @@ def test_generated_fixtures_reject_beta_relabeling_or_wrong_source(tmp_path, dri
         )
     if drift:
         with pytest.raises(RuntimeError):
-            verify_wheel(wheel)
+            verify_wheel(wheel, fixture)
     else:
-        verify_wheel(wheel)
+        verify_wheel(wheel, fixture)
 
 
 def test_ha_test_plugin_resolver_uses_newest_exact_ha_compatibility():
@@ -162,3 +164,21 @@ def test_historical_runtime_identity_covers_python_ha_base_and_release_tag(tmp_p
     assert all(
         item["inputs_sha256"] != baseline["inputs_sha256"] for item in changed_values
     )
+
+
+@pytest.mark.parametrize("ha_version", list(GENERATED_FIXTURES))
+def test_generated_bridge_does_not_accept_another_release(monkeypatch, ha_version):
+    from ci import install_ha_test_plugin as installer
+
+    fixture = GENERATED_FIXTURES[ha_version]
+    monkeypatch.setattr(
+        installer.sys, "argv", ["installer", "2026.10.99", fixture.plugin_version]
+    )
+    with pytest.raises(SystemExit) as error:
+        installer.main()
+    assert error.value.code == 2
+
+
+def test_release_day_bridge_does_not_guess_future_releases():
+    with pytest.raises(RuntimeError, match="No published"):
+        resolve_ha_test_plugin("2026.10.4", {"releases": {}})

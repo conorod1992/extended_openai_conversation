@@ -23,6 +23,7 @@ from custom_components.extended_openai_conversation_responses.delayed_tools impo
     tool_definition_fingerprint,
 )
 from tests.test_backup import _document
+from tests.helpers import legacy_agent_export
 
 TOOL_YAML = """spec:
   name: dated_reminder
@@ -190,7 +191,7 @@ async def test_unselected_configuration_preserves_yaml_date_in_restore_rollback(
     incoming["sections"]["persistent_memory"] = {"memories": []}
     selected = frozenset({"persistent_memory"})
     imported = transfer.inspect_transfer(
-        incoming, subentry.subentry_id, sections=selected
+        backup_transfer._redacted_document(incoming), subentry.subentry_id, sections=selected
     )
     target, _preserved, _missing = transfer._prepared_restore_from_selection(
         rollback, imported, selected
@@ -221,7 +222,7 @@ async def test_yaml_date_export_redacts_and_restores_secrets(saved_date_tool):
     tools = yaml.safe_load(subentry.data["functions"])
     tools[-1]["function"]["variables"]["password"] = "local-credential"
     subentry.data = {**subentry.data, "functions": yaml.safe_dump(tools)}
-    document = json.loads(json.dumps(management_ui._export_agent(subentry)))
+    document = json.loads(json.dumps(legacy_agent_export(subentry)))
     exported = yaml.safe_load(document["config"]["functions"])
     assert exported[-1]["function"]["variables"]["password"] == REDACTED_SECRET_SENTINEL
     assert "local-credential" not in json.dumps(document)

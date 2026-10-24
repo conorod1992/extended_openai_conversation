@@ -75,6 +75,7 @@ from .request_rule_patterns import (
     sentence_capture_names,
     validate_match_input,
 )
+from .script_payload import effective_service_payload, set_effective_service_field
 from .script_structure import (
     MAX_SCRIPT_DEPTH,
     MAX_SCRIPT_NODES,
@@ -82,8 +83,10 @@ from .script_structure import (
     iter_script_actions,
     normalize_script_containers as _normalize_script_containers,
     rewrite_script_actions,
+    script_selector_fields,
 )
 from .strict_store import PropagatingWriteStore
+from .template_diagnostics import private_template_diagnostics
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -618,6 +621,10 @@ class RequestRules:
             "diagnostics": dict(self._diagnostics),
         }
 
+    def rule_snapshot(self, rule_id: str) -> dict[str, Any]:
+        """Detach one exact stored Rule for field-only management validation."""
+        return deepcopy(self._rules[self._index(rule_id)])
+
     def function_references(self, function_name: str) -> list[dict[str, str]]:
         """Return references throughout the native script tree."""
         from .function_dependency_integrity import recursive_function_references
@@ -832,6 +839,7 @@ class RequestRules:
             raw["id"] = rule_id
             raw.setdefault("order", self._rules[index]["order"])
             previous = self._rules[index]
+            _require_exact_integer_update(previous, raw)
             preserve_inactive = self.preserves_inactive_pattern(rule_id, raw)
             rule = validate_rule(
                 _assign_missing_result_step_ids(raw),
@@ -1046,6 +1054,7 @@ class RequestRules:
                 }
             )
 
+    @private_template_diagnostics
     async def _async_conditions_pass(
         self, hass: HomeAssistant, match: RuleMatch
     ) -> bool:
@@ -1216,11 +1225,6 @@ class RequestRules:
         total_pattern_states = 0
         for stored_rule in self._rules:
             rule = deepcopy(stored_rule)
-            try:
-                _validate_action(rule["action_type"], rule["action"])
-            except ValueError as err:
-                diagnostics[rule["id"]] = f"Action is inactive: {err}"
-                continue
             settings = (
                 self._defaults
                 if rule["matching_behavior"] == "defaults"
@@ -1264,8 +1268,6 @@ class RequestRules:
                         err,
                     )
                     continue
-                if rule["enabled"]:
-                    total_pattern_states += state_count
             else:
                 phrases = [
                     CompiledPhrase(
@@ -1274,7 +1276,20 @@ class RequestRules:
                     for item in rule["phrases"]
                 ]
 
+            try:
+                _validate_action(
+                    rule["action_type"],
+                    rule["action"],
+                    capture_names=phrase_slots[0]
+                    if rule["match_type"] == "sentence_pattern"
+                    else set(),
+                )
+            except ValueError as err:
+                diagnostics[rule["id"]] = f"Action is inactive: {err}"
+                continue
             if rule["enabled"]:
+                if rule["match_type"] == "sentence_pattern":
+                    total_pattern_states += state_count
                 compiled_rules.extend(
                     (rule, dict(settings), phrase) for phrase in phrases
                 )
@@ -1748,9 +1763,10 @@ def validate_rule(
     if action_type == "local_action":
         _validate_result_dependencies(action, set(slot_names))
         aliases = {
-            step.get("data", {}).get("result_alias")
+            data.get("result_alias")
             for step in action["actions"]
-            if isinstance(step, Mapping) and isinstance(step.get("data"), Mapping)
+            if isinstance(step, Mapping)
+            and isinstance(data := effective_service_payload(step), Mapping)
         }
         referenced_slots -= aliases
     unknown_slots = referenced_slots - set(slot_names)
@@ -2135,7 +2151,7 @@ def _assign_missing_result_step_ids(value: Any) -> Any:
             if step.get("result_alias") and not step.get("step_id"):
                 step["step_id"] = uuid4().hex
             continue
-        data = step.get("data")
+        data = effective_service_payload(step)
         if (
             step.get("action", step.get("service"))
             == f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
@@ -2143,7 +2159,7 @@ def _assign_missing_result_step_ids(value: Any) -> Any:
             and data.get("result_alias")
             and not data.get("step_id")
         ):
-            data["step_id"] = uuid4().hex
+            set_effective_service_field(step, "step_id", uuid4().hex)
     return rule
 
 
@@ -2194,7 +2210,7 @@ def _validate_result_dependencies(action: Mapping[str, Any], slots: set[str]) ->
     step_ids: set[str] = set()
     top_level_ids = {id(step) for step in action["actions"]}
     for nested in _iter_script_actions(action["actions"]):
-        data = nested.get("data")
+        data = effective_service_payload(nested)
         if (
             _is_function_action(nested)
             and isinstance(data, Mapping)
@@ -2203,11 +2219,11 @@ def _validate_result_dependencies(action: Mapping[str, Any], slots: set[str]) ->
         ):
             raise ValueError("Function results can be captured only by top-level steps")
     all_aliases = {
-        step.get("data", {}).get("result_alias")
+        data.get("result_alias")
         for step in action["actions"]
         if isinstance(step, Mapping)
         and _is_function_action(step)
-        and isinstance(step.get("data"), Mapping)
+        and isinstance(data := effective_service_payload(step), Mapping)
     }
     for step in action["actions"]:
         if not isinstance(step, Mapping):
@@ -2220,7 +2236,7 @@ def _validate_result_dependencies(action: Mapping[str, Any], slots: set[str]) ->
                 "Function result must be produced by an earlier step: "
                 + ", ".join(sorted(missing))
             )
-        data = step.get("data", {})
+        data = effective_service_payload(step)
         if not _is_function_action(step) or not isinstance(data, Mapping):
             continue
         alias = data.get("result_alias")
@@ -2276,25 +2292,21 @@ def _prepare_concrete_captures(
     validation: bool = False,
     concrete: bool = False,
     key: str | None = None,
-    native_context: bool = True,
+    _selectors: dict[int, frozenset[str]] | None = None,
 ) -> Any:
     """Resolve concrete HA selectors; leave native lazy fields to HA templates."""
+    if _selectors is None:
+        _selectors = script_selector_fields(value)
     if isinstance(value, Mapping):
-        selector_context = native_context and (
-            "condition" in value or "platform" in value or "trigger" in value
-        )
+        selector_fields = _selectors.get(id(value), frozenset())
         return {
             name: _prepare_concrete_captures(
                 item,
                 slots,
                 validation=validation,
                 key=str(name),
-                concrete=(
-                    selector_context and name in {"entity_id", "zone", "device_id"}
-                )
-                or (native_context and name == "scene"),
-                native_context=native_context
-                and name not in {"data", "data_template", "variables", "target"},
+                concrete=name in selector_fields,
+                _selectors=_selectors,
             )
             for name, item in value.items()
         }
@@ -2306,7 +2318,7 @@ def _prepare_concrete_captures(
                 validation=validation,
                 concrete=concrete,
                 key=key,
-                native_context=native_context,
+                _selectors=_selectors,
             )
             for item in value
         ]
@@ -2355,11 +2367,8 @@ def _prepare_concrete_captures(
             and key in {"entity_id", "scene", "zone"}
             and rendered == "request_rule_template"
         ):
-            rendered = (
-                "zone.request_rule_template"
-                if key == "zone"
-                else "light.request_rule_template"
-            )
+            domain = {"zone": "zone", "scene": "scene"}.get(key, "light")
+            rendered = f"{domain}.request_rule_template"
         return rendered
     if validation:
         # Native HA accepts templates only in its supported lazy fields. Do not
@@ -2540,6 +2549,34 @@ def _bounded_function_result(
     return result
 
 
+def _require_exact_integer_update(previous: Any, updated: Any) -> None:
+    """Reject lossy whole-rule edits without changing private restoration data.
+
+    Browser JSON numbers cannot represent every stored integer. A native caller
+    can retain an exact value, but a rounded/removed/retyped value must not silently
+    replace it. Field-only toggles hydrate their full candidate on the server.
+    """
+    pending = [(previous, updated)]
+    while pending:
+        before, after = pending.pop()
+        if type(before) is int and abs(before) > 2**53 - 1:
+            if type(after) is not int or after != before:
+                raise ValueError(
+                    "This edit would change an integer outside the browser's exact "
+                    "range. Reload the Rule; enable/disable remains available. "
+                    "Use a lossless private import to change those values."
+                )
+        elif isinstance(before, Mapping):
+            mapping = after if isinstance(after, Mapping) else {}
+            pending.extend((item, mapping.get(key)) for key, item in before.items())
+        elif isinstance(before, list):
+            items = after if isinstance(after, list) else []
+            pending.extend(
+                (item, items[index] if index < len(items) else None)
+                for index, item in enumerate(before)
+            )
+
+
 class RuleResponseValueError(ValueError):
     """An unavailable, validated variable/path in a rule's final response."""
 
@@ -2604,11 +2641,11 @@ def _native_result_sequence(
 ) -> list[dict[str, Any]]:
     """Keep HA variables and waits in one script while exposing captured results."""
     aliases = {
-        step["data"]["result_alias"]
+        data["result_alias"]
         for step in actions
         if _is_function_action(step)
-        and isinstance(step.get("data"), Mapping)
-        and step["data"].get("result_alias")
+        and isinstance(data := effective_service_payload(step), Mapping)
+        and data.get("result_alias")
     }
     # Each frozen script owns its helper; captured/native names cannot shadow it.
     lookup_name = f"__eoai_result_value_{uuid4().hex}"
@@ -2642,7 +2679,7 @@ def _native_result_sequence(
     sequence: list[dict[str, Any]] = []
     for step in actions:
         rendered = native_templates(_prepare_concrete_captures(step, slots))
-        data = step.get("data")
+        data = effective_service_payload(step)
         alias = (
             data.get("result_alias")
             if _is_function_action(step) and isinstance(data, Mapping)
@@ -2819,7 +2856,7 @@ def _guest_script_allowed(
             if not isinstance(action_name, str):
                 return False
             if action_name == f"{DOMAIN}.{SERVICE_CALL_FUNCTION}":
-                data = item.get("data", {})
+                data = effective_service_payload(item)
                 if not isinstance(data, Mapping):
                     return False
                 function_name = data.get("function")
@@ -2885,7 +2922,7 @@ async def _async_guest_functions_allowed(
                 if function_tool_enabled(tool) and tool["spec"]["name"] not in disabled
             ]
         data = resolve_slot_values(
-            _resolve_guest_slot_templates(step.get("data", {}), slots), slots
+            _resolve_guest_slot_templates(effective_service_payload(step), slots), slots
         )
         if not isinstance(data, Mapping):
             return False
@@ -3459,6 +3496,7 @@ async def async_evaluate_rule(
     return last
 
 
+@private_template_diagnostics
 async def _async_evaluate_matched_rule(
     hass: HomeAssistant,
     match: RuleMatch,
@@ -3515,8 +3553,8 @@ async def _async_evaluate_matched_rule(
             captures_results = any(
                 isinstance(step, Mapping)
                 and _is_function_action(step)
-                and isinstance(step.get("data"), Mapping)
-                and step["data"].get("result_alias")
+                and isinstance(data := effective_service_payload(step), Mapping)
+                and data.get("result_alias")
                 for step in executable_actions
             )
             alias_bindings: dict[str, tuple[str, str]] = {}
@@ -3714,7 +3752,14 @@ async def _async_evaluate_matched_rule(
                 "Review the rule's Success response/template in Extended OpenAI > Request Rules. "
                 "Actions were not retried."
             )
-            _LOGGER.warning("%s", message)
+            log_handled_failure(
+                _LOGGER,
+                f"Request Rule '{rule.get('name') or rule['id']}': action execution "
+                "succeeded, but response construction failed. Review the rule's "
+                "Success response/template in Extended OpenAI > Request Rules. "
+                "Actions were not retried.",
+                err,
+            )
             return RuleEvaluation(
                 match,
                 True,
@@ -3751,7 +3796,7 @@ async def _async_evaluate_matched_rule(
     effort = (
         _resolved_routing_value(
             action["reasoning_effort"], match.slots, "reasoning effort"
-        )
+        ).lower()
         if action["reasoning_effort"]
         else None
     )
@@ -3804,6 +3849,18 @@ async def _async_evaluate_matched_rule(
     if action["scope"] == "conversation" and (
         can_retain_conversation_route is None or can_retain_conversation_route()
     ):
+        # A request reset/override can mask an incompatible retained sibling.
+        # Validate what the next turn will inherit before mutating runtime state.
+        retained = {**runtime.get(session_id, timeout_minutes), **override}
+        if request_options is not None:
+            validate_routed_request_options(
+                {**request_options, **retained}, entry_data or {}
+            )
+        elif retained.get(CONF_REASONING_EFFORT):
+            _validate_effective_reasoning(
+                retained.get(CONF_CHAT_MODEL, configured_model),
+                retained[CONF_REASONING_EFFORT],
+            )
         runtime.set(session_id, override, timeout_minutes)
         request_override = None
     else:

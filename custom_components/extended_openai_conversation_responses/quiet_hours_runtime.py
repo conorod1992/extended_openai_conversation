@@ -506,7 +506,7 @@ class QuietHoursManager:
         async with self._lock:
             self._cancel_scheduled_callbacks()
             try:
-                await self._async_restore_locked()
+                await self._async_restore_locked(preserve_released=True)
             finally:
                 # Recovery can rearm an authoritative generation while stopping.
                 self._cancel_scheduled_callbacks()
@@ -577,18 +577,42 @@ class QuietHoursManager:
                         period_started_at=new_period.start.isoformat(),
                         period_ends_at=new_period.end.isoformat(),
                     )
-                    self._active["observed_controls"] = list(
-                        self._active.get("controls", {})
+                    # Saving a policy must not erase observations that released
+                    # ownership or protect an unapplied intent's baseline. Only
+                    # a changed target can reconsider unowned controls of that
+                    # kind; schedule/other-control edits do not reclaim them.
+                    changed_domains = set()
+                    if candidate.max_volume != previous.max_volume:
+                        changed_domains.add("media_player")
+                    if candidate.wake_sound != previous.wake_sound:
+                        changed_domains.add("switch")
+                    controls = self._active.get("controls", {})
+                    observed = list(
+                        dict.fromkeys(
+                            [*self._active.get("observed_controls", []), *controls]
+                        )
                     )
+                    self._active["observed_controls"] = observed = [
+                        entity_id
+                        for entity_id in observed
+                        if entity_id in controls
+                        or entity_id.partition(".")[0] not in changed_domains
+                    ]
                     if "observed_identities" in self._active:
                         self._active["observed_identities"] = {
                             key: identity
                             for key, identity in self._active[
                                 "observed_identities"
                             ].items()
-                            if key in self._active["controls"]
+                            if key in observed
                         }
-                    self._active["pending_controls"] = {}
+                    self._active["pending_controls"] = {
+                        key: intent
+                        for key, intent in self._active.get(
+                            "pending_controls", {}
+                        ).items()
+                        if key in observed
+                    }
                     await self._async_save_control_state_locked()
             except BaseException as err:
                 failure = err
@@ -1409,10 +1433,18 @@ class QuietHoursManager:
             return left is not None and abs(left - right) <= _VOLUME_TOLERANCE
         return left is right
 
-    async def _async_restore_locked(self, *, pending_only: bool = False) -> None:
+    async def _async_restore_locked(
+        self, *, pending_only: bool = False, preserve_released: bool = False
+    ) -> None:
         if not await self._async_recover_configuration_locked():
             return
         await self._async_resolve_control_identities_locked()
+        # Manager replacement does not start a new policy period. Retain only
+        # independently released choices; successfully restored controls must
+        # remain eligible for the replacement manager's cold-start catch-up.
+        released = set((self._active or {}).get("observed_controls", [])) - set(
+            (self._active or {}).get("controls", {})
+        )
         if self._active is not None:
             controls = self._active.get("controls", {})
             for entity_id, control in list(controls.items()):
@@ -1428,6 +1460,7 @@ class QuietHoursManager:
                     # Ending a period must not restore a value merely because an
                     # unacknowledged intent happens to match an independent effect.
                     controls.pop(entity_id)
+                    released.add(entity_id)
         if self._active is None:
             return
         controls = self._active.get("controls", {})
@@ -1459,9 +1492,11 @@ class QuietHoursManager:
                         current = _current_volume(self.hass, entity_id)
                         if current is None:
                             continue
-                        if math.isclose(
+                        if not math.isclose(
                             current, float(quiet), abs_tol=_VOLUME_TOLERANCE
-                        ) and not math.isclose(
+                        ):
+                            released.add(entity_id)
+                        elif not math.isclose(
                             current, float(original), abs_tol=_VOLUME_TOLERANCE
                         ):
                             await self._async_set_volume(entity_id, float(original))
@@ -1473,7 +1508,9 @@ class QuietHoursManager:
                         current_switch = _current_switch(self.hass, entity_id)
                         if current_switch is None:
                             continue
-                        if current_switch is quiet and current_switch is not original:
+                        if current_switch is not quiet:
+                            released.add(entity_id)
+                        elif current_switch is not original:
                             await self._async_set_switch(entity_id, original)
                     # A confirmed independent value releases ownership too.
                     controls.pop(entity_id)
@@ -1486,8 +1523,11 @@ class QuietHoursManager:
                         "restore", entity_id, str(kind), err, ownership="retained"
                     )
         if not pending_only:
-            if controls:
-                self._active["observed_controls"] = list(controls)
+            retained_observations = set(controls)
+            if preserve_released:
+                retained_observations.update(released)
+            if retained_observations:
+                self._active["observed_controls"] = sorted(retained_observations)
                 self._active["pending_controls"] = {}
             else:
                 self._active = None

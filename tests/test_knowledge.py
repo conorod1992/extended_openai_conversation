@@ -305,8 +305,10 @@ async def test_search_and_catalog_reuse_precomputed_lexical_features(
 
     original_tokens = knowledge._tokens
     original_normalize = knowledge._normalize
+    original_catalog_normalize = knowledge._normalize_catalog
     token_inputs: list[str] = []
     normalize_inputs: list[str] = []
+    catalog_normalize_inputs: list[str] = []
 
     def tracked_tokens(value: str) -> set[str]:
         token_inputs.append(value)
@@ -316,8 +318,13 @@ async def test_search_and_catalog_reuse_precomputed_lexical_features(
         normalize_inputs.append(value)
         return original_normalize(value)
 
+    def tracked_catalog_normalize(value: str) -> str:
+        catalog_normalize_inputs.append(value)
+        return original_catalog_normalize(value)
+
     monkeypatch.setattr(knowledge, "_tokens", tracked_tokens)
     monkeypatch.setattr(knowledge, "_normalize", tracked_normalize)
+    monkeypatch.setattr(knowledge, "_normalize_catalog", tracked_catalog_normalize)
 
     assert [item.source_id for item in await library.async_search("concrete wall")] == [
         source.source_id
@@ -326,7 +333,8 @@ async def test_search_and_catalog_reuse_precomputed_lexical_features(
     assert [item["source_id"] for item in catalog["sources"]] == [source.source_id]
 
     assert token_inputs == ["concrete wall", "masonry tools"]
-    assert normalize_inputs == ["concrete wall", "masonry tools"]
+    assert normalize_inputs == ["concrete wall"]
+    assert catalog_normalize_inputs == ["masonry tools"]
 
 
 async def test_update_rebuilds_precomputed_lexical_features() -> None:

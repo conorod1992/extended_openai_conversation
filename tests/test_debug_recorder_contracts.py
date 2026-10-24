@@ -143,7 +143,7 @@ def test_provider_request_error_export_redacts_credentials() -> None:
     assert "secret-password" not in serialized
     assert "super-secret-token" not in serialized
     assert "super-secret-key" not in serialized
-    assert "[redacted]" in serialized
+    assert exported["error"]["message"] == "Provider request failed"
 
 
 def test_debug_export_handles_non_json_native_values() -> None:

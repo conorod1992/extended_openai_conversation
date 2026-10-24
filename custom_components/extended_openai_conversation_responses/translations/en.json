@@ -150,6 +150,9 @@
             },
             "abort": {
                 "agent_configuration_managed_in_panel": "Conversation-agent behaviour is managed from Extended OpenAI > Configuration in the sidebar."
+            },
+            "error": {
+                "invalid_name": "Enter an agent name of at most 255 characters."
             }
         },
         "ai_task_data": {
@@ -407,6 +410,12 @@
         "reload_skills": {
             "name": "Reload skills",
             "description": "Reload skills from the skills directory."
+        }
+    },
+    "issues": {
+        "retired_model": {
+            "title": "Extended OpenAI assistant uses a retired model",
+            "description": "The assistant **{assistant}** requested **{model}**. OpenAI scheduled this model for shutdown on **{shutdown_at}**, and the provider has now rejected it as unavailable. Review Model & responses and Request Rule model overrides in Extended OpenAI Conversation."
         }
     }
 }
