@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import re
 import sys
@@ -10,12 +11,42 @@ from typing import Any
 from urllib.request import Request, urlopen
 
 # Release-day bridge: the upstream daily generator has not published fixtures
-# for this Core release yet. Regenerate from these immutable upstream sources;
+# for a Core release yet. Regenerate only the reviewed immutable source pairs;
 # never relabel beta fixtures or silently select an older stable runtime.
 GENERATED_HA_VERSION = "2026.10.2"
 GENERATOR_SHA = "aacf4b5e11e16da8f6ccc67fe3729441a51c282e"
 CORE_SHA = "8d7fd8b68677c2585be36ec86043308f403875b8"
 GENERATED_PLUGIN_VERSION = "0.13.370+eoai.ha2026.10.2.gaacf4b5e.c8d7fd8b6"
+
+
+@dataclass(frozen=True, slots=True)
+class GeneratedFixture:
+    """An explicitly reviewed released Core/generator pair."""
+
+    ha_version: str
+    plugin_version: str
+    core_sha: str
+    generator_sha: str = GENERATOR_SHA
+
+    @property
+    def provenance(self) -> dict[str, str]:
+        return {
+            "generator_sha": self.generator_sha,
+            "core_sha": self.core_sha,
+            "homeassistant": self.ha_version,
+        }
+
+
+GENERATED_FIXTURES = {
+    GENERATED_HA_VERSION: GeneratedFixture(
+        GENERATED_HA_VERSION, GENERATED_PLUGIN_VERSION, CORE_SHA
+    ),
+    "2026.10.3": GeneratedFixture(
+        "2026.10.3",
+        "0.13.370+eoai.ha2026.10.3.gaacf4b5e.c1f214b84",
+        "1f214b8461dd1fbbd66e10765c6905f49d3c1d86",
+    ),
+}
 
 
 def _numeric_version(value: str) -> tuple[int, ...] | None:
@@ -59,8 +90,8 @@ def resolve_ha_test_plugin(
             if match and match.group(1) == ha_version:
                 return version
 
-    if ha_version == GENERATED_HA_VERSION:
-        return GENERATED_PLUGIN_VERSION
+    if fixture := GENERATED_FIXTURES.get(ha_version):
+        return fixture.plugin_version
 
     raise RuntimeError(
         f"No published pytest-homeassistant-custom-component release pins "
