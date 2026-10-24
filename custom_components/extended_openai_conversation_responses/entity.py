@@ -76,6 +76,7 @@ from .context_usage_hardening import (
     _trace_provider_usage,
     async_prepared_input_revision,
     async_recover_trailing_usage,
+    async_validate_tool_call_ids_with_usage,
     estimate_prepared_request,
     normalized_chat_stream,
     normalized_responses_stream,
@@ -143,7 +144,6 @@ from .tool_exchange import (
     append_unresolved_tool_results,
     async_execute_tool_exchange,
     retained_tool_calls_since,
-    validate_tool_call_ids,
 )
 from .usage import RequestUsage, UsageManager, extract_usage
 
@@ -1080,6 +1080,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     await self._truncate_message_history(
                         chat_log,
                         observed_input_tokens=round_estimate,
+                        defer_summary=False,
                         estimate=estimate_history,
                         model=model,
                         api_mode=api_mode,
@@ -1990,7 +1991,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             external=True,  # Mark as external so ChatLog doesn't try to execute
                         )
                     )
-                validate_tool_call_ids(tool_calls_list)
+                await async_validate_tool_call_ids_with_usage(
+                    tool_calls_list, result, request_usage
+                )
                 yield {"tool_calls": tool_calls_list}
                 current_tool_calls.clear()
             if finish_reason in {"stop", "tool_calls", "function_call"}:
@@ -2207,7 +2210,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                 external=True,
                             )
                         )
-                        validate_tool_call_ids(completed_calls)
+                        await async_validate_tool_call_ids_with_usage(
+                            completed_calls, result, request_usage
+                        )
                         yield {
                             # SDK-native calls retain their original provider item ID
                             # and arguments, alongside HA's executable call record.
@@ -2409,13 +2414,14 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         chat_log: conversation.ChatLog,
         *,
         observed_input_tokens: int | None = None,
+        defer_summary: bool = True,
         estimate: HistoryEstimator | None = None,
         model: str | None = None,
         api_mode: str | None = None,
     ) -> None:
         """Truncate message history based on strategy."""
         await async_prepare_tool_results(chat_log.content)
-        if await schedule_context_summary(
+        if defer_summary and await schedule_context_summary(
             self,
             chat_log,
             observed_input_tokens=observed_input_tokens,

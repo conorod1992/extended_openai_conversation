@@ -130,3 +130,143 @@ async def test_truncated_streamed_tool_call_never_executes_and_next_request_reco
         expected_path,
         expected_path,
     ]
+
+
+@pytest.mark.parametrize("mode", ["chat_completions", "responses"])
+async def test_duplicate_call_ids_recover_trailing_usage_without_executing(
+    hass, monkeypatch, mode
+):
+    from tests_real_ha.test_provider_wire_e2e import _response_object
+    from custom_components.extended_openai_conversation_responses import (
+        context_usage_hardening as hardening,
+    )
+
+    # This is a wire/accounting test, not a wall-clock benchmark: the real SDK's
+    # cold Responses model construction can exceed 200 ms on shared CI runners.
+    # Dedicated tests enforce the production deadline, event limit, cancellation
+    # and rejection of late accounting independently of SDK parsing speed.
+    monkeypatch.setattr(hardening, "_TRAILING_USAGE_TIMEOUT", 5)
+    arguments = json.dumps(
+        {
+            "list": [
+                {
+                    "domain": "light",
+                    "service": "turn_off",
+                    "service_data": {"entity_id": ["light.provider_wire"]},
+                }
+            ]
+        }
+    )
+    if mode == "chat_completions":
+        usage = {
+            "prompt_tokens": 223,
+            "completion_tokens": 17,
+            "total_tokens": 240,
+            "prompt_tokens_details": {"cached_tokens": 11},
+            "completion_tokens_details": {"reasoning_tokens": 3},
+        }
+        base = {
+            "id": "duplicate",
+            "object": "chat.completion.chunk",
+            "created": 0,
+            "model": "gpt-5.6",
+        }
+        events = [
+            {
+                **base,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {
+                            "role": "assistant",
+                            "tool_calls": [
+                                {
+                                    "index": i,
+                                    "id": "same-call",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "execute_services",
+                                        "arguments": arguments,
+                                    },
+                                }
+                                for i in range(2)
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ],
+            },
+            {**base, "choices": [], "usage": usage},
+        ]
+        stream = (
+            "".join(f"data: {json.dumps(e)}\n\n" for e in events).encode()
+            + b"data: [DONE]\n\n"
+        )
+    else:
+        items = [
+            {
+                "id": f"fc-{i}",
+                "type": "function_call",
+                "call_id": "same-call",
+                "name": "execute_services",
+                "arguments": arguments,
+                "status": "completed",
+            }
+            for i in range(2)
+        ]
+        events = []
+        for i, item in enumerate(items):
+            events.extend(
+                [
+                    {
+                        "type": "response.output_item.added",
+                        "output_index": i,
+                        "item": {**item, "arguments": "", "status": "in_progress"},
+                        "sequence_number": i * 2,
+                    },
+                    {
+                        "type": "response.output_item.done",
+                        "output_index": i,
+                        "item": item,
+                        "sequence_number": i * 2 + 1,
+                    },
+                ]
+            )
+        response = _response_object("duplicate", items)
+        response["usage"] = {
+            "input_tokens": 223,
+            "output_tokens": 17,
+            "total_tokens": 240,
+            "input_tokens_details": {"cached_tokens": 11},
+            "output_tokens_details": {"reasoning_tokens": 3},
+        }
+        events.append(
+            {"type": "response.completed", "response": response, "sequence_number": 4}
+        )
+        stream = "".join(f"data: {json.dumps(e)}\n\n" for e in events).encode()
+    agent = await _agent(hass, mode)
+    calls = await _prepare_service(hass)
+    text = _responses_sse_text if mode == "responses" else _chat_sse_text
+    _install_wire(monkeypatch, agent, [stream, text("Recovered")])
+    failed = await _say(hass, agent)
+    assert failed.response.error_code is not None
+    assert calls == []
+    request = agent._usage.requests[-1]
+    assert not request.successful
+    assert (request.input_tokens, request.output_tokens, request.total_tokens) == (
+        223,
+        17,
+        240,
+    )
+    assert (request.cached_input_tokens, request.reasoning_tokens) == (11, 3)
+    run = agent._usage.runs[-1]
+    assert (run.request_count, run.failed_request_count, run.total_tokens) == (
+        1,
+        1,
+        240,
+    )
+    from tests_real_ha.test_cross_feature_acceptance import _say as say_followup
+
+    recovered = await say_followup(hass, agent, "continue", failed.conversation_id)
+    assert _speech(recovered) == "Recovered"
+    assert calls == []

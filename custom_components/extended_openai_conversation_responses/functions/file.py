@@ -26,6 +26,7 @@ from ..const import (
     DOMAIN,
     FILE_READ_SIZE_LIMIT,
 )
+from ..execution_outcomes import execution_completed, execution_started
 from ..function_execution import backend_failure
 from ..operational_errors import log_handled_failure
 from ..skills import SkillManager
@@ -402,11 +403,19 @@ class WriteFileFunction(FileFunction):
                 hass, self.get_working_dir(hass), target=target_path
             )
             async with _get_edit_lock(hass, target_path):
+                receipt = execution_started(
+                    kind="file_write",
+                    prepared={
+                        "path": os.path.normcase(str(target_path)),
+                        "content": content,
+                    },
+                )
                 bytes_written = await _async_settle_native_edit(
                     hass.async_add_executor_job(
                         _atomic_replace_text, target_path, content
                     )
                 )
+                execution_completed(receipt)
 
         except Exception as err:
             log_handled_failure(_LOGGER, "Function Tool file write failed", err)
@@ -489,6 +498,14 @@ class EditFileFunction(FileFunction):
                     + new_text
                     + content[first_match + len(old_text) :]
                 )
+                receipt = execution_started(
+                    kind="file_edit",
+                    prepared={
+                        "path": os.path.normcase(str(target_path)),
+                        "old_text": old_text,
+                        "new_text": new_text,
+                    },
+                )
                 await _async_settle_native_edit(
                     hass.async_add_executor_job(
                         _atomic_replace_text_if_unchanged,
@@ -497,6 +514,7 @@ class EditFileFunction(FileFunction):
                         fingerprint,
                     )
                 )
+                execution_completed(receipt)
 
         except Exception as err:
             log_handled_failure(_LOGGER, "Function Tool file edit failed", err)

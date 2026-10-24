@@ -163,3 +163,16 @@ labels, caller contexts and origin selectors remain delivery metadata. Origin
 exclusion has already been applied to the resolved recipients. A failed provider
 continuation therefore cannot repeat the same queued announcement through another
 route. Successful acknowledgement still permits a deliberate later repetition.
+
+
+## File mutations
+
+File edits and writes record their prepared effect immediately before dispatch,
+under the existing canonical-path lock. Identity includes the resolved path,
+operation type and rendered content (or rendered old/new text for an edit).
+Equivalent path spellings, template defaults and Composite Function wrappers
+therefore cannot repeat an unacknowledged operation after a failed continuation.
+Different prepared operations remain distinct; a successful provider
+acknowledgment permits intentional repetition. Path authorization, atomic writes,
+edit conflict detection and cancellation settlement remain enforced at the file
+backend boundary.

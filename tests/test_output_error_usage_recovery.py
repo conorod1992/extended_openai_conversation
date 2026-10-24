@@ -209,12 +209,24 @@ async def test_recovery_errors_cannot_replace_original_output_error(failure):
 @pytest.mark.parametrize("suppress_cancel", [False, True])
 async def test_recovery_deadline_excludes_late_usage(monkeypatch, suppress_cancel):
     monkeypatch.setattr(hardening, "_TRAILING_USAGE_TIMEOUT", 0.02)
+    # Expire the recovery clock only after the iterator has actually entered its
+    # stalled read. A heavily instrumented runner can otherwise exhaust 20 ms
+    # before starting collect(), never exercising cancellation suppression.
+    clock = [0.0]
+    monkeypatch.setattr(
+        hardening,
+        "asyncio",
+        SimpleNamespace(**(vars(asyncio) | {
+            "get_running_loop": lambda: SimpleNamespace(time=lambda: clock[0])
+        })),
+    )
     release, finished = asyncio.Event(), asyncio.Event()
 
     class Stalled(Stream):
         async def __anext__(self):
             if self._index == 0:
                 return await super().__anext__()
+            clock[0] = 1.0
             try:
                 try:
                     await release.wait()
@@ -377,3 +389,36 @@ async def test_recovery_has_an_event_limit(monkeypatch):
     await hardening.async_recover_trailing_usage(stream, usage)
     assert stream._index == 3
     assert usage.total_tokens == 150
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_duplicate_id_recovery_remains_bounded_and_cancellable(
+    monkeypatch, cancel
+):
+    monkeypatch.setattr(hardening, "_TRAILING_USAGE_TIMEOUT", 60 if cancel else 0.02)
+    reading, finished = asyncio.Event(), asyncio.Event()
+
+    class Stalled(Stream):
+        async def __anext__(self):
+            reading.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                finished.set()
+
+    calls = [SimpleNamespace(id="duplicate"), SimpleNamespace(id="duplicate")]
+    usage = RequestUsage()
+    task = asyncio.create_task(
+        hardening.async_validate_tool_call_ids_with_usage(calls, Stalled([]), usage)
+    )
+    try:
+        await asyncio.wait_for(reading.wait(), 1)
+        if cancel:
+            task.cancel()
+        with pytest.raises(asyncio.CancelledError if cancel else HomeAssistantError):
+            await asyncio.wait_for(task, 0.3)
+        await asyncio.wait_for(finished.wait(), 0.3)
+        assert usage.total_tokens == 0
+    finally:
+        if not task.done():
+            task.cancel()

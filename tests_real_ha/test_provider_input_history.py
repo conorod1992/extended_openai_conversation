@@ -560,3 +560,106 @@ async def test_full_handler_bulk_context_measurement_runs_in_workers(
         assert "Older question" not in json.dumps(wire.requests[0]["body"])
     assert calls and main not in [thread for thread, _ in calls]
     assert len(calls) <= 15
+
+
+@pytest.mark.parametrize("mode", ["chat_completions", "responses"])
+async def test_foreground_preflight_summary_belongs_to_current_usage_run(hass, mode):
+    from tests_real_ha.test_provider_wire_e2e import _response_object
+
+    agent = await _contract_agent(
+        hass,
+        api_mode=mode,
+        prompt="System",
+        current_datetime_template="",
+        context_threshold=3000,
+        context_truncate_strategy="summarize",
+        memory_mode="off",
+        temporary_memory="off",
+    )
+    with async_get_chat_session(hass) as session:
+        cid = session.conversation_id
+        with conversation.async_get_chat_log(hass, session) as log:
+            log.content.extend(
+                [
+                    conversation.UserContent(content="Old content " + "x" * 20000),
+                    conversation.AssistantContent(
+                        agent_id=agent.entity_id, content="Old answer"
+                    ),
+                ]
+            )
+    if mode == "responses":
+        summary = _response_object(
+            "summary",
+            [
+                {
+                    "id": "summary-message",
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "A compact summary",
+                            "annotations": [],
+                        }
+                    ],
+                }
+            ],
+        )
+        summary["usage"] = {
+            "input_tokens": 101,
+            "output_tokens": 7,
+            "total_tokens": 108,
+        }
+        events = [
+            json.loads(chunk.removeprefix("data: "))
+            for chunk in _responses_sse_text("Answer").decode().strip().split("\n\n")
+        ]
+        events[-1]["response"]["usage"] = {
+            "input_tokens": 11,
+            "output_tokens": 3,
+            "total_tokens": 14,
+        }
+        main = "".join(f"data: {json.dumps(e)}\n\n" for e in events).encode()
+    else:
+        summary = {
+            "id": "summary",
+            "object": "chat.completion",
+            "created": 0,
+            "model": "gpt-5.6",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "A compact summary"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 101,
+                "completion_tokens": 7,
+                "total_tokens": 108,
+            },
+        }
+        usage = {
+            "id": "main",
+            "object": "chat.completion.chunk",
+            "created": 0,
+            "model": "gpt-5.6",
+            "choices": [],
+            "usage": {"prompt_tokens": 11, "completion_tokens": 3, "total_tokens": 14},
+        }
+        main = _chat_sse_text("Answer").replace(
+            b"data: [DONE]", f"data: {json.dumps(usage)}\n\ndata: [DONE]".encode()
+        )
+    async with _transport(agent.entry, [(200, summary), main]) as wire:
+        result = await _say(hass, agent, "Current question", cid)
+        assert _speech(result) == "Answer"
+        wire.assert_complete(2)
+        assert "A compact summary" in json.dumps(wire.requests[1]["body"])
+    requests = agent._usage.requests
+    assert [r.request_stage for r in requests] == ["context_summary", "initial"]
+    run = agent._usage.runs[-1]
+    assert {r.run_id for r in requests} == {run.run_id}
+    assert (run.request_count, run.successful_request_count) == (2, 2)
+    assert (run.input_tokens, run.output_tokens, run.total_tokens) == (112, 10, 122)
+    assert agent._usage.totals.total_tokens == 122

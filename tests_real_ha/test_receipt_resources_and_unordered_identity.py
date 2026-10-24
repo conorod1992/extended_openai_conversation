@@ -167,3 +167,233 @@ async def test_total_receipt_record_eviction_refuses_actual_replay(hass, monkeyp
     guard.clear_unacknowledged_calls(entity, logs[0].conversation_id)
     await exchange(_args(0), name="other", chat_log=logs[0])
     assert len(effects) == 5
+
+
+@pytest.mark.parametrize("mode", ["chat_completions", "responses"])
+@pytest.mark.parametrize("path_kind", ["relative", "absolute", "symlink"])
+@pytest.mark.parametrize("composite", [False, True])
+async def test_prepared_file_edit_receipt_survives_aliases_and_wrappers(
+    hass, monkeypatch, mode, path_kind, composite
+):
+    from pathlib import Path
+    from custom_components.extended_openai_conversation_responses.const import DOMAIN
+    from tests_real_ha.test_provider_wire_e2e import (
+        _responses_sse_text,
+        _responses_sse_tool_call,
+    )
+
+    root = Path(hass.config.config_dir) / DOMAIN
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "sub").mkdir()
+    target = root / "note.txt"
+    target.write_text("seed", encoding="utf-8")
+    if path_kind == "symlink":
+        (root / "alias.txt").symlink_to(target)
+    path = {
+        "relative": "./sub/../note.txt",
+        "absolute": str(target),
+        "symlink": "alias.txt",
+    }[path_kind]
+    backend = {
+        "type": "edit_file",
+        "path": "{{ filename | default('note.txt') }}",
+        "old_text": "{{ old | default('seed') }}",
+        "new_text": "{{ new | default('seed!') }}",
+    }
+    tools = []
+    for name, implementation in (
+        ("edit_one", backend),
+        (
+            "edit_two",
+            {"type": "composite", "sequence": [backend]} if composite else backend,
+        ),
+    ):
+        tools.append(
+            {
+                "spec": {
+                    "name": name,
+                    "description": "Edit local note",
+                    "strict": False,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            key: {"type": "string"}
+                            for key in ("filename", "old", "new")
+                        },
+                    },
+                },
+                "function": implementation,
+            }
+        )
+    agent = await _agent(hass, api_mode=mode, **{CONF_FUNCTION_TOOLS: tools})
+    call = _responses_sse_tool_call if mode == "responses" else _chat_sse_tool_call
+    text = _responses_sse_text if mode == "responses" else _chat_sse_text
+    _install_wire(monkeypatch, agent, [text("Ready")])
+    seed = await _say(hass, agent, "hello")
+    _install_wire(
+        monkeypatch,
+        agent,
+        [
+            call("first", "edit_one", {}),
+            (
+                400,
+                {
+                    "error": {
+                        "message": "continuation failed",
+                        "type": "invalid_request_error",
+                    }
+                },
+            ),
+        ],
+    )
+    failed = await _say(hass, agent, "edit", seed.conversation_id)
+    assert failed.response.error_code is not None
+    assert target.read_text(encoding="utf-8") == "seed!"
+    # Match remains applicable to seed!, so a missing receipt really would edit again.
+    _install_wire(
+        monkeypatch,
+        agent,
+        [
+            call(
+                "retry",
+                "edit_two",
+                {
+                    "filename": path,
+                    "old": "seed",
+                    "new": "seed!",
+                },
+            )
+        ],
+    )
+    blocked = await _say(hass, agent, "retry", failed.conversation_id)
+    assert blocked.response.error_code is not None
+    assert target.read_text(encoding="utf-8") == "seed!"
+    _install_wire(
+        monkeypatch,
+        agent,
+        [
+            call(
+                "different",
+                "edit_two",
+                {
+                    "filename": path,
+                    "old": "seed!",
+                    "new": "seed",
+                },
+            ),
+            text("Acknowledged"),
+        ],
+    )
+    changed = await _say(hass, agent, "different edit", failed.conversation_id)
+    assert changed.response.error_code is None
+    assert target.read_text(encoding="utf-8") == "seed"
+    _install_wire(
+        monkeypatch, agent, [call("intentional", "edit_one", {}), text("Done")]
+    )
+    repeated = await _say(hass, agent, "edit again", failed.conversation_id)
+    assert repeated.response.error_code is None
+    assert target.read_text(encoding="utf-8") == "seed!"
+
+
+@pytest.mark.parametrize("mode", ["chat_completions", "responses"])
+@pytest.mark.parametrize("composite", [False, True])
+async def test_prepared_file_write_receipt_counts_dispatches(
+    hass, monkeypatch, mode, composite
+):
+    from pathlib import Path
+    from custom_components.extended_openai_conversation_responses.const import DOMAIN
+    from custom_components.extended_openai_conversation_responses.functions import (
+        file as files,
+    )
+    from tests_real_ha.test_provider_wire_e2e import (
+        _responses_sse_text,
+        _responses_sse_tool_call,
+    )
+
+    root = Path(hass.config.config_dir) / DOMAIN
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "sub").mkdir()
+    target = root / "written.txt"
+    backend = {
+        "type": "write_file",
+        "path": "{{ filename | default('written.txt') }}",
+        "content": "{{ value | default('first') }}",
+    }
+    tools = [
+        {
+            "spec": {
+                "name": name,
+                "description": "Write a note",
+                "strict": False,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        key: {"type": "string"} for key in ("filename", "value")
+                    },
+                },
+            },
+            "function": config,
+        }
+        for name, config in (
+            ("write_one", backend),
+            (
+                "write_two",
+                {"type": "composite", "sequence": [backend]} if composite else backend,
+            ),
+        )
+    ]
+    agent = await _agent(hass, api_mode=mode, **{CONF_FUNCTION_TOOLS: tools})
+    writes = []
+    original = files._atomic_replace_text
+
+    def counted(path, content, **kwargs):
+        writes.append((path, content))
+        return original(path, content, **kwargs)
+
+    monkeypatch.setattr(files, "_atomic_replace_text", counted)
+    call = _responses_sse_tool_call if mode == "responses" else _chat_sse_tool_call
+    text = _responses_sse_text if mode == "responses" else _chat_sse_text
+    _install_wire(monkeypatch, agent, [text("Ready")])
+    seed = await _say(hass, agent, "hello")
+    _install_wire(
+        monkeypatch,
+        agent,
+        [
+            call("first-write", "write_one", {}),
+            (
+                400,
+                {
+                    "error": {
+                        "message": "continuation failed",
+                        "type": "invalid_request_error",
+                    }
+                },
+            ),
+        ],
+    )
+    failed = await _say(hass, agent, "write", seed.conversation_id)
+    assert failed.response.error_code is not None
+    assert writes == [(target, "first")]
+    equivalent = {"filename": "./sub/../written.txt", "value": "first"}
+    _install_wire(monkeypatch, agent, [call("retry-write", "write_two", equivalent)])
+    blocked = await _say(hass, agent, "retry write", seed.conversation_id)
+    assert blocked.response.error_code is not None
+    assert writes == [(target, "first")]
+    _install_wire(
+        monkeypatch,
+        agent,
+        [
+            call("different-write", "write_two", {**equivalent, "value": "second"}),
+            text("Acknowledged"),
+        ],
+    )
+    different = await _say(hass, agent, "write different text", seed.conversation_id)
+    assert different.response.error_code is None
+    assert writes == [(target, "first"), (target, "second")]
+    _install_wire(
+        monkeypatch, agent, [call("repeat-write", "write_one", {}), text("Done")]
+    )
+    repeated = await _say(hass, agent, "write first again", seed.conversation_id)
+    assert repeated.response.error_code is None
+    assert writes == [(target, "first"), (target, "second"), (target, "first")]
+    assert target.read_text(encoding="utf-8") == "first"

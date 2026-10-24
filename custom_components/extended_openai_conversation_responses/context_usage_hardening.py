@@ -379,6 +379,21 @@ async def async_recover_trailing_usage(result: Any, usage: RequestUsage) -> None
             task.cancel()
 
 
+async def async_validate_tool_call_ids_with_usage(
+    calls: Any, result: Any, usage: RequestUsage
+) -> None:
+    """Keep ambiguous calls fatal while recovering bounded provider accounting."""
+    from homeassistant.exceptions import HomeAssistantError
+
+    from .tool_exchange import validate_tool_call_ids
+
+    try:
+        validate_tool_call_ids(calls)
+    except HomeAssistantError:
+        await async_recover_trailing_usage(result, usage)
+        raise
+
+
 async def normalized_chat_stream(
     chat_log: Any, result: Any, request_usage: RequestUsage | None
 ) -> AsyncIterator[Any]:

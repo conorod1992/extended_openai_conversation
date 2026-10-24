@@ -24,7 +24,7 @@ This controls the short sound played when a compatible satellite detects its wak
 
 ## Satellite discovery and overrides
 
-Extended OpenAI discovers Assist satellites from Home Assistant and tries to associate each one with its speaker media player and wake-word sound switch. The Quiet Hours page shows the detected entities and whether the speaker is currently usable.
+Extended OpenAI discovers Assist satellites from Home Assistant and tries to associate each one with its speaker media player and wake-word sound switch. The Quiet Hours page shows the detected entities and whether the speaker is currently usable. Manual selections follow the Home Assistant entity registry when a satellite, speaker or wake-sound switch is renamed, including across restarts. Removing a selected entity does not transfer its selection or restoration ownership to another entity that reuses its old ID.
 
 Use the per-satellite overrides when automatic discovery finds the wrong entity or cannot identify one. Leaving an override empty returns that satellite to automatic discovery.
 
