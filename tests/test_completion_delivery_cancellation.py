@@ -1,11 +1,11 @@
-"""Actual cancellation during conversion must drain the entire completion queue."""
+"""Actual cancellation during delivery must drain the entire completion queue."""
 
 import asyncio
-import threading
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from custom_components.extended_openai_conversation_responses import completion_events
 from custom_components.extended_openai_conversation_responses.completion_events import (
     completion_event_scope,
     queue_completion_event,
@@ -14,28 +14,27 @@ from custom_components.extended_openai_conversation_responses.completion_events 
 
 @pytest.mark.parametrize("count,blocked_index", [(1, 0), (3, 0), (3, 1)])
 @pytest.mark.parametrize("cancels", [1, 2])
-async def test_task_cancel_during_worker_observes_all_deliveries(
-    count, blocked_index, cancels
+async def test_task_cancel_during_flush_observes_all_deliveries(
+    count, blocked_index, cancels, monkeypatch
 ):
     entered = asyncio.Event()
-    release = threading.Event()
-    loop = asyncio.get_running_loop()
+    release = asyncio.Event()
     hass = SimpleNamespace(bus=SimpleNamespace(async_fire=Mock()))
 
-    class Content:
-        def __init__(self, index):
-            self.index = index
+    original = completion_events._async_emit
 
-        def as_dict(self):
-            if self.index == blocked_index:
-                loop.call_soon_threadsafe(entered.set)
-                assert release.wait(5), "test failed to release conversion worker"
-            return {"index": self.index}
+    async def blocked_emit(hass, payload):
+        if payload["index"] == blocked_index:
+            entered.set()
+            await release.wait()
+        await original(hass, payload)
+
+    monkeypatch.setattr(completion_events, "_async_emit", blocked_emit)
 
     async def request():
         async with completion_event_scope():
             for index in range(count):
-                queue_completion_event(hass, {"index": index}, [Content(index)])
+                queue_completion_event(hass, {"index": index})
 
     task = asyncio.create_task(request())
     try:

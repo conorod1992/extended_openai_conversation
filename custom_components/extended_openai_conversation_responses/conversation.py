@@ -260,6 +260,11 @@ _ACTIVE_SCOPE: ContextVar[ResolvedDataScope | None] = ContextVar(
 _ACTIVE_ARCHIVE: ContextVar[tuple[str, str] | None] = ContextVar(
     "extended_openai_active_archive", default=None
 )
+# A privacy request is irreversible for this turn, even if saving is resumed
+# into another session before finalization. Nested requests own separate flags.
+_ARCHIVE_TURN_PRIVATE: ContextVar[bool] = ContextVar(
+    "extended_openai_archive_turn_private", default=False
+)
 _ACTIVE_TEMPORARY_SCOPE: ContextVar[str | None] = ContextVar(
     "extended_openai_active_temporary_scope", default=None
 )
@@ -914,6 +919,7 @@ class ExtendedOpenAIAgentEntity(
                 request_policy,
             )
             scope_token = _ACTIVE_SCOPE.set(scope)
+            archive_privacy_token = _ARCHIVE_TURN_PRIVATE.set(False)
             archive_token = _ACTIVE_ARCHIVE.set(
                 (session_key, archive_session.session_id) if archive_session else None
             )
@@ -1125,6 +1131,7 @@ class ExtendedOpenAIAgentEntity(
                     _ACTIVE_FUNCTION_GROUP_SESSION.reset(function_group_token)
                     _ACTIVE_TEMPORARY_SCOPE.reset(temporary_token)
                     _ACTIVE_ARCHIVE.reset(archive_token)
+                    _ARCHIVE_TURN_PRIVATE.reset(archive_privacy_token)
                     _ACTIVE_MEMORY_SESSION.reset(memory_session_token)
                     _ACTIVE_SCOPE.reset(scope_token)
 
@@ -1446,9 +1453,10 @@ class ExtendedOpenAIAgentEntity(
         handled_locally: bool = False,
         error_type: str | None = None,
     ) -> None:
-        """Emit exactly one completion event with backward-compatible fields."""
+        """Emit metadata only: HA Recorder can persist every custom bus event."""
         payload: dict[str, Any] = {
-            "user_input": user_input,
+            "schema_version": 2,
+            "conversation_id": getattr(chat_log, "conversation_id", None),
             "agent_id": self.subentry.subentry_id,
             "status": status,
         }
@@ -1456,7 +1464,7 @@ class ExtendedOpenAIAgentEntity(
             payload["handled_locally"] = True
         if error_type is not None:
             payload["error_type"] = error_type
-        queue_completion_event(self.hass, payload, chat_log.content)
+        queue_completion_event(self.hass, payload)
 
     async def _async_archive_turn(
         self,
@@ -1471,6 +1479,7 @@ class ExtendedOpenAIAgentEntity(
         if (
             self._archive is None
             or archive_session is None
+            or _ARCHIVE_TURN_PRIVATE.get()
             or not self._effective_guest_policy().archive_retention
         ):
             return
@@ -3093,6 +3102,9 @@ class ExtendedOpenAIAgentEntity(
                     text_offset=int(arguments.get("text_offset", 0)),
                 )
             if operation == "private":
+                # Do this before awaiting persistence: a failed privacy write must
+                # not cause finalization to save the current private request.
+                _ARCHIVE_TURN_PRIVATE.set(True)
                 return await self._archive.async_make_private(session_id)
             if operation == "resume":
                 session = await self._archive.async_resume_saving(

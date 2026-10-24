@@ -1,4 +1,4 @@
-"""Completion event snapshots keep retained backend payload traversal off HA's loop."""
+"""Metadata-only completion events never traverse retained backend payloads."""
 
 import asyncio
 from contextlib import closing
@@ -22,15 +22,13 @@ from custom_components.extended_openai_conversation_responses.ha_tool_result_com
 
 
 @pytest.mark.parametrize("rows", [10, 10000])
-async def test_completion_copies_real_sqlite_history_in_workers(
+async def test_completion_does_not_copy_retained_sqlite_history(
     tmp_path, monkeypatch, rows
 ):
     contents = await retained_sqlite_history(tmp_path, rows)
-    expected = [item.as_dict() for item in contents]
     agent = object.__new__(owner.ExtendedOpenAIAgentEntity)
     agent.subentry = SimpleNamespace(subentry_id="agent")
     agent.hass = SimpleNamespace(bus=SimpleNamespace(async_fire=Mock()))
-    loop_thread = threading.get_ident()
     calls = []
     original = conversation.ToolResultContent.as_dict
 
@@ -45,23 +43,23 @@ async def test_completion_copies_real_sqlite_history_in_workers(
         agent._fire_conversation_finished(
             request, SimpleNamespace(content=contents), status="success"
         )
-        # HA can replace the chat log list after completion. Membership is captured.
+        # Replacing the chat log must not affect queued completion metadata.
         contents.clear()
         return "response"
 
     agent._async_process = process
     assert await agent.async_process(user_input) == "response"
-    assert calls and all(thread != loop_thread for thread in calls)
+    assert not calls  # No retained payload traversal is needed for metadata.
     agent.hass.bus.async_fire.assert_called_once()
     payload = agent.hass.bus.async_fire.call_args.args[1]
     assert payload == {
-        "user_input": user_input,
-        "messages": expected,
+        "schema_version": 2,
+        "conversation_id": None,
         "agent_id": "agent",
         "status": "success",
     }
     # The event has been fired by the time normal/direct processing returns.
-    assert len(payload["messages"]) == 7
+    assert "messages" not in payload and "user_input" not in payload
 
 
 async def retained_sqlite_history(tmp_path, rows):

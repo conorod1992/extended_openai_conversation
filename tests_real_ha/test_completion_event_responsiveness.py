@@ -18,7 +18,6 @@ from tests.test_completion_event_workers import retained_sqlite_history
 @pytest.mark.parametrize("rows", [10, 10000])
 async def test_retained_backend_completion_does_not_block_ha(hass, tmp_path, rows):
     contents = await retained_sqlite_history(tmp_path, rows)
-    expected = [item.as_dict() for item in contents]
     # Exercise the production invocation/event boundary with a genuine HA bus and
     # genuine HA message classes; no provider traffic is needed for conversion.
     agent = object.__new__(ExtendedOpenAIAgentEntity)
@@ -70,7 +69,12 @@ async def test_retained_backend_completion_does_not_block_ha(hass, tmp_path, row
         hass.bus._debug = prior_bus_debug
     await hass.async_block_till_done()
     assert len(finished) == 1
-    assert finished[0].data["messages"] == expected
+    assert finished[0].data == {
+        "schema_version": 2,
+        "conversation_id": None,
+        "agent_id": "event-agent",
+        "status": "success",
+    }
     assert max(gaps) < 0.25, (
         f"Retained result conversion stalled HA for {max(gaps):.3f}s"
     )
@@ -78,29 +82,35 @@ async def test_retained_backend_completion_does_not_block_ha(hass, tmp_path, row
 
 @pytest.mark.parametrize("failed_index", [0, 1])
 @pytest.mark.parametrize("cancel", [False, True])
-async def test_conversion_failure_does_not_hide_later_native_completion_events(
+async def test_bus_failure_does_not_hide_later_native_completion_events(
     hass, monkeypatch, caplog, failed_index, cancel
 ):
     """One failed notification preserves later real HA events and request outcome."""
-    import threading
-
-    from homeassistant.components import conversation
+    from custom_components.extended_openai_conversation_responses import (
+        completion_events,
+    )
 
     entered = asyncio.Event()
-    release = threading.Event()
-    loop = asyncio.get_running_loop()
-    original = conversation.UserContent.as_dict
+    release = asyncio.Event()
+    original = completion_events._async_emit
     secret = "private-event-content-do-not-log"
 
-    def as_dict(content):
-        if content.content == "broken":
-            loop.call_soon_threadsafe(entered.set)
+    async def emit(hass, payload):
+        if payload["conversation_id"] == str(failed_index):
+            entered.set()
             if cancel:
-                assert release.wait(5), "test did not release conversion worker"
-            raise ValueError(secret)
-        return original(content)
+                await release.wait()
+            completion_events._emit(
+                SimpleNamespace(bus=SimpleNamespace(async_fire=lambda *_args: fail())),
+                payload,
+            )
+            return
+        await original(hass, payload)
 
-    monkeypatch.setattr(conversation.UserContent, "as_dict", as_dict)
+    def fail():
+        raise ValueError(secret)
+
+    monkeypatch.setattr(completion_events, "_async_emit", emit)
     agent = object.__new__(ExtendedOpenAIAgentEntity)
     agent.hass = hass
     agent.subentry = SimpleNamespace(subentry_id="completion-failure-agent")
@@ -113,13 +123,7 @@ async def test_conversion_failure_does_not_hide_later_native_completion_events(
         for index in range(3):
             agent._fire_conversation_finished(
                 SimpleNamespace(index=index),
-                SimpleNamespace(
-                    content=[
-                        conversation.UserContent(
-                            content="broken" if index == failed_index else str(index)
-                        )
-                    ]
-                ),
+                SimpleNamespace(conversation_id=str(index), content=[]),
                 status="success",
             )
         return "successful response"
@@ -138,7 +142,7 @@ async def test_conversion_failure_does_not_hide_later_native_completion_events(
         else:
             assert await task == "successful response"
         await hass.async_block_till_done()
-        assert [event.data["user_input"].index for event in finished] == [
+        assert [int(event.data["conversation_id"]) for event in finished] == [
             index for index in range(3) if index != failed_index
         ]
         assert "Completion notification failed" in caplog.text
@@ -146,3 +150,59 @@ async def test_conversion_failure_does_not_hide_later_native_completion_events(
     finally:
         release.set()
         await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize(
+    "archive_enabled,private", [(False, False), (True, False), (True, True)]
+)
+async def test_completion_event_recording_contains_metadata_only(
+    hass, monkeypatch, archive_enabled, private
+):
+    """Exercise public Assist and the actual Recorder event serialization boundary."""
+    from homeassistant.components import conversation
+    from homeassistant.components.recorder.db_schema import EventData
+    from homeassistant.core import Context
+    from pytest_homeassistant_custom_component.common import MockUser
+    from tests_real_ha.test_cross_feature_acceptance import _agent, _provider
+
+    agent = await _agent(hass, archive_enabled=archive_enabled)
+    secret = "PRIVATE_COMPLETION_INPUT_VALUE"
+    system_secret = "PRIVATE_COMPLETION_SYSTEM_VALUE"
+    events = []
+    hass.bus.async_listen(EVENT_CONVERSATION_FINISHED, events.append)
+    user = MockUser(id="completion-owner").add_to_hass(hass)
+    replies = []
+    if private:
+        replies.append(
+            {
+                "index": 0,
+                "id": "private-call",
+                "type": "function",
+                "function": {"name": "conversation_private", "arguments": "{}"},
+            }
+        )
+    replies.append("PRIVATE_COMPLETION_ANSWER_VALUE")
+    _provider(monkeypatch, agent, replies)
+    result = await conversation.async_converse(
+        hass=hass,
+        text=secret,
+        conversation_id=None,
+        context=Context(user_id=user.id),
+        language="en",
+        agent_id=agent.entry.entry_id,
+        extra_system_prompt=system_secret,
+    )
+    assert result.response.error_code is None
+    await hass.async_block_till_done()
+    assert len(events) == 1
+    encoded = EventData.shared_data_bytes_from_event(events[0], "sqlite")
+    assert encoded is not None
+    for value in (secret, system_secret, "PRIVATE_COMPLETION_ANSWER_VALUE"):
+        assert value.encode() not in encoded
+    assert set(events[0].data) == {
+        "schema_version",
+        "agent_id",
+        "conversation_id",
+        "status",
+    }
+    assert events[0].data["status"] == "success"

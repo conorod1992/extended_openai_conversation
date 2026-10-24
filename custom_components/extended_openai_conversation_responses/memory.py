@@ -83,6 +83,14 @@ _SECRET_PATTERN = re.compile(
     r"\bsk-[A-Za-z0-9_-]{12,}\b",
     re.IGNORECASE,
 )
+# Categories were historically casefolded before privacy validation. Recognize
+# credential assignments even when a prefixed camelCase label lost its boundary.
+# Keep this conservative recovery rule local to category metadata.
+_CATEGORY_SECRET_PATTERN = re.compile(
+    r"(?:password|passcode|api[_ -]?key|access[_ -]?token|auth[_ -]?token|"
+    r"security[_ -]?code|secret|pin)\b\s*(?:is|:|=)\s*\S+",
+    re.IGNORECASE,
+)
 _PAYMENT_CARD_CANDIDATE_PATTERN = re.compile(r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)")
 _PAYMENT_CARD_CONTEXT_PATTERN = re.compile(
     r"\b(?:card(?:\s+number)?|credit\s+card|debit\s+card|visa|mastercard|amex)\b",
@@ -2042,6 +2050,10 @@ def _clean_content(value: str) -> str:
 def _clean_category(value: str) -> str:
     if not isinstance(value, str):
         raise ValueError("category must be a string")
+    # Validate the authored spelling before casefolding destroys camelCase clues.
+    _validate_privacy(value, "explicit")
+    if _CATEGORY_SECRET_PATTERN.search(value):
+        raise ValueError("memory rejected because it appears to contain a secret")
     value = _SPACE_PATTERN.sub(" ", value).strip().casefold()
     if not value or len(value) > MAX_CATEGORY_LENGTH:
         raise ValueError(f"category must be 1 to {MAX_CATEGORY_LENGTH} characters")

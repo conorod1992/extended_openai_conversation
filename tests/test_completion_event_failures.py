@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import threading
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -39,11 +38,17 @@ def _assert_warning(caplog):
 @pytest.mark.parametrize("failed_index", [0, 1])
 @pytest.mark.parametrize("direct", [False, True])
 @pytest.mark.parametrize("outcome", ["success", "error", "cancel"])
-async def test_conversion_failure_retains_request_outcome_and_later_events(
+async def test_bus_failure_retains_request_outcome_and_later_events(
     failed_index, direct, outcome, caplog
 ):
     caplog.set_level(logging.DEBUG, logger=completion_events.__name__)
-    hass = SimpleNamespace(bus=SimpleNamespace(async_fire=Mock()))
+
+    def fire(_event, payload):
+        if payload["index"] == failed_index:
+            raise ValueError(_SECRET)
+
+    fire_mock = Mock(side_effect=fire)
+    hass = SimpleNamespace(bus=SimpleNamespace(async_fire=fire_mock))
     agent = object.__new__(ExtendedOpenAIAgentEntity)
     agent.hass = hass
     response = object()
@@ -75,27 +80,39 @@ async def test_conversion_failure_retains_request_outcome_and_later_events(
         with pytest.raises(asyncio.CancelledError, match="original cancellation"):
             await call
     assert [call.args[1]["index"] for call in hass.bus.async_fire.call_args_list] == [
-        index for index in range(3) if index != failed_index
+        index for index in range(3)
     ]
     _assert_warning(caplog)
 
 
 @pytest.mark.parametrize("failed_index", [0, 1])
 @pytest.mark.parametrize("cancels", [1, 2])
-async def test_real_cancellation_during_failed_conversion_still_drains_queue(
-    failed_index, cancels, caplog
+async def test_real_cancellation_during_failed_delivery_still_drains_queue(
+    failed_index, cancels, caplog, monkeypatch
 ):
     entered = asyncio.Event()
-    release = threading.Event()
-    loop = asyncio.get_running_loop()
+    release = asyncio.Event()
     hass = SimpleNamespace(bus=SimpleNamespace(async_fire=Mock()))
 
-    class BlockedContent(Content):
-        def as_dict(self):
-            if self.fail:
-                loop.call_soon_threadsafe(entered.set)
-                assert release.wait(5), "test did not release conversion worker"
-            return super().as_dict()
+    original = completion_events._async_emit
+
+    async def blocked_emit(hass, payload):
+        if payload["index"] == failed_index:
+            entered.set()
+            await release.wait()
+            # Exercise the same best-effort bus boundary after suspension.
+            completion_events._emit(
+                SimpleNamespace(
+                    bus=SimpleNamespace(
+                        async_fire=Mock(side_effect=ValueError(_SECRET))
+                    )
+                ),
+                payload,
+            )
+            return
+        await original(hass, payload)
+
+    monkeypatch.setattr(completion_events, "_async_emit", blocked_emit)
 
     async def process():
         async with completion_events.completion_event_scope():
@@ -103,7 +120,7 @@ async def test_real_cancellation_during_failed_conversion_still_drains_queue(
                 completion_events.queue_completion_event(
                     hass,
                     {"index": index},
-                    [BlockedContent(index, fail=index == failed_index)],
+                    [Content(index, fail=True)],
                 )
 
     task = asyncio.create_task(process())
@@ -150,25 +167,10 @@ async def test_bus_failure_isolated_from_other_events(standalone, caplog):
     _assert_warning(caplog)
 
 
-@pytest.mark.parametrize("tool_history", [False, True])
-async def test_standalone_conversion_failure_is_observed_and_logged(
-    monkeypatch, tool_history, caplog
-):
-    tasks = []
-
-    def create_task(coro, _name):
-        task = asyncio.create_task(coro)
-        tasks.append(task)
-        return task
-
-    hass = SimpleNamespace(
-        bus=SimpleNamespace(async_fire=Mock()), async_create_task=create_task
+async def test_standalone_never_converts_private_history():
+    hass = SimpleNamespace(bus=SimpleNamespace(async_fire=Mock()))
+    completion_events.queue_completion_event(
+        hass, {"status": "success"}, [Content(0, fail=True)]
     )
-    monkeypatch.setattr(
-        completion_events, "is_tool_result_content", lambda _item: tool_history
-    )
-    completion_events.queue_completion_event(hass, {}, [Content(0, fail=True)])
-    if tasks:
-        await asyncio.gather(*tasks)
-    hass.bus.async_fire.assert_not_called()
-    _assert_warning(caplog)
+    hass.bus.async_fire.assert_called_once()
+    assert hass.bus.async_fire.call_args.args[1] == {"status": "success"}

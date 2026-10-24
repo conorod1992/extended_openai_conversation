@@ -539,3 +539,70 @@ def test_guest_script_templates_cannot_hide_outside_action_targets(
         else script
     )
     assert classify_function(function) == FunctionSecurity.UNSCOPABLE
+
+
+@pytest.mark.parametrize("domain", ["automation", "AUTOMATION", "ScEnE", "SCRIPT"])
+@pytest.mark.parametrize("shape", ["single", "batch", "script"])
+def test_indirect_service_identifiers_are_case_insensitive(domain, shape):
+    action = {
+        "domain": domain,
+        "service": "TURN_ON",
+        "service_data": {"entity_id": "scene.owner"},
+    }
+    value = (
+        action
+        if shape == "single"
+        else {"list": [action]}
+        if shape == "batch"
+        else {
+            "sequence": [
+                {"action": f"{domain}.TURN_ON", "target": {"entity_id": "scene.owner"}}
+            ]
+        }
+    )
+    assert contains_indirect_service_call(value)
+    if shape == "script":
+        assert (
+            classify_function({"type": "script", **value}) == FunctionSecurity.INDIRECT
+        )
+
+
+@pytest.mark.parametrize("domain", ["AUTOMATION", "ScEnE", "SCRIPT", "HOMEASSISTANT"])
+@pytest.mark.parametrize("batch", [False, True])
+async def test_mixed_case_guest_indirect_call_never_reaches_backend(
+    monkeypatch, domain, batch
+):
+    tool = {
+        "spec": {"name": "control", "parameters": {"type": "object", "properties": {}}},
+        "function": {
+            "type": "native",
+            "name": "execute_service" if batch else "execute_service_single",
+        },
+    }
+    policy = GuestCapabilityPolicy(
+        True,
+        readable_entity_ids=frozenset({"scene.owner"}),
+        controllable_entity_ids=frozenset({"scene.owner"}),
+        configured_tool_names=frozenset({"control"}),
+    )
+    entity = _execution_entity(tool, policy)
+    entity.hass.services.has_service = lambda *_args: True
+    execute = AsyncMock(return_value="must not execute")
+    monkeypatch.setattr(ExtendedOpenAIBaseLLMEntity, "_execute_function_tool", execute)
+    arguments = {
+        "domain": domain,
+        "service": "TURN_ON",
+        "service_data": {"entity_id": "scene.owner"},
+    }
+    result = await entity._execute_function_tool(
+        tool,
+        SimpleNamespace(
+            tool_name="control",
+            tool_args={"list": [arguments]} if batch else arguments,
+            id="denied",
+        ),
+        None,
+        [],
+    )
+    assert json.loads(tool_result_data(result)["result"])["reason"] == "guest_mode"
+    execute.assert_not_awaited()

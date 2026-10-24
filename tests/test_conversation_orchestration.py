@@ -434,6 +434,10 @@ async def test_unexpected_failure_restores_request_scoped_context(monkeypatch):
     tokens = [
         (_ACTIVE_SCOPE, _ACTIVE_SCOPE.set(outer_scope)),
         (_ACTIVE_ARCHIVE, _ACTIVE_ARCHIVE.set(("outer", "archive"))),
+        (
+            conversation_module._ARCHIVE_TURN_PRIVATE,
+            conversation_module._ARCHIVE_TURN_PRIVATE.set(True),
+        ),
         (_ACTIVE_TEMPORARY_SCOPE, _ACTIVE_TEMPORARY_SCOPE.set("outer-temp")),
         (
             _ACTIVE_FUNCTION_GROUP_SESSION,
@@ -447,6 +451,7 @@ async def test_unexpected_failure_restores_request_scoped_context(monkeypatch):
 
         assert _ACTIVE_SCOPE.get() is outer_scope
         assert _ACTIVE_ARCHIVE.get() == ("outer", "archive")
+        assert conversation_module._ARCHIVE_TURN_PRIVATE.get() is True
         assert _ACTIVE_TEMPORARY_SCOPE.get() == "outer-temp"
         assert _ACTIVE_FUNCTION_GROUP_SESSION.get() is outer_function_group
         assert _ACTIVE_MEMORY_SESSION.get() == ("outer-memory", 5)
@@ -860,3 +865,96 @@ async def test_archive_turn_with_empty_chat_log_records_empty_assistant_text() -
         assistant_text="",
         successful=False,
     )
+
+
+@pytest.mark.parametrize("initial_private", [False, True])
+@pytest.mark.parametrize(
+    "operations",
+    [
+        ("resume",),
+        ("resume", "private"),
+        ("private", "resume"),
+        ("resume", "private", "resume"),
+    ],
+)
+async def test_archive_privacy_transitions_do_not_save_the_current_private_turn(
+    monkeypatch, initial_private, operations
+):
+    from custom_components.extended_openai_conversation_responses.const import (
+        CONF_ARCHIVE_ENABLED,
+    )
+    from custom_components.extended_openai_conversation_responses.conversation_archive import (
+        ConversationArchive,
+    )
+    from tests.test_conversation_archive import FakeArchiveStorage
+
+    entity, request, log, _, process = _pipeline_fixture(monkeypatch)
+    entity.subentry.data[CONF_ARCHIVE_ENABLED] = True
+    entity._usage = _UsageRecorder()
+    storage = FakeArchiveStorage()
+    archive = entity._archive = ConversationArchive(storage, "agent")
+    await archive.async_initialize()
+    scope = user_scope("alice", source="test")
+    original = await archive.async_begin_session(
+        "browser",
+        scope,
+        "conversation-1",
+        archive_enabled=True,
+        shared_archive_enabled=False,
+        inactivity_minutes=30,
+    )
+    if initial_private:
+        await archive.async_make_private(original.session_id)
+    entity._async_begin_archive_session.return_value = original
+    final_ids = []
+
+    async def handle(*_args, **_kwargs):
+        for operation in operations:
+            await entity._async_execute_archive_tool(operation, {})
+        final_ids.append(_ACTIVE_ARCHIVE.get()[1])
+        log.content.append(
+            conversation.AssistantContent(agent_id="agent", content="Current answer")
+        )
+        return conversation.ConversationResult(
+            response=intent.IntentResponse(language="en"),
+            conversation_id="conversation-1",
+        )
+
+    monkeypatch.setattr(
+        conversation_module,
+        "async_try_handle_local_intent",
+        AsyncMock(return_value=None),
+    )
+    entity._async_handle_message_with_ha_tools = AsyncMock(side_effect=handle)
+    request.text = "Current private request"
+    await process()
+    should_save = not initial_private and "private" not in operations
+    assert archive.stats()["turn_count"] == int(should_save)
+    if not should_save:
+        assert request.text not in str(storage.partitions)
+        assert "Current answer" not in str(storage.partitions)
+    # The next request owns a fresh privacy flag and follows the active session.
+    active = archive._sessions[final_ids[0]]
+    entity._async_begin_archive_session.return_value = active
+
+    async def future(*_args, **_kwargs):
+        log.content.append(
+            conversation.AssistantContent(
+                agent_id="agent", content="Future public answer"
+            )
+        )
+        return conversation.ConversationResult(
+            response=intent.IntentResponse(language="en"),
+            conversation_id="conversation-1",
+        )
+
+    entity._async_handle_message_with_ha_tools = AsyncMock(side_effect=future)
+    request.text = "Future public request"
+    await process()
+    assert archive.stats()["turn_count"] == int(should_save) + int(
+        active.retention_state == "retained"
+    )
+
+    if not should_save:
+        assert "Current private request" not in str(storage.partitions)
+        assert "Current answer" not in str(storage.partitions)
