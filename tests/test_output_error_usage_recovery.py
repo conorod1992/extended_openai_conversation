@@ -70,6 +70,19 @@ def usage_event(mode, counts):
     )
 
 
+def rejected_protocol_events(mode, violation):
+    if mode == "chat":
+        return [malformed(mode, "{}"), _chat_chunk(content="Unexpected output")]
+    call = malformed(mode, "{}")
+    if violation == "unfinished-output":
+        return [
+            _event("response.output_item.added", output_index=1, item=call.item),
+            _event("response.completed", response=SimpleNamespace(usage=None)),
+        ]
+    call.output_index = 0
+    return [call, call]
+
+
 @pytest.mark.parametrize(
     "mode,problem,streaming",
     [
@@ -438,3 +451,166 @@ async def test_duplicate_id_recovery_remains_bounded_and_cancellable(
     finally:
         if not task.done():
             task.cancel()
+
+
+@pytest.mark.parametrize("report_usage", [False, True])
+@pytest.mark.parametrize(
+    "mode,violation",
+    [
+        ("chat", "after-terminal"),
+        ("responses", "unfinished-output"),
+        ("responses", "duplicate-output"),
+    ],
+)
+async def test_protocol_rejections_drain_usage_once_before_public_cleanup(
+    hass, monkeypatch, mode, violation, report_usage
+):
+    from custom_components.extended_openai_conversation_responses import (
+        entity as entity_module,
+    )
+    from custom_components.extended_openai_conversation_responses.provider_errors import (
+        ProviderStreamError,
+    )
+
+    events = rejected_protocol_events(mode, violation)
+    if report_usage:
+        events.extend([usage_event(mode, FULL), usage_event(mode, CORRECTION)])
+    # Recovery must never interpret or execute output after the rejected event.
+    events.append(malformed(mode, "{}"))
+    order = []
+
+    class Owned(Stream):
+        async def close(self):
+            order.append("closed")
+            await super().close()
+
+    source = Owned(events)
+    entity = _entity(hass, [source])
+    create = entity.entry.runtime_data.chat.completions.create
+    entity.entry.runtime_data.responses = SimpleNamespace(create=create)
+    entity.subentry.data.update(
+        api_mode="responses" if mode == "responses" else "chat_completions",
+        function_tool_error_recovery=False,
+    )
+    entity._execute_function_tool = AsyncMock()
+    original_recover = entity_module.async_recover_trailing_usage
+
+    async def recovering(*args):
+        order.append("recover")
+        await original_recover(*args)
+
+    recover = AsyncMock(side_effect=recovering)
+    monkeypatch.setattr(entity_module, "async_recover_trailing_usage", recover)
+    details = FakeStorage()
+    manager = UsageManager(FakeStorage(), FakeStorage(), details)
+    await manager.async_initialize()
+    entity._usage = manager
+    try:
+        async with manager.async_run():
+            with pytest.raises(ProviderStreamError):
+                await entity._async_handle_chat_log(_chat_log(hass), [], [])
+    finally:
+        await manager.async_prepare_for_deletion()
+    recover.assert_awaited_once()
+    entity._execute_function_tool.assert_not_awaited()
+    assert source.closed
+    assert order == ["recover", "closed"]
+    assert create.await_count == 1
+    assert len(details.data["requests"]) == 1
+    request = details.data["requests"][0]
+    assert not request["successful"]
+    expected = (120, 40, 160) if report_usage else (0, 0, 0)
+    assert (
+        request["input_tokens"],
+        request["output_tokens"],
+        request["total_tokens"],
+    ) == expected
+    assert (manager.totals.api_request_count, manager.totals.failed_request_count) == (
+        1,
+        1,
+    )
+    assert manager.totals.total_tokens == expected[-1]
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+@pytest.mark.parametrize(
+    "mode,violation", [("chat", "after-terminal"), ("responses", "unfinished-output")]
+)
+async def test_ordering_error_recovery_cannot_delay_cancellation_or_publish_late_usage(
+    hass, monkeypatch, mode, violation, cancel
+):
+    from custom_components.extended_openai_conversation_responses import (
+        entity as entity_module,
+    )
+    from custom_components.extended_openai_conversation_responses.provider_errors import (
+        ProviderStreamError,
+    )
+
+    monkeypatch.setattr(hardening, "_TRAILING_USAGE_TIMEOUT", 60 if cancel else 0.02)
+    reading, release, finished, recovery_started = (asyncio.Event() for _ in range(4))
+
+    class Stalled(Stream):
+        async def __anext__(self):
+            if self._index < len(self.events):
+                return await super().__anext__()
+            reading.set()
+            try:
+                try:
+                    await release.wait()
+                except asyncio.CancelledError:
+                    if cancel:
+                        raise
+                    await release.wait()
+                return usage_event(mode, FULL)
+            finally:
+                finished.set()
+
+    source = Stalled(rejected_protocol_events(mode, violation))
+    entity = _entity(hass, [source])
+    create = entity.entry.runtime_data.chat.completions.create
+    entity.entry.runtime_data.responses = SimpleNamespace(create=create)
+    entity.subentry.data.update(
+        api_mode="responses" if mode == "responses" else "chat_completions"
+    )
+    entity._execute_function_tool = AsyncMock()
+    manager = UsageManager(FakeStorage(), FakeStorage(), FakeStorage())
+    await manager.async_initialize()
+    entity._usage = manager
+    original_recover = entity_module.async_recover_trailing_usage
+
+    async def recovering(*args):
+        recovery_started.set()
+        await original_recover(*args)
+
+    recover = AsyncMock(side_effect=recovering)
+    monkeypatch.setattr(entity_module, "async_recover_trailing_usage", recover)
+
+    async def request():
+        async with manager.async_run():
+            await entity._async_handle_chat_log(_chat_log(hass), [], [])
+
+    task = asyncio.create_task(request())
+    try:
+        await asyncio.wait_for(recovery_started.wait(), 2)
+        if cancel:
+            await asyncio.wait_for(reading.wait(), 1)
+            task.cancel()
+        with pytest.raises(asyncio.CancelledError if cancel else ProviderStreamError):
+            await asyncio.wait_for(task, 0.3)
+        recover.assert_awaited_once()
+        assert source.closed
+        release.set()
+        if reading.is_set():
+            await asyncio.wait_for(finished.wait(), 0.3)
+        assert manager.totals.total_tokens == 0
+        assert (
+            manager.totals.api_request_count,
+            manager.totals.failed_request_count,
+        ) == (1, 1)
+        entity._execute_function_tool.assert_not_awaited()
+    finally:
+        release.set()
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        await manager.async_prepare_for_deletion()

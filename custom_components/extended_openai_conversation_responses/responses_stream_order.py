@@ -145,6 +145,10 @@ async def ordered_output_events(
                 known_indices.add(index)
             if index is None or index not in known_indices:
                 if event.type == "response.completed" and pending:
+                    # This rejection belongs to ordering, outside wire validation.
+                    # Drain once while the normalized/raw stream is still owned.
+                    if recover_usage is not None:
+                        await recover_usage()
                     raise ProviderStreamError(
                         "Provider returned malformed data: unfinished output item",
                         error_type="invalid_event_sequence",

@@ -1903,6 +1903,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 continue
 
             if terminal_finish_seen:
+                await async_recover_trailing_usage(result, request_usage)
                 raise ProviderStreamError(
                     "Provider returned malformed data: event after terminal response",
                     error_type="invalid_event_sequence",

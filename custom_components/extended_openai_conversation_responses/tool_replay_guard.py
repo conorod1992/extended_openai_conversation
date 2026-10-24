@@ -26,7 +26,13 @@ from .schema_errors import SCHEMA_ERRORS
 _MAX_AMBIGUOUS_CONVERSATIONS = 32
 _MAX_RETIRED_CONVERSATIONS = 4096
 _MAX_DISPATCH_RECORDS = 4096
-_PRECISE_EFFECT_KINDS = {"ha_service", "automation_update", "broadcast"}
+_PRECISE_EFFECT_KINDS = {
+    "ha_service",
+    "automation_update",
+    "broadcast",
+    "file_write",
+    "file_edit",
+}
 
 
 def _retire_replay_history(entity: Any, conversation_id: str | None) -> None:

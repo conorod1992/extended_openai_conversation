@@ -1,6 +1,18 @@
 {
   "schema": "eoai-nightly-execution-contract/v1",
   "pytest": [
+    "tests_real_ha/test_file_effect_recovery_precision.py::test_file_recovery_matches_effects_after_partial_or_uncertain_execution[partial-edit_file-chat_completions]",
+    "tests_real_ha/test_file_effect_recovery_precision.py::test_file_recovery_matches_effects_after_partial_or_uncertain_execution[partial-edit_file-responses]",
+    "tests_real_ha/test_file_effect_recovery_precision.py::test_file_recovery_matches_effects_after_partial_or_uncertain_execution[partial-write_file-chat_completions]",
+    "tests_real_ha/test_file_effect_recovery_precision.py::test_file_recovery_matches_effects_after_partial_or_uncertain_execution[partial-write_file-responses]",
+    "tests_real_ha/test_file_effect_recovery_precision.py::test_file_recovery_matches_effects_after_partial_or_uncertain_execution[uncertain-edit_file-chat_completions]",
+    "tests_real_ha/test_file_effect_recovery_precision.py::test_file_recovery_matches_effects_after_partial_or_uncertain_execution[uncertain-edit_file-responses]",
+    "tests_real_ha/test_file_effect_recovery_precision.py::test_file_recovery_matches_effects_after_partial_or_uncertain_execution[uncertain-write_file-chat_completions]",
+    "tests_real_ha/test_file_effect_recovery_precision.py::test_file_recovery_matches_effects_after_partial_or_uncertain_execution[uncertain-write_file-responses]",
+    "tests_real_ha/test_provider_wire_truncated_tool_stream.py::test_ordering_rejections_recover_usage_before_closing_sdk_stream[False-chat_completions]",
+    "tests_real_ha/test_provider_wire_truncated_tool_stream.py::test_ordering_rejections_recover_usage_before_closing_sdk_stream[False-responses]",
+    "tests_real_ha/test_provider_wire_truncated_tool_stream.py::test_ordering_rejections_recover_usage_before_closing_sdk_stream[True-chat_completions]",
+    "tests_real_ha/test_provider_wire_truncated_tool_stream.py::test_ordering_rejections_recover_usage_before_closing_sdk_stream[True-responses]",
     "tests_real_ha/test_quiet_hours_identity_shutdown.py::test_pending_application_follows_satellite_identity_after_restart[rename-False-switch]",
     "tests_real_ha/test_quiet_hours_identity_shutdown.py::test_pending_application_follows_satellite_identity_after_restart[rename-False-volume]",
     "tests_real_ha/test_quiet_hours_identity_shutdown.py::test_pending_application_follows_satellite_identity_after_restart[rename-True-switch]",
@@ -3974,6 +3986,7 @@
       "tests_stress/test_valid_configuration_transitions.py"
     ],
     "functions": [
+      "tests_real_ha/test_file_effect_recovery_precision.py",
       "tests_real_ha/test_review_followup_replays.py",
       "tests_real_ha/test_effect_receipts.py",
       "tests/functions",

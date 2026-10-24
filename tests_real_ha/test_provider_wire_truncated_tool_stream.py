@@ -358,3 +358,127 @@ async def test_rejected_responses_protocol_keeps_trailing_usage(
     recovered = await followup(hass, agent, "continue", failed.conversation_id)
     assert _speech(recovered) == "Healthy"
     assert calls == []
+
+
+@pytest.mark.parametrize("mode", ["chat_completions", "responses"])
+@pytest.mark.parametrize("report_usage", [False, True])
+async def test_ordering_rejections_recover_usage_before_closing_sdk_stream(
+    hass, monkeypatch, mode, report_usage
+):
+    import httpx
+
+    from custom_components.extended_openai_conversation_responses import (
+        context_usage_hardening as hardening,
+    )
+    from tests_real_ha.test_provider_wire_e2e import (
+        _chat_sse_tool_call,
+        _raw_client,
+        _response_object,
+    )
+
+    # Exercise real SDK parsing without making its cold-start cost a deadline test.
+    # The unit recovery tests retain the production deadline and event/cancel limits.
+    monkeypatch.setattr(hardening, "_TRAILING_USAGE_TIMEOUT", 5)
+    if mode == "chat_completions":
+        first = json.loads(_chat_sse_tool_call().decode().split("\n\n")[0][6:])
+        events = [
+            first,
+            {
+                **first,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"content": "Unexpected output after terminal"},
+                        "finish_reason": None,
+                    }
+                ],
+            },
+        ]
+        usage_event = {
+            **first,
+            "choices": [],
+            "usage": {
+                "prompt_tokens": 223,
+                "completion_tokens": 17,
+                "total_tokens": 240,
+            },
+        }
+    else:
+        item = {
+            "id": "fc-buffered",
+            "type": "function_call",
+            "call_id": "call-buffered",
+            "name": "execute_services",
+            "arguments": "{}",
+            "status": "completed",
+        }
+        response = _response_object("unfinished-output", [item])
+        response["usage"] = None
+        events = [
+            {"type": "response.output_item.added", "output_index": 1, "item": item},
+            {"type": "response.completed", "response": response},
+        ]
+        usage_event = {
+            "type": "response.usage",
+            "usage": {"input_tokens": 223, "output_tokens": 17, "total_tokens": 240},
+        }
+    if report_usage:
+        events.append(usage_event)
+    stream = "".join(
+        f"data: {json.dumps({**event, 'sequence_number': i})}\n\n"
+        for i, event in enumerate(events)
+    ).encode()
+    if mode == "chat_completions":
+        stream += b"data: [DONE]\n\n"
+    agent = await _agent(hass, mode)
+    calls = await _prepare_service(hass)
+    reply = _responses_sse_text if mode == "responses" else _chat_sse_text
+    wire = _install_wire(monkeypatch, agent, [stream, reply("Healthy follow-up")])
+    closed = []
+
+    class TrackedStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield stream
+
+        async def aclose(self):
+            closed.append(True)
+
+    original_send = wire.send
+
+    async def send(request, *args, **kwargs):
+        response = await original_send(request, *args, **kwargs)
+        if len(wire.requests) == 1:
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                stream=TrackedStream(),
+                request=request,
+            )
+        return response
+
+    monkeypatch.setattr(_raw_client(agent)._client, "send", send)
+    failed = await _say(hass, agent)
+    assert failed.response.error_code is not None
+    assert calls == []
+    assert closed == [True]
+    assert len(wire.requests) == 1
+    request = agent._usage.requests[-1]
+    assert request.error_type == "ProviderStreamError"
+    assert not request.successful
+    expected = (223, 17, 240) if report_usage else (0, 0, 0)
+    assert (
+        request.input_tokens,
+        request.output_tokens,
+        request.total_tokens,
+    ) == expected
+    run = agent._usage.runs[-1]
+    assert (run.request_count, run.failed_request_count, run.total_tokens) == (
+        1,
+        1,
+        expected[-1],
+    )
+    from tests_real_ha.test_cross_feature_acceptance import _say as followup
+
+    recovered = await followup(hass, agent, "continue", failed.conversation_id)
+    assert _speech(recovered) == "Healthy follow-up"
+    assert calls == []
