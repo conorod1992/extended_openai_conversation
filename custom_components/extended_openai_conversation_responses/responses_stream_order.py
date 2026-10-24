@@ -1,13 +1,16 @@
 """Adapt concurrent Responses output lifetimes to HA's sequential accumulator."""
 
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import aclosing
 from typing import Any
 
 from .provider_errors import ProviderStreamError
 
 
-async def _validated_output_events(events: AsyncIterator[Any]) -> AsyncGenerator[Any]:
+async def _validated_output_events(
+    events: AsyncIterator[Any],
+    recover_usage: Callable[[], Awaitable[None]] | None = None,
+) -> AsyncGenerator[Any]:
     """Validate wire identities and arguments before presentation can buffer them."""
     terminal_seen = False
     completed_items: set[tuple[Any, Any]] = set()
@@ -107,12 +110,22 @@ async def _validated_output_events(events: AsyncIterator[Any]) -> AsyncGenerator
                 terminal_seen = True
             yield event
 
+    except ProviderStreamError:
+        # Recover from the raw owned stream before closing normalized iteration.
+        # This never interprets buffered output or executes any Function calls.
+        if recover_usage is not None:
+            await recover_usage()
+        raise
     finally:
         if (close := getattr(events, "aclose", None)) is not None:
             await close()
 
 
-async def ordered_output_events(events: AsyncIterator[Any]) -> AsyncGenerator[Any]:
+async def ordered_output_events(
+    events: AsyncIterator[Any],
+    *,
+    recover_usage: Callable[[], Awaitable[None]] | None = None,
+) -> AsyncGenerator[Any]:
     """Stream the leading item live and buffer later items until their turn.
 
     Responses identifies output by index; HA has only one current assistant
@@ -122,7 +135,7 @@ async def ordered_output_events(events: AsyncIterator[Any]) -> AsyncGenerator[An
     next_index = 0
     pending: dict[int, list[Any]] = {}
     known_indices: set[int] = set()
-    async with aclosing(_validated_output_events(events)) as validated:
+    async with aclosing(_validated_output_events(events, recover_usage)) as validated:
         async for event in validated:
             index = getattr(event, "output_index", None)
             if index is not None and event.type in {

@@ -29,6 +29,10 @@ async def async_quiet_hours_command(
         if not isinstance(config, dict):
             raise HomeAssistantError("config must be an object")
         try:
+            if message.get("revision") is not None:
+                return await manager.async_update_config(
+                    config, expected_revision=message["revision"]
+                )
             return await manager.async_update_config(config)
         except ValueError as err:
             raise HomeAssistantError(str(err)) from err

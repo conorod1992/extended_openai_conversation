@@ -296,16 +296,25 @@ class ModelCatalogManager:
                     if routed_effort:
                         effective[CONF_REASONING_EFFORT] = routed_effort
                     try:
+                        routed_metadata = catalog_model_metadata(
+                            candidate,
+                            capability_model_identity(
+                                effective, getattr(entry, "data", {})
+                            ),
+                        )
+                        # Explicit Rule efforts are validated at execution; the
+                        # request builder may omit stale agent-only preferences.
+                        if routed_effort and (
+                            not routed_metadata["reasoning"]["supported"]
+                            or routed_effort
+                            not in routed_metadata["reasoning"]["efforts"]
+                        ):
+                            return False
                         build_provider_request_snapshot(
                             effective,
                             getattr(entry, "data", {}),
                             tools_required=conversation_tools_required(effective),
-                            model_capabilities=catalog_model_metadata(
-                                candidate,
-                                capability_model_identity(
-                                    effective, getattr(entry, "data", {})
-                                ),
-                            ),
+                            model_capabilities=routed_metadata,
                         )
                     except Exception:
                         return False
@@ -490,28 +499,23 @@ class ModelCatalogManager:
                     ):
                         continue
                     model = action.get("model")
-                    if (
-                        isinstance(model, str)
-                        and model
-                        and not SLOT_REFERENCE.search(model)
-                    ):
-                        effective = {
-                            **subentry.data,
-                            CONF_CHAT_MODEL: model,
-                            CONF_REASONING_EFFORT: effort,
-                        }
-                        metadata = catalog_model_metadata(
-                            None,
-                            capability_model_identity(
-                                effective, getattr(entry, "data", {})
-                            ),
-                        )
-                        if (
-                            not metadata["reasoning"]["supported"]
-                            or effort not in metadata["reasoning"]["efforts"]
-                        ):
+                    if isinstance(model, str) and SLOT_REFERENCE.search(model):
+                        if effort not in bundled_efforts:
                             return True
-                    elif effort not in bundled_efforts:
+                        continue
+                    effective = {**subentry.data, CONF_REASONING_EFFORT: effort}
+                    if isinstance(model, str) and model:
+                        effective[CONF_CHAT_MODEL] = model
+                    metadata = catalog_model_metadata(
+                        None,
+                        capability_model_identity(
+                            effective, getattr(entry, "data", {})
+                        ),
+                    )
+                    if (
+                        not metadata["reasoning"]["supported"]
+                        or effort not in metadata["reasoning"]["efforts"]
+                    ):
                         return True
         return False
 

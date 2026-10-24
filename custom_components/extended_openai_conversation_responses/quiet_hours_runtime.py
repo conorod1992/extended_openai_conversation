@@ -12,6 +12,8 @@ import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
+from hashlib import sha256
+import json
 import logging
 import math
 from typing import Any, cast
@@ -603,6 +605,16 @@ class QuietHoursManager:
     def discovery_snapshot(self) -> list[dict[str, Any]]:
         return [item.as_dict() for item in self._discover_capabilities()]
 
+    def revision(self) -> str:
+        """Identify the saved policy and its selected physical controls."""
+        return sha256(
+            json.dumps(
+                [self._config.as_dict(), getattr(self, "_selection_identities", {})],
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+
     def snapshot(self) -> dict[str, Any]:
         now = dt_util.now()
         period = (
@@ -612,6 +624,7 @@ class QuietHoursManager:
         )
         return {
             "config": self._config.as_dict(),
+            "revision": self.revision(),
             "active": period is not None,
             "period_started_at": period.start.isoformat() if period else None,
             "period_ends_at": period.end.isoformat() if period else None,
@@ -624,11 +637,26 @@ class QuietHoursManager:
         """Enable or disable the daily schedule without changing its policy."""
         if not isinstance(enabled, bool):
             raise ValueError("enabled must be a boolean")
-        config = self.config.as_dict()
+        async with self._lock:
+            if not await self._async_recover_configuration_locked():
+                raise ValueError(
+                    "Quiet Hours configuration recovery is pending; retry later"
+                )
+            if (
+                self._selected_entity_ids()
+                and not await self._async_resolve_control_identities_locked()
+            ):
+                raise ValueError("Quiet Hours selections are changing; retry later")
+            config = self.config.as_dict()
+            revision = self.revision()
         config["enabled"] = enabled
-        return await self.async_update_config(config)
+        # A toggle owns only enabled, never a stale copy of a renamed selection
+        # or a concurrent administrator's policy edit.
+        return await self.async_update_config(config, expected_revision=revision)
 
-    async def async_update_config(self, value: Any) -> dict[str, Any]:
+    async def async_update_config(
+        self, value: Any, *, expected_revision: str | None = None
+    ) -> dict[str, Any]:
         candidate = _config_from_data(value)
         failure: BaseException | None = None
         async with self._lock:
@@ -638,6 +666,31 @@ class QuietHoursManager:
                 raise ValueError(
                     "Quiet Hours configuration recovery is pending; retry later"
                 )
+            # Resolve renames before comparing the editor's saved baseline.
+            if (
+                self._selected_entity_ids()
+                and not await self._async_resolve_control_identities_locked()
+            ):
+                raise ValueError(
+                    "Quiet Hours selections are changing; reload and try again"
+                )
+            if expected_revision is not None and expected_revision != self.revision():
+                raise ValueError(
+                    "Quiet Hours configuration changed; reload before saving"
+                )
+            # Legacy callers have no revision. Do not let an obsolete, newly
+            # introduced ID silently remove a currently bound manual selection.
+            if getattr(self, "_selection_identities", {}):
+                for entity_id in (
+                    self._selected_entity_ids(candidate) - self._selected_entity_ids()
+                ):
+                    if (
+                        er.async_get(self.hass).async_get(entity_id) is None
+                        and self.hass.states.get(entity_id) is None
+                    ):
+                        raise ValueError(
+                            "A Quiet Hours selection no longer exists; reload before saving"
+                        )
             previous = self._config
             self._config = candidate
             try:
@@ -933,7 +986,22 @@ class QuietHoursManager:
             )
             for override in self._config.overrides
         )
-        changed = overrides != self._config.overrides or identities != previous
+        associations_changed = False
+        if self._active is not None:
+            for key in ("controls", "pending_controls"):
+                for control in self._active.get(key, {}).values():
+                    old_satellite = control.get("satellite_entity_id")
+                    satellite = destinations.get(old_satellite, old_satellite)
+                    if satellite != old_satellite:
+                        # The selected satellite's stable identity followed a
+                        # rename; this is not a change of device association.
+                        control["satellite_entity_id"] = satellite
+                        associations_changed = True
+        changed = (
+            associations_changed
+            or overrides != self._config.overrides
+            or identities != previous
+        )
         if changed:
             self._config = replace(self._config, overrides=overrides)
             self._selection_identities = identities

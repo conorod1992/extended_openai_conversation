@@ -353,3 +353,35 @@ for (const bundled of [false, true]) {
     await expectHarnessClean(page, errors);
   });
 }
+
+
+for (const bundled of [false, true]) {
+  test(`Azure rule editing preserves unbound deployment reasoning (${bundled})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    await page.goto(`/tests_browser/fixture.html?route=capabilities/request-rules${bundled ? "&bundle=1" : ""}`);
+    const panel = panelFor(page);
+    await expect(panel.locator("#rule-add")).toBeVisible();
+    await panel.evaluate(host => {
+      const call = host._hass.callWS.bind(host._hass);
+      host._azureLookups = [];
+      host._hass = {...host._hass, callWS:async message => {
+        if (message.type?.endsWith("/model_catalog")) {
+          host._azureLookups.push(message.model);
+          return {reasoning_effort_options:message.model === "gpt-5.6" ? ["low", "medium", "high"] : []};
+        }
+        if (message.section === "request_rules" && message.action === "update") host._savedAzureRule = message.rule;
+        return call(message);
+      }};
+      host._result = {...host._result, api_provider:"azure", azure_model:null, effective_model:"gpt-4.1",
+        rules:[{id:"unbound-azure", name:"Unbound Azure", enabled:true, phrases:["route"], match_type:"equals", action_type:"model_routing",
+          action:{model:"gpt-5.6", reasoning_effort:"high", scope:"conversation", continue_to_ai:true}, matching_behavior:"defaults", matching:{}, order:0, conditions:[]}]};
+      host._render();
+    });
+    await openRule(panel, "Unbound Azure");
+    await expect.poll(() => panel.evaluate(host => host._azureLookups.at(-1))).toBe("gpt-5.6");
+    await expect(panel.locator("#rule-reasoning")).toHaveValue("high");
+    await panel.locator("#rule-save").click();
+    await expect.poll(() => panel.evaluate(host => host._savedAzureRule?.action?.reasoning_effort)).toBe("high");
+    await expectHarnessClean(page, errors);
+  });
+}

@@ -162,3 +162,66 @@ async def test_reset_preserves_active_download_only_reasoning_dependency(
     assert "blocked" in result["last_error"]
     assert manager.catalog == current
     assert manager.store.saved == saved
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+@pytest.mark.parametrize("explicit_model", [True, False])
+async def test_inherited_rule_reasoning_is_a_model_specific_catalog_dependency(
+    hass, monkeypatch, enabled, explicit_model
+):
+    candidate = deepcopy(data.BUNDLED_CATALOG)
+    candidate["catalog_version"] += 1
+    model = deepcopy(
+        next(item for item in candidate["models"] if item["id"] == "gpt-5.6")
+    )
+    model.update(id="new-reasoning-model", display_name="New reasoning model")
+    candidate["models"].append(model)
+    options = {
+        "chat_model": "new-reasoning-model",
+        "api_mode": "responses",
+        "max_function_calls_per_conversation": 0,
+        "continue_conversation": "ha_default",
+    }
+    action = {"reasoning_effort": "high", "scope": "conversation"}
+    if explicit_model:
+        action["model"] = "new-reasoning-model"
+    rules = [
+        {
+            "id": "route",
+            "name": "High reasoning",
+            "enabled": enabled,
+            "action_type": "model_routing",
+            "action": action,
+        }
+    ]
+    entry = SimpleNamespace(
+        entry_id="new-model",
+        data={},
+        subentries={
+            "agent": SimpleNamespace(
+                subentry_id="agent",
+                title="New model agent",
+                subentry_type="conversation",
+                data=options,
+            )
+        },
+    )
+    hass.config_entries.async_entries.return_value = [entry]
+    monkeypatch.setattr(
+        runtime,
+        "async_get_request_rules",
+        AsyncMock(return_value=SimpleNamespace(snapshot=lambda: {"rules": rules})),
+    )
+    manager = runtime.ModelCatalogManager(hass)
+    manager.store = MemoryStore()
+    manager.available_catalog = candidate
+    assert (await manager.async_apply_update())["source"] == "downloaded"
+    validate_saved_model_routes(rules, options, entry.data)
+    assert await manager._candidate_preserves_saved_requests(data.BUNDLED_CATALOG) is (
+        not enabled
+    )
+    result = await manager.async_reset()
+    assert result["source"] == ("downloaded" if enabled else "bundled")
+    if enabled:
+        assert result["last_error"]
+        validate_saved_model_routes(rules, options, entry.data)

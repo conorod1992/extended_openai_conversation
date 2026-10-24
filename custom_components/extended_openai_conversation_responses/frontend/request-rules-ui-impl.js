@@ -278,7 +278,10 @@ export function requestRuleCapabilityModel(panel, override = "") {
   const result = panel._result || {};
   const config = result.config || {};
   const azure = result.api_provider === "azure" || (!result.api_provider && config.azure_model);
-  const azureModel = azure ? result.effective_model || config.azure_model : null;
+  // Older backends did not expose the binding separately. Preserve their
+  // effective-model fallback while an explicit empty binding uses the route.
+  const azureModel = azure ? (Object.hasOwn(result, "azure_model")
+    ? result.azure_model : config.azure_model || result.effective_model) : null;
   return String(azureModel || override || result.effective_model || config.chat_model || "").trim();
 }
 

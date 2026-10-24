@@ -663,3 +663,90 @@ async def test_foreground_preflight_summary_belongs_to_current_usage_run(hass, m
     assert (run.request_count, run.successful_request_count) == (2, 2)
     assert (run.input_tokens, run.output_tokens, run.total_tokens) == (112, 10, 122)
     assert agent._usage.totals.total_tokens == 122
+
+
+@pytest.mark.parametrize(
+    "pdf_count,pdf_size", [(0, 0), (10, 700), (3, 18 * 1024 * 1024)]
+)
+async def test_incompatible_historical_pdfs_do_not_consume_chat_image_budget(
+    hass, tmp_path, monkeypatch, pdf_count, pdf_size
+):
+    agent = await _contract_agent(hass, api_mode="chat_completions")
+    image = tmp_path / "retained.png"
+    image.write_bytes(
+        base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aV1cAAAAASUVORK5CYII="
+        )
+    )
+    pdf = tmp_path / "retained.pdf"
+    pdf.write_bytes(
+        b"%PDF-1.4\n1 0 obj\n<</Type/Catalog/Pages 2 0 R>>\nendobj\n2 0 obj\n<</Type/Pages/Count 0/Kids[]>>\nendobj\ntrailer\n<</Root 1 0 R>>\n%%EOF\n"
+    )
+    if pdf_size:
+        with pdf.open("ab") as handle:
+            handle.truncate(pdf_size)
+    from custom_components.extended_openai_conversation_responses import (
+        entity as entity_module,
+    )
+
+    read_paths = []
+    original_read = entity_module.read_bounded_local_file
+
+    def read(path, total=0):
+        read_paths.append(path)
+        return original_read(path, total)
+
+    monkeypatch.setattr(entity_module, "read_bounded_local_file", read)
+    with async_get_chat_session(hass) as session:
+        cid = session.conversation_id
+        with conversation.async_get_chat_log(hass, session) as log:
+            log.async_add_user_content(
+                conversation.UserContent(
+                    content="Look at this image",
+                    attachments=[
+                        conversation.Attachment(
+                            media_content_id="image", mime_type="image/png", path=image
+                        )
+                    ],
+                )
+            )
+            log.content.append(
+                conversation.AssistantContent(
+                    agent_id=agent.entity_id, content="Image reviewed"
+                )
+            )
+            if pdf_count:
+                log.async_add_user_content(
+                    conversation.UserContent(
+                        content="Later PDFs",
+                        attachments=[
+                            conversation.Attachment(
+                                media_content_id=f"pdf-{i}",
+                                mime_type="application/pdf",
+                                path=pdf,
+                            )
+                            for i in range(pdf_count)
+                        ],
+                    )
+                )
+                log.content.append(
+                    conversation.AssistantContent(
+                        agent_id=agent.entity_id, content="PDFs reviewed in Responses"
+                    )
+                )
+    async with _transport(agent.entry, [_chat_sse_text("Answer")]) as wire:
+        result = await _say(hass, agent, "Recall the image", cid)
+        assert _speech(result) == "Answer"
+        outgoing = wire.requests[0]["body"]["messages"]
+        parts = [
+            part
+            for item in outgoing
+            for part in (item.get("content") or [])
+            if isinstance(part, dict)
+        ]
+        images = [part for part in parts if part.get("type") == "image_url"]
+        assert not any(part.get("type") == "input_file" for part in parts)
+        assert len(images) == 1, (
+            "Incompatible PDFs must not evict an otherwise usable historical image"
+        )
+        assert read_paths == [image]

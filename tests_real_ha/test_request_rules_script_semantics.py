@@ -774,3 +774,54 @@ async def test_cancelled_event_wait_removes_listener_and_next_public_request_rec
     assert calls == []
     assert _speech(await _say(hass, agent, "healthy")) == "Done"
     assert calls == ["healthy"]
+
+
+@pytest.mark.parametrize("form", ["list", "and", "or", "not"])
+async def test_condition_shorthand_captures_survive_create_reload_and_execute(
+    hass, monkeypatch, form
+):
+    from copy import deepcopy
+    from homeassistant.helpers import config_validation as cv
+    from custom_components.extended_openai_conversation_responses.request_rules import (
+        _validate_script_sequence,
+    )
+
+    agent = await _agent(hass)
+    _provider(monkeypatch, agent, [])
+    hass.states.async_set("light.kitchen", "on")
+    child = {
+        "condition": "state",
+        "entity_id": "{device}",
+        "state": "off" if form == "not" else "on",
+    }
+    guard = {"condition": [child]} if form == "list" else {form: [child]}
+    action = (
+        guard
+        if form == "list"
+        else {"if": [guard], "then": [{"event": "shorthand_accepted"}]}
+    )
+    sequence = [action, {"event": "shorthand_completed"}]
+    saved = await agent._request_rules.async_create(
+        _local(sequence, phrase="run {device}", match_type="sentence_pattern")
+    )
+    assert saved["enabled"]
+    # Compilation of persistence-shaped rules must retain the same capture scope.
+    agent._request_rules._sort_and_compile()
+    events = []
+    unsubscribe = hass.bus.async_listen(
+        "shorthand_completed", lambda event: events.append(event)
+    )
+    try:
+        assert _speech(await _say(hass, agent, "run light.kitchen")) == "Done"
+        await hass.async_block_till_done()
+        assert len(events) == 1
+    finally:
+        unsubscribe()
+    # Selectors inside every native condition-bearing container resolve, while
+    # event payload fields with the same names stay ordinary script data.
+    for container in (
+        [{"choose": [{"conditions": [guard], "sequence": [{"event": "selected"}]}]}],
+        [{"repeat": {"while": [guard], "sequence": [{"stop": "done"}]}}],
+        [{"repeat": {"until": [guard], "sequence": [{"stop": "done"}]}}],
+    ):
+        assert _validate_script_sequence(deepcopy(container), capture_names={"device"})

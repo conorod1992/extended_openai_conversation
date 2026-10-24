@@ -335,3 +335,30 @@ async def test_chat_completions_duplicate_tool_call_ids_fail_before_execution(
     calls, outputs = _protocol_messages(history)
     assert calls == []
     assert outputs == []
+
+
+async def test_api_change_during_attachment_preparation_fails_before_dispatch(hass):
+    import asyncio
+    from unittest.mock import Mock
+
+    entity = _entity(hass, [_final_stream()])
+    log = _chat_log(hass)
+    log.content[-1] = conversation.UserContent(
+        content="Use the image",
+        attachments=[
+            conversation.Attachment(
+                media_content_id="image", mime_type="image/png", path="unused.png"
+            )
+        ],
+    )
+
+    async def prepare(*_args):
+        await asyncio.sleep(0)
+        entity.subentry.data[CONF_API_MODE] = "responses"
+
+    entity._async_add_attachments = prepare
+    factory = Mock(return_value=[])
+    with pytest.raises(HomeAssistantError, match="API availability changed"):
+        await entity._async_handle_chat_log(log, [], [], function_tools_factory=factory)
+    assert factory.call_count == 2
+    entity.entry.runtime_data.chat.completions.create.assert_not_awaited()

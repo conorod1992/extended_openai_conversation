@@ -96,7 +96,16 @@ async def test_prepared_eviction_preserves_newer_turns(hass, kind, strategy):
         return_value=None if strategy == "summary_failure" else "Old image summarized"
     )
     log = _chat_log(hass)
-    old = conversation.UserContent(content="Old costly turn")
+    old = conversation.UserContent(
+        content="Old costly turn",
+        attachments=[]
+        if kind.endswith("reasoning")
+        else [
+            conversation.Attachment(
+                media_content_id="old-image", mime_type="image/png", path="unused"
+            )
+        ],
+    )
     recent = []
     for index in range(3):
         recent.extend(
@@ -130,11 +139,21 @@ async def test_prepared_eviction_preserves_newer_turns(hass, kind, strategy):
         )
     else:
 
-        async def attach(_log, messages, _api):
-            next(item for item in messages if item.get("role") == "user")["content"] = [
-                {"type": "input_text", "text": old.content},
-                {"type": "input_image", "image_url": "data:image/png;base64,AAAA"},
-            ]
+        async def attach(_log, messages, api):
+            next(item for item in messages if item.get("role") == "user")["content"] = (
+                [
+                    {"type": "input_text", "text": old.content},
+                    {"type": "input_image", "image_url": "data:image/png;base64,AAAA"},
+                ]
+                if api == "responses"
+                else [
+                    {"type": "text", "text": old.content},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,AAAA"},
+                    },
+                ]
+            )
 
         entity._async_add_attachments = attach
     await entity._async_handle_chat_log(log, [], [])

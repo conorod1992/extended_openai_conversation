@@ -257,17 +257,26 @@ async def test_chat_attachment_handoff_converts_images_and_rejects_pdf(
     )
     log = conversation.ChatLog(hass, "conversation")
     log.content[0] = conversation.SystemContent(content="system")
-    log.async_add_user_content(conversation.UserContent(content="question"))
+    log.async_add_user_content(
+        conversation.UserContent(
+            content="question",
+            attachments=[
+                conversation.Attachment(
+                    media_content_id="test",
+                    mime_type="image/png" if part == "image" else "application/pdf",
+                    path="unused",
+                )
+            ],
+        )
+    )
 
-    async def prepare(_log, messages, _mode):
+    async def prepare(_log, messages, mode):
+        assert mode == "chat_completions"
+        if part == "pdf":
+            raise HomeAssistantError("Chat Completions supports image attachments")
         messages[-1]["content"] = [
-            {"type": "input_text", "text": "question"},
-            {"type": "input_image", "image_url": "data:image/png;base64,YQ=="}
-            if part == "image"
-            else {
-                "type": "input_file",
-                "file_data": "data:application/pdf;base64,YQ==",
-            },
+            {"type": "text", "text": "question"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,YQ=="}},
         ]
 
     instance._async_add_attachments = prepare

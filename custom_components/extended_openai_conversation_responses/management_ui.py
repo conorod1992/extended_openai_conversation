@@ -972,6 +972,9 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
 
         entry_data = getattr(request.entry, "data", {})
         snapshot["api_provider"] = entry_data.get(CONF_API_PROVIDER, "openai")
+        # An absent Azure binding means each routed deployment supplies its own
+        # capability identity; the base effective model is not a binding.
+        snapshot["azure_model"] = subentry.data.get("azure_model") or None
         snapshot["effective_model"] = capability_model_identity(
             subentry.data, entry_data
         )

@@ -270,3 +270,91 @@ async def test_duplicate_call_ids_recover_trailing_usage_without_executing(
     recovered = await say_followup(hass, agent, "continue", failed.conversation_id)
     assert _speech(recovered) == "Recovered"
     assert calls == []
+
+
+@pytest.mark.parametrize("violation", ["duplicate-output-id", "conflicting-arguments"])
+async def test_rejected_responses_protocol_keeps_trailing_usage(
+    hass, monkeypatch, violation
+):
+    from tests_real_ha.test_provider_wire_e2e import (
+        _agent,
+        _prepare_service,
+        _install_wire,
+        _response_object,
+        _responses_sse_text,
+        _say as say,
+    )
+    from custom_components.extended_openai_conversation_responses import (
+        context_usage_hardening as hardening,
+    )
+
+    # Accounting/stream ownership probe. Separate repository tests cover the
+    # production 200 ms/128-event recovery deadline, so exclude cold SDK cost.
+    monkeypatch.setattr(hardening, "_TRAILING_USAGE_TIMEOUT", 5)
+    arguments = json.dumps(
+        {
+            "list": [
+                {
+                    "domain": "light",
+                    "service": "turn_off",
+                    "service_data": {"entity_id": ["light.provider_wire"]},
+                }
+            ]
+        }
+    )
+    items = [
+        {
+            "id": "fc-one" if violation == "duplicate-output-id" else f"fc-{i}",
+            "type": "function_call",
+            "call_id": f"call-{i}",
+            "name": "execute_services",
+            "arguments": arguments,
+            "status": "completed",
+        }
+        for i in range(2)
+    ]
+    events = []
+    for i, item in enumerate(items):
+        events.append(
+            {
+                "type": "response.output_item.added",
+                "output_index": i,
+                "item": {**item, "arguments": "", "status": "in_progress"},
+            }
+        )
+        if violation == "conflicting-arguments" and i == 1:
+            events.append(
+                {
+                    "type": "response.function_call_arguments.delta",
+                    "output_index": i,
+                    "item_id": item["id"],
+                    "delta": "{}",
+                }
+            )
+        events.append(
+            {"type": "response.output_item.done", "output_index": i, "item": item}
+        )
+    response = _response_object("protocol-error", items)
+    response["usage"] = {"input_tokens": 223, "output_tokens": 17, "total_tokens": 240}
+    events.append({"type": "response.completed", "response": response})
+    stream = "".join(
+        f"data: {json.dumps({**e, 'sequence_number': i})}\n\n"
+        for i, e in enumerate(events)
+    ).encode()
+    agent = await _agent(hass, "responses")
+    calls = await _prepare_service(hass)
+    _install_wire(monkeypatch, agent, [stream, _responses_sse_text("Healthy")])
+    failed = await say(hass, agent)
+    assert failed.response.error_code is not None
+    assert calls == []
+    request = agent._usage.requests[-1]
+    assert request.error_type == "ProviderStreamError"
+    assert request.total_tokens == 240, (
+        "Available trailing provider usage was discarded by an earlier validation layer"
+    )
+
+    from tests_real_ha.test_cross_feature_acceptance import _say as followup
+
+    recovered = await followup(hass, agent, "continue", failed.conversation_id)
+    assert _speech(recovered) == "Healthy"
+    assert calls == []

@@ -148,8 +148,16 @@ def script_selector_fields(value: Any) -> dict[int, frozenset[str]]:
                 conditions(item)
         elif isinstance(config, Mapping):
             result[id(config)] = selector_keys
-            if config.get("condition") in {"and", "or", "not"}:
+            condition = config.get("condition")
+            if isinstance(condition, (list, Mapping)):
+                conditions(condition)
+            elif isinstance(condition, str) and condition in {"and", "or", "not"}:
                 conditions(config.get("conditions", []))
+            elif condition is None:
+                # HA also accepts logical shorthand without a condition key.
+                for operator in ("and", "or", "not"):
+                    if operator in config:
+                        conditions(config[operator])
 
     actions = [value] if isinstance(value, Mapping) else value
     if not isinstance(actions, list):

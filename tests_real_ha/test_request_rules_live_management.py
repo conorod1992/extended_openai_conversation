@@ -304,7 +304,8 @@ async def test_inferred_object_rule_arguments_save_reload_and_execute(
     assert _speech(await _say(hass, agent, "count 3")) == "Count 3"
 
 
-async def test_azure_rule_snapshot_reports_underlying_capability_model(hass):
+@pytest.mark.parametrize("bound", [True, False])
+async def test_azure_rule_snapshot_reports_underlying_capability_model(hass, bound):
     from homeassistant.components import conversation
     from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
 
@@ -312,9 +313,9 @@ async def test_azure_rule_snapshot_reports_underlying_capability_model(hass):
         include_ai_task=False,
         data={"api_provider": "azure"},
         conversation_options={
-            "chat_model": "home-deployment",
-            "azure_model": "gpt-5.6",
-            "reasoning_effort": "low",
+            "chat_model": "home-deployment" if bound else "gpt-4.1",
+            "azure_model": "gpt-5.6" if bound else "",
+            "reasoning_effort": "low" if bound else None,
             "api_mode": "responses",
             "functions": [],
         },
@@ -323,7 +324,8 @@ async def test_azure_rule_snapshot_reports_underlying_capability_model(hass):
     agent = conversation.async_get_agent(hass, entry.entry_id)
     result = await _manage_rule_boundary(hass, agent, "request_rules", "list")
     assert result["api_provider"] == "azure"
-    assert result["effective_model"] == "gpt-5.6"
+    assert result["effective_model"] == ("gpt-5.6" if bound else "gpt-4.1")
+    assert result["azure_model"] == ("gpt-5.6" if bound else None)
 
 
 @pytest.mark.parametrize("allowed", [False, True])

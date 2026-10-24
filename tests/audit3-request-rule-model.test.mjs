@@ -21,3 +21,13 @@ assert.equal(isFunctionServiceAction({event_data: {action: "EXTENDED_OPENAI_CONV
 assert.equal(isFunctionServiceAction({action: "{{ 'extended_openai_conversation_responses.call_function' }}"}), false);
 
 assert.equal(requestRuleCapabilityModel({_result: {api_provider:"openai", effective_model:"gpt-5.6", config:{azure_model:"stale-model"}}}, "gpt-4o"), "gpt-4o");
+
+
+// Current backends distinguish an empty Azure binding from an inherited model.
+for (const binding of [null, ""]) {
+  const unbound = {_result:{api_provider:"azure", effective_model:"gpt-4.1", azure_model:binding}};
+  assert.equal(requestRuleCapabilityModel(unbound, "gpt-5.6"), "gpt-5.6");
+  assert.equal(requestRuleCapabilityModel(unbound, "{deployment}"), "{deployment}");
+  assert.equal(requestRuleCapabilityModel(unbound), "gpt-4.1");
+}
+assert.equal(requestRuleCapabilityModel({_result:{api_provider:"azure", effective_model:"gpt-5.6", azure_model:"gpt-5.6"}}, "deployment"), "gpt-5.6");

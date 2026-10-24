@@ -134,3 +134,24 @@ async def test_responses_parser_closes_source_on_every_exit(outcome):
         with pytest.raises(asyncio.CancelledError):
             await task
     assert closed == [True]
+
+
+async def test_protocol_recovery_runs_before_owned_source_is_closed():
+    order = []
+
+    async def source():
+        try:
+            yield event("response.output_item.done", output_index=0)
+            yield event("response.output_item.done", output_index=0)
+        finally:
+            order.append("closed")
+
+    async def recover():
+        order.append("recover")
+
+    with pytest.raises(ProviderStreamError, match="repeated completed"):
+        _ = [
+            item
+            async for item in ordered_output_events(source(), recover_usage=recover)
+        ]
+    assert order == ["recover", "closed"]

@@ -8,7 +8,9 @@ function repairIssue(panel) {
     // Direct Functions visits may precede the Overview health read. The loaded
     // configuration is authoritative, including when an earlier issue was fixed.
     const repair = repairMetadata(panel);
-    if (!repair) return null;
+    if (!repair) return hasRepairDraft(panel)
+      ? {field:"functions", message:"Review your unsaved Function Tools changes.", repairable:true}
+      : null;
     return {
       field: "functions",
       message: repair.validation_error || issue?.message || "Saved Function Tools need repair.",
@@ -103,19 +105,27 @@ function renderFallbackRepair(panel, issue) {
   const draft = ownRepairDraft(panel);
   const result = panel._result || {};
   const repair = repairMetadata(panel) || {};
-  const validationError = repair.validation_error || result.validation_error || issue.message || "The saved Function Tools are invalid.";
+  const recovering = Boolean(repairMetadata(panel));
+  const validationError = recovering
+    ? repair.validation_error || result.validation_error || issue.message || "The saved Function Tools are invalid."
+    : issue.message;
   return `<section class="card function-repair" aria-labelledby="function-repair-title">
-    <h2 id="function-repair-title">Function Tools need repair</h2>
+    <h2 id="function-repair-title">${recovering ? "Function Tools need repair" : "Unsaved Function Tools changes"}</h2>
     <div class="error" role="alert">${escapeHtml(panel, validationError)}</div>
-    <p>This recovery editor appears only when the saved Function Tools cannot be repaired individually.</p>
+    <p>${recovering ? "This recovery editor appears only when the saved Function Tools cannot be repaired individually." : "These edits were made after your last submission. Review and save them, or discard them to return to the saved Function Tools."}</p>
     <label class="field"><span>Saved Function Tools (YAML or JSON)</span><textarea id="function-repair-editor" rows="20" spellcheck="false">${escapeHtml(panel, draft.text)}</textarea></label>
-    <div class="actions"><button id="function-repair-save" type="button">Validate and save repair</button><button id="function-repair-discard" type="button" class="secondary">Discard unsaved repair</button></div>
+    <div class="actions"><button id="function-repair-save" type="button" ${draft.pending ? "disabled" : ""}>Validate and save repair</button><button id="function-repair-discard" type="button" class="secondary" ${draft.pending ? "disabled" : ""}>Discard unsaved repair</button></div>
   </section>`;
+}
+
+function hasRepairDraft(panel) {
+  const draft = panel._functionRepairDraft;
+  return Boolean(draft && draft.agent === panel._agentId && draft.text !== draft.baseline);
 }
 
 function requiresToolRepairFallback(panel) {
   const repair = repairMetadata(panel);
-  return repair?.isolatable === false && repair.tools_valid !== true;
+  return hasRepairDraft(panel) || (repair?.isolatable === false && repair.tools_valid !== true);
 }
 
 function renderFunctionRepairCards(panel) {
@@ -303,9 +313,12 @@ function bindFallbackRepair(panel) {
   const editor = panel.shadowRoot?.querySelector("#function-repair-editor");
   editor?.addEventListener?.("input", () => { draft.text = editor.value; });
   panel.shadowRoot?.querySelector("#function-repair-discard")?.addEventListener?.("click", () => {
+    if (draft.pending) return;
     panel._unsavedState.scopes.get("function-repair").discard();
+    panel._render();
   });
   button.addEventListener("click", () => {
+    if (draft.pending) return;
     void (async () => {
       const submission = captureConfigurationSubmission(panel);
       // Malformed persisted YAML is displayed verbatim. The backend owns YAML/JSON
@@ -314,6 +327,8 @@ function bindFallbackRepair(panel) {
       draft.text = tools;
       draft.pending = true;
       button.disabled = true;
+      const discard = panel.shadowRoot?.querySelector("#function-repair-discard");
+      if (discard) discard.disabled = true;
       try {
         const saved = await panel._call("function_repair", "save", {tools, revision: draft.revision});
         draft.baseline = tools;
@@ -324,6 +339,12 @@ function bindFallbackRepair(panel) {
       } finally {
         draft.pending = false;
         button.disabled = false;
+        if (configurationSubmissionIsCurrent(panel, submission) && functionRepairView(panel)) {
+          for (const id of ["function-repair-save", "function-repair-discard"]) {
+            const current = panel.shadowRoot?.querySelector(`#${id}`);
+            if (current) current.disabled = false;
+          }
+        }
       }
     })();
   });

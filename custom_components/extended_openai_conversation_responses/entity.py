@@ -130,6 +130,7 @@ from .provider_loop import MAX_PROVIDER_REQUESTS, assert_provider_loop_completed
 from .request import (
     CONTINUE_CONVERSATION_TOOL,
     CONTINUE_CONVERSATION_TOOL_NAME,
+    ProviderRequestSnapshot,
     auxiliary_output_token_limit,
     build_provider_request_snapshot,
     format_function_tools,
@@ -786,11 +787,67 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             threshold = int(
                 options.get(CONF_CONTEXT_THRESHOLD, DEFAULT_CONTEXT_THRESHOLD)
             )
-            # Keep file I/O before the live tool snapshot. Responses is the
-            # neutral representation; API-specific historical omissions follow
-            # validation of the current catalogue, without loading files twice.
-            messages: Any = _convert_content_to_responses_param(chat_log.content)
-            await self._async_add_attachments(chat_log, messages, API_MODE_RESPONSES)
+
+            def snapshot_for_live_tools() -> tuple[
+                list[dict[str, Any]], ProviderRequestSnapshot
+            ]:
+                initial_tools = (
+                    function_tools_factory()
+                    if function_tools_factory is not None
+                    else function_tools
+                )
+                max_calls = options.get(
+                    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+                    DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+                )
+                if int(max_calls) == 0:
+                    initial_tools = [
+                        tool
+                        for tool in initial_tools
+                        if tool.get("function", {}).get("type")
+                        == "function_group_loader"
+                    ]
+                return initial_tools, build_provider_request_snapshot(
+                    options,
+                    getattr(self.entry, "data", {}),
+                    tools_required=bool(initial_tools) or conditional_continue,
+                )
+
+            attachment_io = any(
+                getattr(item, "attachments", None)
+                for item in chat_log.content
+                if isinstance(item, conversation.UserContent)
+            )
+            # Text-only turns still assemble their live catalogue exactly once,
+            # after the attachment await. File-bearing turns need an initial API
+            # choice so incompatible files never consume its replay budget.
+            attachment_api = (
+                snapshot_for_live_tools()[1].api_mode
+                if attachment_io
+                else API_MODE_RESPONSES
+            )
+
+            def prepare_messages(api: str) -> Any:
+                return (
+                    _convert_content_to_responses_param(chat_log.content)
+                    if api == API_MODE_RESPONSES
+                    else _convert_content_to_param(
+                        chat_log.content,
+                        options.get(
+                            CONF_SHORTEN_TOOL_CALL_ID, DEFAULT_SHORTEN_TOOL_CALL_ID
+                        ),
+                    )
+                )
+
+            messages: Any = prepare_messages(attachment_api)
+            await self._async_add_attachments(chat_log, messages, attachment_api)
+            initial_tools, provider_snapshot = snapshot_for_live_tools()
+            if attachment_io and provider_snapshot.api_mode != attachment_api:
+                raise HomeAssistantError(
+                    "Provider API availability changed while preparing attachments; retry the request"
+                )
+            if not attachment_io and provider_snapshot.api_mode != attachment_api:
+                messages = prepare_messages(provider_snapshot.api_mode)
             prepared_user_content = {
                 id(content): message["content"]
                 for content, message in zip(
@@ -798,32 +855,16 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         item
                         for item in chat_log.content
                         if isinstance(item, conversation.UserContent)
-                        and (item.content or getattr(item, "attachments", None))
+                        and (
+                            provider_snapshot.api_mode != API_MODE_RESPONSES
+                            or item.content
+                            or getattr(item, "attachments", None)
+                        )
                     ),
                     (item for item in messages if item.get("role") == "user"),
                     strict=True,
                 )
             }
-            initial_tools = (
-                function_tools_factory()
-                if function_tools_factory is not None
-                else function_tools
-            )
-            max_function_calls = options.get(
-                CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-                DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-            )
-            if int(max_function_calls) == 0:
-                initial_tools = [
-                    tool
-                    for tool in initial_tools
-                    if tool.get("function", {}).get("type") == "function_group_loader"
-                ]
-            provider_snapshot = build_provider_request_snapshot(
-                options,
-                getattr(self.entry, "data", {}),
-                tools_required=bool(initial_tools) or conditional_continue,
-            )
             api_kwargs = dict(provider_snapshot.api_kwargs)
             model = str(api_kwargs["model"])
             api_mode = provider_snapshot.api_mode
@@ -843,50 +884,6 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 CONF_SHORTEN_TOOL_CALL_ID,
                 DEFAULT_SHORTEN_TOOL_CALL_ID,
             )
-
-            if api_mode != API_MODE_RESPONSES:
-                current_user = next(
-                    (
-                        item
-                        for item in reversed(chat_log.content)
-                        if isinstance(item, conversation.UserContent)
-                    ),
-                    None,
-                )
-                for content_id, prepared in prepared_user_content.items():
-                    if not isinstance(prepared, list):
-                        continue
-                    converted = []
-                    omitted = False
-                    for part in prepared:
-                        if part["type"] == "input_text":
-                            converted.append({"type": "text", "text": part["text"]})
-                        elif part["type"] == "input_image":
-                            converted.append(
-                                {
-                                    "type": "image_url",
-                                    "image_url": {"url": part["image_url"]},
-                                }
-                            )
-                        elif current_user is not None and content_id == id(
-                            current_user
-                        ):
-                            raise HomeAssistantError(
-                                "Chat Completions supports image attachments; Responses supports image and PDF attachments."
-                            )
-                        else:
-                            omitted = True
-                    if omitted:
-                        converted.append(
-                            {
-                                "type": "text",
-                                "text": "[Earlier attachment omitted: incompatible with the selected API.]",
-                            }
-                        )
-                    prepared_user_content[content_id] = converted
-                messages = _convert_content_to_param(
-                    chat_log.content, shorten_tool_call_id, prepared_user_content
-                )
 
             web_search_tool = (
                 provider_snapshot.provider_tools[0]
@@ -2083,7 +2080,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         event_count = 0
         async with aclosing(
             ordered_output_events(
-                normalized_responses_stream(chat_log, result, request_usage)
+                normalized_responses_stream(chat_log, result, request_usage),
+                recover_usage=lambda: async_recover_trailing_usage(
+                    result, request_usage
+                ),
             )
         ) as events:
             async for event in events:

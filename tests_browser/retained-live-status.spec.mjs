@@ -161,3 +161,71 @@ test("Whole-home Broadcast omits retained specific selections", async ({page}) =
   await expect(panel.locator('[data-broadcast-entity="assist_satellite.hall"]')).toBeChecked();
   await expectHarnessClean(page, errors);
 });
+
+
+for (const bundled of [false, true]) {
+  for (const outcome of ["save", "discard"]) {
+    test(`Bulk repair keeps later edits accessible after acknowledgement (${bundled}, ${outcome})`, async ({page}) => {
+      const errors = trackPageErrors(page);
+      await page.goto(`/tests_browser/fixture.html?route=capabilities/functions${bundled ? "&bundle=1" : ""}`);
+      const panel = page.locator("extended-openai-management-panel");
+      await expect(panel.locator("#function-add")).toBeVisible();
+      await panel.evaluate(async host => {
+        host.hass = {...host.hass, user:{id:"repair-owner", is_admin:true}};
+        const call = host.hass.callWS.bind(host.hass);
+        let repaired = false;
+        let savedConfiguration = null;
+        host._repairSubmissions = [];
+        host.hass.callWS = async message => {
+          if (message.section === "function_repair" && message.action === "save") {
+            host._repairSubmissions.push(message.tools);
+            if (host._repairSubmissions.length === 1) await new Promise(resolve => host._releaseRepairSave = resolve);
+            repaired = true;
+            const data = await call({...message, section:"configuration", action:"get"});
+            savedConfiguration = {...data, valid:true, revision:`repaired-${host._repairSubmissions.length}`, function_repair:undefined,
+              config:{...data.config, function_groups:[], functions:[{spec:{name:host._repairSubmissions.length > 1 ? "newer_tool" : "repaired_tool", description:"fixed", parameters:{type:"object", properties:{}}}, function:{type:"template", value_template:"done"}}]}};
+            return structuredClone(savedConfiguration);
+          }
+          if (message.section === "configuration" && message.action === "get" && savedConfiguration)
+            return structuredClone(savedConfiguration);
+          const result = await call(message);
+          if (message.section === "configuration" && message.action === "get" && !repaired)
+            result.function_repair = {isolatable:false, tools_valid:false, validation_error:"Invalid YAML", tools:"- spec: [broken"};
+          return result;
+        };
+        host._invalidateCleanConfiguration(host._agentId);
+        host._configData = null;
+        host._eocSectionCache?.clear?.();
+        await host._loadSection(true);
+      });
+      const editor = panel.locator("#function-repair-editor");
+      const first = JSON.stringify([{spec:{name:"repaired_tool",description:"A repaired template",parameters:{type:"object",properties:{}}},function:{type:"template",value_template:"done"}}], null, 2);
+      const later = "- spec: [new temporarily invalid edits";
+      await editor.fill(first);
+      await panel.locator("#function-repair-save").click();
+      await expect.poll(() => panel.evaluate(host => typeof host._releaseRepairSave)).toBe("function");
+      await expect(panel.locator("#function-repair-save")).toBeDisabled();
+      await editor.fill(later);
+      await panel.evaluate(host => host._releaseRepairSave());
+      await expect(panel.locator("#toast")).toContainText("Function Tools repaired");
+      await expect(editor).toHaveValue(later);
+      await panel.evaluate(host => host._navigate("guide"));
+      await panel.evaluate(host => host._navigate("capabilities", "functions"));
+      await expect(editor).toHaveValue(later);
+      await expect(panel.locator("#function-repair-save")).toBeEnabled();
+      await expect(panel.locator("#function-repair-discard")).toBeVisible();
+      if (outcome === "discard") await panel.locator("#function-repair-discard").click();
+      else {
+        await editor.fill(first.replaceAll("repaired_tool", "newer_tool"));
+        await panel.locator("#function-repair-save").click();
+        await expect.poll(() => panel.evaluate(host => host._repairSubmissions.length)).toBe(2);
+        expect(await panel.evaluate(host => host._repairSubmissions[1])).toBe(first.replaceAll("repaired_tool", "newer_tool"));
+      }
+      await expect(editor).toHaveCount(0);
+      await expect(panel).toContainText(outcome === "save" ? "newer_tool" : "repaired_tool");
+      await expect(panel.locator("#function-add")).toBeVisible();
+      expect(await panel.evaluate(host => host._unsavedState.scopes.get("function-repair").dirty())).toBe(false);
+      await expectHarnessClean(page, errors);
+    });
+  }
+}
