@@ -768,3 +768,15 @@ async def test_ordinary_category_normalization_is_preserved(category):
     manager = await _memory()
     result = await manager.async_add("alice", "A harmless fact", category, "explicit")
     assert result["memory"]["category"] == category.casefold()
+
+
+@pytest.mark.parametrize("category", ["x" * 10000, "\u00df" * 33])
+def test_oversized_categories_are_rejected_before_privacy_scan(monkeypatch, category):
+    from custom_components.extended_openai_conversation_responses import memory
+
+    def must_not_scan(*_args):
+        pytest.fail("oversized category reached the privacy scanner")
+
+    monkeypatch.setattr(memory, "_validate_privacy", must_not_scan)
+    with pytest.raises(ValueError, match="category must be 1 to 64"):
+        memory._clean_category(category)

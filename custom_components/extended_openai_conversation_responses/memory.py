@@ -2050,14 +2050,15 @@ def _clean_content(value: str) -> str:
 def _clean_category(value: str) -> str:
     if not isinstance(value, str):
         raise ValueError("category must be a string")
-    # Validate the authored spelling before casefolding destroys camelCase clues.
+    value = _SPACE_PATTERN.sub(" ", value).strip()
+    normalized = value.casefold()
+    if not normalized or len(normalized) > MAX_CATEGORY_LENGTH:
+        raise ValueError(f"category must be 1 to {MAX_CATEGORY_LENGTH} characters")
+    # Check bounded authored text, keeping camelCase clues until validation ends.
     _validate_privacy(value, "explicit")
     if _CATEGORY_SECRET_PATTERN.search(value):
         raise ValueError("memory rejected because it appears to contain a secret")
-    value = _SPACE_PATTERN.sub(" ", value).strip().casefold()
-    if not value or len(value) > MAX_CATEGORY_LENGTH:
-        raise ValueError(f"category must be 1 to {MAX_CATEGORY_LENGTH} characters")
-    return value
+    return normalized
 
 
 def _clean_optional(value: str | None, field: str, maximum: int) -> str | None:
