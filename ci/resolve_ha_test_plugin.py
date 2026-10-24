@@ -46,6 +46,11 @@ GENERATED_FIXTURES = {
         "0.13.370+eoai.ha2026.10.3.gaacf4b5e.c1f214b84",
         "1f214b8461dd1fbbd66e10765c6905f49d3c1d86",
     ),
+    "2026.10.4": GeneratedFixture(
+        "2026.10.4",
+        "0.13.370+eoai.ha2026.10.4.gaacf4b5e.c357cae5c",
+        "357cae5c598dfcd7a0ea7dc5b1facccd4ec6037b",
+    ),
 }
 
 

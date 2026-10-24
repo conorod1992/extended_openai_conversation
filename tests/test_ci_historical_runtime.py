@@ -181,4 +181,4 @@ def test_generated_bridge_does_not_accept_another_release(monkeypatch, ha_versio
 
 def test_release_day_bridge_does_not_guess_future_releases():
     with pytest.raises(RuntimeError, match="No published"):
-        resolve_ha_test_plugin("2026.10.4", {"releases": {}})
+        resolve_ha_test_plugin("2026.10.5", {"releases": {}})
