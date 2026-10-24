@@ -483,6 +483,17 @@ def validate_function_arguments(
     return dict(result)
 
 
+def inferred_schema_type(schema: Mapping[str, Any]) -> Any:
+    """Resolve explicit or keyword-inferred types for the supported schema subset."""
+    expected = schema.get("type")
+    if expected is None:
+        if _OBJECT_KEYWORDS.intersection(schema):
+            return "object"
+        if _ARRAY_KEYWORDS.intersection(schema):
+            return "array"
+    return expected
+
+
 def _schema_contains_pattern(schema: Mapping[str, Any]) -> bool:
     """Return whether a schema tree contains a configured string pattern."""
     if "pattern" in schema:
@@ -531,12 +542,7 @@ def _collect_pattern_checks(
     checks: list[tuple[str, str, str, int]],
 ) -> None:
     """Collect configured regex checks from already type-validated arguments."""
-    expected = schema.get("type")
-    if expected is None:
-        if _OBJECT_KEYWORDS.intersection(schema):
-            expected = "object"
-        elif _ARRAY_KEYWORDS.intersection(schema):
-            expected = "array"
+    expected = inferred_schema_type(schema)
     expected_types = {expected} if isinstance(expected, str) else set(expected or [])
 
     if "object" in expected_types and isinstance(value, Mapping):
@@ -933,12 +939,7 @@ def _json_hash(value: Any) -> int:
 
 def _validate_value(name: str, value: Any, schema: Mapping[str, Any]) -> Any:
     """Recursively validate one JSON-schema value."""
-    expected = schema.get("type")
-    if expected is None:
-        if _OBJECT_KEYWORDS.intersection(schema):
-            expected = "object"
-        elif _ARRAY_KEYWORDS.intersection(schema):
-            expected = "array"
+    expected = inferred_schema_type(schema)
 
     value = _validate_type(name, value, expected)
 

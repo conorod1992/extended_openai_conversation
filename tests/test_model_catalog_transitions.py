@@ -609,14 +609,14 @@ async def test_valid_model_routing_rule_continues_scanning(hass, monkeypatch) ->
         ("gpt-5.6", "high", False),
         ("gpt-5.6", "minimal", True),
         ("gpt-5.6", 42, False),
-        ("private-model", "xhigh", True),
+        ("private-model", "xhigh", False),
     ],
     ids=[
         "no-reasoning",
         "bundled-compatible",
         "download-only-reasoning",
         "legacy-malformed-reasoning",
-        "model-absent-from-bundled-catalog",
+        "unknown-model-with-inactive-legacy-effort",
     ],
 )
 async def test_bundled_reset_safeguard_checks_saved_conversation_reasoning(

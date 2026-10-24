@@ -11,9 +11,13 @@ from homeassistant.exceptions import HomeAssistantError
 
 from . import request_rules
 from .agent_config import function_tool_enabled
-from .const import CONF_GUEST_ALLOWED_GROUP_IDS, DOMAIN, SERVICE_CALL_FUNCTION
-from .function_execution import async_validate_function_arguments
-from .script_payload import effective_service_payload, set_effective_service_field
+from .const import CONF_GUEST_ALLOWED_GROUP_IDS
+from .function_execution import async_validate_function_arguments, inferred_schema_type
+from .script_payload import (
+    effective_service_payload,
+    is_function_service_action,
+    set_effective_service_field,
+)
 from .script_structure import iter_script_actions
 
 _TOOL_MUTATIONS = frozenset(
@@ -46,15 +50,11 @@ def _contains_template(value: Any) -> bool:
 
 
 def _schema_types(schema: Mapping[str, Any]) -> set[str]:
-    value = schema.get("type")
+    value = inferred_schema_type(schema)
     if isinstance(value, str):
         return {value}
     if isinstance(value, list):
         return {item for item in value if isinstance(item, str)}
-    if "properties" in schema or "required" in schema:
-        return {"object"}
-    if "items" in schema:
-        return {"array"}
     return set()
 
 
@@ -212,11 +212,10 @@ def recursive_function_references(
     manager: Any, function_name: str
 ) -> list[dict[str, str]]:
     """Return rules that call a Function Tool anywhere in a native script tree."""
-    service_action = f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
     references: list[dict[str, str]] = []
     for rule in manager._rules:
         if any(
-            action.get("action", action.get("service")) == service_action
+            is_function_service_action(action)
             and isinstance(data := effective_service_payload(action), Mapping)
             and data.get("function") == function_name
             for action in _rule_script_actions(rule)
@@ -235,7 +234,6 @@ async def async_rename_function_reference_recursive(
     """Rewrite nested Function Tool references with in-memory rollback on save failure."""
     if old_name == new_name:
         return 0
-    service_action = f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
     async with manager._lock:
         manager._require_revision_locked(expected_revision)
         changed = 0
@@ -245,7 +243,7 @@ async def async_rename_function_reference_recursive(
             for action in _rule_script_actions(updated):
                 data = effective_service_payload(action)
                 if (
-                    action.get("action", action.get("service")) == service_action
+                    is_function_service_action(action)
                     and isinstance(data, Mapping)
                     and data.get("function") == old_name
                 ):
@@ -287,14 +285,13 @@ async def async_validate_request_rule_functions(
     """Validate saved structure; require available dependencies on activation."""
     if require_ready is None:
         require_ready = bool(rule.get("enabled", True))
-    service_action = f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
     by_name = {
         tool["spec"]["name"]: tool
         for tool in configured_tools
         if not require_ready or allow_disabled or function_tool_enabled(tool)
     }
     for action in _rule_script_actions(rule):
-        if action.get("action", action.get("service")) != service_action:
+        if not is_function_service_action(action):
             continue
         data = effective_service_payload(action)
         if not isinstance(data, Mapping) or not isinstance(data.get("function"), str):

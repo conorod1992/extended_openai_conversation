@@ -290,3 +290,66 @@ for (const bundled of [false, true]) {
     await expectHarnessClean(page, errors);
   });
 }
+
+
+for (const bundled of [false, true]) {
+  test(`Azure routing edits preserve reasoning through deployment changes (${bundled})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    await page.goto(fixtureUrl("capabilities/request-rules", bundled ? "&bundle=1" : ""));
+    const panel = panelFor(page);
+    await panel.evaluate(host => {
+      host._result = {...host._result, api_provider: "azure", effective_model: "gpt-5.6"};
+      const original = host._hass.callWS.bind(host._hass);
+      host._hass.callWS = async message => {
+        const result = await original(message);
+        if (message.type.endsWith("/model_catalog")) {
+          host._azureRuleLookups ||= [];
+          host._azureRuleLookups.push(message.model);
+          return {...result, reasoning_effort_options: message.model === "gpt-5.6" ? ["low", "high"] : []};
+        }
+        return result;
+      };
+    });
+    await panel.getByRole("button", {name: "Create rule", exact: true}).first().click();
+    await panel.locator("#rule-name").fill("Azure preserved route");
+    await panel.locator("#rule-phrases").fill("switch deployment");
+    await panel.locator("#rule-action-type").selectOption("model_routing");
+    await panel.locator("#rule-model").fill("home-deployment");
+    await expect(panel.locator('#rule-reasoning option[value="high"]')).toHaveCount(1);
+    await panel.locator("#rule-reasoning").selectOption("high");
+    await panel.locator("#rule-save").click();
+    await openRule(panel, "Azure preserved route");
+    await expect(panel.locator("#rule-reasoning")).toHaveValue("high");
+    // An unrelated input refresh used to look up the deployment and clear High.
+    await panel.locator("#rule-phrases").fill("switch to another deployment");
+    await panel.locator("#rule-model").fill("another-deployment");
+    await expect.poll(() => panel.evaluate(host => host._azureRuleLookups.length)).toBeGreaterThan(2);
+    await expect(panel.locator("#rule-reasoning")).toHaveValue("high");
+    expect(await panel.evaluate(host => host._azureRuleLookups.every(model => model === "gpt-5.6"))).toBe(true);
+    await panel.locator("#rule-save").click();
+    const saved = await page.evaluate(() => browserHarness.getState().requestRules.rules.find(rule => rule.name === "Azure preserved route"));
+    expect(saved.action.model).toBe("another-deployment");
+    expect(saved.action.reasoning_effort).toBe("high");
+    await expectHarnessClean(page, errors);
+  });
+
+  test(`mixed-case Function actions retain editable result aliases (${bundled})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    await page.goto(fixtureUrl("capabilities/request-rules", bundled ? "&bundle=1" : ""));
+    const panel = panelFor(page);
+    await panel.getByRole("button", {name: "Create rule", exact: true}).first().click();
+    await setHaSelector(panel.locator("#rule-action-sequence-host ha-selector"), [{
+      action: "EXTENDED_OPENAI_CONVERSATION_RESPONSES.CALL_FUNCTION",
+      data_template: {function: "EchoCase", arguments: {}, result_alias: "reply"},
+    }]);
+    await expect(panel.locator(".rule-result-alias")).toHaveValue("reply");
+    await expect(panel.locator("#rule-result-aliases")).toContainText("EchoCase");
+    await panel.locator(".rule-result-alias").fill("renamed_reply");
+    await panel.locator(".rule-result-alias").dispatchEvent("change");
+    const actions = await panel.locator("#rule-action-sequence-host ha-selector").evaluate(selector => selector.value);
+    expect(actions[0].data_template.result_alias).toBe("renamed_reply");
+    expect(actions[0].action).toBe("EXTENDED_OPENAI_CONVERSATION_RESPONSES.CALL_FUNCTION");
+    expect(actions[0].data_template.function).toBe("EchoCase");
+    await expectHarnessClean(page, errors);
+  });
+}

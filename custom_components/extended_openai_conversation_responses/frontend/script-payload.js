@@ -1,6 +1,11 @@
 // Inspect authored HA service payloads without rendering templates.
 const isMapping = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 
+export function isFunctionServiceAction(action) {
+  const name = action?.action ?? action?.service ?? action?.service_template;
+  return typeof name === "string" && name.toLowerCase() === "extended_openai_conversation_responses.call_function";
+}
+
 export function effectiveServicePayload(action) {
   const payload = {};
   for (const field of ["data", "data_template"]) {

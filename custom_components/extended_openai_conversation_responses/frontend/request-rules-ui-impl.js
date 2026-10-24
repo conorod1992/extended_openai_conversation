@@ -1,6 +1,6 @@
 import {watchSelectorYaml, assertSelectorYamlReady, isSelectorValueEvent} from "./native-selector-drafts.js";
 import {setReasoningOptions, syncRequestRuleRoutingControls} from "./request-rule-routing-controls.js";
-import {effectiveServicePayload, setEffectiveServiceField} from "./script-payload.js";
+import {effectiveServicePayload, isFunctionServiceAction, setEffectiveServiceField} from "./script-payload.js";
 export {syncRequestRuleRoutingControls} from "./request-rule-routing-controls.js";
 import {applyRequestRuleMutation, fuzzyThresholdValue, matchingControls} from "./request-rules-ui-core.js";
 export {fuzzyThresholdValue, recoverRequestRuleMutation, reconcileRequestRules, renderRequestRules} from "./request-rules-ui-core.js";
@@ -235,7 +235,7 @@ function renderResultAliases(panel, selector) {
   const host = panel.shadowRoot.querySelector("#rule-result-aliases");
   if (!host) return;
   const actions = selector.value || [];
-  const calls = actions.map((action, index) => ({action, index, data:effectiveServicePayload(action)})).filter(({action, data}) => (action?.action || action?.service) === "extended_openai_conversation_responses.call_function" && data?.function);
+  const calls = actions.map((action, index) => ({action, index, data:effectiveServicePayload(action)})).filter(({action, data}) => isFunctionServiceAction(action) && data?.function);
   const suggested = new Set(calls.map(({data}) => data.result_alias).filter(Boolean));
   host.innerHTML = calls.map(({data, index}) => {
     const alias = data.result_alias || "";
@@ -275,7 +275,11 @@ function ensureModelCatalog() {
 }
 
 export function requestRuleCapabilityModel(panel, override = "") {
-  return String(override || panel._result?.effective_model || panel._result?.config?.azure_model || panel._result?.config?.chat_model || "").trim();
+  const result = panel._result || {};
+  const config = result.config || {};
+  const azure = result.api_provider === "azure" || (!result.api_provider && config.azure_model);
+  const azureModel = azure ? result.effective_model || config.azure_model : null;
+  return String(azureModel || override || result.effective_model || config.chat_model || "").trim();
 }
 
 
@@ -333,7 +337,7 @@ function refreshEditor(panel) {
   if(local)return;
   const model=requestRuleCapabilityModel(panel,q("#rule-model")?.value.trim());
   if(!model || /\{[^{}]+\}/.test(model))return;
-  void ensureModelCatalog().then((module)=>module.lookupModelData(panel,model)).then((data)=>{
+  void ensureModelCatalog().then((module)=>module.lookupModelData(panel,model,"lookup",()=>current===state.modelRevision && root.querySelector("#rule-dialog")?.open)).then((data)=>{
     if(current===state.modelRevision && root.querySelector("#rule-dialog")?.open) syncRequestRuleRoutingControls(root,data.reasoning_effort_options);
   }).catch((err)=>panel._toast(`Unable to load model choices: ${err.message || String(err)}`,true));
 }

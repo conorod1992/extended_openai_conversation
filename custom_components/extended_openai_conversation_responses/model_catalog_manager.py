@@ -449,9 +449,18 @@ class ModelCatalogManager:
                 configured_effort = subentry.data.get(CONF_REASONING_EFFORT)
                 metadata = catalog_model_metadata(None, configured_model)
                 bundled_config_efforts = metadata["reasoning"]["efforts"]
+                # A legacy value omitted by both request builders is inactive.
+                # Still protect reasoning that the active catalogue actually uses.
+                current_metadata = catalog_model_metadata(
+                    self.catalog, configured_model
+                )
                 if (
                     isinstance(configured_effort, str)
                     and configured_effort
+                    and (
+                        metadata["reasoning"]["supported"]
+                        or current_metadata["reasoning"]["supported"]
+                    )
                     and (
                         not metadata["reasoning"]["supported"]
                         or configured_effort not in bundled_config_efforts

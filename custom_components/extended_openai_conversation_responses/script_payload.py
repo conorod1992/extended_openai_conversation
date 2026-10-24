@@ -3,6 +3,18 @@
 from collections.abc import Mapping
 from typing import Any
 
+from .const import DOMAIN, SERVICE_CALL_FUNCTION
+
+
+def is_function_service_action(action: Mapping[str, Any]) -> bool:
+    """Recognize a literal Function service name using HA's case normalization.
+
+    Inspect only the action selector; names in payloads and templates are data.
+    Keep the authored service spelling and Function name intact.
+    """
+    name = action.get("action", action.get("service", action.get("service_template")))
+    return isinstance(name, str) and name.lower() == f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
+
 
 def effective_service_payload(action: Mapping[str, Any]) -> dict[str, Any] | None:
     """Match HA's shallow data then data_template update, retaining templates.

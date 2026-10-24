@@ -75,7 +75,11 @@ from .request_rule_patterns import (
     sentence_capture_names,
     validate_match_input,
 )
-from .script_payload import effective_service_payload, set_effective_service_field
+from .script_payload import (
+    effective_service_payload,
+    is_function_service_action,
+    set_effective_service_field,
+)
 from .script_structure import (
     MAX_SCRIPT_DEPTH,
     MAX_SCRIPT_NODES,
@@ -2153,8 +2157,7 @@ def _assign_missing_result_step_ids(value: Any) -> Any:
             continue
         data = effective_service_payload(step)
         if (
-            step.get("action", step.get("service"))
-            == f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
+            _is_function_action(step)
             and isinstance(data, dict)
             and data.get("result_alias")
             and not data.get("step_id")
@@ -2201,8 +2204,7 @@ def _result_paths_by_alias(value: Any) -> dict[str, set[str]]:
 
 def _is_function_action(step: Mapping[str, Any]) -> bool:
     """Recognize only a statically identified EOAI Function service action."""
-    name = step.get("action", step.get("service", step.get("service_template")))
-    return isinstance(name, str) and name == f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
+    return is_function_service_action(step)
 
 
 def _validate_result_dependencies(action: Mapping[str, Any], slots: set[str]) -> None:
@@ -2855,7 +2857,7 @@ def _guest_script_allowed(
         if action_name is not None:
             if not isinstance(action_name, str):
                 return False
-            if action_name == f"{DOMAIN}.{SERVICE_CALL_FUNCTION}":
+            if _is_function_action(item):
                 data = effective_service_payload(item)
                 if not isinstance(data, Mapping):
                     return False
@@ -2900,10 +2902,7 @@ async def _async_guest_functions_allowed(
 
     tools = None
     for step in _iter_script_actions(sequence):
-        if (
-            step.get("action", step.get("service"))
-            != f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
-        ):
+        if not _is_function_action(step):
             continue
         if tools is None:
             tools = _runtime_configured_function_tools(request_options or {})

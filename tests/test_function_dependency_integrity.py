@@ -579,7 +579,7 @@ async def test_rule_action_iteration_and_service_alias_references() -> None:
     assert list(integrity._rule_script_actions({"action": {"actions": "bad"}})) == []
     assert list(integrity._rule_script_actions({})) == []
 
-    service = f"{integrity.DOMAIN}.{integrity.SERVICE_CALL_FUNCTION}"
+    service = f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
     manager = SimpleNamespace(
         _rules=[
             {
@@ -689,3 +689,38 @@ async def test_function_management_mutations_reject_invalid_ids_before_resolutio
         await management_ui.async_management_command(hass, "admin", True, message)
 
     select.assert_not_called()
+
+
+@pytest.mark.parametrize("hint", [{"additionalProperties": True}, {"additionalProperties": False}, {"minProperties": 1}, {"maxProperties": 3}])
+def test_schema_inference_matches_runtime_object_keywords(hint):
+    from custom_components.extended_openai_conversation_responses.function_execution import inferred_schema_type
+    assert integrity._schema_types(hint) == {inferred_schema_type(hint)} == {"object"}
+
+
+@pytest.mark.parametrize("container", ["object", "array"])
+async def test_inferred_additional_objects_defer_only_dynamic_values(hass, container):
+    schema = {"additionalProperties": {"type": "integer", "minimum": 1}, "minProperties": 2}
+    value = {"capture": "{{ amount }}", "static": 2}
+    if container == "array":
+        schema, value = {"items": schema}, [value]
+    spec = {"parameters": {"type": "object", "properties": {"counts": schema}, "required": ["counts"], "additionalProperties": False}}
+    original = deepcopy(spec)
+    await async_validate_static_function_arguments(hass, spec, {"counts": value})
+    invalid = {"capture": "{{ amount }}", "static": 0}
+    if container == "array":
+        invalid = [invalid]
+    with pytest.raises(HomeAssistantError, match="at least 1"):
+        await async_validate_static_function_arguments(hass, spec, {"counts": invalid})
+    assert spec == original
+
+
+@pytest.mark.parametrize("selector", ["action", "service", "service_template"])
+def test_function_service_case_does_not_change_function_identity(selector):
+    service = f"{DOMAIN}.{SERVICE_CALL_FUNCTION}".upper()
+    manager = SimpleNamespace(_rules=[{"id": "case", "name": "Case", "action": {"actions": [
+        {selector: service, "data_template": {"function": "EchoCase", "arguments": {"message": "KeepCase"}}},
+        {"event": "business_data", "event_data": {"action": service, "data": {"function": "unrelated"}}},
+    ]}}])
+    assert recursive_function_references(manager, "EchoCase") == [{"id": "case", "name": "Case"}]
+    assert recursive_function_references(manager, "echocase") == []
+    assert recursive_function_references(manager, "unrelated") == []

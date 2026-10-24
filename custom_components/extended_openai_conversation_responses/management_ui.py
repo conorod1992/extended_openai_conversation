@@ -67,14 +67,12 @@ from .const import (
     CONF_SHARED_MEMORY_MODE,
     CONF_USAGE_REQUEST_RETENTION_DAYS,
     CONF_USAGE_RUN_RETENTION_DAYS,
-    DEFAULT_CHAT_MODEL,
     DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
     DEFAULT_SHARED_MEMORY_MODE,
     DOMAIN,
     GUEST_POLICY_VERSION,
     MANAGEMENT_PANEL_TITLE,
     MANAGEMENT_PANEL_URL,
-    SERVICE_CALL_FUNCTION,
     SHARED_MEMORY_DISABLED,
 )
 from .continuity import async_get_continuity
@@ -178,7 +176,11 @@ from .request_rules import (
     validate_rule,
 )
 from .scope import SHARED_HOUSEHOLD_SCOPE_ID
-from .script_payload import effective_service_payload, set_effective_service_field
+from .script_payload import (
+    effective_service_payload,
+    is_function_service_action,
+    set_effective_service_field,
+)
 from .secret_redaction import is_redacted_secret, redact_secrets
 from .temporary_memory import async_get_temporary_memory, temporary_memory_as_dict
 from .usage import async_get_usage
@@ -556,10 +558,9 @@ def _request_rule_function_tools(
     from .function_dependency_integrity import _rule_script_actions
     from .management_function_repair import editable_function_tools
 
-    service = f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
     names = set()
     for step in _rule_script_actions(rule):
-        if step.get("action", step.get("service")) != service:
+        if not is_function_service_action(step):
             continue
         call = effective_service_payload(step)
         if not isinstance(call, Mapping) or not isinstance(call.get("function"), str):
@@ -592,12 +593,11 @@ def _validate_request_rule_functions(
     rule: Mapping[str, Any], configured_tools: list[dict[str, Any]]
 ) -> None:
     """Validate configured Function references in canonical persisted actions."""
-    service_action = f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
     calls: list[Mapping[str, Any]] = []
     for action in rule.get("action", {}).get("actions", []):
         if not isinstance(action, Mapping):
             continue
-        if action.get("action", action.get("service")) != service_action:
+        if not is_function_service_action(action):
             continue
         data = effective_service_payload(action)
         if not isinstance(data, Mapping) or not isinstance(data.get("function"), str):
@@ -735,8 +735,7 @@ async def _review_rule_pack(
             {
                 str(data["function"])
                 for action in actions
-                if action.get("action", action.get("service"))
-                == f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
+                if is_function_service_action(action)
                 and isinstance(data := effective_service_payload(action), Mapping)
                 and isinstance(data.get("function"), str)
             }
@@ -769,7 +768,7 @@ async def _review_rule_pack(
                     service := action.get("action", action.get("service")), str
                 )
                 and "." in service
-                and service != f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
+                and not is_function_service_action(action)
             }
         )
         missing_services = [
@@ -969,11 +968,12 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
             for tool in configured_tools
             if function_tool_enabled(tool) and not is_ha_tool(tool)
         ]
-        snapshot["effective_model"] = str(
-            subentry.data.get("azure_model")
-            if getattr(request.entry, "data", {}).get(CONF_API_PROVIDER) == "azure"
-            and subentry.data.get("azure_model")
-            else subentry.data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
+        from .request import capability_model_identity
+
+        entry_data = getattr(request.entry, "data", {})
+        snapshot["api_provider"] = entry_data.get(CONF_API_PROVIDER, "openai")
+        snapshot["effective_model"] = capability_model_identity(
+            subentry.data, entry_data
         )
         return snapshot
     if action == "settings":
@@ -1920,8 +1920,7 @@ async def _async_validate_configuration_dependencies(
             for action in _rule_script_actions(rule):
                 data = effective_service_payload(action)
                 if (
-                    action.get("action", action.get("service"))
-                    == f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
+                    is_function_service_action(action)
                     and isinstance(data, Mapping)
                     and data.get("function") == old_name
                 ):

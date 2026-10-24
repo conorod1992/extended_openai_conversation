@@ -10,7 +10,7 @@ from homeassistant.exceptions import HomeAssistantError
 from . import request_rules
 from .request_rule_patterns import SentenceMatchLimitError
 from .request_rules import RuleMatch, rule_provider_input, rule_stops_matching
-from .script_payload import effective_service_payload
+from .script_payload import effective_service_payload, is_function_service_action
 from .script_structure import iter_script_actions
 
 
@@ -46,8 +46,7 @@ def request_rule_match_preview(match: RuleMatch | None) -> dict[str, Any]:
                 max_nodes=request_rules.MAX_SCRIPT_NODES,
             )
             if isinstance(data := effective_service_payload(step), dict)
-            and step.get("action", step.get("service"))
-            == "extended_openai_conversation_responses.call_function"
+            and is_function_service_action(step)
             and isinstance(data.get("function"), str)
         ]
         would_do: dict[str, Any] = {

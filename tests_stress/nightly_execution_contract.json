@@ -629,7 +629,7 @@
     "tests/test_model_catalog_transitions.py::test_bundled_reset_safeguard_checks_saved_conversation_reasoning[bundled-compatible]",
     "tests/test_model_catalog_transitions.py::test_bundled_reset_safeguard_checks_saved_conversation_reasoning[download-only-reasoning]",
     "tests/test_model_catalog_transitions.py::test_bundled_reset_safeguard_checks_saved_conversation_reasoning[legacy-malformed-reasoning]",
-    "tests/test_model_catalog_transitions.py::test_bundled_reset_safeguard_checks_saved_conversation_reasoning[model-absent-from-bundled-catalog]",
+    "tests/test_model_catalog_transitions.py::test_bundled_reset_safeguard_checks_saved_conversation_reasoning[unknown-model-with-inactive-legacy-effort]",
     "tests/test_model_catalog_transitions.py::test_bundled_reset_safeguard_checks_saved_conversation_reasoning[no-reasoning]",
     "tests/test_model_catalog_transitions.py::test_candidate_rejects_invalid_saved_agent_before_loading_rules",
     "tests/test_model_catalog_transitions.py::test_catalog_check_rejects_invalid_saved_rule_then_recovers",
