@@ -1,4 +1,4 @@
-import {watchSelectorYaml, assertSelectorYamlReady} from "./native-selector-drafts.js";
+import {watchSelectorYaml, assertSelectorYamlReady, isSelectorValueEvent} from "./native-selector-drafts.js";
 import {setReasoningOptions, syncRequestRuleRoutingControls} from "./request-rule-routing-controls.js";
 import {effectiveServicePayload, setEffectiveServiceField} from "./script-payload.js";
 export {syncRequestRuleRoutingControls} from "./request-rule-routing-controls.js";
@@ -146,7 +146,7 @@ export function createRequestRuleActionSelector(panel, host) {
   actionSelector.selector = {action:{}};
   actionSelector.value = [];
   actionSelector.addEventListener("value-changed", (event) => {
-    if ((event.composedPath?.()[0] ?? event.target ?? actionSelector) === actionSelector) actionSelector.value = event.detail.value || [];
+    if (isSelectorValueEvent(actionSelector, event)) actionSelector.value = event.detail.value || [];
   });
   host.querySelector?.("ha-selector")?.__eocStopYamlDraft?.();
   host.replaceChildren(actionSelector);
@@ -159,7 +159,7 @@ export function createRequestRuleConditionSelector(panel, host) {
   selector.hass = panel._hass;
   selector.selector = {condition:{}};
   selector.value = [];
-  selector.addEventListener("value-changed", (event) => { if ((event.composedPath?.()[0] ?? event.target ?? selector) !== selector) return; selector.value = event.detail.value || []; void labelConditionAddControl(panel, selector); });
+  selector.addEventListener("value-changed", (event) => { if (!isSelectorValueEvent(selector, event)) return; selector.value = event.detail.value || []; void labelConditionAddControl(panel, selector); });
   host.querySelector?.("ha-selector")?.__eocStopYamlDraft?.();
   host.replaceChildren(selector);
   watchSelectorYaml(selector);

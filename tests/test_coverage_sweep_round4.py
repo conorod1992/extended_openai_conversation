@@ -516,7 +516,7 @@ def test_agent_config_serialization_falls_back_for_runtime_objects(monkeypatch) 
         pass
 
     dump = Mock(return_value="fallback-yaml")
-    monkeypatch.setattr(agent_config.yaml, "safe_dump", dump)
+    monkeypatch.setattr(agent_config, "dump_yaml", dump)
 
     result = agent_config._configured_tools_yaml(
         {agent_config.CONF_FUNCTION_TOOLS: [{"runtime": RuntimeOnly()}]}

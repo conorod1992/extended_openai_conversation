@@ -371,7 +371,9 @@ test("correcting native Rule YAML saves the intended actions and clears the draf
   const selector=panel.locator("#rule-action-sequence-host ha-selector");
   await selector.evaluate(element => {
     const root=element.shadowRoot || element.attachShadow({mode:"open"});
-    const yaml=document.createElement("ha-yaml-editor"); root.append(yaml);
+    const wrapper=document.createElement("ha-selector-action"); root.append(wrapper);
+    const collection=document.createElement("ha-automation-action"); wrapper.attachShadow({mode:"open"}).append(collection);
+    const yaml=document.createElement("ha-yaml-editor"); collection.attachShadow({mode:"open"}).append(yaml);
     yaml.yaml="- event: [invalid";
     yaml.dispatchEvent(new CustomEvent("value-changed", {detail:{isValid:false}, bubbles:true, composed:true}));
   });
@@ -379,15 +381,16 @@ test("correcting native Rule YAML saves the intended actions and clears the draf
   await expect(panel.locator("#rule-error")).toContainText("Correct the YAML");
   const actions=[{event:"intended_corrected_event", event_data:{message:"Intended new actions"}}];
   await selector.evaluate((element, actions) => {
-    const yaml=element.shadowRoot.querySelector("ha-yaml-editor");
+    const collection=element.shadowRoot.querySelector("ha-selector-action").shadowRoot.querySelector("ha-automation-action");
+    const yaml=collection.shadowRoot.querySelector("ha-yaml-editor");
     yaml.yaml="- event: intended_corrected_event";
     yaml.dispatchEvent(new CustomEvent("value-changed", {detail:{isValid:true, value:actions}, bubbles:true, composed:true}));
   }, actions);
   await panel.locator("#rule-save").click();
   await expect(panel.locator("#rule-error")).toContainText("Correct the YAML"); // Valid but not yet applied by the selector.
   await selector.evaluate((element, actions) => {
-    element.value=actions;
-    element.dispatchEvent(new CustomEvent("value-changed", {detail:{value:actions}, bubbles:true, composed:true}));
+    const collection=element.shadowRoot.querySelector("ha-selector-action").shadowRoot.querySelector("ha-automation-action");
+    collection.dispatchEvent(new CustomEvent("value-changed", {detail:{value:actions}, bubbles:true, composed:true}));
   }, actions);
   await panel.locator("#rule-save").click();
   await expect(panel.locator("#rule-dialog")).toHaveJSProperty("open", false);

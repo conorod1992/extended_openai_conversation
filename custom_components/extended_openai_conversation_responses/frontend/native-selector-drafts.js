@@ -1,5 +1,16 @@
 // Native YAML editors keep invalid text separately from their selector value.
 // Observe the editors themselves: their events need not cross shadow boundaries.
+export function isSelectorValueEvent(selector, event) {
+  const source = event.composedPath?.()[0] ?? event.target ?? selector;
+  if (source === selector) return true;
+  // HA's generic selector forwards its collection's event without re-emitting
+  // it. Accept that outer collection, never a nested row or raw YAML editor.
+  const kind = selector.selector?.action ? "action" : selector.selector?.condition ? "condition" : null;
+  const wrapper = kind && selector.shadowRoot?.querySelector(`ha-selector-${kind}`);
+  return Boolean(wrapper && Array.isArray(event.detail?.value)
+    && source === wrapper.shadowRoot?.querySelector(`ha-automation-${kind}`));
+}
+
 export function watchSelectorYaml(selector) {
   if (!globalThis.MutationObserver) return;
   const records = new Map(), roots = new Set(), updates = new WeakSet();
@@ -58,7 +69,7 @@ export function watchSelectorYaml(selector) {
     scan(selector);
   };
   selector.addEventListener("value-changed", event => {
-    if (event.composedPath()[0] !== selector) return;
+    if (!isSelectorValueEvent(selector, event)) return;
     for (const record of records.values()) if (record.valid) record.pending = false;
   });
   selector.addEventListener("value-changed", () => scan(selector), true);
