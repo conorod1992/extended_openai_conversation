@@ -46,3 +46,13 @@ for (const topic of backupPrivacyTopics) {
   assert.match(text, /not encrypted/);
   assert.doesNotMatch(text, /credentials.*(?:are excluded|are not included)/);
 }
+
+
+const configurationGuide = await readFile(new URL("../docs/configuration.md", import.meta.url), "utf8");
+const backupSection = configurationGuide.split("## Backup & Restore")[1].split("## Speech cleanup")[0];
+assert.match(backupSection, /preserve inline credentials and include the parent provider connection/);
+assert.match(backupSection, /when configuration is selected/);
+assert.match(backupSection, /not encrypted/);
+assert.match(backupSection, /explicit shared-connection choice/);
+assert.doesNotMatch(backupSection, /Provider API keys, OAuth tokens, parent config-entry credentials.*are excluded/);
+assert.doesNotMatch(backupSection, /Re-enter provider credentials separately|Reconnect or re-enter provider credentials separately/);
