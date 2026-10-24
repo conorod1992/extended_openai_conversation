@@ -62,3 +62,11 @@ Quiet Hours saves check the policy revision loaded by the editor. If selections
 or settings change while the page is open, reload the latest policy before
 saving. Renaming a selected satellite also migrates its pending applications,
 so interrupted changes can resume under the same physical satellite identity.
+
+Unsaved policy edits recovered after Home Assistant recreates the panel retain
+the revision they were based on. If the policy changed meanwhile, saving asks
+you to reload; explicitly discarding the recovered edits adopts the latest
+saved policy. Pending applications retain satellite registry identities for
+both automatic discovery and manual selections, so a rename can resume safely
+without treating a replacement satellite that reuses the old ID as the same
+application.

@@ -339,6 +339,18 @@ async def test_public_recovery_timeout_and_cancel_record_failure_once(
 ):
     monkeypatch.setattr(hardening, "_TRAILING_USAGE_TIMEOUT", 60 if cancel else 0.02)
     reading, finished = asyncio.Event(), asyncio.Event()
+    recovery_started = asyncio.Event()
+    from custom_components.extended_openai_conversation_responses import (
+        entity as entity_module,
+    )
+
+    recover = entity_module.async_recover_trailing_usage
+
+    async def entered_recovery(*args):
+        recovery_started.set()
+        await recover(*args)
+
+    monkeypatch.setattr(entity_module, "async_recover_trailing_usage", entered_recovery)
 
     class Stalled(Stream):
         async def __anext__(self):
@@ -364,12 +376,16 @@ async def test_public_recovery_timeout_and_cancel_record_failure_once(
 
     task = asyncio.create_task(request())
     try:
-        await asyncio.wait_for(reading.wait(), 1)
+        await asyncio.wait_for(recovery_started.wait(), 1)
         if cancel:
+            await asyncio.wait_for(reading.wait(), 1)
             task.cancel()
         with pytest.raises(asyncio.CancelledError if cancel else HomeAssistantError):
             await asyncio.wait_for(task, 0.3)
-        await asyncio.wait_for(finished.wait(), 0.3)
+        # An expired deadline can prevent the first recovery read altogether.
+        # A read that did start must still finish when recovery is cancelled.
+        if reading.is_set():
+            await asyncio.wait_for(finished.wait(), 0.3)
     finally:
         if not task.done():
             task.cancel()

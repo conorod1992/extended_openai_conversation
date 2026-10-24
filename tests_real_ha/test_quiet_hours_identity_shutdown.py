@@ -517,12 +517,25 @@ async def test_stale_quiet_hours_save_cannot_undo_renames(
 
 
 @pytest.mark.parametrize("kind", ["volume", "switch"])
+@pytest.mark.parametrize("manual", [True, False])
+@pytest.mark.parametrize("change", ["rename", "rename_during_save", "replacement"])
 async def test_pending_application_follows_satellite_identity_after_restart(
-    hass, monkeypatch, kind
+    hass, monkeypatch, kind, manual, change
 ):
-    manager, satellite, media, wake, _, _, calls = await _manual_manager(
-        hass, enabled=False
-    )
+    (
+        manager,
+        satellite,
+        media,
+        wake,
+        auto_media,
+        auto_wake,
+        calls,
+    ) = await _manual_manager(hass, enabled=False)
+    if not manual:
+        config = manager.config.as_dict()
+        config["overrides"] = {}
+        await manager.async_update_config(config)
+        media, wake = auto_media, auto_wake
     if kind == "switch":
         hass.states.async_set(media, "idle", {"volume_level": 0.1})
     target = media if kind == "volume" else wake
@@ -545,11 +558,53 @@ async def test_pending_application_follows_satellite_identity_after_restart(
     assert not calls
     _retire_for_restart(manager)
     renamed = "assist_satellite.renamed_before_dispatch"
-    _rename_selected(hass, satellite, renamed)
+    if change == "replacement":
+        registry = er.async_get(hass)
+        previous = registry.async_get(satellite)
+        registry.async_remove(satellite)
+        hass.states.async_remove(satellite)
+        created = registry.async_get_or_create(
+            "assist_satellite",
+            previous.platform,
+            "replacement-before-dispatch",
+            suggested_object_id=satellite.split(".", 1)[1],
+            device_id=previous.device_id,
+        )
+        assert created.entity_id == satellite
+        hass.states.async_set(satellite, "idle")
+    else:
+        _rename_selected(hass, satellite, renamed)
     restarted = QuietHoursManager(hass)
+    if change == "rename_during_save":
+        first_name = renamed
+        renamed += "_again"
+        save = restarted._store.async_save
+        renamed_again = False
+
+        async def save_with_rename(data):
+            nonlocal renamed_again
+            await save(data)
+            if not renamed_again:
+                renamed_again = True
+                _rename_selected(hass, first_name, renamed)
+
+        monkeypatch.setattr(restarted._store, "async_save", save_with_rename)
     try:
         await restarted.async_setup()
-        assert restarted.config.overrides[0].satellite_entity_id == renamed
+        if change == "replacement":
+            assert not any(entity_id == target for _, entity_id in calls)
+            assert target not in restarted.active["controls"]
+            assert hass.states.get(media).attributes["volume_level"] == (
+                (0.8 if manual else 0.6) if kind == "volume" else 0.1
+            )
+            assert hass.states.get(wake).state == (
+                "off" if not manual and kind == "volume" else "on"
+            )
+            await restarted.async_reconcile()
+            assert not any(entity_id == target for _, entity_id in calls)
+            return
+        if manual:
+            assert restarted.config.overrides[0].satellite_entity_id == renamed
         assert hass.states.get(media).attributes["volume_level"] == (
             0.2 if kind == "volume" else 0.1
         )
@@ -561,7 +616,7 @@ async def test_pending_application_follows_satellite_identity_after_restart(
         )
         await restarted.async_set_enabled(False)
         assert hass.states.get(media).attributes["volume_level"] == (
-            0.8 if kind == "volume" else 0.1
+            (0.8 if manual else 0.6) if kind == "volume" else 0.1
         )
         assert hass.states.get(wake).state == "on"
     finally:

@@ -89,6 +89,13 @@ export function initializePageDraft(panel) {
     },
   });
   Object.assign(scope, {agent: panel._agentId, result, revision: result.revision});
+  scope.discard = () => {
+    // Recovery can retain an older baseline/revision while result contains the
+    // current saved policy. Explicit discard adopts that acknowledged read.
+    scope.baseline = clone(view === RULES ? settings(scope.result) : scope.result.config || {});
+    scope.revision = scope.result.revision;
+    scope.write(clone(scope.baseline));
+  };
   state.register(view, scope);
 }
 

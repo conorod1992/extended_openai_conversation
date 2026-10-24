@@ -918,12 +918,21 @@ class QuietHoursManager:
                         controls,
                     )
 
-    async def _async_resolve_control_identities_locked(self) -> bool:
+    async def _async_resolve_control_identities_locked(
+        self, *, settle_pending: bool = True
+    ) -> bool:
         # A registry event can arrive while the prior migration is being saved.
         # Settle the complete selection/ownership mapping before discovery can
         # mistake a renamed satellite for a new one with automatic controls.
-        follow_selections = bool(self._selected_entity_ids())
-        for _ in range(8 if follow_selections else 1):
+        follow_bindings = bool(self._selected_entity_ids()) or (
+            settle_pending
+            and any(
+                isinstance(control, Mapping)
+                and control.get("satellite_registry_identity")
+                for control in (self._active or {}).get("pending_controls", {}).values()
+            )
+        )
+        for _ in range(8 if follow_bindings else 1):
             changed = self._migrate_selected_entity_ids()
             if self._migrate_control_entity_ids():
                 changed = True
@@ -932,7 +941,7 @@ class QuietHoursManager:
             await self._async_save_control_state_locked()
         # Continuous registry churn must not cause unbounded writes or actions
         # against a stale discovery snapshot. The next reconciliation retries.
-        return not follow_selections
+        return not follow_bindings
 
     def _migrate_selected_entity_ids(self) -> bool:
         """Follow manual selections before deciding which owned controls departed."""
@@ -1013,6 +1022,7 @@ class QuietHoursManager:
             return False
         destinations: dict[str, list[tuple[str, str, dict[str, Any]]]] = {}
         moves: dict[str, str | None] = {}
+        associations_changed = False
         for key in ("controls", "pending_controls"):
             controls = self._active.get(key, {})
             if not isinstance(controls, Mapping):
@@ -1020,6 +1030,14 @@ class QuietHoursManager:
             for old_id, control in controls.items():
                 if not isinstance(old_id, str) or not isinstance(control, dict):
                     continue
+                if identity := control.get("satellite_registry_identity"):
+                    satellite = er.async_get(self.hass).async_get_entity_id(*identity)
+                    if (
+                        isinstance(satellite, str)
+                        and satellite != control["satellite_entity_id"]
+                    ):
+                        control["satellite_entity_id"] = satellite
+                        associations_changed = True
                 identity = control.get("registry_identity")
                 new_id = (
                     er.async_get(self.hass).async_get_entity_id(*identity)
@@ -1091,7 +1109,8 @@ class QuietHoursManager:
                 )
         observed = list(dict.fromkeys(observed + ambiguous))
         changed = (
-            any(self._active.get(key, {}) != value for key, value in rebuilt.items())
+            associations_changed
+            or any(self._active.get(key, {}) != value for key, value in rebuilt.items())
             or self._active.get("observed_controls", []) != observed
             or previous_identities != identities
         )
@@ -1137,6 +1156,9 @@ class QuietHoursManager:
             if control["satellite_entity_id"] != target[1]:
                 # Ownership follows the physical control, even if its satellite changes.
                 control["satellite_entity_id"] = target[1]
+                control.pop("satellite_registry_identity", None)
+                if identity := self._entity_registry_identity(target[1]):
+                    control["satellite_registry_identity"] = identity
                 await self._async_save_control_state_locked()
             if control.get("application_state") == "prepared":
                 state = self.hass.states.get(entity_id)
@@ -1509,6 +1531,20 @@ class QuietHoursManager:
             control["application_state"] = "applied"
             await self._async_save_control_state_locked()
 
+    def _entity_registry_identity(self, entity_id: str) -> list[str] | None:
+        try:
+            entry = er.async_get(self.hass).async_get(entity_id)
+        except TypeError:
+            return None
+        parts = [
+            getattr(entry, field, None) for field in ("domain", "platform", "unique_id")
+        ]
+        return (
+            cast(list[str], parts)
+            if all(isinstance(part, str) and part for part in parts)
+            else None
+        )
+
     async def _async_prepare_control_locked(
         self,
         satellite_entity_id: str,
@@ -1575,6 +1611,11 @@ class QuietHoursManager:
             if (
                 intent["kind"] != kind
                 or intent["satellite_entity_id"] != satellite_entity_id
+                or (
+                    intent.get("satellite_registry_identity") is not None
+                    and intent["satellite_registry_identity"]
+                    != self._entity_registry_identity(satellite_entity_id)
+                )
                 or not same_baseline
                 or not self._baseline_context_matches(entity_id, intent, legacy=True)
             ):
@@ -1584,26 +1625,23 @@ class QuietHoursManager:
                 await self._async_save_control_state_locked()
                 return None
         else:
-            try:
-                entry = er.async_get(self.hass).async_get(entity_id)
-            except TypeError:
-                entry = None
-            identity = [
-                entity_id.partition(".")[0],
-                getattr(entry, "platform", None),
-                getattr(entry, "unique_id", None),
-            ]
+            identity = self._entity_registry_identity(entity_id)
             intent = {
                 "kind": kind,
                 "satellite_entity_id": satellite_entity_id,
+                **(
+                    {"satellite_registry_identity": satellite_identity}
+                    if (
+                        satellite_identity := self._entity_registry_identity(
+                            satellite_entity_id
+                        )
+                    )
+                    else {}
+                ),
                 "original_value": original,
                 "quiet_value": desired,
                 "baseline_context_id": self._control_context_id(entity_id),
-                **(
-                    {"registry_identity": identity}
-                    if all(isinstance(item, str) and item for item in identity)
-                    else {}
-                ),
+                **({"registry_identity": identity} if identity else {}),
             }
             observed.append(entity_id)
         if identity := intent.get("registry_identity"):
@@ -1668,7 +1706,11 @@ class QuietHoursManager:
     ) -> None:
         if not await self._async_recover_configuration_locked():
             return
-        if not await self._async_resolve_control_identities_locked():
+        # Pending retries must not change when an existing restoration is
+        # deferred by a registry change during persistence.
+        if not await self._async_resolve_control_identities_locked(
+            settle_pending=False
+        ):
             return
         # Manager replacement does not start a new policy period. Retain only
         # independently released choices; successfully restored controls must
@@ -2009,14 +2051,15 @@ class QuietHoursManager:
                 or (kind == "switch" and isinstance(pending_value, bool))
             ):
                 controls[entity_id]["pending_quiet_value"] = pending_value
-            identity = raw.get("registry_identity")
-            if (
-                entity_id in controls
-                and isinstance(identity, list)
-                and len(identity) == 3
-                and all(isinstance(item, str) and item for item in identity)
-            ):
-                controls[entity_id]["registry_identity"] = list(identity)
+            for identity_key in ("registry_identity", "satellite_registry_identity"):
+                identity = raw.get(identity_key)
+                if (
+                    entity_id in controls
+                    and isinstance(identity, list)
+                    and len(identity) == 3
+                    and all(isinstance(item, str) and item for item in identity)
+                ):
+                    controls[entity_id][identity_key] = list(identity)
         return {
             "period_started_at": started.isoformat(),
             "period_ends_at": ended.isoformat(),

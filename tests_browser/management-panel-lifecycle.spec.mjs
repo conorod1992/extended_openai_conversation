@@ -470,3 +470,49 @@ for (const kind of ["action", "condition"]) {
     expect(kind === "action" ? saved.action.actions : saved.conditions).toEqual(remaining);
   });
 }
+
+
+for (const bundled of [false, true]) {
+  test(`recovered policy draft keeps its original revision (${bundled})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    await page.goto(fixtureUrl("capabilities/quiet-hours", bundled ? "&bundle=1" : ""));
+    const panel = page.locator("extended-openai-management-panel");
+    await expect(panel.locator("#qh-start")).toBeVisible();
+    await identify(page);
+    await panel.evaluate(async host => {
+      const call = host.hass.callWS.bind(host.hass);
+      window.__policyServer = {revision:"old-policy", updates:[]};
+      host.hass.callWS = async message => {
+        const server = window.__policyServer;
+        if (message.section === "quiet_hours" && message.action === "update") {
+          server.updates.push(structuredClone(message));
+          if (message.revision !== server.revision) throw new Error("Quiet Hours configuration changed; reload before saving");
+        }
+        const result = await call(message);
+        return message.section === "quiet_hours" ? {...result, revision:server.revision,
+          config:{...result.config, ...(server.revision === "new-policy" ? {end:"04:02"} : {})}} : result;
+      };
+      host._eocSectionCache?.clear?.();
+      await host._loadSection(true);
+    });
+    await panel.locator("#qh-start").fill("23:17");
+    await panel.locator("#qh-start").dispatchEvent("change");
+    await page.evaluate(() => {window.__policyServer.revision = "new-policy";});
+    await replacePanel(page);
+    await expect(panel.locator("#qh-start")).toHaveValue("23:17");
+    await panel.locator("#save-page").click();
+    await expect.poll(() => page.evaluate(() => window.__policyServer.updates.length)).toBe(1);
+    expect(await page.evaluate(() => window.__policyServer.updates[0].revision)).toBe("old-policy");
+    await expect(panel.locator("#toast")).toContainText("reload before saving");
+    await expect(panel.locator("#save-page")).toBeVisible();
+    await panel.locator("#discard-page").click();
+    await expect(panel.locator("#qh-end")).toHaveValue("04:02");
+    await panel.locator("#qh-start").fill("23:18");
+    await panel.locator("#qh-start").dispatchEvent("change");
+    await panel.locator("#save-page").click();
+    await expect.poll(() => page.evaluate(() => window.__policyServer.updates.length)).toBe(2);
+    expect(await page.evaluate(() => window.__policyServer.updates[1].revision)).toBe("new-policy");
+    await expect(panel.locator("#save-page")).toHaveCount(0);
+    await expectHarnessClean(page, errors);
+  });
+}

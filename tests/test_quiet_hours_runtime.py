@@ -2074,7 +2074,8 @@ async def test_prepared_volume_intent_survives_policy_change(monkeypatch, hass):
 
 
 @pytest.mark.asyncio
-async def test_same_physical_control_with_new_satellite_keeps_ownership(hass):
+async def test_same_physical_control_with_new_satellite_keeps_ownership(hass, monkeypatch):
+    _install_registry(monkeypatch, "bedroom")
     manager = _stateful_public_manager(hass)
     manager._config = _config(wake_sound="unchanged")
     _seed_room(hass, "bedroom", volume=0.2)
@@ -2123,7 +2124,8 @@ async def test_retarget_to_original_values_needs_no_second_restore(monkeypatch, 
 
 
 @pytest.mark.asyncio
-async def test_manual_same_value_adjustment_during_satellite_save_is_preserved(hass):
+async def test_manual_same_value_adjustment_during_satellite_save_is_preserved(hass, monkeypatch):
+    _install_registry(monkeypatch, "bedroom")
     manager = _stateful_public_manager(hass)
     manager._config = _config(max_volume=0.1, wake_sound="unchanged")
     _seed_room(hass, "bedroom", volume=0.2)

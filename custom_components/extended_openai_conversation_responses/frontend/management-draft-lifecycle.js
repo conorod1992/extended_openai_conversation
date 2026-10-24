@@ -105,7 +105,11 @@ function restoreDraftSource(panel, source, key) {
     if (from?.dirty() && to?.write && !to.dirty() && panel._data?.is_admin) {
       const field = {"capabilities/guest-mode":"_guestDraft", "capabilities/quiet-hours":"_quietHoursDraft", "capabilities/request-rules":"_rulesSettingsDraft"}[panel._viewKey()];
       if (field) {
-        to.write(mergeAcknowledgedDraft(source[field], from.baseline, to.baseline));
+        // A recovered policy keeps the revision against which its edits were
+        // authored. Rebasing onto a fresh read would bypass conflict checks.
+        to.baseline = clone(from.baseline);
+        to.revision = from.revision;
+        to.write(clone(source[field]));
         from.discard();
         panel._render();
       }
