@@ -65,7 +65,7 @@ async def context_summary_request(entity: Any, chat_log: Any) -> AsyncIterator[N
         _DEFER_CONTEXT_SUMMARY.reset(token)
 
 
-def schedule_context_summary(
+async def schedule_context_summary(
     self: Any,
     chat_log: Any,
     *,
@@ -100,7 +100,7 @@ def schedule_context_summary(
                 self.entry.async_create_task(self.hass, coroutine),
             )
 
-        if _manager(self).schedule(
+        if await _manager(self).async_schedule(
             conversation_id,
             chat_log.content,
             observed_input_tokens=observed,

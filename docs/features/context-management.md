@@ -16,6 +16,8 @@ This is the default for new agents.
 
 The integration removes the oldest complete user turns while preserving recent conversation context. Tool calls are kept together with their corresponding results so truncation does not leave malformed or misleading function history.
 
+Selection measures the actual prepared provider input, including attachment budgets and native reasoning. It finds the largest complete recent suffix that fits without repeatedly serializing every intermediate history. If the current turn alone exceeds the threshold, older turns are removed without repeatedly measuring them; the current turn is preserved. Measurement, retention selection, summary planning and history fingerprints run in workers, with the resulting history published on Home Assistant's event loop.
+
 This is generally the best balance between continuity and predictable cost/latency.
 
 ## Clear all messages

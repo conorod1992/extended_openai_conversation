@@ -20,6 +20,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util.json import json_loads
 
+from .assistant_response import final_assistant_text
 from .debug import record_current_provider_failure
 from .entity import (
     ExtendedOpenAIBaseLLMEntity,
@@ -448,7 +449,9 @@ class ExtendedOpenAITaskEntity(
                 "Last content in chat log is not an AssistantContent"
             )
 
-        text = chat_log.content[-1].content or ""
+        text = final_assistant_text(
+            chat_log.content, separator="" if task.structure else "\n\n"
+        )
 
         # Handle structured output
         if not task.structure:

@@ -278,10 +278,10 @@ async def test_primary_prompt_transitions_preserve_users_summaries_and_attachmen
 
 @pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
 @pytest.mark.parametrize("limit", ["count", "bytes"])
-async def test_retained_attachment_ledger_rejects_aggregate_and_resets_for_new_session(
+async def test_retained_attachment_ledger_bounds_replay_and_resets_for_new_session(
     hass, tmp_path, api_mode, limit
 ):
-    """Individually valid retained turns share one request budget."""
+    """Historical replay is bounded without blocking a fresh request."""
     agent = await _contract_agent(hass, api_mode=api_mode)
     path = tmp_path / "ledger.png"
     size = 18 * 1024 * 1024 if limit == "bytes" else 12
@@ -309,13 +309,30 @@ async def test_retained_attachment_ledger_rejects_aggregate_and_resets_for_new_s
         if limit == "count"
         else (acknowledged["bytes"] > 50 * 1024 * 1024)
     )
-    async with _transport(agent.entry, []) as wire:
-        failed = await _say(hass, agent, "Read every retained attachment", cid)
-        assert failed.response.error_code is not None
-        assert (
-            "10 attachments" if limit == "count" else "combined request limit"
-        ) in str(failed.response.as_dict())
-        wire.assert_complete(0)
+    reply = _responses_sse_text if api_mode == "responses" else _chat_sse_text
+    async with _transport(
+        agent.entry, [reply("Available attachments reviewed")]
+    ) as wire:
+        result = await _say(
+            hass, agent, "Read retained attachments where available", cid
+        )
+        assert _speech(result) == "Available attachments reviewed"
+        wire.assert_complete(1)
+        body = wire.requests[0]["body"]
+        outgoing = body.get("input", body.get("messages"))
+        parts = [
+            part
+            for item in outgoing
+            for part in (item.get("content") or [])
+            if isinstance(part, dict)
+        ]
+        images = [
+            part for part in parts if part.get("type") in {"image_url", "input_image"}
+        ]
+        assert len(images) == (10 if limit == "count" else 2)
+        assert len(images) * size <= 50 * 1024 * 1024
+        acknowledged["provider_requests"] += len(wire.requests)
+        assert "Earlier attachment omitted" in json.dumps(outgoing)
     reply = _responses_sse_text if api_mode == "responses" else _chat_sse_text
     async with _transport(agent.entry, [reply("Fresh request healthy")]) as wire:
         healthy = await _say(hass, agent, "Independent request")
@@ -325,5 +342,221 @@ async def test_retained_attachment_ledger_rejects_aggregate_and_resets_for_new_s
     assert acknowledged == {
         "attachments": count,
         "bytes": count * size,
-        "provider_requests": 1,
+        "provider_requests": 2,
     }
+
+
+def _multi_message_response(parts, *, streaming=True):
+    """Real SDK output with independent commentary/final message identities."""
+    from tests_real_ha.test_provider_wire_e2e import _response_object
+
+    output = [
+        {
+            "id": f"msg-multi-{i}",
+            "type": "message",
+            "role": "assistant",
+            "status": "completed",
+            **({"phase": phase} if phase else {}),
+            "content": [
+                {"type": "output_text", "text": text, "annotations": [], "logprobs": []}
+            ],
+        }
+        for i, (phase, text) in enumerate(parts)
+    ]
+    response = _response_object("resp-multi", output)
+    if not streaming:
+        return (200, response)
+    events = []
+    for i, item in enumerate(output):
+        events.extend(
+            [
+                {
+                    "type": "response.output_item.added",
+                    "output_index": i,
+                    "item": {**item, "content": [], "status": "in_progress"},
+                },
+                {
+                    "type": "response.output_text.delta",
+                    "output_index": i,
+                    "content_index": 0,
+                    "item_id": item["id"],
+                    "delta": parts[i][1],
+                    "logprobs": [],
+                },
+                {"type": "response.output_item.done", "output_index": i, "item": item},
+            ]
+        )
+    events.append({"type": "response.completed", "response": response})
+    return "".join(
+        f"data: {json.dumps({**event, 'sequence_number': i})}\n\n"
+        for i, event in enumerate(events)
+    ).encode()
+
+
+@pytest.mark.parametrize("streaming", [True, False], ids=["streamed", "completed"])
+@pytest.mark.parametrize("phase", [None, "final_answer"])
+async def test_public_responses_preserves_all_final_messages_in_reply_archive_and_replay(
+    hass, streaming, phase
+):
+    from pytest_homeassistant_custom_component.common import MockUser
+
+    user = MockUser(is_owner=True).add_to_hass(hass)
+    agent = await _contract_agent(
+        hass,
+        api_mode="responses",
+        archive_enabled=True,
+        chat_model="gpt-5.6" if streaming else "gpt-5.5-pro",
+        reasoning_effort="none" if streaming else "medium",
+    )
+    parts = [
+        ("commentary", "Checking context."),
+        (phase, "First answer."),
+        ("commentary", "More progress."),
+        (phase, "Second answer."),
+    ]
+    async with _transport(
+        agent.entry, [_multi_message_response(parts, streaming=streaming)]
+    ) as wire:
+        first = await conversation.async_converse(
+            hass=hass,
+            text="Question",
+            conversation_id=None,
+            context=Context(user_id=user.id),
+            language="en",
+            agent_id=agent.entry.entry_id,
+        )
+        assert _speech(first) == "First answer.\n\nSecond answer."
+        wire.assert_complete(1)
+    archive = await agent._archive.async_backup_data()
+    assert archive["turns"][0]["assistant_text"] == "First answer.\n\nSecond answer."
+    async with _transport(
+        agent.entry, [_multi_message_response([(phase, "Next")], streaming=streaming)]
+    ) as wire:
+        followup = await conversation.async_converse(
+            hass=hass,
+            text="Next question",
+            conversation_id=first.conversation_id,
+            context=Context(user_id=user.id),
+            language="en",
+            agent_id=agent.entry.entry_id,
+        )
+        assert _speech(followup) == "Next"
+        retained = wire.requests[0]["body"]["input"]
+        messages = [
+            item
+            for item in retained
+            if str(item.get("id", "")).startswith("msg-multi-")
+        ]
+        assert [item["id"] for item in messages] == [f"msg-multi-{i}" for i in range(4)]
+        assert [item["content"][0]["text"] for item in messages] == [
+            text for _, text in parts
+        ]
+
+
+@pytest.mark.parametrize("mode", ["chat_completions", "responses"])
+@pytest.mark.parametrize(
+    "kind", ["missing-image", "missing-pdf", "pdf-after-api-change"]
+)
+async def test_historical_attachment_unavailability_does_not_break_public_followup(
+    hass, tmp_path, mode, kind
+):
+    agent = await _contract_agent(hass, api_mode=mode)
+    path = tmp_path / ("historical.pdf" if "pdf" in kind else "historical.png")
+    if kind == "pdf-after-api-change":
+        path.write_bytes(b"%PDF-1.4\n%%EOF")
+    with async_get_chat_session(hass) as session:
+        cid = session.conversation_id
+        with conversation.async_get_chat_log(hass, session) as log:
+            attachment = conversation.Attachment(
+                media_content_id="historical",
+                mime_type="application/pdf" if "pdf" in kind else "image/png",
+                path=path,
+            )
+            log.async_add_user_content(
+                conversation.UserContent(
+                    content="Earlier attachment question", attachments=[attachment]
+                )
+            )
+            log.content.append(
+                conversation.AssistantContent(
+                    agent_id=agent.entity_id, content="Earlier answer"
+                )
+            )
+    reply = _responses_sse_text if mode == "responses" else _chat_sse_text
+    async with _transport(agent.entry, [reply("Follow-up is healthy")]) as wire:
+        result = await _say(hass, agent, "Text-only follow-up", cid)
+        assert _speech(result) == "Follow-up is healthy"
+        wire.assert_complete(1)
+        text = json.dumps(wire.requests[0]["body"])
+        assert "Earlier attachment question" in text and "Earlier answer" in text
+        assert "Text-only follow-up" in text
+        if mode == "responses" and kind == "pdf-after-api-change":
+            assert "input_file" in text
+        else:
+            assert "Earlier attachment omitted" in text
+            assert str(path) not in text
+    # Preparing one request does not destroy the retained attachment metadata.
+    assert log.content[1].attachments == [attachment]
+
+
+@pytest.mark.parametrize("mode", ["chat_completions", "responses"])
+async def test_full_handler_bulk_context_measurement_runs_in_workers(
+    hass, monkeypatch, mode
+):
+    import threading
+    from custom_components.extended_openai_conversation_responses import (
+        context_usage_hardening as measurement,
+    )
+
+    agent = await _contract_agent(
+        hass,
+        api_mode=mode,
+        prompt="System",
+        current_datetime_template="",
+        context_threshold=3000,
+        context_truncate_strategy="keep_recent",
+        memory_mode="off",
+        temporary_memory="off",
+    )
+    with async_get_chat_session(hass) as session:
+        cid = session.conversation_id
+        with conversation.async_get_chat_log(hass, session) as log:
+            for i in range(96):
+                call = llm.ToolInput(
+                    id=f"retained-{i}", tool_name="report", tool_args={}, external=True
+                )
+                log.content.extend(
+                    [
+                        conversation.UserContent(content=f"Older question {i}"),
+                        conversation.AssistantContent(
+                            agent_id=agent.entity_id, tool_calls=[call]
+                        ),
+                        make_tool_result_content(
+                            agent_id=agent.entity_id,
+                            tool_call_id=call.id,
+                            tool_name=call.tool_name,
+                            tool_result={"result": {"value": "x" * 16000}},
+                        ),
+                        conversation.AssistantContent(
+                            agent_id=agent.entity_id, content="Reported"
+                        ),
+                    ]
+                )
+    main = threading.get_ident()
+    calls = []
+    original = measurement.estimate_provider_input_tokens
+
+    def checked(items, tools=None):
+        calls.append((threading.get_ident(), len(items)))
+        return original(items, tools)
+
+    monkeypatch.setattr(measurement, "estimate_provider_input_tokens", checked)
+    reply = _responses_sse_text if mode == "responses" else _chat_sse_text
+    async with _transport(agent.entry, [reply("Current answer")]) as wire:
+        result = await _say(hass, agent, "Current question", cid)
+        assert _speech(result) == "Current answer"
+        wire.assert_complete(1)
+        assert "Current question" in json.dumps(wire.requests[0]["body"])
+        assert "Older question" not in json.dumps(wire.requests[0]["body"])
+    assert calls and main not in [thread for thread, _ in calls]
+    assert len(calls) <= 15

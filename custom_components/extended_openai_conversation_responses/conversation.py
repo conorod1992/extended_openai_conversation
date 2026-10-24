@@ -48,6 +48,7 @@ from .agent_configuration import (
     sync_memory_embedding_provider,
 )
 from .agent_maintenance import conversation_request_lease, get_agent_maintenance_gate
+from .assistant_response import final_assistant_text
 from .completion_events import completion_event_scope, queue_completion_event
 from .const import (
     CONF_ARCHIVE_ENABLED,
@@ -1341,18 +1342,13 @@ class ExtendedOpenAIAgentEntity(
         # Build response from chat log
         intent_response = intent.IntentResponse(language=user_input.language)
 
-        # Get last assistant message
-        last_content = chat_log.content[-1]
-        if isinstance(last_content, conversation.AssistantContent):
-            original_text = last_content.content or ""
-            if needs_async_speech_cleanup(original_text, self.subentry.data):
-                deferred_speech.append((original_text, self.subentry.data))
-                speech_text = original_text
-            else:
-                speech_text = process_speech_text(original_text, self.subentry.data)
-            intent_response.async_set_speech(speech_text)
+        original_text = final_assistant_text(chat_log.content)
+        if needs_async_speech_cleanup(original_text, self.subentry.data):
+            deferred_speech.append((original_text, self.subentry.data))
+            speech_text = original_text
         else:
-            intent_response.async_set_speech("")
+            speech_text = process_speech_text(original_text, self.subentry.data)
+        intent_response.async_set_speech(speech_text)
 
         return ConversationResult(
             response=intent_response,
@@ -1483,11 +1479,7 @@ class ExtendedOpenAIAgentEntity(
             or not self._effective_guest_policy().archive_retention
         ):
             return
-        assistant_text = ""
-        if chat_log.content and isinstance(
-            chat_log.content[-1], conversation.AssistantContent
-        ):
-            assistant_text = chat_log.content[-1].content or ""
+        assistant_text = final_assistant_text(chat_log.content)
         try:
             await self._archive.async_record_turn(
                 archive_session.session_id,

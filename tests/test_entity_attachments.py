@@ -103,35 +103,30 @@ async def test_async_add_attachments_enforces_count_limit(
 
 
 @pytest.mark.asyncio
-async def test_async_add_attachments_enforces_count_limit_across_retained_turns(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The request-wide attachment count cannot be bypassed via conversation history."""
-    earlier = _FakeUserContent(
-        attachments=[_attachment("unused")] * 6
-    )
-    later = _FakeUserContent(
-        attachments=[_attachment("unused")] * 5
-    )
+async def test_async_add_attachments_bounds_history_and_reserves_current_upload(
+    monkeypatch, tmp_path
+):
+    image = tmp_path / "image.png"
+    image.write_bytes(b"image")
+    earlier = _FakeUserContent(attachments=[_attachment(image)] * 6)
+    current = _FakeUserContent(attachments=[_attachment(image)] * 5)
     messages = [
-        {"role": "user", "content": "first"},
-        {"role": "assistant", "content": "reply"},
-        {"role": "user", "content": "second"},
+        {"role": "user", "content": "earlier"},
+        {"role": "user", "content": "current"},
     ]
-
-    with pytest.raises(
-        HomeAssistantError,
-        match=rf"At most {entity.MAX_ATTACHMENT_COUNT} attachments can be sent",
-    ):
-        await _add_attachments(
-            monkeypatch,
-            [earlier, object(), later],
-            messages,
-            "chat_completions",
+    await _add_attachments(
+        monkeypatch, [earlier, current], messages, "chat_completions"
+    )
+    assert (
+        sum(
+            part["type"] == "image_url"
+            for message in messages
+            for part in message["content"]
         )
-
-    assert messages[0]["content"] == "first"
-    assert messages[-1]["content"] == "second"
+        == entity.MAX_ATTACHMENT_COUNT
+    )
+    assert len(messages[1]["content"]) == 6
+    assert "Earlier attachment omitted" in messages[0]["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -139,7 +134,7 @@ async def test_async_add_attachments_carries_byte_budget_across_retained_turns(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
-    """A later historical attachment sees bytes already consumed by earlier turns."""
+    """Historical attachments respect bytes already reserved for the current upload."""
     first = tmp_path / "first.png"
     second = tmp_path / "second.png"
     first.write_bytes(b"x")
@@ -159,19 +154,20 @@ async def test_async_add_attachments_carries_byte_budget_across_retained_turns(
         {"role": "user", "content": "second"},
     ]
 
-    with pytest.raises(HomeAssistantError, match="combined request limit"):
-        await _add_attachments(
-            monkeypatch,
-            [
-                _FakeUserContent(attachments=[_attachment(first, "image/png")]),
-                object(),
-                _FakeUserContent(attachments=[_attachment(second, "image/png")]),
-            ],
-            messages,
-            "chat_completions",
-        )
+    await _add_attachments(
+        monkeypatch,
+        [
+            _FakeUserContent(attachments=[_attachment(first, "image/png")]),
+            object(),
+            _FakeUserContent(attachments=[_attachment(second, "image/png")]),
+        ],
+        messages,
+        "chat_completions",
+    )
 
     assert totals == [0, 6]
+    assert "Earlier attachment omitted" in messages[0]["content"][0]["text"]
+    assert messages[2]["content"][1]["type"] == "image_url"
 
 
 @pytest.mark.asyncio
@@ -342,3 +338,28 @@ async def test_async_add_attachments_creates_missing_user_message(
             ],
         }
     ]
+
+
+@pytest.mark.parametrize("historical", [False, True])
+async def test_attachment_permission_failure_is_scoped_to_current_upload(
+    monkeypatch, tmp_path, historical
+):
+    from pathlib import Path
+
+    image = tmp_path / "restricted.png"
+
+    def denied(_path):
+        raise PermissionError("PRIVATE_FILESYSTEM_DETAIL")
+
+    monkeypatch.setattr(Path, "exists", denied)
+    users = [_FakeUserContent(attachments=[_attachment(image, "image/png")])]
+    messages = [{"role": "user", "content": "Question"}]
+    if historical:
+        users.append(_FakeUserContent())
+        messages.append({"role": "user", "content": "Follow-up"})
+        await _add_attachments(monkeypatch, users, messages, "chat_completions")
+        assert "Earlier attachment omitted" in messages[0]["content"][0]["text"]
+        assert "PRIVATE_" not in str(messages)
+    else:
+        with pytest.raises(HomeAssistantError, match="Unable to read attachment"):
+            await _add_attachments(monkeypatch, users, messages, "chat_completions")

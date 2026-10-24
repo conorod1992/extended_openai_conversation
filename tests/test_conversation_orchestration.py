@@ -950,6 +950,7 @@ async def test_archive_privacy_transitions_do_not_save_the_current_private_turn(
 
     entity._async_handle_message_with_ha_tools = AsyncMock(side_effect=future)
     request.text = "Future public request"
+    log.content.append(conversation.UserContent(content=request.text))
     await process()
     assert archive.stats()["turn_count"] == int(should_save) + int(
         active.retention_state == "retained"

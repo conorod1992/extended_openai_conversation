@@ -70,7 +70,7 @@ async def test_summary_scheduling_declines_short_history_without_creating_task()
     )
     before = list(log.content)
     async with summaries.context_summary_request(entity, log):
-        assert not summaries.schedule_context_summary(
+        assert not await summaries.schedule_context_summary(
             entity, log, model="gpt-4.1", api_mode="responses"
         )
     assert log.content == before

@@ -110,6 +110,10 @@ Always sends requests to `/v1/responses`.
 
 Responses mode supports integration features such as streaming, Home Assistant functions, sequential tool calls, image/PDF inputs, structured outputs, reasoning effort, and service tiers when the selected model/provider supports them.
 
+New attachments are validated strictly. On later turns, an unavailable file or an attachment unsupported by the selected API (such as a historical PDF after switching to Chat Completions) is omitted with a provider-visible notice, preserving the earlier text and answer. Current uploads take priority over retained attachments within the existing per-file, combined-byte and attachment-count limits; historical attachment metadata is kept so usable files can be replayed on a later request.
+
+Responses can return several final-answer messages. Conversation speech, AI Task output and the optional archive combine those messages while excluding commentary; native message identities and phases remain intact in provider history.
+
 Do not force Responses with a custom provider unless it implements a compatible `/v1/responses` endpoint.
 
 See [Responses API](features/responses-api.md).

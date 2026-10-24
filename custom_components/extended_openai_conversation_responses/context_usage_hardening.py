@@ -422,9 +422,19 @@ async def normalized_responses_stream(
 
 
 def estimate_prepared_request(
-    entity: Any, request_usage: RequestUsage, input_value: Any, tools: Any
+    entity: Any,
+    request_usage: RequestUsage,
+    input_value: Any,
+    tools: Any,
+    *,
+    input_tokens: int | None = None,
 ) -> None:
     """Measure the already assembled provider round without rebuilding tools/history."""
+    if input_tokens is not None:
+        request_usage.input_tokens = input_tokens
+        request_usage.total_tokens = input_tokens
+        request_usage.details = {_LOCAL_ESTIMATE_DETAIL: input_tokens}
+        return
     # Materialize once; the shared measurement handles encoded attachments for
     # both preflight pruning and request diagnostics.
     measured = input_value if isinstance(input_value, list) else list(input_value)

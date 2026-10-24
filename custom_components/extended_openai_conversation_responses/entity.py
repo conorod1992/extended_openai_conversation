@@ -61,10 +61,10 @@ from .const import (
 )
 from .context import (
     HistoryEstimator,
+    async_keep_recent_messages,
+    async_select_summary_history,
     history_as_summary_text,
-    keep_recent_messages,
     partition_history,
-    select_summary_history,
 )
 from .context_summary_performance import (
     async_apply_context_summary,
@@ -786,8 +786,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             threshold = int(
                 options.get(CONF_CONTEXT_THRESHOLD, DEFAULT_CONTEXT_THRESHOLD)
             )
-            # Prepare attachment content before the API-aware budgeting boundary.
-            # Responses content provides a lossless intermediate for images and PDFs.
+            # Keep file I/O before the live tool snapshot. Responses is the
+            # neutral representation; API-specific historical omissions follow
+            # validation of the current catalogue, without loading files twice.
             messages: Any = _convert_content_to_responses_param(chat_log.content)
             await self._async_add_attachments(chat_log, messages, API_MODE_RESPONSES)
             prepared_user_content = {
@@ -844,10 +845,19 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             )
 
             if api_mode != API_MODE_RESPONSES:
+                current_user = next(
+                    (
+                        item
+                        for item in reversed(chat_log.content)
+                        if isinstance(item, conversation.UserContent)
+                    ),
+                    None,
+                )
                 for content_id, prepared in prepared_user_content.items():
                     if not isinstance(prepared, list):
                         continue
                     converted = []
+                    omitted = False
                     for part in prepared:
                         if part["type"] == "input_text":
                             converted.append({"type": "text", "text": part["text"]})
@@ -858,10 +868,21 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                     "image_url": {"url": part["image_url"]},
                                 }
                             )
-                        else:
+                        elif current_user is not None and content_id == id(
+                            current_user
+                        ):
                             raise HomeAssistantError(
                                 "Chat Completions supports image attachments; Responses supports image and PDF attachments."
                             )
+                        else:
+                            omitted = True
+                    if omitted:
+                        converted.append(
+                            {
+                                "type": "text",
+                                "text": "[Earlier attachment omitted: incompatible with the selected API.]",
+                            }
+                        )
                     prepared_user_content[content_id] = converted
                 messages = _convert_content_to_param(
                     chat_log.content, shorten_tool_call_id, prepared_user_content
@@ -1049,8 +1070,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     )
                     return estimate_provider_input_tokens(prepared, tools)
 
-                round_estimate = estimate_provider_input_tokens(
-                    messages, tool_kwargs.get("tools")
+                round_estimate = await asyncio.to_thread(
+                    estimate_provider_input_tokens, messages, tool_kwargs.get("tools")
                 )
                 if (
                     round_estimate > threshold
@@ -1077,16 +1098,21 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             prepared_user_content,
                         )
                     )
-                    immediate_estimate = estimate_provider_input_tokens(
-                        messages, tool_kwargs.get("tools")
+                    immediate_estimate = await asyncio.to_thread(
+                        estimate_provider_input_tokens,
+                        messages,
+                        tool_kwargs.get("tools"),
                     )
-                    if immediate_estimate > threshold:
-                        keep_recent_messages(
+                    round_estimate = immediate_estimate
+                    if (
+                        immediate_estimate > threshold
+                        and await async_keep_recent_messages(
                             chat_log.content,
                             immediate_estimate,
                             threshold,
                             estimate_history,
                         )
+                    ):
                         messages = (
                             _convert_content_to_responses_param(
                                 chat_log.content, prepared_user_content
@@ -1097,6 +1123,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                 shorten_tool_call_id,
                                 prepared_user_content,
                             )
+                        )
+                        round_estimate = await asyncio.to_thread(
+                            estimate_provider_input_tokens,
+                            messages,
+                            tool_kwargs.get("tools"),
                         )
                     primary_system_item_present = (
                         api_mode != API_MODE_RESPONSES
@@ -1115,7 +1146,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
                 request_usage = RequestUsage()
                 estimate_prepared_request(
-                    self, request_usage, messages, tool_kwargs.get("tools")
+                    self,
+                    request_usage,
+                    messages,
+                    tool_kwargs.get("tools"),
+                    input_tokens=round_estimate,
                 )
                 request_started = time.monotonic()
                 request_history_length = len(chat_log.content)
@@ -1517,8 +1552,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             prepared_user_content,
                         )
                     )
-                    observed_input_tokens = estimate_provider_input_tokens(
-                        prepared_current, tool_kwargs.get("tools")
+                    observed_input_tokens = await asyncio.to_thread(
+                        estimate_provider_input_tokens,
+                        prepared_current,
+                        tool_kwargs.get("tools"),
                     )
             if observed_input_tokens > threshold:
                 await self._truncate_message_history(
@@ -1654,49 +1691,54 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         messages: list[Any],
         api_mode: str,
     ) -> None:
-        """Reconstruct attachments for every retained user turn."""
-        attachment_count = sum(
-            len(getattr(content, "attachments", None) or [])
-            for content in chat_log.content
-            if isinstance(content, conversation.UserContent)
-        )
-        if attachment_count > MAX_ATTACHMENT_COUNT:
-            raise HomeAssistantError(
-                f"At most {MAX_ATTACHMENT_COUNT} attachments can be sent in one request"
-            )
-        total_bytes = 0
+        """Prioritize new uploads and replay usable historical files within limits."""
+        users = [
+            item
+            for item in chat_log.content
+            if isinstance(item, conversation.UserContent)
+        ]
         user_messages = iter(
             message
             for message in messages
             if isinstance(message, dict) and message.get("role") == "user"
         )
-        for content in chat_log.content:
-            if isinstance(content, conversation.UserContent):
-                if api_mode == API_MODE_RESPONSES and not (
-                    getattr(content, "content", "")
-                    or getattr(content, "attachments", None)
-                ):
-                    continue
-                message = next(user_messages, None)
-                if getattr(content, "attachments", None):
-                    if message is None:
-                        message = {
-                            **(
-                                {"type": "message"}
-                                if api_mode == API_MODE_RESPONSES
-                                else {}
-                            ),
-                            "role": "user",
-                            "content": getattr(content, "content", "") or "",
-                        }
-                        messages.append(message)
-                    total_bytes = await ExtendedOpenAIBaseLLMEntity._async_prepare_user_attachments(
-                        self,
-                        content,
-                        message,
-                        api_mode,
-                        total_bytes=total_bytes,
-                    )
+        mapped = []
+        for content in users:
+            if api_mode == API_MODE_RESPONSES and not (
+                getattr(content, "content", "") or getattr(content, "attachments", None)
+            ):
+                continue
+            message = next(user_messages, None)
+            if not getattr(content, "attachments", None):
+                continue
+            if message is None:
+                message = {
+                    **({"type": "message"} if api_mode == API_MODE_RESPONSES else {}),
+                    "role": "user",
+                    "content": getattr(content, "content", "") or "",
+                }
+                messages.append(message)
+            mapped.append((content, message))
+        total_bytes = 0
+        count = 0
+        # Reserve the budget for the current upload, then the newest older files.
+        for content, message in reversed(mapped):
+            total_bytes = (
+                await ExtendedOpenAIBaseLLMEntity._async_prepare_user_attachments(
+                    self,
+                    content,
+                    message,
+                    api_mode,
+                    total_bytes=total_bytes,
+                    historical=content is not users[-1],
+                    remaining_count=MAX_ATTACHMENT_COUNT - count,
+                )
+            )
+            count += sum(
+                part.get("type") in {"input_image", "image_url", "input_file"}
+                for part in message.get("content", [])
+                if isinstance(part, dict)
+            )
 
     async def _async_prepare_user_attachments(
         self,
@@ -1705,6 +1747,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         api_mode: str,
         *,
         total_bytes: int = 0,
+        historical: bool = False,
+        remaining_count: int = MAX_ATTACHMENT_COUNT,
     ) -> int:
         """Read one turn's files once while enforcing the whole-request byte budget."""
         messages = [message]
@@ -1715,49 +1759,62 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             return total_bytes
 
         attachment_items = list(last_content.attachments or [])
-        if len(attachment_items) > MAX_ATTACHMENT_COUNT:
+        if not historical and len(attachment_items) > remaining_count:
             raise HomeAssistantError(
                 f"At most {MAX_ATTACHMENT_COUNT} attachments can be sent in one request"
             )
 
-        def prepare_attachments() -> tuple[list[dict[str, Any]], int]:
+        def prepare_attachments() -> tuple[list[dict[str, Any]], int, bool]:
             prepared: list[dict[str, Any]] = []
             prepared_bytes = total_bytes
+            omitted = False
             for attachment in attachment_items:
-                path = Path(attachment.path)
-                if not path.exists():
-                    raise HomeAssistantError(f"`{path}` does not exist")
-                if not path.is_file():
-                    raise HomeAssistantError(f"`{path}` is not a file")
-
-                content = read_bounded_local_file(path, prepared_bytes)
+                if historical and len(prepared) >= remaining_count:
+                    omitted = True
+                    continue
+                try:
+                    path = Path(attachment.path)
+                    if not path.exists():
+                        raise HomeAssistantError(f"`{path}` does not exist")
+                    if not path.is_file():
+                        raise HomeAssistantError(f"`{path}` is not a file")
+                    mime_type = attachment.mime_type or mimetypes.guess_type(path)[0]
+                    if not mime_type:
+                        raise HomeAssistantError(
+                            f"Unable to determine attachment type for `{path}`"
+                        )
+                    if not (
+                        mime_type.startswith("image/")
+                        or (
+                            mime_type == "application/pdf"
+                            and api_mode == API_MODE_RESPONSES
+                        )
+                    ):
+                        raise HomeAssistantError(
+                            "Chat Completions supports image attachments; Responses "
+                            "supports image and PDF attachments. "
+                            f"Unsupported attachment `{path}` ({mime_type})."
+                        )
+                    content = read_bounded_local_file(path, prepared_bytes)
+                except (HomeAssistantError, OSError) as err:
+                    if not historical:
+                        if isinstance(err, OSError):
+                            raise HomeAssistantError(
+                                "Unable to read attachment"
+                            ) from err
+                        raise
+                    omitted = True
+                    continue
                 prepared_bytes += len(content)
-
-                mime_type = attachment.mime_type or mimetypes.guess_type(path)[0]
-                if not mime_type:
-                    raise HomeAssistantError(
-                        f"Unable to determine attachment type for `{path}`"
-                    )
-
                 encoded = base64.b64encode(content).decode()
                 data_url = f"data:{mime_type};base64,{encoded}"
                 if mime_type.startswith("image/"):
-                    if api_mode == API_MODE_RESPONSES:
-                        prepared.append(
-                            {
-                                "type": "input_image",
-                                "image_url": data_url,
-                                "detail": "auto",
-                            }
-                        )
-                    else:
-                        prepared.append(
-                            {
-                                "type": "image_url",
-                                "image_url": {"url": data_url},
-                            }
-                        )
-                elif mime_type == "application/pdf" and api_mode == API_MODE_RESPONSES:
+                    prepared.append(
+                        {"type": "input_image", "image_url": data_url, "detail": "auto"}
+                        if api_mode == API_MODE_RESPONSES
+                        else {"type": "image_url", "image_url": {"url": data_url}}
+                    )
+                else:
                     prepared.append(
                         {
                             "type": "input_file",
@@ -1765,15 +1822,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             "file_data": data_url,
                         }
                     )
-                else:
-                    raise HomeAssistantError(
-                        "Chat Completions supports image attachments; Responses "
-                        "supports image and PDF attachments. "
-                        f"Unsupported attachment `{path}` ({mime_type})."
-                    )
-            return prepared, prepared_bytes
+            return prepared, prepared_bytes, omitted
 
-        attachments, total_bytes = await self.hass.async_add_executor_job(
+        attachments, total_bytes, omitted = await self.hass.async_add_executor_job(
             prepare_attachments
         )
         last_message = next(
@@ -1795,6 +1846,16 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         text_content = last_message.get("content", "")
         if not isinstance(text_content, str):
             raise HomeAssistantError("Unable to attach files to non-text user content")
+
+        if omitted:
+            text_content = "\n".join(
+                part
+                for part in (
+                    text_content,
+                    "[Earlier attachment omitted: unavailable, incompatible, or outside the current request limits.]",
+                )
+                if part
+            )
 
         if api_mode == API_MODE_RESPONSES:
             last_message["content"] = [
@@ -2354,7 +2415,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
     ) -> None:
         """Truncate message history based on strategy."""
         await async_prepare_tool_results(chat_log.content)
-        if schedule_context_summary(
+        if await schedule_context_summary(
             self,
             chat_log,
             observed_input_tokens=observed_input_tokens,
@@ -2380,7 +2441,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             return
 
         if strategy == CONTEXT_TRUNCATE_SUMMARIZE:
-            selected = select_summary_history(
+            selected = await async_select_summary_history(
                 chat_log.content, observed_input_tokens, threshold, estimate
             )
             if selected is not None:
@@ -2417,7 +2478,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             CONTEXT_TRUNCATE_SUMMARIZE,
         }:
             strategy = DEFAULT_CONTEXT_TRUNCATE_STRATEGY
-        if keep_recent_messages(
+        if await async_keep_recent_messages(
             chat_log.content, observed_input_tokens, threshold, estimate
         ):
             _LOGGER.info(
@@ -2433,7 +2494,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         """Summarize older turns once without tools or recursive truncation."""
         older = list(older)
         await async_prepare_tool_results(older)
-        transcript = history_as_summary_text(older)
+        transcript = await asyncio.to_thread(history_as_summary_text, list(older))
         if not transcript:
             return None
         prompt = (

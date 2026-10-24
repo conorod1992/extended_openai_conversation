@@ -188,3 +188,50 @@ async def test_real_ha_excluded_local_intent_falls_through_to_provider(
         result.response.as_dict()["speech"]["plain"]["speech"]
         == "Provider fallback reached"
     )
+
+
+@pytest.mark.parametrize("mode", ["chat_completions", "responses"])
+async def test_native_reply_render_failure_repairs_history_without_repeating_effect(
+    hass, monkeypatch, mode
+):
+    from homeassistant.components.homeassistant.exposed_entities import (
+        async_expose_entity,
+    )
+    from homeassistant.exceptions import TemplateError
+    from tests_real_ha.test_cross_feature_acceptance import _agent, _say, _speech
+    from tests_real_ha.test_provider_input_history import _transport
+    from tests_real_ha.test_provider_wire_e2e import _chat_sse_text, _responses_sse_text
+
+    effects = []
+    hass.states.async_set("light.kitchen", "off", {"friendly_name": "Kitchen light"})
+    async_expose_entity(hass, "conversation", "light.kitchen", True)
+
+    async def turn_on(call):
+        effects.append(call)
+        hass.states.async_set("light.kitchen", "on", {"friendly_name": "Kitchen light"})
+
+    hass.services.async_register("light", "turn_on", turn_on)
+    agent = await _agent(hass, api_mode=mode, local_intents_enabled=True)
+    reply = _responses_sse_text if mode == "responses" else _chat_sse_text
+    async with _transport(agent.entry, [reply("Ready")]):
+        first = await _say(hass, agent, "Tell me about Mars")
+        assert _speech(first) == "Ready"
+    native = conversation.get_agent_manager(hass).default_agent
+    private = "PRIVATE_REPLY_RENDERING_DETAIL"
+    broken_speech = AsyncMock(side_effect=TemplateError(private))
+    monkeypatch.setattr(native, "_build_speech", broken_speech)
+    async with _transport(agent.entry, []) as wire:
+        failed = await _say(hass, agent, "turn on kitchen light", first.conversation_id)
+        assert failed.response.error_code is not None
+        assert private not in str(failed.response.as_dict())
+        wire.assert_complete(0)
+    assert len(effects) == 1
+    broken_speech.assert_awaited_once()
+    async with _transport(agent.entry, [reply("History is usable")]) as wire:
+        followup = await _say(
+            hass, agent, "Tell me a story about Venus", first.conversation_id
+        )
+        assert _speech(followup) == "History is usable"
+        wire.assert_complete(1)
+        assert private not in str(wire.requests[0]["body"])
+    assert len(effects) == 1

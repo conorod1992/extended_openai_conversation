@@ -639,3 +639,60 @@ def test_local_handling_snapshot_tolerates_lightweight_hass_standin(
     ]
     assert all(item["available"] is False for item in snapshot["intents"])
     assert isinstance(snapshot["supported"], bool)
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+@pytest.mark.parametrize("completed", [False, True])
+async def test_local_failure_repairs_only_unanswered_calls_and_preserves_cancellation(
+    hass, monkeypatch, cancel, completed
+):
+    import asyncio
+    from homeassistant.exceptions import HomeAssistantError
+    from homeassistant.helpers import llm
+    from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+        make_tool_result_content,
+        tool_result_data,
+    )
+
+    content = [conversation.UserContent(content="current")]
+    log = SimpleNamespace(
+        content=content, async_add_assistant_content_without_tools=content.append
+    )
+    call = llm.ToolInput(
+        id="native-local-call", tool_name="HassTurnOn", tool_args={}, external=True
+    )
+    result = make_tool_result_content(
+        agent_id="homeassistant",
+        tool_call_id=call.id,
+        tool_name=call.tool_name,
+        tool_result={"success": True},
+    )
+    error = (
+        asyncio.CancelledError("PRIVATE_CANCEL")
+        if cancel
+        else HomeAssistantError("PRIVATE_ERROR")
+    )
+
+    async def fail(*_args, **_kwargs):
+        content.append(
+            conversation.AssistantContent(agent_id="homeassistant", tool_calls=[call])
+        )
+        if completed:
+            content.append(result)
+        raise error
+
+    monkeypatch.setattr(conversation, "async_handle_intents", fail)
+    with pytest.raises(type(error)):
+        await async_try_handle_local_intent(
+            hass,
+            SimpleNamespace(text="turn on", context=None),
+            log,
+            {CONF_LOCAL_INTENTS_ENABLED: True},
+            guest_active=False,
+        )
+    results = [item for item in content if getattr(item, "role", None) == "tool_result"]
+    assert len(results) == 1
+    if completed:
+        assert results[0] is result
+    else:
+        assert "PRIVATE_" not in str(tool_result_data(results[0]))
