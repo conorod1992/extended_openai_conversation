@@ -245,3 +245,83 @@ test("a lazy recovery opener does not replace a dialog opened during preparation
   assert.equal(current.textarea.value, "work in another editor");
   assert.equal(old.dialog.open, true);
 });
+
+test("an in-place refresh retires only its unchanged recovery editor and retries", async () => {
+  const old = source(), current = panel();
+  current._loadToken = 1;
+  let release;
+  const gate = new Promise(resolve => {release = resolve;});
+  let opens = 0;
+  openRecoveredTool = async value => {
+    value._toolEditorLoad = {};
+    open(value);
+    if (++opens === 1) await gate;
+  };
+  const first = recoverDisconnectedEditor(current, old);
+  await settle();
+  current._loadToken = 2;
+  await recoverDisconnectedEditor(current, old);
+  release();
+  await first;
+  await settle();
+  assert.equal(opens, 2);
+  assert.equal(current.textarea.value, "original unsaved YAML");
+  assert.equal(old.dialog.open, false);
+});
+
+test("refresh cleanup preserves edits made in the receiving editor", async () => {
+  const old = source(), current = panel();
+  current._loadToken = 1;
+  let release;
+  const gate = new Promise(resolve => {release = resolve;});
+  let opens = 0;
+  openRecoveredTool = async value => {value._toolEditorLoad = {}; opens += 1; open(value); await gate;};
+  const first = recoverDisconnectedEditor(current, old);
+  await settle();
+  current._loadToken = 2;
+  current.textarea.value = "a new draft owned by the receiving editor";
+  await recoverDisconnectedEditor(current, old);
+  release();
+  await first;
+  await settle();
+  assert.equal(opens, 1);
+  assert.equal(current.dialog.open, true);
+  assert.equal(current.textarea.value, "a new draft owned by the receiving editor");
+  assert.equal(old.dialog.open, true);
+});
+
+test("failed lazy preparation leaves a newer dialog alone", async () => {
+  const old = source(), current = panel();
+  old.dialog.id = "ha-llm-tools-dialog";
+  old._eocDialogBaselines = new Map([[old.dialog.id, []]]);
+  let reject;
+  current._ensureHALlmTools = () => new Promise((_resolve, fail) => {reject = fail;});
+  const first = recoverDisconnectedEditor(current, old);
+  await settle();
+  open(current);
+  current.textarea.value = "a newer manually opened draft";
+  reject(new Error("Chooser initialization failed"));
+  await first;
+  assert.equal(current.dialog.open, true);
+  assert.equal(current.textarea.value, "a newer manually opened draft");
+  assert.equal(old.dialog.open, true);
+  assert.equal(Boolean(old._eocRecoveringEditor), false);
+});
+
+test("a failed cleanup read releases recovery ownership without discarding either draft", async () => {
+  const old = source(), current = panel();
+  current._loadToken = 1;
+  let release;
+  const gate = new Promise(resolve => {release = resolve;});
+  openRecoveredTool = async value => {value._toolEditorLoad = {}; open(value); await gate;};
+  const first = recoverDisconnectedEditor(current, old);
+  await settle();
+  current._loadToken = 2;
+  Object.defineProperty(current.textarea, "value", {get() {throw new Error("Draft temporarily unavailable");}});
+  release();
+  await assert.rejects(first, /temporarily unavailable/);
+  assert.equal(Boolean(old._eocRecoveringEditor), false);
+  assert.equal(Boolean(current._eocReceivingEditor), false);
+  assert.equal(old.dialog.open, true);
+  assert.equal(current.dialog.open, true);
+});

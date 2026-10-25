@@ -216,13 +216,6 @@ function showRecoveredEditorValues(panel, old, values) {
   recovery.showModal();
 }
 
-async function openRecoveryEditor(open, generation) {
-  const opening = open();
-  const token = generation();
-  await opening;
-  return generation() === token;
-}
-
 export async function recoverDisconnectedEditor(panel, source, retry = () => recoverDisconnectedEditor(panel, source)) {
   const old = modifiedOpenDialog(source);
   if (!old || source.isConnected || !panel.isConnected) return;
@@ -252,6 +245,15 @@ export async function recoverDisconnectedEditor(panel, source, retry = () => rec
   const values = dialogState(old);
   const baseline = source._eocDialogBaselines?.get(old.id);
   const attempt = {panel, retry:null};
+  let openedEditor;
+  const openRecoveryEditor = async (open, generation) => {
+    const opening = open();
+    const token = generation(), dialog = panel.shadowRoot.querySelector(`#${old.id}`);
+    const owns = () => generation() === token && panel.shadowRoot.querySelector(`#${old.id}`) === dialog;
+    openedEditor = {dialog, owns};
+    await opening;
+    return owns();
+  };
   source._eocRecoveringEditor = panel._eocReceivingEditor = attempt;
   try {
     if (old.id === "rule-dialog") {
@@ -287,7 +289,7 @@ export async function recoverDisconnectedEditor(panel, source, retry = () => rec
     let toolEditor;
     if (old.id === "tool-dialog") {
       const {getToolYamlEditor} = await import("./tool-yaml-editor-adapter.js");
-      if (!current()) return;
+      if (!current() || !openedEditor?.owns()) return;
       toolEditor = getToolYamlEditor(panel);
     }
     const dialog = panel.shadowRoot.querySelector(`#${old.id}`);
@@ -334,21 +336,32 @@ export async function recoverDisconnectedEditor(panel, source, retry = () => rec
     }
     old.close();
   } catch (_err) {
-    if (current()) {
-      panel.shadowRoot.querySelector(`#${old.id}`)?.close();
+    if (current() && (openedEditor?.owns() || !panel.shadowRoot.querySelector("dialog[open]"))) {
+      if (openedEditor?.owns()) openedEditor.dialog?.close();
       showRecoveredEditorValues(panel, old, values);
     }
   } finally {
-    if (source._eocRecoveringEditor === attempt) source._eocRecoveringEditor = null;
-    if (panel._eocReceivingEditor === attempt) panel._eocReceivingEditor = null;
-    const next = attempt.retry;
-    // A repeated restore point on this same, still-current panel must not
-    // reopen an editor the user just cancelled. Wake a replacement destination
-    // only when this attempt lost its context or a newer panel requested it.
-    if (next && (!current() || next.panel !== panel)) queueMicrotask(() => {
-      if (!next.panel.isConnected) return;
-      void Promise.resolve().then(next.run).catch(() => next.panel._toast?.("Unsaved editor recovery is pending. Return to its original page to retry.", true));
-    });
+    // An in-place reconnect refresh can supersede this visit while preserving
+    // its loading dialog. Retire only our own unchanged editor so it cannot
+    // block the fresh recovery. A cancelled/reopened or edited dialog belongs
+    // to the user and must survive cleanup of this older attempt.
+    try {
+      if (!current() && openedEditor?.owns() && openedEditor.dialog?.open && !dialogDirty(panel, openedEditor.dialog)) {
+        openedEditor.dialog.close();
+        attempt.retry ||= {panel, run:retry};
+      }
+    } finally {
+      if (source._eocRecoveringEditor === attempt) source._eocRecoveringEditor = null;
+      if (panel._eocReceivingEditor === attempt) panel._eocReceivingEditor = null;
+      const next = attempt.retry;
+      // A repeated restore point on this same, still-current panel must not
+      // reopen an editor the user just cancelled. Wake a replacement destination
+      // only when this attempt lost its context or a newer panel requested it.
+      if (next && (!current() || next.panel !== panel)) queueMicrotask(() => {
+        if (!next.panel.isConnected) return;
+        void Promise.resolve().then(next.run).catch(() => next.panel._toast?.("Unsaved editor recovery is pending. Return to its original page to retry.", true));
+      });
+    }
   }
 }
 

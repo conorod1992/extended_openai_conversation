@@ -40,6 +40,26 @@ async function holdToolRecovery(panel, marker) {
 }
 
 for (const bundled of [false, true]) {
+  test(`refresh during Function recovery keeps the retained draft reachable (${bundled ? "bundle" : "source"})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    await page.goto(fixtureUrl("capabilities/functions", bundled ? "&bundle=1" : ""));
+    const panel = page.locator("extended-openai-management-panel");
+    await panel.getByText("Show member functions", {exact:true}).click();
+    await identify(page);
+    await panel.locator(".edit-tool").first().click();
+    await expect.poll(() => panel.evaluate(host => typeof host._toolInitialYaml)).toBe("string");
+    await holdToolRecovery(panel, "Draft retained through an in-place refresh");
+    await replacePanel(page);
+    await expect.poll(() => page.evaluate(() => Boolean(window.__editorRecoveryWaiting))).toBe(true);
+    await panel.evaluate(host => host._loadSection(true));
+    await page.evaluate(() => window.__releaseEditorRecovery());
+    await expect.poll(() => page.evaluate(() => Boolean(window.__originalEditorPanel._eocRecoveringEditor))).toBe(false);
+    await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", true);
+    await expect(panel.locator("#tool-yaml")).toHaveValue(/Draft retained through an in-place refresh/);
+    expect(await page.evaluate(() => browserHarness.calls.filter(call => call.section === "tools" && call.action === "save").length)).toBe(0);
+    await expectHarnessClean(page, errors);
+  });
+
   test(`an unavailable unsaved Rule choice is retained for review (${bundled ? "bundle" : "source"})`, async ({page}) => {
     const errors = trackPageErrors(page);
     await page.goto(fixtureUrl("capabilities/request-rules", bundled ? "&bundle=1" : ""));
