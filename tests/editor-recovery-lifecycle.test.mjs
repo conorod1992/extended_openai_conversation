@@ -23,7 +23,7 @@ after(() => {
   delete globalThis.__openRecoveredTool;
 });
 
-const {recoverDisconnectedEditor} = await import("../custom_components/extended_openai_conversation_responses/frontend/management-state-safety.js");
+const {recoverDisconnectedEditor, confirmDialogClose} = await import("../custom_components/extended_openai_conversation_responses/frontend/management-state-safety.js");
 const settle = () => new Promise(resolve => setImmediate(resolve));
 function panel(connected = true) {
   const textarea = {id:"tool-yaml", type:"textarea", tagName:"TEXTAREA", value:"saved", dispatchEvent() {}};
@@ -324,4 +324,60 @@ test("a failed cleanup read releases recovery ownership without discarding eithe
   assert.equal(Boolean(current._eocReceivingEditor), false);
   assert.equal(old.dialog.open, true);
   assert.equal(current.dialog.open, true);
+});
+
+for (const returnBeforeReady of [false, true]) {
+  test(`Cancel after refresh defers recovery, with later visit=${returnBeforeReady}`, async () => {
+    const old = source(), current = panel();
+    current._loadToken = 1;
+    let release;
+    const gate = new Promise(resolve => {release = resolve;});
+    let opens = 0;
+    openRecoveredTool = async value => {value._toolEditorLoad = {}; open(value); if (++opens === 1) await gate;};
+    const first = recoverDisconnectedEditor(current, old);
+    await settle();
+    current._loadToken = 2;
+    await recoverDisconnectedEditor(current, old);
+    await confirmDialogClose(current, current.dialog);
+    current._toolEditorLoad = null;
+    if (returnBeforeReady) {
+      current._loadToken = 3;
+      await recoverDisconnectedEditor(current, old);
+    }
+    release();
+    await first;
+    await settle();
+    assert.equal(opens, returnBeforeReady ? 2 : 1);
+    assert.equal(current.dialog.open, returnBeforeReady);
+    assert.equal(old.dialog.open, !returnBeforeReady);
+    if (!returnBeforeReady) {
+      current._loadToken = 3;
+      await recoverDisconnectedEditor(current, old);
+      assert.equal(current.textarea.value, "original unsaved YAML");
+    }
+  });
+}
+
+test("declining a close confirmation does not defer recovery", async () => {
+  const old = source(), current = panel();
+  current._loadToken = 1;
+  let release;
+  const gate = new Promise(resolve => {release = resolve;});
+  let opens = 0;
+  openRecoveredTool = async value => {value._toolEditorLoad = {}; open(value); if (++opens === 1) await gate;};
+  const first = recoverDisconnectedEditor(current, old);
+  await settle();
+  current._loadToken = 2;
+  await recoverDisconnectedEditor(current, old);
+  current.textarea.value = "a receiving draft";
+  current._confirm = async () => false;
+  assert.equal(await confirmDialogClose(current, current.dialog), false);
+  assert.equal(current.dialog.open, true);
+  current.textarea.value = "saved";
+  release();
+  await first;
+  await settle();
+  assert.equal(opens, 2);
+  assert.equal(current.textarea.value, "original unsaved YAML");
+  assert.equal(old.dialog.open, false);
 });

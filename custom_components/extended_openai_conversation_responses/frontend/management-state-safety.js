@@ -223,15 +223,15 @@ export async function recoverDisconnectedEditor(panel, source, retry = () => rec
   const entry = panel._selectedAgent?.()?.entry_id, memoryKind = panel._memoryKind;
   const visit = panel._loadToken;
   const adminRequired = !["memory-dialog", "knowledge-dialog", "temporary-memory-dialog"].includes(old.id);
-  const current = () => panel.isConnected && !source.isConnected && panel.hass?.user?.id === user
+  const ownsContext = () => panel.isConnected && !source.isConnected && panel.hass?.user?.id === user
     && old.open && source.shadowRoot.querySelector(`#${old.id}`) === old
     && source.hass?.user?.id === user && panel._agentId === agent && source._agentId === agent
     && panel._selectedAgent?.()?.entry_id === entry && source._selectedAgent?.()?.entry_id === entry
     && panel._viewKey() === view && source._viewKey() === view
     && panel._scopeId === scope && source._scopeId === scope
-    && panel._loadToken === visit
     && (!adminRequired || panel._data?.is_admin)
     && (view !== "data-memory/memories" || (panel._memoryKind === memoryKind && source._memoryKind === memoryKind));
+  const current = () => ownsContext() && panel._loadToken === visit;
   if (!user || !entry || !agent || !current()) return;
   const canOpen = () => current() && !panel.shadowRoot.querySelector("dialog[open]");
   const pending = source._eocRecoveringEditor || panel._eocReceivingEditor;
@@ -244,8 +244,10 @@ export async function recoverDisconnectedEditor(panel, source, retry = () => rec
   if (panel.shadowRoot.querySelector("dialog[open]")) return;
   const values = dialogState(old);
   const baseline = source._eocDialogBaselines?.get(old.id);
-  const attempt = {panel, retry:null};
-  let openedEditor;
+  let openedEditor, dismissal;
+  const attempt = {panel, retry:null, dismiss:dialog => {
+    if (openedEditor?.dialog === dialog && ownsContext()) dismissal = {visit:panel._loadToken};
+  }};
   const openRecoveryEditor = async (open, generation) => {
     const opening = open();
     const token = generation(), dialog = panel.shadowRoot.querySelector(`#${old.id}`);
@@ -357,7 +359,8 @@ export async function recoverDisconnectedEditor(panel, source, retry = () => rec
       // A repeated restore point on this same, still-current panel must not
       // reopen an editor the user just cancelled. Wake a replacement destination
       // only when this attempt lost its context or a newer panel requested it.
-      if (next && (!current() || next.panel !== panel)) queueMicrotask(() => {
+      const dismissedHere = dismissal && next?.panel === panel && dismissal.visit === panel._loadToken;
+      if (next && !dismissedHere && (!current() || next.panel !== panel)) queueMicrotask(() => {
         if (!next.panel.isConnected) return;
         void Promise.resolve().then(next.run).catch(() => next.panel._toast?.("Unsaved editor recovery is pending. Return to its original page to retry.", true));
       });
@@ -375,6 +378,7 @@ export async function confirmDialogClose(panel, dialog) {
 async function closeEditor(panel, dialog) {
   if (!dialog?.open) return true;
   if (!dialogDirty(panel, dialog)) {
+    panel._eocReceivingEditor?.dismiss?.(dialog);
     clearDialogBaseline(panel, dialog);
     dialog.close();
     return true;
@@ -385,6 +389,7 @@ async function closeEditor(panel, dialog) {
     "Discard",
   );
   if (!discard) return false;
+  panel._eocReceivingEditor?.dismiss?.(dialog);
   clearDialogBaseline(panel, dialog);
   dialog.close();
   return true;
@@ -436,6 +441,9 @@ export function bindStateSafety(panel) {
 
     // Explicit Cancel remains an intentional discard. Protect close/X buttons.
     const dialog = button.closest?.("dialog");
+    if (EDITOR_IDS.includes(dialog?.id) && (button.id.endsWith("-cancel") || button.hasAttribute("data-cancel"))) {
+      panel._eocReceivingEditor?.dismiss?.(dialog);
+    }
     if (!button.closest?.(".dialog-header") || !button.classList.contains("icon") || !EDITOR_IDS.includes(dialog?.id)) return;
     if (!dialogDirty(panel, dialog)) return;
     event.preventDefault();
