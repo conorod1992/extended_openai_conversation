@@ -290,3 +290,22 @@ for (const action of ['apply','reset']) {
     assert.equal(panel._configDataStale,false);
   });
 }
+
+test('capability gates follow the draft catalogue after saved baseline replacement', async () => {
+  const {modelCapabilitiesForDraft} = await import('../custom_components/extended_openai_conversation_responses/frontend/agent-config-model-presentation.js');
+  const current = {supports_reasoning_effort:true, reasoning:{supported:true, efforts:['minimal','low']}};
+  const saved = {supports_reasoning_effort:false};
+  const panel = {_draft:{chat_model:'gpt-5-mini',reasoning_effort:'minimal'},_result:{config:{chat_model:'gpt-4o'},model_capabilities:saved},_modelCatalogData:{requested_model:'gpt-5-mini',model_capabilities:current}};
+  assert.equal(modelCapabilitiesForDraft(panel), current);
+  assert.equal(modelFieldPresentation(panel,'reasoning_effort','minimal').visible,true);
+  panel._modelCatalogData.requested_model = 'gpt-4o';
+  assert.deepEqual(modelCapabilitiesForDraft(panel), {}, 'a mismatched catalogue and saved baseline cannot describe this draft');
+  panel._draft = {chat_model:'azure-deployment',azure_model:'gpt-5-mini'};
+  panel._modelCatalogData = {requested_model:'gpt-5-mini',model_metadata:current};
+  assert.equal(modelCapabilitiesForDraft(panel), current);
+  delete panel._modelCatalogData;
+  panel._draft = {chat_model:'gpt-4o'};
+  assert.equal(modelCapabilitiesForDraft(panel), saved);
+  delete panel._draft;
+  assert.equal(modelCapabilitiesForDraft(panel), saved);
+});

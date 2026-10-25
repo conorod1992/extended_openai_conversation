@@ -5,13 +5,14 @@ import {bindOwnedEvent} from "./management-owned-events.js";
 import {ensureCompactChoiceStyle} from "./compact-choice-styles.js";
 import {readConfigurationDraft as readConfig} from "./configuration-controls.js";
 import {bindConfigurationInputs, updateConfigurationControl} from "./configuration-inputs.js";
-import {modelFieldPresentation, modelFieldNotes, webSearchControlState} from "./agent-config-model-presentation.js";
+import {modelFieldPresentation, modelFieldNotes, webSearchControlState, modelCapabilitiesForDraft} from "./agent-config-model-presentation.js";
 import {friendlySettingLabel, friendlySettingValue, settingSearchAliases} from "./management-setting-metadata.js";
 import {settingBadgesMarkup} from "./management-decision-guidance.js";
 import {bindSingleRequestSave} from "./management-actions.js";
 import {saveBarMarkup} from "./unsaved-state.js";
 import {modelDataControls, bindModelDataControls} from "./model-catalog.js";
 import {bindHelp, helpButton, helpPopover} from "./agent-config-help.js";
+export {modelCapabilitiesForDraft} from "./agent-config-model-presentation.js";
 export {modelDataControls} from "./model-catalog.js";
 export {helpButton} from "./agent-config-help.js";
 
@@ -184,7 +185,7 @@ export function renderConfiguration(panel, {voiceIdentity = null, renderExposedA
   const view = panel._viewKey?.();
   const webSkillsOnly = view === "capabilities/web-skills";
   const config = panel._draft || panel._result?.config || {};
-  const capabilities = panel._result?.model_capabilities || {};
+  const capabilities = modelCapabilitiesForDraft(panel);
   const defaults = panel._result?.defaults || {};
   const regexRules = config.speech_regex_replacements || [];
   const archive = config.archive_enabled;

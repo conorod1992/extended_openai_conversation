@@ -57,7 +57,7 @@ export function bindConfiguration(panel) {
   const hasModelAwareControls = Boolean(
     modelInput
     || reasoning
-    || root?.querySelector('[data-config="temperature"],[data-config="top_p"],[data-config="api_mode"],[data-config="max_tokens"]')
+    || root?.querySelector('[data-config="temperature"],[data-config="top_p"],[data-config="api_mode"],[data-config="max_tokens"],[data-config="service_tier"]')
   );
   if (hasModelAwareControls) void ensureCatalogData(panel);
 

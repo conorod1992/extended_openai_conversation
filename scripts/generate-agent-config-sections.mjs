@@ -18,7 +18,7 @@ if (!timeoutLine || sections.size !== 12) throw new Error("Configuration section
 const timeoutExpression = timeoutLine.replace(/^const timeoutControl = /, "").replace(/;$/, "");
 
 const commonImport = `import {section, field, select, toggle, option, labelRow, settingSearch,\n`
-  + `  configurationChoiceLabel, renderLocalHandling, regexRow, modelDataControls, helpButton}\n`
+  + `  configurationChoiceLabel, renderLocalHandling, regexRow, modelDataControls, helpButton, modelCapabilitiesForDraft}\n`
   + `  from "./agent-config-editor-base.js";\n`;
 
 const groups = {
@@ -26,7 +26,7 @@ const groups = {
     ids: ["general", "conversation", "context", "model"],
     setup: `  const view = panel._viewKey?.();
   const config = panel._draft || panel._result?.config || {};
-  const capabilities = panel._result?.model_capabilities || {};
+  const capabilities = modelCapabilitiesForDraft(panel);
   const choices = (key) => (panel._result?.options?.[key] || []).map((item) => ({...item, label: configurationChoiceLabel(key, item)}));
   const continuity = config.conversation_continuity !== "ha_default";
   const timeoutControl = () => {

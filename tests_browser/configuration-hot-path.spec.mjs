@@ -4,6 +4,58 @@ import {fixtureUrl as routeFixture, trackPageErrors, expectHarnessClean} from ".
 for (const bundle of [false, true]) test.describe(bundle ? "production configuration inputs" : "source configuration inputs", () => {
 const fixtureUrl = (route) => routeFixture(route, bundle ? "&bundle=1" : "");
 
+for (const coldCatalog of [false, true]) test(`saved baseline refresh keeps reasoning availability tied to the retained draft: cold=${coldCatalog}`, async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("assistant/basics"));
+  const host = page.locator("extended-openai-management-panel");
+  await expect(host.locator('[data-config="chat_model"]')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => Boolean(window.browserHarness.panel._modelCatalogData))).toBe(true);
+  await host.evaluate(panel => panel._navigate("assistant", "model-responses"));
+  await host.evaluate(panel => {
+    const baseline = structuredClone(panel._configData);
+    baseline.config.chat_model = "gpt-4o";
+    delete baseline.config.reasoning_effort;
+    baseline.model_capabilities = {supports_reasoning_effort:false};
+    panel._configData = baseline;
+    panel._draft = {...structuredClone(baseline.config), chat_model:"gpt-5-mini", reasoning_effort:"minimal", api_mode:"responses", max_tokens:425};
+    const capabilities = {supports_reasoning_effort:true, reasoning:{supported:true, efforts:["minimal","low","medium","high"]}};
+    panel._result = {...baseline, model_capabilities:capabilities};
+    panel._modelCatalogData = {requested_model:"gpt-5-mini", model_capabilities:capabilities};
+    const ws = panel._hass.callWS.bind(panel._hass);
+    window.reasoningCatalogLookups = 0;
+    panel._hass.callWS = async message => {
+      const response = await ws(message);
+      if (message.type.endsWith("/model_catalog")) {
+        window.reasoningCatalogLookups++;
+        return {...response, model_capabilities:capabilities};
+      }
+      return response;
+    };
+    panel._syncConfigDirty();
+    const call = panel._call.bind(panel);
+    panel._call = (section, action, data) => section === "configuration" && action === "get" ? Promise.resolve(structuredClone(baseline)) : call(section, action, data);
+    panel._render();
+    window.reasoningDraftBefore = JSON.stringify(panel._draft);
+  });
+  const effort = host.locator('[data-config="reasoning_effort"]');
+  await expect(effort).toBeEnabled();
+  await expect(effort).toHaveValue("minimal");
+  await host.evaluate(async (panel, coldCatalog) => {
+    panel._configDataStale = true;
+    panel._cleanConfigSnapshots.clear();
+    await panel._loadConfigDraft();
+    if (coldCatalog) panel._modelCatalogData = null;
+    panel._render();
+  }, coldCatalog);
+  expect(await host.evaluate(panel => JSON.stringify(panel._draft) === window.reasoningDraftBefore)).toBe(true);
+  await expect(effort).toBeEnabled();
+  await expect(effort).toHaveValue("minimal");
+  expect(await page.evaluate(() => window.reasoningCatalogLookups > 0)).toBe(coldCatalog);
+  await effort.selectOption("low");
+  expect(await host.evaluate(panel => panel._draft.max_tokens)).toBe(425);
+  await expectHarnessClean(page, errors);
+});
+
 for (const supported of [true, false]) test(`late model change refreshes API choices while tokens stay focused: supported=${supported}`, async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("assistant/basics"));

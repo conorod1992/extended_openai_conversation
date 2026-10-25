@@ -8,9 +8,7 @@ export function reasoningEffortOptionsForResult(result = {}) {
 
 export function webSearchControlState(panel) {
   const config = panel?._draft || panel?._result?.config || {};
-  const data = panel?._modelCatalogData;
-  const metadata = data?.requested_model === String(config.azure_model || config.chat_model || "")
-    ? data.model_capabilities : panel?._result?.model_capabilities;
+  const metadata = modelCapabilitiesForDraft(panel);
   if (!metadata?.evaluations) return {disabled:false, note:""};
   const effort = config.reasoning_effort ?? metadata.recommended_profile?.reasoning_effort ?? null;
   const functions = toolsRequired(config);
@@ -28,13 +26,27 @@ function toolsRequired(config) {
     || config.continue_conversation === "conditional";
 }
 
+export function modelCapabilitiesForDraft(panel) {
+  const config = panel?._draft || panel?._result?.config || {};
+  const model = String(config.azure_model || config.chat_model || "");
+  const catalog = panel?._modelCatalogData;
+  const saved = panel?._result?.config;
+  const fallback = saved && String(saved.azure_model || saved.chat_model || "") !== model
+    ? {} : panel?._result?.model_capabilities || {};
+  if (catalog?.requested_model !== model) return fallback;
+  if (catalog.model_capabilities) return catalog.model_capabilities;
+  // Older catalogue envelopes expose metadata separately from the legacy
+  // support flags. Reuse those flags only when they belong to this same model.
+  return Object.keys(fallback).length ? {...fallback, ...catalog.model_metadata} : catalog.model_metadata || {};
+}
+
 // Presentation only: the catalogue and backend still own capability semantics.
 // Both browser and standalone renderers consume the same decisions before HTML.
 export function modelFieldPresentation(panel, key, value) {
   const config = panel?._draft || panel?._result?.config || {};
   const catalog = panel?._modelCatalogData;
   const data = catalog?.requested_model === String(config.azure_model || config.chat_model || "") ? catalog : null;
-  const metadata = data?.model_capabilities || data?.model_metadata || panel?._result?.model_capabilities || {};
+  const metadata = modelCapabilitiesForDraft(panel);
   if (key === "chat_model" && data) {
     const note = metadata.status === "deprecated"
       ? `Deprecated model. It remains selected for this existing configuration and will not be changed automatically.${metadata.lifecycle_note ? ` ${metadata.lifecycle_note}` : ""}`

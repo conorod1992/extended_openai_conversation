@@ -1,11 +1,11 @@
 // Generated from agent-config-editor-base.js by scripts/generate-agent-config-sections.mjs.
 import {section, field, select, toggle, option, labelRow, settingSearch,
-  configurationChoiceLabel, renderLocalHandling, regexRow, modelDataControls, helpButton}
+  configurationChoiceLabel, renderLocalHandling, regexRow, modelDataControls, helpButton, modelCapabilitiesForDraft}
   from "./agent-config-editor-base.js";
 export function renderConfigurationSections(panel, {voiceIdentity = null, renderExposedAttributes = null, renderBackup = null} = {}) {
   const view = panel._viewKey?.();
   const config = panel._draft || panel._result?.config || {};
-  const capabilities = panel._result?.model_capabilities || {};
+  const capabilities = modelCapabilitiesForDraft(panel);
   const choices = (key) => (panel._result?.options?.[key] || []).map((item) => ({...item, label: configurationChoiceLabel(key, item)}));
   const continuity = config.conversation_continuity !== "ha_default";
   const timeoutControl = () => {
