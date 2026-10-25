@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {changeConfigurationModel} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-model-v2.js";
 import {recordReasoningChoice} from "../custom_components/extended_openai_conversation_responses/frontend/configuration-controls.js";
-import {captureConfigurationSubmission} from "../custom_components/extended_openai_conversation_responses/frontend/configuration-acknowledgement.js";
+import {captureConfigurationSubmission, mergeConfigurationRead} from "../custom_components/extended_openai_conversation_responses/frontend/configuration-acknowledgement.js";
 
 function preparing(config, field = "chat_model") {
   let resolve;
@@ -151,4 +151,105 @@ for (const owner of ["user","entry","agent","intent","model"]) test(`a different
   if (owner === "model") panel._draft.chat_model = "gpt-5-mini";
   assert.equal(intent.acknowledgeReasoning(panel,{chat_model:"gpt-5",reasoning_effort:"low"},submission), false);
   assert.equal(panel._draft.reasoning_effort,"minimal");
+});
+
+test("a completed derived effort yields to an authoritative matching read", async () => {
+  const {panel,pending,resolve} = preparing({chat_model:"gpt-5",reasoning_effort:"low"});
+  resolve();
+  await pending;
+  assert.equal(panel._eocPendingModelPreparation,null);
+  assert.equal(panel._eocModelIntent.acceptReasoningRead(panel,{chat_model:"gpt-5",reasoning_effort:"high"},{comparisonConfig:{chat_model:"gpt-5.2",reasoning_effort:"xhigh"}}),true);
+  assert.equal(panel._draft.reasoning_effort,"high");
+});
+
+for (const inherited of [false,true]) test(`read reasoning follows the prospective Azure model, inherited=${inherited}`, async () => {
+  const {panel,pending,resolve} = preparing({chat_model:"new-deployment",azure_model:"gpt-5",reasoning_effort:"low"});
+  resolve();
+  await pending;
+  const baseline = {title:"Saved",config:{chat_model:"old-deployment",azure_model:inherited ? "gpt-5" : "gpt-4o",reasoning_effort:"low"}};
+  const saved = {title:"Saved",config:{chat_model:"old-deployment",azure_model:"gpt-6-astra",reasoning_effort:"high"}};
+  const next = mergeConfigurationRead(panel,{draft:panel._draft,title:"Saved"},baseline,saved).draft;
+  assert.equal(next.chat_model,"new-deployment");
+  assert.equal(next.azure_model,inherited ? "gpt-6-astra" : "gpt-5");
+  assert.equal(next.reasoning_effort,inherited ? "high" : "minimal");
+});
+
+test("a saved old model cannot consume the current model's completed default", async () => {
+  const {panel,pending,resolve} = preparing({chat_model:"gpt-5",reasoning_effort:"low"});
+  resolve();
+  await pending;
+  assert.equal(panel._eocModelIntent.acceptReasoningRead(panel,{chat_model:"gpt-5.2",reasoning_effort:"high"},{comparisonConfig:{chat_model:"gpt-5.2",reasoning_effort:"low"}}),false);
+  assert.equal(panel._draft.reasoning_effort,"minimal");
+});
+
+for (const protectedFields of [["reasoning_effort"],["azure_model"]]) test(`pending written fields protect derived read adoption: ${protectedFields}`, async () => {
+  const {panel,pending,resolve} = preparing({chat_model:"deployment",azure_model:"gpt-5",reasoning_effort:"low"});
+  resolve();
+  await pending;
+  const saved = {chat_model:"deployment",azure_model:"gpt-6-astra",reasoning_effort:"high"};
+  assert.equal(panel._eocModelIntent.acceptReasoningRead(panel,saved,{comparisonConfig:{chat_model:"deployment",azure_model:"gpt-5"},protectedFields}),false);
+  assert.equal(panel._draft.reasoning_effort,"minimal");
+});
+
+for (const reaffirm of [false,true]) test(`a completed read preserves an explicit effort, reaffirm=${reaffirm}`, async () => {
+  const {panel,pending,resolve} = preparing({chat_model:"gpt-5",reasoning_effort:"low"});
+  resolve();
+  await pending;
+  recordReasoningChoice(panel);
+  panel._draft.reasoning_effort = reaffirm ? "minimal" : "high";
+  assert.equal(panel._eocModelIntent.acceptReasoningRead(panel,{chat_model:"gpt-5",reasoning_effort:"low"}),false);
+  assert.equal(panel._draft.reasoning_effort,reaffirm ? "minimal" : "high");
+});
+
+function destination(source, choiceRevision = 0) {
+  return {...source,_draft:{...source._draft},hass:{user:{id:"admin"}},isConnected:true,
+    _eocPendingModelPreparation:null,_eocModelIntent:null,_eocReasoningChoiceRevision:choiceRevision,_configDirty:false};
+}
+
+test("completed provenance moves across repeated panels and revokes its old sources", async () => {
+  const {panel:source,pending,resolve} = preparing({chat_model:"gpt-5",reasoning_effort:"low"});
+  resolve();
+  await pending;
+  const intent = source._eocModelIntent;
+  source.isConnected = false;
+  const first = destination(source,7);
+  assert.equal(intent.transferTo(source,first),true);
+  assert.equal(source._eocModelIntent,null);
+  assert.equal(first._eocModelIntent,intent);
+  assert.equal(intent.acceptReasoningRead(source,{chat_model:"gpt-5",reasoning_effort:"low"}),false);
+  first.isConnected = false;
+  const second = destination(first,2);
+  assert.equal(intent.transferTo(first,second),true);
+  assert.equal(first._eocModelIntent,null);
+  assert.equal(intent.acceptReasoningRead(second,{chat_model:"gpt-5",reasoning_effort:"low"}),true);
+  assert.equal(second._draft.reasoning_effort,"low");
+});
+
+test("a transferred explicit reaffirmation cannot reset to automatic revision zero", async () => {
+  const {panel:source,pending,resolve} = preparing({chat_model:"gpt-5",reasoning_effort:"low"});
+  resolve();
+  await pending;
+  recordReasoningChoice(source);
+  source.isConnected = false;
+  const next = destination(source);
+  assert.equal(source._eocModelIntent.transferTo(source,next),true);
+  assert.equal(next._eocModelIntent.acceptReasoningRead(next,{chat_model:"gpt-5",reasoning_effort:"low"}),false);
+  assert.equal(next._draft.reasoning_effort,"minimal");
+});
+
+for (const conflict of ["connected source","user","entry","agent","model","pending"]) test(`intent transfer rejects ${conflict}`, async () => {
+  const {panel:source,pending,resolve} = preparing({chat_model:"gpt-5",reasoning_effort:"low"});
+  resolve();
+  await pending;
+  const intent = source._eocModelIntent;
+  source.isConnected = conflict === "connected source";
+  const next = destination(source);
+  if (conflict === "user") next.hass.user.id = "other";
+  if (conflict === "entry") next._selectedAgent = () => ({entry_id:"other"});
+  if (conflict === "agent") next._agentId = "other";
+  if (conflict === "model") next._draft.chat_model = "gpt-5-mini";
+  if (conflict === "pending") next._eocPendingModelPreparation = {};
+  assert.equal(intent.transferTo(source,next),false);
+  assert.equal(source._eocModelIntent,intent);
+  assert.equal(next._eocModelIntent,null);
 });

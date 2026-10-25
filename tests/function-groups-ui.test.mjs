@@ -128,7 +128,7 @@ const editorSource = (
 ).join("\n");
 assert.match(editorSource, /insertAdjacentHTML\("beforebegin", saveBar\(panel\)\)/, "the bar should appear as soon as a clean configuration becomes dirty");
 const inputSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/configuration-inputs.js", import.meta.url), "utf8");
-assert.match(inputSource, /#revert-config[\s\S]*?_setConfigDirty\(false\);[\s\S]*?panel\._eocMainMarkup = null;\s*panel\._render\(\)/, "reverting should clear dirty state and restore the form including the save bar");
+assert.match(inputSource, /#revert-config[\s\S]*?discardConfigurationDraft\(panel\);[\s\S]*?panel\._eocMainMarkup = null;\s*panel\._render\(\)/, "reverting should use shared discard state and restore the mounted form including the save bar");
 assert.match(editorSource, /bindSingleRequestSave\(panel\)/, "configuration saves must use the canonical shell handler");
 assert.match(
   editorSource,

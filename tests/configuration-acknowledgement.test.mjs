@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {captureConfigurationSubmission, reconcileConfigurationAcknowledgement, completeConfigurationAcknowledgement, configurationDraftBaseline, mergeConfigurationRead} from "../custom_components/extended_openai_conversation_responses/frontend/configuration-acknowledgement.js";
+import {captureConfigurationSubmission, reconcileConfigurationAcknowledgement, completeConfigurationAcknowledgement, configurationDraftBaseline, mergeConfigurationRead, discardConfigurationDraft} from "../custom_components/extended_openai_conversation_responses/frontend/configuration-acknowledgement.js";
 import {saveConfiguration} from "../custom_components/extended_openai_conversation_responses/frontend/management-actions.js";
 import {bindKnowledgeAvailability} from "../custom_components/extended_openai_conversation_responses/frontend/management-knowledge-feature.js";
 import {initializePageDraft, currentPageScope} from "../custom_components/extended_openai_conversation_responses/frontend/management-page-drafts.js";
@@ -433,3 +433,40 @@ for (const writtenEffort of [false, true]) {
     assert.equal(latest.draft.reasoning_effort, "high", "computed values must not become local edits hiding newer saved state");
   });
 }
+
+test("discard drops the authored delta while retaining the acknowledged write's refresh obligation", async () => {
+  const host = panel(), gate = deferred();
+  host._setConfigDirty = value => {host._configDirty = value;};
+  host._call = () => gate.promise;
+  const saving = saveConfiguration(host, {});
+  host._draftTitle = "Saved title";
+  host._draft.prompt = "Saved prompt";
+  const read = host._configData = {revision:"r1", title:"Saved title", config:{...host._configData.config, knowledge_enabled:true}};
+  host._eocConfigurationReadEpoch = 1;
+  host._loadConfigDraft = async () => { throw new Error("Saved configuration unavailable"); };
+  gate.resolve({valid:true, revision:"r2", title:"Edited title", config:{prompt:"Submitted prompt", max_tokens:200, knowledge_enabled:false}});
+  await saving;
+  const intent = host._eocAcknowledgedConfiguration;
+  assert.equal(typeof intent, "function");
+  assert.equal(discardConfigurationDraft(host), true);
+  assert.equal(host._draftTitle, "Edited title");
+  assert.equal(host._draft.prompt, "Submitted prompt");
+  assert.equal(host._draft.max_tokens, 200);
+  assert.equal(host._draft.knowledge_enabled, true, "do not rewind unrelated fields from the accepted read");
+  assert.equal(host._configData, read, "discard is not a new certification of the saved revision");
+  assert.equal(host._eocAcknowledgedConfiguration, intent);
+  assert.equal(host._configDataStale, true);
+  assert.equal(host._configDirty, false);
+  const latest = {revision:"r3", title:"Newest title", config:{prompt:"Newest prompt", max_tokens:300, knowledge_enabled:false}};
+  const merged = mergeConfigurationRead(host, {draft:host._draft, title:host._draftTitle}, read, latest);
+  assert.equal(merged.title, "Newest title");
+  assert.deepEqual(merged.draft, latest.config, "discarded values must not survive the next read as local edits");
+});
+
+test("discard cannot clear a configuration draft while its write is pending", () => {
+  const host = panel(), draft = host._draft;
+  host._configurationSaving = true;
+  assert.equal(discardConfigurationDraft(host), false);
+  assert.equal(host._draft, draft);
+  assert.equal(host._draft.prompt, "Submitted prompt");
+});

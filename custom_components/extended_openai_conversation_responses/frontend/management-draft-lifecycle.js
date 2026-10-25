@@ -1,6 +1,7 @@
-import {clone, mergeAcknowledgedDraft} from "./unsaved-state.js";
+import {clone} from "./unsaved-state.js";
 import {pageCoordinator} from "./management-page-drafts.js";
 import {recoverDisconnectedEditor} from "./management-state-safety.js";
+import {mergeConfigurationRead} from "./configuration-acknowledgement.js";
 
 // HA destroys custom panels during navigation and background suspension. Keep
 // the owning instance in document memory, never in persistent browser storage.
@@ -107,10 +108,15 @@ function restoreDraftSource(panel, source, key) {
       const fresh = panel._configData?.config ? panel._configData : null;
       panel._configData = fresh || clone(source._configData);
       panel._configDataStale = !fresh;
-      panel._draft = mergeAcknowledgedDraft(source._draft, source._configData.config, panel._configData.config);
-      panel._draftTitle = source._draftTitle !== source._configData.title ? source._draftTitle : panel._configData.title;
+      const sourceDraft = source._draft;
+      const merged = mergeConfigurationRead(source, {draft:sourceDraft, title:source._draftTitle}, source._configData, panel._configData);
+      source._eocPendingModelPreparation?.rebindDraft?.(sourceDraft, sourceDraft,
+        {savedConfig:panel._configData.projection === "retention" ? undefined : panel._configData.config});
+      panel._draft = merged.draft;
+      panel._draftTitle = merged.title;
       panel._draftAgentId = panel._agentId;
-      source._eocPendingModelPreparation?.transferTo?.(panel);
+      if (source._eocPendingModelPreparation) source._eocPendingModelPreparation.transferTo?.(panel);
+      else source._eocModelIntent?.transferTo?.(source, panel);
       panel._syncConfigDirty();
       source._setConfigDirty(false);
       panel._render();

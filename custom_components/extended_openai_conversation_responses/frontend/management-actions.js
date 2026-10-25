@@ -1,6 +1,6 @@
 import {same} from "./unsaved-state.js";
 import {reconcileSavedConfiguration} from "./configuration-save-dom.js";
-import {captureConfigurationSubmission, configurationSubmissionIsCurrent, completeConfigurationAcknowledgement, reconcileConfigurationAcknowledgement} from "./configuration-acknowledgement.js";
+import {captureConfigurationSubmission, configurationSubmissionIsCurrent, completeConfigurationAcknowledgement, reconcileConfigurationAcknowledgement, discardConfigurationDraft} from "./configuration-acknowledgement.js";
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
 function fieldErrorKey(key) {
@@ -142,7 +142,17 @@ export function bindSingleRequestSave(panel) {
   if (root.__eocSingleRequestSaveBound) return;
   root.__eocSingleRequestSaveBound = true;
   root.addEventListener("click", (event) => {
-    if (event.target?.closest?.("#revert-config") && panel._configurationSaving) { event.preventDefault(); event.stopImmediatePropagation(); return; }
+    if (event.target?.closest?.("#revert-config")) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (panel._configurationSaving || !panel._configData?.config) return;
+      discardConfigurationDraft(panel);
+      // Save acknowledgements can insert this bar after a feature bound its
+      // original controls. Delegation also covers those newly created buttons.
+      panel._eocMainMarkup = null;
+      panel._render();
+      return;
+    }
     const button = event.target?.closest?.("#save-config");
     if (!button) return;
     event.preventDefault();

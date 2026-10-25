@@ -3,7 +3,8 @@ import {applyTargetedConfigDirty} from "./management-state-safety.js";
 import {refreshSettingEffects} from "./management-setting-metadata.js";
 import {configurationGuidanceChanged} from "./management-configuration-guidance.js";
 import {bindSingleRequestSave} from "./management-actions.js";
-import {saveBarMarkup, clone} from "./unsaved-state.js";
+import {discardConfigurationDraft} from "./configuration-acknowledgement.js";
+import {saveBarMarkup} from "./unsaved-state.js";
 import {enhancementChanged} from "./management-enhancement-state.js";
 
 export function refreshConfigurationSaveBar(panel) {
@@ -88,9 +89,7 @@ export function bindConfigurationInputs(panel, handlers = {}) {
   root.addEventListener("change", handle);
   root.addEventListener("click", (event) => {
     if (!event.target?.closest?.("#revert-config") || panel._configurationSaving) return;
-    panel._draft = clone(panel._configData.config);
-    panel._draftTitle = panel._configData.title;
-    panel._setConfigDirty(false);
+    discardConfigurationDraft(panel);
     // Explicit discard restores every mounted control, even when the cached
     // pre-edit markup already equals the baseline being restored.
     panel._eocMainMarkup = null;

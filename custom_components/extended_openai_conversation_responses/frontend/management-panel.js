@@ -1582,6 +1582,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   async _loadConfigDraft({preserveResult = false, full = false} = {}) {
+    // A global acknowledgement retains an authoring baseline until a complete
+    // read resolves it, including when the current route is Retention.
+    full ||= Boolean(this._eocAcknowledgedConfiguration);
     const previousConfig = this._configData, previousResult = this._result;
     const user = this.hass?.user?.id;
     // Validate shared model data before reusing an active baseline, clean cache

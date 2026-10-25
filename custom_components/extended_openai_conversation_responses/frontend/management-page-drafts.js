@@ -1,5 +1,5 @@
 import {saveConfiguration, synchronizePersistedConfigurationFields} from "./management-actions.js";
-import {captureConfigurationSubmission, configurationSubmissionIsCurrent, presentAcknowledgedMutation} from "./configuration-acknowledgement.js";
+import {captureConfigurationSubmission, configurationSubmissionIsCurrent, presentAcknowledgedMutation, discardConfigurationDraft} from "./configuration-acknowledgement.js";
 import {formatWordingAlternatives, parseWordingAlternatives} from "./wording-alternatives.js";
 import {enhancementChanged} from "./management-enhancement-state.js";
 import {UnsavedState, clone, same, draftScope, saveBarMarkup} from "./unsaved-state.js";
@@ -27,14 +27,7 @@ export function pageCoordinator(panel) {
       return Boolean(route && (!section || route.sections.some((item) => item.id === section))
         && panel._draftAgentId === panel._agentId);
     },
-    discard: () => {
-      panel._eocAcknowledgedConfiguration = null;
-      if (panel._configData) {
-        panel._draft = clone(panel._configData.config);
-        panel._draftTitle = panel._configData.title;
-      }
-      panel._setConfigDirty(false);
-    },
+    discard: () => discardConfigurationDraft(panel),
   });
   return state;
 }

@@ -112,6 +112,7 @@ function createModelIntent(panel, field, model) {
   const sameModel = (left, right) => left?.chat_model === right?.chat_model
     && String(left?.azure_model || left?.chat_model || "") === String(right?.azure_model || right?.chat_model || "");
   let derived;
+  let acceptedModel;
   const intent = {
     reasoningDefaultRevision:0,
     recordReasoningDefault(target) {
@@ -122,6 +123,60 @@ function createModelIntent(panel, field, model) {
         present:Object.hasOwn(target._draft, "reasoning_effort"),
         value:target._draft.reasoning_effort,
       };
+    },
+    acceptReasoningRead(target, savedConfig, {comparisonConfig = target._configData?.config, protectedFields = []} = {}) {
+      const protectedKeys = new Set(protectedFields);
+      const current = target._draft;
+      if (!derived || !owns(target) || target._draftAgentId !== agent || target._eocModelIntent !== intent
+          || !current || protectedKeys.has("reasoning_effort")
+          || (target._eocReasoningChoiceRevision || 0) !== derived.choiceRevision
+          || Object.hasOwn(current, "reasoning_effort") !== derived.present
+          || (derived.present && current.reasoning_effort !== derived.value)
+          || !savedConfig || !Object.hasOwn(savedConfig, "chat_model") || !Object.hasOwn(savedConfig, field)) return false;
+      const prospective = {};
+      for (const key of ["chat_model", "azure_model"]) {
+        const unchanged = Object.hasOwn(current, key) === Object.hasOwn(comparisonConfig || {}, key)
+          && current[key] === comparisonConfig?.[key];
+        const source = protectedKeys.has(key) || !unchanged ? current : savedConfig;
+        if (Object.hasOwn(source, key)) prospective[key] = source[key];
+      }
+      // Adopt reasoning only for the model that the normal read merge will
+      // actually retain, including local Azure overrides and pending writes.
+      if (String(prospective.azure_model || prospective.chat_model || "") !== String(savedConfig.azure_model || savedConfig.chat_model || "")) return false;
+      if (Object.hasOwn(savedConfig, "reasoning_effort")) current.reasoning_effort = savedConfig.reasoning_effort;
+      else delete current.reasoning_effort;
+      derived = null;
+      acceptedModel = prospective;
+      const presentation = {...current};
+      for (const key of ["chat_model", "azure_model"]) {
+        if (Object.hasOwn(prospective, key)) presentation[key] = prospective[key];
+        else delete presentation[key];
+      }
+      refreshReasoningEffortPresentation({
+        shadowRoot:target.shadowRoot, _draft:presentation, _modelCatalogData:target._modelCatalogData,
+        _result:target._configData?.config === savedConfig ? target._configData : target._result,
+      });
+      return true;
+    },
+    transferTo(source, destination) {
+      if (!owns(source) || !owns(destination) || source._eocModelIntent !== intent
+          || source._draftAgentId !== agent || destination._draftAgentId !== agent
+          || !source._draft || !destination._draft || destination.isConnected === false) return false;
+      if (source === destination) return true;
+      if (source.isConnected !== false || destination._eocPendingModelPreparation
+          || (!sameModel(source._draft, destination._draft) && (!acceptedModel || !sameModel(acceptedModel, destination._draft)))) return false;
+      const sameDerived = draft => derived && Object.hasOwn(draft, "reasoning_effort") === derived.present
+        && (!derived.present || draft.reasoning_effort === derived.value);
+      if (derived) {
+        // Numeric choice revisions belong to a panel. A transferred explicit
+        // choice must not become automatic merely because the new panel is 0.
+        if ((source._eocReasoningChoiceRevision || 0) !== derived.choiceRevision
+            || !sameDerived(source._draft) || !sameDerived(destination._draft)) derived = null;
+        else derived = {...derived, choiceRevision:destination._eocReasoningChoiceRevision || 0};
+      }
+      source._eocModelIntent = null;
+      destination._eocModelIntent = intent;
+      return true;
     },
     acknowledgeReasoning(target, savedConfig, submission, comparisonConfig = savedConfig) {
       if (!derived || !owns(target) || target._draftAgentId !== agent || target._eocModelIntent !== intent
@@ -176,6 +231,7 @@ function ownModelPreparation(panel, field, model, token, preserveReasoning, inte
           || String(destination._draft?.azure_model || destination._draft?.chat_model || "") !== capabilityModel
           || (destination !== panel && destination._eocPendingModelPreparation)) return false;
       const keepReasoning = preserveReasoning || (panel._eocReasoningChoiceRevision || 0) !== preparation.reasoningRevision;
+      if (intent.transferTo && !intent.transferTo(panel, destination)) return false;
       panel._eocPendingModelPreparation = null;
       panel._eocModelChangeToken++;
       destination._eocModelIntent = intent;

@@ -37,11 +37,29 @@ export function configurationDraftBaseline(panel, baseline = panel._configData) 
   return panel._eocAcknowledgedConfiguration?.baseline?.(baseline) || baseline;
 }
 
+export function discardConfigurationDraft(panel) {
+  if (panel._configurationSaving) return false;
+  const baseline = configurationDraftBaseline(panel);
+  if (!baseline?.config) return false;
+  panel._draft = clone(baseline.config);
+  panel._draftTitle = baseline.title;
+  if (panel._eocAcknowledgedConfiguration) {
+    // Discard the authored delta, not the completed write's refresh obligation.
+    // An older read cannot certify the next write or become a recovered edit.
+    panel._invalidateCleanConfiguration?.(panel._agentId);
+    panel._configDataStale = true;
+  }
+  panel._setConfigDirty(false);
+  return true;
+}
+
 export function mergeConfigurationRead(panel, current, baseline, saved) {
   const comparison = configurationDraftBaseline(panel, baseline);
+  const pending = panel._eocConfigurationSubmission;
+  const protectedFields = pending && !pending.acknowledged && configurationSubmissionIsCurrent(panel, pending) ? pending.fields : [];
+  panel._eocModelIntent?.acceptReasoningRead?.(panel, saved.config, {comparisonConfig:comparison.config, protectedFields});
   const next = mergeAcknowledgedDraft(current.draft, comparison.config, saved.config);
   let title = current.title !== comparison.title ? current.title : saved.title;
-  const pending = panel._eocConfigurationSubmission;
   if (pending && !pending.acknowledged && configurationSubmissionIsCurrent(panel, pending)) {
     // Reads made before the write commits cannot acknowledge its submitted
     // fields, nor erase a later reversion to the original saved value.
