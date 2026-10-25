@@ -2,6 +2,7 @@ import {bindConfigurationInputs} from "./configuration-inputs.js";
 import {applyTargetedConfigDirty} from "./management-state-safety.js";
 import {bindConfiguration as bindBaseConfiguration} from "./agent-config-editor-base.js";
 import {lookupModelData} from "./model-catalog.js";
+import {refreshApiModePresentation} from "./agent-config-model-presentation.js";
 
 function currentConfig(panel) {
   return panel?._draft || panel?._result?.config || {};
@@ -15,7 +16,7 @@ function currentCatalogData(panel, model) {
 async function ensureCatalogData(panel) {
   const config = currentConfig(panel);
   const model = String(config.azure_model || config.chat_model || "");
-  if (currentCatalogData(panel, model)) return;
+  if (currentCatalogData(panel, model)) { refreshApiModePresentation(panel); return; }
   const searchTarget = panel._pendingSettingFocus;
   const agent = panel._agentId;
   const view = panel._viewKey?.();
@@ -26,6 +27,7 @@ async function ensureCatalogData(panel) {
   try {
     await lookupModelData(panel, model, "lookup", current);
     if (!current()) return;
+    refreshApiModePresentation(panel);
     // A late catalog response must not replace an editor while the user is
     // typing. The next ordinary render will use the now-cached model data.
     if (panel.shadowRoot?.activeElement?.matches?.("input,textarea,[contenteditable='true']")) return;
@@ -86,10 +88,12 @@ export async function changeConfigurationModel(panel, control) {
     const data = await lookupModelData(panel, String(draft.azure_model || draft.chat_model || ""), "lookup", current);
     if (!current()) return;
     applyModelDefaults(panel, data);
+    refreshApiModePresentation(panel);
     applyTargetedConfigDirty(panel, [field, "reasoning_effort"], control, false);
     const validation = await panel._call("configuration", "validate", {config: panel._draft});
     if (!current() || !validation.valid) return;
     panel._result.model_capabilities = validation.model_capabilities;
+    refreshApiModePresentation(panel);
     // A model change finishes after blur. Do not replace the next control or
     // move focus back while the user is already editing another field.
     const focused = panel.shadowRoot?.activeElement;

@@ -94,3 +94,22 @@ export function modelFieldNotes(panel, presentation) {
   const list = models ? `<datalist id="extended-openai-model-catalog">${models.map((item) => `<option value="${panel._e(item.id)}" label="${panel._e(`${item.display_name || item.id}${item.status === "deprecated" ? " — Deprecated" : ""}`)}"></option>`).join("")}</datalist>` : "";
   return `${list}${note ? `<small class="${noteClass}">${panel._e(note)}</small>` : ""}`;
 }
+
+// Catalogue work can finish after focus moves to another editable field. Keep
+// the mounted API selector current without replacing controls or moving focus.
+export function refreshApiModePresentation(panel) {
+  const control = panel.shadowRoot?.querySelector?.('[data-config="api_mode"]');
+  if (!control) return;
+  const presentation = modelFieldPresentation(panel, "api_mode", control.value);
+  for (const option of control.options) option.disabled = presentation.disabledOption(option.value);
+  const field = control.closest('[data-field="api_mode"]');
+  let note = field?.querySelector(".capability-note");
+  if (!presentation.note) { note?.remove(); return; }
+  if (!field) return;
+  if (!note) {
+    note = document.createElement("small");
+    note.className = "capability-note";
+    field.append(note);
+  }
+  note.textContent = presentation.note;
+}

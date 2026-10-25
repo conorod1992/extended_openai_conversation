@@ -4,6 +4,58 @@ import {fixtureUrl as routeFixture, trackPageErrors, expectHarnessClean} from ".
 for (const bundle of [false, true]) test.describe(bundle ? "production configuration inputs" : "source configuration inputs", () => {
 const fixtureUrl = (route) => routeFixture(route, bundle ? "&bundle=1" : "");
 
+for (const supported of [true, false]) test(`late model change refreshes API choices while tokens stay focused: supported=${supported}`, async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("assistant/basics"));
+  const host = page.locator("extended-openai-management-panel");
+  const model = host.locator('[data-config="chat_model"]');
+  const tokens = host.locator('[data-config="max_tokens"]');
+  await expect(model).toBeVisible();
+  await expect.poll(() => page.evaluate(() => Boolean(window.browserHarness.panel._modelCatalogData))).toBe(true);
+  await host.evaluate((panel, supported) => {
+    const before = supported ? "gpt-5.4-pro" : "gpt-4o";
+    panel._draft.chat_model = before;
+    panel._draft.api_mode = supported ? "responses" : "chat_completions";
+    panel._draft.max_function_calls_per_conversation = 0;
+    panel._modelCatalogData = {requested_model:before, model_capabilities:{api:{responses:true, chat_completions:!supported}}};
+    panel._render();
+    window.apiDraftBefore = JSON.stringify({functions:panel._draft.functions, groups:panel._draft.function_groups});
+    const call = panel._hass.callWS.bind(panel._hass);
+    panel._hass.callWS = async message => {
+      const response = await call(message);
+      const metadata = {api:{responses:true, chat_completions:supported}};
+      if (message.type.endsWith("/model_catalog")) return {...response, model_metadata:{reasoning:{supported:false}}, model_capabilities:metadata};
+      if (message.section === "configuration" && message.action === "validate") {
+        window.apiValidationWaiting = true;
+        await new Promise(resolve => {window.releaseApiValidation = resolve;});
+        return {valid:supported, model_capabilities:metadata, errors:supported ? {} : {api_mode:"Unsupported"}};
+      }
+      return response;
+    };
+  }, supported);
+  const choice = host.locator('[data-config="api_mode"] option[value="chat_completions"]');
+  await expect(choice).toHaveJSProperty("disabled", supported);
+  await model.fill(supported ? "gpt-4o" : "gpt-5.4-pro");
+  await tokens.focus();
+  await expect.poll(() => page.evaluate(() => Boolean(window.apiValidationWaiting))).toBe(true);
+  await tokens.fill("1234");
+  await tokens.evaluate(node => {window.editingTokenControl = node;});
+  await page.evaluate(() => window.releaseApiValidation());
+  await expect(choice).toHaveJSProperty("disabled", !supported);
+  if (!supported) await expect(host.locator('[data-field="api_mode"] .capability-note')).toContainText("not supported");
+  await expect(tokens).toBeFocused();
+  await expect(tokens).toHaveValue("1234");
+  expect(await tokens.evaluate(node => node === window.editingTokenControl)).toBe(true);
+  expect(await host.evaluate(panel => JSON.stringify({functions:panel._draft.functions, groups:panel._draft.function_groups}) === window.apiDraftBefore)).toBe(true);
+  if (supported) {
+    const api = host.locator('[data-config="api_mode"]');
+    await api.locator('xpath=ancestor::details').evaluateAll(nodes => nodes.forEach(node => {node.open = true;}));
+    await api.selectOption("chat_completions");
+  }
+  expect(await page.evaluate(() => browserHarness.calls.filter(call => call.section === "configuration" && call.action === "save").length)).toBe(0);
+  await expectHarnessClean(page, errors);
+});
+
 test("first and subsequent edits retain the draft, read no other controls and propagate normally", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("assistant/basics"));
@@ -123,7 +175,7 @@ test("a late model catalog response does not redirect typing from the title into
     const {panel} = window.browserHarness;
     const call = panel._hass.callWS.bind(panel._hass);
     panel._hass.callWS = (message) => message.type.endsWith("/model_catalog")
-      ? new Promise((resolve, reject) => { window.resolveLateCatalog = () => call(message).then(resolve, reject); })
+      ? new Promise((resolve, reject) => { window.resolveLateCatalog = () => call(message).then(result => resolve({...result, model_capabilities:{api:{responses:true, chat_completions:false}}}), reject); })
       : call(message);
     panel._modelCatalogData = null;
     panel._render();
@@ -132,6 +184,7 @@ test("a late model catalog response does not redirect typing from the title into
   await title.fill("Late catalog title");
   await expect.poll(() => page.evaluate(() => window.browserHarness.panel.shadowRoot.activeElement?.dataset.config)).toBe("__title");
   await page.evaluate(() => window.resolveLateCatalog());
+  await expect(panel.locator('[data-config="api_mode"] option[value="chat_completions"]')).toHaveJSProperty("disabled", true);
   await page.keyboard.insertText("!");
   const typedTitle = await title.inputValue();
   expect(typedTitle).toMatch(/^(?:!Late catalog title|Late catalog title!)$/);
