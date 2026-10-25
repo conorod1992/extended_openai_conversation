@@ -280,7 +280,10 @@ async function deleteInvalidTool(panel, item, button) {
       index: Number(item.index),
       revision: panel._result?.revision,
     });
-    await refreshAfterRepair(panel, "Function Tool deleted", saved, submission);
+    // The complete repair acknowledgement owns this deletion. A catalogue
+    // refresh can otherwise replace an independently opened sibling editor,
+    // including after a transient read failure. Keep its authoring revision.
+    await refreshAfterRepair(panel, "Function Tool deleted", saved, submission, {reload:false});
   } catch (err) {
     if (configurationSubmissionIsCurrent(panel, submission)) panel._toast(`Unable to delete Function Tool: ${err.message || String(err)}`, true);
     button.disabled = false;

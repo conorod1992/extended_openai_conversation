@@ -8,6 +8,7 @@ import {mergeConfigurationRead} from "./configuration-acknowledgement.js";
 // Reading it at recovery time also observes acknowledgements arriving after
 // disconnection, rather than resurrecting an already-saved submission.
 const retained = new Map();
+const recoveryConfigurationReads = new WeakMap();
 const ownScopes = panel => [...pageCoordinator(panel).scopes.entries()]
   .filter(([id]) => id !== "retained-drafts").map(([, scope]) => scope);
 const hasOwnChanges = panel => ownScopes(panel).some(scope => scope.dirty());
@@ -105,6 +106,10 @@ function restoreDraftSource(panel, source, key) {
   }
   if (source._configDirty && source._draftAgentId === panel._agentId && panel._data?.is_admin) {
     if (!panel._configDirty) {
+      // A cold Retention visit has only a partial configuration projection.
+      // Missing fields there are unknown, not deletions from a retained full
+      // draft. Obtain a full, current baseline before transferring ownership.
+      if (prepareFullRecoveryBaseline(panel, source, key)) return;
       const fresh = panel._configData?.config ? panel._configData : null;
       panel._configData = fresh || clone(source._configData);
       panel._configDataStale = !fresh;
@@ -146,6 +151,30 @@ function restoreDraftSource(panel, source, key) {
     // pending mutations and the current route, rather than bypassing it.
     void recoverDisconnectedEditor(panel, source, () => restorePanelDrafts(panel)).catch(() => panel._toast?.("Unsaved editor recovery is pending. Return to its original page to retry.", true));
   }
+}
+
+function prepareFullRecoveryBaseline(panel, source, key) {
+  if (!source._configData?.config || source._configData.projection === "retention"
+      || panel._configData?.projection !== "retention") return false;
+  const previous = recoveryConfigurationReads.get(panel);
+  if (previous?.key === key && (previous.running || (previous.visit === panel._loadToken && previous.generation === panel._cacheGeneration))) return true;
+  const state = {key, running:true, visit:panel._loadToken, generation:panel._cacheGeneration, view:panel._viewKey()};
+  recoveryConfigurationReads.set(panel, state);
+  void Promise.resolve().then(() => {
+    if (panel.isConnected && owner(panel) === key && panel._data?.is_admin && panel._viewKey() === state.view
+        && panel._loadToken === state.visit && panel._cacheGeneration === state.generation) return panel._loadConfigDraft({preserveResult:true, full:true});
+  }).catch(() => {
+    // Keep the original source intact and avoid retrying a failed read on every
+    // render. A new visit or invalidation can retry through the normal gates.
+    if (panel.isConnected && owner(panel) === key && panel._loadToken === state.visit) {
+      panel._toast?.("Unsaved configuration is retained. Refresh this section to retry loading the complete settings.", true);
+    }
+  }).finally(() => {
+    state.running = false;
+    if (panel.isConnected && owner(panel) === key && (panel._configData?.projection !== "retention"
+        || panel._loadToken !== state.visit || panel._cacheGeneration !== state.generation)) restorePanelDrafts(panel);
+  });
+  return true;
 }
 
 export function stopDraftRecovery(panel) {

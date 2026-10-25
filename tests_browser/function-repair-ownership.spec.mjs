@@ -423,3 +423,100 @@ for (const bundled of [false, true]) {
     await expectHarnessClean(page, diagnostics);
   });
 }
+
+for (const bundled of [false, true]) for (const invalid of [false, true]) for (const failCatalogue of [false, true]) for (const replace of [false, true]) {
+  test(`Function deletion preserves a newer ${invalid ? "quarantined" : "healthy"} sibling editor, catalogue failure=${failCatalogue}, replacement=${replace} (${bundled ? "bundle" : "source"})`, async ({page}) => {
+    const diagnostics = trackPageErrors(page);
+    const panel = await prepareRepair(page, bundled);
+    await panel.evaluate((host, failCatalogue) => {
+      host.hass = {...host.hass, user:{id:"admin", is_admin:true}};
+      const original = host.hass.callWS.bind(host.hass), state = window.repairOwnership;
+      Object.assign(state, {deleteEntered:false, deletes:[], catalogueReads:0, catalogueAvailable:!failCatalogue});
+      host.hass.callWS = async message => {
+        if (message.section === "function_repair" && message.action === "delete_one") {
+          state.deletes.push(structuredClone(message));
+          if (message.revision !== state.revision) throw new Error("Saved repair changed; reload before deleting");
+          state.deleteEntered = true;
+          await new Promise(resolve => {state.releaseDelete = resolve;});
+          state.raw.splice(Number(message.index), 1);
+          state.revision = "deleted-a";
+          const saved = state.snapshot();
+          return {valid:true, ...saved, agent:{...host._selectedAgent(), function_count:saved.config.functions.length}};
+        }
+        if (!message.section && message.action === "agents") {
+          state.catalogueReads++;
+          if (!state.catalogueAvailable) throw new Error("Temporary catalogue read failure");
+        }
+        return original(message);
+      };
+    }, failCatalogue);
+    await panel.locator('.delete-invalid-tool[data-repair-index="0"]').click();
+    await panel.locator('#confirm-accept').click();
+    await expect.poll(() => page.evaluate(() => repairOwnership.deleteEntered)).toBe(true);
+    if (invalid) await openRepair(panel, 1);
+    else {
+      await panel.getByText("Show member functions", {exact:true}).click();
+      await panel.locator('.edit-tool').first().click();
+      await expect.poll(() => panel.evaluate(host => typeof host._toolInitialYaml)).toBe("string");
+    }
+    const authoredRevision = await panel.evaluate((host, invalid) => invalid ? host._repairToolRevision : host._toolRevision, invalid);
+    const yaml = repairedYaml(invalid ? "repair_b" : "baseline_tool").replace("Corrected baseline_tool", "Newer healthy sibling draft");
+    await panel.locator('#tool-yaml').fill(yaml);
+    expect(await panel.evaluate(host => host._unsavedState.hasChanges())).toBe(true);
+    await page.evaluate(() => repairOwnership.releaseDelete());
+    await expect.poll(() => panel.evaluate(host => host._eocAgentMutations || 0)).toBe(0);
+    await expect(panel.locator('#toast')).toContainText("Function Tool deleted");
+    await expect(panel.locator('#tool-dialog')).toBeVisible();
+    await expect(panel.locator('#tool-yaml')).toHaveValue(yaml);
+    expect(await panel.evaluate((host, invalid) => invalid ? host._repairToolRevision : host._toolRevision, invalid)).toBe(authoredRevision);
+    expect(await panel.evaluate(host => host._unsavedState.hasChanges())).toBe(true);
+    expect(await page.evaluate(() => repairOwnership.catalogueReads)).toBe(0);
+    expect(await page.evaluate(() => repairOwnership.deletes.length)).toBe(1);
+    expect(await page.evaluate(() => repairOwnership.raw.map(tool => tool.spec.name))).toEqual(["repair_b", "baseline_tool"]);
+    expect(await page.evaluate(() => repairOwnership.raw[0].spec.parameters.properties.message.minLength)).toBe("1");
+
+    // Deletion shifts B's persisted index. Keeping its old authoring revision
+    // must reject a stale save instead of writing into the healthy sibling now
+    // occupying that index. Healthy editors retain the same revision guard.
+    await panel.locator('#tool-save').click();
+    await expect(panel.locator(invalid ? '#toast' : '#tool-error')).toContainText("Saved repair changed; reload before saving");
+    await expect(panel.locator('#tool-save')).toBeEnabled();
+    await expect(panel.locator('#tool-yaml')).toHaveValue(yaml);
+    expect(await page.evaluate(() => repairOwnership.raw.map(tool => tool.spec.name))).toEqual(["repair_b", "baseline_tool"]);
+    expect(await page.evaluate(() => repairOwnership.raw[0].spec.parameters.properties.message.minLength)).toBe("1");
+    const attempted = await page.evaluate(invalid => invalid ? repairOwnership.saves.at(-1) : repairOwnership.normalSaves.at(-1), invalid);
+    expect(attempted.revision).toBe(authoredRevision);
+    if (invalid) expect(attempted.index).toBe(1);
+
+    if (replace) {
+      // The new panel must preserve the stale draft for review without rebasing
+      // it onto a different raw index or submitting the failed edit again.
+      await panel.evaluate(host => {
+        const parent = host.parentElement, hass = host.hass;
+        host.remove();
+        const next = document.createElement("extended-openai-management-panel");
+        parent.append(next);
+        next.hass = hass;
+      });
+      if (failCatalogue) {
+        await expect.poll(() => panel.evaluate(host => host._error)).toBe("Temporary catalogue read failure");
+        await expect(panel.locator('#tool-dialog')).not.toBeVisible();
+        // Recovery still waits for the same owner's successful catalogue read;
+        // the retained source holds the draft across this fail-closed boundary.
+        await panel.evaluate(host => {
+          repairOwnership.catalogueAvailable = true;
+          return host._loadAgents();
+        });
+      }
+      const recovered = panel.getByLabel("Recovered editor values");
+      await expect(recovered).toBeVisible();
+      expect(JSON.parse(await recovered.inputValue()).find(value => value.id === "tool-yaml")?.value).toBe(yaml);
+      expect(await page.evaluate(() => repairOwnership.deletes.length)).toBe(1);
+    }
+    expect(await page.evaluate(() => ({deletes:repairOwnership.deletes.length, repairs:repairOwnership.saves.length, normal:repairOwnership.normalSaves.length})))
+      .toEqual({deletes:1, repairs:invalid ? 1 : 0, normal:invalid ? 0 : 1});
+    expect(await page.evaluate(() => repairOwnership.raw.map(tool => tool.spec.name))).toEqual(["repair_b", "baseline_tool"]);
+    expect(await page.evaluate(() => repairOwnership.raw[0].spec.parameters.properties.message.minLength)).toBe("1");
+    await expectHarnessClean(page, diagnostics);
+  });
+}

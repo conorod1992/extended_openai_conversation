@@ -196,9 +196,10 @@ function modifiedOpenDialog(panel) {
   return null;
 }
 
-function showRecoveredEditorValues(panel, old, values) {
+function showRecoveredEditorValues(panel, old, values, ownsSource) {
   const recovery = document.createElement("dialog");
   recovery.className = "editor-dialog";
+  recovery.dataset.eocRecoveredEditor = "";
   const title = document.createElement("h2");
   title.textContent = "Recovered unsaved editor";
   const explanation = document.createElement("p");
@@ -212,8 +213,14 @@ function showRecoveredEditorValues(panel, old, values) {
   close.onclick = () => recovery.close();
   const discard = document.createElement("button");
   discard.textContent = "Discard recovered edits";
-  discard.onclick = () => { old.close(); recovery.close(); };
-  recovery.addEventListener("close", () => recovery.remove(), {once:true});
+  discard.onclick = () => {
+    if (ownsSource() && same(dialogState(old), values)) old.close();
+    recovery.close();
+  };
+  recovery.addEventListener("close", () => {
+    close.onclick = discard.onclick = null;
+    recovery.remove();
+  }, {once:true});
   recovery.append(title, explanation, text, close, discard);
   panel.shadowRoot.append(recovery);
   recovery.showModal();
@@ -269,7 +276,7 @@ export async function recoverDisconnectedEditor(panel, source, retry = () => rec
       const {openTool} = await import("./agent-config-tools-base.js");
       if (!canOpen()) return;
       const index = source._toolOriginalName == null ? null : panel._draft?.functions?.findIndex(tool => tool.spec?.name === source._toolOriginalName);
-      if (index === -1 || index === undefined) return showRecoveredEditorValues(panel, old, values);
+      if (index === -1 || index === undefined) return showRecoveredEditorValues(panel, old, values, ownsContext);
       if (!await openRecoveryEditor(() => openTool(panel, index), () => panel._toolEditorLoad)) return;
     } else if (old.id === "group-dialog") {
       const {openFunctionGroup} = await import("./agent-config-tools-base.js");
@@ -286,7 +293,7 @@ export async function recoverDisconnectedEditor(panel, source, retry = () => rec
       // Expiry or deletion can remove the saved item during a disconnect. Do
       // not silently leave its retained edits in the detached panel, or reopen
       // them as a new record. Preserve the original until explicit discard.
-      if (!panel._result?.memories?.some(memory => memory.memory_id === memoryId)) return showRecoveredEditorValues(panel, old, values);
+      if (!panel._result?.memories?.some(memory => memory.memory_id === memoryId)) return showRecoveredEditorValues(panel, old, values, ownsContext);
       openTemporaryMemory(panel, memoryId);
     } else if (old.id === "ha-llm-tools-dialog") {
       await panel._ensureHALlmTools?.();
@@ -311,7 +318,7 @@ export async function recoverDisconnectedEditor(panel, source, retry = () => rec
       : baseline && !same(baseline, panel._eocDialogBaselines?.get(old.id));
     if (changed) {
       dialog.close();
-      showRecoveredEditorValues(panel, old, values);
+      showRecoveredEditorValues(panel, old, values, ownsContext);
       return;
     }
     if (dialog.__eocRestoreDraft) {
@@ -323,7 +330,7 @@ export async function recoverDisconnectedEditor(panel, source, retry = () => rec
     // If its native editing mode cannot be recreated safely, keep the raw copy.
     if (values.some(value => value.yaml?.length)) {
       dialog.close();
-      showRecoveredEditorValues(panel, old, values);
+      showRecoveredEditorValues(panel, old, values, ownsContext);
       return;
     }
     const controls = editorControls(dialog);
@@ -341,14 +348,14 @@ export async function recoverDisconnectedEditor(panel, source, retry = () => rec
     // authored value survived; retain the complete copy for explicit review.
     if (!same(dialogState(dialog), values)) {
       dialog.close();
-      showRecoveredEditorValues(panel, old, values);
+      showRecoveredEditorValues(panel, old, values, ownsContext);
       return;
     }
     old.close();
   } catch (_err) {
     if (current() && (openedEditor?.owns() || !panel.shadowRoot.querySelector("dialog[open]"))) {
       if (openedEditor?.owns()) openedEditor.dialog?.close();
-      showRecoveredEditorValues(panel, old, values);
+      showRecoveredEditorValues(panel, old, values, ownsContext);
     }
   } finally {
     // An in-place reconnect refresh can supersede this visit while preserving
@@ -496,6 +503,9 @@ async function navigateWithUnsavedState(panel, destination) {
   }
   // Close even clean editors before switching their owning context.
   if (destination !== panel._viewKey?.()) panel._eocBackupTransferCleanup?.();
+  // This is a read-only copy of a detached editor. The retained source keeps
+  // owning the edits; its modal must not follow a different route or assistant.
+  for (const recovery of panel.shadowRoot?.querySelectorAll?.("dialog[data-eoc-recovered-editor]") || []) recovery.close();
   for (const id of EDITOR_IDS) {
     const editor = panel.shadowRoot?.querySelector?.(`#${id}`);
     if (editor?.open) { clearDialogBaseline(panel, editor); editor.close(); }
