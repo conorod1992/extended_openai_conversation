@@ -342,6 +342,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (this._viewKey() === "usage-maintenance/diagnostics") {
       getRouteFeature("usage-maintenance/diagnostics")?.enhanceDiagnostics(this);
     }
+    this._eocPendingModelPreparation?.resumeIfIdle?.({reconnect:true});
   }
 
   disconnectedCallback() {
@@ -1637,7 +1638,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       if (!cached) this._rememberCleanConfiguration(configData, agentId);
       // Adopt fresh unchanged fields and keep the latest local delta, including
       // edits/deletions made while the read was pending and Retention expansion.
-      this._draft = retainedDraft ? mergeAcknowledgedDraft(retainedDraft.draft, baseline.config, configData.config) : clone(configData.config);
+      const nextDraft = retainedDraft ? mergeAcknowledgedDraft(retainedDraft.draft, baseline.config, configData.config) : clone(configData.config);
+      if (retainedDraft) this._eocPendingModelPreparation?.rebindDraft?.(retainedDraft.draft, nextDraft);
+      this._draft = nextDraft;
       this._draftTitle = retainedDraft && retainedDraft.title !== baseline.title ? retainedDraft.title : configData.title;
       this._draftAgentId = agentId;
       this._setConfigDirty(false);
@@ -2316,6 +2319,33 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       && (allowRefresh || this._loadToken === owner.loadToken);
   }
 
+  _revalidateAcknowledgedCollection(owner) {
+    if (!this._ownsRetainedMutation(owner, {allowRefresh:true})) return false;
+    if (!this.isConnected) {
+      if (!owner.user || !owner.entry || !owner.agent) return false;
+      // Recovery may have already read the collection before this detached
+      // editor's write committed. Hand off only cache invalidation/read intent;
+      // the saved response must never become another panel's collection data.
+      const sameIdentity = panel => panel._agentId === owner.agent
+        && panel._selectedAgent?.()?.entry_id === owner.entry && panel.hass?.user?.id === owner.user;
+      this._eocAcknowledgedCollection = panel => {
+        if (!panel.isConnected || !sameIdentity(this) || !sameIdentity(panel)) return {accepted:false, refreshing:false};
+        panel._invalidateAfterMutation(owner.agent, owner.route === "data-memory/knowledge" ? "knowledge" : "memories", "update");
+        return {accepted:true, refreshing:panel._revalidateAcknowledgedCollection(owner)};
+      };
+      return false;
+    }
+    // A read completed during this save may precede its commit, or may contain
+    // a newer write than this acknowledgement. Re-read through the normal route
+    // ownership guards instead of applying an old response over either case.
+    void this._loadSection(true).catch(() => {
+      if (this.isConnected && this._ownsRetainedMutation(owner, {allowRefresh:true})) {
+        this._toast("Changes saved, but the collection could not be refreshed. Refresh this section to retry.", true);
+      }
+    });
+    return true;
+  }
+
   _patchScopeCount(scopeId, field, delta) {
     const scopes = this._data?.scopes;
     if (!Array.isArray(scopes)) return;
@@ -2366,6 +2396,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       if (ownsList && agent && Number.isFinite(response?.feature_status?.source_count)) agent.knowledge_source_count = response.feature_status.source_count;
       this._render();
       this._toast(editing ? "Knowledge source updated" : "Knowledge source saved");
+      if (!this.isConnected || !this._ownsRetainedMutation(owner)) this._revalidateAcknowledgedCollection(owner);
     } catch (err) {
       if (current()) this._setDialogError("knowledge", `Unable to save source: ${err.message || String(err)}`);
     } finally { if (current()) this._setSaving(button, false); }
@@ -2432,6 +2463,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       if (ownsList && !temporary && response.status === "created") this._selectedAgent().memory_count = Number(this._selectedAgent().memory_count || 0) + 1;
       this._render();
       this._toast(editing ? "Memory updated" : "Memory added");
+      if (!this.isConnected || !this._ownsRetainedMutation(owner)) this._revalidateAcknowledgedCollection(owner);
     } catch (err) {
       if (current()) this._setDialogError("memory", `Unable to save memory: ${err.message || String(err)}`);
     } finally { if (current()) { unlock(); this._setSaving(button, false); if (this._editingMemory) this.shadowRoot.querySelector("#memory-type").disabled = true; } }

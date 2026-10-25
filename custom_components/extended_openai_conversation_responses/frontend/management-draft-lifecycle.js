@@ -53,7 +53,7 @@ export function restorePanelDrafts(panel) {
   for (const source of sources || []) {
     if (owner(source) !== key) { sources.delete(source); continue; }
     restoreDraftSource(panel, source, key);
-    if (!hasOwnChanges(source)) sources.delete(source);
+    if (!hasOwnChanges(source) && !source._eocAcknowledgedCollection) sources.delete(source);
   }
   if (sources?.size) pageCoordinator(panel).register("retained-drafts", {
     dirty: () => owner(panel) === key && [...sources].some(source => source !== panel && hasOwnChanges(source)),
@@ -82,6 +82,14 @@ function restoreDraftSource(panel, source, key) {
     }, 100);
     return;
   }
+  const acknowledgement = source._eocAcknowledgedCollection;
+  if (acknowledgement) {
+    const result = acknowledgement(panel);
+    if (result.accepted && source._eocAcknowledgedCollection === acknowledgement) source._eocAcknowledgedCollection = null;
+    // Publish an authoritative collection before reopening an editor against
+    // its newly acknowledged identity/revision. Other routes only invalidate.
+    if (result.refreshing) return;
+  }
   if (source._configDirty && source._draftAgentId === panel._agentId && panel._data?.is_admin) {
     if (!panel._configDirty) {
       const fresh = panel._configData?.config ? panel._configData : null;
@@ -90,6 +98,7 @@ function restoreDraftSource(panel, source, key) {
       panel._draft = mergeAcknowledgedDraft(source._draft, source._configData.config, panel._configData.config);
       panel._draftTitle = source._draftTitle !== source._configData.title ? source._draftTitle : panel._configData.title;
       panel._draftAgentId = panel._agentId;
+      source._eocPendingModelPreparation?.transferTo?.(panel);
       panel._syncConfigDirty();
       source._setConfigDirty(false);
       panel._render();

@@ -4,6 +4,189 @@ import {fixtureUrl as routeFixture, trackPageErrors, expectHarnessClean} from ".
 for (const bundle of [false, true]) test.describe(bundle ? "production configuration inputs" : "source configuration inputs", () => {
 const fixtureUrl = (route) => routeFixture(route, bundle ? "&bundle=1" : "");
 
+test("unrelated collection invalidation releases mounted model-data controls without adopting stale data", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("assistant/model-responses"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect.poll(() => panel.evaluate(host => Boolean(host._modelCatalogData))).toBe(true);
+  await panel.evaluate(host => {
+    host.hass = {...host.hass, user:{id:"admin", is_admin:true}};
+    const call = host.hass.callWS.bind(host.hass);
+    window.invalidatedModelButton = host.shadowRoot.querySelector('[data-model-data="check"]');
+    window.invalidatedModelDraft = JSON.stringify(host._draft);
+    let checks = 0;
+    host.hass.callWS = async message => {
+      const result = await call(message);
+      if (message.type.endsWith("/model_catalog") && message.action === "check") {
+        if (++checks === 1) {
+          window.invalidatedModelWaiting = true;
+          await new Promise(resolve => {window.releaseInvalidatedModel = resolve;});
+          window.invalidatedModelReturned = true;
+        }
+        return {...result, update_available:true, available_catalog_version:2};
+      }
+      return result;
+    };
+  });
+  const check = panel.locator('[data-model-data="check"]');
+  await check.click();
+  await expect.poll(() => page.evaluate(() => Boolean(window.invalidatedModelWaiting))).toBe(true);
+  await panel.evaluate(host => host._invalidateAfterMutation(host._agentId, "knowledge", "update"));
+  await page.evaluate(() => window.releaseInvalidatedModel());
+  await expect.poll(() => page.evaluate(() => Boolean(window.invalidatedModelReturned))).toBe(true);
+  await expect(check).toBeEnabled();
+  await expect(panel.locator('[data-model-data="reset"]')).toBeEnabled();
+  expect(await check.evaluate(button => button === window.invalidatedModelButton)).toBe(true);
+  expect(await panel.evaluate(host => host._modelCatalogData.update_available)).toBe(false);
+  expect(await panel.evaluate(host => JSON.stringify(host._draft) === window.invalidatedModelDraft)).toBe(true);
+  await check.click();
+  await expect(panel.locator('[data-model-data="apply"]')).toBeEnabled();
+  expect(await panel.evaluate(host => host._modelCatalogData.update_available)).toBe(true);
+  await expectHarnessClean(page, errors);
+});
+
+for (const boundary of ["check", "retry", "baseline", "replacement", "rejected-replacement", "reattach"]) for (const explicitChoice of [false, true]) test(`pending model preparation survives ${boundary}, explicit effort=${explicitChoice}`, async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("assistant/basics"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect.poll(() => panel.evaluate(host => Boolean(host._modelCatalogData))).toBe(true);
+  await panel.evaluate(host => {
+    host.hass = {...host.hass, user:{id:"admin", is_admin:true}};
+    host._draft.chat_model = "gpt-5.2";
+    host._draft.reasoning_effort = "xhigh";
+    host._configData.config = structuredClone(host._draft);
+    const baseline = structuredClone(host._draft);
+    const previous = {supports_reasoning_effort:true, reasoning:{supported:true, efforts:["none","low","medium","high","xhigh"]}};
+    host._configData.model_capabilities = previous;
+    host._result = host._configData;
+    host._modelCatalogData = {requested_model:"gpt-5.2", model_capabilities:previous};
+    host._render();
+    const call = host.hass.callWS.bind(host.hass);
+    window.pendingModelSources = [host];
+    window.pendingModelLookups = 0;
+    window.recoveryModelGates = [];
+    host.hass.callWS = async message => {
+      const result = await call(message);
+      if (message.section === "configuration" && message.action === "get") return {...result, config:structuredClone(baseline), model_capabilities:previous};
+      if (message.type.endsWith("/model_catalog")) {
+        if (message.action === "lookup" && message.model === "gpt-5") {
+          if (++window.pendingModelLookups === 1) {
+            window.pendingModelWaiting = true;
+            await new Promise(resolve => {window.releasePendingModel = resolve;});
+            window.originalModelReturned = true;
+            if (window.rejectPendingModel) throw new Error("Temporary model catalogue failure");
+          } else if (window.blockRecoveryModel) {
+            await new Promise(resolve => {window.recoveryModelGates.push(resolve);});
+          }
+        }
+        const metadata = message.model === "gpt-5.2" ? previous : {supports_reasoning_effort:true, reasoning:{supported:true, efforts:["minimal","low","medium","high"]}, recommended_profile:{reasoning_effort:"minimal"}};
+        return {...result, model_capabilities:metadata, model_metadata:metadata};
+      }
+      return result;
+    };
+  });
+  await panel.locator('[data-config="chat_model"]').fill("gpt-5");
+  await panel.locator('[data-config="max_tokens"]').focus();
+  await expect.poll(() => page.evaluate(() => Boolean(window.pendingModelWaiting))).toBe(true);
+  await panel.evaluate(host => host._navigate("assistant", "model-responses"));
+  const effort = panel.locator('[data-config="reasoning_effort"]');
+  await expect(effort).toBeEnabled();
+  if (explicitChoice) await effort.selectOption("high");
+  if (boundary === "rejected-replacement" || boundary === "retry") {
+    await page.evaluate(() => {window.rejectPendingModel = true; window.releasePendingModel();});
+    await expect.poll(() => panel.evaluate(host => Boolean(host._eocPendingModelPreparation?.failed && !host._eocPendingModelPreparation?.running))).toBe(true);
+    const lookups = await page.evaluate(() => window.pendingModelLookups);
+    await panel.evaluate(host => {host._render(); host._render();});
+    expect(await page.evaluate(() => window.pendingModelLookups)).toBe(lookups);
+  }
+  if (boundary === "check" || boundary === "retry") {
+    await panel.locator('[data-model-data="check"]').click();
+    await expect.poll(() => page.evaluate(() => browserHarness.calls.filter(message => message.type.endsWith("/model_catalog") && message.action === "check").length)).toBe(1);
+  } else if (boundary === "baseline") {
+    await panel.evaluate(async host => {
+      host._configDataStale = true;
+      host._cleanConfigSnapshots.clear();
+      await host._loadConfigDraft();
+      host._render();
+    });
+  } else if (boundary.endsWith("replacement")) {
+    await page.evaluate(() => {window.blockRecoveryModel = true;});
+    for (let replacement = 0; replacement < 2; replacement++) {
+      await panel.evaluate(host => {
+        const parent = host.parentElement, hass = host.hass;
+        if (!window.pendingModelSources.includes(host)) window.pendingModelSources.push(host);
+        host.remove();
+        const next = document.createElement("extended-openai-management-panel");
+        parent.append(next);
+        next.hass = hass;
+      });
+      await expect.poll(() => panel.evaluate(host => host._draft?.chat_model)).toBe("gpt-5");
+      await expect.poll(() => panel.evaluate(host => Boolean(host._eocPendingModelPreparation?.running))).toBe(true);
+    }
+    await page.evaluate(() => {
+      window.blockRecoveryModel = false;
+      for (const release of window.recoveryModelGates) release();
+    });
+  } else {
+    await panel.evaluate(host => {window.pendingModelParent = host.parentElement; host.remove();});
+    await page.evaluate(() => window.releasePendingModel());
+    await expect.poll(() => page.evaluate(() => Boolean(window.pendingModelSources[0]._eocPendingModelPreparation?.running))).toBe(false);
+    expect(await page.evaluate(() => window.pendingModelSources[0]._draft.reasoning_effort)).toBe(explicitChoice ? "high" : "xhigh");
+    await page.evaluate(() => window.pendingModelParent.append(window.pendingModelSources[0]));
+  }
+  if (boundary !== "reattach") await page.evaluate(() => window.releasePendingModel());
+  await expect.poll(() => page.evaluate(() => Boolean(window.originalModelReturned))).toBe(true);
+  await expect.poll(() => panel.evaluate(host => Boolean(host._eocPendingModelPreparation))).toBe(false);
+  const expected = explicitChoice ? "high" : "minimal";
+  expect(await panel.evaluate(host => host._draft.chat_model)).toBe("gpt-5");
+  expect(await panel.evaluate(host => host._draft.reasoning_effort)).toBe(expected);
+  await panel.getByRole("heading", {name:"Model parameters", exact:true}).click();
+  await expect(effort).toHaveValue(expected);
+  if (boundary.endsWith("replacement")) expect(await page.evaluate(() => window.pendingModelSources.every(source => !source._configDirty && !source._eocPendingModelPreparation))).toBe(true);
+  expect(await page.evaluate(() => browserHarness.calls.filter(message => message.section === "configuration" && message.action === "save").length)).toBe(0);
+  await expectHarnessClean(page, errors);
+});
+
+test("late model validation tolerates a destination route's pending result", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("assistant/basics"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect.poll(() => panel.evaluate(host => Boolean(host._modelCatalogData))).toBe(true);
+  await panel.evaluate(host => {
+    const call = host.hass.callWS.bind(host.hass);
+    host.hass.callWS = async message => {
+      const result = await call(message);
+      const metadata = {supports_reasoning_effort:true, reasoning:{supported:true, efforts:["minimal","low","medium","high"]}, recommended_profile:{reasoning_effort:"minimal"}};
+      if (message.type.endsWith("/model_catalog")) return {...result, model_capabilities:metadata, model_metadata:metadata};
+      if (message.section === "configuration" && message.action === "validate") {
+        window.navigationValidationWaiting = true;
+        await new Promise(resolve => {window.releaseNavigationValidation = resolve;});
+        return {...result, valid:true, model_capabilities:metadata};
+      }
+      if (message.section === "knowledge" && message.action === "list") {
+        window.navigationKnowledgeWaiting = true;
+        await new Promise(resolve => {window.releaseNavigationKnowledge = resolve;});
+      }
+      return result;
+    };
+  });
+  await panel.locator('[data-config="chat_model"]').fill("gpt-5");
+  await panel.locator('[data-config="max_tokens"]').focus();
+  await expect.poll(() => page.evaluate(() => Boolean(window.navigationValidationWaiting))).toBe(true);
+  await panel.evaluate(host => {void host._navigate("data-memory", "knowledge");});
+  await expect.poll(() => page.evaluate(() => Boolean(window.navigationKnowledgeWaiting))).toBe(true);
+  expect(await panel.evaluate(host => host._result)).toBeNull();
+  await page.evaluate(() => window.releaseNavigationValidation());
+  await expect.poll(() => panel.evaluate(host => Boolean(host._eocPendingModelPreparation))).toBe(false);
+  await expect(panel.locator("#toast")).not.toContainText("Unable to inspect model options");
+  expect(await panel.evaluate(host => host._draft.reasoning_effort)).toBe("minimal");
+  await page.evaluate(() => window.releaseNavigationKnowledge());
+  await expect(panel.getByRole("heading", {name:"Knowledge Library", exact:true})).toBeVisible();
+  await panel.evaluate(host => host._navigate("assistant", "model-responses"));
+  await expect(panel.locator('[data-config="reasoning_effort"]')).toHaveValue("minimal");
+  await expectHarnessClean(page, errors);
+});
+
 for (const activation of ["save", "check", "tab"]) test(`deferred model presentation preserves native activation and current defaults: ${activation}`, async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("assistant/basics"));

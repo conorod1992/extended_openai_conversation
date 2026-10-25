@@ -78,6 +78,7 @@ export function readConfigurationDraft(panel) {
     state._draft.speech_regex_replacements = [...root.querySelectorAll(".rule-row")].map(() => ({pattern:"", replacement:""}));
   }
   root.querySelectorAll(CONFIGURATION_CONTROLS).forEach((control) => applyConfigurationControl(state, control));
+  panel._eocPendingModelPreparation?.rebindDraft?.(panel._draft, state._draft);
   panel._draft = state._draft;
   panel._draftTitle = state._draftTitle;
   return panel._draft;

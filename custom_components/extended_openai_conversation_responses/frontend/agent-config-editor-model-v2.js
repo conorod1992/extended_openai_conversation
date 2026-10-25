@@ -104,6 +104,48 @@ function applyModelDefaults(panel, data) {
   panel._draft.reasoning_effort = efforts.includes(recommended) ? recommended : efforts[0];
 }
 
+function ownModelPreparation(panel, field, model, token, preserveReasoning) {
+  const agent = panel._agentId, entry = panel._selectedAgent?.()?.entry_id, user = panel.hass?.user?.id;
+  const capabilityModel = String(panel._draft.azure_model || panel._draft.chat_model || "");
+  const owns = target => target._agentId === agent && target._selectedAgent?.()?.entry_id === entry && target.hass?.user?.id === user;
+  const preparation = {
+    draft:panel._draft, reasoningRevision:panel._eocReasoningChoiceRevision || 0,
+    defaultsPending:true, running:true, failed:false,
+    intentCurrent:() => owns(panel)
+      && panel._eocModelChangeToken === token && panel._draft === preparation.draft
+      && panel._draft?.[field] === model
+      && String(panel._draft?.azure_model || panel._draft?.chat_model || "") === capabilityModel,
+    current:() => panel.isConnected !== false && preparation.intentCurrent(),
+    rebindDraft(previous, next) {
+      if (panel._eocPendingModelPreparation === preparation && preparation.intentCurrent() && preparation.draft === previous && next?.[field] === model
+          && String(next.azure_model || next.chat_model || "") === capabilityModel) preparation.draft = next;
+    },
+    transferTo(destination) {
+      if (panel._eocPendingModelPreparation !== preparation || !preparation.intentCurrent() || !owns(destination) || destination.isConnected === false
+          || destination._draft?.[field] !== model
+          || String(destination._draft?.azure_model || destination._draft?.chat_model || "") !== capabilityModel
+          || (destination !== panel && destination._eocPendingModelPreparation)) return false;
+      const keepReasoning = preserveReasoning || (panel._eocReasoningChoiceRevision || 0) !== preparation.reasoningRevision;
+      panel._eocPendingModelPreparation = null;
+      panel._eocModelChangeToken++;
+      // Defaults already in the transferred draft need no second application.
+      // Otherwise restart against the destination's own current catalogue.
+      if (preparation.defaultsPending) void changeConfigurationModel(destination, {dataset:{config:field}, value:model}, {preserveReasoning:keepReasoning});
+      return true;
+    },
+    resumeIfIdle({reconnect = false, retry = false} = {}) {
+      if (preparation.running) return;
+      if (!preparation.intentCurrent()) {
+        if (panel._eocPendingModelPreparation === preparation) panel._eocPendingModelPreparation = null;
+        return;
+      }
+      if (preparation.defaultsPending && (!preparation.failed || reconnect || retry) && panel.isConnected !== false) preparation.transferTo(panel);
+    },
+  };
+  panel._eocPendingModelPreparation = preparation;
+  return preparation;
+}
+
 export function bindConfiguration(panel) {
   if (panel.shadowRoot?.__eocModelPresentation) panel.shadowRoot.__eocModelPresentation.pending = null;
   const result = bindBaseConfiguration(panel);
@@ -119,6 +161,7 @@ export function bindConfiguration(panel) {
     // Observe pointer activation before asynchronous capabilities arrive.
     modelPresentationState(panel);
     void ensureCatalogData(panel);
+    panel._eocPendingModelPreparation?.resumeIfIdle?.();
   }
 
   bindConfigurationInputs(panel, {
@@ -135,25 +178,24 @@ export function bindConfiguration(panel) {
   return result;
 }
 
-export async function changeConfigurationModel(panel, control) {
+export async function changeConfigurationModel(panel, control, {preserveReasoning = false} = {}) {
   const field = control.dataset?.config || "chat_model";
   const model = control.value;
-  const agent = panel._agentId;
   const draft = panel._draft;
-  const reasoningRevision = panel._eocReasoningChoiceRevision || 0;
   const token = (panel._eocModelChangeToken || 0) + 1;
   panel._eocModelChangeToken = token;
-  const current = () => panel._agentId === agent && panel._draft === draft
-    && panel._eocModelChangeToken === token && draft[field] === model;
+  const preparation = ownModelPreparation(panel, field, model, token, preserveReasoning);
+  const current = preparation.current;
   try {
     const data = await lookupModelData(panel, String(draft.azure_model || draft.chat_model || ""), "lookup", current);
     if (!current()) return;
     // A later explicit effort choice (including a reset) belongs to the user,
     // even when navigation initiated another lookup for this same model.
-    if ((panel._eocReasoningChoiceRevision || 0) === reasoningRevision) {
+    if (!preserveReasoning && (panel._eocReasoningChoiceRevision || 0) === preparation.reasoningRevision) {
       applyModelDefaults(panel, data);
       refreshReasoningEffortPresentation(panel);
     }
+    preparation.defaultsPending = false;
     refreshApiModePresentation(panel);
     // Capability presentation still needs a refresh if request validation
     // rejects another draft field. The catalogue itself already applies.
@@ -161,7 +203,7 @@ export async function changeConfigurationModel(panel, control) {
     applyTargetedConfigDirty(panel, [field, "reasoning_effort"], control, false);
     const validation = await panel._call("configuration", "validate", {config: panel._draft});
     if (!current() || !validation.valid) return;
-    panel._result.model_capabilities = validation.model_capabilities;
+    if (panel._result) panel._result.model_capabilities = validation.model_capabilities;
     refreshApiModePresentation(panel);
     // A model change finishes after blur. Do not replace the next control or
     // move focus back while the user is already editing another field.
@@ -170,6 +212,14 @@ export async function changeConfigurationModel(panel, control) {
     if (focused === control) panel._configRestoreFocus = `[data-config="${field}"]`;
     panel._render();
   } catch (err) {
+    preparation.failed = true;
     if (current()) panel._toast?.(`Unable to inspect model options: ${err.message || String(err)}`, true);
+  } finally {
+    preparation.running = false;
+    // A disconnected owner keeps only resumable intent. Completion must not
+    // dirty its detached draft or prevent a later owner from preparing it.
+    if (panel._eocPendingModelPreparation === preparation
+        && (!preparation.intentCurrent() || !preparation.defaultsPending
+          || (panel.isConnected !== false && !preparation.failed))) panel._eocPendingModelPreparation = null;
   }
 }

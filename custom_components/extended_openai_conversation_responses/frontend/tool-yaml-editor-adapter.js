@@ -91,16 +91,19 @@ export function captureToolEditorOperation(panel) {
 }
 
 export function acknowledgeToolEditor(panel, operation, saved, previous) {
-  if (!operation.isCurrent()) return operation;
+  const tools = saved?.config?.functions || saved?.functions;
+  if (!operation.isCurrent() || saved?.valid === false || saved?.revision == null || !Array.isArray(tools)) return operation;
+  // The acknowledged text is now saved even when a newer read prevents this
+  // editor from adopting its revision. Reverting to the earlier text is an
+  // unsaved edit, not a clean draft that may be discarded on navigation.
+  panel._toolInitialYaml = operation.yaml;
   // Only this editor's own commit may advance its authoring revision. Another
   // acknowledged/read baseline requires the existing conflict/review path.
   if (previous.config !== operation.baselineConfig
       || ![operation.revision, saved.revision].includes(previous.revision)) return operation;
-  const tools = saved.config?.functions || saved.functions || [];
   const candidates = tools.filter(tool => !operation.otherNames.has(tool.spec?.name));
   if (candidates.length !== 1 || saved.revision == null) return operation;
   const tool = candidates[0];
-  panel._toolInitialYaml = operation.yaml;
   panel._toolOriginalName = tool.spec.name;
   panel._toolIndex = tools.findIndex(item => item.spec?.name === tool.spec.name);
   panel._toolRevision = saved.revision;

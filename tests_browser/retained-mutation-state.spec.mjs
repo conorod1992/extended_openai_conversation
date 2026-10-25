@@ -2,27 +2,46 @@ import {expect, test} from "@playwright/test";
 import {acceptConfirmation, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 import {openDataCollection} from "./data-collection-helpers.mjs";
 
-test("a late Knowledge save cannot replace a newer route load", async ({page}) => {
+for (const bundled of [false, true]) for (const kind of ["knowledge", "persistent"]) test(`a late ${kind} acknowledgement revalidates a newer committed collection (${bundled ? "bundle" : "source"})`, async ({page}) => {
   const errors = trackPageErrors(page);
-  const panel = await openDataCollection(page, "knowledge", 10);
-  await panel.locator('[data-source-id="source-1"] .source-edit-button').click();
-  await panel.locator("#knowledge-title").fill("Delayed title");
-  await page.evaluate(() => {
-    const original = browserHarness.hass.callWS;
+  const panel = await openDataCollection(page, kind, 10, bundled);
+  const knowledge = kind === "knowledge", section = knowledge ? "knowledge" : "memories";
+  await panel.locator(knowledge ? '[data-source-id="source-1"] .source-edit-button' : '[data-memory-id="memory-1"] .memory-edit-button').click();
+  await panel.locator(knowledge ? "#knowledge-content" : "#memory-content").fill("Committed A with held acknowledgement");
+  await page.evaluate(section => {
+    const original = browserHarness.hass.callWS.bind(browserHarness.hass);
+    let held = false;
     browserHarness.hass.callWS = async message => {
-      if (message.section === "knowledge" && message.action === "update") {
-        await new Promise(resolve => { window.releaseKnowledgeSave = resolve; });
+      const response = await original(message);
+      if (!held && message.section === section && message.action === "update") {
+        held = true;
+        window.committedAcknowledgement = response;
+        return new Promise(resolve => { window.releaseCommittedAcknowledgement = () => resolve(response); });
       }
-      return original(message);
+      return response;
     };
-  });
-  await panel.locator("#knowledge-save").click();
-  await expect.poll(() => page.evaluate(() => Boolean(window.releaseKnowledgeSave))).toBe(true);
-  await panel.evaluate(host => host._loadSection(true));
-  await page.evaluate(() => releaseKnowledgeSave());
-  await expect.poll(() => page.evaluate(() => dataCollectionBackend.calls.some(call => call.action === "update"))).toBe(true);
-  await expect(panel.locator('[data-source-id="source-1"]')).toContainText("Source 1");
-  await expect(panel.locator('[data-source-id="source-1"]')).not.toContainText("Delayed title");
+  }, section);
+  await panel.locator(knowledge ? "#knowledge-save" : "#memory-save").click();
+  await expect.poll(() => page.evaluate(() => Boolean(window.releaseCommittedAcknowledgement))).toBe(true);
+  await panel.evaluate(async (host, section) => {
+    const response = committedAcknowledgement;
+    await host._call(section, "update", section === "knowledge" ? {
+      source_id: response.source.source_id, expected_revision: response.source.updated_at,
+      title: "Newer committed title", description: response.source.description, enabled: true, content: "Newer committed B",
+    } : {
+      scope_id: host._scopeId, memory_id: response.memory.memory_id, expected_revision: response.memory.revision,
+      content: "Newer committed B", category: response.memory.category,
+    });
+    await host._loadSection(true);
+  }, section);
+  const contents = () => panel.evaluate((host, knowledge) => host._result[knowledge ? "sources" : "memories"].map(record => record.content), knowledge);
+  expect(await contents()).toContain("Newer committed B");
+  const reads = await page.evaluate(section => dataCollectionBackend.calls.filter(call => call.section === section && call.action === "list").length, section);
+  await page.evaluate(() => releaseCommittedAcknowledgement());
+  await expect(panel.locator(knowledge ? "#knowledge-dialog" : "#memory-dialog")).not.toBeVisible();
+  await expect.poll(() => page.evaluate(section => dataCollectionBackend.calls.filter(call => call.section === section && call.action === "list").length, section)).toBeGreaterThan(reads);
+  expect(await contents()).toContain("Newer committed B");
+  expect(await contents()).not.toContain("Committed A with held acknowledgement");
   await expectHarnessClean(page, errors);
 });
 

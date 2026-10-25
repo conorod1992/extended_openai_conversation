@@ -1065,11 +1065,13 @@ async function saveFunctionGroup(panel) {
     await completeFunctionMutation(panel, result, submission, "Function group saved", () => {
       if (unchanged()) dialog.close();
       else if (ownsEditor()) {
+        // Dirty tracking follows the acknowledged submission independently of
+        // whether it is safe to advance the editor's authoring revision.
+        panel._eocDialogBaselines?.set("group-dialog", authored);
         if (previous.config === baselineConfig && [revision, result.revision].includes(previous.revision)) {
           panel._groupOriginalId = id;
           panel._groupRevision = result.revision;
           panel._groupRepair = false;
-          panel._eocDialogBaselines?.set("group-dialog", authored);
           error.textContent = "Submitted version saved. Your newer changes are still unsaved.";
         } else error.textContent = "Submitted version saved. Reload the latest settings before saving these edits.";
       }

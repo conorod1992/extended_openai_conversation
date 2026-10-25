@@ -311,6 +311,7 @@ export function bindConfiguration(panel) {
       // through the normal draft merger, retaining unrelated unsaved edits.
       await panel._loadConfigDraft?.();
     }
+    panel._eocPendingModelPreparation?.resumeIfIdle?.({retry:true});
     panel._render();
     panel._toast(message);
   });

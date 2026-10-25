@@ -50,7 +50,7 @@ for (const repair of [false, true]) {
     host.textarea.value = "newer B";
     const previous = {revision:"r3", config:structuredClone(host._configData.config)};
     acknowledgeToolEditor(host, operation, {revision:"r2", functions:[tool("renamed"), tool("other")]}, previous);
-    assert.equal(host._toolInitialYaml, "original");
+    assert.equal(host._toolInitialYaml, "submitted A");
     assert.equal(operation.revision, "r1");
     assert.equal(repair ? host._repairToolRevision : host._toolRevision, "r1");
     assert.equal(host.textarea.value, "newer B");
@@ -65,6 +65,16 @@ test("transport revision acknowledgement can advance its unchanged baseline enve
   assert.equal(host._toolRevision, "r2");
 });
 
+test("a reverted original draft remains dirty after an acknowledgement with an intervening read", () => {
+  const host = panel(), operation = captureToolEditorOperation(host);
+  host.textarea.value = "original";
+  const previous = {revision:"r3", config:structuredClone(host._configData.config)};
+  acknowledgeToolEditor(host, operation, {revision:"r2", functions:[tool("old"), tool("other")]}, previous);
+  assert.equal(host._toolInitialYaml, "submitted A");
+  assert.notEqual(host.textarea.value, host._toolInitialYaml);
+  assert.equal(host._toolRevision, "r1", "dirty tracking must not silently rebase the authoring revision");
+});
+
 test("an old operation cannot acknowledge a reopened editor or another entry", () => {
   const host = panel(true), operation = captureToolEditorOperation(host);
   const previous = {revision:"r1", config:host._configData.config};
@@ -76,3 +86,13 @@ test("an old operation cannot acknowledge a reopened editor or another entry", (
   host.agent = {...host.agent, entry_id:"different"};
   assert.equal(next.isCurrent(), false);
 });
+
+for (const saved of [{valid:false, revision:"r2", functions:[tool("old")]}, {revision:"r2"}, {functions:[tool("old")]}]) {
+  test(`an unacknowledged response cannot change the dirty baseline: ${JSON.stringify(saved)}`, () => {
+    const host = panel(), operation = captureToolEditorOperation(host);
+    host.textarea.value = "original";
+    acknowledgeToolEditor(host, operation, saved, {revision:"r1", config:host._configData.config});
+    assert.equal(host._toolInitialYaml, "original");
+    assert.equal(host._toolRevision, "r1");
+  });
+}

@@ -153,6 +153,71 @@ function toolDraft(repair, description) {
 for (const bundled of [false, true]) {
   const version = bundled ? "bundle" : "source";
 
+  for (const group of [false, true]) test(`${group ? "Group" : "Tool"} original-text reversion stays dirty after an acknowledged save and refresh (${version})`, async ({page}) => {
+    const diagnostics = trackPageErrors(page);
+    await page.goto(fixtureUrl("capabilities/functions", `&agents=2${bundled ? "&bundle=1" : ""}`));
+    const panel = page.locator("extended-openai-management-panel");
+    await panel.getByText("Show member functions", {exact:true}).click();
+    await panel.evaluate(host => {host.hass = {...host.hass, user:{id:"admin", is_admin:true}};});
+    // A real prior mutation makes a full configuration read eligible while the
+    // subsequent editor's save is pending.
+    await panel.locator(".tool-enabled").first().uncheck();
+    await expect.poll(() => panel.evaluate(host => host._configData.config.functions[0].enabled)).toBe(false);
+    await panel.locator(group ? ".edit-group" : ".edit-tool").first().click();
+    if (!group) await expect.poll(() => panel.evaluate(host => typeof host._toolInitialYaml)).toBe("string");
+    const field = panel.locator(group ? "#group-description" : "#tool-yaml");
+    const original = await field.inputValue();
+    const revision = await panel.evaluate((host, group) => group ? host._groupRevision : host._toolRevision, group);
+    await panel.evaluate((host, group) => {
+      const call = host.hass.callWS.bind(host.hass);
+      window.repairOwnership = {entered:false, saves:[], baseline:host._configData.config};
+      host.hass.callWS = async message => {
+        if (message.section === "tools" && message.action === (group ? "save_group" : "save")) {
+          window.repairOwnership.saves.push(structuredClone(message));
+          window.repairOwnership.entered = true;
+          await new Promise(resolve => {window.repairOwnership.release = resolve;});
+        }
+        return call(message);
+      };
+    }, group);
+    await field.fill(group ? "Acknowledged Group A" : original.replace("Baseline browser fixture Function Tool", "Acknowledged Tool A"));
+    await panel.locator(group ? "#group-save" : "#tool-save").click();
+    await expect.poll(() => page.evaluate(() => window.repairOwnership.entered)).toBe(true);
+    await field.fill(original);
+    await panel.evaluate(host => host._loadSection(true));
+    expect(await panel.evaluate(host => host._configData.config !== window.repairOwnership.baseline)).toBe(true);
+    await settleReleasedOperation(page);
+    await expect(field).toHaveValue(original);
+    expect(await panel.evaluate((host, group) => group ? host._groupRevision : host._toolRevision, group)).toBe(revision);
+    expect(await panel.evaluate(host => host._unsavedState.hasChanges())).toBe(true);
+    const agent = await panel.evaluate(host => host._agentId);
+    await panel.locator("#agent").selectOption("scale-agent-1");
+    await expect(panel.locator("#confirm-dialog")).toBeVisible();
+    await panel.locator("#confirm-cancel").click();
+    expect(await panel.evaluate(host => host._agentId)).toBe(agent);
+    await expect(field).toHaveValue(original);
+    await panel.evaluate(host => {void host._navigate("guide");});
+    await expect(panel.locator("#confirm-dialog")).toBeVisible();
+    await panel.locator("#confirm-cancel").click();
+    await expect(field).toHaveValue(original);
+    await panel.evaluate(host => {
+      const parent = host.parentElement, hass = host.hass;
+      host.remove();
+      const next = document.createElement("extended-openai-management-panel");
+      parent.append(next);
+      next.hass = hass;
+    });
+    await expect.poll(() => panel.evaluate((host, group) => {
+      const id = group ? "group-description" : "tool-yaml";
+      const field = host.shadowRoot.querySelector(`#${id}`);
+      if (field?.closest("dialog")?.open) return field.value;
+      const review = host.shadowRoot.querySelector('[aria-label="Recovered editor values"]');
+      return review ? JSON.parse(review.value).find(value => value.id === id)?.value : null;
+    }, group)).toBe(original);
+    expect(await page.evaluate(() => window.repairOwnership.saves.length)).toBe(1);
+    await expectHarnessClean(page, diagnostics);
+  });
+
   for (const reopen of [false, true]) test(`Group acknowledgement preserves ${reopen ? "a reopened" : "the same"} editor's newer draft (${version})`, async ({page}) => {
     const diagnostics = trackPageErrors(page);
     await page.goto(fixtureUrl("capabilities/functions", bundled ? "&bundle=1" : ""));

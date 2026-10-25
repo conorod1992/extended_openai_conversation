@@ -47,6 +47,36 @@ test('a successful no-update check releases the retained configuration buttons',
   assert.deepEqual(buttons.map(button=>button.disabled),[false,true,false]);
 });
 
+for (const detached of [false,true]) test(`an unrelated invalidation releases still-owned model buttons, detached=${detached}`, async () => {
+  const {panel,buttons}=fixture('check');
+  const draft=panel._draft;
+  let release;
+  panel._hass.callWS=()=>new Promise(resolve=>{release=resolve;});
+  const checking=buttons[0].click();
+  assert.deepEqual(buttons.map(button=>button.disabled),[true,true,true]);
+  panel._cacheGeneration++;
+  panel.isConnected=!detached;
+  release({catalog_version:1,update_available:true,model_capabilities:{stale:true}});
+  await checking;
+  assert.equal(panel._draft,draft,'stale data must not reach the draft-reading callback');
+  assert.equal(panel._modelCatalogData.update_available,false);
+  assert.deepEqual(buttons.map(button=>button.disabled),[false,true,false]);
+});
+
+test('an abandoned action cannot release replacement model buttons', async () => {
+  const {panel,buttons}=fixture('check');
+  let release;
+  panel._hass.callWS=()=>new Promise(resolve=>{release=resolve;});
+  const checking=buttons[0].click();
+  const replacements=buttons.map(button=>({...button,disabled:true}));
+  const original=panel.shadowRoot.querySelectorAll.bind(panel.shadowRoot);
+  panel.shadowRoot.querySelectorAll=selector=>selector==='[data-model-data]' ? replacements : original(selector);
+  release({catalog_version:1,update_available:false});
+  await checking;
+  assert.deepEqual(buttons.map(button=>button.disabled),[true,true,true]);
+  assert.deepEqual(replacements.map(button=>button.disabled),[true,true,true]);
+});
+
 function refreshingFixture(action) {
   const fixtureData = fixture(action,'low','high');
   const panel = Object.assign(new ExtendedOpenAIManagementPanel(),fixtureData.panel);
