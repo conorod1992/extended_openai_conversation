@@ -2941,7 +2941,26 @@
     "tests_real_ha/test_action_target_safety.py::test_service_casing_preserves_participants_and_previous_state[shared-entity_id-service-light]",
     "tests_real_ha/test_action_target_safety.py::test_service_casing_preserves_participants_and_previous_state[shared-entity_id-service-homeassistant]",
     "tests_real_ha/test_action_target_safety.py::test_service_casing_preserves_participants_and_previous_state[shared-entity_id-both-light]",
-    "tests_real_ha/test_action_target_safety.py::test_service_casing_preserves_participants_and_previous_state[shared-entity_id-both-homeassistant]"
+    "tests_real_ha/test_action_target_safety.py::test_service_casing_preserves_participants_and_previous_state[shared-entity_id-both-homeassistant]",
+    "tests/functions/test_script.py::test_older_script_cleanup_preserves_active_cancellation[True]",
+    "tests/functions/test_script.py::test_older_script_cleanup_preserves_active_cancellation[False]",
+    "tests/functions/test_script.py::test_handled_outer_cancellation_does_not_hide_new_script_cleanup_failure",
+    "tests_real_ha/test_request_rules_script_semantics.py::test_script_cleanup_does_not_mask_public_cancellation[function-True-True-chat_completions]",
+    "tests_real_ha/test_request_rules_script_semantics.py::test_script_cleanup_does_not_mask_public_cancellation[function-True-True-responses]",
+    "tests_real_ha/test_request_rules_script_semantics.py::test_script_cleanup_does_not_mask_public_cancellation[function-True-False-chat_completions]",
+    "tests_real_ha/test_request_rules_script_semantics.py::test_script_cleanup_does_not_mask_public_cancellation[function-True-False-responses]",
+    "tests_real_ha/test_request_rules_script_semantics.py::test_script_cleanup_does_not_mask_public_cancellation[function-False-True-chat_completions]",
+    "tests_real_ha/test_request_rules_script_semantics.py::test_script_cleanup_does_not_mask_public_cancellation[function-False-True-responses]",
+    "tests_real_ha/test_request_rules_script_semantics.py::test_script_cleanup_does_not_mask_public_cancellation[function-False-False-chat_completions]",
+    "tests_real_ha/test_request_rules_script_semantics.py::test_script_cleanup_does_not_mask_public_cancellation[function-False-False-responses]",
+    "tests_real_ha/test_request_rules_script_semantics.py::test_script_cleanup_does_not_mask_public_cancellation[local_rule-True-True-chat_completions]",
+    "tests_real_ha/test_request_rules_script_semantics.py::test_script_cleanup_does_not_mask_public_cancellation[local_rule-True-True-responses]",
+    "tests_real_ha/test_request_rules_script_semantics.py::test_script_cleanup_does_not_mask_public_cancellation[local_rule-True-False-chat_completions]",
+    "tests_real_ha/test_request_rules_script_semantics.py::test_script_cleanup_does_not_mask_public_cancellation[local_rule-True-False-responses]",
+    "tests_real_ha/test_request_rules_script_semantics.py::test_script_cleanup_does_not_mask_public_cancellation[local_rule-False-True-chat_completions]",
+    "tests_real_ha/test_request_rules_script_semantics.py::test_script_cleanup_does_not_mask_public_cancellation[local_rule-False-True-responses]",
+    "tests_real_ha/test_request_rules_script_semantics.py::test_script_cleanup_does_not_mask_public_cancellation[local_rule-False-False-chat_completions]",
+    "tests_real_ha/test_request_rules_script_semantics.py::test_script_cleanup_does_not_mask_public_cancellation[local_rule-False-False-responses]"
   ],
   "browser": {
     "browser": [
