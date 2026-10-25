@@ -223,6 +223,7 @@ export async function recoverDisconnectedEditor(panel, source, retry = () => rec
   const entry = panel._selectedAgent?.()?.entry_id, memoryKind = panel._memoryKind;
   const adminRequired = !["memory-dialog", "knowledge-dialog", "temporary-memory-dialog"].includes(old.id);
   const current = () => panel.isConnected && !source.isConnected && panel.hass?.user?.id === user
+    && old.open && source.shadowRoot.querySelector(`#${old.id}`) === old
     && source.hass?.user?.id === user && panel._agentId === agent && source._agentId === agent
     && panel._selectedAgent?.()?.entry_id === entry && source._selectedAgent?.()?.entry_id === entry
     && panel._viewKey() === view && source._viewKey() === view
@@ -252,7 +253,11 @@ export async function recoverDisconnectedEditor(panel, source, retry = () => rec
       if (!current()) return;
       const index = source._toolOriginalName == null ? null : panel._draft?.functions?.findIndex(tool => tool.spec?.name === source._toolOriginalName);
       if (index === -1 || index === undefined) return showRecoveredEditorValues(panel, old, values);
-      await openTool(panel, index);
+      const opening = openTool(panel, index);
+      const generation = panel._toolEditorLoad;
+      await opening;
+      // Cancel or a manually opened editor supersedes this asynchronous open.
+      if (panel._toolEditorLoad !== generation) return;
     } else if (old.id === "group-dialog") {
       const {openFunctionGroup} = await import("./agent-config-tools-base.js");
       if (!current()) return;

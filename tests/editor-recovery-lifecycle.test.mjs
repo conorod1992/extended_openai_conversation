@@ -147,3 +147,37 @@ test("a failed draft read cannot leave recovery ownership stuck", async () => {
   assert.equal(current.textarea.value, "original unsaved YAML");
   assert.equal(old.dialog.open, false);
 });
+
+test("a superseding Function editor is never overwritten by stale recovery", async () => {
+  const old = source(), current = panel();
+  let release;
+  const gate = new Promise(resolve => {release = resolve;});
+  openRecoveredTool = async value => {value._toolEditorLoad = {}; open(value); await gate;};
+  const first = recoverDisconnectedEditor(current, old);
+  await settle();
+  await recoverDisconnectedEditor(current, old);
+  current.dialog.close();
+  current._toolEditorLoad = {}; // The real Function opener allocates a new generation.
+  open(current);
+  current.textarea.value = "a new manually authored draft";
+  release();
+  await first;
+  await settle();
+  assert.equal(current.textarea.value, "a new manually authored draft");
+  assert.equal(old.dialog.open, true);
+});
+
+test("an acknowledged source cannot be resurrected while preparation awaits", async () => {
+  const old = source(), current = panel();
+  let release;
+  const gate = new Promise(resolve => {release = resolve;});
+  openRecoveredTool = async value => {await gate; open(value);};
+  const first = recoverDisconnectedEditor(current, old);
+  await settle();
+  old.dialog.close();
+  release();
+  await first;
+  await settle();
+  assert.equal(current.textarea.value, "saved");
+  assert.equal(old.dialog.open, false);
+});

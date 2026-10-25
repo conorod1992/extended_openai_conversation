@@ -19,6 +19,26 @@ async function replacePanel(page, user = "admin") {
   }, user);
 }
 
+async function holdToolRecovery(panel, marker) {
+  await panel.evaluate((host, marker) => {
+    const textarea = host.shadowRoot.querySelector("#tool-yaml");
+    textarea.value += `\n# ${marker}\n`;
+    textarea.dispatchEvent(new Event("input", {bubbles:true}));
+    window.__originalEditorPanel = host;
+    const call = host.hass.callWS.bind(host.hass);
+    const gate = new Promise(resolve => {window.__releaseEditorRecovery = resolve;});
+    let held = false;
+    host.hass.callWS = async message => {
+      if (!held && message.section === "tools" && message.action === "serialize") {
+        held = true;
+        window.__editorRecoveryWaiting = true;
+        await gate;
+      }
+      return call(message);
+    };
+  }, marker);
+}
+
 for (const bundled of [false, true]) {
   test(`Rule editor stays protected after switching assistants (${bundled ? "bundle" : "source"})`, async ({page}) => {
     const errors = trackPageErrors(page);
@@ -55,23 +75,7 @@ for (const bundled of [false, true]) {
     await identify(page);
     await panel.locator(".edit-tool").first().click();
     await expect.poll(() => panel.evaluate(host => typeof host._toolInitialYaml)).toBe("string");
-    await panel.evaluate(host => {
-      const textarea = host.shadowRoot.querySelector("#tool-yaml");
-      textarea.value += "\n# Original draft through two replacements\n";
-      textarea.dispatchEvent(new Event("input", {bubbles:true}));
-      window.__originalEditorPanel = host;
-      const call = host.hass.callWS.bind(host.hass);
-      const gate = new Promise(resolve => {window.__releaseEditorRecovery = resolve;});
-      let held = false;
-      host.hass.callWS = async message => {
-        if (!held && message.section === "tools" && message.action === "serialize") {
-          held = true;
-          window.__editorRecoveryWaiting = true;
-          await gate;
-        }
-        return call(message);
-      };
-    });
+    await holdToolRecovery(panel, "Original draft through two replacements");
     await replacePanel(page);
     await expect.poll(() => page.evaluate(() => Boolean(window.__editorRecoveryWaiting))).toBe(true);
     await replacePanel(page);
@@ -87,6 +91,40 @@ for (const bundled of [false, true]) {
     await replacePanel(page);
     await expect(panel.locator("#function-add")).toBeVisible();
     await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", false);
+    await expectHarnessClean(page, errors);
+  });
+
+  test(`cancelled Function recovery cannot overwrite a new editor (${bundled ? "bundle" : "source"})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    await page.goto(fixtureUrl("capabilities/functions", bundled ? "&bundle=1" : ""));
+    const panel = page.locator("extended-openai-management-panel");
+    await panel.getByText("Show member functions", {exact:true}).click();
+    await identify(page);
+    await panel.locator(".edit-tool").first().click();
+    await expect.poll(() => panel.evaluate(host => typeof host._toolInitialYaml)).toBe("string");
+    await holdToolRecovery(panel, "Original retained Function draft");
+    await replacePanel(page);
+    await expect.poll(() => page.evaluate(() => Boolean(window.__editorRecoveryWaiting))).toBe(true);
+    await panel.locator("#tool-cancel").click();
+    const members = panel.getByText("Show member functions", {exact:true});
+    if (await members.isVisible()) await members.click();
+    await panel.locator(".edit-tool").first().click();
+    await expect.poll(() => panel.evaluate(host => typeof host._toolInitialYaml)).toBe("string");
+    await panel.locator("#tool-yaml").evaluate(textarea => {
+      textarea.value += "\n# New manually authored Function draft\n";
+      textarea.dispatchEvent(new Event("input", {bubbles:true}));
+    });
+    await page.evaluate(() => window.__releaseEditorRecovery());
+    await expect.poll(() => page.evaluate(() => Boolean(window.__originalEditorPanel._eocRecoveringEditor))).toBe(false);
+    await expect(panel.locator("#tool-yaml")).toHaveValue(/New manually authored Function draft/);
+    expect(await page.evaluate(() => window.__originalEditorPanel.shadowRoot.querySelector("#tool-dialog").open)).toBe(true);
+    expect(await page.evaluate(() => browserHarness.calls.filter(call => call.section === "tools" && call.action === "save").length)).toBe(0);
+    await panel.locator("#tool-save").click();
+    await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", false);
+    await replacePanel(page);
+    await expect(panel.getByRole("heading", {name:"Recovered unsaved editor"})).toBeVisible();
+    await expect(panel.getByLabel("Recovered editor values")).toHaveValue(/Original retained Function draft/);
+    expect(await page.evaluate(() => browserHarness.calls.filter(call => call.section === "tools" && call.action === "save").length)).toBe(1);
     await expectHarnessClean(page, errors);
   });
 }
