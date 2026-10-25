@@ -40,6 +40,97 @@ async function holdToolRecovery(panel, marker) {
 }
 
 for (const bundled of [false, true]) {
+  test(`an unavailable unsaved Rule choice is retained for review (${bundled ? "bundle" : "source"})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    await page.goto(fixtureUrl("capabilities/request-rules", bundled ? "&bundle=1" : ""));
+    const panel = page.locator("extended-openai-management-panel");
+    await expect(panel.locator(".rule-edit").first()).toBeVisible();
+    await identify(page);
+    await panel.evaluate(async host => {
+      await host._call("request_rules", "groups", {groups:[{id:"unsaved-destination", name:"Unsaved destination"}], revision:host._result.revision});
+      await host._loadSection(true);
+    });
+    await panel.locator(".rule-edit").first().click();
+    await panel.locator("#rule-name").fill("Preserve this entire Rule draft");
+    await panel.locator("#rule-group").selectOption("unsaved-destination");
+    await panel.evaluate(async host => {
+      window.__ruleDraftSource = host;
+      const agent = host._selectedAgent();
+      await host.hass.callWS({type:"extended_openai_conversation_responses/management", section:"request_rules", action:"groups",
+        entry_id:agent.entry_id, subentry_id:agent.subentry_id, groups:[], revision:host._result.revision});
+    });
+    await replacePanel(page);
+    await expect(panel.getByRole("heading", {name:"Recovered unsaved editor"})).toBeVisible();
+    await expect(panel.getByLabel("Recovered editor values")).toHaveValue(/unsaved-destination/);
+    await expect(panel.getByLabel("Recovered editor values")).toHaveValue(/Preserve this entire Rule draft/);
+    expect(await page.evaluate(() => window.__ruleDraftSource.shadowRoot.querySelector("#rule-dialog").open)).toBe(true);
+    expect(await page.evaluate(() => browserHarness.calls.filter(call => call.section === "request_rules" && call.action === "update").length)).toBe(0);
+    await expectHarnessClean(page, errors);
+  });
+
+  test(`returning to Functions while recovery awaits restores the original draft (${bundled ? "bundle" : "source"})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    await page.goto(fixtureUrl("capabilities/functions", bundled ? "&bundle=1" : ""));
+    const panel = page.locator("extended-openai-management-panel");
+    await panel.getByText("Show member functions", {exact:true}).click();
+    await identify(page);
+    await panel.locator(".edit-tool").first().click();
+    await expect.poll(() => panel.evaluate(host => typeof host._toolInitialYaml)).toBe("string");
+    await holdToolRecovery(panel, "Original draft after returning to Functions");
+    await replacePanel(page);
+    await expect.poll(() => page.evaluate(() => Boolean(window.__editorRecoveryWaiting))).toBe(true);
+    await panel.evaluate(host => host._navigate("guide"));
+    await panel.evaluate(host => host._navigate("capabilities", "functions"));
+    await expect(panel.locator("#function-add")).toBeVisible();
+    await page.evaluate(() => window.__releaseEditorRecovery());
+    await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", true);
+    await expect(panel.locator("#tool-yaml")).toHaveValue(/Original draft after returning to Functions/);
+    expect(await page.evaluate(() => browserHarness.calls.filter(call => call.section === "tools" && call.action === "save").length)).toBe(0);
+    await expectHarnessClean(page, errors);
+  });
+
+  test(`cancelled Knowledge recovery preserves a newer editor (${bundled ? "bundle" : "source"})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    await page.goto(fixtureUrl("data-memory/knowledge", bundled ? "&bundle=1" : ""));
+    const panel = page.locator("extended-openai-management-panel");
+    await identify(page);
+    await panel.locator("#add-source").click();
+    await panel.locator("#knowledge-title").fill("Saved recovery source");
+    await panel.locator("#knowledge-content").fill("Saved Knowledge content");
+    await panel.locator("#knowledge-save").click();
+    await expect(panel.locator("#knowledge-dialog")).toHaveJSProperty("open", false);
+    await expect(panel.locator(".source-edit-button").first()).toBeVisible();
+    await panel.locator(".source-edit-button").first().click();
+    await expect(panel.locator("#knowledge-content")).toBeEnabled();
+    await panel.locator("#knowledge-content").fill("Original retained Knowledge draft");
+    await panel.evaluate(host => {
+      window.__knowledgeSource = host;
+      const call = host.hass.callWS.bind(host.hass);
+      const gate = new Promise(resolve => {window.__releaseKnowledgeRecovery = resolve;});
+      let held = false;
+      host.hass.callWS = async message => {
+        if (!held && message.section === "knowledge" && message.action === "get") {
+          held = true;
+          window.__knowledgeRecoveryWaiting = true;
+          await gate;
+        }
+        return call(message);
+      };
+    });
+    await replacePanel(page);
+    await expect.poll(() => page.evaluate(() => Boolean(window.__knowledgeRecoveryWaiting))).toBe(true);
+    await panel.locator("#knowledge-dialog .close-editor").filter({hasText:"Cancel"}).click();
+    await panel.locator(".source-edit-button").first().click();
+    await expect(panel.locator("#knowledge-content")).toBeEnabled();
+    await panel.locator("#knowledge-content").fill("New manually authored Knowledge draft");
+    await page.evaluate(() => window.__releaseKnowledgeRecovery());
+    await expect.poll(() => page.evaluate(() => Boolean(window.__knowledgeSource._eocRecoveringEditor))).toBe(false);
+    await expect(panel.locator("#knowledge-content")).toHaveValue("New manually authored Knowledge draft");
+    expect(await page.evaluate(() => window.__knowledgeSource.shadowRoot.querySelector("#knowledge-dialog").open)).toBe(true);
+    expect(await page.evaluate(() => browserHarness.calls.filter(call => call.section === "knowledge" && call.action === "update").length)).toBe(0);
+    await expectHarnessClean(page, errors);
+  });
+
   test(`Rule editor stays protected after switching assistants (${bundled ? "bundle" : "source"})`, async ({page}) => {
     const errors = trackPageErrors(page);
     await page.goto(fixtureUrl("capabilities/request-rules", `&agents=2${bundled ? "&bundle=1" : ""}`));

@@ -216,11 +216,19 @@ function showRecoveredEditorValues(panel, old, values) {
   recovery.showModal();
 }
 
+async function openRecoveryEditor(open, generation) {
+  const opening = open();
+  const token = generation();
+  await opening;
+  return generation() === token;
+}
+
 export async function recoverDisconnectedEditor(panel, source, retry = () => recoverDisconnectedEditor(panel, source)) {
   const old = modifiedOpenDialog(source);
   if (!old || source.isConnected || !panel.isConnected) return;
   const user = panel.hass?.user?.id, agent = panel._agentId, view = panel._viewKey(), scope = panel._scopeId;
   const entry = panel._selectedAgent?.()?.entry_id, memoryKind = panel._memoryKind;
+  const visit = panel._loadToken;
   const adminRequired = !["memory-dialog", "knowledge-dialog", "temporary-memory-dialog"].includes(old.id);
   const current = () => panel.isConnected && !source.isConnected && panel.hass?.user?.id === user
     && old.open && source.shadowRoot.querySelector(`#${old.id}`) === old
@@ -228,9 +236,11 @@ export async function recoverDisconnectedEditor(panel, source, retry = () => rec
     && panel._selectedAgent?.()?.entry_id === entry && source._selectedAgent?.()?.entry_id === entry
     && panel._viewKey() === view && source._viewKey() === view
     && panel._scopeId === scope && source._scopeId === scope
+    && panel._loadToken === visit
     && (!adminRequired || panel._data?.is_admin)
     && (view !== "data-memory/memories" || (panel._memoryKind === memoryKind && source._memoryKind === memoryKind));
   if (!user || !entry || !agent || !current()) return;
+  const canOpen = () => current() && !panel.shadowRoot.querySelector("dialog[open]");
   const pending = source._eocRecoveringEditor || panel._eocReceivingEditor;
   if (pending) {
     // Repeated restore points from the active attempt must not displace a
@@ -246,31 +256,30 @@ export async function recoverDisconnectedEditor(panel, source, retry = () => rec
   try {
     if (old.id === "rule-dialog") {
       const {openRequestRuleEditor} = await import("./request-rules-ui-impl.js");
-      if (!current()) return;
+      if (!canOpen()) return;
       openRequestRuleEditor(panel, source._editingRuleId);
     } else if (old.id === "tool-dialog") {
       const {openTool} = await import("./agent-config-tools-base.js");
-      if (!current()) return;
+      if (!canOpen()) return;
       const index = source._toolOriginalName == null ? null : panel._draft?.functions?.findIndex(tool => tool.spec?.name === source._toolOriginalName);
       if (index === -1 || index === undefined) return showRecoveredEditorValues(panel, old, values);
-      const opening = openTool(panel, index);
-      const generation = panel._toolEditorLoad;
-      await opening;
-      // Cancel or a manually opened editor supersedes this asynchronous open.
-      if (panel._toolEditorLoad !== generation) return;
+      if (!await openRecoveryEditor(() => openTool(panel, index), () => panel._toolEditorLoad)) return;
     } else if (old.id === "group-dialog") {
       const {openFunctionGroup} = await import("./agent-config-tools-base.js");
-      if (!current()) return;
+      if (!canOpen()) return;
       openFunctionGroup(panel, source._groupOriginalId, source._groupRepair);
     } else if (old.id === "memory-dialog") await panel._openMemory(source._editingMemory?.memory_id);
-    else if (old.id === "knowledge-dialog") await panel._openKnowledge(source._editingSource?.source_id);
+    else if (old.id === "knowledge-dialog") {
+      if (!await openRecoveryEditor(() => panel._openKnowledge(source._editingSource?.source_id), () => panel._knowledgeLoadToken)) return;
+    }
     else if (old.id === "temporary-memory-dialog") {
       const {openTemporaryMemory} = await import("./management-temporary-memory.js");
-      if (!current()) return;
+      if (!canOpen()) return;
       openTemporaryMemory(panel, source._temporaryMemoryDraft?.memory_id);
     } else if (old.id === "ha-llm-tools-dialog") {
       await panel._ensureHALlmTools?.();
-      await panel._openHALlmTools?.();
+      if (!canOpen()) return;
+      if (!await openRecoveryEditor(() => panel._openHALlmTools?.(), () => panel.shadowRoot.querySelector("#ha-llm-tools-dialog"))) return;
     } else return;
     if (!current()) return;
     // Finish asynchronous preparation before checking the fresh baseline or
@@ -315,6 +324,14 @@ export async function recoverDisconnectedEditor(panel, source, retry = () => rec
     }
     if (old.id === "group-dialog") panel._groupIdEdited = source._groupIdEdited;
     if (toolEditor) toolEditor.setYaml(old.querySelector("#tool-yaml").value);
+    // Select options and dynamically created controls may have changed without
+    // changing the saved definition. Never consume the source unless every
+    // authored value survived; retain the complete copy for explicit review.
+    if (!same(dialogState(dialog), values)) {
+      dialog.close();
+      showRecoveredEditorValues(panel, old, values);
+      return;
+    }
     old.close();
   } catch (_err) {
     if (current()) {

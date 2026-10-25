@@ -181,3 +181,67 @@ test("an acknowledged source cannot be resurrected while preparation awaits", as
   assert.equal(current.textarea.value, "saved");
   assert.equal(old.dialog.open, false);
 });
+
+test("returning to the same context retries after an older visit was superseded", async () => {
+  const old = source(), current = panel();
+  current._loadToken = 1;
+  let release;
+  const gate = new Promise(resolve => {release = resolve;});
+  let opens = 0;
+  openRecoveredTool = async value => {
+    const generation = value._toolEditorLoad = {};
+    open(value);
+    if (++opens === 1) {
+      await gate;
+      if (value._toolEditorLoad !== generation) return;
+    }
+  };
+  const first = recoverDisconnectedEditor(current, old);
+  await settle();
+  current.dialog.close();
+  current._toolEditorLoad = null;
+  current._loadToken = 2;
+  await recoverDisconnectedEditor(current, old);
+  release();
+  await first;
+  await settle();
+  assert.equal(opens, 2);
+  assert.equal(current.textarea.value, "original unsaved YAML");
+  assert.equal(old.dialog.open, false);
+});
+
+test("a delayed HA chooser setup cannot open in a different assistant", async () => {
+  const old = source(), current = panel();
+  old.dialog.id = "ha-llm-tools-dialog";
+  old._eocDialogBaselines = new Map([[old.dialog.id, []]]);
+  let release;
+  current._ensureHALlmTools = () => new Promise(resolve => {release = resolve;});
+  let opens = 0;
+  current._openHALlmTools = async () => {opens += 1; open(current);};
+  const first = recoverDisconnectedEditor(current, old);
+  await settle();
+  current._agentId = "another-agent";
+  release();
+  await first;
+  assert.equal(opens, 0);
+  assert.equal(old.dialog.open, true);
+});
+
+test("a lazy recovery opener does not replace a dialog opened during preparation", async () => {
+  const old = source(), current = panel();
+  old.dialog.id = "ha-llm-tools-dialog";
+  old._eocDialogBaselines = new Map([[old.dialog.id, []]]);
+  let release;
+  current._ensureHALlmTools = () => new Promise(resolve => {release = resolve;});
+  let opens = 0;
+  current._openHALlmTools = async () => {opens += 1; open(current);};
+  const first = recoverDisconnectedEditor(current, old);
+  await settle();
+  open(current);
+  current.textarea.value = "work in another editor";
+  release();
+  await first;
+  assert.equal(opens, 0);
+  assert.equal(current.textarea.value, "work in another editor");
+  assert.equal(old.dialog.open, true);
+});
