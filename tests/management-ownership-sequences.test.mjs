@@ -232,3 +232,39 @@ for (const projection of ["full", "retention"]) for (const readOutcome of ["succ
       retire(source, target);
     });
   }
+
+for (const readOutcome of ["success", "failure"]) test(`O5/O6: consuming an edited replacement retires its queued dirty callback, abandoned read=${readOutcome}`, async t => {
+  const {state, create}=fixture(), source=create();
+  edit(source,"prompt","Submitted");
+  const write=state.holdWrite("success"), saving=saveConfiguration(source,null);
+  await flushUntil(() => write.entered);
+  edit(source,"prompt","Later source edit");
+  const target=replace(source,create), read=state.holdRead();
+  let latest;
+  t.after(async () => {write.release.resolve(); read.release.resolve("success"); await saving; retire(source,target,...(latest ? [latest] : []));});
+  write.release.resolve(); await saving;
+  restorePanelDrafts(target);
+  await flushUntil(() => read.entered);
+  edit(target,"temperature",0.7);
+  // Both lifecycle operations are synchronous: the older recomputation may
+  // still be queued when ownership is handed to the next panel.
+  latest=replace(target,create);
+  await flushUntil(() => latest._draft.prompt === "Later source edit" && latest._draft.temperature === 0.7);
+  read.release.resolve(readOutcome);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(target._configDirty,false,"a consumed source must stay consumed after its callbacks drain");
+  assert.equal(source._configDirty,false);
+  assert.equal(latest._configDirty,true);
+  assert.equal(state.writes.length,1);
+  assert.equal(state.snapshot(source._agentId).config.temperature,baseConfig.temperature);
+});
+
+test("O2: a current whole-draft dirty callback still discovers changed keys", async () => {
+  const {create}=fixture(), panel=create();
+  panel._draft.prompt="Current authored edit";
+  panel._setConfigDirty(true);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(panel._configDirty,true);
+  assert.equal(panel._eocDirtyConfigKeys.has("prompt"),true);
+  retire(panel);
+});

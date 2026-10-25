@@ -162,6 +162,12 @@ function restoreDraftSource(panel, source, key) {
         to.baseline = clone(from.baseline);
         to.revision = from.revision;
         to.write(clone(source[field]));
+        if (field === "_guestDraft") {
+          // Keep the recovered legacy policy editable. Its authoring mode is
+          // transferred with the same owner, access and revision gates.
+          panel._guestMigrationReview = Boolean(source._guestMigrationReview);
+          panel._guestStartingFresh = Boolean(source._guestStartingFresh);
+        }
         from.discard();
         panel._render();
       }

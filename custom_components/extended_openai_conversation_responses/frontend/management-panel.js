@@ -449,8 +449,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     }
     this._configDirty = true;
     if (this._eocDirtyConfigKeys instanceof Set) {
+      const keys = this._eocDirtyConfigKeys;
       queueMicrotask(() => {
-        if (!(this._eocDirtyConfigKeys instanceof Set) || this._eocDirtyConfigKeys.size) return;
+        // Clearing or transferring a draft replaces its key set. An older
+        // callback must not mark the consumed source dirty again.
+        if (this._eocDirtyConfigKeys !== keys || keys.size) return;
         const changed = rebuildConfigDirtyKeys(this);
         const dirty = changed.size > 0;
         const wasDirty = Boolean(this._configDirty);
@@ -1378,11 +1381,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
           load_errors: result.load_errors || [],
         };
         guestDetailsSecondary = detailsPromise;
-        if (this._unsavedState?.scopes.get("capabilities/guest-mode")?.agent !== this._agentId) this._guestDraft = JSON.parse(JSON.stringify(result.config || {}));
-        if (!result.legacy_policy) {
-          this._guestMigrationReview = false;
-          this._guestStartingFresh = false;
-        }
       } else if (view === "capabilities/request-rules") {
         result = await consumeIntentRead(this, view, "request_rules", "list");
       } else if (this._isDraftView() && view !== "usage-maintenance/backup-restore") {
@@ -1393,6 +1391,15 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       }
       if (!ownsLoad()) return;
       if (cacheGeneration !== this._cacheGeneration) return;
+      if (view === "capabilities/guest-mode") {
+        // Authoring mode belongs to the accepted policy read, just as its
+        // values do. A late response from another assistant cannot reset it.
+        if (this._unsavedState?.scopes.get(view)?.agent !== this._agentId) this._guestDraft = clone(result.config || {});
+        if (!result.legacy_policy) {
+          this._guestMigrationReview = false;
+          this._guestStartingFresh = false;
+        }
+      }
       this._contentData = contentData;
       this._result = result;
       if (view === "usage-maintenance/usage") {

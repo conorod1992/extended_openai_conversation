@@ -35,7 +35,7 @@ Assertions cover visible authoring state, saved snapshots, pending guards, exact
 write counts and recovery ownership after each relevant transition. Failing case
 names identify the ordering rather than relying on random timing.
 
-The deterministic matrix has 246 cases:
+The deterministic matrix has 249 cases:
 
 - 180 save sequences: success/failure/cancellation, unchanged/new/reverted/title
   edits, absent/successful/failed reads on either side of settlement, and
@@ -46,6 +46,9 @@ The deterministic matrix has 246 cases:
 - 34 ownership and control cases: user/entry/assistant/session retirement,
   queued-command isolation, successful and failed reads, and process-restart
   revision retry with an unchanged persisted baseline.
+- 3 dirty-callback cases: replacement during certification with an abandoned
+  successful/failed read, and a current-callback control. Consumed sources stay
+  clean after their queued callbacks drain.
 
 `management-ownership-matrix.spec.mjs` adds 24 browser representatives across
 source and shipped assets. They use mounted controls, actual panel replacement,
@@ -58,3 +61,9 @@ Existing model-preparation, raw-YAML editor, repair-confirmation and genuine-HA
 suites cover O6/O7/O8 in greater depth; the matrix focuses on O1–O5 and their
 interactions. This does not claim exhaustive coverage of all editor types or
 every reconnect ordering.
+
+`guest-ownership.spec.mjs` adds 12 source/bundle cases for policy-specific
+authoring state. Review-converted and start-fresh modes must follow the recovered
+Guest draft, survive current-owner refreshes and cancelled navigation, and be
+reset for a different assistant. Obsolete reads cannot alter those modes before
+their values are accepted. Successful saves clear the reviewed migration state.

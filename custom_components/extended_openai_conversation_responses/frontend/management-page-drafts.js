@@ -40,6 +40,12 @@ export function initializePageDraft(panel) {
   const state = pageCoordinator(panel), view = panel._viewKey?.(), result = panel._result;
   if (![GUEST, QUIET, RULES].includes(view) || !result || panel._busy || panel._error) return;
   const existing = state.scopes.get(view);
+  if (view === GUEST && existing?.agent !== panel._agentId) {
+    // Reviewing a legacy policy is an explicit choice for this assistant.
+    // Same-owner refreshes retain it; a newly owned scope must review its own.
+    panel._guestMigrationReview = false;
+    panel._guestStartingFresh = false;
+  }
   if (existing?.agent === panel._agentId) {
     if (view === RULES && existing.result !== result && same(existing.baseline, settings(result))) existing.revision = result.revision;
     if (existing.result === result || existing.dirty() || existing.pending) return;
