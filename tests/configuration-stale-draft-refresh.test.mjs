@@ -495,3 +495,19 @@ for (const kind of ["cached", "retention", "incomplete"]) {
     assert.equal(host._selectedAgent().title, "Catalogue title");
   });
 }
+
+test("clearing a configuration draft retires its model work before the next owner loads", () => {
+  const {host} = panel();
+  host._eocModelChangeToken = 11;
+  host._eocModelIntent = {};
+  host._eocPendingModelPreparation = {draft:host._draft};
+  host._eocReasoningChoiceRevision = 5;
+  host._clearConfigDraft();
+  assert.equal(host._eocModelChangeToken, 12);
+  assert.equal(host._eocModelIntent, null);
+  assert.equal(host._eocPendingModelPreparation, null);
+  assert.equal(host._eocReasoningChoiceRevision, 0);
+  assert.equal(host._draft, null);
+  assert.equal(host._draftAgentId, null);
+  assert.equal(host._configData, null);
+});

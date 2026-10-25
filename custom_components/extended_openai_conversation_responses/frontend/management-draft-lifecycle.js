@@ -1,7 +1,8 @@
-import {clone} from "./unsaved-state.js";
+import {clone, same} from "./unsaved-state.js";
 import {pageCoordinator} from "./management-page-drafts.js";
-import {recoverDisconnectedEditor} from "./management-state-safety.js";
-import {mergeConfigurationRead} from "./configuration-acknowledgement.js";
+import {recoverDisconnectedEditor, showRecoveredDraftCopy} from "./management-state-safety.js";
+import {mergeConfigurationRead, configurationDraftBaseline} from "./configuration-acknowledgement.js";
+import {planConfigurationRecovery, combineRecoveredConfiguration, recoveredConfigurationChanges} from "./configuration-draft-recovery.js";
 
 // HA destroys custom panels during navigation and background suspension. Keep
 // the owning instance in document memory, never in persistent browser storage.
@@ -9,6 +10,7 @@ import {mergeConfigurationRead} from "./configuration-acknowledgement.js";
 // disconnection, rather than resurrecting an already-saved submission.
 const retained = new Map();
 const recoveryConfigurationReads = new WeakMap();
+const recoveryConfigurationCopies = new WeakMap();
 const ownScopes = panel => [...pageCoordinator(panel).scopes.entries()]
   .filter(([id]) => id !== "retained-drafts").map(([, scope]) => scope);
 const hasOwnChanges = panel => ownScopes(panel).some(scope => scope.dirty());
@@ -56,6 +58,8 @@ export function retainPanelDrafts(panel) {
 
 export function restorePanelDrafts(panel) {
   const key = owner(panel), sources = retained.get(key);
+  const previousCopy = recoveryConfigurationCopies.get(panel);
+  if (previousCopy && (!previousCopy.source._configDirty || owner(previousCopy.source) !== key)) recoveryConfigurationCopies.delete(panel);
   for (const source of sources || []) {
     if (owner(source) !== key) { sources.delete(source); continue; }
     restoreDraftSource(panel, source, key);
@@ -64,7 +68,8 @@ export function restorePanelDrafts(panel) {
   if (sources?.size) pageCoordinator(panel).register("retained-drafts", {
     dirty: () => owner(panel) === key && [...sources].some(source => source !== panel && hasOwnChanges(source)),
     owns: destination => Boolean(destination),
-    destinations: () => [...sources].filter(hasOwnChanges).map(source => source._viewKey()),
+    destinations: () => [...sources].filter(hasOwnChanges).flatMap(source => ownScopes(source)
+      .filter(scope => scope.dirty()).flatMap(scope => scope.destinations?.() || [source._viewKey()])),
     // A dispatched write remains pending after HA replaces its owning panel.
     // Discarding the detached editor cannot cancel that backend operation.
     get pending() { return [...sources].some(hasOwnPendingWork); },
@@ -72,6 +77,7 @@ export function restorePanelDrafts(panel) {
       for (const source of sources) for (const scope of ownScopes(source)) if (scope.dirty()) scope.discard?.();
       sources.clear();
       retained.delete(key);
+      recoveryConfigurationCopies.delete(panel);
       synchronizeUnloadGuard();
     },
   });
@@ -105,27 +111,41 @@ function restoreDraftSource(panel, source, key) {
     if (source._eocAcknowledgedConfiguration === configurationAcknowledgement) source._eocAcknowledgedConfiguration = null;
   }
   if (source._configDirty && source._draftAgentId === panel._agentId && panel._data?.is_admin) {
-    if (!panel._configDirty) {
-      // A cold Retention visit has only a partial configuration projection.
-      // Missing fields there are unknown, not deletions from a retained full
-      // draft. Obtain a full, current baseline before transferring ownership.
-      if (prepareFullRecoveryBaseline(panel, source, key)) return;
-      const fresh = panel._configData?.config ? panel._configData : null;
-      panel._configData = fresh || clone(source._configData);
-      panel._configDataStale = !fresh;
-      const sourceDraft = source._draft;
-      const merged = mergeConfigurationRead(source, {draft:sourceDraft, title:source._draftTitle}, source._configData, panel._configData);
-      source._eocPendingModelPreparation?.rebindDraft?.(sourceDraft, sourceDraft,
-        {savedConfig:panel._configData.projection === "retention" ? undefined : panel._configData.config});
-      panel._draft = merged.draft;
-      panel._draftTitle = merged.title;
-      panel._draftAgentId = panel._agentId;
+    if (panel._configDirty && panel._draftAgentId !== panel._agentId) return;
+    // A cold Retention visit has only a partial configuration projection.
+    // Missing fields there are unknown, not deletions from a retained full
+    // draft. Obtain a full, current baseline before transferring ownership.
+    if (prepareFullRecoveryBaseline(panel, source, key)) return;
+    const fresh = panel._configData?.config ? panel._configData : null;
+    const target = {draft:panel._draft, title:panel._draftTitle};
+    const targetBaseline = configurationDraftBaseline(panel);
+    const sourceBaseline = configurationDraftBaseline(source);
+    const targetOwnsModel = Boolean(panel._eocModelIntent || panel._eocPendingModelPreparation || panel._eocReasoningChoiceRevision);
+    const plan = (panel._configDirty || targetOwnsModel) && target.draft && targetBaseline?.config
+      ? planConfigurationRecovery({draft:source._draft, title:source._draftTitle}, sourceBaseline, target, targetBaseline, {targetOwnsModel}) : null;
+    if (plan?.conflicts.length) {
+      showConfigurationRecoveryConflict(panel, source, key, sourceBaseline);
+      return;
+    }
+    panel._configData = fresh || clone(source._configData);
+    panel._configDataStale = !fresh;
+    const sourceDraft = source._draft;
+    const merged = mergeConfigurationRead(source, {draft:sourceDraft, title:source._draftTitle}, source._configData, panel._configData);
+    source._eocPendingModelPreparation?.rebindDraft?.(sourceDraft, sourceDraft,
+      {savedConfig:panel._configData.projection === "retention" ? undefined : panel._configData.config});
+    const recovered = plan ? combineRecoveredConfiguration(target, targetBaseline, merged) : merged;
+    if (plan?.preserveTargetModel) panel._eocPendingModelPreparation?.rebindDraft?.(target.draft, recovered.draft);
+    panel._draft = recovered.draft;
+    panel._draftTitle = recovered.title;
+    panel._draftAgentId = panel._agentId;
+    if (!plan?.preserveTargetModel) {
       if (source._eocPendingModelPreparation) source._eocPendingModelPreparation.transferTo?.(panel);
       else source._eocModelIntent?.transferTo?.(source, panel);
-      panel._syncConfigDirty();
-      source._setConfigDirty(false);
-      panel._render();
     }
+    panel._syncConfigDirty();
+    source._setConfigDirty(false);
+    if (recoveryConfigurationCopies.get(panel)?.source === source) recoveryConfigurationCopies.delete(panel);
+    panel._render();
   }
   for (const scope of ownScopes(source)) if (scope.dirty() && scope.restore) scope.restore(panel);
   // Page drafts and editors keep their original route, baseline and revision.
@@ -151,6 +171,31 @@ function restoreDraftSource(panel, source, key) {
     // pending mutations and the current route, rather than bypassing it.
     void recoverDisconnectedEditor(panel, source, () => restorePanelDrafts(panel)).catch(() => panel._toast?.("Unsaved editor recovery is pending. Return to its original page to retry.", true));
   }
+}
+
+function showConfigurationRecoveryConflict(panel, source, key, baseline) {
+  const baselineSnapshot = clone(baseline);
+  const current = {draft:clone(source._draft), title:source._draftTitle};
+  const values = recoveredConfigurationChanges(current, baseline);
+  const previous = recoveryConfigurationCopies.get(panel);
+  if (previous?.source === source && previous.visit === panel._loadToken && same(previous.values, values)) return;
+  if (panel.shadowRoot?.querySelector("dialog[open]")) return;
+  const visit = panel._loadToken, generation = panel._cacheGeneration;
+  recoveryConfigurationCopies.set(panel, {source, visit, values});
+  showRecoveredDraftCopy(panel, {
+    title:"Recovered unsaved configuration", label:"Recovered configuration values", values,
+    description:"The retained configuration conflicts with your current draft. Copy its recovered changes before discarding either draft.",
+    canDiscard:() => panel.isConnected && !source.isConnected && panel._data?.is_admin && owner(panel) === key && owner(source) === key
+      && panel._loadToken === visit && panel._cacheGeneration === generation
+      && same(source._draft, current.draft) && source._draftTitle === current.title
+      && same(configurationDraftBaseline(source), baselineSnapshot),
+    onDiscard:() => {
+      pageCoordinator(source).scopes.get("configuration")?.discard();
+      recoveryConfigurationCopies.delete(panel);
+      retainPanelDrafts(source);
+      queueMicrotask(() => restorePanelDrafts(panel));
+    },
+  });
 }
 
 function prepareFullRecoveryBaseline(panel, source, key) {

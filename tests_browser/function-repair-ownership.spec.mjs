@@ -14,6 +14,7 @@ async function prepareRepair(page, bundled, hold = null) {
   const panel = page.locator("extended-openai-management-panel");
   await expect(panel.locator("#function-add")).toBeVisible();
   await panel.evaluate((host, hold) => {
+    host.hass = {...host.hass, user:{id:"admin", is_admin:true}};
     // A recoverable legacy parameter-schema error quarantines these two tools;
     // the baseline fixture's healthy Function and Group remain usable.
     const invalid = name => ({
@@ -520,3 +521,191 @@ for (const bundled of [false, true]) for (const invalid of [false, true]) for (c
     await expectHarnessClean(page, diagnostics);
   });
 }
+
+for (const bundled of [false, true]) test(`quarantine deletion keeps the confirmed snapshot's revision (${bundled ? "bundle" : "source"})`, async ({page}) => {
+  const diagnostics = trackPageErrors(page);
+  const panel = await prepareRepair(page, bundled);
+  const authored = await panel.evaluate(host => host._result.revision);
+  await panel.evaluate(host => {
+    const original = host.hass.callWS.bind(host.hass), state = repairOwnership;
+    state.deletes = [];
+    host.hass.callWS = async message => {
+      if (message.section === "function_repair" && message.action === "delete_one") {
+        state.deletes.push(structuredClone(message));
+        if (message.revision !== state.revision) throw new Error("Saved repair changed; reload before deleting");
+        state.raw.splice(Number(message.index), 1);
+        state.revision = "confirmed-deletion";
+        const saved = state.snapshot();
+        return {valid:true, ...saved, agent:{...host._selectedAgent()}};
+      }
+      return original(message);
+    };
+  });
+  await panel.locator('.delete-invalid-tool[data-repair-index="0"]').click();
+  await expect(panel.locator("#confirm-dialog")).toHaveJSProperty("open", true);
+  // Another client removes A. The accepted read may advance the baseline, but
+  // the open confirmation still describes A in the original raw collection.
+  await panel.evaluate(async host => {
+    repairOwnership.raw.shift();
+    repairOwnership.revision = "remote-deleted-a";
+    host._invalidateCleanConfiguration(host._agentId);
+    await host._loadSection(true);
+  });
+  expect(await panel.evaluate(host => host._result.revision)).toBe("remote-deleted-a");
+  await panel.locator("#confirm-accept").click();
+  await expect(panel.locator("#toast")).toContainText("Saved repair changed; reload before deleting");
+  expect(await page.evaluate(() => repairOwnership.deletes[0].revision)).toBe(authored);
+  expect(await page.evaluate(() => repairOwnership.raw.map(tool => tool.spec.name))).toEqual(["repair_b", "baseline_tool"]);
+  await expect(panel.locator(".delete-invalid-tool")).toHaveCount(1);
+  // A fresh action on the refreshed B card owns the new snapshot and can delete
+  // B normally. The rejected confirmation must neither replay nor disable it.
+  await panel.locator('.delete-invalid-tool[data-repair-index="0"]').click();
+  await panel.locator("#confirm-accept").click();
+  await expect(panel.locator("#toast")).toContainText("Function Tool deleted");
+  expect(await page.evaluate(() => repairOwnership.deletes.map(message => message.revision))).toEqual([authored, "remote-deleted-a"]);
+  expect(await page.evaluate(() => repairOwnership.raw.map(tool => tool.spec.name))).toEqual(["baseline_tool"]);
+  await expectHarnessClean(page, diagnostics);
+});
+
+for (const bundled of [false, true]) test(`quarantine editor keeps its bound metadata revision after a deferred refresh (${bundled ? "bundle" : "source"})`, async ({page}) => {
+  const diagnostics = trackPageErrors(page);
+  const panel = await prepareRepair(page, bundled);
+  const authored = await panel.evaluate(host => host._result.revision);
+  await panel.locator('.delete-invalid-tool[data-repair-index="0"]').click();
+  await panel.evaluate(async host => {
+    window.retiredRepairEdit = host.shadowRoot.querySelector('.edit-invalid-tool[data-repair-index="1"]');
+    repairOwnership.raw.shift();
+    repairOwnership.revision = "remote-deleted-a";
+    host._invalidateCleanConfiguration(host._agentId);
+    await host._loadSection(true);
+  });
+  // Exercise the old card's still-bound handler before the deferred render.
+  // Its displayed definition must not acquire the newer raw index's revision.
+  await panel.evaluate(host => {
+    host.shadowRoot.querySelector("#confirm-cancel").click();
+    retiredRepairEdit.click();
+  });
+  await expect(panel.locator("#tool-dialog")).toBeVisible();
+  expect(await panel.evaluate(host => host._repairToolRevision)).toBe(authored);
+  await panel.locator("#tool-yaml").fill(repairedYaml("repair_b"));
+  await panel.locator("#tool-save").click();
+  await expect(panel.locator("#toast")).toContainText("Saved repair changed; reload before saving");
+  expect(await page.evaluate(() => repairOwnership.saves.at(-1).revision)).toBe(authored);
+  expect(await page.evaluate(() => repairOwnership.raw.map(tool => tool.spec.name))).toEqual(["repair_b", "baseline_tool"]);
+  expect(await page.evaluate(() => repairOwnership.raw[0].spec.parameters.properties.message.minLength)).toBe("1");
+  await expectHarnessClean(page, diagnostics);
+});
+
+for (const bundled of [false, true]) test(`retired quarantine confirmation cannot dispatch after panel replacement (${bundled ? "bundle" : "source"})`, async ({page}) => {
+  const diagnostics = trackPageErrors(page);
+  const panel = await prepareRepair(page, bundled);
+  await panel.evaluate(host => {
+    const original = host.hass.callWS.bind(host.hass);
+    repairOwnership.deletes = [];
+    host.hass.callWS = message => {
+      if (message.section === "function_repair" && message.action === "delete_one") {
+        repairOwnership.deletes.push(structuredClone(message));
+        throw new Error("A retired confirmation cannot dispatch");
+      }
+      return original(message);
+    };
+  });
+  await panel.locator('.delete-invalid-tool[data-repair-index="0"]').click();
+  await expect(panel.locator("#confirm-dialog")).toHaveJSProperty("open", true);
+  await panel.evaluate(host => {
+    window.retiredRepairConfirmation = host.shadowRoot.querySelector("#confirm-accept");
+    const parent = host.parentElement, hass = host.hass;
+    host.remove();
+    const next = document.createElement("extended-openai-management-panel");
+    parent.append(next);
+    next.hass = hass;
+  });
+  await expect(panel.locator(".edit-invalid-tool")).toHaveCount(2);
+  await page.evaluate(async () => {
+    retiredRepairConfirmation.click();
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+  expect(await page.evaluate(() => repairOwnership.deletes)).toEqual([]);
+  expect(await page.evaluate(() => repairOwnership.raw.map(tool => tool.spec.name))).toEqual(["repair_a", "repair_b", "baseline_tool"]);
+  await expectHarnessClean(page, diagnostics);
+});
+
+for (const bundled of [false, true]) for (const action of ["edit", "delete"]) test(`published unchanged repair cards adopt an unrelated saved revision for ${action} (${bundled ? "bundle" : "source"})`, async ({page}) => {
+  const diagnostics = trackPageErrors(page);
+  const panel = await prepareRepair(page, bundled);
+  await panel.evaluate((host, action) => {
+    window.preservedRepairButton = host.shadowRoot.querySelector(`.${action}-invalid-tool[data-repair-index="1"]`);
+    const original = host.hass.callWS.bind(host.hass);
+    repairOwnership.revision = "unrelated-title-save";
+    repairOwnership.deletes = [];
+    host.hass.callWS = async message => {
+      if (message.section === "function_repair" && message.action === "delete_one") {
+        repairOwnership.deletes.push(structuredClone(message));
+        if (message.revision !== repairOwnership.revision) throw new Error("Saved repair changed; reload before deleting");
+        repairOwnership.raw.splice(Number(message.index), 1);
+        repairOwnership.revision = "deleted-after-title-save";
+        return {valid:true, ...repairOwnership.snapshot(), agent:{...host._selectedAgent()}};
+      }
+      const response = await original(message);
+      if ((message.section === "configuration" && message.action === "get")
+          || (message.section === "function_repair" && message.action === "configuration_get")) return {...response, title:"Renamed by another administrator"};
+      return response;
+    };
+    host._invalidateCleanConfiguration(host._agentId);
+    return host._loadSection(true);
+  }, action);
+  expect(await panel.evaluate(host => host._configData.revision)).toBe("unrelated-title-save");
+  expect(await panel.evaluate((host, action) => host.shadowRoot.querySelector(`.${action}-invalid-tool[data-repair-index="1"]`) === preservedRepairButton, action)).toBe(true);
+  if (action === "edit") {
+    await openRepair(panel, 1);
+    expect(await panel.evaluate(host => host._repairToolRevision)).toBe("unrelated-title-save");
+    await panel.locator("#tool-yaml").fill(repairedYaml("repair_b"));
+    await panel.locator("#tool-save").click();
+    await expect(panel.locator("#tool-dialog")).not.toBeVisible();
+    expect(await page.evaluate(() => repairOwnership.saves)).toHaveLength(1);
+    expect(await page.evaluate(() => repairOwnership.saves[0].revision)).toBe("unrelated-title-save");
+    expect(await page.evaluate(() => repairOwnership.raw[1].spec.parameters.properties.message.minLength)).toBe(1);
+  } else {
+    await panel.locator('.delete-invalid-tool[data-repair-index="1"]').click();
+    await panel.locator("#confirm-accept").click();
+    await expect(panel.locator("#toast")).toContainText("Function Tool deleted");
+    expect(await page.evaluate(() => repairOwnership.deletes)).toHaveLength(1);
+    expect(await page.evaluate(() => repairOwnership.deletes[0].revision)).toBe("unrelated-title-save");
+    expect(await page.evaluate(() => repairOwnership.raw.map(tool => tool.spec.name))).toEqual(["repair_a", "baseline_tool"]);
+  }
+  await expectHarnessClean(page, diagnostics);
+});
+
+for (const bundled of [false, true]) test(`repair card bindings require their user until an authorized read is published (${bundled ? "bundle" : "source"})`, async ({page}) => {
+  const diagnostics = trackPageErrors(page);
+  const panel = await prepareRepair(page, bundled);
+  await panel.evaluate(host => {
+    const original = host.hass.callWS.bind(host.hass);
+    repairOwnership.deletes = [];
+    host.hass.callWS = async message => {
+      if (message.section === "function_repair" && message.action === "delete_one") {
+        repairOwnership.deletes.push(structuredClone(message));
+        if (message.revision !== repairOwnership.revision) throw new Error("Saved repair changed; reload before deleting");
+        repairOwnership.raw.splice(Number(message.index), 1);
+        repairOwnership.revision = "deleted-by-current-user";
+        return {valid:true, ...repairOwnership.snapshot(), agent:{...host._selectedAgent()}};
+      }
+      return original(message);
+    };
+    host.hass = {...host.hass, user:{id:"another-admin", is_admin:true}};
+  });
+  await panel.locator('.delete-invalid-tool[data-repair-index="0"]').click();
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await expect(panel.locator("#confirm-dialog")).not.toBeVisible();
+  expect(await page.evaluate(() => repairOwnership.deletes)).toEqual([]);
+  await panel.evaluate(host => {
+    host._invalidateCleanConfiguration(host._agentId);
+    return host._loadSection(true);
+  });
+  await panel.locator('.delete-invalid-tool[data-repair-index="0"]').click();
+  await panel.locator("#confirm-accept").click();
+  await expect(panel.locator("#toast")).toContainText("Function Tool deleted");
+  expect(await page.evaluate(() => repairOwnership.deletes)).toHaveLength(1);
+  expect(await page.evaluate(() => repairOwnership.raw.map(tool => tool.spec.name))).toEqual(["repair_b", "baseline_tool"]);
+  await expectHarnessClean(page, diagnostics);
+});

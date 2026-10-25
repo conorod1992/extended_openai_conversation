@@ -147,7 +147,7 @@ function renderFunctionRepairCards(panel) {
   return tools || cards ? `<div class="function-repair-attention" style="display:grid;gap:18px">${tools}${cards}</div>` : "";
 }
 
-async function openInvalidToolEditor(panel, item) {
+async function openInvalidToolEditor(panel, item, revision = panel._result?.revision) {
   const root = panel.shadowRoot;
   const dialog = root?.querySelector("#tool-dialog");
   const editor = getToolYamlEditor(panel);
@@ -160,7 +160,7 @@ async function openInvalidToolEditor(panel, item) {
   const agentId = panel._agentId;
   const isCurrent = () => dialog.open && panel._repairToolLoad === loadToken
     && panel._agentId === agentId && root.querySelector("#tool-dialog") === dialog;
-  panel._repairToolRevision = panel._result?.revision;
+  panel._repairToolRevision = revision;
   const save = root.querySelector("#tool-save");
   if (save) {
     if (typeof panel._setSaving === "function") panel._setSaving(save, false);
@@ -267,18 +267,20 @@ async function saveInvalidTool(panel, button) {
   return true;
 }
 
-async function deleteInvalidTool(panel, item, button) {
+async function deleteInvalidTool(panel, item, button, revision = panel._result?.revision) {
   const submission = captureConfigurationSubmission(panel);
+  const user = panel.hass?.user?.id;
   const label = item.name || `Function Tool ${Number(item.index) + 1}`;
   const confirmed = typeof panel._confirm === "function"
     ? await panel._confirm(`Delete ${label}?`, "Its retained Function Group assignment will also be removed.")
     : globalThis.confirm?.(`Delete ${label}?`) !== false;
-  if (!confirmed || !configurationSubmissionIsCurrent(panel, submission)) return;
+  if (!confirmed || panel.isConnected === false || panel.hass?.user?.id !== user
+      || !configurationSubmissionIsCurrent(panel, submission)) return;
   button.disabled = true;
   try {
     const saved = await panel._call("function_repair", "delete_one", {
       index: Number(item.index),
-      revision: panel._result?.revision,
+      revision,
     });
     // The complete repair acknowledgement owns this deletion. A catalogue
     // refresh can otherwise replace an independently opened sibling editor,
@@ -295,23 +297,32 @@ function bindIsolatedRepair(panel) {
   const repair = repairMetadata(panel);
   const invalidTools = Array.isArray(repair?.invalid_tools) ? repair.invalid_tools : [];
   const byIndex = new Map(invalidTools.map((item) => [Number(item.index), item]));
+  // A raw index identifies an item only within this saved repair snapshot.
+  // Refreshes can shift indices while a confirmation or another editor is open.
+  const revision = panel._result?.revision;
   const root = panel.shadowRoot;
-  root?.querySelectorAll?.(".edit-invalid-tool").forEach((button) => {
-    if (button.dataset.eocBound === "true") return;
+  const published = !panel._busy && !panel._error && !panel._eocDeferredEditorRender
+    && (!panel._eocRenderedRoute || panel._eocRenderedRoute === `${panel._agentId}|${panel._viewKey()}`);
+  const bindRepairAction = (selector, edit) => root?.querySelectorAll?.(selector).forEach((button) => {
+    // Identical markup can preserve this button after an accepted read. Refresh
+    // its snapshot only when that read has actually been published; deferred
+    // old cards must not acquire a newer raw collection's revision.
+    if (published) button.__eocRepairSnapshot = {
+      item:byIndex.get(Number(button.dataset.repairIndex)), revision,
+      agentId:panel._agentId, entryId:panel._selectedAgent?.()?.entry_id, user:panel.hass?.user?.id,
+    };
+    if (!button.__eocRepairSnapshot || button.dataset.eocBound === "true") return;
     button.dataset.eocBound = "true";
     button.addEventListener("click", () => {
-      const item = byIndex.get(Number(button.dataset.repairIndex));
-      if (item) openInvalidToolEditor(panel, item);
+      const snapshot = button.__eocRepairSnapshot;
+      if (!snapshot?.item || button.isConnected === false || panel.hass?.user?.id !== snapshot.user
+          || !configurationSubmissionIsCurrent(panel, snapshot)) return;
+      if (edit) openInvalidToolEditor(panel, snapshot.item, snapshot.revision);
+      else void deleteInvalidTool(panel, snapshot.item, button, snapshot.revision);
     });
   });
-  root?.querySelectorAll?.(".delete-invalid-tool").forEach((button) => {
-    if (button.dataset.eocBound === "true") return;
-    button.dataset.eocBound = "true";
-    button.addEventListener("click", () => {
-      const item = byIndex.get(Number(button.dataset.repairIndex));
-      if (item) void deleteInvalidTool(panel, item, button);
-    });
-  });
+  bindRepairAction(".edit-invalid-tool", true);
+  bindRepairAction(".delete-invalid-tool", false);
   const save = root?.querySelector?.("#tool-save");
   if (save && save.dataset.eocRepairCapture !== "true") {
     save.dataset.eocRepairCapture = "true";

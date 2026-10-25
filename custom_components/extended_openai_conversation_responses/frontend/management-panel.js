@@ -461,6 +461,12 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _clearConfigDraft() {
+    // Model work belongs to this draft owner. A new assistant or explicitly
+    // replaced configuration must not inherit its intent or choice revision.
+    this._eocModelChangeToken = (this._eocModelChangeToken || 0) + 1;
+    this._eocPendingModelPreparation = null;
+    this._eocModelIntent = null;
+    this._eocReasoningChoiceRevision = 0;
     this._eocAcknowledgedConfiguration = null;
     this._setConfigDirty(false);
     this._configData = null;

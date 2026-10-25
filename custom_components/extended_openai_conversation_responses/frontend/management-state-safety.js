@@ -196,34 +196,50 @@ function modifiedOpenDialog(panel) {
   return null;
 }
 
-function showRecoveredEditorValues(panel, old, values, ownsSource) {
+export function showRecoveredDraftCopy(panel, {
+  title = "Recovered unsaved editor",
+  description = "The saved definition could not be safely reopened. Copy your recovered edits before opening the current definition.",
+  values,
+  label = "Recovered editor values",
+  canDiscard = () => false,
+  onDiscard = () => {},
+}) {
   const recovery = document.createElement("dialog");
   recovery.className = "editor-dialog";
   recovery.dataset.eocRecoveredEditor = "";
-  const title = document.createElement("h2");
-  title.textContent = "Recovered unsaved editor";
+  const heading = document.createElement("h2");
+  heading.textContent = title;
   const explanation = document.createElement("p");
-  explanation.textContent = "The saved definition could not be safely reopened. Copy your recovered edits before opening the current definition.";
+  explanation.textContent = description;
   const text = document.createElement("textarea");
   text.value = JSON.stringify(values, null, 2);
   text.readOnly = true;
-  text.setAttribute("aria-label", "Recovered editor values");
+  text.setAttribute("aria-label", label);
   const close = document.createElement("button");
   close.textContent = "Keep draft for later";
   close.onclick = () => recovery.close();
   const discard = document.createElement("button");
   discard.textContent = "Discard recovered edits";
   discard.onclick = () => {
-    if (ownsSource() && same(dialogState(old), values)) old.close();
+    if (recovery.open && canDiscard()) onDiscard();
     recovery.close();
   };
   recovery.addEventListener("close", () => {
     close.onclick = discard.onclick = null;
     recovery.remove();
   }, {once:true});
-  recovery.append(title, explanation, text, close, discard);
+  recovery.append(heading, explanation, text, close, discard);
   panel.shadowRoot.append(recovery);
   recovery.showModal();
+  return recovery;
+}
+
+function showRecoveredEditorValues(panel, old, values, ownsSource) {
+  showRecoveredDraftCopy(panel, {
+    values,
+    canDiscard:() => ownsSource() && same(dialogState(old), values),
+    onDiscard:() => old.close(),
+  });
 }
 
 export async function recoverDisconnectedEditor(panel, source, retry = () => recoverDisconnectedEditor(panel, source)) {
