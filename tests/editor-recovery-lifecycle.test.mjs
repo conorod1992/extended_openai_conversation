@@ -23,7 +23,7 @@ after(() => {
   delete globalThis.__openRecoveredTool;
 });
 
-const {recoverDisconnectedEditor, confirmDialogClose} = await import("../custom_components/extended_openai_conversation_responses/frontend/management-state-safety.js");
+const {recoverDisconnectedEditor, confirmDialogClose, bindStateSafety, cleanupStateSafety} = await import("../custom_components/extended_openai_conversation_responses/frontend/management-state-safety.js");
 const settle = () => new Promise(resolve => setImmediate(resolve));
 function panel(connected = true) {
   const textarea = {id:"tool-yaml", type:"textarea", tagName:"TEXTAREA", value:"saved", dispatchEvent() {}};
@@ -380,4 +380,56 @@ test("declining a close confirmation does not defer recovery", async () => {
   assert.equal(opens, 2);
   assert.equal(current.textarea.value, "original unsaved YAML");
   assert.equal(old.dialog.open, false);
+});
+
+for (const [id, className] of [["knowledge-dialog", "close-editor"], ["memory-dialog", "close-editor"], ["temporary-memory-dialog", "close-temporary-editor"]]) {
+  test(`class-based Cancel records dismissal synchronously for ${id}`, () => {
+    const current = panel();
+    current.dialog.id = id;
+    const handlers = new Map();
+    current.shadowRoot.addEventListener = (name, fn) => handlers.set(name, fn);
+    let dismissals = 0;
+    current._eocReceivingEditor = {dismiss(dialog) {assert.equal(dialog, current.dialog); dismissals++;}};
+    const previous = globalThis.window;
+    globalThis.window = {addEventListener() {}, removeEventListener() {}};
+    try {
+      bindStateSafety(current);
+      const classes = new Set([className]);
+      const button = {id:"", classList:{contains:value => classes.has(value)}, hasAttribute:() => false,
+        closest:selector => selector === "button" ? button : selector === "dialog" ? current.dialog : null};
+      handlers.get("click")({target:button});
+      assert.equal(dismissals, 1);
+      classes.add("icon");
+      handlers.get("click")({target:button});
+      assert.equal(dismissals, 1, "the header close button must use the confirmation path");
+      cleanupStateSafety(current);
+    } finally {
+      if (previous === undefined) delete globalThis.window;
+      else globalThis.window = previous;
+    }
+  });
+}
+
+test("a queued close leaves a reopened dialog's unsaved-state baseline intact", () => {
+  const current = panel();
+  current.dialog.id = "rule-dialog";
+  current.dialog.open = true;
+  const baseline = [{value:"saved"}];
+  current._eocDialogBaselines = new Map([[current.dialog.id, baseline]]);
+  const handlers = new Map();
+  current.shadowRoot.addEventListener = (name, fn) => handlers.set(name, fn);
+  const previous = globalThis.window;
+  globalThis.window = {addEventListener() {}, removeEventListener() {}};
+  try {
+    bindStateSafety(current);
+    handlers.get("close")({target:current.dialog});
+    assert.equal(current._eocDialogBaselines.get(current.dialog.id), baseline);
+    current.dialog.open = false;
+    handlers.get("close")({target:current.dialog});
+    assert.equal(current._eocDialogBaselines.has(current.dialog.id), false);
+    cleanupStateSafety(current);
+  } finally {
+    if (previous === undefined) delete globalThis.window;
+    else globalThis.window = previous;
+  }
 });

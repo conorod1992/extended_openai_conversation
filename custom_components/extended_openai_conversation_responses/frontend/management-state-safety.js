@@ -441,7 +441,9 @@ export function bindStateSafety(panel) {
 
     // Explicit Cancel remains an intentional discard. Protect close/X buttons.
     const dialog = button.closest?.("dialog");
-    if (EDITOR_IDS.includes(dialog?.id) && (button.id.endsWith("-cancel") || button.hasAttribute("data-cancel"))) {
+    const explicitCancel = button.id.endsWith("-cancel") || button.hasAttribute("data-cancel")
+      || (!button.classList.contains("icon") && (button.classList.contains("close-editor") || button.classList.contains("close-temporary-editor")));
+    if (EDITOR_IDS.includes(dialog?.id) && explicitCancel) {
       panel._eocReceivingEditor?.dismiss?.(dialog);
     }
     if (!button.closest?.(".dialog-header") || !button.classList.contains("icon") || !EDITOR_IDS.includes(dialog?.id)) return;
@@ -460,6 +462,8 @@ export function bindStateSafety(panel) {
   }, true);
 
   root.addEventListener("close", (event) => {
+    // A queued close can belong to an earlier opening of this same dialog.
+    if (event.target.open) return;
     clearDialogBaseline(panel, event.target);
     if (panel._eocDeferredEditorRender) queueMicrotask(() => panel._render());
   }, true);

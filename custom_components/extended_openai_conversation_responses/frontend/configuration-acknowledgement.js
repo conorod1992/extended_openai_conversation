@@ -59,7 +59,13 @@ export function reconcileConfigurationAcknowledgement(panel, saved, submission, 
     panel._draft = mergeAcknowledgedDraft(panel._draft, submitted, saved.config, keys);
     if (full && panel._draftTitle === submission.title) panel._draftTitle = saved.title;
   }
-  if (agent) Object.assign(panel._selectedAgent?.() || {}, agent);
+  if (agent) {
+    const selected = panel._selectedAgent?.() || {};
+    // Full agent snapshots omit this optional field after the last repair.
+    // Partial metadata projections do not certify configuration health.
+    if (agent.subentry_id && !Object.hasOwn(agent, "configuration_issue")) delete selected.configuration_issue;
+    Object.assign(selected, agent);
+  }
   panel._syncConfigDirty?.();
   return true;
 }

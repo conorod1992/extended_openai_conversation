@@ -4,6 +4,102 @@ import {fixtureUrl as routeFixture, trackPageErrors, expectHarnessClean} from ".
 for (const bundle of [false, true]) test.describe(bundle ? "production configuration inputs" : "source configuration inputs", () => {
 const fixtureUrl = (route) => routeFixture(route, bundle ? "&bundle=1" : "");
 
+test("cold model catalogue preserves an active selector until blur then publishes derived controls", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("assistant/basics"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect.poll(() => panel.evaluate(host => Boolean(host._modelCatalogData))).toBe(true);
+  await panel.evaluate(async host => {
+    const call = host._hass.callWS.bind(host._hass);
+    host._hass.callWS = async message => {
+      const result = await call(message);
+      if (message.type.endsWith("/model_catalog") && message.action === "lookup") {
+        window.coldModelLookupWaiting = true;
+        await new Promise(resolve => {window.releaseColdModelLookup = resolve;});
+        return {...result, model_capabilities:{supports_reasoning_effort:true, reasoning:{supported:true, efforts:["low","high"]}, service_tier_options:["default","flex"]}};
+      }
+      return result;
+    };
+    host._modelCatalogData = null;
+    await host._navigate("assistant", "model-responses");
+    window.coldModelDraft = JSON.stringify(host._draft);
+  });
+  await expect.poll(() => page.evaluate(() => Boolean(window.coldModelLookupWaiting))).toBe(true);
+  const tier = panel.locator('[data-config="service_tier"]');
+  await tier.focus();
+  await tier.evaluate(node => {window.coldModelTier = node;});
+  await page.evaluate(() => window.releaseColdModelLookup());
+  await expect.poll(() => panel.evaluate(host => host._modelCatalogData?.model_capabilities?.supports_reasoning_effort)).toBe(true);
+  await expect(tier).toBeFocused();
+  expect(await tier.evaluate(node => node === window.coldModelTier)).toBe(true);
+  await expect(panel.locator('[data-config="reasoning_effort"]')).toHaveCount(0);
+  await panel.getByRole("heading", {name:"Model parameters", exact:true}).click();
+  await expect(panel.locator('[data-config="reasoning_effort"]')).toBeEnabled();
+  await expect(tier.locator('option[value="flex"]')).toHaveCount(1);
+  expect(await panel.evaluate(host => JSON.stringify(host._draft) === window.coldModelDraft)).toBe(true);
+  await expectHarnessClean(page, errors);
+});
+
+for (const intent of ["default", "select", "reset"]) test(`late original model lookup preserves a later reasoning choice across navigation: intent=${intent}`, async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("assistant/basics"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator('[data-config="chat_model"]')).toBeVisible();
+  await expect.poll(() => panel.evaluate(host => Boolean(host._modelCatalogData))).toBe(true);
+  await panel.evaluate(host => {
+    host._draft.chat_model = "gpt-4o";
+    delete host._draft.reasoning_effort;
+    host._configData.config = structuredClone(host._draft);
+    host._configData.model_capabilities = {supports_reasoning_effort:false};
+    host._result = host._configData;
+    host._result.defaults = {temperature:0.5, top_p:1, reasoning_effort:"high", service_tier:"default", shorten_tool_call_id:false};
+    host._modelCatalogData = {requested_model:"gpt-4o", model_capabilities:{supports_reasoning_effort:false, reasoning:{supported:false}}};
+    host._render();
+    const call = host._hass.callWS.bind(host._hass);
+    window.deferredModelLookups = 0;
+    window.deferredModelValidations = 0;
+    window.modelFunctionBaseline = JSON.stringify({functions:host._draft.functions, groups:host._draft.function_groups});
+    host._hass.callWS = async message => {
+      const result = await call(message);
+      if (message.type.endsWith("/model_catalog") && message.action === "lookup") {
+        const original = ++window.deferredModelLookups === 1;
+        if (original) {
+          window.originalModelLookupWaiting = true;
+          await new Promise(resolve => {window.releaseOriginalModelLookup = resolve;});
+        }
+        if (original) window.originalModelLookupReturned = true;
+        const metadata = {supports_reasoning_effort:true, reasoning:{supported:true, efforts:["low","high"]}, recommended_profile:{reasoning_effort:"low"}};
+        return {...result, model_capabilities:metadata, model_metadata:metadata};
+      }
+      if (message.section === "configuration" && message.action === "validate") window.deferredModelValidations++;
+      return result;
+    };
+  });
+  await panel.locator('[data-config="chat_model"]').fill("gpt-5-mini");
+  await panel.locator('[data-config="max_tokens"]').focus();
+  await expect.poll(() => page.evaluate(() => Boolean(window.originalModelLookupWaiting))).toBe(true);
+  await panel.evaluate(host => host._navigate("assistant", "model-responses"));
+  const effort = panel.locator('[data-config="reasoning_effort"]');
+  await expect(effort).toBeVisible();
+  await expect(effort).toBeEnabled();
+  await expect.poll(() => page.evaluate(() => window.deferredModelLookups)).toBe(2);
+  if (intent !== "default") {
+    if (intent === "reset") await panel.locator("#reset-model-parameters").click();
+    else await effort.selectOption("high");
+    expect(await panel.evaluate(host => host._draft.reasoning_effort)).toBe("high");
+  }
+  await page.evaluate(() => window.releaseOriginalModelLookup());
+  await expect.poll(() => page.evaluate(() => Boolean(window.originalModelLookupReturned))).toBe(true);
+  if (intent !== "reset") await expect.poll(() => page.evaluate(() => window.deferredModelValidations)).toBe(1);
+  const expected = intent === "default" ? "low" : "high";
+  await expect(effort).toHaveValue(expected);
+  expect(await panel.evaluate(host => host._draft.reasoning_effort)).toBe(expected);
+  expect(await panel.evaluate(host => host._draft.chat_model)).toBe("gpt-5-mini");
+  expect(await panel.evaluate(host => JSON.stringify({functions:host._draft.functions, groups:host._draft.function_groups}) === window.modelFunctionBaseline)).toBe(true);
+  expect(await page.evaluate(() => browserHarness.calls.filter(call => call.section === "configuration" && call.action === "save").length)).toBe(0);
+  await expectHarnessClean(page, errors);
+});
+
 for (const coldCatalog of [false, true]) test(`saved baseline refresh keeps reasoning availability tied to the retained draft: cold=${coldCatalog}`, async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("assistant/basics"));
@@ -69,13 +165,13 @@ for (const supported of [true, false]) test(`late model change refreshes API cho
     panel._draft.chat_model = before;
     panel._draft.api_mode = supported ? "responses" : "chat_completions";
     panel._draft.max_function_calls_per_conversation = 0;
-    panel._modelCatalogData = {requested_model:before, model_capabilities:{api:{responses:true, chat_completions:!supported}}};
+    panel._modelCatalogData = {requested_model:before, model_capabilities:{api:{responses:true, chat_completions:!supported}, limits:{max_output_tokens:500}}};
     panel._render();
     window.apiDraftBefore = JSON.stringify({functions:panel._draft.functions, groups:panel._draft.function_groups});
     const call = panel._hass.callWS.bind(panel._hass);
     panel._hass.callWS = async message => {
       const response = await call(message);
-      const metadata = {api:{responses:true, chat_completions:supported}};
+      const metadata = {api:{responses:true, chat_completions:supported}, limits:{max_output_tokens:2000}};
       if (message.type.endsWith("/model_catalog")) return {...response, model_metadata:{reasoning:{supported:false}}, model_capabilities:metadata};
       if (message.section === "configuration" && message.action === "validate") {
         window.apiValidationWaiting = true;
@@ -98,6 +194,9 @@ for (const supported of [true, false]) test(`late model change refreshes API cho
   await expect(tokens).toBeFocused();
   await expect(tokens).toHaveValue("1234");
   expect(await tokens.evaluate(node => node === window.editingTokenControl)).toBe(true);
+  await expect(tokens).toHaveAttribute("max", "500");
+  await host.getByRole("heading", {name:"General", exact:true}).click();
+  await expect(tokens).toHaveAttribute("max", "2000");
   expect(await host.evaluate(panel => JSON.stringify({functions:panel._draft.functions, groups:panel._draft.function_groups}) === window.apiDraftBefore)).toBe(true);
   if (supported) {
     const api = host.locator('[data-config="api_mode"]');

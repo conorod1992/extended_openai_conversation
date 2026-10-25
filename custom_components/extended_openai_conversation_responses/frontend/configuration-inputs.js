@@ -1,4 +1,4 @@
-import {CONFIGURATION_CONTROLS, applyConfigurationControl} from "./configuration-controls.js";
+import {CONFIGURATION_CONTROLS, applyConfigurationControl, recordReasoningChoice} from "./configuration-controls.js";
 import {applyTargetedConfigDirty} from "./management-state-safety.js";
 import {refreshSettingEffects} from "./management-setting-metadata.js";
 import {configurationGuidanceChanged} from "./management-configuration-guidance.js";
@@ -76,7 +76,10 @@ export function bindConfigurationInputs(panel, handlers = {}) {
     const result = updateConfigurationControl(panel, control, event.type);
     if (!result || event.type !== "change") return;
     if (["chat_model", "azure_model"].includes(result.key)) void root.__eocConfigurationInputs.modelChanged?.(control);
-    if (result.key === "reasoning_effort") root.__eocConfigurationInputs.reasoningChanged?.(control);
+    if (result.key === "reasoning_effort") {
+      recordReasoningChoice(panel);
+      root.__eocConfigurationInputs.reasoningChanged?.(control);
+    }
     // Recompute dependent choices on commit, including after an input event
     // already updated the draft. Numeric keystrokes must not rebuild the form.
     if (["api_mode", "web_search", "max_function_calls_per_conversation", "continue_conversation"].includes(result.key)) root.__eocConfigurationInputs.capabilityChanged?.(control);

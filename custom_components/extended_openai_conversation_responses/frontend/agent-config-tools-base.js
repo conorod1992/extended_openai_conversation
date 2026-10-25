@@ -874,6 +874,9 @@ export function populateToolPresetPicker(panel, catalog) {
 }
 
 export async function openTool(panel, index = null, initialTool = null) {
+  panel._repairToolIndex = null;
+  panel._repairToolLoad = null;
+  panel._repairToolRevision = null;
   const tool = initialTool || (index === null ? null : panel._draft.functions[index]);
   panel._toolIndex = index;
   panel._toolOriginalName = index === null ? null : tool?.spec?.name || null;

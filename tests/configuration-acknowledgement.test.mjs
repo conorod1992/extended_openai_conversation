@@ -144,6 +144,19 @@ test("an omitted revision in a legacy subset acknowledgement cannot erase the ex
   assert.equal(host._configData.revision, "r1");
 });
 
+for (const snapshot of ["healthy", "still needs repair", "partial"]) {
+  test(`a ${snapshot} agent acknowledgement updates repair status without a catalogue reload`, () => {
+    const host = panel();
+    const issue = {repairable:true, field:"functions", message:"Legacy Function"};
+    const selected = {entry_id:"entry-a", subentry_id:"a", configuration_issue:issue};
+    host._selectedAgent = () => selected;
+    const agent = snapshot === "partial" ? {function_count:2}
+      : {entry_id:"entry-a", subentry_id:"a", ...(snapshot === "still needs repair" ? {configuration_issue:issue} : {})};
+    reconcileConfigurationAcknowledgement(host, {config:{functions:[]}, agent}, captureConfigurationSubmission(host), {fields:["functions"]});
+    assert.equal(selected.configuration_issue, snapshot === "healthy" ? undefined : issue);
+  });
+}
+
 test("queued acknowledgements are not mistaken for newer local edits", () => {
   const host = panel();
   host._configData.config.functions = [{name:"first"}, {name:"second"}];

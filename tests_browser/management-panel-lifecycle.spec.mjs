@@ -40,6 +40,50 @@ async function holdToolRecovery(panel, marker) {
 }
 
 for (const bundled of [false, true]) {
+  for (const closeMethod of ["Cancel", "Escape"]) test(`Knowledge recovery respects ${closeMethod} after refresh (${bundled ? "bundle" : "source"})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    await page.goto(fixtureUrl("data-memory/knowledge", bundled ? "&bundle=1" : ""));
+    const panel = page.locator("extended-openai-management-panel");
+    await identify(page);
+    await panel.locator("#add-source").click();
+    await panel.locator("#knowledge-title").fill("Saved Knowledge source");
+    await panel.locator("#knowledge-content").fill("Saved Knowledge content");
+    await panel.locator("#knowledge-save").click();
+    await expect(panel.locator("#knowledge-dialog")).toHaveJSProperty("open", false);
+    await panel.locator(".source-edit-button").first().click();
+    await expect(panel.locator("#knowledge-content")).toBeEnabled();
+    await panel.locator("#knowledge-content").fill("Keep this deferred Knowledge draft");
+    await panel.evaluate(host => {
+      window.knowledgeRecoverySource = host;
+      const call = host.hass.callWS.bind(host.hass);
+      const gate = new Promise(resolve => {window.releaseKnowledgeRecovery = resolve;});
+      let held = false;
+      host.hass.callWS = async message => {
+        if (!held && message.section === "knowledge" && message.action === "get") {
+          held = true;
+          window.knowledgeRecoveryWaiting = true;
+          await gate;
+        }
+        return call(message);
+      };
+    });
+    await replacePanel(page);
+    await expect.poll(() => page.evaluate(() => Boolean(window.knowledgeRecoveryWaiting))).toBe(true);
+    await panel.evaluate(host => host._loadSection(true));
+    if (closeMethod === "Cancel") await panel.locator("#knowledge-dialog .close-editor").filter({hasText:"Cancel"}).click();
+    else await page.keyboard.press("Escape");
+    await expect(panel.locator("#knowledge-dialog")).toHaveJSProperty("open", false);
+    await page.evaluate(() => window.releaseKnowledgeRecovery());
+    await expect.poll(() => page.evaluate(() => Boolean(window.knowledgeRecoverySource._eocRecoveringEditor))).toBe(false);
+    await expect(panel.locator("#knowledge-dialog")).toHaveJSProperty("open", false);
+    expect(await page.evaluate(() => window.knowledgeRecoverySource.shadowRoot.querySelector("#knowledge-dialog").open)).toBe(true);
+    await panel.evaluate(host => host._navigate("guide"));
+    await panel.evaluate(host => host._navigate("data-memory", "knowledge"));
+    await expect(panel.locator("#knowledge-content")).toHaveValue("Keep this deferred Knowledge draft");
+    expect(await page.evaluate(() => browserHarness.calls.filter(call => call.section === "knowledge" && call.action === "update").length)).toBe(0);
+    await expectHarnessClean(page, errors);
+  });
+
   test(`cancel after refresh defers Function recovery until a later visit (${bundled ? "bundle" : "source"})`, async ({page}) => {
     const errors = trackPageErrors(page);
     await page.goto(fixtureUrl("capabilities/functions", bundled ? "&bundle=1" : ""));

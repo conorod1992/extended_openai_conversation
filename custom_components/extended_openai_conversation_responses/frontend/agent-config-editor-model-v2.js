@@ -13,6 +13,34 @@ function currentCatalogData(panel, model) {
   return data?.requested_model === String(model || "") ? data : null;
 }
 
+const protectedModelFocus = (root) => root?.activeElement?.matches?.("input,textarea,select,button,a[href],summary,[tabindex],[contenteditable='true']");
+
+function deferModelRender(panel, isCurrent) {
+  const root = panel.shadowRoot;
+  if (!root?.addEventListener) return;
+  const state = root.__eocModelPresentation ||= {pending:null, bound:false};
+  if (!state.bound) {
+    // One listener belongs to this shadow root, rather than each lookup or
+    // document. A full configuration bind clears already-presented work.
+    state.bound = true;
+    root.addEventListener("focusout", () => queueMicrotask(() => {
+      const pending = state.pending;
+      if (!pending) return;
+      if (!pending.current()) { state.pending = null; return; }
+      if (protectedModelFocus(root)) return;
+      state.pending = null;
+      panel._render();
+    }));
+  }
+  const draft = panel._draft, user = panel.hass?.user?.id;
+  const entry = panel._selectedAgent?.()?.entry_id, agent = panel._agentId;
+  const view = panel._viewKey?.(), visit = panel._loadToken;
+  state.pending = {current:() => panel.isConnected !== false && isCurrent()
+    && panel._draft === draft && panel.hass?.user?.id === user
+    && panel._agentId === agent && panel._selectedAgent?.()?.entry_id === entry
+    && panel._viewKey?.() === view && panel._loadToken === visit};
+}
+
 async function ensureCatalogData(panel) {
   const config = currentConfig(panel);
   const model = String(config.azure_model || config.chat_model || "");
@@ -28,9 +56,9 @@ async function ensureCatalogData(panel) {
     await lookupModelData(panel, model, "lookup", current);
     if (!current()) return;
     refreshApiModePresentation(panel);
-    // A late catalog response must not replace an editor while the user is
-    // typing. The next ordinary render will use the now-cached model data.
-    if (panel.shadowRoot?.activeElement?.matches?.("input,textarea,[contenteditable='true']")) return;
+    // Keep active controls intact, then publish the remaining derived fields
+    // after focus actually leaves editing instead of leaving them stale.
+    if (protectedModelFocus(panel.shadowRoot)) { deferModelRender(panel, current); return; }
     if (searchTarget) panel._configRestoreFocus = `#${CSS.escape(searchTarget)}`;
     panel._render();
   } catch (err) {
@@ -50,6 +78,7 @@ function applyModelDefaults(panel, data) {
 }
 
 export function bindConfiguration(panel) {
+  if (panel.shadowRoot?.__eocModelPresentation) panel.shadowRoot.__eocModelPresentation.pending = null;
   const result = bindBaseConfiguration(panel);
   const root = panel?.shadowRoot;
   const modelInput = root?.querySelector('[data-config="chat_model"]');
@@ -80,6 +109,7 @@ export async function changeConfigurationModel(panel, control) {
   const model = control.value;
   const agent = panel._agentId;
   const draft = panel._draft;
+  const reasoningRevision = panel._eocReasoningChoiceRevision || 0;
   const token = (panel._eocModelChangeToken || 0) + 1;
   panel._eocModelChangeToken = token;
   const current = () => panel._agentId === agent && panel._draft === draft
@@ -87,8 +117,13 @@ export async function changeConfigurationModel(panel, control) {
   try {
     const data = await lookupModelData(panel, String(draft.azure_model || draft.chat_model || ""), "lookup", current);
     if (!current()) return;
-    applyModelDefaults(panel, data);
+    // A later explicit effort choice (including a reset) belongs to the user,
+    // even when navigation initiated another lookup for this same model.
+    if ((panel._eocReasoningChoiceRevision || 0) === reasoningRevision) applyModelDefaults(panel, data);
     refreshApiModePresentation(panel);
+    // Capability presentation still needs a refresh if request validation
+    // rejects another draft field. The catalogue itself already applies.
+    if (protectedModelFocus(panel.shadowRoot) && panel.shadowRoot.activeElement !== control) deferModelRender(panel, current);
     applyTargetedConfigDirty(panel, [field, "reasoning_effort"], control, false);
     const validation = await panel._call("configuration", "validate", {config: panel._draft});
     if (!current() || !validation.valid) return;
@@ -97,7 +132,7 @@ export async function changeConfigurationModel(panel, control) {
     // A model change finishes after blur. Do not replace the next control or
     // move focus back while the user is already editing another field.
     const focused = panel.shadowRoot?.activeElement;
-    if (focused && focused !== control) return;
+    if (focused && focused !== control) { deferModelRender(panel, current); return; }
     if (focused === control) panel._configRestoreFocus = `[data-config="${field}"]`;
     panel._render();
   } catch (err) {
