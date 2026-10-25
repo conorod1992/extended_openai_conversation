@@ -1,6 +1,6 @@
 import {UnsavedState} from "./unsaved-state.js";
 import {captureConfigurationSubmission, configurationSubmissionIsCurrent, completeConfigurationAcknowledgement} from "./configuration-acknowledgement.js";
-import {getToolYamlEditor} from "./tool-yaml-editor-adapter.js";
+import {getToolYamlEditor, captureToolEditorOperation, acknowledgeToolEditor} from "./tool-yaml-editor-adapter.js";
 
 function repairIssue(panel) {
   const issue = panel._selectedAgent?.()?.configuration_issue;
@@ -227,18 +227,13 @@ async function saveInvalidTool(panel, button) {
   const editor = getToolYamlEditor(panel);
   const yaml = editor?.getYaml?.() || "";
   const submission = captureConfigurationSubmission(panel);
-  const root = panel.shadowRoot;
-  const dialog = root?.querySelector("#tool-dialog");
-  const generation = panel._repairToolLoad;
-  const revision = panel._repairToolRevision;
-  const ownsEditor = () => configurationSubmissionIsCurrent(panel, submission)
-    && panel.shadowRoot === root && root.querySelector("#tool-dialog") === dialog && dialog?.open
-    && panel._repairToolLoad === generation && panel._repairToolIndex === index;
+  const operation = captureToolEditorOperation(panel);
+  let finishingOperation = operation;
   if (typeof panel._setSaving === "function") panel._setSaving(button, true);
   else button.disabled = true;
   try {
     const validation = await panel._call("tools", "validate_yaml", {yaml});
-    if (!ownsEditor()) return true;
+    if (!operation.isUnchanged()) return true;
     if (!validation?.valid) {
       const detail = Object.values(validation?.errors || {})[0] || "Function Tool is still invalid.";
       const status = panel.shadowRoot?.querySelector("#tool-error");
@@ -251,18 +246,20 @@ async function saveInvalidTool(panel, button) {
     const saved = await panel._call("function_repair", "save_one", {
       index,
       tool: validation.config,
-      revision,
+      revision:operation.revision,
     });
     if (!configurationSubmissionIsCurrent(panel, submission)) return true;
-    if (ownsEditor()) {
-      dialog.close();
+    const previous = {revision:panel._configData?.revision, config:panel._configData?.config};
+    if (operation.isUnchanged()) {
+      operation.dialog.close();
       panel._repairToolIndex = null;
     }
     await refreshAfterRepair(panel, "Function Tool repaired", saved, submission, {reload:false});
+    finishingOperation = acknowledgeToolEditor(panel, operation, saved, previous);
   } catch (err) {
-    if (ownsEditor()) panel._toast(`Unable to repair Function Tool: ${err.message || String(err)}`, true);
+    if (operation.isUnchanged()) panel._toast(`Unable to repair Function Tool: ${err.message || String(err)}`, true);
   } finally {
-    if (ownsEditor()) {
+    if (finishingOperation.isCurrent()) {
       if (typeof panel._setSaving === "function") panel._setSaving(button, false);
       else button.disabled = false;
     }

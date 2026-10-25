@@ -125,3 +125,19 @@ export function refreshApiModePresentation(panel) {
   }
   note.textContent = presentation.note;
 }
+
+// A model recommendation changes the draft without a native input event. Keep
+// an already-mounted selector in sync before actions read the complete form.
+export function refreshReasoningEffortPresentation(panel) {
+  const control = panel.shadowRoot?.querySelector?.('[data-config="reasoning_effort"]');
+  if (!control) return;
+  const presentation = modelFieldPresentation(panel, "reasoning_effort", panel._draft?.reasoning_effort);
+  const options = presentation.options.map(({value, label}) => {
+    const option = control.ownerDocument.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    return option;
+  });
+  control.replaceChildren(...options);
+  control.value = presentation.value;
+}

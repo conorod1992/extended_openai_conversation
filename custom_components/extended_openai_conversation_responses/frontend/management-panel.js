@@ -2261,9 +2261,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     beginOperation(this, "memory-editor");
     this._setSaving(this.shadowRoot.querySelector("#memory-save"), false);
     const root = this.shadowRoot;
+    root.querySelectorAll("#memory-dialog input,#memory-dialog textarea,#memory-dialog select").forEach(control => {control.disabled = false;});
     const memory = getRouteFeature("memory-browser")?.findPersistentMemory(this, memoryId) || null;
     this._editingMemory = memory ? {...memory} : null;
     this._memoryEditorScope = this._scopeId;
+    this._memoryMutationScope = this._scopeId;
     this._memoryEditorAgent = this._agentId;
     this._editorKind = "memory";
     root.querySelector("#memory-dialog-title").textContent = memory ? "Edit memory" : "Add memory";
@@ -2307,11 +2309,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       kind: this._memoryKind, loadToken: this._loadToken};
   }
 
-  _ownsRetainedMutation(owner) {
+  _ownsRetainedMutation(owner, {allowRefresh = false} = {}) {
     return this._agentId === owner.agent && this._selectedAgent()?.entry_id === owner.entry
       && this._hass?.user?.id === owner.user && this._viewKey() === owner.route
       && this._scopeId === owner.scope && this._memoryKind === owner.kind
-      && this._loadToken === owner.loadToken;
+      && (allowRefresh || this._loadToken === owner.loadToken);
   }
 
   _patchScopeCount(scopeId, field, delta) {
@@ -2337,14 +2339,25 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const ownsOperation = beginOperation(this, "knowledge-editor");
     const current = () => ownsOperation() && dialog.open
       && this.shadowRoot.querySelector("#knowledge-dialog") === dialog
-      && this._ownsRetainedMutation(owner);
+      // A reconnect read can refresh the same editor's list without changing
+      // its operation, dialog or owner. Its save still needs acknowledgement.
+      && this._ownsRetainedMutation(owner, {allowRefresh:true});
     this._setSaving(button, true);
     try {
       const response = await this._call("knowledge", editing ? "update" : "create", { ...(editing ? { source_id: this._editingSource.source_id, expected_revision: this._editingSource.updated_at } : {}), ...values });
       if (!current()) return;
       if (!getRouteFeature("data-memory/knowledge")?.applyKnowledgeMutation(this, response)) throw new Error("The saved source response was incomplete.");
       this._setSaving(button, false);
-      dialog.close();
+      if (same(this._knowledgeValues(), values)) dialog.close();
+      else {
+        // Acknowledge this submission without discarding text authored while
+        // it was saving. A subsequent save updates the acknowledged record.
+        this._editingSource = response.source;
+        this._knowledgeMode = "edit";
+        this._editorInitial = values;
+        this.shadowRoot.querySelector("#knowledge-delete").hidden = false;
+        this.shadowRoot.querySelector("#knowledge-dialog-title").textContent = "Edit Knowledge source";
+      }
       writeSectionCache(this, this._sectionCacheKey(), this._result);
       const agent = this._selectedAgent();
       if (agent && Number.isFinite(response?.feature_status?.source_count)) agent.knowledge_source_count = response.feature_status.source_count;
@@ -2359,20 +2372,29 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const button = this.shadowRoot.querySelector("#memory-save");
     if (button.disabled) return;
     const values = this._memoryValues();
+    const editing = Boolean(this._editingMemory);
+    const temporary = values.type === "temporary";
+    const sourceScope = this._memoryMutationScope;
     const owner = this._retainedMutationOwner();
     const dialog = this.shadowRoot.querySelector("#memory-dialog");
     const ownsOperation = beginOperation(this, "memory-editor");
     const current = () => ownsOperation() && dialog.open
       && this.shadowRoot.querySelector("#memory-dialog") === dialog
-      && this._ownsRetainedMutation(owner);
+      && this._ownsRetainedMutation(owner, {allowRefresh:true});
+    // Temporary creation has no movable-record editor in this form. Keep its
+    // fields stable until acknowledgement rather than risk a duplicate add.
+    // Persistent content/metadata can keep changing; only its type is fixed.
+    const locked = [...dialog.querySelectorAll(temporary ? "input,textarea,select" : "#memory-type")]
+      .map(control => ({control, disabled:control.disabled}));
+    const unlock = () => { for (const {control, disabled} of locked) control.disabled = disabled; };
+    for (const {control} of locked) control.disabled = true;
     this._setSaving(button, true);
     try {
       if (this._memoryEditorAgent !== this._agentId || this._memoryEditorScope !== this._scopeId) throw new Error("The selected agent or scope changed. Close and reopen this editor.");
       if (this._editingMemory && !this._editingMemory.revision) throw new Error("Refresh the Memory list and reopen this editor before saving.");
-      const temporary = values.type === "temporary";
       const feature = getRouteFeature("data-memory/memories");
       const response = await this._call("memories", temporary ? "temporary_add" : this._editingMemory ? "update" : "add", {
-        scope_id: this._memoryEditorScope,
+        scope_id: sourceScope,
         ...(this._editingMemory ? {memory_id: this._editingMemory.memory_id, expected_revision: this._editingMemory.revision} : {}),
         ...feature.memoryMutationValues(values, this._editingMemory),
         ...(temporary ? {expires_at: feature.memoryExpiryISO(this, values.expires_at)} : {}),
@@ -2387,19 +2409,28 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       } else if (owner.kind === "persistent" && !await getRouteFeature("data-memory/memories")?.applyPersistentMemoryMutation(this, response, {sourceScope: owner.scope})) throw new Error("The saved memory response was incomplete.");
       if (!current()) return;
       this._setSaving(button, false);
-      dialog.close();
+      unlock();
+      if (same(this._memoryValues(), values)) dialog.close();
+      else {
+        this._editingMemory = {...response.memory};
+        this._memoryMutationScope = response.scope_id;
+        this._editorInitial = values;
+        this.shadowRoot.querySelector("#memory-type").disabled = true;
+        this.shadowRoot.querySelector("#memory-delete").hidden = false;
+        this.shadowRoot.querySelector("#memory-dialog-title").textContent = "Edit memory";
+      }
       if (!temporary && response.status === "created") this._patchScopeCount(response.scope_id, "memory_count", 1);
-      else if (this._editingMemory && response.scope_id !== owner.scope) {
-        this._patchScopeCount(owner.scope, "memory_count", -1);
+      else if (editing && response.scope_id !== sourceScope) {
+        this._patchScopeCount(sourceScope, "memory_count", -1);
         this._patchScopeCount(response.scope_id, "memory_count", 1);
       }
       this._patchScopeCount(owner.scope, "memory_count", 0);
       if (!temporary && response.status === "created") this._selectedAgent().memory_count = Number(this._selectedAgent().memory_count || 0) + 1;
       this._render();
-      this._toast(this._editingMemory ? "Memory updated" : "Memory added");
+      this._toast(editing ? "Memory updated" : "Memory added");
     } catch (err) {
       if (current()) this._setDialogError("memory", `Unable to save memory: ${err.message || String(err)}`);
-    } finally { if (current()) this._setSaving(button, false); }
+    } finally { if (current()) { unlock(); this._setSaving(button, false); if (this._editingMemory) this.shadowRoot.querySelector("#memory-type").disabled = true; } }
   }
 
   async _deleteSource(sourceId, fromDialog = false, button = null) {
@@ -2421,16 +2452,18 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   async _deleteMemory(memoryId, fromDialog = false, button = null) {
+    const sourceScope = fromDialog && this._editingMemory?.memory_id === memoryId
+      ? this._memoryMutationScope : this._scopeId;
     if (!memoryId || !await this._confirm("Delete memory?", "This memory will be permanently removed from the selected scope.", "Delete")) return;
     const owner = this._retainedMutationOwner();
     this._setSaving(button, true, "Deleting…");
     try {
-      const response = await this._call("memories", "delete", { scope_id: owner.scope, memory_id: memoryId });
+      const response = await this._call("memories", "delete", { scope_id: sourceScope, memory_id: memoryId });
       if (!this._ownsRetainedMutation(owner)) return;
       if (!await getRouteFeature("data-memory/memories")?.applyPersistentMemoryMutation(this, response, {deletedId: memoryId, sourceScope: owner.scope})) throw new Error("The deleted memory response was incomplete.");
       if (!this._ownsRetainedMutation(owner)) return;
       if (fromDialog) this.shadowRoot.querySelector("#memory-dialog").close();
-      this._patchScopeCount(owner.scope, "memory_count", -1);
+      this._patchScopeCount(sourceScope, "memory_count", -1);
       this._selectedAgent().memory_count = Math.max(0, Number(this._selectedAgent().memory_count || 0) - 1);
       getRouteFeature("data-memory/memories")?.reconcileMemories(this);
       this._toast("Memory deleted");

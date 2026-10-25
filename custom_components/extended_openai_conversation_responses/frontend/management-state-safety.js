@@ -279,7 +279,12 @@ export async function recoverDisconnectedEditor(panel, source, retry = () => rec
     else if (old.id === "temporary-memory-dialog") {
       const {openTemporaryMemory} = await import("./management-temporary-memory.js");
       if (!canOpen()) return;
-      openTemporaryMemory(panel, source._temporaryMemoryDraft?.memory_id);
+      const memoryId = source._temporaryMemoryDraft?.memory_id;
+      // Expiry or deletion can remove the saved item during a disconnect. Do
+      // not silently leave its retained edits in the detached panel, or reopen
+      // them as a new record. Preserve the original until explicit discard.
+      if (!panel._result?.memories?.some(memory => memory.memory_id === memoryId)) return showRecoveredEditorValues(panel, old, values);
+      openTemporaryMemory(panel, memoryId);
     } else if (old.id === "ha-llm-tools-dialog") {
       await panel._ensureHALlmTools?.();
       if (!canOpen()) return;

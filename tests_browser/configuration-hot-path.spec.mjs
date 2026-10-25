@@ -4,6 +4,72 @@ import {fixtureUrl as routeFixture, trackPageErrors, expectHarnessClean} from ".
 for (const bundle of [false, true]) test.describe(bundle ? "production configuration inputs" : "source configuration inputs", () => {
 const fixtureUrl = (route) => routeFixture(route, bundle ? "&bundle=1" : "");
 
+for (const activation of ["save", "check", "tab"]) test(`deferred model presentation preserves native activation and current defaults: ${activation}`, async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("assistant/basics"));
+  const panel = page.locator("extended-openai-management-panel");
+  await expect.poll(() => panel.evaluate(host => Boolean(host._modelCatalogData))).toBe(true);
+  await panel.evaluate(host => {
+    host._draft.chat_model = "gpt-5.2";
+    host._draft.reasoning_effort = "high";
+    host._configData.config = structuredClone(host._draft);
+    const previous = {supports_reasoning_effort:true, reasoning:{supported:true, efforts:["low","high"]}};
+    host._configData.model_capabilities = previous;
+    host._result = host._configData;
+    host._modelCatalogData = {requested_model:"gpt-5.2", model_capabilities:previous};
+    host._render();
+    const call = host._hass.callWS.bind(host._hass);
+    window.activationModelLookups = 0;
+    window.activationModelValidations = 0;
+    host._hass.callWS = async message => {
+      const result = await call(message);
+      if (message.type.endsWith("/model_catalog")) {
+        if (message.action === "lookup" && ++window.activationModelLookups === 1) {
+          window.activationModelWaiting = true;
+          await new Promise(resolve => {window.releaseActivationModel = resolve;});
+        }
+        const metadata = {supports_reasoning_effort:true, reasoning:{supported:true, efforts:["low"]}, recommended_profile:{reasoning_effort:"low"}};
+        return {...result, model_capabilities:metadata, model_metadata:metadata};
+      }
+      if (message.section === "configuration" && message.action === "validate") window.activationModelValidations++;
+      return result;
+    };
+  });
+  await panel.locator('[data-config="chat_model"]').fill("gpt-5-mini");
+  await panel.locator('[data-config="max_tokens"]').focus();
+  await expect.poll(() => page.evaluate(() => Boolean(window.activationModelWaiting))).toBe(true);
+  await panel.evaluate(host => host._navigate("assistant", "model-responses"));
+  await expect.poll(() => page.evaluate(() => window.activationModelLookups)).toBe(2);
+  const tier = panel.locator('[data-config="service_tier"]');
+  await tier.focus();
+  await tier.evaluate(node => {window.activationTier = node;});
+  await page.evaluate(() => window.releaseActivationModel());
+  await expect.poll(() => page.evaluate(() => window.activationModelValidations)).toBe(1);
+  expect(await panel.evaluate(host => host._draft.reasoning_effort)).toBe("low");
+  await expect(tier).toBeFocused();
+  expect(await tier.evaluate(node => node === window.activationTier)).toBe(true);
+  await expect(panel.locator('[data-config="reasoning_effort"]')).toHaveValue("low");
+  if (activation === "save") {
+    await panel.locator("#save-config").click();
+    await expect.poll(() => page.evaluate(() => browserHarness.calls.filter(message => message.section === "configuration" && message.action === "save").length)).toBe(1);
+    expect(await page.evaluate(() => browserHarness.calls.find(message => message.section === "configuration" && message.action === "save").config.reasoning_effort)).toBe("low");
+  } else if (activation === "check") {
+    await panel.locator('[data-model-data="check"]').click();
+    await expect.poll(() => page.evaluate(() => browserHarness.calls.filter(message => message.type.endsWith("/model_catalog") && message.action === "check").length)).toBe(1);
+    await expect(panel.locator('[data-config="reasoning_effort"]')).toHaveValue("low");
+  } else {
+    const next = panel.locator('[data-config="shorten_tool_call_id"]');
+    await next.evaluate(node => {window.activationNext = node;});
+    await tier.press("Tab");
+    await expect(next).toBeFocused();
+    expect(await next.evaluate(node => node === window.activationNext)).toBe(true);
+    await panel.getByRole("heading", {name:"Model parameters", exact:true}).click();
+    await expect(panel.locator('[data-config="reasoning_effort"]')).toHaveValue("low");
+  }
+  expect(await panel.evaluate(host => host._draft.reasoning_effort)).toBe("low");
+  await expectHarnessClean(page, errors);
+});
+
 test("cold model catalogue preserves an active selector until blur then publishes derived controls", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("assistant/basics"));

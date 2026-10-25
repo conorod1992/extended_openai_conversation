@@ -22,11 +22,11 @@ import {friendlySettingLabel, friendlySettingValue, settingSearchAliases} from "
 import {settingBadgesMarkup} from "./management-decision-guidance.js";
 import {bindSingleRequestSave} from "./management-actions.js";
 import {captureConfigurationSubmission, configurationSubmissionIsCurrent, reconcileConfigurationAcknowledgement, completeConfigurationAcknowledgement} from "./configuration-acknowledgement.js";
-import {saveBarMarkup} from "./unsaved-state.js";
+import {saveBarMarkup, same} from "./unsaved-state.js";
 import {modelDataControls, bindModelDataControls} from "./model-catalog.js";
 import { haToolName, isHALlmTool, renderHAToolCard, toolDescription } from "./ha-llm-tools-list.js";
 import { bindHelp, helpButton, helpPopover } from "./agent-config-help.js";
-import {getToolYamlEditor} from "./tool-yaml-editor-adapter.js";
+import {getToolYamlEditor, captureToolEditorOperation, acknowledgeToolEditor} from "./tool-yaml-editor-adapter.js";
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const bool = (value) => value ? "checked" : "";
@@ -938,29 +938,12 @@ export async function openTool(panel, index = null, initialTool = null) {
 
 function toolErrorText(errors={}) { return Object.entries(errors).map(([key,value])=>`${key}: ${value}`).join(" "); }
 
-function toolEditorOperation(panel) {
-  const root = panel.shadowRoot;
-  const dialog = root.querySelector("#tool-dialog");
-  const generation = panel._toolEditorLoad;
-  const agentId = panel._agentId;
-  const agent = panel._selectedAgent?.();
-  return {
-    root, dialog,
-    yaml: getToolYamlEditor(panel).getYaml(),
-    originalName: panel._toolOriginalName,
-    revision: panel._configData?.revision,
-    destination: agent ? {entry_id: agent.entry_id, subentry_id: agent.subentry_id} : {},
-    isCurrent: () => panel._toolEditorLoad === generation && panel._agentId === agentId
-      && panel.shadowRoot === root && root.querySelector("#tool-dialog") === dialog && dialog.open,
-  };
-}
-
-async function validateDialogTool(panel, operation = toolEditorOperation(panel)) {
+async function validateDialogTool(panel, operation = captureToolEditorOperation(panel)) {
   const root=panel.shadowRoot;
   const status=root.querySelector("#tool-error");
   const validation = {};
   panel._toolValidation = validation;
-  const isCurrent = () => operation.isCurrent() && panel._toolValidation === validation;
+  const isCurrent = () => operation.isUnchanged() && panel._toolValidation === validation;
   status.className="validation";
   status.textContent="Validating...";
   try {
@@ -990,6 +973,8 @@ function editableFunctionGroup(panel, groupId) {
 
 export function openFunctionGroup(panel, groupId = null, repair = false) {
   const root=panel.shadowRoot;
+  panel._groupEditorLoad = {};
+  panel._setSaving(root.querySelector("#group-save"), false);
   const group=editableFunctionGroup(panel, groupId);
   panel._groupOriginalId=group?.id??null;
   panel._groupRepair=repair;
@@ -1032,8 +1017,19 @@ function refreshFunctionGroupValidation(root) {
 
 async function saveFunctionGroup(panel) {
   const root=panel.shadowRoot;
+  const dialog = root.querySelector("#group-dialog");
   const button = root.querySelector("#group-save");
   if (button.disabled) return;
+  const generation = panel._groupEditorLoad;
+  const originalId = panel._groupOriginalId, repair = panel._groupRepair, revision = panel._groupRevision;
+  const baselineConfig = panel._configData?.config;
+  // Use the same primitive control representation as the dialog draft tracker,
+  // including checkboxes and excluding its search filter.
+  const readState = () => [...dialog.querySelectorAll("input,select,textarea")]
+    .filter(control => !["button", "submit", "reset", "file", "search"].includes(control.type))
+    .map(control => ({id:control.id || control.name || "", type:control.type || control.tagName,
+      checked:"checked" in control ? Boolean(control.checked) : undefined, value:control.value}));
+  const authored = readState();
   const name=root.querySelector("#group-name").value.trim();
   const id=root.querySelector("#group-id").value.trim();
   const description=root.querySelector("#group-description").value.trim();
@@ -1053,14 +1049,34 @@ async function saveFunctionGroup(panel) {
   error.textContent="Saving...";
   panel._setSaving(button, true);
   const submission = captureConfigurationSubmission(panel);
+  const ownsEditor = () => configurationSubmissionIsCurrent(panel, submission)
+    && panel._groupEditorLoad === generation && panel.shadowRoot === root
+    && root.querySelector("#group-dialog") === dialog && dialog.open;
+  const unchanged = () => ownsEditor() && same(readState(), authored);
   try {
-    const result=await queueFunctionGroupMutation(panel,()=>panel._call("tools","save_group",{group:{id,name,description,loading_mode,functions,guest_allowed,enabled},...(panel._groupOriginalId!==null?{original_id:panel._groupOriginalId}:{}),...(panel._groupRepair?{repair:true}:{})}));
+    const result=await queueFunctionGroupMutation(panel,()=>unchanged()
+      ? panel._call("tools","save_group",{group:{id,name,description,loading_mode,functions,guest_allowed,enabled},
+        revision, ...(originalId!==null?{original_id:originalId}:{}), ...(repair?{repair:true}:{})}) : null);
+    if (!result) {
+      if (ownsEditor()) error.textContent = "Changes updated while waiting. Save again to submit them.";
+      return;
+    }
+    const previous = {revision:panel._configData?.revision, config:panel._configData?.config};
     await completeFunctionMutation(panel, result, submission, "Function group saved", () => {
-      root.querySelector("#group-dialog").close();
+      if (unchanged()) dialog.close();
+      else if (ownsEditor()) {
+        if (previous.config === baselineConfig && [revision, result.revision].includes(previous.revision)) {
+          panel._groupOriginalId = id;
+          panel._groupRevision = result.revision;
+          panel._groupRepair = false;
+          panel._eocDialogBaselines?.set("group-dialog", authored);
+          error.textContent = "Submitted version saved. Your newer changes are still unsaved.";
+        } else error.textContent = "Submitted version saved. Reload the latest settings before saving these edits.";
+      }
       panel._render();
     });
-  } catch(err) { if (configurationSubmissionIsCurrent(panel, submission)) { delete error.dataset.field; error.textContent=err.message||String(err); } }
-  finally { panel._setSaving(button, false); }
+  } catch(err) { if (ownsEditor()) { delete error.dataset.field; error.textContent=err.message||String(err); } }
+  finally { if (ownsEditor()) panel._setSaving(button, false); }
 }
 
 async function assignToolToGroup(panel, select) {
@@ -1153,7 +1169,8 @@ export function bindTools(panel) {
   root.querySelector("#tool-save")?.addEventListener("click", async () => {
     const button = root.querySelector("#tool-save");
     if (button.disabled) return;
-    const operation = toolEditorOperation(panel);
+    const operation = captureToolEditorOperation(panel);
+    let finishingOperation = operation;
     const submission = captureConfigurationSubmission(panel);
     panel._setSaving(button, true);
     try {
@@ -1161,20 +1178,22 @@ export function bindTools(panel) {
         ...(operation.revision !== undefined ? {revision: operation.revision} : {}),
         ...(operation.originalName ? {original_name: operation.originalName} : {})});
       if (result.valid === false) {
-        if (!operation.isCurrent()) return;
+        if (!operation.isUnchanged()) return;
         root.querySelector("#tool-error").className = "validation invalid";
         root.querySelector("#tool-error").textContent = `Function configuration is invalid: ${toolErrorText(result.errors)}`;
         return;
       }
+      const previous = {revision:panel._configData?.revision, config:panel._configData?.config};
       await completeFunctionMutation(panel, result, submission, "Changes saved", () => {
-        if (operation.isCurrent()) root.querySelector("#tool-dialog").close();
+        if (operation.isUnchanged()) operation.dialog.close();
+        else finishingOperation = acknowledgeToolEditor(panel, operation, result, previous);
         panel._render();
       });
     } catch (err) {
-      if (!operation.isCurrent()) return;
+      if (!operation.isUnchanged()) return;
       root.querySelector("#tool-error").className = "validation invalid";
       root.querySelector("#tool-error").textContent = err.message || String(err);
-    } finally { if (operation.isCurrent()) panel._setSaving(button, false); }
+    } finally { if (finishingOperation.isCurrent()) panel._setSaving(button, false); }
   });
   root.querySelector("#group-name")?.addEventListener("input",(event)=>{if(!panel._groupIdEdited)root.querySelector("#group-id").value=functionGroupIdFromName(event.target.value);refreshFunctionGroupValidation(root);});
   root.querySelector("#group-id")?.addEventListener("input",()=>{panel._groupIdEdited=true;refreshFunctionGroupValidation(root);});

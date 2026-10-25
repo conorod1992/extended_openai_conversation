@@ -2,7 +2,7 @@ import {bindConfigurationInputs} from "./configuration-inputs.js";
 import {applyTargetedConfigDirty} from "./management-state-safety.js";
 import {bindConfiguration as bindBaseConfiguration} from "./agent-config-editor-base.js";
 import {lookupModelData} from "./model-catalog.js";
-import {refreshApiModePresentation} from "./agent-config-model-presentation.js";
+import {refreshApiModePresentation, refreshReasoningEffortPresentation} from "./agent-config-model-presentation.js";
 
 function currentConfig(panel) {
   return panel?._draft || panel?._result?.config || {};
@@ -13,25 +13,52 @@ function currentCatalogData(panel, model) {
   return data?.requested_model === String(model || "") ? data : null;
 }
 
-const protectedModelFocus = (root) => root?.activeElement?.matches?.("input,textarea,select,button,a[href],summary,[tabindex],[contenteditable='true']");
+const protectedModelElement = (element) => element?.matches?.("input,textarea,select,button,a[href],summary,[tabindex],[contenteditable='true']");
+const protectedModelFocus = (root) => protectedModelElement(root?.activeElement);
 
-function deferModelRender(panel, isCurrent) {
+function modelPresentationState(panel) {
   const root = panel.shadowRoot;
   if (!root?.addEventListener) return;
-  const state = root.__eocModelPresentation ||= {pending:null, bound:false};
+  const state = root.__eocModelPresentation ||= {pending:null, bound:false, pointerActive:false, scheduled:false};
   if (!state.bound) {
     // One listener belongs to this shadow root, rather than each lookup or
     // document. A full configuration bind clears already-presented work.
     state.bound = true;
-    root.addEventListener("focusout", () => queueMicrotask(() => {
+    const flush = () => {
+      state.scheduled = false;
       const pending = state.pending;
       if (!pending) return;
       if (!pending.current()) { state.pending = null; return; }
-      if (protectedModelFocus(root)) return;
+      if (state.pointerActive || protectedModelFocus(root)) return;
       state.pending = null;
       panel._render();
-    }));
+    };
+    const schedule = () => {
+      if (!state.pending || state.scheduled) return;
+      state.scheduled = true;
+      if (typeof requestAnimationFrame === "function") requestAnimationFrame(flush);
+      else queueMicrotask(flush);
+    };
+    root.addEventListener("focusout", (event) => {
+      // activeElement can be null until native focusin runs. Rendering in a
+      // focusout microtask would remove the next Tab target or clicked button.
+      if (!protectedModelElement(event.relatedTarget)) schedule();
+    });
+    root.addEventListener("pointerdown", () => { state.pointerActive = true; }, true);
+    const releasePointer = () => { state.pointerActive = false; schedule(); };
+    root.addEventListener("pointerup", releasePointer, true);
+    root.addEventListener("pointercancel", releasePointer, true);
+    root.addEventListener("pointerout", (event) => {
+      if (!root.contains?.(event.relatedTarget)) releasePointer();
+    }, true);
+    root.addEventListener("keydown", () => { state.pointerActive = false; }, true);
   }
+  return state;
+}
+
+function deferModelRender(panel, isCurrent) {
+  const state = modelPresentationState(panel);
+  if (!state) return;
   const draft = panel._draft, user = panel.hass?.user?.id;
   const entry = panel._selectedAgent?.()?.entry_id, agent = panel._agentId;
   const view = panel._viewKey?.(), visit = panel._loadToken;
@@ -88,7 +115,11 @@ export function bindConfiguration(panel) {
     || reasoning
     || root?.querySelector('[data-config="temperature"],[data-config="top_p"],[data-config="api_mode"],[data-config="max_tokens"],[data-config="service_tier"]')
   );
-  if (hasModelAwareControls) void ensureCatalogData(panel);
+  if (hasModelAwareControls) {
+    // Observe pointer activation before asynchronous capabilities arrive.
+    modelPresentationState(panel);
+    void ensureCatalogData(panel);
+  }
 
   bindConfigurationInputs(panel, {
     modelChanged: (control) => changeConfigurationModel(panel, control),
@@ -119,7 +150,10 @@ export async function changeConfigurationModel(panel, control) {
     if (!current()) return;
     // A later explicit effort choice (including a reset) belongs to the user,
     // even when navigation initiated another lookup for this same model.
-    if ((panel._eocReasoningChoiceRevision || 0) === reasoningRevision) applyModelDefaults(panel, data);
+    if ((panel._eocReasoningChoiceRevision || 0) === reasoningRevision) {
+      applyModelDefaults(panel, data);
+      refreshReasoningEffortPresentation(panel);
+    }
     refreshApiModePresentation(panel);
     // Capability presentation still needs a refresh if request validation
     // rejects another draft field. The catalogue itself already applies.

@@ -81,7 +81,7 @@ describe("native management rendering", () => {
   it("renders model decisions directly and only loads catalog data for model controls", async () => {
     const source = await readFile(new URL("../../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-model-v2.js", import.meta.url), "utf8");
     expect(source).toContain("const hasModelAwareControls = Boolean(");
-    expect(source).toContain("if (hasModelAwareControls) void ensureCatalogData(panel);");
+    expect(source).toMatch(/if \(hasModelAwareControls\) \{[^}]*void ensureCatalogData\(panel\);/);
     const panel = owner();
     panel._configSections = ["model"];
     panel._draft.reasoning_effort = "high";

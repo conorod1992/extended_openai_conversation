@@ -1,5 +1,6 @@
 import {expect, test} from "@playwright/test";
 import {fixtureUrl, trackPageErrors, expectHarnessClean} from "./browser-helpers.mjs";
+import {openDataCollection} from "./data-collection-helpers.mjs";
 
 async function identify(page, id = "admin") {
   await page.locator("extended-openai-management-panel").evaluate((panel, id) => {
@@ -7,16 +8,17 @@ async function identify(page, id = "admin") {
   }, id);
 }
 
-async function replacePanel(page, user = "admin") {
-  await page.evaluate(user => {
+async function replacePanel(page, user = "admin", memoryKind) {
+  await page.evaluate(({user, memoryKind}) => {
     const old = document.querySelector("extended-openai-management-panel");
     const parent = old.parentElement;
     const hass = {...old.hass, user:{id:user, is_admin:true}};
     old.remove(); // Runs the real disconnectedCallback, as HA's wrapper does.
     const next = document.createElement("extended-openai-management-panel");
+    if (memoryKind !== undefined) next._memoryKind = memoryKind;
     parent.append(next);
     next.hass = hass;
-  }, user);
+  }, {user, memoryKind});
 }
 
 async function holdToolRecovery(panel, marker) {
@@ -40,6 +42,54 @@ async function holdToolRecovery(panel, marker) {
 }
 
 for (const bundled of [false, true]) {
+  test(`an expired Short-term Memory editor retains its unsaved values for review (${bundled ? "bundle" : "source"})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    const panel = await openDataCollection(page, "temporary", 12, bundled);
+    await identify(page);
+    await panel.locator(".edit-temporary-memory").first().click();
+    await panel.locator("#temporary-memory-content").fill("Preserve this independently expired memory draft");
+    await panel.evaluate(host => {
+      window.expiredMemorySource = host;
+      dataCollectionBackend.state.temporary = [];
+    });
+    await replacePanel(page, "admin", "temporary");
+    await expect(panel.getByRole("heading", {name:"Recovered unsaved editor"})).toBeVisible();
+    await expect(panel.getByLabel("Recovered editor values")).toHaveValue(/Preserve this independently expired memory draft/);
+    expect(await page.evaluate(() => expiredMemorySource.shadowRoot.querySelector("#temporary-memory-dialog").open)).toBe(true);
+    await panel.getByRole("button", {name:"Keep draft for later"}).click();
+    await replacePanel(page, "admin", "temporary");
+    await expect(panel.getByRole("heading", {name:"Recovered unsaved editor"})).toBeVisible();
+    await expect(panel.getByLabel("Recovered editor values")).toHaveValue(/Preserve this independently expired memory draft/);
+    await panel.getByRole("button", {name:"Keep draft for later"}).click();
+    await panel.evaluate(host => host._navigate("guide"));
+    await panel.evaluate(host => host._navigate("data-memory", "memories"));
+    await expect(panel.getByRole("heading", {name:"Recovered unsaved editor"})).toBeVisible();
+    await expect(panel.getByLabel("Recovered editor values")).toHaveValue(/Preserve this independently expired memory draft/);
+    await panel.getByRole("button", {name:"Discard recovered edits"}).click();
+    expect(await page.evaluate(() => expiredMemorySource.shadowRoot.querySelector("#temporary-memory-dialog").open)).toBe(false);
+    await panel.evaluate(host => host._navigate("guide"));
+    await panel.evaluate(host => host._navigate("data-memory", "memories"));
+    await expect(panel.getByRole("heading", {name:"Recovered unsaved editor"})).toHaveCount(0);
+    expect(await page.evaluate(() => browserHarness.calls.filter(call => ["temporary_update", "temporary_add"].includes(call.action)).length)).toBe(0);
+    await expectHarnessClean(page, errors);
+  });
+
+  test(`an existing Short-term Memory editor restores its unsaved values (${bundled ? "bundle" : "source"})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    const panel = await openDataCollection(page, "temporary", 12, bundled);
+    await identify(page);
+    await panel.locator(".edit-temporary-memory").first().click();
+    await panel.locator("#temporary-memory-content").fill("Preserve the existing memory draft");
+    await panel.evaluate(host => { window.existingMemorySource = host; });
+    await replacePanel(page, "admin", "temporary");
+    await expect(panel.locator("#temporary-memory-dialog")).toHaveJSProperty("open", true);
+    await expect(panel.locator("#temporary-memory-content")).toHaveValue("Preserve the existing memory draft");
+    await expect(panel.getByRole("heading", {name:"Recovered unsaved editor"})).toHaveCount(0);
+    expect(await page.evaluate(() => existingMemorySource.shadowRoot.querySelector("#temporary-memory-dialog").open)).toBe(false);
+    expect(await page.evaluate(() => browserHarness.calls.filter(call => ["temporary_update", "temporary_add"].includes(call.action)).length)).toBe(0);
+    await expectHarnessClean(page, errors);
+  });
+
   for (const closeMethod of ["Cancel", "Escape"]) test(`Knowledge recovery respects ${closeMethod} after refresh (${bundled ? "bundle" : "source"})`, async ({page}) => {
     const errors = trackPageErrors(page);
     await page.goto(fixtureUrl("data-memory/knowledge", bundled ? "&bundle=1" : ""));
