@@ -28,6 +28,7 @@ export function pageCoordinator(panel) {
         && panel._draftAgentId === panel._agentId);
     },
     discard: () => {
+      panel._eocAcknowledgedConfiguration = null;
       if (panel._configData) {
         panel._draft = clone(panel._configData.config);
         panel._draftTitle = panel._configData.title;

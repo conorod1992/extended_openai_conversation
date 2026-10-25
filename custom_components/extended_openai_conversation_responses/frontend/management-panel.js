@@ -18,7 +18,7 @@ import {readSectionCache, writeSectionCache, pruneCacheTimes, SCOPE_CACHE_TTL_MS
 import {bindPanelDialogs, knowledgeSourceAvailabilityControl, updateDialogs} from "./management-dialogs.js";
 import {ASSISTANT_INTRO_MARKUP, renderManagement, showPendingDestination, reconcileScopePicker, reconcileHistoryConfiguration} from "./management-renderer.js";
 import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, setControlPending, syncAgentPicker} from "./management-actions.js";
-import {configurationSubmissionIsCurrent, configurationReadOvertookSubmission} from "./configuration-acknowledgement.js";
+import {configurationSubmissionIsCurrent, configurationReadOvertookSubmission, mergeConfigurationRead} from "./configuration-acknowledgement.js";
 import {loadAgentsWithOverviewPrefetch, loadRoute, bindRequestRuleSearch, applyRequestRuleSearch, warmRouteAsset, prefetchIntentRead, consumeIntentRead, consumeStoredConfigurationPrefetch, discardStoredConfigurationPrefetch, markConfigurationRead, measureConfigurationRead} from "./management-route.js";
 import {getConfigurationEditor, getConfigurationTools, getRouteFeature, routeAssetKind, routeFeaturesReady, isRestrictedManagementView, nonAdminOverviewKnowledgeSnapshot} from "./management-route.js";
 import {NAVIGATION, pageMetadata, routeFromPath, routePath, focusManagementSetting} from "./frontend-navigation.js";
@@ -461,6 +461,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _clearConfigDraft() {
+    this._eocAcknowledgedConfiguration = null;
     this._setConfigDirty(false);
     this._configData = null;
     this._configDataStale = false;
@@ -521,7 +522,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     return true;
   }
 
-  _observeConfigurationRead(configData, {fresh = false} = {}) {
+  _observeConfigurationRead(configData, options = {}) {
+    const {fresh = false, previousTitle} = options;
     this._eocConfigurationReadEpoch = (this._eocConfigurationReadEpoch || 0) + 1;
     // Cached, prefetched and retention projections do not certify that a later
     // catalogue repair issue has cleared. Only a sequential full backend read
@@ -530,6 +532,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         || !Array.isArray(configData?.config?.functions)
         || !Array.isArray(configData?.config?.function_groups)) return;
     const agent = this._selectedAgent();
+    if (agent && Object.hasOwn(options, "previousTitle") && agent.title === previousTitle && typeof configData.title === "string") agent.title = configData.title;
     const existing = agent?.configuration_issue;
     if (!agent || (existing && existing.field !== "functions")) return;
     const repair = configData.function_repair;
@@ -1578,7 +1581,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     return true;
   }
 
-  async _loadConfigDraft({preserveResult = false} = {}) {
+  async _loadConfigDraft({preserveResult = false, full = false} = {}) {
     const previousConfig = this._configData, previousResult = this._result;
     const user = this.hass?.user?.id;
     // Validate shared model data before reusing an active baseline, clean cache
@@ -1586,7 +1589,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (this._hasConfigurationCatalogGeneration() && !await this._validateConfigurationCatalog()) return;
     const diagnostics = this._eocConfigurationReadDiagnostics ||= {};
     if (!this._configData || this._configDataStale || this._draftAgentId !== this._agentId
-        || (this._configData.projection === "retention" && this._viewKey() !== "usage-maintenance/retention")) {
+        || (this._configData.projection === "retention" && (full || this._viewKey() !== "usage-maintenance/retention"))) {
       const agentId = this._agentId;
       const entryId = this._selectedAgent()?.entry_id;
       const baseline = this._draftAgentId === agentId ? this._configData : null;
@@ -1595,13 +1598,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const view = this._viewKey();
       // Cold Retention visits stay partial. Refresh an existing full baseline
       // with a full read so its unrelated draft fields cannot disappear.
-      const projection = view === "usage-maintenance/retention" && (!baseline || baseline.projection === "retention") ? "retention" : "full";
+      const projection = !full && view === "usage-maintenance/retention" && (!baseline || baseline.projection === "retention") ? "retention" : "full";
       const action = projection === "retention" ? "retention_get" : "get";
       const trace = (event, detail) => markConfigurationRead(event, {view, action, ...detail});
       const key = this._configurationSnapshotKey(agentId, projection);
       const cached = this._freshCleanConfiguration(agentId, projection);
       let configData = cached;
-      let healthReadOwner, healthReadIssue, certifiesHealth = false;
+      let healthReadOwner, healthReadIssue, healthReadTitle, certifiesHealth = false;
       if (cached) {
         discardStoredConfigurationPrefetch(this, "clean-snapshot");
         diagnostics.draft = {source: "clean-snapshot", action, sentAction: null};
@@ -1643,6 +1646,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
           const finishFallback = measureConfigurationRead("fallback-response", {view, action, source: "new-backend-request"});
           healthReadOwner = this._selectedAgent();
           healthReadIssue = healthReadOwner?.configuration_issue;
+          healthReadTitle = healthReadOwner?.title;
           try {
             configData = projection === "retention"
               ? await consumeIntentRead(this, view, "configuration", "retention_get")
@@ -1671,17 +1675,20 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const prior = key ? this._cleanConfigSnapshots.get(key)?.result : null;
       if (prior && prior.revision !== configData.revision) this._invalidateCleanConfiguration(agentId);
       observeCatalogGeneration(this, configData);
-      this._observeConfigurationRead(configData, {fresh:certifiesHealth
+      this._observeConfigurationRead(configData, {previousTitle:healthReadTitle, fresh:certifiesHealth
         && this._selectedAgent() === healthReadOwner && healthReadOwner?.configuration_issue === healthReadIssue});
       this._configData = configData;
       this._configDataStale = false;
       if (!cached) this._rememberCleanConfiguration(configData, agentId);
       // Adopt fresh unchanged fields and keep the latest local delta, including
       // edits/deletions made while the read was pending and Retention expansion.
-      const nextDraft = retainedDraft ? mergeAcknowledgedDraft(retainedDraft.draft, baseline.config, configData.config) : clone(configData.config);
-      if (retainedDraft) this._eocPendingModelPreparation?.rebindDraft?.(retainedDraft.draft, nextDraft);
+      const merged = retainedDraft ? mergeConfigurationRead(this, retainedDraft, baseline, configData) : {draft:clone(configData.config), title:configData.title};
+      const nextDraft = merged.draft;
+      if (retainedDraft) this._eocPendingModelPreparation?.rebindDraft?.(retainedDraft.draft, nextDraft,
+        {savedConfig:configData.projection === "retention" ? undefined : configData.config});
       this._draft = nextDraft;
-      this._draftTitle = retainedDraft && retainedDraft.title !== baseline.title ? retainedDraft.title : configData.title;
+      this._draftTitle = merged.title;
+      if (configData.projection !== "retention") this._eocAcknowledgedConfiguration = null;
       this._draftAgentId = agentId;
       this._setConfigDirty(false);
       if (retainedDraft) this._syncConfigDirty();

@@ -12,10 +12,12 @@ const ownScopes = panel => [...pageCoordinator(panel).scopes.entries()]
 const hasOwnChanges = panel => ownScopes(panel).some(scope => scope.dirty());
 const hasOwnPendingWork = panel => Boolean(panel._configurationSaving || panel._eocAgentMutations
   || ownScopes(panel).some(scope => scope.pending));
+const hasRetainedWork = panel => hasOwnChanges(panel) || hasOwnPendingWork(panel)
+  || Boolean(panel._eocAcknowledgedCollection || panel._eocAcknowledgedConfiguration);
 let unloadBound = false;
 
 function hasRetainedChanges() {
-  return [...retained].some(([key, sources]) => [...sources].some(source => owner(source) === key && hasOwnChanges(source)));
+  return [...retained].some(([key, sources]) => [...sources].some(source => owner(source) === key && (hasOwnChanges(source) || hasOwnPendingWork(source))));
 }
 
 function retainedBeforeUnload(event) {
@@ -43,7 +45,7 @@ export function retainPanelDrafts(panel) {
   const key = owner(panel);
   if (!key) return;
   const sources = retained.get(key) || new Set();
-  if (hasOwnChanges(panel)) sources.add(panel);
+  if (hasRetainedWork(panel)) sources.add(panel);
   else sources.delete(panel);
   if (sources.size) retained.set(key, sources);
   else retained.delete(key);
@@ -55,7 +57,7 @@ export function restorePanelDrafts(panel) {
   for (const source of sources || []) {
     if (owner(source) !== key) { sources.delete(source); continue; }
     restoreDraftSource(panel, source, key);
-    if (!hasOwnChanges(source) && !source._eocAcknowledgedCollection) sources.delete(source);
+    if (!hasRetainedWork(source)) sources.delete(source);
   }
   if (sources?.size) pageCoordinator(panel).register("retained-drafts", {
     dirty: () => owner(panel) === key && [...sources].some(source => source !== panel && hasOwnChanges(source)),
@@ -93,6 +95,12 @@ function restoreDraftSource(panel, source, key) {
     // Publish an authoritative collection before reopening an editor against
     // its newly acknowledged identity/revision. Other routes only invalidate.
     if (result.refreshing) return;
+  }
+  const configurationAcknowledgement = source._eocAcknowledgedConfiguration;
+  if (configurationAcknowledgement) {
+    const result = configurationAcknowledgement(panel, () => restorePanelDrafts(panel));
+    if (!result.accepted) return;
+    if (source._eocAcknowledgedConfiguration === configurationAcknowledgement) source._eocAcknowledgedConfiguration = null;
   }
   if (source._configDirty && source._draftAgentId === panel._agentId && panel._data?.is_admin) {
     if (!panel._configDirty) {

@@ -9,6 +9,8 @@ export function captureConfigurationSubmission(panel) {
     revision:panel._configData?.revision,
     readEpoch:panel._eocConfigurationReadEpoch || 0,
     modelIntent:panel._eocModelIntent || null,
+    reasoningChoiceRevision:panel._eocReasoningChoiceRevision || 0,
+    modelDefaultsRevision:panel._eocModelIntent?.reasoningDefaultRevision || 0,
     baseline:clone(panel._configData?.config || {}),
     draft:clone(panel._draft || {}), title:panel._draftTitle,
   };
@@ -28,10 +30,99 @@ function preservesModelPreparation(panel, submission, fields) {
   return !ownsModel || (panel._eocModelIntent || null) !== (submission.modelIntent || null);
 }
 
+// The saved projection and the baseline of a pending edit have different
+// lifetimes. Acknowledged fields describe this write; unrelated fields still
+// belong to the latest accepted read.
+export function configurationDraftBaseline(panel, baseline = panel._configData) {
+  return panel._eocAcknowledgedConfiguration?.baseline?.(baseline) || baseline;
+}
+
+export function mergeConfigurationRead(panel, current, baseline, saved) {
+  const comparison = configurationDraftBaseline(panel, baseline);
+  const next = mergeAcknowledgedDraft(current.draft, comparison.config, saved.config);
+  let title = current.title !== comparison.title ? current.title : saved.title;
+  const pending = panel._eocConfigurationSubmission;
+  if (pending && !pending.acknowledged && configurationSubmissionIsCurrent(panel, pending)) {
+    // Reads made before the write commits cannot acknowledge its submitted
+    // fields, nor erase a later reversion to the original saved value.
+    for (const key of pending.fields) {
+      if (Object.hasOwn(current.draft, key)) next[key] = clone(current.draft[key]);
+      else delete next[key];
+    }
+    if (pending.writesTitle) title = current.title;
+  }
+  return {draft:next, title};
+}
+
+function acknowledgedFieldsBaseline(baseline, saved, submission) {
+  const config = {...baseline.config};
+  for (const key of submission.fields) {
+    if (Object.hasOwn(saved.config, key)) config[key] = clone(saved.config[key]);
+    else delete config[key];
+  }
+  return {...baseline, config, title:submission.writesTitle ? saved.title : baseline.title};
+}
+
+function retainConfigurationAcknowledgement(panel, saved, submission) {
+  if (panel._eocConfigurationSubmission !== submission) return;
+  submission.acknowledged = true;
+  const comparison = acknowledgedFieldsBaseline(panel._configData || {config:submission.baseline, title:submission.title}, saved, submission);
+  panel._eocModelIntent?.acknowledgeReasoning?.(panel, saved.config, submission, comparison.config);
+  // Canonicalize only unchanged submitted fields, even if a newer read owns
+  // the saved projection. Normalization is not a newly authored edit.
+  if (panel._draft && panel._draftAgentId === submission.agentId) {
+    const previous = panel._draft;
+    const next = mergeAcknowledgedDraft(previous, submission.draft, saved.config, submission.fields);
+    if (preservesModelPreparation(panel, submission)) panel._eocPendingModelPreparation?.rebindDraft?.(previous, next);
+    panel._draft = next;
+    if (submission.writesTitle && panel._draftTitle === submission.title) panel._draftTitle = saved.title;
+  }
+  const user = panel.hass?.user?.id;
+  const owns = target => configurationSubmissionIsCurrent(target, submission) && target.hass?.user?.id === user;
+  const states = new WeakMap();
+  const acknowledgement = (destination, retry) => {
+    if (!owns(panel) || !owns(destination) || panel.isConnected !== false
+        || destination.isConnected === false || !destination._data?.is_admin) return {accepted:false, refreshing:false};
+    let state = states.get(destination);
+    if (state?.running) return {accepted:false, refreshing:true};
+    if (state && !destination._configDataStale && destination._configData?.config && destination._configData.projection !== "retention"
+        && (destination._eocConfigurationReadEpoch || 0) > state.epoch) {
+      if (destination._configDirty) return {accepted:false, refreshing:false};
+      // The source is detached and cannot dispatch another save. Preserve its
+      // acknowledged authoring baseline until the lifecycle transfers its delta.
+      panel._configData = acknowledgement.baseline();
+      panel._syncConfigDirty?.();
+      if (destination._result === destination._configData) destination._render?.();
+      return {accepted:true, refreshing:false};
+    }
+    if (state?.failed && state.visit === destination._loadToken) return {accepted:false, refreshing:false};
+    state = {running:true, epoch:destination._eocConfigurationReadEpoch || 0, visit:destination._loadToken};
+    states.set(destination, state);
+    if (destination._invalidateAfterMutation) destination._invalidateAfterMutation(submission.agentId, "configuration", "save");
+    else destination._invalidateCleanConfiguration?.(submission.agentId);
+    destination._configDataStale = true;
+    void destination._loadConfigDraft({preserveResult:true, full:true}).catch(() => {
+      state.failed = true;
+      if (owns(destination) && destination.isConnected !== false) destination._toast?.("Changes saved, but configuration could not be refreshed. Refresh this section to retry.", true);
+    }).finally(() => {
+      state.running = false;
+      // Retry through the normal access, pending-work and current-panel gates.
+      retry?.();
+    });
+    return {accepted:false, refreshing:true};
+  };
+  acknowledgement.baseline = (baseline = panel._configData || {config:submission.baseline, title:submission.title}) => {
+    if (!owns(panel)) return null;
+    return acknowledgedFieldsBaseline(baseline, saved, submission);
+  };
+  panel._eocAcknowledgedConfiguration = acknowledgement;
+}
+
 // A full save replaces the saved projection. Independent saves acknowledge only
 // their own fields, leaving unrelated persisted values and local edits alone.
 export function reconcileConfigurationAcknowledgement(panel, saved, submission, {fields, metadata = []} = {}) {
   if (!configurationSubmissionIsCurrent(panel, submission) || saved?.valid === false || !saved?.config) return false;
+  if (!fields) retainConfigurationAcknowledgement(panel, saved, submission);
   if (configurationReadOvertookSubmission(panel, submission)) {
     // A response describes the commit it acknowledges, not necessarily the
     // latest persisted configuration. Keep an accepted newer read until an
@@ -44,6 +135,7 @@ export function reconcileConfigurationAcknowledgement(panel, saved, submission, 
       panel._eocPendingModelPreparation = null;
       panel._eocModelChangeToken = (panel._eocModelChangeToken || 0) + 1;
     }
+    panel._syncConfigDirty?.();
     return true;
   }
   if (fields && !panel._configData?.config) return true;

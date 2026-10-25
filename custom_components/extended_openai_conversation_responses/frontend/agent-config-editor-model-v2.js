@@ -104,6 +104,45 @@ function applyModelDefaults(panel, data) {
   panel._draft.reasoning_effort = efforts.includes(recommended) ? recommended : efforts[0];
 }
 
+function createModelIntent(panel, field, model) {
+  const agent = panel._agentId, entry = panel._selectedAgent?.()?.entry_id, user = panel.hass?.user?.id;
+  const capabilityModel = String(panel._draft.azure_model || panel._draft.chat_model || "");
+  const owns = target => target._agentId === agent && target._selectedAgent?.()?.entry_id === entry && target.hass?.user?.id === user;
+  const matchesModel = config => config?.[field] === model && String(config?.azure_model || config?.chat_model || "") === capabilityModel;
+  const sameModel = (left, right) => left?.chat_model === right?.chat_model
+    && String(left?.azure_model || left?.chat_model || "") === String(right?.azure_model || right?.chat_model || "");
+  let derived;
+  const intent = {
+    reasoningDefaultRevision:0,
+    recordReasoningDefault(target) {
+      if (!owns(target) || target._eocModelIntent !== intent || !matchesModel(target._draft)) return;
+      derived = {
+        revision:++intent.reasoningDefaultRevision,
+        choiceRevision:target._eocReasoningChoiceRevision || 0,
+        present:Object.hasOwn(target._draft, "reasoning_effort"),
+        value:target._draft.reasoning_effort,
+      };
+    },
+    acknowledgeReasoning(target, savedConfig, submission, comparisonConfig = savedConfig) {
+      if (!derived || !owns(target) || target._draftAgentId !== agent || target._eocModelIntent !== intent
+          || submission.modelIntent !== intent || (!matchesModel(target._draft) && !sameModel(target._draft, comparisonConfig))
+          || !matchesModel(savedConfig) || !matchesModel(submission.draft) || !sameModel(savedConfig, submission.draft)
+          || derived.revision <= (submission.modelDefaultsRevision || 0)
+          || derived.choiceRevision !== (submission.reasoningChoiceRevision || 0)
+          || (target._eocReasoningChoiceRevision || 0) !== (submission.reasoningChoiceRevision || 0)
+          || Object.hasOwn(target._draft, "reasoning_effort") !== derived.present
+          || (derived.present && target._draft.reasoning_effort !== derived.value)) return false;
+      // This default belongs to the model intent included in this Save, not a
+      // later authored edit. Restore its acknowledged value before draft merge.
+      if (Object.hasOwn(comparisonConfig, "reasoning_effort")) target._draft.reasoning_effort = comparisonConfig.reasoning_effort;
+      else delete target._draft.reasoning_effort;
+      refreshReasoningEffortPresentation(target);
+      return true;
+    },
+  };
+  return intent;
+}
+
 function ownModelPreparation(panel, field, model, token, preserveReasoning, intent) {
   const agent = panel._agentId, entry = panel._selectedAgent?.()?.entry_id, user = panel.hass?.user?.id;
   const capabilityModel = String(panel._draft.azure_model || panel._draft.chat_model || "");
@@ -116,9 +155,20 @@ function ownModelPreparation(panel, field, model, token, preserveReasoning, inte
       && panel._draft?.[field] === model
       && String(panel._draft?.azure_model || panel._draft?.chat_model || "") === capabilityModel,
     current:() => panel.isConnected !== false && preparation.intentCurrent(),
-    rebindDraft(previous, next) {
+    rebindDraft(previous, next, {savedConfig} = {}) {
       if (panel._eocPendingModelPreparation === preparation && preparation.intentCurrent() && preparation.draft === previous && next?.[field] === model
-          && String(next.azure_model || next.chat_model || "") === capabilityModel) preparation.draft = next;
+          && String(next.azure_model || next.chat_model || "") === capabilityModel) {
+        if (savedConfig && Object.hasOwn(savedConfig, "chat_model") && Object.hasOwn(savedConfig, field)
+            && savedConfig[field] === model
+            && String(savedConfig.azure_model || savedConfig.chat_model || "") === capabilityModel) {
+          // An authoritative read already contains this model choice. Its
+          // accepted settings must not be rewritten by a delayed default.
+          panel._eocPendingModelPreparation = null;
+          panel._eocModelChangeToken++;
+          return;
+        }
+        preparation.draft = next;
+      }
     },
     transferTo(destination) {
       if (panel._eocPendingModelPreparation !== preparation || !preparation.intentCurrent() || !owns(destination) || destination.isConnected === false
@@ -128,6 +178,7 @@ function ownModelPreparation(panel, field, model, token, preserveReasoning, inte
       const keepReasoning = preserveReasoning || (panel._eocReasoningChoiceRevision || 0) !== preparation.reasoningRevision;
       panel._eocPendingModelPreparation = null;
       panel._eocModelChangeToken++;
+      destination._eocModelIntent = intent;
       // Defaults already in the transferred draft need no second application.
       // Otherwise restart against the destination's own current catalogue.
       if (preparation.defaultsPending) void changeConfigurationModel(destination, {dataset:{config:field}, value:model}, {preserveReasoning:keepReasoning, intent});
@@ -186,7 +237,7 @@ export async function changeConfigurationModel(panel, control, {preserveReasonin
   panel._eocModelChangeToken = token;
   // Retries and handoffs start a new async operation for the same authored
   // model choice. Only another user model change creates a different intent.
-  panel._eocModelIntent = intent || {};
+  panel._eocModelIntent = intent || createModelIntent(panel, field, model);
   const preparation = ownModelPreparation(panel, field, model, token, preserveReasoning, panel._eocModelIntent);
   const current = preparation.current;
   try {
@@ -196,6 +247,7 @@ export async function changeConfigurationModel(panel, control, {preserveReasonin
     // even when navigation initiated another lookup for this same model.
     if (!preserveReasoning && (panel._eocReasoningChoiceRevision || 0) === preparation.reasoningRevision) {
       applyModelDefaults(panel, data);
+      panel._eocModelIntent.recordReasoningDefault?.(panel);
       refreshReasoningEffortPresentation(panel);
     }
     preparation.defaultsPending = false;

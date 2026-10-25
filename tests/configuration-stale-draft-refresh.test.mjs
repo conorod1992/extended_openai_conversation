@@ -467,3 +467,31 @@ for (const change of ["disconnect", "user"]) {
     assert.equal(host._eocConfigurationReadEpoch || 0, 0);
   });
 }
+
+for (const change of ["none", "title", "agent"]) {
+  test(`fresh configuration title adoption respects intervening ${change} metadata`, async () => {
+    const {host} = panel(), read = deferred();
+    const selected = host._selectedAgent();
+    selected.title = "Catalogue title";
+    host._configDataStale = true;
+    host._call = () => read.promise;
+    const loading = host._loadConfigDraft();
+    if (change === "title") selected.title = "Newer catalogue title";
+    if (change === "agent") host._data.agents[0] = {...selected, title:"Newer catalogue title"};
+    read.resolve({...structuredClone(host._configData), revision:"r3", title:"Fresh saved title"});
+    await loading;
+    assert.equal(host._selectedAgent().title, change === "none" ? "Fresh saved title" : "Newer catalogue title");
+  });
+}
+
+for (const kind of ["cached", "retention", "incomplete"]) {
+  test(`${kind} configuration cannot certify a catalogue title`, () => {
+    const {host} = panel();
+    host._selectedAgent().title = "Catalogue title";
+    const saved = {...structuredClone(host._configData), title:"Uncertified title"};
+    if (kind === "retention") saved.projection = "retention";
+    if (kind === "incomplete") delete saved.config.function_groups;
+    host._observeConfigurationRead(saved, {fresh:kind !== "cached", previousTitle:"Catalogue title"});
+    assert.equal(host._selectedAgent().title, "Catalogue title");
+  });
+}

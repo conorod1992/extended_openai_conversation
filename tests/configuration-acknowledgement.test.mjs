@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {captureConfigurationSubmission, reconcileConfigurationAcknowledgement, completeConfigurationAcknowledgement} from "../custom_components/extended_openai_conversation_responses/frontend/configuration-acknowledgement.js";
+import {captureConfigurationSubmission, reconcileConfigurationAcknowledgement, completeConfigurationAcknowledgement, configurationDraftBaseline, mergeConfigurationRead} from "../custom_components/extended_openai_conversation_responses/frontend/configuration-acknowledgement.js";
 import {saveConfiguration} from "../custom_components/extended_openai_conversation_responses/frontend/management-actions.js";
 import {bindKnowledgeAvailability} from "../custom_components/extended_openai_conversation_responses/frontend/management-knowledge-feature.js";
 import {initializePageDraft, currentPageScope} from "../custom_components/extended_openai_conversation_responses/frontend/management-page-drafts.js";
@@ -322,5 +322,114 @@ for (const change of ["agent", "entry", "visit", "disconnect"]) {
     if (change === "disconnect") host.isConnected = false;
     read.resolve(); await pending;
     assert.equal(host.renders, 0);
+  });
+}
+
+test("pending full-save fields retain original-value reversions across a precommit read", async () => {
+  const host = panel(), gate = deferred();
+  host._call = () => gate.promise;
+  const saving = saveConfiguration(host, {});
+  host._draft.prompt = "Saved prompt";
+  host._draftTitle = "Saved title";
+  const read = {revision:"r1", title:"Read title", config:{...host._configData.config, knowledge_enabled:true}};
+  const merged = mergeConfigurationRead(host, {draft:host._draft, title:host._draftTitle}, host._configData, read);
+  assert.equal(merged.draft.prompt, "Saved prompt");
+  assert.equal(merged.draft.max_tokens, "200");
+  assert.equal(merged.title, "Saved title");
+  assert.equal(merged.draft.knowledge_enabled, true, "unrelated fields still follow the accepted read");
+  host._draft = merged.draft;
+  host._draftTitle = merged.title;
+  host._configData = read;
+  host._eocConfigurationReadEpoch = 1;
+  gate.resolve({valid:true, revision:"r2", title:"Edited title", config:{prompt:"Submitted prompt", max_tokens:200, knowledge_enabled:false}});
+  await saving;
+  const comparison = configurationDraftBaseline(host);
+  assert.equal(host._configData, read, "the ACK cannot rewind the saved projection");
+  assert.equal(comparison.config.prompt, "Submitted prompt");
+  assert.equal(comparison.config.max_tokens, 200);
+  assert.equal(comparison.config.knowledge_enabled, true, "the ACK owns only its submitted fields");
+  assert.equal(comparison.title, "Edited title");
+  const latest = {revision:"r3", title:"Edited title", config:{prompt:"Submitted prompt", max_tokens:200, knowledge_enabled:false}};
+  const recovered = mergeConfigurationRead(host, {draft:host._draft, title:host._draftTitle}, read, latest);
+  assert.equal(recovered.draft.prompt, "Saved prompt");
+  assert.equal(recovered.title, "Saved title");
+  assert.equal(recovered.draft.max_tokens, 200);
+  assert.equal(recovered.draft.knowledge_enabled, false, "read-adopted values are not resurrected as authored edits");
+});
+
+test("a detached full acknowledgement requires a fresh full destination read before delta transfer", async () => {
+  const source = panel(), gate = deferred();
+  source.hass = {user:{id:"admin"}};
+  source._call = () => gate.promise;
+  const saving = saveConfiguration(source, {});
+  source._draftTitle = "Saved title";
+  source.isConnected = false;
+  gate.resolve({valid:true, revision:"r2", title:"Edited title", config:{prompt:"Submitted prompt", max_tokens:200, knowledge_enabled:false}});
+  await saving;
+  const acknowledgement = source._eocAcknowledgedConfiguration;
+  assert.equal(typeof acknowledgement, "function");
+  const destination = panel(), read = deferred();
+  destination.hass = source.hass;
+  destination.isConnected = true;
+  destination._data = {is_admin:true};
+  let reads = 0, retries = 0;
+  destination._loadConfigDraft = async options => {
+    reads++;
+    assert.deepEqual(options, {preserveResult:true, full:true});
+    await read.promise;
+    destination._configData = {revision:"r3", title:"Latest saved title", config:{prompt:"Latest prompt", max_tokens:300, knowledge_enabled:true}};
+    destination._configDataStale = false;
+    destination._eocConfigurationReadEpoch = 1;
+    destination._result = destination._configData;
+  };
+  const retry = () => { retries++; };
+  assert.deepEqual(acknowledgement(destination, retry), {accepted:false, refreshing:true});
+  assert.deepEqual(acknowledgement(destination, retry), {accepted:false, refreshing:true});
+  assert.equal(reads, 1);
+  read.resolve();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(retries, 1);
+  assert.deepEqual(acknowledgement(destination, retry), {accepted:true, refreshing:false});
+  assert.equal(source._configData.title, "Edited title");
+  assert.equal(source._draftTitle, "Saved title");
+  assert.equal(destination._configData.revision, "r3");
+  assert.equal(destination.renders, 1, "even a clean saved source must update mounted controls");
+});
+
+test("refreshing an acknowledged write never dispatches a new save or follows another owner", async () => {
+  for (const replace of [false, true]) {
+    const host = panel(), read = deferred();
+    host._eocAcknowledgedConfiguration = () => {};
+    host._configDataStale = true;
+    let writes = 0;
+    host._call = () => { writes++; throw new Error("No write until review"); };
+    host._loadConfigDraft = async () => { await read.promise; host._configDataStale = false; };
+    const refreshing = saveConfiguration(host, {});
+    if (replace) host._agentId = "b";
+    read.resolve(); await refreshing;
+    assert.equal(writes, 0);
+    assert.equal(host.toasts.length, replace ? 0 : 1);
+    if (!replace) assert.match(host.toasts[0][0], /Review your changes before saving/);
+  }
+});
+
+for (const writtenEffort of [false, true]) {
+  test(`retiring model defaults respects ${writtenEffort ? "submitted" : "newer untouched"} reasoning fields`, async () => {
+    const host = panel(), gate = deferred();
+    host._configData.config.chat_model = "gpt-5.2";
+    host._configData.config.reasoning_effort = writtenEffort ? "high" : "low";
+    host._draft = {...host._configData.config, chat_model:"gpt-5", reasoning_effort:"low"};
+    host._eocDirtyConfigKeys = new Set(["chat_model", ...(writtenEffort ? ["reasoning_effort"] : [])]);
+    host._eocModelIntent = {acknowledgeReasoning(panel, _saved, _submission, comparison) { panel._draft.reasoning_effort = comparison.reasoning_effort; return true; }};
+    host._call = () => gate.promise;
+    const saving = saveConfiguration(host, {});
+    host._draft.reasoning_effort = "minimal";
+    const read = host._configData = {revision:"r3", title:"Saved title", config:{...host._configData.config, chat_model:"gpt-5", reasoning_effort:"high"}};
+    host._eocConfigurationReadEpoch = 1;
+    gate.resolve({valid:true, revision:"r2", title:"Saved title", config:{...read.config, reasoning_effort:"low"}});
+    await saving;
+    assert.equal(host._draft.reasoning_effort, writtenEffort ? "low" : "high");
+    const latest = mergeConfigurationRead(host, {draft:host._draft, title:host._draftTitle}, read, read);
+    assert.equal(latest.draft.reasoning_effort, "high", "computed values must not become local edits hiding newer saved state");
   });
 }

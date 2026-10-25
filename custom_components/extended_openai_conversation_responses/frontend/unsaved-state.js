@@ -25,7 +25,7 @@ export class UnsavedState {
   register(id, scope) { this.scopes.set(id, scope); return scope; }
   dirty() { return [...this.scopes.values()].filter((scope) => scope.dirty()); }
   hasChanges() { return this.dirty().length > 0; }
-  leaving(destination) { return this.dirty().filter((scope) => !scope.owns?.(destination)); }
+  leaving(destination) { return [...this.scopes.values()].filter((scope) => (scope.dirty() || scope.pending) && !scope.owns?.(destination)); }
   destinations() { return new Set(this.dirty().flatMap((scope) => scope.destinations?.() || [])); }
 }
 

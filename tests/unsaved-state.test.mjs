@@ -87,6 +87,24 @@ test("central navigation shares config context, cancels safely, and discards wit
   assert.equal(same({x: [1, 2]}, {x: [2, 1]}), false);
 });
 
+test("a clean pending scope guards its owner without claiming unsaved changes", async () => {
+  const state = new UnsavedState();
+  let pending = true, discarded = 0, prompts = 0;
+  const scope = {dirty:() => false, get pending() {return pending;}, owns:destination => destination === "assistant/basics", discard() {discarded++;}};
+  state.register("retained-write", scope);
+  const panel = {_unsavedState:state, _confirm:async () => {prompts++; return true;}};
+  assert.equal(state.hasChanges(), false);
+  assert.deepEqual(state.leaving(null), [scope]);
+  assert.deepEqual(state.leaving("assistant/basics"), []);
+  assert.equal(await confirmStateSafeNavigation(panel, null), false);
+  assert.equal(discarded, 0);
+  assert.equal(prompts, 0);
+  pending = false;
+  assert.equal(await confirmStateSafeNavigation(panel, null), true);
+  assert.deepEqual(state.leaving(null), []);
+  assert.equal(state.hasChanges(), false);
+});
+
 
 for (const refreshFails of [false, true]) {
   for (const newerEdit of [false, true]) {

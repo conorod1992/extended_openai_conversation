@@ -76,6 +76,19 @@ export async function saveConfigurationAcrossRestart(panel, payload, submitted, 
 
 async function saveConfiguration(panel, button) {
   if (!panel._draft || !panel._selectedAgent?.() || panel._configurationSaving) return;
+  if (panel._eocAcknowledgedConfiguration && panel._configDataStale) {
+    const owner = captureConfigurationSubmission(panel), user = panel.hass?.user?.id, visit = panel._loadToken;
+    try { await panel._loadConfigDraft({preserveResult:true}); }
+    catch (error) {
+      if (configurationSubmissionIsCurrent(panel, owner) && panel.hass?.user?.id === user && panel._loadToken === visit) panel._toast(`Changes already saved; refresh configuration before saving again: ${error.message || String(error)}`, true);
+      return;
+    }
+    if (configurationSubmissionIsCurrent(panel, owner) && panel.hass?.user?.id === user && panel._loadToken === visit && !panel._configDataStale) {
+      panel._render();
+      panel._toast("Configuration refreshed. Review your changes before saving.");
+    }
+    return;
+  }
   const submission = captureConfigurationSubmission(panel);
   const submitted = submission.draft, submittedTitle = submission.title;
   const owner = {...submission,
@@ -86,6 +99,9 @@ async function saveConfiguration(panel, button) {
   panel._syncConfigDirty?.();
   const dirty = panel._eocDirtyConfigKeys || new Set();
   const changed = Object.fromEntries([...dirty].filter(key => key !== "__title" && Object.hasOwn(submitted, key)).map(key => [key, submitted[key]]));
+  submission.fields = Object.keys(changed);
+  submission.writesTitle = dirty.has("__title");
+  panel._eocConfigurationSubmission = submission;
   panel._configurationSaving = true;
   panel._setSaving(button, true);
   try {
@@ -112,6 +128,8 @@ async function saveConfiguration(panel, button) {
   } catch (err) {
     if (configurationSubmissionIsCurrent(panel, submission)) panel._toast(`Unable to save configuration: ${err.message || String(err)}`, true);
   } finally {
+    if (panel._eocConfigurationSubmission === submission) panel._eocConfigurationSubmission = null;
+    if (panel.isConnected !== false && !panel._configDataStale) panel._eocAcknowledgedConfiguration = null;
     panel._configurationSaving = false;
     panel._setSaving(panel.shadowRoot.querySelector("#save-config") || button, false);
     const discard = panel.shadowRoot.querySelector("#revert-config");

@@ -2,6 +2,7 @@ import {getRouteFeature} from "./management-route.js";
 import {pageCoordinator, currentPageScope} from "./management-page-drafts.js";
 import {same, clone} from "./unsaved-state.js";
 import {SECTION_CACHE_TTL_MS} from "./management-cache.js";
+import {configurationDraftBaseline} from "./configuration-acknowledgement.js";
 export {SECTION_CACHE_TTL_MS};
 
 const RESET_PROMPT_KEYS = [
@@ -39,20 +40,22 @@ function configBaselineReady(panel) {
 
 function configKeyChanged(panel, key) {
   if (!configBaselineReady(panel)) return false;
-  if (key === "__title") return panel._draftTitle !== panel._configData.title;
-  return !same(panel._draft[key], panel._configData.config[key]);
+  const baseline = configurationDraftBaseline(panel);
+  if (key === "__title") return panel._draftTitle !== baseline.title;
+  return !same(panel._draft[key], baseline.config[key]);
 }
 
 export function rebuildConfigDirtyKeys(panel) {
   const changed = new Set();
   if (configBaselineReady(panel)) {
-    const baseline = panel._configData.config;
+    const snapshot = configurationDraftBaseline(panel);
+    const baseline = snapshot.config;
     const draft = panel._draft;
     const keys = new Set([...Object.keys(baseline), ...Object.keys(draft)]);
     for (const key of keys) {
       if (!same(baseline[key], draft[key])) changed.add(key);
     }
-    if (panel._draftTitle !== panel._configData.title) changed.add("__title");
+    if (panel._draftTitle !== snapshot.title) changed.add("__title");
   }
   panel._eocDirtyConfigKeys = changed;
   return changed;

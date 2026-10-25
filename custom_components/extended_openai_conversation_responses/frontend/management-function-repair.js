@@ -254,8 +254,8 @@ async function saveInvalidTool(panel, button) {
       operation.dialog.close();
       panel._repairToolIndex = null;
     }
-    await refreshAfterRepair(panel, "Function Tool repaired", saved, submission, {reload:false});
     finishingOperation = acknowledgeToolEditor(panel, operation, saved, previous);
+    await refreshAfterRepair(panel, "Function Tool repaired", saved, submission, {reload:false});
   } catch (err) {
     if (operation.isUnchanged()) panel._toast(`Unable to repair Function Tool: ${err.message || String(err)}`, true);
   } finally {
