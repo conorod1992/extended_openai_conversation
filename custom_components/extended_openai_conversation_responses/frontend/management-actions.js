@@ -1,6 +1,6 @@
 import {same} from "./unsaved-state.js";
 import {reconcileSavedConfiguration} from "./configuration-save-dom.js";
-import {captureConfigurationSubmission, configurationSubmissionIsCurrent, completeConfigurationAcknowledgement, reconcileConfigurationAcknowledgement, discardConfigurationDraft} from "./configuration-acknowledgement.js";
+import {captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, completeConfigurationAcknowledgement, reconcileConfigurationAcknowledgement, discardConfigurationDraft} from "./configuration-acknowledgement.js";
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
 function fieldErrorKey(key) {
@@ -57,16 +57,16 @@ async function runFrontendMutation(panel, control, label, operation) {
 
 export async function saveConfigurationAcrossRestart(panel, payload, submitted, submittedTitle) {
   const baseline = panel._configData;
-  const agentId = panel._agentId;
+  const owner = captureConfigurationOwner(panel);
   try {
     return await panel._call("configuration", "save", payload);
   } catch (error) {
-    if (!String(error?.message || error).includes("Configuration changed in another tab") ||
+    if (!configurationSubmissionIsCurrent(panel, owner) || !String(error?.message || error).includes("Configuration changed in another tab") ||
         !baseline?.server_epoch || panel._configData !== baseline) throw error;
     const latest = await panel._call("configuration", "get");
     if (latest?.server_epoch === baseline.server_epoch || !latest?.server_epoch ||
         latest.title !== baseline.title || !same(latest.config, baseline.config) ||
-        panel._agentId !== agentId || !same(panel._draft, submitted) ||
+        !configurationSubmissionIsCurrent(panel, owner) || !same(panel._draft, submitted) ||
         panel._draftTitle !== submittedTitle) throw error;
     // A new HA process lost the in-memory revision lineage. The persisted
     // baseline is unchanged, so the draft can safely use its fresh revision.

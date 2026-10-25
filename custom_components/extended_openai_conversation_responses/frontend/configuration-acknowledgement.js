@@ -2,9 +2,14 @@ import {clone, same, mergeAcknowledgedDraft} from "./unsaved-state.js";
 
 const field = (config, key) => Object.hasOwn(config, key) ? [config[key]] : [];
 
+export function captureConfigurationOwner(panel) {
+  return {agentId:panel._agentId, entryId:panel._selectedAgent?.()?.entry_id,
+    userId:panel.hass?.user?.id, draftGeneration:panel._eocDraftGeneration || 0};
+}
+
 export function captureConfigurationSubmission(panel) {
   return {
-    agentId:panel._agentId, entryId:panel._selectedAgent?.()?.entry_id,
+    ...captureConfigurationOwner(panel),
     view:panel._viewKey?.(),
     revision:panel._configData?.revision,
     readEpoch:panel._eocConfigurationReadEpoch || 0,
@@ -16,9 +21,17 @@ export function captureConfigurationSubmission(panel) {
   };
 }
 
-export function configurationSubmissionIsCurrent(panel, submission) {
+export function configurationOwnerIsCurrent(panel, submission) {
   return panel._agentId === submission.agentId
-    && panel._selectedAgent?.()?.entry_id === submission.entryId;
+    && panel._selectedAgent?.()?.entry_id === submission.entryId
+    && (!Object.hasOwn(submission, "userId") || panel.hass?.user?.id === submission.userId);
+}
+
+export function configurationSubmissionIsCurrent(panel, submission) {
+  return configurationOwnerIsCurrent(panel, submission)
+    // Identity-only collection refresh descriptors remain supported. Draft
+    // authoring and queue admission capture the full owner above.
+    && (!Object.hasOwn(submission, "draftGeneration") || (panel._eocDraftGeneration || 0) === submission.draftGeneration);
 }
 
 export function configurationReadOvertookSubmission(panel, submission) {
@@ -96,7 +109,10 @@ function retainConfigurationAcknowledgement(panel, saved, submission) {
     if (submission.writesTitle && panel._draftTitle === submission.title) panel._draftTitle = saved.title;
   }
   const user = panel.hass?.user?.id;
-  const owns = target => configurationSubmissionIsCurrent(target, submission) && target.hass?.user?.id === user;
+  const owns = target => configurationOwnerIsCurrent(target, submission) && target.hass?.user?.id === user
+    // A source must still own its submitted session. A replacement destination
+    // has its own session and acquires the delta through explicit recovery.
+    && (target !== panel || configurationSubmissionIsCurrent(panel, submission));
   const states = new WeakMap();
   const acknowledgement = (destination, retry) => {
     if (!owns(panel) || !owns(destination) || panel.isConnected !== false
@@ -105,9 +121,10 @@ function retainConfigurationAcknowledgement(panel, saved, submission) {
     if (state?.running) return {accepted:false, refreshing:true};
     if (state && !destination._configDataStale && destination._configData?.config && destination._configData.projection !== "retention"
         && (destination._eocConfigurationReadEpoch || 0) > state.epoch) {
-      if (destination._configDirty) return {accepted:false, refreshing:false};
       // The source is detached and cannot dispatch another save. Preserve its
       // acknowledged authoring baseline until the lifecycle transfers its delta.
+      // Destination edits are resolved by that same lifecycle's merge/conflict
+      // planner, not by withholding this completed-write handoff indefinitely.
       panel._configData = acknowledgement.baseline();
       panel._syncConfigDirty?.();
       if (destination._result === destination._configData) destination._render?.();
