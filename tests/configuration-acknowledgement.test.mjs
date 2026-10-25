@@ -259,3 +259,68 @@ test("a late Request Rules settings acknowledgement cannot replace another assis
   assert.equal(host._rulesSettingsDraft.defaults.fuzzy, false);
   assert.equal(scope.revision, "rules-a2", "the original scope still owns its acknowledgement");
 });
+
+for (const full of [false, true]) {
+  test(`an overtaken ${full ? "full" : "partial"} acknowledgement keeps the newer read until revalidation`, async () => {
+    const host = panel(), submission = captureConfigurationSubmission(host), read = deferred();
+    const current = host._configData = {revision:"r3", title:"Newer title", config:{prompt:"Newer persisted prompt", max_tokens:300}};
+    host._result = {sources:["A different page"]};
+    const otherPage = host._result;
+    host._eocConfigurationReadEpoch = 1;
+    host._draft = {...current.config, prompt:"Still unsaved"};
+    let refreshed = false, reads = 0;
+    host._loadConfigDraft = async options => {
+      reads++;
+      assert.deepEqual(options, {preserveResult:true});
+      assert.equal(refreshed, true, "finish editor acknowledgement before a new asynchronous boundary");
+      assert.equal(host._configData, current, "never publish the stale r2 projection, even briefly");
+      await read.promise;
+    };
+    const pending = completeConfigurationAcknowledgement(host,
+      {revision:"r2", title:"Submitted title", config:{prompt:"Submitted prompt", max_tokens:200}}, submission,
+      {message:"Saved", ...(full ? {} : {fields:["max_tokens"]}), refresh:() => {refreshed = true;}});
+    await Promise.resolve();
+    assert.equal(refreshed, true);
+    assert.equal(reads, 1);
+    assert.equal(host._configData, current);
+    assert.equal(host._configDataStale, true);
+    assert.equal(host._draft.prompt, "Still unsaved");
+    read.resolve();
+    await pending;
+    assert.equal(host._result, otherPage);
+    assert.deepEqual(host.toasts, [["Saved"]]);
+  });
+}
+
+test("a failed revalidation keeps the completed write and editor acknowledgement without replay", async () => {
+  const host = panel(), submission = captureConfigurationSubmission(host);
+  host._eocConfigurationReadEpoch = 1;
+  let acknowledged = 0, reads = 0;
+  host._loadConfigDraft = async () => { reads++; throw new Error("Fresh read offline"); };
+  await completeConfigurationAcknowledgement(host, {revision:"r2", config:submission.draft}, submission, {
+    message:"Saved", refresh:() => { acknowledged++; },
+  });
+  assert.equal(acknowledged, 1);
+  assert.equal(reads, 1);
+  assert.equal(host._configData.revision, "r1");
+  assert.equal(host._configDataStale, true);
+  assert.match(host.toasts.at(-1)[0], /^Saved, but .*Fresh read offline/);
+});
+
+for (const change of ["agent", "entry", "visit", "disconnect"]) {
+  test(`acknowledgement revalidation cannot render after ${change} replacement`, async () => {
+    const host = panel(), submission = captureConfigurationSubmission(host), read = deferred();
+    host._eocConfigurationReadEpoch = 1;
+    host._result = host._configData;
+    host._loadConfigDraft = () => read.promise;
+    const pending = completeConfigurationAcknowledgement(host, {revision:"r2", config:submission.draft}, submission,
+      {message:"Saved", refresh:() => {}});
+    await Promise.resolve();
+    if (change === "agent") host._agentId = "b";
+    if (change === "entry") host.entryId = "replacement";
+    if (change === "visit") host._loadToken++;
+    if (change === "disconnect") host.isConnected = false;
+    read.resolve(); await pending;
+    assert.equal(host.renders, 0);
+  });
+}

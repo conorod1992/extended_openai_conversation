@@ -588,6 +588,7 @@ export function consumeStoredConfigurationPrefetch(panel, action) {
 }
 
 function applyPrefetchedConfiguration(panel, prefetch, configData) {
+  panel._observeConfigurationRead?.(configData);
   panel._configData = configData;
   panel._rememberCleanConfiguration?.(configData, prefetch.subentryId);
   panel._draft = JSON.parse(JSON.stringify(configData.config));

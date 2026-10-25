@@ -7,6 +7,8 @@ export function captureConfigurationSubmission(panel) {
     agentId:panel._agentId, entryId:panel._selectedAgent?.()?.entry_id,
     view:panel._viewKey?.(),
     revision:panel._configData?.revision,
+    readEpoch:panel._eocConfigurationReadEpoch || 0,
+    modelIntent:panel._eocModelIntent || null,
     baseline:clone(panel._configData?.config || {}),
     draft:clone(panel._draft || {}), title:panel._draftTitle,
   };
@@ -17,10 +19,33 @@ export function configurationSubmissionIsCurrent(panel, submission) {
     && panel._selectedAgent?.()?.entry_id === submission.entryId;
 }
 
+export function configurationReadOvertookSubmission(panel, submission) {
+  return (panel._eocConfigurationReadEpoch || 0) !== (submission.readEpoch || 0);
+}
+
+function preservesModelPreparation(panel, submission, fields) {
+  const ownsModel = !fields || fields.some(key => ["chat_model", "azure_model", "reasoning_effort"].includes(key));
+  return !ownsModel || (panel._eocModelIntent || null) !== (submission.modelIntent || null);
+}
+
 // A full save replaces the saved projection. Independent saves acknowledge only
 // their own fields, leaving unrelated persisted values and local edits alone.
 export function reconcileConfigurationAcknowledgement(panel, saved, submission, {fields, metadata = []} = {}) {
   if (!configurationSubmissionIsCurrent(panel, submission) || saved?.valid === false || !saved?.config) return false;
+  if (configurationReadOvertookSubmission(panel, submission)) {
+    // A response describes the commit it acknowledges, not necessarily the
+    // latest persisted configuration. Keep an accepted newer read until an
+    // authoritative re-read can establish the current state after this write.
+    panel._invalidateCleanConfiguration?.(submission.agentId);
+    panel._configDataStale = true;
+    if (panel._eocPendingModelPreparation && !preservesModelPreparation(panel, submission, fields)) {
+      // A save that commits the active model intent also retires its defaults
+      // when a later read, rather than this response, owns the baseline.
+      panel._eocPendingModelPreparation = null;
+      panel._eocModelChangeToken = (panel._eocModelChangeToken || 0) + 1;
+    }
+    return true;
+  }
   if (fields && !panel._configData?.config) return true;
   const full = !fields;
   const keys = fields?.filter(key => Object.hasOwn(saved.config, key));
@@ -56,7 +81,15 @@ export function reconcileConfigurationAcknowledgement(panel, saved, submission, 
       if (Object.hasOwn(previous?.config || {}, key)) submitted[key] = clone(previous.config[key]);
       else delete submitted[key];
     }
-    panel._draft = mergeAcknowledgedDraft(panel._draft, submitted, saved.config, keys);
+    const previousDraft = panel._draft;
+    const nextDraft = mergeAcknowledgedDraft(previousDraft, submitted, saved.config, keys);
+    // An unrelated acknowledgement, or one submitted before the active model
+    // edit, must not abandon that edit's pending defaults. A save submitting
+    // the active intent still commits it and invalidates the old preparation.
+    if (preservesModelPreparation(panel, submission, fields)) {
+      panel._eocPendingModelPreparation?.rebindDraft?.(previousDraft, nextDraft);
+    }
+    panel._draft = nextDraft;
     if (full && panel._draftTitle === submission.title) panel._draftTitle = saved.title;
   }
   if (agent) {
@@ -75,8 +108,18 @@ export function reconcileConfigurationAcknowledgement(panel, saved, submission, 
 export async function completeConfigurationAcknowledgement(panel, saved, submission, {message, refresh, ...projection}) {
   if (!configurationSubmissionIsCurrent(panel, submission) || saved?.valid === false || !saved?.config) return false;
   return presentAcknowledgedMutation(panel, submission, message, async () => {
+    const overtaken = configurationReadOvertookSubmission(panel, submission);
     reconcileConfigurationAcknowledgement(panel, saved, submission, projection);
+    // Complete editor ownership before awaiting another read. A panel can be
+    // replaced during that await; recovery must see the acknowledged identity
+    // and dirty baseline, even if the refresh fails or belongs to an old visit.
     await refresh?.();
+    if (overtaken && panel.isConnected !== false && configurationSubmissionIsCurrent(panel, submission)) {
+      const view = panel._viewKey?.(), visit = panel._loadToken;
+      await panel._loadConfigDraft?.({preserveResult:true});
+      if (panel.isConnected !== false && configurationSubmissionIsCurrent(panel, submission)
+          && panel._viewKey?.() === view && panel._loadToken === visit && panel._result === panel._configData) panel._render?.();
+    }
   });
 }
 

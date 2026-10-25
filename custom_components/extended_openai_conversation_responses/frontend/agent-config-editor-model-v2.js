@@ -104,7 +104,7 @@ function applyModelDefaults(panel, data) {
   panel._draft.reasoning_effort = efforts.includes(recommended) ? recommended : efforts[0];
 }
 
-function ownModelPreparation(panel, field, model, token, preserveReasoning) {
+function ownModelPreparation(panel, field, model, token, preserveReasoning, intent) {
   const agent = panel._agentId, entry = panel._selectedAgent?.()?.entry_id, user = panel.hass?.user?.id;
   const capabilityModel = String(panel._draft.azure_model || panel._draft.chat_model || "");
   const owns = target => target._agentId === agent && target._selectedAgent?.()?.entry_id === entry && target.hass?.user?.id === user;
@@ -112,7 +112,7 @@ function ownModelPreparation(panel, field, model, token, preserveReasoning) {
     draft:panel._draft, reasoningRevision:panel._eocReasoningChoiceRevision || 0,
     defaultsPending:true, running:true, failed:false,
     intentCurrent:() => owns(panel)
-      && panel._eocModelChangeToken === token && panel._draft === preparation.draft
+      && panel._eocModelChangeToken === token && panel._eocModelIntent === intent && panel._draft === preparation.draft
       && panel._draft?.[field] === model
       && String(panel._draft?.azure_model || panel._draft?.chat_model || "") === capabilityModel,
     current:() => panel.isConnected !== false && preparation.intentCurrent(),
@@ -130,7 +130,7 @@ function ownModelPreparation(panel, field, model, token, preserveReasoning) {
       panel._eocModelChangeToken++;
       // Defaults already in the transferred draft need no second application.
       // Otherwise restart against the destination's own current catalogue.
-      if (preparation.defaultsPending) void changeConfigurationModel(destination, {dataset:{config:field}, value:model}, {preserveReasoning:keepReasoning});
+      if (preparation.defaultsPending) void changeConfigurationModel(destination, {dataset:{config:field}, value:model}, {preserveReasoning:keepReasoning, intent});
       return true;
     },
     resumeIfIdle({reconnect = false, retry = false} = {}) {
@@ -178,13 +178,16 @@ export function bindConfiguration(panel) {
   return result;
 }
 
-export async function changeConfigurationModel(panel, control, {preserveReasoning = false} = {}) {
+export async function changeConfigurationModel(panel, control, {preserveReasoning = false, intent = null} = {}) {
   const field = control.dataset?.config || "chat_model";
   const model = control.value;
   const draft = panel._draft;
   const token = (panel._eocModelChangeToken || 0) + 1;
   panel._eocModelChangeToken = token;
-  const preparation = ownModelPreparation(panel, field, model, token, preserveReasoning);
+  // Retries and handoffs start a new async operation for the same authored
+  // model choice. Only another user model change creates a different intent.
+  panel._eocModelIntent = intent || {};
+  const preparation = ownModelPreparation(panel, field, model, token, preserveReasoning, panel._eocModelIntent);
   const current = preparation.current;
   try {
     const data = await lookupModelData(panel, String(draft.azure_model || draft.chat_model || ""), "lookup", current);

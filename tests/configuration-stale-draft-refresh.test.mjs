@@ -78,6 +78,52 @@ function panel() {
   return {host, controls, edit};
 }
 
+for (const kind of ["fresh", "cached", "retention", "partial", "malformed", "unrelated"]) {
+  test(`configuration read repair health is conservative for ${kind} metadata`, () => {
+    const {host} = panel();
+    const issue = {field:kind === "unrelated" ? "provider" : "functions", repairable:true, message:"Existing issue"};
+    host._selectedAgent().configuration_issue = issue;
+    const snapshot = structuredClone(host._configData);
+    if (kind === "retention") snapshot.projection = "retention";
+    if (kind === "partial") delete snapshot.config.function_groups;
+    if (kind === "malformed") snapshot.function_repair = {};
+    host._observeConfigurationRead(snapshot, {fresh:kind !== "cached"});
+    assert.equal(host._eocConfigurationReadEpoch, 1);
+    if (kind === "fresh") assert.equal(host._selectedAgent().configuration_issue, undefined);
+    else assert.equal(host._selectedAgent().configuration_issue, issue);
+  });
+}
+
+test("a fresh complete read updates an active Function repair issue", () => {
+  const {host} = panel();
+  const snapshot = {...structuredClone(host._configData), function_repair:{
+    invalid_tools:[], invalid_count:0, group_issues:[{id:"damaged"}],
+    tools_valid:true, validation_error:"Group references an unavailable Function",
+  }};
+  host._observeConfigurationRead(snapshot, {fresh:true});
+  assert.deepEqual(host._selectedAgent().configuration_issue,
+    {field:"functions", repairable:true, message:"Group references an unavailable Function"});
+});
+
+test("an accepted older read does not clear newer agent issue metadata", async () => {
+  const {host} = panel(), response = deferred();
+  host._configDataStale = true;
+  host._selectedAgent().configuration_issue = {field:"functions", repairable:true, message:"Original issue"};
+  host._hass = {callWS:async message => {
+    assert.equal(message.section, "configuration");
+    assert.equal(message.action, "get");
+    return response.promise;
+  }};
+  const reading = host._loadConfigDraft();
+  await Promise.resolve();
+  const newer = {field:"functions", repairable:true, message:"Newer catalogue issue"};
+  host._selectedAgent().configuration_issue = newer;
+  response.resolve({...structuredClone(host._configData), revision:"r2"});
+  await reading;
+  assert.equal(host._selectedAgent().configuration_issue, newer);
+  assert.equal(host._eocConfigurationReadEpoch, 1);
+});
+
 for (const kind of ["function", "group"]) {
   test(`dirty prompt and title survive a ${kind} rename, fresh preview and later save`, async () => {
     const {host, controls, edit} = panel();
@@ -384,3 +430,40 @@ test("retention refresh and expansion preserve edits without dropping full field
   assert.equal(host._draft.prompt, "Full prompt");
   assert.deepEqual(calls, ["retention_get", "get", "get"]);
 });
+
+for (const separatePage of [false, true]) {
+  test(`acknowledgement revalidation preserves the current page, separate=${separatePage}`, async () => {
+    const {host, edit} = panel();
+    edit("prompt", "Local prompt");
+    host._configDataStale = true;
+    const page = host._result = separatePage ? {sources:[{title:"Knowledge"}]} : host._configData;
+    const saved = {...structuredClone(host._configData), revision:"r3"};
+    saved.config.top_p = 0.25;
+    host._call = async () => saved;
+    await host._loadConfigDraft({preserveResult:true});
+    assert.equal(host._configData, saved);
+    assert.equal(host._eocConfigurationReadEpoch, 1);
+    assert.equal(host._result, separatePage ? page : saved);
+    assert.equal(host._draft.prompt, "Local prompt");
+    assert.equal(host._draft.top_p, 0.25);
+  });
+}
+
+for (const change of ["disconnect", "user"]) {
+  test(`acknowledgement revalidation cannot publish after ${change} replacement`, async () => {
+    const {host} = panel(), read = deferred();
+    host._hass = {user:{id:"admin"}};
+    host._configDataStale = true;
+    host._call = () => read.promise;
+    const baseline = host._configData, draft = host._draft;
+    const loading = host._loadConfigDraft({preserveResult:true});
+    if (change === "disconnect") host.isConnected = false;
+    else host._hass = {user:{id:"other"}};
+    read.resolve({revision:"r3", title:"Obsolete read", config:{prompt:"Obsolete"}});
+    await loading;
+    assert.equal(host._configData, baseline);
+    assert.equal(host._draft, draft);
+    assert.equal(host._configDataStale, true);
+    assert.equal(host._eocConfigurationReadEpoch || 0, 0);
+  });
+}

@@ -10,6 +10,8 @@ const retained = new Map();
 const ownScopes = panel => [...pageCoordinator(panel).scopes.entries()]
   .filter(([id]) => id !== "retained-drafts").map(([, scope]) => scope);
 const hasOwnChanges = panel => ownScopes(panel).some(scope => scope.dirty());
+const hasOwnPendingWork = panel => Boolean(panel._configurationSaving || panel._eocAgentMutations
+  || ownScopes(panel).some(scope => scope.pending));
 let unloadBound = false;
 
 function hasRetainedChanges() {
@@ -59,7 +61,9 @@ export function restorePanelDrafts(panel) {
     dirty: () => owner(panel) === key && [...sources].some(source => source !== panel && hasOwnChanges(source)),
     owns: destination => Boolean(destination),
     destinations: () => [...sources].filter(hasOwnChanges).map(source => source._viewKey()),
-    get pending() { return [...sources].some(source => ownScopes(source).some(scope => scope.pending)); },
+    // A dispatched write remains pending after HA replaces its owning panel.
+    // Discarding the detached editor cannot cancel that backend operation.
+    get pending() { return [...sources].some(hasOwnPendingWork); },
     discard: () => {
       for (const source of sources) for (const scope of ownScopes(source)) if (scope.dirty()) scope.discard?.();
       sources.clear();
@@ -74,8 +78,8 @@ export function restorePanelDrafts(panel) {
 function restoreDraftSource(panel, source, key) {
   if (!source || owner(source) !== key || source.isConnected || !panel.isConnected || panel._busy || panel._error) return;
   // Do not transfer ownership of a mutation still awaiting acknowledgement.
-  if ([source, panel].some(value => value._configurationSaving || value._eocAgentMutations
-      || [...pageCoordinator(value).scopes.values()].some(scope => scope.pending))) {
+  if ([source, panel].some(value => hasOwnPendingWork(value)
+      || pageCoordinator(value).scopes.get("retained-drafts")?.pending)) {
     if (!panel._eocDraftRecoveryTimer) panel._eocDraftRecoveryTimer = setTimeout(() => {
       panel._eocDraftRecoveryTimer = null;
       restorePanelDrafts(panel);
