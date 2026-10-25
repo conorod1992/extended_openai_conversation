@@ -113,6 +113,7 @@ for (const bundle of [false, true]) for (const kind of ['knowledge', 'memory']) 
     const visit = await panel.evaluate(host => host._loadToken);
     await panel.evaluate(host => host._loadSection(true));
     expect(await panel.evaluate(host => host._loadToken)).not.toBe(visit);
+    const freshCollection = await panel.evaluate((host, kind) => JSON.stringify(host._result[kind === 'memory' ? 'memories' : 'sources']), kind);
     await expect(panel.locator(`#${kind}-dialog`)).toBeVisible();
     await page.evaluate(failure => pendingEditors[0].finish(failure), failure);
     if (failure) {
@@ -121,6 +122,10 @@ for (const bundle of [false, true]) for (const kind of ['knowledge', 'memory']) 
       await expect(panel.locator(`#${kind}-content`)).toHaveValue('Saved once across reconnect');
     } else {
       await expect(panel.locator(`#${kind}-dialog`)).not.toBeVisible();
+      expect(await panel.evaluate((host, kind) => JSON.stringify(host._result[kind === 'memory' ? 'memories' : 'sources']), kind)).toBe(freshCollection);
+      // The acknowledged editor may close, while a newer collection read keeps
+      // its own snapshot. An explicit fresh read observes the persisted write.
+      await panel.evaluate(host => host._loadSection(true));
       const records = await panel.evaluate((host, kind) => host._result[kind === 'memory' ? 'memories' : 'sources'], kind);
       expect(records.filter(record => record.content === 'Saved once across reconnect')).toHaveLength(1);
       expect(await page.evaluate(({section, action}) => browserHarness.calls.filter(call => call.section === section && call.action === action).length, {section, action})).toBe(1);

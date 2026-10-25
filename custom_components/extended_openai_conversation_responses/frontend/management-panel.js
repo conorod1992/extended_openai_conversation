@@ -2346,7 +2346,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     try {
       const response = await this._call("knowledge", editing ? "update" : "create", { ...(editing ? { source_id: this._editingSource.source_id, expected_revision: this._editingSource.updated_at } : {}), ...values });
       if (!current()) return;
-      if (!getRouteFeature("data-memory/knowledge")?.applyKnowledgeMutation(this, response)) throw new Error("The saved source response was incomplete.");
+      const ownsList = this._ownsRetainedMutation(owner);
+      if (!response?.source?.source_id || (ownsList && !getRouteFeature("data-memory/knowledge")?.applyKnowledgeMutation(this, response))) throw new Error("The saved source response was incomplete.");
       this._setSaving(button, false);
       if (same(this._knowledgeValues(), values)) dialog.close();
       else {
@@ -2358,9 +2359,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         this.shadowRoot.querySelector("#knowledge-delete").hidden = false;
         this.shadowRoot.querySelector("#knowledge-dialog-title").textContent = "Edit Knowledge source";
       }
-      writeSectionCache(this, this._sectionCacheKey(), this._result);
+      // The editor owns its acknowledgement across a refresh, but only the
+      // original visit owns collection data. A newer read must remain intact.
+      if (ownsList) writeSectionCache(this, this._sectionCacheKey(), this._result);
       const agent = this._selectedAgent();
-      if (agent && Number.isFinite(response?.feature_status?.source_count)) agent.knowledge_source_count = response.feature_status.source_count;
+      if (ownsList && agent && Number.isFinite(response?.feature_status?.source_count)) agent.knowledge_source_count = response.feature_status.source_count;
       this._render();
       this._toast(editing ? "Knowledge source updated" : "Knowledge source saved");
     } catch (err) {
@@ -2401,12 +2404,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       });
       if (!current()) return;
       if (!response?.memory?.memory_id) throw new Error("The saved memory response was incomplete.");
-      if (temporary) {
+      const ownsList = this._ownsRetainedMutation(owner);
+      if (ownsList && temporary) {
         if (response.scope_id === owner.scope && owner.kind === "temporary") {
           this._result = {...this._result, memories: [...(this._result.memories || []).filter(memory => memory.memory_id !== response.memory.memory_id), response.memory]};
         }
         if (response.status === "created") this._patchScopeCount(response.scope_id, "temporary_memory_count", 1);
-      } else if (owner.kind === "persistent" && !await getRouteFeature("data-memory/memories")?.applyPersistentMemoryMutation(this, response, {sourceScope: owner.scope})) throw new Error("The saved memory response was incomplete.");
+      } else if (ownsList && owner.kind === "persistent" && !await getRouteFeature("data-memory/memories")?.applyPersistentMemoryMutation(this, response, {sourceScope: owner.scope})) throw new Error("The saved memory response was incomplete.");
       if (!current()) return;
       this._setSaving(button, false);
       unlock();
@@ -2419,13 +2423,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         this.shadowRoot.querySelector("#memory-delete").hidden = false;
         this.shadowRoot.querySelector("#memory-dialog-title").textContent = "Edit memory";
       }
-      if (!temporary && response.status === "created") this._patchScopeCount(response.scope_id, "memory_count", 1);
-      else if (editing && response.scope_id !== sourceScope) {
+      if (ownsList && !temporary && response.status === "created") this._patchScopeCount(response.scope_id, "memory_count", 1);
+      else if (ownsList && editing && response.scope_id !== sourceScope) {
         this._patchScopeCount(sourceScope, "memory_count", -1);
         this._patchScopeCount(response.scope_id, "memory_count", 1);
       }
-      this._patchScopeCount(owner.scope, "memory_count", 0);
-      if (!temporary && response.status === "created") this._selectedAgent().memory_count = Number(this._selectedAgent().memory_count || 0) + 1;
+      if (ownsList) this._patchScopeCount(owner.scope, "memory_count", 0);
+      if (ownsList && !temporary && response.status === "created") this._selectedAgent().memory_count = Number(this._selectedAgent().memory_count || 0) + 1;
       this._render();
       this._toast(editing ? "Memory updated" : "Memory added");
     } catch (err) {
