@@ -825,3 +825,73 @@ async def test_condition_shorthand_captures_survive_create_reload_and_execute(
         [{"repeat": {"until": [guard], "sequence": [{"stop": "done"}]}}],
     ):
         assert _validate_script_sequence(deepcopy(container), capture_names={"device"})
+
+@pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
+@pytest.mark.parametrize("cancel", [True, False])
+@pytest.mark.parametrize("fail_cleanup", [True, False])
+@pytest.mark.parametrize("route", ["function", "local_rule"])
+async def test_script_cleanup_does_not_mask_public_cancellation(
+    hass, monkeypatch, api_mode, cancel, fail_cleanup, route
+):
+    from homeassistant.helpers.script import Script
+    from custom_components.extended_openai_conversation_responses.public_errors import SanitizedUnexpectedBackendError
+    from tests_real_ha.test_provider_wire_e2e import (
+        _chat_sse_tool_call, _chat_sse_text, _responses_sse_tool_call,
+        _responses_sse_text, _install_wire,
+    )
+
+    entered = asyncio.Event()
+    effects = []
+    cleanups = []
+
+    async def effect(call):
+        effects.append(call.context.id)
+        entered.set()
+
+    hass.services.async_register("script_probe", "effect", effect)
+    tool = {
+        "spec": {"name": "perform_once", "description": "Execute once", "parameters": {"type": "object", "properties": {}}},
+        "function": {"type": "script", "sequence": [
+            {"action": "script_probe.effect"},
+            {"wait_for_trigger": [{"trigger": "event", "event_type": "script_probe_release"}]},
+        ]},
+    }
+    agent = await _agent(hass, api_mode=api_mode, function_tool_error_recovery=False, **{CONF_FUNCTION_TOOLS: [tool] if route == "function" else []})
+    call = _chat_sse_tool_call if api_mode == "chat_completions" else _responses_sse_tool_call
+    text = _chat_sse_text if api_mode == "chat_completions" else _responses_sse_text
+    replies = [text("Healthy"), text("Healthy")]
+    if route == "function":
+        replies.insert(0, call("perform-once", "perform_once", {}))
+    else:
+        await agent._request_rules.async_create(_local(tool["function"]["sequence"], phrase="perform once", success="Healthy"))
+    _install_wire(monkeypatch, agent, replies)
+    unload = Script.async_unload
+
+    async def finish_cleanup(script):
+        await unload(script)
+        cleanups.append(True)
+        if fail_cleanup:
+            raise RuntimeError("PRIVATE_SCRIPT_CLEANUP_FAILURE")
+
+    monkeypatch.setattr(Script, "async_unload", finish_cleanup)
+    task = asyncio.create_task(_say(hass, agent, "perform once"))
+    await asyncio.wait_for(entered.wait(), 5)
+    await hass.async_block_till_done()
+    if cancel:
+        task.cancel("cancel script after effect")
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    else:
+        hass.bus.async_fire("script_probe_release")
+        if fail_cleanup and route == "function":
+            with pytest.raises(SanitizedUnexpectedBackendError):
+                await task
+        elif fail_cleanup:
+            assert _speech(await task, successful=False) == "Failed safely"
+        else:
+            assert _speech(await task) == "Healthy"
+    assert len(effects) == 1
+    assert cleanups == [True]
+    assert hass.bus.async_listeners().get("script_probe_release", 0) == 0
+    assert _speech(await _say(hass, agent, "independent healthy turn")) == "Healthy"
+    assert len(effects) == 1

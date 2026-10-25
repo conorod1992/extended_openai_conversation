@@ -75,6 +75,7 @@ from .request_rule_patterns import (
     sentence_capture_names,
     validate_match_input,
 )
+from .script_lifecycle import async_cleanup_script
 from .script_payload import (
     effective_service_payload,
     is_function_service_action,
@@ -3652,6 +3653,7 @@ async def _async_evaluate_matched_rule(
             )
             execution = StopReason()
             execution_token = script_execution_cv.set(execution)
+            cancelled = False
             try:
                 run_result = await script.async_run(
                     {**match.slots, "request": {"slots": dict(match.slots)}},
@@ -3684,6 +3686,9 @@ async def _async_evaluate_matched_rule(
                 stopped = not variables.get(completion_marker) and bool(
                     variables.get(stop_marker)
                 )
+            except asyncio.CancelledError:
+                cancelled = True
+                raise
             finally:
                 script_execution_cv.reset(execution_token)
                 _ACTIVE_RESULT_PATHS.reset(paths_token)
@@ -3695,10 +3700,7 @@ async def _async_evaluate_matched_rule(
                 # Script.async_unload was added after our minimum supported HA.
                 # Older Script releases expose async_stop for the same final
                 # run cleanup; keep using async_unload where it is available.
-                if unload := getattr(script, "async_unload", None):
-                    await unload()
-                else:
-                    await script.async_stop()
+                await async_cleanup_script(script, cancelled=cancelled)
         except GuestModeDenied, _GuestTemplateDenied:
             return RuleEvaluation(match, True, GUEST_MODE_UNAVAILABLE, successful=False)
         except Exception as err:
