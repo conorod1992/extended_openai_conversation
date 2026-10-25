@@ -104,10 +104,12 @@ test("disabled Model and Speech explanations remain readable while their control
   await page.goto(fixtureUrl("assistant/model-responses"));
   const panel=page.locator("extended-openai-management-panel");
   await panel.locator("#reset-model-parameters").waitFor();
+  await expect.poll(()=>panel.evaluate(host=>host._modelCatalogData?.requested_model===String(host._draft.azure_model||host._draft.chat_model||""))).toBe(true);
   const temperatureState=await panel.evaluate(host=>{
     const capabilities={...host._result.model_capabilities,supports_temperature:false};
     host._result.model_capabilities=capabilities;
     host._configData.model_capabilities=capabilities;
+    host._modelCatalogData={...host._modelCatalogData,model_capabilities:capabilities};
     host._eocMainMarkup=null;
     host._render();
     const control=host.shadowRoot.querySelector("#config-temperature");
