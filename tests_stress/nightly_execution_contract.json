@@ -1947,6 +1947,7 @@
     "tests_stress/test_management_transaction_matrix.py::test_mixed_maintenance_waiters_storage_failure_and_management_progress",
     "tests_stress/test_management_transaction_matrix.py::test_rule_group_and_references_rollback_on_store_failure",
     "tests_stress/test_management_ws_contract.py::test_reviewed_browser_payloads_are_accepted_by_websocket_schemas",
+    "tests_stress/test_management_ws_contract.py::test_shared_rule_dispatcher_preserves_literal_mutation_review",
     "tests_stress/test_management_ws_contract.py::test_shipped_frontend_mutation_actions_are_reviewed",
     "tests_stress/test_memory_contract_sequences.py::test_seeded_memory_contract_against_real_storage",
     "tests_stress/test_memory_knowledge_scale.py::test_live_model_change_before_manager_sync_keeps_pending_provider_bound",
