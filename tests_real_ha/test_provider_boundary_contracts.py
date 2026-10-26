@@ -19,7 +19,7 @@ from custom_components.extended_openai_conversation_responses.live_subentry_upda
 from homeassistant.components import ai_task, conversation
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.chat_session import async_get_chat_session
+from tests_real_ha.chat_sessions import async_get_chat_session
 from tests_real_ha.strict_provider import install_strict_provider
 from tests_real_ha.test_ai_task_provider_wire import _task_entity
 from tests_real_ha.test_ai_task_runtime import CallerAPI, ContextProbeTool

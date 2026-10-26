@@ -14,8 +14,8 @@ from homeassistant.components import ai_task
 from homeassistant.components.ai_task.const import DATA_COMPONENT
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
-from homeassistant.helpers.chat_session import async_get_chat_session
 from homeassistant.setup import async_setup_component
+from tests_real_ha.chat_sessions import async_get_chat_session
 from tests_real_ha.test_ai_task_runtime import (
     CallerAPI,
     _chunk,

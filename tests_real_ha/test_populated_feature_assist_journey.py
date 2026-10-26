@@ -40,8 +40,8 @@ from homeassistant.components.assist_pipeline.pipeline import (
 )
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
 from homeassistant.core import Context
-from homeassistant.helpers import chat_session
 from homeassistant.setup import async_setup_component
+from tests_real_ha.chat_sessions import async_get_chat_session
 from tests_real_ha.test_cross_feature_acceptance import _agent
 from tests_real_ha.test_knowledge_provider_wire_e2e import (
     _responses_sse_tool_call,
@@ -69,7 +69,7 @@ _QUERY = "What is my calibration token?"
 async def _assist(hass, agent, conversation_id, text):
     """HA constructs the actual ConversationInput, listener and intent result."""
     events = []
-    with chat_session.async_get_chat_session(hass, conversation_id) as session:
+    with async_get_chat_session(hass, conversation_id) as session:
         pipeline_input = PipelineInput(
             intent_input=text,
             session=session,

@@ -11,7 +11,7 @@ from custom_components.extended_openai_conversation_responses.ha_tool_result_com
     tool_result_data,
 )
 from homeassistant.components import conversation
-from homeassistant.helpers.chat_session import async_get_chat_session
+from tests_real_ha.chat_sessions import async_get_chat_session
 from tests_real_ha.test_cross_feature_acceptance import _agent, _say, _speech
 from tests_real_ha.test_provider_wire_e2e import (
     _chat_sse_text,

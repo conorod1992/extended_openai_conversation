@@ -30,6 +30,7 @@ from homeassistant.helpers import (
     entity_registry as er,
 )
 from homeassistant.setup import async_setup_component
+from tests_real_ha.chat_sessions import async_get_chat_session
 from tests_real_ha.test_assist_streaming_speech_processing import (
     _final_speech,
     _progressive_text,
@@ -208,7 +209,7 @@ async def test_satellite_background_survives_followup_and_clears_for_new_owner(
     # Replace only the hardware audio/STT adapter, retaining real HA pipeline,
     # satellite one-shot context consumption, ChatLog and integration dispatch.
     async def from_audio(hass, **kwargs):
-        with chat_session.async_get_chat_session(
+        with async_get_chat_session(
             hass, kwargs["conversation_id"]
         ) as session:
             run = PipelineRun(
@@ -273,6 +274,20 @@ async def test_satellite_background_survives_followup_and_clears_for_new_owner(
     await satellite.async_accept_pipeline_from_satellite(
         audio(), context=Context(user_id=other.id)
     )
+    from inspect import signature
+
+    if "context" in signature(chat_session.async_get_chat_session).parameters:
+        # New Core binds native session ownership before EOAI dispatch. A
+        # different user must not reach the provider through the old session.
+        assert len(wire.requests) == 2
+        await satellite.async_internal_start_conversation(
+            start_message="A new owner's task.",
+            extra_system_prompt="",
+            preannounce=False,
+        )
+        await satellite.async_accept_pipeline_from_satellite(
+            audio(), context=Context(user_id=other.id)
+        )
     assert background not in json.dumps(wire.requests[2]["body"])
     # Starting another satellite conversation also resets the old background.
     await satellite.async_internal_start_conversation(

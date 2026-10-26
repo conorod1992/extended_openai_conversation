@@ -31,7 +31,6 @@ from homeassistant.const import MATCH_ALL
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import intent, llm
-from homeassistant.helpers.chat_session import async_get_chat_session
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_track_time_interval
 
@@ -167,6 +166,7 @@ from .guest_mode import (
     guest_mode_denial_result,
     resolve_guest_policy,
 )
+from .ha_chat_session_compat import async_get_chat_session
 from .ha_llm_tools import (
     ToolSnapshot,
     async_discover,
@@ -861,7 +861,9 @@ class ExtendedOpenAIAgentEntity(
         assist_chat_log = current_chat_log.get()
         user_input.conversation_id = resolution.conversation_id
         with (
-            async_get_chat_session(self.hass, resolution.conversation_id) as session,
+            async_get_chat_session(
+                self.hass, resolution.conversation_id, context=user_input.context
+            ) as session,
             async_get_chat_log(self.hass, session, user_input) as chat_log,
             forward_chat_log_deltas(assist_chat_log, chat_log, user_input.text),
             processing_conversation_scope(
