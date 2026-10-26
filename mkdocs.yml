@@ -84,6 +84,7 @@ nav:
       - Create a Skill: skills/creating-skills.md
   - Reference:
       - Compatibility: reference/compatibility.md
+      - Request context ownership: development/request-context-ownership.md
       - Logging: reference/logging.md
       - Migration: migration.md
   - Help:
