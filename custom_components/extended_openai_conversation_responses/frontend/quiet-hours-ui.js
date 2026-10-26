@@ -1,18 +1,28 @@
 import {ensureNativePicker} from "./native-picker-loader.js";
+import {captureConfigurationOwner, configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
+import {capturePageRead, acceptPageRead} from "./page-save-acknowledgement.js";
 
 export async function loadQuietHours(panel, silent = false) {
   const token = ++panel._loadToken;
+  const owner = captureConfigurationOwner(panel), generation = panel._cacheGeneration;
+  const read = capturePageRead(panel, VIEW);
+  const current = () => token === panel._loadToken && panel._viewKey?.() === VIEW
+    && panel.isConnected !== false && configurationSubmissionIsCurrent(panel, owner);
   if (!silent) { panel._busy = true; panel._render(); }
   try {
     const result = await panel._call("quiet_hours", "get");
-    if (token !== panel._loadToken) return;
+    if (!current() || generation !== panel._cacheGeneration) return;
     panel._result = result;
     if (panel._unsavedState?.scopes.get(VIEW)?.agent !== panel._agentId) panel._quietHoursDraft = JSON.parse(JSON.stringify(result.config || {}));
     panel._error = null;
+    acceptPageRead(panel, result, read);
   } catch (err) {
-    if (token === panel._loadToken) panel._error = err.message || String(err);
+    if (current() && generation === panel._cacheGeneration) panel._error = err.message || String(err);
   } finally {
-    if (token === panel._loadToken) { panel._busy = false; panel._render(); }
+    if (current()) {
+      if (generation !== panel._cacheGeneration) queueMicrotask(() => { if (current()) void loadQuietHours(panel, silent); });
+      else { panel._busy = false; panel._render(); }
+    }
   }
 }
 

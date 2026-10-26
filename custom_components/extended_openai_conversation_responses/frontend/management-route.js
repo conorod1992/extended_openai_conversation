@@ -3,7 +3,8 @@ import {ensureGuideModule} from "./guide-page.js";
 import {ensureOverviewModule, startOverviewDetailReads} from "./overview-page.js";
 import {readOptionalStorage, writeOptionalStorage} from "./browser-storage.js";
 import {SECTION_CACHE_TTL_MS} from "./management-cache.js";
-import {configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
+import {captureCatalogLoad, catalogMayPublish, catalogMaySelect, catalogIntentIsCurrent, catalogHasAuthoredWork, captureCatalogContinuation, catalogContinuationIsCurrent, retireAssistantDraft} from "./management-catalog-ownership.js";
+import {updateAgentPicker} from "./management-renderer.js";
 const REQUEST_RULES_VIEW = "capabilities/request-rules";
 const CONFIG_TRACE_PREFIX = "extended-openai:config-read";
 const CONFIG_TRACE_LIMIT = 100;
@@ -597,11 +598,20 @@ function applyPrefetchedConfiguration(panel, prefetch, configData) {
   panel._setConfigDirty?.(false);
 }
 
-export async function loadAgentsWithOverviewPrefetch(panel, selectedId = null, owner = null) {
+function publishCatalogScopes(panel,data) {
+  // A fresh catalog is also a user-scope boundary, especially on role changes.
+  panel._scopeCatalogCache.clear();
+  panel._eocScopeCatalogTimes?.clear();
+  panel._baseScopes=data.scopes || [];
+  panel._applyScopes(panel._baseScopes);
+}
+
+export async function loadAgentsWithOverviewPrefetch(panel, selectedId = null, owner = null, context = null) {
+  const load=context || captureCatalogLoad(panel,owner);
+  if(!catalogMayPublish(panel,load)) return;
   const initialToken = panel._loadToken;
-  const previousAgentId = panel._agentId;
   const saved = readOptionalStorage(AGENT_KEY);
-  const preferred = selectedId || saved;
+  const preferred = selectedId || panel._agentId || saved;
   if (panel._viewKey?.() === "overview") panel._markColdLifecycle?.("overview-asset-start");
   const routeAsset = warmRouteAsset(panel._viewKey?.());
   if (panel._viewKey?.() === "overview" && routeAsset?.then) {
@@ -614,27 +624,51 @@ export async function loadAgentsWithOverviewPrefetch(panel, selectedId = null, o
   const configurationPrefetch = startStoredConfigurationPrefetch(panel, preferred);
 
   const data = await panel._hass.callWS({type: WS_TYPE, action: "agents"});
-  if (owner && !configurationSubmissionIsCurrent(panel, owner)) return;
+  if(!catalogMayPublish(panel,load)) return;
+  const agents=data.agents || [];
+  const active=agents.find(item => item.subentry_id === panel._agentId);
+  const currentAgent=panel._selectedAgent?.();
+  const accessChanged=typeof data.is_admin === "boolean" && data.is_admin !== panel._data?.is_admin;
+  const selectRequested=catalogMaySelect(panel,load);
+  const refreshCurrent=catalogIntentIsCurrent(panel,load.intent);
+  // An obsolete catalog must not remove the owner of retained authoring work.
+  // A clean deleted selection still uses the normal first-agent fallback.
+  if(panel._agentId && !active && !selectRequested && catalogHasAuthoredWork(panel)) {
+    // Retain the raw authoring owner without treating an old catalog as proof
+    // that its access still exists. Do not fabricate a replacement identity.
+    if(accessChanged) {
+      panel._data={...panel._data,is_admin:data.is_admin};
+      publishCatalogScopes(panel,data);
+      panel._render?.();
+    }
+    return;
+  }
+  const nextAgent=selectRequested || !active
+    ? agents.some(item => item.subentry_id === preferred) ? preferred : agents[0]?.subentry_id
+    : panel._agentId;
+  if(!selectRequested && !refreshCurrent && active) {
+    // The membership read remains useful, but it owns neither a later route's
+    // scopes nor its selection/draft. Keep its current scoped projection intact.
+    panel._data={...data,agents:agents.map(item => item.subentry_id === currentAgent?.subentry_id
+      && item.entry_id === currentAgent.entry_id ? currentAgent : item),
+      ...(panel._data?.scopes ? {scopes:panel._data.scopes} : {})};
+    updateAgentPicker(panel);
+    // A permission change must still retire writable protected presentation.
+    // Its current owner is preserved; only its current route is revalidated.
+    if(accessChanged) {
+      publishCatalogScopes(panel,data);
+      await panel._loadSection();
+    }
+    return;
+  }
   panel._data = data;
-  // A fresh agent catalogue is an ownership boundary: cached user scopes may
-  // refer to users that have since been deleted.
-  panel._scopeCatalogCache.clear();
-  panel._eocScopeCatalogTimes?.clear();
-  panel._baseScopes = panel._data.scopes || [];
-  const agents = panel._data.agents || [];
-  panel._agentId = agents.some((item) => item.subentry_id === preferred)
-    ? preferred
-    : agents[0]?.subentry_id;
+  retireAssistantDraft(panel,nextAgent);
 
   const selected = panel._selectedAgent?.();
-  const selectedOwner = {agentId:panel._agentId, entryId:selected?.entry_id};
   if (panel._agentId) writeOptionalStorage(AGENT_KEY, panel._agentId);
   if (selected?.entry_id) writeOptionalStorage(ENTRY_KEY, selected.entry_id);
-  if (previousAgentId !== panel._agentId) {
-    panel._scopeId = null;
-    panel._ruleGroupFilter = "all";
-  }
-  panel._applyScopes(panel._scopeCatalogCache.get(panel._scopeCatalogKey()) || panel._baseScopes);
+  publishCatalogScopes(panel,data);
+  captureCatalogContinuation(panel,load);
 
   const overviewSelected = panel._viewKey?.() === "overview" && Boolean(selected);
   if (overviewSelected) {
@@ -656,13 +690,15 @@ export async function loadAgentsWithOverviewPrefetch(panel, selectedId = null, o
       const pending = consumeStoredConfigurationPrefetch(panel, configurationPrefetch.action);
       const settled = await pending;
       const staleReason = storedConfigurationDiscardReason(panel, configurationPrefetch, panel._selectedAgent?.())
-        || (panel._loadToken !== initialToken ? "load-token-changed" : null);
+        || (panel._loadToken !== initialToken ? "load-token-changed" : null)
+        || (!catalogContinuationIsCurrent(panel,load) ? "catalog-owner-changed" : null);
       if (staleReason) {
         configurationPrefetch.detail.status = "discarded";
         configurationPrefetch.detail.reason = staleReason;
         configurationPrefetch.detail.discardedAt = Date.now();
       } else if (settled.status === "fulfilled" && settled.value?.config && typeof settled.value.config === "object") {
         applyPrefetchedConfiguration(panel, configurationPrefetch, settled.value);
+        captureCatalogContinuation(panel,load);
       } else {
         configurationPrefetch.detail.status = "discarded";
         configurationPrefetch.detail.reason = settled.status === "rejected" ? "request-failed" : "invalid-response";
@@ -681,7 +717,7 @@ export async function loadAgentsWithOverviewPrefetch(panel, selectedId = null, o
       (value) => ({status: "fulfilled", value}),
       (reason) => ({status: "rejected", reason}),
     );
-    if (panel._viewKey?.() !== "overview" || panel._loadToken !== initialToken
+    if (!catalogContinuationIsCurrent(panel,load) || panel._viewKey?.() !== "overview" || panel._loadToken !== initialToken
         || panel._agentId !== prefetch.subentryId) return;
     if (overviewResult.status === "fulfilled") {
       applyOverviewResult(panel, overviewResult.value, {cache: false});
@@ -697,7 +733,7 @@ export async function loadAgentsWithOverviewPrefetch(panel, selectedId = null, o
     return;
   }
 
-  if (owner && !configurationSubmissionIsCurrent(panel, selectedOwner)) return;
+  if(!catalogContinuationIsCurrent(panel,load)) return;
   await panel._loadSection(overviewSelected);
 }
 

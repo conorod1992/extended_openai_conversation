@@ -3,6 +3,7 @@ import {pageCoordinator} from "./management-page-drafts.js";
 import {recoverDisconnectedEditor, showRecoveredDraftCopy} from "./management-state-safety.js";
 import {mergeConfigurationRead, configurationDraftBaseline} from "./configuration-acknowledgement.js";
 import {planConfigurationRecovery, combineRecoveredConfiguration, recoveredConfigurationChanges} from "./configuration-draft-recovery.js";
+import {hasPageSaveAcknowledgement} from "./page-save-acknowledgement.js";
 
 // HA destroys custom panels during navigation and background suspension. Keep
 // the owning instance in document memory, never in persistent browser storage.
@@ -17,7 +18,7 @@ const hasOwnChanges = panel => ownScopes(panel).some(scope => scope.dirty());
 const hasOwnPendingWork = panel => Boolean(panel._configurationSaving || panel._eocAgentMutations
   || ownScopes(panel).some(scope => scope.pending));
 const hasRetainedWork = panel => hasOwnChanges(panel) || hasOwnPendingWork(panel)
-  || Boolean(panel._eocAcknowledgedCollection || panel._eocAcknowledgedConfiguration);
+  || Boolean(panel._eocAcknowledgedCollection || panel._eocAcknowledgedConfiguration) || hasPageSaveAcknowledgement(panel);
 let unloadBound = false;
 
 function hasRetainedChanges() {
@@ -153,6 +154,12 @@ function restoreDraftSource(panel, source, key) {
   if (source._viewKey() === panel._viewKey() && source._scopeId === panel._scopeId
       && (panel._viewKey() !== "data-memory/memories" || source._memoryKind === panel._memoryKind)) {
     const from = pageCoordinator(source).scopes.get(source._viewKey());
+    const acknowledgement = from?.acknowledgedSave;
+    if (acknowledgement) {
+      const result = acknowledgement(panel, () => restorePanelDrafts(panel));
+      if (result.accepted && from.acknowledgedSave === acknowledgement) from.acknowledgedSave = null;
+      if (!result.accepted) return;
+    }
     const to = pageCoordinator(panel).scopes.get(panel._viewKey());
     if (from?.dirty() && to?.write && !to.dirty() && panel._data?.is_admin) {
       const field = {"capabilities/guest-mode":"_guestDraft", "capabilities/quiet-hours":"_quietHoursDraft", "capabilities/request-rules":"_rulesSettingsDraft"}[panel._viewKey()];

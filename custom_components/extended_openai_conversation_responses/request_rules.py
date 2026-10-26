@@ -3695,12 +3695,12 @@ async def _async_evaluate_matched_rule(
                 _ACTIVE_FUNCTION_RESULTS.reset(result_token)
                 _ACTIVE_FUNCTION_EXECUTOR.reset(token)
                 _ACTIVE_ACTION_GUARD.reset(guard_token)
-                if result_reference_stop is not None:
-                    await result_reference_stop
                 # Script.async_unload was added after our minimum supported HA.
                 # Older Script releases expose async_stop for the same final
                 # run cleanup; keep using async_unload where it is available.
-                await async_cleanup_script(script, cancelled=cancelled)
+                await async_cleanup_script(
+                    script, cancelled=cancelled, pending_stop=result_reference_stop
+                )
         except GuestModeDenied, _GuestTemplateDenied:
             return RuleEvaluation(match, True, GUEST_MODE_UNAVAILABLE, successful=False)
         except Exception as err:

@@ -67,3 +67,31 @@ authoring state. Review-converted and start-fresh modes must follow the recovere
 Guest draft, survive current-owner refreshes and cancelled navigation, and be
 reset for a different assistant. Obsolete reads cannot alter those modes before
 their values are accepted. Successful saves clear the reviewed migration state.
+
+## Catalogue selection and page-save handoffs
+
+An assistant catalogue read owns membership separately from selection. A
+Duplicate operation captures its selection intent before the write starts;
+subsequent edits, an explicit assistant/route change, an opened editor or a
+replacement panel retire automatic selection. The completed copy can still
+appear in the current catalogue. Obsolete sources cannot write the browser's
+selection preference, close newer editors on a failed read or apply an old
+configuration prefetch. Startup, clean duplication and explicit same-owner
+import/restore refreshes retain their normal selection behaviour. Permission
+changes still invalidate protected presentation and cached user scopes.
+
+A detached Guest, Quiet Hours or Request Rules settings save can become clean
+while its replacement still holds a pre-commit read. The original page scope
+therefore retains an acknowledgement independently of its dirty state. Recovery
+consumes it only after an accepted read certificate matches the destination's
+user, entry, assistant, session, route, visit and cache generation. A resolved
+reload promise alone cannot certify freshness. Refresh never replays the save or
+publishes the source's saved response over another panel's data.
+
+Original authoring baselines/revisions stay attached to later edits. An accepted
+saved projection is kept separately for explicit Discard. Policy saves wait
+while a required acknowledgement refresh is unresolved. Quiet Hours has no
+backend revision: after this panel observes a changed saved policy, its older
+dirty draft cannot overwrite it. The draft remains available; Discard adopts the
+current policy before edits are reapplied. This guards observed conflicts, not
+unseen concurrent writes from another client.

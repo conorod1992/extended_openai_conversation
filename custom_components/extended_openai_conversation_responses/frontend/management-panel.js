@@ -19,6 +19,8 @@ import {bindPanelDialogs, knowledgeSourceAvailabilityControl, updateDialogs} fro
 import {ASSISTANT_INTRO_MARKUP, renderManagement, showPendingDestination, reconcileScopePicker, reconcileHistoryConfiguration} from "./management-renderer.js";
 import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, setControlPending, syncAgentPicker} from "./management-actions.js";
 import {captureConfigurationOwner, configurationSubmissionIsCurrent, configurationReadOvertookSubmission, mergeConfigurationRead} from "./configuration-acknowledgement.js";
+import {captureCatalogLoad, catalogFailureIsCurrent} from "./management-catalog-ownership.js";
+import {capturePageRead, acceptPageRead} from "./page-save-acknowledgement.js";
 import {loadAgentsWithOverviewPrefetch, loadRoute, bindRequestRuleSearch, applyRequestRuleSearch, warmRouteAsset, prefetchIntentRead, consumeIntentRead, consumeStoredConfigurationPrefetch, discardStoredConfigurationPrefetch, markConfigurationRead, measureConfigurationRead} from "./management-route.js";
 import {getConfigurationEditor, getConfigurationTools, getRouteFeature, routeAssetKind, routeFeaturesReady, isRestrictedManagementView, nonAdminOverviewKnowledgeSnapshot} from "./management-route.js";
 import {NAVIGATION, pageMetadata, routeFromPath, routePath, focusManagementSetting} from "./frontend-navigation.js";
@@ -1098,15 +1100,16 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     return this._serviceCatalogPromise;
   }
 
-  async _loadAgents(selectedId = null, owner = null) {
+  async _loadAgents(selectedId = null, owner = null, selectionIntent = null) {
+    const context=captureCatalogLoad(this,owner,selectionIntent);
     this._markColdLifecycle("agents-start");
     try {
-      await loadAgentsWithOverviewPrefetch(this, selectedId, owner);
+      await loadAgentsWithOverviewPrefetch(this, selectedId, owner, context);
       restorePanelDrafts(this);
       this._markColdLifecycle("agents-complete", {status: "fulfilled"});
     } catch (err) {
       this._markColdLifecycle("agents-complete", {status: "rejected"});
-      if (owner && !configurationSubmissionIsCurrent(this, owner)) return;
+      if (!catalogFailureIsCurrent(this,context)) return;
       // Failed catalogue reads cannot validate the owner of a mounted editor.
       // Close it so the failure can render and stale drafts cannot be submitted.
       this.shadowRoot?.querySelectorAll("dialog[open]").forEach(dialog => dialog.close());
@@ -1165,6 +1168,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const ownsLoad = () => loadToken === this._loadToken && configurationSubmissionIsCurrent(this, owner);
     const cacheGeneration = this._cacheGeneration;
     const scopeCatalogKey = this._prepareScopeCatalogVisit(view);
+    const pageRead = capturePageRead(this, view);
     const configOnly = this._isDraftView() && view !== "data-memory/conversations" && !["capabilities/request-rules", "usage-maintenance/backup-restore"].includes(view);
     if (configOnly && this._hasConfigurationCatalogGeneration()) {
       try {
@@ -1408,6 +1412,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         }
       } else if (view !== "overview") writeSectionCache(this, cacheKey, result);
       this._error = null;
+      acceptPageRead(this, result, pageRead);
       if (view === "overview") {
         void startOverviewDetailReads(this, {loadToken, cacheGeneration});
       }

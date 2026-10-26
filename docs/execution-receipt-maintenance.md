@@ -176,3 +176,27 @@ Different prepared operations remain distinct; a successful provider
 acknowledgment permits intentional repetition. Path authorization, atomic writes,
 edit conflict detection and cancellation settlement remain enforced at the file
 backend boundary.
+
+## Transient Script cleanup
+
+Script Functions and native Request Rules retain ownership until their one
+stop/unload sequence settles, including repeated caller cancellation. A Rule's
+already-started result-reference stop task belongs to that same sequence; it must
+not become an interruptible await that skips unload. Native unload cannot simply
+be retried because HA marks the runner unloaded before awaiting its final stop.
+
+The cleanup task inherits its caller's context. Parent cancellation is deferred
+using `asyncio.wait`, then the owned result is observed explicitly. Directly
+shielding a failing task can invoke HA's shield-error logger after cancellation,
+exposing private cleanup exception text even when the caller later observes it.
+An active caller cancellation is preserved with generic cleanup diagnostics;
+ordinary cleanup failures still propagate. Older HA's `async_stop` fallback keeps
+the same settlement behavior. Action effects, contexts, receipts and successful
+provider acknowledgement boundaries are unchanged.
+
+An existing cancellation retains its original identity. Cancellation first
+received during cleanup propagates after settlement. Ordinary cleanup failures
+still propagate, while failures secondary to cancellation use a generic local
+diagnostic. An earlier cancellation already handled by the caller is not treated
+as active merely because `Task.cancelling()` remains nonzero. The execution and
+receipt scope remains alive until cleanup settles.

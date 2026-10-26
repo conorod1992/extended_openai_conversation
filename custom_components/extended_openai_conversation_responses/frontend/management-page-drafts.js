@@ -2,6 +2,7 @@ import {saveConfiguration, synchronizePersistedConfigurationFields} from "./mana
 import {captureConfigurationSubmission, configurationSubmissionIsCurrent, presentAcknowledgedMutation, discardConfigurationDraft} from "./configuration-acknowledgement.js";
 import {formatWordingAlternatives, parseWordingAlternatives} from "./wording-alternatives.js";
 import {enhancementChanged} from "./management-enhancement-state.js";
+import {retainPageSaveAcknowledgement, hasPendingPageSaveRead, PAGE_SAVE_READ_EVENT, PAGE_SAVE_READ_MESSAGE} from "./page-save-acknowledgement.js";
 import {UnsavedState, clone, same, draftScope, saveBarMarkup} from "./unsaved-state.js";
 import {NAVIGATION} from "./frontend-navigation.js";
 
@@ -47,8 +48,12 @@ export function initializePageDraft(panel) {
     panel._guestStartingFresh = false;
   }
   if (existing?.agent === panel._agentId) {
+    const sameResult = existing.result === result;
     if (view === RULES && existing.result !== result && same(existing.baseline, settings(result))) existing.revision = result.revision;
-    if (existing.result === result || existing.dirty() || existing.pending) return;
+    // Keep the authoring baseline/revision while retaining the current saved
+    // projection for an explicit discard after a refresh or recovered ACK.
+    existing.result = result;
+    if (sameResult || existing.dirty() || existing.pending || existing.acknowledgedSave?.owns()) return;
   }
   const field = view === GUEST ? "_guestDraft" : view === QUIET ? "_quietHoursDraft" : "_rulesSettingsDraft";
   const baseline = view === RULES ? settings(result) : result.config || {};
@@ -61,7 +66,13 @@ export function initializePageDraft(panel) {
     owns: (destination) => destination === view,
     destinations: () => [view],
     save: async (submitted, current) => {
+      if (hasPendingPageSaveRead(panel)) throw new Error(PAGE_SAVE_READ_MESSAGE);
       if (view === RULES) return saveRuleSettings(panel, submitted, current);
+      if (view === QUIET && !same(current.baseline, current.result?.config || {})) {
+        // Quiet Hours has no backend revision. Do not overwrite a newer policy
+        // this panel has already observed with an older whole-policy draft.
+        throw new Error("The saved Quiet Hours policy changed. Your edits are retained. Discard to load the current policy before applying them again.");
+      }
       const submission = captureConfigurationSubmission(panel);
       const {agentId, entryId} = submission;
       const saved = await panel._call(view === GUEST ? "guest_mode" : "quiet_hours", view === GUEST ? "save_policy" : "update", {
@@ -85,6 +96,7 @@ export function initializePageDraft(panel) {
         const token = panel._loadToken;
         current.refreshSavedPolicy = () => refreshSavedGuestPolicy(panel, current, {agentId, entryId, token, generation:panel._cacheGeneration, revision:saved.revision});
       }
+      retainPageSaveAcknowledgement(panel, current, submission, view);
       return saved.config;
     },
   });
@@ -157,6 +169,7 @@ async function saveRuleSettings(panel, submitted, scope) {
     panel._result = {...panel._result, ...acknowledged};
     scope.result = panel._result;
   }
+  retainPageSaveAcknowledgement(panel, scope, submission, RULES);
   return clone(scope.baseline);
 }
 
@@ -195,8 +208,9 @@ export function refreshPageSaveBar(panel) {
   const scope = currentPageScope(panel), root = panel.shadowRoot;
   if (!scope || !root?.querySelector) return;
   const dirty = scope.dirty();
+  const refreshing = hasPendingPageSaveRead(panel);
   const invalid = panel._viewKey?.() === RULES && panel._rulesSettingsDraft?.wording_groups.some((group) => group.validation_error);
-  if (!enhancementChanged(panel, "page-save-bar", [scope, dirty, scope.pending, invalid])) return;
+  if (!enhancementChanged(panel, "page-save-bar", [scope, dirty, scope.pending, invalid, refreshing])) return;
   let bar = root.querySelector(".save-bar");
   if (!dirty) { bar?.remove(); root.dispatchEvent?.(new Event("eoc-config-dirty-changed")); return; }
   if (!bar) {
@@ -204,7 +218,7 @@ export function refreshPageSaveBar(panel) {
     bar = root.querySelector(".save-bar");
   }
   const save = bar?.querySelector("#save-page"), discard = bar?.querySelector("#discard-page");
-  if (save) { save.disabled = scope.pending || invalid; save.textContent = scope.pending ? "Saving…" : "Save changes"; }
+  if (save) { save.disabled = scope.pending || invalid || refreshing; save.textContent = scope.pending ? "Saving…" : refreshing ? "Refreshing saved policy…" : "Save changes"; }
   if (discard) discard.disabled = scope.pending;
   root.dispatchEvent?.(new Event("eoc-config-dirty-changed"));
 }
@@ -305,6 +319,10 @@ export async function savePageChanges(panel) {
   readRuleSettings(panel);
   const scope = currentPageScope(panel);
   if (!scope || scope.pending || !scope.dirty()) return false;
+  if (hasPendingPageSaveRead(panel)) {
+    panel._toast(PAGE_SAVE_READ_MESSAGE, true);
+    return false;
+  }
   const submission = captureConfigurationSubmission(panel);
   const operation = scope.save();
   refreshPageSaveBar(panel);
@@ -328,6 +346,7 @@ export function bindPageDrafts(panel) {
   const root = panel.shadowRoot;
   if (!root || root.__eocPageDraftsBound) return;
   root.__eocPageDraftsBound = true;
+  root.addEventListener(PAGE_SAVE_READ_EVENT, () => refreshPageSaveBar(panel));
   const sync = () => {
     if (![GUEST, QUIET, RULES].includes(panel._viewKey?.())) return;
     queueMicrotask(() => {
