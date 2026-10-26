@@ -122,24 +122,30 @@ const setFuzzyState = (root, prefix) => { const toggle = root.querySelector(`#${
 
 
 const editorTranslations = new WeakMap();
+const translationLanguage = hass => hass?.language || hass?.locale?.language;
 
 export function ensureRequestRuleTranslations(panel) {
   const hass = panel.hass || panel._hass;
   if (!hass?.loadFragmentTranslation) return Promise.resolve();
-  const language = hass.language || hass.locale?.language;
+  const language = translationLanguage(hass);
   const cached = editorTranslations.get(panel);
   if (cached?.language === language && cached.connection === hass.connection) return cached.promise;
-  const promise = Promise.resolve(hass.loadFragmentTranslation("config")).then(localize => {
-    if ((panel.hass || panel._hass)?.language !== hass.language) return;
+  const record = {language, connection:hass.connection, promise:null};
+  const current = () => editorTranslations.get(panel) === record
+    && (panel.hass || panel._hass)?.connection === record.connection
+    && translationLanguage(panel.hass || panel._hass) === record.language;
+  record.promise = Promise.resolve(hass.loadFragmentTranslation("config")).then(localize => {
+    if (!current()) return;
     panel.shadowRoot.querySelectorAll("#rule-condition-host ha-selector, #rule-action-sequence-host ha-selector").forEach(selector => {
       selector.hass = localize ? {...(panel.hass || panel._hass), localize} : (panel.hass || panel._hass);
     });
   }).catch(error => {
+    if (!current()) return;
     editorTranslations.delete(panel);
     panel._toast?.(`Unable to load Home Assistant editor labels: ${error.message || String(error)}`, true);
   });
-  editorTranslations.set(panel, {language, connection:hass.connection, promise});
-  return promise;
+  editorTranslations.set(panel, record);
+  return record.promise;
 }
 
 export function createRequestRuleActionSelector(panel, host) {

@@ -197,3 +197,9 @@ prevents repeated form submissions; the shared owner-scoped mutation queue still
 serializes requests and deduplicates identical payloads. There is no additional
 panel-wide Rule save promise or submit interceptor whose completion can reset
 another opening's controls.
+
+Native Rule translation readiness has a resource lifetime, not an editor-visit
+lifetime. The cache's exact record, connection and effective language must still
+match before success hydrates currently mounted selectors or failure removes the
+record and reports an error. Reopening an editor can reuse that matching resource;
+an obsolete connection cannot replace its labels or delete a newer cached result.
