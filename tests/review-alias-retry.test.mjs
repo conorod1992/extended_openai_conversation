@@ -9,6 +9,7 @@ class Field extends EventTarget {
   hidden = false;
   ownerDocument = {createElement: () => new Field()};
   replaceChildren(child) { this.child = child; }
+  querySelectorAll() { return []; }
   close() { this.closed = true; }
   contains() { return false; }
 }

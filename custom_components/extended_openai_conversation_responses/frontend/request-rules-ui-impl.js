@@ -2,6 +2,8 @@ import {watchSelectorYaml, assertSelectorYamlReady, isSelectorValueEvent} from "
 import {setReasoningOptions, syncRequestRuleRoutingControls} from "./request-rule-routing-controls.js";
 import {beginOperation} from "./operation-ownership.js";
 import {captureConfigurationOwner, configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
+import {dialogState, setDialogBaseline} from "./management-dialogs.js";
+import {same} from "./unsaved-state.js";
 import {effectiveServicePayload, isFunctionServiceAction, setEffectiveServiceField} from "./script-payload.js";
 export {syncRequestRuleRoutingControls} from "./request-rule-routing-controls.js";
 import {applyRequestRuleMutation, fuzzyThresholdValue, matchingControls} from "./request-rules-ui-core.js";
@@ -439,10 +441,22 @@ export function bindRequestRuleEditor(panel) {
       if(q("#rule-ai-input-mode").value==="capture" && (q("#rule-ai-input-settings").hidden || q("#rule-ai-input-capture").getAttribute("aria-invalid")==="true")) throw new Error(q("#rule-ai-input-help").textContent || "Choose a capture available in every trigger.");
       const rule={ai_input_mode:q("#rule-ai-input-mode").value,ai_input_capture:q("#rule-ai-input-mode").value==="capture"?q("#rule-ai-input-capture").value:null,name:q("#rule-name").value,enabled:previous?.enabled??true,phrases:q("#rule-phrases").value.split("\n").map((item)=>item.trim()).filter(Boolean),match_type:q("#rule-match").value,action_type:actionType,action:actionType==="local_action"?{actions,success_response:successResponse,failure_response:q("#rule-failure").value,continue_to_ai:q("#rule-local-continue-to-ai").checked}:{model:q("#rule-model").value,reasoning_effort:q("#rule-reasoning").value,scope:q("#rule-scope").value,reset:q("#rule-reset").checked,continue_to_ai:q("#rule-continue-to-ai").checked,success_response:q("#rule-routing-success").value},matching_behavior:q("#rule-matching-behavior").value,matching:{word_forms:q("#rule-word-forms").checked,wording_alternatives:q("#rule-wording").checked,fuzzy:q("#rule-fuzzy").checked,fuzzy_threshold:fuzzyThresholdValue(q("#rule-threshold").value)},order:rules.find((item)=>item.id===panel._editingRuleId)?.order??rules.length,conditions:state.conditionSelector.value||[],group_id:q("#rule-group").value||null,continue_matching:q("#rule-continue-matching").checked};
       const action=panel._editingRuleId?"update":"create";
-      const result=await panel._call("request_rules",action,{...(panel._editingRuleId?{rule_id:panel._editingRuleId}:{}),rule,revision:state.revision});
+      const ruleId=panel._editingRuleId, revision=state.revision, baseline=panel._result;
+      const submitted=dialogState(dialog);
+      const result=await panel._call("request_rules",action,{...(ruleId?{rule_id:ruleId}:{}),rule,revision});
       if(!current())return;
-      dialog.close();
-      applyRequestRuleMutation(panel,action,result,{ruleId:panel._editingRuleId});
+      if(!result?.rule?.id || result.revision==null)throw new Error("The save did not return an acknowledged Request Rule. Reload the rules before retrying.");
+      const unchanged=same(dialogState(dialog),submitted);
+      setDialogBaseline(panel,dialog.id,submitted);
+      panel._editingRuleId=result.rule.id;
+      q("#rule-dialog-title").textContent="Edit Request Rule";
+      // Advance only this editor's own authoring baseline. A newer accepted
+      // collection remains authoritative and requires the normal conflict path.
+      if(panel._result===baseline || [revision,result.revision].includes(panel._result?.revision)) {
+        state.revision=result.revision;
+        applyRequestRuleMutation(panel,action,result,{ruleId:result.rule.id});
+      }
+      if(unchanged)dialog.close();
     }catch(err){
       if(!current())return;
       const message = err.message || String(err);

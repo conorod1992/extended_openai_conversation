@@ -203,3 +203,12 @@ lifetime. The cache's exact record, connection and effective language must still
 match before success hydrates currently mounted selectors or failure removes the
 record and reports an error. Reopening an editor can reuse that matching resource;
 an obsolete connection cannot replace its labels or delete a newer cached result.
+
+Rule saves use the same lossless `dialogState()` and keyed dialog-baseline registry
+as recovery and Function Group saves. Their acknowledged baseline is the raw
+dispatch snapshot, including selector YAML; only an unchanged submission closes.
+Later controls remain mounted and dirty, and an acknowledged creation keeps its
+server-owned rule ID for its next update. An own ACK may advance the editor's
+revision only while its original collection baseline or that ACK still owns the
+saved projection. A newer accepted collection requires the existing conflict
+path. Missing ID/revision responses never retire the draft or its old revision.
