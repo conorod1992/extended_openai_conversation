@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 import re
 
+import pytest
+
 from tests_stress.test_management_action_inventory import production_actions
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -78,6 +80,44 @@ REVIEWED_FRONTEND_MUTATIONS = {
 OPEN_FRONTEND_CONTRACT_GAPS: set[tuple[str, str]] = set()
 
 
+def _frontend_literal_actions(text: str) -> set[tuple[str, str]]:
+    """Include literal Rule actions routed through the shared fixed-section runner."""
+    actions = set(re.findall(
+        r'_call\(\s*["\'`]([^"\'`]+)["\'`]\s*,\s*["\'`]([^"\'`]+)["\'`]',
+        text,
+    ))
+    rule_actions = re.findall(
+        r'runRuleCollectionMutation\(\s*panel\s*,\s*operation\s*,\s*["\'`]([^"\'`]+)["\'`]',
+        text,
+    )
+    if rule_actions:
+        # The helper's section must remain fixed; otherwise these calls cannot
+        # be certified as Request Rule mutations by this literal-call audit.
+        helper = text.split("async function runRuleCollectionMutation", 1)[1].split("\n}\n", 1)[0]
+        assert re.search(r'_call\(\s*["\'`]request_rules["\'`]\s*,\s*action\s*,\s*payload\s*\)', helper)
+        actions.update(("request_rules", action) for action in rule_actions)
+    return actions
+
+
+def test_shared_rule_dispatcher_preserves_literal_mutation_review() -> None:
+    """Delegated actions remain visible, including an action not yet reviewed."""
+    source = '''
+async function runRuleCollectionMutation(panel, operation, action, payload) {
+  return panel._call("request_rules", action, payload);
+}
+runRuleCollectionMutation(panel, operation, "delete", {});
+runRuleCollectionMutation(
+  panel, operation, 'unreviewed_action', {});
+panel._call("tools", "save", {});
+'''
+    assert _frontend_literal_actions(source) == {
+        ("request_rules", "delete"), ("request_rules", "unreviewed_action"),
+        ("tools", "save"),
+    }
+    with pytest.raises(AssertionError):
+        _frontend_literal_actions(source.replace('"request_rules", action', '"other_section", action'))
+
+
 def test_shipped_frontend_mutation_actions_are_reviewed() -> None:
     """A newly wired literal mutation must not escape nightly contract review."""
     production = production_actions()
@@ -98,10 +138,7 @@ def test_shipped_frontend_mutation_actions_are_reviewed() -> None:
     for source in FRONTEND_DIR.glob("*.js"):
         actual.update(
             (section, action)
-            for section, action in re.findall(
-                r'_call\(\s*["\'`]([^"\'`]+)["\'`]\s*,\s*["\'`]([^"\'`]+)["\'`]',
-                source.read_text(encoding="utf-8"),
-            )
+            for section, action in _frontend_literal_actions(source.read_text(encoding="utf-8"))
             if (section, action) in mutations
         )
     assert actual == REVIEWED_FRONTEND_MUTATIONS
