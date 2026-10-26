@@ -82,6 +82,37 @@ test("mutation declarations preserve real revisions and cached projections", asy
     const update = await page.evaluate(() => mutationEffectsProbe.calls.find(call => call.message.section === "request_rules"
       && call.message.action === "update" && call.message.rule_id === realRuleAcknowledgement.rule.id));
     expect(update.message.revision).toBe(await page.evaluate(() => realRuleAcknowledgement.revision));
+    await page.evaluate(() => {
+      const {hass} = browserHarness, original = hass.callWS.bind(hass);
+      window.realRuleCollectionCall = original;
+      let hold = true;
+      hass.callWS = async message => {
+        const result = await original(message);
+        if (hold && message.section === "request_rules" && message.action === "update"
+            && Object.keys(message.rule || {}).join() === "enabled") {
+          hold = false;
+          window.realRuleToggleAcknowledgement = result;
+          return new Promise(resolve => {window.releaseRealRuleToggle = () => resolve(result);});
+        }
+        return result;
+      };
+    });
+    await panel.locator(".request-rule-card").filter({hasText:"After configuration save"}).locator(".rule-enabled").uncheck();
+    await expect.poll(() => page.evaluate(() => typeof window.releaseRealRuleToggle)).toBe("function");
+    const authoritative = await panel.evaluate(async host => {
+      await realRuleCollectionCall({type:"extended_openai_conversation_responses/management", section:"request_rules", action:"update",
+        entry_id:host._selectedAgent().entry_id, subentry_id:host._agentId, rule_id:realRuleToggleAcknowledgement.rule.id,
+        rule:{...realRuleToggleAcknowledgement.rule, name:"Newer genuine HA collection read"}, revision:realRuleToggleAcknowledgement.revision});
+      host._sectionCache.delete(host._sectionCacheKey());
+      await host._loadSection(true);
+      return structuredClone(host._result);
+    });
+    await page.evaluate(() => releaseRealRuleToggle());
+    await expect.poll(() => panel.evaluate(host => host._eocAgentMutations || 0)).toBe(0);
+    expect(await panel.evaluate(host => host._result)).toEqual(authoritative);
+    expect(await panel.evaluate(host => host._eocRequestRuleRevision.value)).toBe(authoritative.revision);
+    await panel.locator(".request-rule-card").filter({hasText:"Newer genuine HA collection read"}).locator(".rule-duplicate").click();
+    await expect.poll(() => panel.evaluate(host => host._result.rules.length)).toBe(authoritative.rules.length + 1);
   } else if (scenario === "rule_pack") {
     const pack = await panel.evaluate(async host => {
       await host._call("request_rules", "create", {rule:{name:"Original pack rule", enabled:true, phrases:["pack phrase"], match_type:"equals", action_type:"model_routing", action:{model:"gpt-5-mini", scope:"conversation"}}});

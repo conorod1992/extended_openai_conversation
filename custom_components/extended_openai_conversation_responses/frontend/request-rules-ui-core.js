@@ -2,6 +2,8 @@ import {localRuleActionSummary} from "./request-rule-response-summary.js";
 import {formatWordingAlternatives} from "./wording-alternatives.js";
 import {adoptKeyedElements, elementFromMarkup, keyedElement, placeChildren, pruneKeys} from "./keyed-collection.js";
 import {requestRuleEmptyContent, updateRequestRuleEmptyState} from "./request-rule-empty-state.js";
+import {captureConfigurationOwner, configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
+import {beginOperation, invalidateOperation} from "./operation-ownership.js";
 
 const sharingGroupOptions = new WeakMap();
 export function refreshRuleSharingGroups(panel) {
@@ -56,15 +58,74 @@ export function requestRuleSummary(rule = {}, defaults = {}) {
   return {action: `${model} · ${reasoning} · ${scope}`, matching, hiddenPhrases: Math.max(0, phrases.length - 4)};
 }
 
-export async function recoverRequestRuleMutation(panel, error, label) {
+export async function recoverRequestRuleMutation(panel, error, label, isCurrent = () => true) {
+  if (!isCurrent()) return;
+  const owner = captureConfigurationOwner(panel), root = panel.shadowRoot, view = panel._viewKey?.();
   const message = error?.message || String(error || "Unknown error");
   panel._toast?.(`${label}: ${message}`, true);
   const cacheKey = panel._sectionCacheKey?.();
   if (cacheKey) panel._sectionCache?.delete(cacheKey);
-  try { await panel._loadSection(true); }
+  let assetToken = panel._eocViewAssetToken;
+  try {
+    const refresh = panel._loadSection(true);
+    assetToken = panel._eocViewAssetToken;
+    await refresh;
+  }
   catch (refreshError) {
+    if (!configurationSubmissionIsCurrent(panel, owner) || panel.shadowRoot !== root || panel._viewKey?.() !== view
+        || panel._eocViewAssetToken !== assetToken) return;
     panel._toast?.(`Unable to refresh Request Rules: ${refreshError?.message || String(refreshError || "Unknown error")}`, true);
   }
+}
+
+// Collection actions share dispatch/result ownership. Their controls can release
+// an old pending state, but only the current visit may publish data or recovery.
+function captureRuleCollectionOperation(panel, control, {queued = false} = {}) {
+  const owner = captureConfigurationOwner(panel), root = panel.shadowRoot;
+  const visit = panel._loadToken, view = panel._viewKey?.();
+  // Drag moves share one list: each queued reorder must publish in order.
+  // Buttons/inputs instead retain exclusive ownership of their pending state.
+  const latest = queued ? () => true : beginOperation(control, "request-rule-mutation");
+  const ownsControls = () => latest() && panel.shadowRoot === root && root.contains(control);
+  const owns = () => latest() && panel.shadowRoot === root
+    && configurationSubmissionIsCurrent(panel, owner) && panel._viewKey?.() === view;
+  return {revision:panel._result?.revision, ownsControls,
+    isCurrent:() => owns() && panel._loadToken === visit,
+    // A read before commit cannot hide this own ACK. A genuinely newer read
+    // retires it through the shared tracked-revision admission boundary.
+    accepts:result => owns() && result?.revision != null
+      && panel._eocRequestRuleRevision?.agentId === panel._agentId
+      && panel._eocRequestRuleRevision.value === result.revision};
+}
+
+async function runRuleCollectionMutation(panel, operation, action, payload, accept, label, rollback) {
+  if (!operation.isCurrent() || !operation.ownsControls()) return false;
+  try {
+    const result = await panel._call("request_rules", action, payload);
+    if (!operation.accepts(result)) return false;
+    accept(result);
+    return true;
+  } catch (error) {
+    if (operation.isCurrent()) rollback?.();
+    await recoverRequestRuleMutation(panel, error, label, operation.isCurrent);
+    return false;
+  }
+}
+
+function acknowledgeRuleGroupControls(panel, dialog, submitted) {
+  const rows = dialog.querySelector(".rule-group-manager-rows");
+  const existing = new Map([...rows.children].map(row => [row.dataset.groupId, row]));
+  const groups = panel._result.groups, rules = panel._result.rules;
+  placeChildren(rows, groups.map(group => {
+    const row = existing.get(group.id) || elementFromMarkup(groupManagerRows(panel, [group], rules));
+    const input = row.querySelector(".rule-group-name");
+    if (!submitted.names.has(group.id) || input.value === submitted.names.get(group.id)) input.value = group.name;
+    const count = rules.filter(rule => rule.group_id === group.id).length;
+    row.querySelector(".rule-group-count").textContent = `${count} rule${count === 1 ? "" : "s"}`;
+    return row;
+  }));
+  const newName = dialog.querySelector("#rule-new-group-name");
+  if (newName.value === submitted.newName) newName.value = "";
 }
 
 export const matchingControls = (prefix, values, hidden = false) => `<div id="${prefix}-matching-controls" class="matching-settings" ${hidden ? "hidden" : ""}><label class="matching-setting"><span class="matching-copy"><span class="matching-title">Normalize word forms</span><small>Treats simple variations such as “light” and “lights” as the same.</small></span><input id="${prefix}-word-forms" type="checkbox" ${values.word_forms ? "checked" : ""}></label><label class="matching-setting"><span class="matching-copy"><span class="matching-title">Wording alternatives</span><small>Uses your saved alternative phrases, such as “switch on” matching “turn on”.</small></span><input id="${prefix}-wording" type="checkbox" ${values.wording_alternatives ? "checked" : ""}></label><label class="matching-setting"><span class="matching-copy"><span class="matching-title">Fuzzy matching</span><small>Allows small speech-recognition or typing mistakes when no normal match succeeds.</small></span><input id="${prefix}-fuzzy" type="checkbox" ${values.fuzzy ? "checked" : ""}></label><label class="matching-setting fuzzy-sensitivity ${values.fuzzy ? "" : "is-disabled"}"><span class="matching-copy"><span class="matching-title">Fuzzy sensitivity</span><small>Controls how close a phrase must be before fuzzy matching is accepted. Conservative is least likely to match the wrong rule.</small></span><span class="matching-control"><input id="${prefix}-threshold" type="number" min="70" max="100" step="1" value="${fuzzyThresholdValue(values.fuzzy_threshold)}" ${values.fuzzy ? "" : "disabled"}></span></label></div>`;
@@ -253,6 +314,9 @@ export function bindRequestRulesCore(panel,{openEditor,activateSafeTester,activa
     groupManager.dataset.eocBound="";
     const opener=root.querySelector("#rule-groups-manage");
     opener?.addEventListener("click",()=>{
+      invalidateOperation(groupManager,"request-rule-mutation");
+      delete groupManager.dataset.eocMutationPending;
+      groupManager.querySelector("#rule-group-add").disabled=false;
       groupManager.querySelector(".rule-group-manager-rows").innerHTML=groupManagerRows(panel,panel._result?.groups||[],panel._result?.rules||[]);
       groupManager.showModal();
     });
@@ -265,12 +329,17 @@ export function bindRequestRulesCore(panel,{openEditor,activateSafeTester,activa
     });
     groupManager.addEventListener("click",async(event)=>{
       const button=event.target.closest?.("button");if(!button||button.disabled||groupManager.dataset.eocMutationPending==="true")return;
-      const groups=[...(panel._result?.groups||[])],id=button.dataset.id;
+      if(button.id!=="rule-group-add"&&!button.matches(".rule-group-rename,.rule-group-delete"))return;
+      const operation=captureRuleCollectionOperation(panel,groupManager);
+      const groups=(panel._result?.groups||[]).map(group=>({...group})),id=button.dataset.id;
+      const submitted={newName:groupManager.querySelector("#rule-new-group-name").value,
+        names:new Map(groups.map(group=>[group.id,group.name]))};
       if(button.id==="rule-group-add"){
         const name=groupManager.querySelector("#rule-new-group-name")?.value.trim();if(!name)return;
         groups.push({name});
       }else if(button.matches(".rule-group-rename")){
-        const name=button.closest(".rule-group-row")?.querySelector(".rule-group-name")?.value.trim();if(!name)return;
+        const input=button.closest(".rule-group-row")?.querySelector(".rule-group-name"),name=input?.value.trim();if(!name)return;
+        submitted.names.set(id,input.value);
         const group=groups.find((item)=>item.id===id);if(group)group.name=name;
       }else if(button.matches(".rule-group-delete")){
         const group=groups.find((item)=>item.id===id);
@@ -278,19 +347,19 @@ export function bindRequestRulesCore(panel,{openEditor,activateSafeTester,activa
         if(!await panel._confirm(`Delete “${group?.name || "this"}” group?`,`${count} rule${count===1?"":"s"} will become Ungrouped and keep their existing priority and order.`,"Delete"))return;
         const index=groups.findIndex((item)=>item.id===id);if(index<0)return;groups.splice(index,1);
       }else return;
+      if(!operation.isCurrent()||!operation.ownsControls())return;
       button.disabled=true;groupManager.dataset.eocMutationPending="true";
       try{
-        const result=await panel._call("request_rules","groups",{groups});
+        await runRuleCollectionMutation(panel,operation,"groups",{groups,revision:operation.revision},result=>{
         panel._result={...(panel._result||{}),groups:result.groups,rules:result.rules,revision:result.revision,...(result.diagnostics ? {diagnostics:result.diagnostics} : {})};
         const cacheKey=panel._sectionCacheKey?.();if(cacheKey)panel._sectionCache?.delete(cacheKey);
         syncScopeRevision(panel,result);
-        groupManager.querySelector(".rule-group-manager-rows").innerHTML=groupManagerRows(panel,result.groups,result.rules);
-        groupManager.querySelector("#rule-new-group-name").value="";
+        acknowledgeRuleGroupControls(panel,groupManager,submitted);
         const filter=root.querySelector("#rule-group-filter");if(filter){filter.innerHTML=groupFilterOptions(panel,result.groups);if(!["all","ungrouped"].includes(panel._ruleGroupFilter)&&!result.groups.some(group=>group.id===panel._ruleGroupFilter))panel._ruleGroupFilter="all";filter.value=panel._ruleGroupFilter;}
         if (!reconcileRequestRules(panel)) panel._render();
         panel._toast("Groups saved");
-      }catch(err){await recoverRequestRuleMutation(panel,err,"Unable to save groups");}
-      finally{delete groupManager.dataset.eocMutationPending;button.disabled=false;}
+        },"Unable to save groups");
+      }finally{if(operation.ownsControls()){delete groupManager.dataset.eocMutationPending;button.disabled=false;}}
     });
   }
   if(list && !list.dataset.eocRuleCoreBound){
@@ -329,11 +398,20 @@ export function bindRequestRulesCore(panel,{openEditor,activateSafeTester,activa
     list.addEventListener("dragstart",event=>{const card=event.target.closest?.("[data-rule-key]");if(!card||!card.draggable){event.preventDefault();return;}dragging=card.dataset.ruleKey;event.dataTransfer.effectAllowed="move";event.dataTransfer.setData("text/plain",dragging);});
     list.addEventListener("dragover",event=>{if(dragging&&event.target.closest?.("[data-rule-key]"))event.preventDefault();});
     list.addEventListener("dragend",()=>{dragging=null;});
-    list.addEventListener("drop",async event=>{const card=event.target.closest?.("[data-rule-key]");const id=dragging;dragging=null;if(!id||!card||!card.draggable||card.dataset.ruleKey===id)return;event.preventDefault();const targetId=card.dataset.ruleKey,direction=event.clientY>card.getBoundingClientRect().top+card.getBoundingClientRect().height/2?"after":"before";try{const result=await panel._call("request_rules","move",{rule_id:id,direction,target_rule_id:targetId});applyRequestRuleMutation(panel,"move",result,{ruleId:id,direction,targetRuleId:targetId});}catch(err){await recoverRequestRuleMutation(panel,err,"Unable to move Request Rule");}});
+    list.addEventListener("drop",async event=>{
+      const card=event.target.closest?.("[data-rule-key]"),id=dragging;dragging=null;
+      if(!id||!card||!card.draggable||card.dataset.ruleKey===id)return;
+      event.preventDefault();
+      const targetId=card.dataset.ruleKey,direction=event.clientY>card.getBoundingClientRect().top+card.getBoundingClientRect().height/2?"after":"before";
+      const operation=captureRuleCollectionOperation(panel,list,{queued:true});
+      await runRuleCollectionMutation(panel,operation,"move",{rule_id:id,direction,target_rule_id:targetId},
+        result=>applyRequestRuleMutation(panel,"move",result,{ruleId:id,direction,targetRuleId:targetId}),"Unable to move Request Rule");
+    });
     list.addEventListener("click",async(event)=>{
       const button=event.target.closest?.("button");if(!button||button.disabled)return;
       if(button.id==="rule-empty-add"||button.matches(".rule-edit")){void openEditor?.(button.dataset.id||null);return;}
       const id=button.dataset.id;
+      const operation=captureRuleCollectionOperation(panel,button);
       if(button.matches(".rule-move")){
         const menu = button.closest(".rule-move-menu");
         const trigger = menu?.querySelector("summary");
@@ -341,41 +419,46 @@ export function bindRequestRulesCore(panel,{openEditor,activateSafeTester,activa
         let restoreFocus = false;
         pendingRuleButtons.add(button);button.disabled=true;
         try{
-          const result=await panel._call("request_rules","move",{rule_id:id,direction:button.dataset.direction});
+          await runRuleCollectionMutation(panel,operation,"move",{rule_id:id,direction:button.dataset.direction},result=>{
           // Moving a keyed DOM node can drop focus. Do not steal it back if the
           // user intentionally focused another control while the save ran.
           restoreFocus = root.activeElement === trigger;
           applyRequestRuleMutation(panel,"move",result,{ruleId:id,direction:button.dataset.direction});
+          },"Unable to move Request Rule");
         }
-        catch(err){await recoverRequestRuleMutation(panel,err,"Unable to move Request Rule");}
         finally{
           pendingRuleButtons.delete(button);
-          reconcileRequestRules(panel);
-          if (restoreFocus && trigger?.isConnected) trigger.focus();
+          if(operation.isCurrent()) {
+            reconcileRequestRules(panel);
+            if (restoreFocus && trigger?.isConnected) trigger.focus();
+          } else if(operation.ownsControls()) {
+            button.disabled=moveDisabled((panel._result?.rules||[]).findIndex(rule=>rule.id===id),panel._result?.rules?.length||0,button.dataset.direction);
+          }
         }
         return;
       }
       if(button.matches(".rule-duplicate")){
         button.disabled=true;
-        try{const result=await panel._call("request_rules","duplicate",{rule_id:id});applyRequestRuleMutation(panel,"duplicate",result,{ruleId:id});panel._toast("Request Rule duplicated");}
-        catch(err){await recoverRequestRuleMutation(panel,err,"Unable to duplicate Request Rule");} finally{button.disabled=false;} return;
+        try{await runRuleCollectionMutation(panel,operation,"duplicate",{rule_id:id},result=>{applyRequestRuleMutation(panel,"duplicate",result,{ruleId:id});panel._toast("Request Rule duplicated");},"Unable to duplicate Request Rule");}
+        finally{if(operation.ownsControls())button.disabled=false;} return;
       }
       if(button.matches(".rule-delete")){
         const deleting=(panel._result?.rules||[]).find((rule)=>rule.id===id);
         panel._eocDecisionConfirmSubject=deleting?.name?`Request Rule “${deleting.name}”`:"Request Rule";
         if(!await panel._confirm("Delete Request Rule?","This cannot be undone.","Delete"))return;
+        if(!operation.isCurrent()||!operation.ownsControls())return;
         button.disabled=true;
-        try{const result=await panel._call("request_rules","delete",{rule_id:id,confirm:true});applyRequestRuleMutation(panel,"delete",result,{ruleId:id});panel._toast("Request Rule deleted");}
-        catch(err){await recoverRequestRuleMutation(panel,err,"Unable to delete Request Rule");} finally{button.disabled=false;}
+        try{await runRuleCollectionMutation(panel,operation,"delete",{rule_id:id,confirm:true},result=>{applyRequestRuleMutation(panel,"delete",result,{ruleId:id});panel._toast("Request Rule deleted");},"Unable to delete Request Rule");}
+        finally{if(operation.ownsControls())button.disabled=false;}
       }
     });
     list.addEventListener("change",async(event)=>{
       const input=event.target;if(!input.matches?.(".rule-enabled")||input.disabled)return;
       const rule=(panel._result?.rules||[]).find(item=>item.id===input.dataset.id);if(!rule)return;
+      const operation=captureRuleCollectionOperation(panel,input);
       const previous=!input.checked;input.disabled=true;
-      try{const result=await panel._call("request_rules","update",{rule_id:rule.id,rule:{enabled:input.checked}});applyRequestRuleMutation(panel,"update",result,{ruleId:rule.id});panel._toast("Changes saved");}
-      catch(err){input.checked=previous;await recoverRequestRuleMutation(panel,err,"Unable to update Request Rule");}
-      finally{input.disabled=false;}
+      try{await runRuleCollectionMutation(panel,operation,"update",{rule_id:rule.id,rule:{enabled:input.checked}},result=>{applyRequestRuleMutation(panel,"update",result,{ruleId:rule.id});panel._toast("Changes saved");},"Unable to update Request Rule",()=>{input.checked=previous;});}
+      finally{if(operation.ownsControls())input.disabled=false;}
     });
   }
   const add=root.querySelector("#rule-add");if(add&&!add.dataset.eocRuleCoreBound){add.dataset.eocRuleCoreBound="";add.addEventListener("click",()=>{void openEditor?.(null);});}

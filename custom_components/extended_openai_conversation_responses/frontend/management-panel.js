@@ -896,6 +896,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   async _runAgentMutation(section, action, extra, mutationTrace = null) {
     const ruleMutation = mutationEffects(section, action)?.revision === "request_rules";
     const agentId = this._agentId;
+    const previousRuleRevision = ruleMutation ? (this._eocRequestRuleRevision?.agentId === agentId
+      ? this._eocRequestRuleRevision.value : this._result?.revision) : null;
     const owner = {...captureConfigurationOwner(this), readEpoch:this._eocConfigurationReadEpoch || 0};
     if (ruleMutation) this._eocRequestRuleMutationEpoch = (this._eocRequestRuleMutationEpoch || 0) + 1;
     this._eocAgentMutations = Number(this._eocAgentMutations || 0) + 1;
@@ -908,6 +910,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         && configurationSubmissionIsCurrent(this, owner)
         && result?.revision !== undefined
         && result?.revision !== null
+        && (this._eocRequestRuleRevision?.agentId !== agentId
+          || [previousRuleRevision, result.revision].includes(this._eocRequestRuleRevision.value))
       ) {
         this._eocRequestRuleRevision = {agentId, value: result.revision};
       }

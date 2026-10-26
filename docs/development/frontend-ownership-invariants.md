@@ -212,3 +212,20 @@ server-owned rule ID for its next update. An own ACK may advance the editor's
 revision only while its original collection baseline or that ACK still owns the
 saved projection. A newer accepted collection requires the existing conflict
 path. Missing ID/revision responses never retire the draft or its old revision.
+
+Rule collection mutations share one dispatch/result/recovery contract. Admission
+and confirmation require the original owner and visit; errors cannot reload a
+replacement visit. Successful publication instead uses the guarded shared Rule
+revision: a read made before commit must not hide the own ACK, and a newer
+accepted read must not be rolled back. Tracking advances only from the revision
+present at dispatch or the same acknowledged revision, without ordering opaque
+revision strings. Previously queued commands can publish even when an earlier
+own ACK replaced their original card.
+
+Control cleanup has a separate latest-operation ticket and exact DOM membership.
+It cannot reset another pending control or steal focus from a newer visit. Drag
+moves share one list and retain every serialized acknowledgement; they do not
+use exclusive control supersession. Group confirmation captures its authoring
+revision, copies group records before editing, and reuses existing group rows on
+ACK. Later row/new-name text and focus remain intact. This does not introduce a
+new general group-dialog discard/navigation/recovery workflow.
