@@ -26,6 +26,31 @@ In-flight operations must match both. Recovery explicitly transfers to a
 different panel with the same owner identity; its local generation need not
 equal the source's. Existing access, scope and revision checks still apply.
 
+## Lifecycle responsibilities
+
+| Boundary | Owner and authority | Shared mechanism / necessary distinction |
+| --- | --- | --- |
+| Open and author | Dialog instance/generation, or the registered policy scope; source values plus the revision at which editing began. | `dialogState()` is the common raw control snapshot for dismissal, Group save comparison and recovery. `setDialogBaseline()` owns ID-keyed baselines. Memory/Knowledge use typed readers in that same registry; Tool YAML retains its asynchronously loaded authoritative text. |
+| Load and publish | Captured user/entry/assistant/session plus visit, cache generation and relevant result identity. | Owner predicates are shared. Visit/cache and accepted-read certificates remain independent because an owner can survive a navigation or cache invalidation. |
+| Detect changes | Authoring baseline versus the current draft, including key presence and unparsed native YAML. | Policy `draftScope` and configuration dirty-key tracking keep different granularity; incremental configuration input handling is not replaced with whole-form comparison. |
+| Submit and settle | Immutable submitted values and original revision; pending ownership lasts until the dispatched write settles. | Owner-only operations capture identity without full configuration copies. Full/field configuration ACKs retain their merge metadata. A rejected/ambiguous response does not advance the baseline or replay the write. |
+| Acknowledge later edits | Submitted values become saved while later values and original-value reversions remain authored. | Policy baseline adoption belongs to `draftScope.save()`. Dialog ACKs store the submitted baseline under the dialog ID. Feature-specific record IDs, revision rules and DOM updates remain with the feature. |
+| Detached recovery | Same identity across panels, with explicit access and route gates; source authoring revision remains authoritative. | Shared raw snapshots and the baseline registry compare the saved definition before restoring. Full configuration, policy-page and collection ACKs retain their distinct read-certification rules. |
+| Discard / actor switch | Only the reviewed/current scope or dialog may discard. Pending writes block unsafe dismissal; user/entry/session retirement prevents late publication. | Navigation/close guards and exact scope registration remain authoritative. Explicit policy Discard adopts its latest accepted saved projection; it does not clear completed-write refresh obligations. |
+
+Memory and Knowledge no longer maintain the panel-global `_editorInitial` in
+parallel with `_eocDialogBaselines`. Open, successful load, acknowledgement, dirty
+close and recovery all use the ID-keyed registry. Knowledge's loading/error
+baseline is still `null`. Raw recovery arrays are not replaced by typed objects,
+and queued close events cannot clear a newly reopened dialog's baseline.
+
+Backend authority is also intentionally different: agent configuration and
+Function mutations use configuration revisions; Rules settings use their atomic
+Rule revision; Memory/Knowledge update individual records with their expected
+revision; Quiet Hours uses a backend revision when provided and otherwise retains
+its observed-conflict check. A common frontend owner is not a replacement for any
+of these validation/revision contracts.
+
 ## Systematic coverage
 
 `management-ownership-sequences.test.mjs` runs production save/read/navigation

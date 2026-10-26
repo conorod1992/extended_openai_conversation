@@ -15,7 +15,7 @@ import {
   savePageChanges,
 } from "./management-page-drafts.js";
 import {readSectionCache, writeSectionCache, pruneCacheTimes, SCOPE_CACHE_TTL_MS, CLEAN_CONFIG_TTL_MS} from "./management-cache.js";
-import {bindPanelDialogs, knowledgeSourceAvailabilityControl, updateDialogs} from "./management-dialogs.js";
+import {bindPanelDialogs, knowledgeSourceAvailabilityControl, updateDialogs, setDialogBaseline} from "./management-dialogs.js";
 import {ASSISTANT_INTRO_MARKUP, renderManagement, showPendingDestination, reconcileScopePicker, reconcileHistoryConfiguration} from "./management-renderer.js";
 import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, setControlPending, syncAgentPicker} from "./management-actions.js";
 import {captureConfigurationOwner, configurationSubmissionIsCurrent, configurationReadOvertookSubmission, mergeConfigurationRead} from "./configuration-acknowledgement.js";
@@ -2325,7 +2325,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._knowledgeLoadToken = loadToken;
     this._editingSource = null;
     this._knowledgeMode = sourceId ? "edit-loading" : "create";
-    this._editorInitial = null;
+    setDialogBaseline(this, "knowledge-dialog", null);
     this._setDialogError("knowledge", "");
     root.querySelector("#knowledge-title").value = "";
     root.querySelector("#knowledge-description").value = "";
@@ -2356,7 +2356,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       }
     }
     if (["create", "edit"].includes(this._knowledgeMode)) {
-      this._editorInitial = this._knowledgeValues();
+      setDialogBaseline(this, "knowledge-dialog", this._knowledgeValues());
     }
     this._updateKnowledgeCounter();
     // The dialog and fields are ready; a deferred focus can steal later input.
@@ -2382,7 +2382,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     root.querySelector("#memory-delete").hidden = !memory;
     root.querySelector("#memory-meta").textContent = memory ? [memory.source, memory.created_at ? `Created ${this._formatDate(memory.created_at)}` : "", memory.updated_at ? `Updated ${this._formatDate(memory.updated_at)}` : ""].filter(Boolean).join(" · ") : "Categories help organise memories.";
     this._setDialogError("memory", "");
-    this._editorInitial = this._memoryValues();
+    setDialogBaseline(this, "memory-dialog", this._memoryValues());
     root.querySelector("#memory-dialog").showModal();
     root.querySelector("#memory-content").focus();
   }
@@ -2489,7 +2489,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         // it was saving. A subsequent save updates the acknowledged record.
         this._editingSource = response.source;
         this._knowledgeMode = "edit";
-        this._editorInitial = values;
+        setDialogBaseline(this, "knowledge-dialog", values);
         this.shadowRoot.querySelector("#knowledge-delete").hidden = false;
         this.shadowRoot.querySelector("#knowledge-dialog-title").textContent = "Edit Knowledge source";
       }
@@ -2553,7 +2553,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       else {
         this._editingMemory = {...response.memory};
         this._memoryMutationScope = response.scope_id;
-        this._editorInitial = values;
+        setDialogBaseline(this, "memory-dialog", values);
         this.shadowRoot.querySelector("#memory-type").disabled = true;
         this.shadowRoot.querySelector("#memory-delete").hidden = false;
         this.shadowRoot.querySelector("#memory-dialog-title").textContent = "Edit memory";

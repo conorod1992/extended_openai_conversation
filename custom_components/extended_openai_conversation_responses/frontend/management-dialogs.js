@@ -2,6 +2,10 @@
 // created on demand and removed when their route or agent changes.
 import {clone} from "./unsaved-state.js";
 
+export function setDialogBaseline(panel, id, value) {
+  (panel._eocDialogBaselines ||= new Map()).set(id, value);
+}
+
 export function editorControls(dialog) {
   return [...dialog.querySelectorAll("input,select,textarea,ha-selector")]
     .filter(control => !["button", "submit", "reset", "file", "search"].includes(control.type));

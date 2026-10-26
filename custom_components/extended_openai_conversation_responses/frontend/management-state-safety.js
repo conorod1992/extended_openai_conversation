@@ -3,7 +3,7 @@ import {pageCoordinator, currentPageScope} from "./management-page-drafts.js";
 import {same, clone} from "./unsaved-state.js";
 import {SECTION_CACHE_TTL_MS} from "./management-cache.js";
 import {configurationDraftBaseline} from "./configuration-acknowledgement.js";
-import {editorControls, dialogState} from "./management-dialogs.js";
+import {editorControls, dialogState, setDialogBaseline} from "./management-dialogs.js";
 export {SECTION_CACHE_TTL_MS};
 
 const RESET_PROMPT_KEYS = [
@@ -138,14 +138,16 @@ const EDITOR_IDS = ["rule-dialog", "tool-dialog", "group-dialog", "knowledge-dia
 
 export function openDialogBaseline(panel, dialog) {
   if (!dialog?.id || !EDITOR_IDS.includes(dialog.id)) return;
-  panel._eocDialogBaselines ||= new Map();
+  // These editors capture typed values at open/load/acknowledgement, rather
+  // than the primitive control array used to transport recovered input.
+  if (["memory-dialog", "knowledge-dialog"].includes(dialog.id)) return;
   if (dialog.id === "tool-dialog") {
     // Function Tools already keep their authoritative initial YAML on the panel,
     // but it arrives asynchronously after the dialog opens.
-    panel._eocDialogBaselines.set(dialog.id, null);
+    setDialogBaseline(panel, dialog.id, null);
     return;
   }
-  panel._eocDialogBaselines.set(dialog.id, dialogState(dialog));
+  setDialogBaseline(panel, dialog.id, dialogState(dialog));
 }
 
 function clearDialogBaseline(panel, dialog) {
@@ -157,7 +159,8 @@ function dialogDirty(panel, dialog) {
   if (!dialog?.open) return false;
   if (dialog.id === "knowledge-dialog" || dialog.id === "memory-dialog") {
     const read = dialog.id === "knowledge-dialog" ? panel._knowledgeValues : panel._memoryValues;
-    return panel._editorInitial != null && !same(read.call(panel), panel._editorInitial);
+    const baseline = panel._eocDialogBaselines?.get(dialog.id);
+    return baseline != null && !same(read.call(panel), baseline);
   }
   if (dialog.id === "temporary-memory-dialog") return getRouteFeature("data-memory/memories")?.temporaryMemoryDirty(panel) || false;
   return dialogHasUnsavedChanges(
@@ -309,7 +312,6 @@ export async function recoverDisconnectedEditor(panel, source, retry = () => rec
     // A changed saved baseline needs review, not an automatic rebase of an
     // editor's revision or selectors. Keep the original work available to copy.
     const changed = old.id === "ha-llm-tools-dialog" ? false : old.id === "tool-dialog" ? source._toolInitialYaml !== panel._toolInitialYaml
-      : ["memory-dialog", "knowledge-dialog"].includes(old.id) ? !same(source._editorInitial, panel._editorInitial)
       : baseline && !same(baseline, panel._eocDialogBaselines?.get(old.id));
     if (changed) {
       dialog.close();
