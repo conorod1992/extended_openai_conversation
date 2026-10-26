@@ -16,7 +16,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     SERVICE_CALL_FUNCTION,
 )
 from custom_components.extended_openai_conversation_responses.request_rules import (
-    _ACTIVE_FUNCTION_RESULTS,
+    _ACTIVE_RULE_ACTION,
 )
 from homeassistant.components import conversation
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
@@ -240,7 +240,7 @@ async def test_shared_response_variable_cannot_publish_another_invocations_alias
 
     async def record(call):
         observed.append(
-            (deepcopy(_ACTIVE_FUNCTION_RESULTS.get()), call.data["message"])
+            (deepcopy(_ACTIVE_RULE_ACTION.get().function_results), call.data["message"])
         )
 
     hass.services.async_register("rule_probe", "record", record)
@@ -766,7 +766,7 @@ async def test_typed_and_exact_text_results_survive_local_and_provider_consumers
     seen = []
 
     async def record(call):
-        seen.append((call.data["value"], deepcopy(_ACTIVE_FUNCTION_RESULTS.get())))
+        seen.append((call.data["value"], deepcopy(_ACTIVE_RULE_ACTION.get().function_results)))
 
     hass.services.async_register("rule_probe", "typed", record)
     await agent._request_rules.async_create(

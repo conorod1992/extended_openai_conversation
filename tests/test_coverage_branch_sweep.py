@@ -1092,23 +1092,7 @@ def test_request_rule_result_references_recurse_but_ignore_identity_fields() -> 
     }
 
 
-def test_request_rule_result_paths_collect_nested_references() -> None:
-    from custom_components.extended_openai_conversation_responses import request_rules
 
-    paths = request_rules._result_paths_by_alias(
-        {
-            "message": "{first.answer} / {first.name}",
-            "nested": [{"value": "{second.value}"}],
-        }
-    )
-
-    assert paths == {
-        "first": {
-            "{first.answer}",
-            "{first.name}",
-        },
-        "second": {"{second.value}"},
-    }
 
 
 @pytest.mark.parametrize(

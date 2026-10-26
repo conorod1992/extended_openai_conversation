@@ -510,7 +510,7 @@ async def test_rule_final_response_failure_does_not_rerun_successful_actions(
     )
 
     async def run(*_args):
-        request_rules._ACTIVE_FUNCTION_RESULTS.get()["lookup"] = {"available": SECRET}
+        request_rules._ACTIVE_RULE_ACTION.get().function_results["lookup"] = {"available": SECRET}
         return SimpleNamespace(variables={marker: True}, conversation_response=None)
 
     script.async_run.side_effect = run
