@@ -248,7 +248,7 @@ async def test_websocket_setup_export_is_coherent_across_restore(
 
     monkeypatch.setattr(transfer, "async_collect_transfer_snapshot", observed_collect)
     export = asyncio.create_task(
-        _transfer_call(client, entry=entry, action="setup_export")
+        _transfer_call(client, entry=entry, action="setup_export", data={"reviewed_custom": True})
     )
     disposable = None
     try:
@@ -301,7 +301,7 @@ async def test_websocket_setup_export_is_coherent_across_restore(
         loaded = conversation.async_get_agent(hass, disposable.entry_id)
         value = await loaded._async_execute_request_rule_function("beta", {}, None)
         assert "BETA" in str(value)
-        normal = await _transfer_call(client, entry=entry, action="setup_export")
+        normal = await _transfer_call(client, entry=entry, action="setup_export", data={"reviewed_custom": True})
         assert (
             normal["success"]
             and normal["result"]["document"]["sections"] == document["sections"]

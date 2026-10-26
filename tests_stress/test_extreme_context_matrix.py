@@ -148,10 +148,13 @@ async def test_bounded_unicode_and_nested_schema_round_trip_on_public_wire(
         assert private not in serialized
         assert "Unicode schema 🔧 مرحبا" in serialized
     snapshot = await backup.async_collect_backup_snapshot(hass, entry, agent.subentry)
-    backed_up_tools = yaml.safe_load(
-        backup.inspect_backup(snapshot, agent.subentry.subentry_id).config[
-            CONF_FUNCTION_TOOLS
-        ]
+    # Private snapshots retain the original representation, including decoded
+    # lists. Inspect through the persisted-config contract rather than assuming
+    # every source was authored as a YAML string.
+    from custom_components.extended_openai_conversation_responses.agent_config import parse_configured_function_tools
+
+    backed_up_tools = parse_configured_function_tools(
+        backup.inspect_backup(snapshot, agent.subentry.subentry_id).config
     )
     assert backed_up_tools[0]["spec"]["parameters"] == schema
     record(
@@ -497,6 +500,21 @@ async def test_combined_context_boundary_tiers_use_real_assist_and_provider_wire
     # must still contain the warm history, proving preflight did not prune it.
     before_compaction = json.dumps(wire.requests[-1]["body"], ensure_ascii=False)
     assert first_marker in before_compaction and recent_marker in before_compaction
+    # Retention remeasures real input; inflated provider usage alone must not
+    # discard history that fits. Introduce actual pressure through a live edit,
+    # with room for the newest complete turns and all mandatory prompt/tools.
+    from custom_components.extended_openai_conversation_responses.context_usage_hardening import estimate_provider_input_tokens
+    from custom_components.extended_openai_conversation_responses.live_subentry_updates import update_live_subentry
+
+    prepared = wire.requests[-1]["body"]
+    full_size = estimate_provider_input_tokens(prepared["messages"], prepared.get("tools"))
+    threshold = estimate_provider_input_tokens(
+        [prepared["messages"][0], *prepared["messages"][-5:]], prepared.get("tools")
+    ) + 512
+    assert threshold < full_size, "The fixture must create real removable context pressure"
+    update_live_subentry(hass, entry, subentry, data={**subentry.data, CONF_CONTEXT_THRESHOLD: threshold})
+    await hass.async_block_till_done()
+    assert conversation.async_get_agent(hass, entry.entry_id) is agent
     third = await _say(
         hass,
         entry.entry_id,
@@ -508,7 +526,10 @@ async def test_combined_context_boundary_tiers_use_real_assist_and_provider_wire
     latest = json.dumps(wire.requests[-1]["body"], ensure_ascii=False)
     assert mandatory_marker in latest and RETRIEVED_DATA_SAFETY in latest
     assert recent_marker in latest
-    assert first_marker not in latest
+    # Compare a boolean so a failing negative control cannot spend minutes in
+    # pytest's quadratic diff of a multi-megabyte, repetitive JSON string.
+    retained_oldest = first_marker in latest
+    assert not retained_oldest, f"Oldest user turn retained under actual pressure ({name})"
     assert other_memory_marker not in latest
     request_bytes = [
         len(json.dumps(item["body"], ensure_ascii=False).encode())
@@ -555,7 +576,7 @@ async def test_combined_context_boundary_tiers_use_real_assist_and_provider_wire
         public_turns=warm_turns + 5,
         request_bytes=request_bytes,
         selected_tools=len(functions),
-        context_threshold=1_000,
+        context_threshold=threshold,
         provider_rejections=1,
         recoveries=1,
         elapsed_seconds=round(perf_counter() - started, 3),

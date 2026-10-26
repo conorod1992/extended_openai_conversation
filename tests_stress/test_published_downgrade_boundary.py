@@ -22,7 +22,6 @@ def _older_release_child() -> None:
     package.__path__ = [str(component.parent)]
     sys.modules["custom_components"] = package
     from custom_components.extended_openai_conversation_responses import backup
-    from custom_components.extended_openai_conversation_responses.private_backup import encode_document
     from homeassistant.exceptions import HomeAssistantError
 
     document = json.loads(Path(os.environ[_DOCUMENT]).read_text(encoding="utf-8"))
@@ -48,6 +47,7 @@ async def test_current_export_is_rejected_by_published_older_release(
     from pytest_homeassistant_custom_component.common import MockConfigEntry
 
     from custom_components.extended_openai_conversation_responses import backup
+    from custom_components.extended_openai_conversation_responses.private_backup import encode_document
     from custom_components.extended_openai_conversation_responses.const import (
         CONF_SKIP_AUTHENTICATION,
         CONFIG_ENTRY_VERSION,

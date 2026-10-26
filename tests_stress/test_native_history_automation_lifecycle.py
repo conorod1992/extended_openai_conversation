@@ -21,7 +21,7 @@ from tests_stress.conftest import record
     "layout", ["standard", "standard-disabled", "inline", "alternate"]
 )
 async def test_native_automation_success_requires_generated_id_loaded(
-    hass, layout, stress_trace
+    hass, layout, stress_trace, monkeypatch
 ):
     """Reload success alone cannot acknowledge an automation HA never loaded."""
     from pytest_homeassistant_custom_component.common import MockUser
@@ -86,11 +86,30 @@ async def test_native_automation_success_requires_generated_id_loaded(
         added["initial_state"] = False
     rejected = layout in {"inline", "alternate"}
     if rejected:
+        native_outcomes = []
+        add = NativeFunction.add_automation
+
+        async def observed_add(*args, **kwargs):
+            try:
+                value = await add(*args, **kwargs)
+            except Exception as err:
+                native_outcomes.append(err)
+                raise
+            native_outcomes.append(value)
+            return value
+
+        monkeypatch.setattr(NativeFunction, "add_automation", observed_add)
         result = await _call_tool(hass, agent, user, yaml.safe_dump(added))
+        assert len(native_outcomes) == 1
+        native = native_outcomes[0]
+        diagnostic = native.get("error") if isinstance(native, dict) else str(native)
+        assert "not loaded" in diagnostic
+        assert "automation: !include automations.yaml" in diagnostic
         failure = result["result"]
         assert failure["status"] == "error"
-        assert "not loaded" in failure["error"]
-        assert "automation: !include automations.yaml" in failure["error"]
+        assert failure["error"] == "Function execution failed. Check the tool configuration and permissions."
+        assert "automation: !include automations.yaml" not in failure["error"]
+        assert str(path) not in failure["error"]
         assert path.read_bytes() == before, "Unloaded automation must be rolled back"
         assert not registered
         assert [

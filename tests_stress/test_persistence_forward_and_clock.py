@@ -155,7 +155,8 @@ async def test_future_backup_version_refuses_without_mutation(
     subentry = next(iter(entry.subentries.values()))
     before = await backup.async_collect_backup_snapshot(hass, entry, subentry)
     future = deepcopy(before)
-    future["version"] = backup.BACKUP_VERSION + 1
+    # Both public v5 and private v6 are supported; v6 is not a future format.
+    future["version"] = max(backup.BACKUP_VERSION, backup.PRIVATE_BACKUP_VERSION) + 1
     with pytest.raises(backup.BackupError, match="newer unsupported backup format"):
         await backup.async_restore_backup(hass, entry, subentry, future)
     after = await backup.async_collect_backup_snapshot(hass, entry, subentry)

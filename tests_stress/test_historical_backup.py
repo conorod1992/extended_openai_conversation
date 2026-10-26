@@ -99,7 +99,7 @@ async def test_tagged_release_fixture_imports_and_reexports(
 
     current = await backup.async_collect_backup_snapshot(hass, entry, subentry)
     await assert_fresh_contents(hass, entry, subentry, current)
-    assert current["version"] == backup.BACKUP_VERSION
+    assert current["version"] == backup.PRIVATE_BACKUP_VERSION
     assert "request_rules" in current
     assert current["memories"]["memories"][0]["content"] == memory_marker
     assert current["knowledge"]["sources"][0]["content"] == knowledge_marker

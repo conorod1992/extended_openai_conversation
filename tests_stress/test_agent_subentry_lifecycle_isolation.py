@@ -100,7 +100,7 @@ async def test_duplicate_and_imported_agents_start_config_only_then_diverge_dura
     assert duplicate_memories["memories"] == []
 
     exported = await _management_call(
-        client, entry=source, section="configuration", action="export"
+        client, entry=source, section="configuration", action="export", reviewed_custom=True
     )
     imported = await _management_call(
         client,

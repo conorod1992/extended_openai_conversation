@@ -199,7 +199,7 @@ async def test_mixed_ai_tasks_remain_request_isolated_after_concurrency_and_relo
     fast_model = "gpt-5.6"
     await task(sequential + concurrent + 2)
 
-    with pytest.raises(HomeAssistantError, match="deterministic provider failure") as failure:
+    with pytest.raises(HomeAssistantError, match=r"^AI Task provider request failed: Provider request failed \(code provider_error\)$") as failure:
         await ai_task.async_generate_data(
             hass,
             task_name="Failed task",
@@ -207,6 +207,8 @@ async def test_mixed_ai_tasks_remain_request_isolated_after_concurrency_and_relo
             instructions=failure_marker,
         )
     assert isinstance(failure.value.__cause__, APIError)
+    assert "deterministic provider failure" in str(failure.value.__cause__)
+    assert "deterministic provider failure" not in str(failure.value)
     # Restore the dependency and retry the same public feature before a sibling.
     await task(9999)
     await task(sequential + concurrent + 4)
