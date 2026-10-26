@@ -1,4 +1,4 @@
-import{a as e,o as t,s as n}from"./tool-yaml-editor-adapter-C8f03DgT.js";var r=`ha-yaml-editor`,i=`tool-yaml-native`;function a(e){return!e||typeof e!=`object`?!1:Object.keys(e).length===1&&typeof e.__eoai_management_yaml_v1__==`string`||Object.values(e).some(a)}var o=null,s=`spec:
+import{a as e,o as t,s as n}from"./tool-yaml-editor-adapter-DfxRcMUC.js";var r=`ha-yaml-editor`,i=`tool-yaml-native`;function a(e){return!e||typeof e!=`object`?!1:Object.keys(e).length===1&&typeof e.__eoai_management_yaml_v1__==`string`||Object.values(e).some(a)}var o=null,s=`spec:
   name: my_tool
   description: Describe what this tool does.
   parameters:

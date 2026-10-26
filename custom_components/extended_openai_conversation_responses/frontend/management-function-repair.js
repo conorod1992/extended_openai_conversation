@@ -1,5 +1,5 @@
 import {UnsavedState} from "./unsaved-state.js";
-import {captureConfigurationSubmission, configurationSubmissionIsCurrent, completeConfigurationAcknowledgement} from "./configuration-acknowledgement.js";
+import {captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, completeConfigurationAcknowledgement} from "./configuration-acknowledgement.js";
 import {getToolYamlEditor, captureToolEditorOwner, captureToolEditorOperation, acknowledgeToolEditor} from "./tool-yaml-editor-adapter.js";
 
 function repairIssue(panel) {
@@ -154,7 +154,7 @@ async function openInvalidToolEditor(panel, item, revision = panel._result?.revi
   const status = root?.querySelector("#tool-error");
   if (!dialog || !editor?.textarea) return;
   panel._repairToolIndex = Number(item.index);
-  panel._repairToolLoad = {};
+  panel._repairToolLoad = {owner:captureConfigurationOwner(panel)};
   panel._toolEditorLoad = null;
   const {isCurrent} = captureToolEditorOwner(panel);
   panel._repairToolRevision = revision;
@@ -223,8 +223,12 @@ async function saveInvalidTool(panel, button) {
   if (!Number.isInteger(index)) return false;
   const editor = getToolYamlEditor(panel);
   const yaml = editor?.getYaml?.() || "";
-  const submission = captureConfigurationSubmission(panel);
   const operation = captureToolEditorOperation(panel);
+  if (!operation.isCurrent()) {
+    panel._toast?.("The Function Tool editor owner changed. Reopen it before continuing.", true);
+    return true;
+  }
+  const submission = captureConfigurationSubmission(panel);
   let finishingOperation = operation;
   if (typeof panel._setSaving === "function") panel._setSaving(button, true);
   else button.disabled = true;

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {captureToolEditorOperation, acknowledgeToolEditor} from "../custom_components/extended_openai_conversation_responses/frontend/tool-yaml-editor-adapter.js";
+import {captureConfigurationOwner} from "../custom_components/extended_openai_conversation_responses/frontend/configuration-acknowledgement.js";
 
 const tool = name => ({spec:{name}, function:{type:"template"}});
 function panel(repair = false) {
@@ -12,6 +13,38 @@ function panel(repair = false) {
     _repairToolIndex:repair ? 0 : null, _repairToolRevision:repair ? "r1" : null,
     _toolRevision:"r1", _toolOriginalName:repair ? null : "old", _toolInitialYaml:"original",
     _configData:{revision:"r1", config:{functions:repair ? [tool("other")] : [tool("old"), tool("other")]}}};
+}
+
+for (const repair of [false, true]) {
+  test(`${repair ? "repair" : "healthy"} new commands retain the owner of their original opening`, () => {
+    const host = panel(repair);
+    host.hass = {user:{id:"opening-owner"}};
+    const token = {owner:captureConfigurationOwner(host)};
+    if (repair) host._repairToolLoad = token; else host._toolEditorLoad = token;
+    host.hass = {user:{id:"different-user"}};
+    assert.equal(captureToolEditorOperation(host).isCurrent(), false);
+    host.hass = {user:{id:"opening-owner"}};
+    host._eocAuthenticationGeneration = 2;
+    assert.equal(captureToolEditorOperation(host).isCurrent(), false);
+    const reopened = {owner:captureConfigurationOwner(host)};
+    if (repair) host._repairToolLoad = reopened; else host._toolEditorLoad = reopened;
+    assert.equal(captureToolEditorOperation(host).isCurrent(), true);
+  });
+
+  test(`${repair ? "repair" : "healthy"} initial identity binding never reassigns an already captured operation`, () => {
+    const host = panel(repair), token = {owner:captureConfigurationOwner(host)};
+    if (repair) host._repairToolLoad = token; else host._toolEditorLoad = token;
+    const pendingUnknown = captureToolEditorOperation(host), original = token.owner;
+    host.hass = {user:{id:"first-known"}};
+    const firstKnown = captureToolEditorOperation(host);
+    assert.equal(firstKnown.isCurrent(), true);
+    assert.equal(token.owner.userId, "first-known");
+    assert.notEqual(token.owner, original);
+    assert.equal(original.userId, undefined);
+    assert.equal(pendingUnknown.isCurrent(), false);
+    host.hass = {user:{id:"second-known"}};
+    assert.equal(captureToolEditorOperation(host).isCurrent(), false);
+  });
 }
 
 for (const repair of [false, true]) {

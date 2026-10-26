@@ -229,3 +229,11 @@ use exclusive control supersession. Group confirmation captures its authoring
 revision, copies group records before editing, and reuses existing group rows on
 ACK. Later row/new-name text and focus remain intact. This does not introduce a
 new general group-dialog discard/navigation/recovery workflow.
+
+Tool load generations also carry their opening owner. New Validate/Save commands
+reuse it instead of acquiring the current identity from an old mounted editor.
+They reject retired ownership before dispatch or pending UI state. Initially
+unknown authoring can bind to its first known identity at a new command's
+admission, by replacing the descriptor. Already-captured operation closures keep
+their original descriptor and cannot inherit that identity. No additional Tool
+owner counter or parallel mutable owner field is maintained.

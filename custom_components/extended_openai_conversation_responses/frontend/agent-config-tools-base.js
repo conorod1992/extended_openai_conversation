@@ -525,7 +525,7 @@ export async function openTool(panel, index = null, initialTool = null) {
   const dialog = root.querySelector("#tool-dialog");
   let editor = getToolYamlEditor(panel);
   const status = root.querySelector("#tool-error");
-  panel._toolEditorLoad = {};
+  panel._toolEditorLoad = {owner:captureConfigurationOwner(panel)};
   const {isCurrent} = captureToolEditorOwner(panel);
   root.querySelector("#tool-dialog-title").textContent = index === null ? "Add Function Tool" : "Edit Function Tool";
   root.querySelector("#tool-dialog-meta").textContent = "Loading YAML...";
@@ -576,6 +576,10 @@ export async function openTool(panel, index = null, initialTool = null) {
 function toolErrorText(errors={}) { return Object.entries(errors).map(([key,value])=>`${key}: ${value}`).join(" "); }
 
 async function validateDialogTool(panel, operation = captureToolEditorOperation(panel)) {
+  if (!operation.isCurrent()) {
+    panel._toast?.("The Function Tool editor owner changed. Reopen it before continuing.", true);
+    return null;
+  }
   const root=panel.shadowRoot;
   const status=root.querySelector("#tool-error");
   const validation = {};
@@ -803,6 +807,10 @@ export function bindTools(panel) {
     const button = root.querySelector("#tool-save");
     if (button.disabled) return;
     const operation = captureToolEditorOperation(panel);
+    if (!operation.isCurrent()) {
+      panel._toast?.("The Function Tool editor owner changed. Reopen it before continuing.", true);
+      return;
+    }
     let finishingOperation = operation;
     const submission = captureConfigurationSubmission(panel);
     panel._setSaving(button, true);

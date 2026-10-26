@@ -71,7 +71,8 @@ export function captureToolEditorOwner(panel) {
   const normalGeneration = panel._toolEditorLoad;
   const repairGeneration = panel._repairToolLoad;
   const repairIndex = panel._repairToolIndex;
-  const owner = captureConfigurationOwner(panel);
+  const generation = Number.isInteger(repairIndex) ? repairGeneration : normalGeneration;
+  const owner = generation?.owner || captureConfigurationOwner(panel);
   const isCurrent = () => configurationSubmissionIsCurrent(panel, owner)
     && panel._toolEditorLoad === normalGeneration
     && panel._repairToolLoad === repairGeneration && panel._repairToolIndex === repairIndex
@@ -82,6 +83,14 @@ export function captureToolEditorOwner(panel) {
 // A submitted YAML snapshot owns only its validation/result presentation.
 // Typing keeps the editor visit while invalidating that snapshot.
 export function captureToolEditorOperation(panel) {
+  const generation = Number.isInteger(panel._repairToolIndex) ? panel._repairToolLoad : panel._toolEditorLoad;
+  const opening = generation?.owner, userId = panel.hass?.user?.id;
+  if (opening && opening.userId == null && userId != null) {
+    const resolved = {...opening, userId};
+    // Bind initial authoring only at a new command's admission. Replacing the
+    // descriptor keeps already-dispatched unknown-user operations immutable.
+    if (configurationSubmissionIsCurrent(panel, resolved)) generation.owner = resolved;
+  }
   const owner = captureToolEditorOwner(panel);
   const agent = panel._selectedAgent?.();
   const yaml = getToolYamlEditor(panel).getYaml();
@@ -120,6 +129,6 @@ export function acknowledgeToolEditor(panel, operation, saved, previous) {
   panel._repairToolIndex = null;
   panel._repairToolLoad = null;
   panel._repairToolRevision = null;
-  panel._toolEditorLoad ||= {};
+  panel._toolEditorLoad ||= {owner:captureConfigurationOwner(panel)};
   return captureToolEditorOperation(panel);
 }
