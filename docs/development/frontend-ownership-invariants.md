@@ -237,3 +237,9 @@ unknown authoring can bind to its first known identity at a new command's
 admission, by replacing the descriptor. Already-captured operation closures keep
 their original descriptor and cannot inherit that identity. No additional Tool
 owner counter or parallel mutable owner field is maintained.
+
+The authentication owner record stores the last observed user ID alongside its
+generation. Reading the previous ID from mutable `hass` would miss in-place
+A→B→A updates. Ordinary same-user updates reuse the record; identity changes
+replace it. The existing generation property is a computed compatibility view,
+not a second independently mutable counter.

@@ -300,10 +300,18 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   get hass() { return this._hass; }
 
+  get _eocAuthenticationGeneration() { return this._eocAuthentication?.generation || 0; }
+
   set hass(value) {
-    const previousUser = this._hass?.user?.id;
-    if (previousUser != null && previousUser !== value.user?.id) {
-      this._eocAuthenticationGeneration = (this._eocAuthenticationGeneration || 0) + 1;
+    const userId = value.user?.id;
+    const previousUser = this._eocAuthentication ? this._eocAuthentication.userId : this._hass?.user?.id;
+    const changed = previousUser != null && previousUser !== userId;
+    if (!this._eocAuthentication || previousUser !== userId) {
+      // Keep the observed identity with its generation: HA payloads can reuse
+      // and mutate the same user object before invoking this setter again.
+      this._eocAuthentication = {userId, generation:this._eocAuthenticationGeneration + (changed ? 1 : 0)};
+    }
+    if (changed) {
       // Retire outstanding reads and model preparation as well as mutations.
       // These are operation lifetimes; keep authored drafts and their recovery
       // baselines intact across a temporary authentication transition.
