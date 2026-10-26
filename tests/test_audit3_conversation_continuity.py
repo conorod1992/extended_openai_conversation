@@ -18,11 +18,13 @@ from custom_components.extended_openai_conversation_responses.context_usage_hard
 from custom_components.extended_openai_conversation_responses.entity import (
     ExtendedOpenAIBaseLLMEntity,
 )
+from custom_components.extended_openai_conversation_responses.function_execution import (
+    validated_function_call,
+)
 from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
     make_tool_result_content,
 )
 from custom_components.extended_openai_conversation_responses.tool_replay_guard import (
-    bind_dispatch_origin,
     record_dispatch,
     remember_unacknowledged_calls,
     was_unacknowledged_equivalent,
@@ -115,7 +117,7 @@ def test_only_verified_reads_are_exempt_from_replay(function, delay, blocked):
     args = {"query": "tea towels", **({"delay": {"seconds": 600}} if delay else {})}
     retained = llm.ToolInput(id="first", tool_name="tool", tool_args=args)
     dispatched = llm.ToolInput(id="first", tool_name="tool", tool_args=dict(args))
-    with bind_dispatch_origin(dispatched, retained):
+    with validated_function_call(dispatched, {}, retained_tool_input=retained):
         record_dispatch(entity, dispatched, {"function": function})
     result = make_tool_result_content(
         agent_id="a", tool_call_id="first", tool_name="tool", tool_result={"result": {}}

@@ -6,6 +6,7 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
+from dataclasses import dataclass
 import logging
 import math
 import re
@@ -1012,23 +1013,49 @@ def _validate_value(name: str, value: Any, schema: Mapping[str, Any]) -> Any:
     return value
 
 
-_VALIDATED_CALL: ContextVar[
-    tuple[llm.ToolInput, dict[str, Any], dict[str, Any]] | None
-] = ContextVar("extended_openai_validated_function_call", default=None)
+@dataclass(frozen=True, slots=True)
+class PreparedFunctionCall:
+    """Validation snapshots and retained provenance for one prepared dispatch."""
+
+    tool_input: llm.ToolInput
+    spec_snapshot: dict[str, Any]
+    arguments_snapshot: dict[str, Any]
+    retained_input: llm.ToolInput | None = None
+
+
+_VALIDATED_CALL: ContextVar[PreparedFunctionCall | None] = ContextVar(
+    "extended_openai_validated_function_call", default=None
+)
 
 
 @contextmanager
 def validated_function_call(
-    tool_input: llm.ToolInput, spec: dict[str, Any]
+    tool_input: llm.ToolInput,
+    spec: dict[str, Any],
+    *,
+    retained_tool_input: llm.ToolInput | None = None,
 ) -> Iterator[None]:
-    """Carry one recovery-validated call across dispatch without validating twice."""
+    """Own prepared-call validation and its retained alias across dispatch."""
     token = _VALIDATED_CALL.set(
-        (tool_input, deepcopy(spec), deepcopy(tool_input.tool_args))
+        PreparedFunctionCall(
+            tool_input,
+            deepcopy(spec),
+            deepcopy(tool_input.tool_args),
+            retained_tool_input,
+        )
     )
     try:
         yield
     finally:
         _VALIDATED_CALL.reset(token)
+
+
+def retained_function_input(tool_input: llm.ToolInput) -> llm.ToolInput | None:
+    """Retain exact-input provenance even when changed arguments need validation."""
+    prepared = _VALIDATED_CALL.get()
+    if prepared is not None and prepared.tool_input is tool_input:
+        return prepared.retained_input
+    return None
 
 
 async def async_execution_arguments(
@@ -1038,9 +1065,9 @@ async def async_execution_arguments(
     prepared = _VALIDATED_CALL.get()
     if (
         prepared is not None
-        and prepared[0] is tool_input
-        and prepared[1] == spec
-        and prepared[2] == tool_input.tool_args
+        and prepared.tool_input is tool_input
+        and prepared.spec_snapshot == spec
+        and prepared.arguments_snapshot == tool_input.tool_args
     ):
         return tool_input.tool_args
     return await async_validate_function_arguments(hass, spec, tool_input.tool_args)
