@@ -41,7 +41,9 @@ async def test_owner_replacement_preserves_b_followup_only(hass, monkeypatch, gu
     monkeypatch.setattr(owner, "resolve_data_scope", resolve_data_scope)
     histories = {}
 
-    def session(_hass, conversation_id):
+    def session(_hass, conversation_id, *, context):
+        assert isinstance(context, Context)
+        assert context.user_id in {"alice", "bob"}
         return nullcontext(
             SimpleNamespace(conversation_id=conversation_id or f"ha-{len(histories)}")
         )

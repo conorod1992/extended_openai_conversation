@@ -173,6 +173,7 @@ test("keyboard-only Request Rule journey creates, edits and deletes a routing ru
   card = panel.locator(".request-rule-card").filter({hasText: "Keyboard routing rule edited"});
   await expect(card).toBeVisible();
   operations.push("edited");
+  await expect(card.locator(".rule-edit")).toBeFocused();
 
   await tabTo(page, card.locator(".rule-delete"));
   await page.keyboard.press("Enter");

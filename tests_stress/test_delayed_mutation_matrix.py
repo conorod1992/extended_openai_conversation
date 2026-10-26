@@ -54,6 +54,7 @@ MUTATIONS = (
     "guest_enabled",
     "guest_policy_edited",
     "backup_restore_removed_tool",
+    "backup_restore_legacy_defaults",
     "entity_unexposed",
     "entity_removed",
     "entity_unavailable",
@@ -63,7 +64,7 @@ MUTATIONS = (
     "entry_reloaded",
     "entry_unloaded_and_setup",
 )
-SURVIVES = {"group_detached", "entry_reloaded", "entry_unloaded_and_setup"}
+SURVIVES = {"group_detached", "entry_reloaded", "entry_unloaded_and_setup", "backup_restore_legacy_defaults"}
 
 
 @pytest.mark.parametrize("mutation", MUTATIONS)
@@ -165,11 +166,15 @@ async def test_delayed_tool_uses_live_state_at_due_time(
             data=normalize_agent_config(options),
         )
         await hass.async_block_till_done()
-    elif mutation == "backup_restore_removed_tool":
+    elif mutation in {"backup_restore_removed_tool", "backup_restore_legacy_defaults"}:
         snapshot = await async_collect_backup_snapshot(
             hass, entry, entry.subentries[subentry.subentry_id]
         )
-        snapshot["agent"]["config"][CONF_FUNCTION_TOOLS] = []
+        # Private recovery preserves persisted source: raw [] historically means
+        # defaults; an explicitly saved empty edit is persisted as YAML "[]".
+        snapshot["agent"]["config"][CONF_FUNCTION_TOOLS] = (
+            "[]" if mutation == "backup_restore_removed_tool" else []
+        )
         result = await async_restore_backup(
             hass, entry, entry.subentries[subentry.subentry_id], snapshot
         )

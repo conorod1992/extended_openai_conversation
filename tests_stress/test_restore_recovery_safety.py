@@ -144,7 +144,9 @@ async def test_pending_restore_rejects_writes_until_durable_recovery(
     assert await restore_recovery.async_recover_pending_restore(hass, entry, subentry)
     expected = previous if phase == "rollback" else target
     await assert_fresh_contents(hass, entry, subentry, expected)
-    assert subentry.data["prompt"] == expected["agent"]["config"]["prompt"]
+    # Private rollback retains absent fields rather than injecting defaults.
+    assert ("prompt" in subentry.data) == ("prompt" in expected["agent"]["config"])
+    assert subentry.data.get("prompt") == expected["agent"]["config"].get("prompt")
     assert not Path(store.path).exists()
     assert not get_agent_maintenance_gate(
         hass, entry.entry_id, subentry.subentry_id

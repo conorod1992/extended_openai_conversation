@@ -33,8 +33,8 @@ from homeassistant.components.assist_pipeline.pipeline import (
     async_get_pipeline,
 )
 from homeassistant.core import Context, HomeAssistant
-from homeassistant.helpers import chat_session
 from homeassistant.setup import async_setup_component
+from tests_real_ha.chat_sessions import async_get_chat_session
 from tests_real_ha.test_acceptance_lifecycle import (
     _conversation_subentry,
     _make_entry,
@@ -84,7 +84,7 @@ async def _run_genuine_assist(
 ) -> list[PipelineEvent]:
     assert await async_setup_component(hass, "assist_pipeline", {})
     events: list[PipelineEvent] = []
-    with chat_session.async_get_chat_session(hass, _CONVERSATION_ID) as session:
+    with async_get_chat_session(hass, _CONVERSATION_ID) as session:
         pipeline_input = PipelineInput(
             intent_input="Which Voice Identity owns this Assist turn?",
             session=session,

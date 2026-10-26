@@ -100,6 +100,7 @@ PROVIDER_BACKED_UP_FIELDS = {"azure_model"}
 
 BACKED_UP_SUBSYSTEMS = {
     "agent",
+    "provider_connection",
     "memories",
     "temporary_memories",
     "knowledge",

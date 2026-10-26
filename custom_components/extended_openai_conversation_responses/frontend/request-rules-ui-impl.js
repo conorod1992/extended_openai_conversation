@@ -456,7 +456,13 @@ export function bindRequestRuleEditor(panel) {
         state.revision=result.revision;
         applyRequestRuleMutation(panel,action,result,{ruleId:result.rule.id});
       }
-      if(unchanged)dialog.close();
+      if(unchanged) {
+        // Updating a keyed card can replace the original opener. Native modal
+        // focus restoration then targets a detached button (Firefox/WebKit can
+        // lose sequential Tab navigation). Restore its current counterpart.
+        dialog.close();
+        if(action === "update")root.querySelector(`[data-rule-key="${CSS.escape(result.rule.id)}"] .rule-edit`)?.focus();
+      }
     }catch(err){
       if(!current())return;
       const message = err.message || String(err);

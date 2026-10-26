@@ -565,11 +565,9 @@ async def test_sqlite_lock_deadline_and_worker_recovery_on_public_assist(
         else:
             result = await asyncio.wait_for(pending, 5)
             assert _speech(result) == "Read settled"
-            assert "execution deadline" in str(
-                _provider_result(
-                    wire.requests[1], API_MODE_CHAT_COMPLETIONS, "locked-call"
-                )
-            )
+            assert _provider_result(
+                wire.requests[1], API_MODE_CHAT_COMPLETIONS, "locked-call"
+            ) == {"status": "error", "error": "Function execution failed. Check the tool configuration and permissions."}
         # The native worker must close while the exclusive lock is STILL held in
         # deadline/cancellation variants. Cancelling the coroutine is insufficient.
         assert await asyncio.to_thread(closed.wait, 1)
@@ -917,6 +915,22 @@ async def test_remaining_function_errors_are_serialized_on_provider_wire(
         if kind == "sqlite":
             with sqlite3.connect(tmp_path / "wire.db") as db:
                 db.execute("CREATE TABLE probes (id INTEGER PRIMARY KEY, value TEXT)")
+        from custom_components.extended_openai_conversation_responses.functions import get_function
+
+        backend = get_function(kind)
+        execute = backend.execute
+        native_outcomes = []
+
+        async def observed_execute(*args, **kwargs):
+            try:
+                value = await execute(*args, **kwargs)
+            except Exception as err:
+                native_outcomes.append(err)
+                raise
+            native_outcomes.append(value)
+            return value
+
+        monkeypatch.setattr(backend, "execute", observed_execute)
         name = f"enhanced_{failure}_wire"
         entry = _make_entry(
             f"Enhanced {failure} wire error",
@@ -956,6 +970,21 @@ async def test_remaining_function_errors_are_serialized_on_provider_wire(
         assert _speech(response) == "Failure handled"
         _assert_exchange(wire, api_mode, name)
         result = _provider_result(wire.requests[1], api_mode, call_id)
+        assert len(native_outcomes) == 1, "The failing backend must execute exactly once"
+        # Keep the original precise failure checks inside the native boundary.
+        # A different exception must not pass merely because public errors share
+        # the same sanitized text.
+        private_errors = {
+            "sqlite_bad_query": "SQLite query failed: no such table: absent_table",
+            "read_file_missing": f"File not found: {tmp_path / 'absent.txt'}",
+            "write_file_denied": f"Access denied: path '{tmp_path / 'marker.txt'}' is not in allowed directories",
+            "edit_file_no_match": "Text not found in file: ABSENT_TEXT...",
+        }
+        if failure in private_errors:
+            native = native_outcomes[0]
+            diagnostic = native.get("error") if isinstance(native, dict) else str(native)
+            assert diagnostic == private_errors[failure]
+            assert private_errors[failure] not in json.dumps(result)
         if failure == "bash_nonzero":
             assert result == {"exit_code": 7, "stderr": "EOAI_FAILURE", "stdout": ""}
             assert (tmp_path / "attempts.txt").read_text(
@@ -970,17 +999,17 @@ async def test_remaining_function_errors_are_serialized_on_provider_wire(
         elif failure == "sqlite_bad_query":
             assert result == {
                 "status": "error",
-                "error": "SQLite query failed: no such table: absent_table",
+                "error": "Function execution failed. Check the tool configuration and permissions.",
             }
         elif failure == "read_file_missing":
-            assert result == {"error": f"File not found: {tmp_path / 'absent.txt'}"}
+            assert result == {"error": "Function execution failed. Check the tool configuration and permissions."}
         elif failure == "write_file_denied":
             assert result == {
-                "error": f"Access denied: path '{tmp_path / 'marker.txt'}' is not in allowed directories"
+                "error": "Function execution failed. Check the tool configuration and permissions."
             }
             assert (tmp_path / "marker.txt").read_text(encoding="utf-8") == "PRESERVE"
         else:
-            assert result == {"error": "Text not found in file: ABSENT_TEXT..."}
+            assert result == {"error": "Function execution failed. Check the tool configuration and permissions."}
             assert (tmp_path / "marker.txt").read_text(encoding="utf-8") == "PRESERVE"
         record(
             stress_trace,
@@ -1059,7 +1088,8 @@ async def test_composite_late_failure_preserves_one_completed_side_effect(
     assert _speech(response) == "Partial failure handled"
     _assert_exchange(wire, api_mode, name)
     result = _provider_result(wire.requests[1], api_mode, call_id)
-    assert result == {"status": "error", "error": f"File not found: {missing}"}
+    assert result == {"status": "error", "error": "Function execution failed. Check the tool configuration and permissions."}
+    assert str(missing) not in json.dumps(result)
     assert side_effects.read_text(encoding="utf-8").splitlines() == ["first"]
     record(stress_trace, "composite_partial_failure", mode=api_mode, side_effects=1)
 

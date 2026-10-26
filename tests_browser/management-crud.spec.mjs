@@ -241,6 +241,7 @@ test("Request Rule Show filter keeps global priorities and group changes preserv
     await panel.locator("#rule-group").selectOption({label:group});
     await panel.locator("#rule-action-type").selectOption("model_routing");
     await panel.locator("#rule-save").click();
+    await expect(panel.getByRole("button", {name:"Create rule", exact:true}).first()).toBeFocused();
   }
   const cards = panel.locator(".request-rule-card");
   await expect(cards).toHaveCount(3);

@@ -432,7 +432,9 @@ async def test_interleaved_fragmented_tools_and_trailing_usage_keep_exact_effect
         agent_id=agent.entity_id,
     )
     assert _speech(result) == "Both complete"
-    order = [0, 1] if api_mode == API_MODE_CHAT_COMPLETIONS else [1, 0]
+    # Native HA consumes output items sequentially by provider output index,
+    # even when completion events arrive in reverse order.
+    order = [0, 1]
     assert effects == [
         ("light", "turn_off", {"entity_id": [targets[index]]}) for index in order
     ]

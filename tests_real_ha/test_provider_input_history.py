@@ -24,7 +24,7 @@ from custom_components.extended_openai_conversation_responses.ha_tool_result_com
 from homeassistant.components import conversation
 from homeassistant.core import Context
 from homeassistant.helpers import llm
-from homeassistant.helpers.chat_session import async_get_chat_session
+from tests_real_ha.chat_sessions import async_get_chat_session
 from tests_real_ha.strict_provider import StrictProvider
 from tests_real_ha.test_cross_feature_acceptance import _say, _speech
 from tests_real_ha.test_entry_point_contract_matrix import _contract_agent
@@ -504,6 +504,7 @@ async def test_full_handler_bulk_context_measurement_runs_in_workers(
     hass, monkeypatch, mode
 ):
     import threading
+
     from custom_components.extended_openai_conversation_responses import (
         context_usage_hardening as measurement,
     )

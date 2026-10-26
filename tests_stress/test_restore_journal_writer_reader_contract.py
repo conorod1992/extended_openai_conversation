@@ -71,7 +71,7 @@ async def test_accepted_journal_is_readable_by_production_reader_on_disk(
     # Read using the actual strict disk reader, including version/key checks.
     reloaded = await reader._async_load_data()
     assert reloaded == journal
-    loaded, read_target, read_rollback = restore_recovery._load_journal(
+    loaded, read_target, read_rollback = await restore_recovery._async_load_journal(
         reloaded, "entry-1", "agent-new"
     )
     assert loaded == journal

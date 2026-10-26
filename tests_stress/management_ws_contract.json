@@ -31,7 +31,7 @@
     {"journey": "request_rules", "section": "request_rules", "action": "settings", "keys": ["defaults", "wording_groups", "revision"]},
     {"journey": "request_rules_empty", "section": "request_rules", "action": "settings", "keys": ["defaults", "wording_groups", "revision"], "contains": {"wording_groups": []}},
     {"journey": "request_rules", "section": "request_rules", "action": "test_match", "keys": ["text"]},
-    {"journey": "rule_pack", "section": "request_rules", "action": "rule_pack_export", "keys": ["selection", "group_id", "rule_ids"], "equals": {"selection": "all", "group_id": null, "rule_ids": null}},
+    {"journey": "rule_pack", "section": "request_rules", "action": "rule_pack_export", "keys": ["selection", "group_id", "rule_ids", "reviewed_custom"], "equals": {"selection": "all", "group_id": null, "rule_ids": null, "reviewed_custom": true}},
     {"journey": "rule_pack", "section": "request_rules", "action": "rule_pack_review", "keys": ["pack"]},
     {"journey": "rule_pack", "section": "request_rules", "action": "rule_pack_import", "keys": ["pack", "revision", "review_token", "confirm"]},
     {"journey": "functions", "section": "tools", "action": "save", "keys": ["yaml", "revision"], "optional_keys": ["original_name"]},
@@ -46,7 +46,7 @@
     {"journey": "guest_quiet", "section": "guest_mode", "action": "save_policy", "keys": ["config", "revision"]},
     {"journey": "guest_operations", "section": "guest_mode", "action": "update", "keys": ["indefinite"], "contains": {"indefinite": true}},
     {"journey": "guest_operations", "section": "guest_mode", "action": "disable", "keys": ["entry_id", "subentry_id"]},
-    {"journey": "guest_quiet", "section": "quiet_hours", "action": "update", "keys": ["config"]},
+    {"journey": "guest_quiet", "section": "quiet_hours", "action": "update", "keys": ["config", "revision"]},
     {"journey": "backup", "type": "extended_openai_conversation_responses/management/backup_transfer", "action": "export_start", "keys": ["data"]},
     {"journey": "backup", "type": "extended_openai_conversation_responses/management/backup_transfer", "action": "import_start", "keys": ["data"]},
     {"journey": "backup", "type": "extended_openai_conversation_responses/management/backup_transfer", "action": "import_restore", "keys": ["data"]}

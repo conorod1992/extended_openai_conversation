@@ -232,6 +232,19 @@ async def test_public_edit_preserves_external_change_during_native_preparation(
         return await conversation.async_converse(hass=hass, text="Edit the file", conversation_id=None, context=Context(), language="en", agent_id=entry.entry_id)
 
     wire = _install_wire(monkeypatch, agent, _provider_replies(api_mode, "late-conflict", "external_edit", "Conflict handled"))
+    native_outcomes = []
+    execute = file.EditFileFunction.execute
+
+    async def observed_execute(*args, **kwargs):
+        try:
+            value = await execute(*args, **kwargs)
+        except Exception as err:
+            native_outcomes.append(err)
+            raise
+        native_outcomes.append(value)
+        return value
+
+    monkeypatch.setattr(file.EditFileFunction, "execute", observed_execute)
     caller = None
     try:
         with monkeypatch.context() as gate:
@@ -243,8 +256,13 @@ async def test_public_edit_preserves_external_change_during_native_preparation(
             release.set()
             assert _speech(await caller) == "Conflict handled"
         result = _provider_result(wire.requests[1], api_mode, "late-conflict")
-        assert "changed since it was read" in result["error"].lower()
-        assert "retry" in result["error"].lower()
+        assert len(native_outcomes) == 1
+        native = native_outcomes[0]
+        diagnostic = native.get("error") if isinstance(native, dict) else str(native)
+        assert "changed since it was read" in diagnostic.lower()
+        assert "retry" in diagnostic.lower()
+        assert result == {"error": "Function execution failed. Check the tool configuration and permissions."}
+        assert str(target) not in result["error"]
         assert target.read_text() == "alpha BETA_EXTERNAL"
         assert list(tmp_path.glob(".external.txt.*.tmp")) == []
         wire = _install_wire(monkeypatch, agent, _provider_replies(api_mode, "healthy-edit", "external_edit", "Healthy edit"))

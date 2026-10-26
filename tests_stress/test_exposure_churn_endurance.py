@@ -357,11 +357,11 @@ async def test_privileged_warm_cache_respects_later_restricted_registry_and_grou
                 ],
             )
             assert _speech(await _say(hass, agent, user.id, index)) == "Control refused"
-            assert "does not have permission to control" in json.dumps(
-                _tool_result_from_chat_request(
-                    denied_wire.requests[1]["body"], f"denied-{index}"
-                )
+            denied = _tool_result_from_chat_request(
+                denied_wire.requests[1]["body"], f"denied-{index}"
             )
+            assert denied == {"result": [{"error": "Function execution failed. Check the tool configuration and permissions."}]}
+            assert current_id not in json.dumps(denied)
             assert effects == []
         if mutation not in {"disable", "delete", "unexpose"}:
             assert _contains_id(privileged, current_id)
