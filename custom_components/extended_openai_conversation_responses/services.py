@@ -1,6 +1,5 @@
 """Services for the extended openai conversation component."""
 
-import asyncio
 import base64
 from collections.abc import Mapping
 from copy import deepcopy
@@ -82,6 +81,7 @@ from .helpers import get_api_mode, get_authenticated_client
 from .live_subentry_updates import update_live_subentry
 from .memory import async_get_memory, memory_as_dict, memory_user_id
 from .model_capabilities import model_capability_snapshot
+from .operation_settlement import async_settle_owned_operation
 from .provider_errors import (
     ensure_successful_responses_result,
     log_provider_failure,
@@ -698,7 +698,11 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                             f"Downloaded Skill file `{repo_path}`",
                         )
                     download_budget.record_file(repo_path, len(content))
-                    await _async_native_job(_write_file_sync, item_path, content)
+                    await async_settle_owned_operation(
+                        hass.async_add_executor_job(
+                            _write_file_sync, item_path, content
+                        )
+                    )
                     downloaded_files.append(repo_path)
                 elif item_type == "dir":
                     child_url = item.get("url")
@@ -721,23 +725,6 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             if path.exists():
                 shutil.rmtree(path)
 
-        async def _async_native_job(function, *args) -> None:
-            """Native preparation/writes must settle before owned cleanup starts."""
-            task = asyncio.ensure_future(hass.async_add_executor_job(function, *args))
-            cancellation = None
-            while not task.done():
-                try:
-                    await asyncio.shield(task)
-                except asyncio.CancelledError as err:
-                    if task.cancelled():
-                        raise
-                    cancellation = cancellation or err
-                except Exception:
-                    break
-            task.result()
-            if cancellation is not None:
-                raise cancellation
-
         skill_manager = await SkillManager.async_get_instance(hass)
         skills_root = skill_manager.user_skills_dir.resolve()
         target_dir = (skills_root / skill_name).resolve()
@@ -749,7 +736,9 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         published = False
 
         try:
-            await _async_native_job(_prepare_staging, staging_root, staging_dir)
+            await async_settle_owned_operation(
+                hass.async_add_executor_job(_prepare_staging, staging_root, staging_dir)
+            )
             _LOGGER.info("Downloading skill `%s` from `%s`", skill_name, source_ref)
             await _download_directory(api_url, staging_dir)
             if not (staging_dir / "SKILL.md").is_file():
@@ -766,7 +755,9 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             ) from err
         finally:
             if owns_staging and not published:
-                await _async_native_job(_cleanup_path, staging_dir)
+                await async_settle_owned_operation(
+                    hass.async_add_executor_job(_cleanup_path, staging_dir)
+                )
 
         _LOGGER.info(
             "Successfully downloaded skill `%s` (%d files)",

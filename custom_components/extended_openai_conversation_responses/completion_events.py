@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
@@ -12,6 +11,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 
 from .const import EVENT_CONVERSATION_FINISHED
+from .operation_settlement import async_settle_owned_operation
 from .operational_errors import log_handled_failure
 
 _LOGGER = logging.getLogger(__name__)
@@ -47,21 +47,7 @@ async def completion_event_scope() -> AsyncIterator[None]:
         if pending:
             # Own one task for the whole queue. Shielding alone would let this
             # context exit on cancellation while later events remain unscheduled.
-            task = asyncio.create_task(_async_flush(pending))
-            cancellation: asyncio.CancelledError | None = None
-            while not task.done():
-                try:
-                    await asyncio.shield(task)
-                except asyncio.CancelledError as err:
-                    if task.cancelled():
-                        raise
-                    if cancellation is None:
-                        cancellation = err
-                except Exception:
-                    break
-            task.result()
-            if cancellation is not None:
-                raise cancellation
+            await async_settle_owned_operation(_async_flush(pending))
 
 
 async def _async_flush(
