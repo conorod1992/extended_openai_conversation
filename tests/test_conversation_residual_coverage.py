@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from inspect import unwrap
 from pathlib import Path
 from types import SimpleNamespace
@@ -65,7 +67,9 @@ def _agent(*, data: dict | None = None) -> SimpleNamespace:
 
 async def _retrieve_temporary_direct(agent: SimpleNamespace):
     """Exercise the owned retrieval path with an explicit retained scope."""
-    prefetch_token = lifecycle._TEMPORARY_MEMORY_PREFETCH.set(None)
+    prefetch_token = lifecycle._ACTIVE_INVOCATION.set(
+        replace(lifecycle._ACTIVE_INVOCATION.get(), temporary_memory_prefetch=None)
+    )
     scope_token = conversation_module._ACTIVE_SCOPE.set(
         user_scope("test", source="coverage")
     )
@@ -73,7 +77,7 @@ async def _retrieve_temporary_direct(agent: SimpleNamespace):
         return await Agent._async_retrieve_temporary_memories(agent)
     finally:
         conversation_module._ACTIVE_SCOPE.reset(scope_token)
-        lifecycle._TEMPORARY_MEMORY_PREFETCH.reset(prefetch_token)
+        lifecycle._ACTIVE_INVOCATION.reset(prefetch_token)
 
 
 @pytest.mark.asyncio

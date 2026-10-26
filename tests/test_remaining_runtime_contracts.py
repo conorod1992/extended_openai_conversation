@@ -1,5 +1,7 @@
 """Conversation error outcomes, control restoration and broadcast lifetime checks."""
 
+from dataclasses import replace
+
 from collections import deque
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -53,13 +55,15 @@ async def test_local_intent_error_is_recorded_and_never_falls_through_to_provide
     log = SimpleNamespace(conversation_id="conversation", content=[])
     user = SimpleNamespace(language="en", conversation_id="conversation")
     metadata = {}
-    token = module._PROCESS_METADATA.set(metadata)
+    token = module._ACTIVE_INVOCATION.set(
+        replace(module._ACTIVE_INVOCATION.get(), metadata=metadata)
+    )
     try:
         result = await entity._async_dispatch_message(
             user, log, {}, try_locally=True, guest_active=False
         )
     finally:
-        module._PROCESS_METADATA.reset(token)
+        module._ACTIVE_INVOCATION.reset(token)
     assert result.response.error_code is not None
     assert metadata["handled_locally"] is True
     assert "local action failed" in log.content[-1].content
@@ -76,13 +80,15 @@ async def test_local_intent_failure_without_speech_uses_error_message(hass):
     )
     log = SimpleNamespace(conversation_id="conversation", content=[])
     metadata = {}
-    token = module._PROCESS_METADATA.set(metadata)
+    token = module._ACTIVE_INVOCATION.set(
+        replace(module._ACTIVE_INVOCATION.get(), metadata=metadata)
+    )
     try:
         result = entity._local_intent_result(
             SimpleNamespace(), log, LocalIntentResult(response, "HassTurnOn")
         )
     finally:
-        module._PROCESS_METADATA.reset(token)
+        module._ACTIVE_INVOCATION.reset(token)
     assert result.response is response and not result.continue_conversation
     assert log.content[-1].content == "Entity unavailable"
     assert metadata == {"handled_locally": True, "matched_intent": "HassTurnOn"}

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import asyncio
 from copy import deepcopy
 from datetime import timedelta
@@ -267,12 +269,14 @@ async def test_memory_prefetch_overlaps_and_is_consumed_once(
         return ["persistent"]
 
     agent = _retrieval_agent(monkeypatch, _memories, _temporary)
-    token = lifecycle._TEMPORARY_MEMORY_PREFETCH.set(None)
+    token = lifecycle._ACTIVE_INVOCATION.set(
+        replace(lifecycle._ACTIVE_INVOCATION.get(), temporary_memory_prefetch=None)
+    )
     try:
         assert await agent._async_retrieve_memories("context", "query") == [
             "persistent"
         ]
-        task = lifecycle._TEMPORARY_MEMORY_PREFETCH.get()
+        task = lifecycle._ACTIVE_INVOCATION.get().temporary_memory_prefetch
         assert task is not None
         assert observed_owner == [
             None
@@ -280,14 +284,14 @@ async def test_memory_prefetch_overlaps_and_is_consumed_once(
 
         release.set()
         assert await agent._async_retrieve_temporary_memories() == ["temporary"]
-        assert lifecycle._TEMPORARY_MEMORY_PREFETCH.get() is None
+        assert lifecycle._ACTIVE_INVOCATION.get().temporary_memory_prefetch is None
     finally:
-        pending = lifecycle._TEMPORARY_MEMORY_PREFETCH.get()
+        pending = lifecycle._ACTIVE_INVOCATION.get().temporary_memory_prefetch
         if pending is not None and not pending.done():
             pending.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await pending
-        lifecycle._TEMPORARY_MEMORY_PREFETCH.reset(token)
+        lifecycle._ACTIVE_INVOCATION.reset(token)
 
 
 async def test_memory_prefetch_is_cancelled_when_persistent_retrieval_fails(
@@ -310,14 +314,16 @@ async def test_memory_prefetch_is_cancelled_when_persistent_retrieval_fails(
         raise RuntimeError("memory lookup failed")
 
     agent = _retrieval_agent(monkeypatch, _memories, _temporary)
-    token = lifecycle._TEMPORARY_MEMORY_PREFETCH.set(None)
+    token = lifecycle._ACTIVE_INVOCATION.set(
+        replace(lifecycle._ACTIVE_INVOCATION.get(), temporary_memory_prefetch=None)
+    )
     try:
         with pytest.raises(RuntimeError, match="memory lookup failed"):
             await agent._async_retrieve_memories("context", "query")
         assert cancelled.is_set()
-        assert lifecycle._TEMPORARY_MEMORY_PREFETCH.get() is None
+        assert lifecycle._ACTIVE_INVOCATION.get().temporary_memory_prefetch is None
     finally:
-        lifecycle._TEMPORARY_MEMORY_PREFETCH.reset(token)
+        lifecycle._ACTIVE_INVOCATION.reset(token)
 
 
 async def test_temporary_memory_owner_uses_direct_and_existing_task_paths(
@@ -334,17 +340,19 @@ async def test_temporary_memory_owner_uses_direct_and_existing_task_paths(
         return "persistent"
 
     agent = _retrieval_agent(monkeypatch, _memories, _temporary)
-    token = lifecycle._TEMPORARY_MEMORY_PREFETCH.set(None)
+    token = lifecycle._ACTIVE_INVOCATION.set(
+        replace(lifecycle._ACTIVE_INVOCATION.get(), temporary_memory_prefetch=None)
+    )
     try:
         assert await agent._async_retrieve_temporary_memories() == "direct"
         assert direct_calls == [((), {})]
 
         existing = asyncio.create_task(asyncio.sleep(0, result="prefetched"))
-        lifecycle._TEMPORARY_MEMORY_PREFETCH.set(existing)
+        lifecycle._ACTIVE_INVOCATION.set(replace(lifecycle._ACTIVE_INVOCATION.get(), temporary_memory_prefetch=existing))
         assert await agent._async_retrieve_memories("context", "query") == "persistent"
-        assert lifecycle._TEMPORARY_MEMORY_PREFETCH.get() is existing
+        assert lifecycle._ACTIVE_INVOCATION.get().temporary_memory_prefetch is existing
         assert await agent._async_retrieve_temporary_memories() == "prefetched"
-        assert lifecycle._TEMPORARY_MEMORY_PREFETCH.get() is None
+        assert lifecycle._ACTIVE_INVOCATION.get().temporary_memory_prefetch is None
         assert direct_calls == [((), {})]
     finally:
-        lifecycle._TEMPORARY_MEMORY_PREFETCH.reset(token)
+        lifecycle._ACTIVE_INVOCATION.reset(token)

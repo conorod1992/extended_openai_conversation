@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import asyncio
 from contextlib import suppress
 from copy import deepcopy
@@ -93,7 +95,9 @@ async def test_persistent_memory_failure_cancels_owned_temporary_prefetch(
     monkeypatch.setattr(conversation, "sync_memory_embedding_provider", Mock())
     monkeypatch.setattr(conversation, "record_memory_retrieval", Mock())
 
-    token = conversation._TEMPORARY_MEMORY_PREFETCH.set(None)
+    token = conversation._ACTIVE_INVOCATION.set(
+        replace(conversation._ACTIVE_INVOCATION.get(), temporary_memory_prefetch=None)
+    )
     try:
         with pytest.raises(RuntimeError, match="memory failed"):
             await conversation.ExtendedOpenAIAgentEntity._async_retrieve_memories(
@@ -102,9 +106,9 @@ async def test_persistent_memory_failure_cancels_owned_temporary_prefetch(
                 "query",
             )
         assert pending.cancelled()
-        assert conversation._TEMPORARY_MEMORY_PREFETCH.get() is None
+        assert conversation._ACTIVE_INVOCATION.get().temporary_memory_prefetch is None
     finally:
-        conversation._TEMPORARY_MEMORY_PREFETCH.reset(token)
+        conversation._ACTIVE_INVOCATION.reset(token)
 
 
 @pytest.mark.asyncio
@@ -129,7 +133,9 @@ async def test_temporary_memory_request_cancellation_drains_prefetch(monkeypatch
         Mock(return_value="user:alice"),
     )
 
-    prefetch_token = conversation._TEMPORARY_MEMORY_PREFETCH.set(child_task)
+    prefetch_token = conversation._ACTIVE_INVOCATION.set(
+        replace(conversation._ACTIVE_INVOCATION.get(), temporary_memory_prefetch=child_task)
+    )
     temp_scope_token = conversation._ACTIVE_TEMPORARY_SCOPE.set("conversation:one")
     scope_token = conversation._ACTIVE_SCOPE.set(SimpleNamespace())
     try:
@@ -146,7 +152,7 @@ async def test_temporary_memory_request_cancellation_drains_prefetch(monkeypatch
     finally:
         conversation._ACTIVE_SCOPE.reset(scope_token)
         conversation._ACTIVE_TEMPORARY_SCOPE.reset(temp_scope_token)
-        conversation._TEMPORARY_MEMORY_PREFETCH.reset(prefetch_token)
+        conversation._ACTIVE_INVOCATION.reset(prefetch_token)
 
 
 def test_integration_tool_error_propagates_when_enabled(monkeypatch) -> None:

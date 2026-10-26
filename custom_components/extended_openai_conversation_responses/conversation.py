@@ -207,6 +207,11 @@ from .request import (
     function_call_budget_available,
     provider_tool_limit,
 )
+from .request_context import (
+    _ACTIVE_INVOCATION,
+    conversation_invocation,
+    set_temporary_memory_prefetch,
+)
 from .request_diagnostics import (
     record_exposed_entities,
     record_prompt_render,
@@ -249,10 +254,6 @@ from .tool_replay_guard import clear_unacknowledged_calls, remember_unacknowledg
 from .usage import async_get_usage, extract_usage
 from .voice_identity_runtime import voice_identity_scope, voice_source_device_id
 
-_TEMPORARY_MEMORY_PREFETCH: ContextVar[asyncio.Task[Any] | None] = ContextVar(
-    "extended_openai_temporary_memory_prefetch", default=None
-)
-
 _LOGGER = logging.getLogger(__name__)
 
 _ACTIVE_SCOPE: ContextVar[ResolvedDataScope | None] = ContextVar(
@@ -289,9 +290,6 @@ _ACTIVE_RUNTIME_RECONCILED: ContextVar[bool] = ContextVar(
 )
 _ACTIVE_REQUEST_CONFIG_DATA: ContextVar[Any | None] = ContextVar(
     "extended_openai_active_request_config_data", default=None
-)
-_PROCESS_METADATA: ContextVar[dict[str, Any] | None] = ContextVar(
-    "extended_openai_process_metadata", default=None
 )
 
 
@@ -678,25 +676,17 @@ class ExtendedOpenAIAgentEntity(
 
     async def async_process(self, user_input: ConversationInput) -> ConversationResult:
         """Process a sentence without inheriting an enclosing invocation's metadata."""
-        token = _PROCESS_METADATA.set(None)
-        try:
-            async with completion_event_scope():
-                return await self._async_process(user_input)
-        finally:
-            _PROCESS_METADATA.reset(token)
+        async with conversation_invocation(), completion_event_scope():
+            return await self._async_process(user_input)
 
     async def async_process_direct(
         self, user_input: ConversationInput
     ) -> tuple[ConversationResult, dict[str, Any]]:
         """Process through the identical pipeline while collecting safe metadata."""
         metadata: dict[str, Any] = {"handled_locally": False}
-        token = _PROCESS_METADATA.set(metadata)
-        try:
-            async with completion_event_scope():
-                result = await self._async_process(user_input)
-            return result, dict(metadata)
-        finally:
-            _PROCESS_METADATA.reset(token)
+        async with conversation_invocation(metadata), completion_event_scope():
+            result = await self._async_process(user_input)
+        return result, dict(metadata)
 
     async def _async_process(self, user_input: ConversationInput) -> ConversationResult:
         """Own the complete request boundary shared by Assist and direct processing.
@@ -1018,7 +1008,7 @@ class ExtendedOpenAIAgentEntity(
                             source_device_id,
                             successful=False,
                         )
-                    metadata = _PROCESS_METADATA.get()
+                    metadata = _ACTIVE_INVOCATION.get().metadata
                     if metadata is not None and evaluation is not None:
                         metadata["matched_rule"] = {
                             "id": evaluation.match.rule["id"],
@@ -1158,7 +1148,7 @@ class ExtendedOpenAIAgentEntity(
                     guest_active=guest_active,
                 )
             except HomeAssistantError as err:
-                metadata = _PROCESS_METADATA.get()
+                metadata = _ACTIVE_INVOCATION.get().metadata
                 if metadata is not None:
                     metadata["handled_locally"] = True
                 return _conversation_error_result(
@@ -1375,7 +1365,7 @@ class ExtendedOpenAIAgentEntity(
         successful: bool,
     ) -> ConversationResult:
         """Return a local rule response without invoking the provider."""
-        metadata = _PROCESS_METADATA.get()
+        metadata = _ACTIVE_INVOCATION.get().metadata
         if metadata is not None:
             metadata["handled_locally"] = True
         chat_log.content.append(
@@ -1410,7 +1400,7 @@ class ExtendedOpenAIAgentEntity(
         local_intent: LocalIntentResult,
     ) -> ConversationResult:
         """Return Home Assistant's original local intent response without a provider call."""
-        metadata = _PROCESS_METADATA.get()
+        metadata = _ACTIVE_INVOCATION.get().metadata
         if metadata is not None:
             metadata["handled_locally"] = True
             metadata["matched_intent"] = local_intent.intent_name
@@ -1630,11 +1620,11 @@ class ExtendedOpenAIAgentEntity(
         runtime_reconciled: bool = False,
     ) -> list[MemoryRecord]:
         """Retrieve live-enabled memory while overlapping temporary retrieval."""
-        existing = _TEMPORARY_MEMORY_PREFETCH.get()
+        existing = _ACTIVE_INVOCATION.get().temporary_memory_prefetch
         task = existing
         if task is None and self._temporary_memory is not None:
             task = asyncio.create_task(self._async_load_temporary_memories())
-            _TEMPORARY_MEMORY_PREFETCH.set(task)
+            set_temporary_memory_prefetch(task)
         try:
             if not memory_enabled(self.subentry.data):
                 return []
@@ -1649,7 +1639,7 @@ class ExtendedOpenAIAgentEntity(
                 task.cancel()
                 with suppress(BaseException):
                     await task
-                _TEMPORARY_MEMORY_PREFETCH.set(None)
+                set_temporary_memory_prefetch(None)
             raise
 
     async def _async_select_memories(
@@ -1824,8 +1814,8 @@ class ExtendedOpenAIAgentEntity(
 
     async def _async_retrieve_temporary_memories(self) -> list[TemporaryMemoryRecord]:
         """Consume one prefetch, checking live capability before exposing records."""
-        task = _TEMPORARY_MEMORY_PREFETCH.get()
-        _TEMPORARY_MEMORY_PREFETCH.set(None)
+        task = _ACTIVE_INVOCATION.get().temporary_memory_prefetch
+        set_temporary_memory_prefetch(None)
         try:
             if (
                 self.subentry.data.get(CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY)
