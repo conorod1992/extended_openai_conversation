@@ -61,7 +61,7 @@ async def test_repair_configuration_patch_rejects_stale_revision_before_write(
 
 @pytest.mark.asyncio
 async def test_repair_configuration_validate_and_save_preserve_quarantined_tools(
-    monkeypatch: pytest.MonkeyPatch,
+    hass, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Preview changes nothing; a valid unrelated setting commits without discarding raw tools."""
     entry, subentry = _repairable_agent()
@@ -143,7 +143,7 @@ def _repairable_agent() -> tuple[Any, Any]:
 
 @pytest.mark.asyncio
 async def test_function_repair_configuration_get_defers_live_metadata(
-    monkeypatch: pytest.MonkeyPatch,
+    hass, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Repair-mode Configuration keeps guidance but defers live HA metadata."""
     entry, subentry = _repairable_agent()

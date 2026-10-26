@@ -6,6 +6,27 @@ AI Task options and provider credentials have separate contracts.
 
 ## Representations and ownership
 
+Function Tools have several deliberately different forms. Keep these boundaries
+explicit when adding a save route; no one form is suitable for every consumer.
+
+| Form | Responsibility and conversion boundary |
+| --- | --- |
+| Authored/persisted subentry | Preserve YAML text, field presence, historical values and opaque fields. `parse_configured_function_tools()` alone interprets legacy persisted falsy/default semantics. A new empty edit is serialized as `[]`, not interpreted as an old persisted empty list. |
+| Validated source Tools | `validate_function_tools()` returns detached source dictionaries after schema checks; it does not return the HA objects created during those checks. Normalization/display candidates can materialize defaults and must pass through the operation's persistence projection. |
+| Hydrated runtime Tools | `configured_function_tools_from_data()` returns isolated containers from the revision cache. Function validators wrap HA-bound Templates and Script data in `_RuntimeFunctionConfig`. `copy_runtime_function_config()` keeps hydrated leaves for execution; ordinary `deepcopy()` intentionally recovers the captured source for persistence. Do not serialize a shallow `dict(runtime_config)` or substitute a runtime copy for a source copy. |
+| Quarantine/repair | Repair state pairs usable source Tools/Groups with original invalid siblings, indexes, diagnostics and raw Group data. A safe display candidate excludes damage; it is not permission to replace the raw collection. Unrelated saves project only their owned fields after revision checks. |
+| Management wire | `management_function_response()` and `decode_management_function_request()` encode/decode typed YAML values only at the Function editor wire boundary. Cache and storage values do not contain wire tags. |
+| Shareable document | Sharing/redaction operates on decoded source data before `json_safe_function_fields()` encodes typed YAML for transport. Runtime objects and private recovery data do not belong in this representation. |
+| Private backup/recovery | `private_configuration_snapshot()` and the private backup format preserve credentials and repair-owned malformed data for authorized recovery. They are distinct from redacted shareable exports; prepared rollback data is directly persistence-shaped. |
+
+The degraded configuration preview and save routes now share field admission in
+`async_function_repair()`: validate the submitted mapping, require isolatable
+damage, reject changes to repair-owned fields, then build the safe merged candidate.
+Preview converts that candidate to display values. Save retains its separate
+validation-error behavior, awaited request validation, revision recheck and
+`project_agent_config_updates()` boundary before writing. Their common admission
+must not acquire unrelated defaults or weaken those save-only guards.
+
 The raw Home Assistant subentry dictionary records saved choices. Key presence is
 its only source of explicitness: an explicitly saved default is still a choice,
 while an absent setting may inherit future model or integration behavior. Do not

@@ -1021,7 +1021,14 @@ async def async_function_repair(
             hass, management_ui, management_loading_performance, entry, subentry
         )
 
-    if action == "configuration_validate":
+    if action in {"configuration_validate", "configuration_save"}:
+        # Both routes admit the same field-only candidate. This is a display/
+        # validation projection; the save branch still projects owned fields
+        # onto the raw source after its awaited checks and revision guard.
+        if action == "configuration_save":
+            if message.get("revision") is not None:
+                require_repair_revision(subentry, message["revision"])
+            operation_revision = repair_revision(subentry)
         updates = message.get("config", {})
         if not isinstance(updates, dict):
             raise HomeAssistantError("config must be an object")
@@ -1048,6 +1055,8 @@ async def async_function_repair(
             for key, value in updates.items()
             if key not in {CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS}
         }
+
+    if action == "configuration_validate":
         result = management_ui._validation_result(
             lambda: management_ui.agent_config_snapshot(
                 management_ui.merge_agent_config(safe_base, filtered)
@@ -1066,35 +1075,6 @@ async def async_function_repair(
         return result
 
     if action == "configuration_save":
-        if message.get("revision") is not None:
-            require_repair_revision(subentry, message["revision"])
-        operation_revision = repair_revision(subentry)
-        updates = message.get("config", {})
-        if not isinstance(updates, dict):
-            raise HomeAssistantError("config must be an object")
-        if not state.field_updates_allowed:
-            return {
-                "valid": False,
-                "errors": {
-                    CONF_FUNCTION_TOOLS: "Repair the whole Function Tool collection before changing unrelated settings"
-                },
-            }
-        safe_payload = _safe_configuration_payload(
-            hass, management_ui, management_loading_performance, entry, subentry
-        )
-        if not _function_fields_unchanged(updates, safe_payload["config"]):
-            return {
-                "valid": False,
-                "errors": {
-                    CONF_FUNCTION_TOOLS: "Repair invalid Function Tools before editing Function Tools or Function Groups"
-                },
-            }
-        filtered = {
-            key: value
-            for key, value in updates.items()
-            if key not in {CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS}
-        }
-        safe_base = safe_function_configuration(dict(subentry.data))
         validation = management_ui._validation_result(
             lambda: management_ui.merge_agent_config(safe_base, filtered)
         )
