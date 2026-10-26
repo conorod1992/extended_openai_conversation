@@ -146,7 +146,7 @@ test("deleting the currently viewed HA user cannot leave its personal scope moun
   await expectHarnessClean(page, errors);
 });
 
-test("deleted and recreated subentry does not inherit a mounted dirty editor", async ({page}) => {
+test("deleted and recreated subentry retains the old draft until explicit discard", async ({page}) => {
   const errors = trackPageErrors(page);
   const panel = await openBasics(page);
   const title = panel.locator('[data-config="__title"]');
@@ -163,6 +163,13 @@ test("deleted and recreated subentry does not inherit a mounted dirty editor", a
     })),
   }));
 
+  await panel.evaluate(host => host._loadAgents("agent-recreated"));
+  // A catalogue response cannot authorize discarding work owned by an earlier
+  // assistant. Keep it recoverable until the user explicitly dismisses it.
+  await expect.poll(() => panel.evaluate(host => host._agentId)).toBe("agent-1");
+  await expect(title).toHaveValue("unsaved deleted-subentry title");
+  await expect(panel.getByText("Unsaved changes", {exact: true})).toBeVisible();
+  await panel.locator("#revert-config").click();
   await panel.evaluate(host => host._loadAgents("agent-recreated"));
   await expect.poll(() => panel.evaluate(host => host._agentId)).toBe("agent-recreated");
   await expect(title).not.toHaveValue("unsaved deleted-subentry title");

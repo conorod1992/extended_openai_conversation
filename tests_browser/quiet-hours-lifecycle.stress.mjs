@@ -13,6 +13,18 @@ async function installSatelliteFixture(panel, satellites = [satellite()]) {
     // This harness tests draft lifecycle; genuine native component loading is
     // covered by the fresh-document real-ha-shell Quiet Hours regression.
     if (!customElements.get("ha-entity-picker")) customElements.define("ha-entity-picker", class extends HTMLElement {});
+    host.__quietFixtureSatellites = items;
+    if (!host.__quietFixtureTransport) {
+      host.__quietFixtureTransport = true;
+      const call = host._hass.callWS.bind(host._hass);
+      host._hass.callWS = async message => {
+        const result = await call(message);
+        // Real policy reads/ACKs include the detected satellite catalogue. Keep
+        // this hardware fixture present after saves as well as initial render.
+        return message.section === "quiet_hours" && ["get", "update"].includes(message.action)
+          ? {...result, satellites:structuredClone(host.__quietFixtureSatellites)} : result;
+      };
+    }
     host._result.satellites = items;
     host._hass.states ||= {};
     for (const item of items) {
@@ -68,12 +80,11 @@ test("nightly Quiet Hours satellite overrides clear to pending automatic resolut
   await page.goto(fixtureUrl("capabilities/quiet-hours"));
   const panel = panelFor(page);
   await installSatelliteFixture(panel, [satellite(), satellite("assist_satellite.office", "office")]);
-  await panel.evaluate(host => {
-    host._result.config.overrides = {"assist_satellite.kitchen":{media_player_entity_id:"media_player.kitchen_alt"}};
-    host._quietHoursDraft = structuredClone(host._result.config);
-    host._render();
-  });
+  // Establish the initial override through an acknowledged save. Mutating the
+  // saved result behind the scope's back correctly triggers its stale-read guard.
   await selectEntity(panel, '[data-qh-satellite="assist_satellite.kitchen"] [data-kind="media_player_entity_id"]', "media_player.kitchen_alt");
+  await panel.locator("#save-page").click();
+  await expect(panel.locator(".save-bar")).toHaveCount(0);
   await selectEntity(panel, '[data-qh-satellite="assist_satellite.kitchen"] [data-kind="wake_sound_entity_id"]', "switch.kitchen_chime");
   await selectEntity(panel, '[data-qh-satellite="assist_satellite.office"] [data-kind="media_player_entity_id"]', "media_player.office_alt");
   await selectEntity(panel, '[data-qh-satellite="assist_satellite.kitchen"] [data-kind="media_player_entity_id"]', "");
