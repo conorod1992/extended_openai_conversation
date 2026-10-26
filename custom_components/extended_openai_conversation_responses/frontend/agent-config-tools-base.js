@@ -15,7 +15,7 @@ function ensureRouteStyle(panel) {
 }
 
 import {adoptKeyedElements, elementFromMarkup, keyedElement, placeChildren, pruneKeys, setAttribute, setText} from "./keyed-collection.js";
-import {captureConfigurationSubmission, configurationSubmissionIsCurrent, reconcileConfigurationAcknowledgement, completeConfigurationAcknowledgement} from "./configuration-acknowledgement.js";
+import {captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, reconcileConfigurationAcknowledgement, completeConfigurationAcknowledgement} from "./configuration-acknowledgement.js";
 import {same} from "./unsaved-state.js";
 import { haToolName, isHALlmTool, renderHAToolCard, toolDescription } from "./ha-llm-tools-list.js";
 import { bindHelp, helpButton, helpPopover } from "./agent-config-help.js";
@@ -326,12 +326,12 @@ function collectionToolIndex(panel, control) {
 }
 
 function queueFunctionGroupMutation(panel, operation) {
-  const submission = captureConfigurationSubmission(panel);
+  const owner = captureConfigurationOwner(panel);
   const previous = panel._eocFunctionGroupUiTail || Promise.resolve();
   const pending = previous.catch(() => {}).then(async () => {
     const backendTail = panel._eocFunctionMutationTail;
     if (backendTail) await backendTail.catch(() => {});
-    if (!configurationSubmissionIsCurrent(panel, submission)) throw new Error("The selected assistant changed");
+    if (!configurationSubmissionIsCurrent(panel, owner)) throw new Error("The selected assistant changed");
     return operation();
   });
   const tracked = pending.finally(() => {

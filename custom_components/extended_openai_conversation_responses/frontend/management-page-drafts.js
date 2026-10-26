@@ -83,7 +83,9 @@ export function initializePageDraft(panel) {
         // panel has already observed with an older whole-policy draft.
         throw new Error("The saved Quiet Hours policy changed. Your edits are retained. Discard to load the current policy before applying them again.");
       }
-      const submission = captureConfigurationSubmission(panel);
+      // Guest also acknowledges agent configuration fields. Quiet Hours owns
+      // only this policy scope and needs no unrelated configuration snapshot.
+      const submission = view === GUEST ? captureConfigurationSubmission(panel) : captureConfigurationOwner(panel);
       const saved = await panel._call(view === GUEST ? "guest_mode" : "quiet_hours", view === GUEST ? "save_policy" : "update", {
         config: submitted, ...(current.revision ? {revision: current.revision} : {}),
       });
@@ -163,13 +165,12 @@ function refreshSavedGuestPolicy(panel, scope, owner) {
 async function saveRuleSettings(panel, submitted, scope) {
   const invalid = submitted.wording_groups.find((group) => group.validation_error);
   if (invalid) throw new Error(invalid.validation_error);
-  const submission = captureConfigurationSubmission(panel);
+  const submission = {...captureConfigurationOwner(panel), view:panel._viewKey?.()};
   const result = await panel._call("request_rules", "settings", {
     defaults: submitted.defaults,
     wording_groups: submitted.wording_groups,
     revision: scope.revision,
   });
-  scope.baseline = settings(result);
   scope.revision = result.revision;
   const acknowledged = {
     defaults: clone(result.defaults),
@@ -182,7 +183,7 @@ async function saveRuleSettings(panel, submitted, scope) {
     scope.result = panel._result;
   }
   retainPageSaveAcknowledgement(panel, scope, submission, RULES);
-  return clone(scope.baseline);
+  return settings(result);
 }
 
 export function readRuleSettings(panel) {
@@ -335,7 +336,7 @@ export async function savePageChanges(panel) {
     panel._toast(PAGE_SAVE_READ_MESSAGE, true);
     return false;
   }
-  const submission = captureConfigurationSubmission(panel);
+  const submission = {...captureConfigurationOwner(panel), view:panel._viewKey?.()};
   const operation = scope.save();
   refreshPageSaveBar(panel);
   try {

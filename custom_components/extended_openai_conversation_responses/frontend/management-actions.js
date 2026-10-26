@@ -77,13 +77,13 @@ export async function saveConfigurationAcrossRestart(panel, payload, submitted, 
 async function saveConfiguration(panel, button) {
   if (!panel._draft || !panel._selectedAgent?.() || panel._configurationSaving) return;
   if (panel._eocAcknowledgedConfiguration && panel._configDataStale) {
-    const owner = captureConfigurationSubmission(panel), user = panel.hass?.user?.id, visit = panel._loadToken;
+    const owner = captureConfigurationOwner(panel), visit = panel._loadToken;
     try { await panel._loadConfigDraft({preserveResult:true}); }
     catch (error) {
-      if (configurationSubmissionIsCurrent(panel, owner) && panel.hass?.user?.id === user && panel._loadToken === visit) panel._toast(`Changes already saved; refresh configuration before saving again: ${error.message || String(error)}`, true);
+      if (configurationSubmissionIsCurrent(panel, owner) && panel._loadToken === visit) panel._toast(`Changes already saved; refresh configuration before saving again: ${error.message || String(error)}`, true);
       return;
     }
-    if (configurationSubmissionIsCurrent(panel, owner) && panel.hass?.user?.id === user && panel._loadToken === visit && !panel._configDataStale) {
+    if (configurationSubmissionIsCurrent(panel, owner) && panel._loadToken === visit && !panel._configDataStale) {
       panel._render();
       panel._toast("Configuration refreshed. Review your changes before saving.");
     }

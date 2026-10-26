@@ -86,6 +86,19 @@ dispatched write. A known user cannot rebind. Captured asynchronous submissions
 and Guest metrics continue using the strict immutable owner check. The policy
 scope sequence tests cover both retirement and this initial resolution boundary.
 
+Capture only what an operation owns. Policy presentation, Rule settings and
+Quiet Hours saves, the Group UI queue, and a required post-save refresh use
+`captureConfigurationOwner()` plus an explicit visit/view where needed. They do
+not copy unrelated agent configuration. Guest's field acknowledgement and Function
+mutations still require `captureConfigurationSubmission()` for field-aware merges,
+read epochs and model intent. UI and backend Group queues remain distinct.
+
+`draftScope.save()` is the only successful-baseline writer for Guest, Quiet Hours
+and Rule settings. Feature callbacks publish their own acknowledged projection and
+revision, then return saved values for the shared scope to merge with later edits.
+Explicit Discard still separately adopts the latest saved projection; it must not
+silently rebase a pending edit or discharge an authoritative-read obligation.
+
 An assistant catalogue read owns membership separately from selection. A
 Duplicate operation captures its selection intent before the write starts;
 subsequent edits, an explicit assistant/route change, an opened editor or a
