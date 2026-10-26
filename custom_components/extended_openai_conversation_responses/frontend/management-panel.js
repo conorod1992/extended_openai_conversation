@@ -307,17 +307,31 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._loadInitialAgents();
   }
 
-  _loadInitialAgents() {
+  _loadInitialAgents(retry = false) {
     // HA can assign hass before appending an already-defined custom panel.
     // Schedule cold work only once connected; publication remains owner-gated.
-    if (this.isConnected === false || !this._hass || this._data) return;
+    if (this.isConnected === false || !this._hass) return;
     const user = this._hass.user?.id;
-    if (this._eocCatalogBootstrap && this._eocCatalogBootstrap.user === user) return;
-    this._eocCatalogBootstrap = {user};
+    const previous = this._eocCatalogBootstrap;
+    const resolved = previous?.pending && previous.user == null && user != null;
+    if (this._data && !retry && !resolved) return;
+    if (previous && previous.user === user) return;
+    this._interruptInitialAgents();
+    const attempt = {user, pending:true};
+    this._eocCatalogBootstrap = attempt;
     // A newly available user requires a new owned read, never adoption of the
     // old unknown-user result. Keep this attempt after failure as well: normal
     // HA state updates must not become an unbounded catalog retry loop.
-    void this._loadAgents();
+    void Promise.resolve(this._loadAgents()).finally(() => {attempt.pending = false;});
+  }
+
+  _interruptInitialAgents() {
+    if (!this._eocCatalogBootstrap?.pending) return;
+    this._eocCatalogBootstrap.interrupted = true;
+    // Retire both page data and lazy presentation from the interrupted attempt.
+    // Its catalogue may already exist while its initial page is still pending.
+    ++this._loadToken;
+    this._eocViewAssetToken = (this._eocViewAssetToken || 0) + 1;
   }
 
   set route(value) {
@@ -328,6 +342,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   connectedCallback() {
+    const retry = Boolean(this._eocCatalogBootstrap?.interrupted);
     this._eocCatalogBootstrap = null;
     this._markColdLifecycle("connected");
     if (!this._onHistoryNavigation) {
@@ -358,10 +373,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       getRouteFeature("usage-maintenance/diagnostics")?.enhanceDiagnostics(this);
     }
     this._eocPendingModelPreparation?.resumeIfIdle?.({reconnect:true});
-    this._loadInitialAgents();
+    this._loadInitialAgents(retry);
   }
 
   disconnectedCallback() {
+    this._interruptInitialAgents();
     retainPanelDrafts(this);
     stopDraftRecovery(this);
     if (this._onHistoryNavigation) {

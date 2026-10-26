@@ -85,6 +85,13 @@ before attaching the panel. Each connection attempts a cold read once per user
 identity. Resolving an initially unknown user starts a new owned read; ordinary
 HA state updates do not retry failed reads. Reconnection and explicit reload
 remain retry boundaries, and detached or superseded responses cannot publish.
+Catalogue publication alone does not complete startup: its first page read may
+still be pending. Late user resolution replaces that pending attempt even when
+membership is already available. Disconnecting it retires both page-data and
+lazy-presentation tokens, and reconnect retries it once. Old attempt settlement
+cannot complete its replacement or publish stale configuration. This does not
+restart settled panels or replay writes; retained drafts keep their owner and
+authoring baseline throughout recovery.
 
 A detached Guest, Quiet Hours or Request Rules settings save can become clean
 while its replacement still holds a pre-commit read. The original page scope
