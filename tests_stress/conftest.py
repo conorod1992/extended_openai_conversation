@@ -21,7 +21,10 @@ from ci.enhanced_evidence import (  # noqa: E402
     safe,
     write_json,
 )
-from tests_real_ha.conftest import real_ha_prerequisites  # noqa: F401,E402
+from tests_real_ha.conftest import (  # noqa: F401,E402
+    hass_config_dir,
+    real_ha_prerequisites,
+)
 
 
 @pytest.hookimpl(hookwrapper=True)

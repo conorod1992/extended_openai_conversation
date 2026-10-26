@@ -1,6 +1,8 @@
 {
   "schema": "eoai-nightly-execution-contract/v1",
   "pytest": [
+    "tests_real_ha/test_fixture_store_isolation.py::test_core_config_store_and_fresh_reader_share_physical_path",
+    "tests_stress/test_fixture_store_isolation.py::test_core_config_store_and_fresh_reader_share_physical_path",
     "tests_real_ha/test_provider_cleanup_file_recovery.py::test_consumed_chat_control_does_not_relax_same_round_id_validation[chat_completions]",
     "tests_real_ha/test_provider_cleanup_file_recovery.py::test_consumed_chat_control_does_not_relax_same_round_id_validation[responses]",
     "tests_real_ha/test_provider_cleanup_file_recovery.py::test_finalizer_id_collision_follows_api_retained_history_contract[chat_completions]",
@@ -4209,6 +4211,8 @@
       "tests_stress/test_backup_fault_matrix.py",
       "tests_stress/test_management_transaction_matrix.py",
       "tests_stress/test_os_storage_faults.py",
+      "tests_stress/test_fixture_store_isolation.py",
+      "tests_real_ha/test_fixture_store_isolation.py",
       "tests_stress/test_pending_retrieval_publication.py",
       "tests_stress/test_persistence_forward_and_clock.py",
       "tests_stress/test_published_downgrade_boundary.py",
