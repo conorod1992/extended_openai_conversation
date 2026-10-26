@@ -15,6 +15,7 @@ from .const import (
     DEFAULT_CONTEXT_THRESHOLD,
     LEGACY_CONTEXT_TRUNCATE_STRATEGY,
 )
+from .context import HistoryEstimator
 from .context_summary import ContextSummaryResult, DeferredContextSummaryManager
 
 _DEFER_CONTEXT_SUMMARY: ContextVar[bool] = ContextVar(
@@ -64,13 +65,14 @@ async def context_summary_request(entity: Any, chat_log: Any) -> AsyncIterator[N
         _DEFER_CONTEXT_SUMMARY.reset(token)
 
 
-def schedule_context_summary(
+async def schedule_context_summary(
     self: Any,
     chat_log: Any,
     *,
     observed_input_tokens: int | None = None,
     model: str | None = None,
     api_mode: str | None = None,
+    estimate: HistoryEstimator | None = None,
 ) -> bool:
     """Schedule eligible optional maintenance, leaving direct truncation synchronous."""
     options = self.subentry.data
@@ -98,7 +100,7 @@ def schedule_context_summary(
                 self.entry.async_create_task(self.hass, coroutine),
             )
 
-        if _manager(self).schedule(
+        if await _manager(self).async_schedule(
             conversation_id,
             chat_log.content,
             observed_input_tokens=observed,
@@ -109,6 +111,7 @@ def schedule_context_summary(
                 _summarize_detached(self, older, summary_model, summary_api_mode)
             ),
             scheduler=schedule,
+            estimate=estimate,
         ):
             return True
 

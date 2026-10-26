@@ -205,8 +205,8 @@ async def test_native_target_becomes_unavailable_before_dispatch_then_recovers(
         assert len(failed_tool_result["result"]) == 1
         error = failed_tool_result["result"][0]
         assert "error" in error
-        assert "unavailable" in error["error"].lower()
-        assert _ENTITY_ID in error["error"]
+        assert error["error"] == "Function execution failed. Check the tool configuration and permissions."
+        assert _ENTITY_ID not in error["error"]
 
     # This distinguishes the case from target disappearance: HA still owns a live
     # State object and the exposure/configured-tool boundaries remain unchanged.

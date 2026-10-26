@@ -82,7 +82,7 @@ Loaded state is intentionally ephemeral and resets when Home Assistant or the in
 
 If an on-demand group is disabled or loses all executable members while it is loaded, its loaded state is discarded and its members disappear from subsequent model requests. If a provider had already returned a call for a member before the change, Extended OpenAI re-checks the latest persisted tool/group state immediately before execution and rejects a stale disabled call.
 
-The loader does not consume the agent's **Maximum function calls** allowance because it performs no user action. It has a separate hard limit of five loader rounds within one model run, while the existing overall tool-loop bound remains in place.
+Setting **Maximum function calls** to zero makes configured Functions and the Group loader dormant; their configuration is preserved. Conditional continuation can still expose its own finalizer. When the allowance is positive, the loader does not consume it because it performs no user action. It has a separate hard limit of five loader rounds within one model run, while the existing overall tool-loop bound remains in place.
 
 ## Token-use example
 

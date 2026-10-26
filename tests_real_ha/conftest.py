@@ -22,11 +22,18 @@ from custom_components.extended_openai_conversation_responses.restore_recovery i
 )
 
 
+@pytest.fixture
+def hass_config_dir(tmp_path: Path) -> str:
+    """Choose each instance's directory before HA constructs its storage owners."""
+    # Recent Core binds Store I/O paths during construction. Relocating config_dir
+    # afterward would split early Core stores from fresh restore-verification stores.
+    return str(tmp_path)
+
+
 @pytest.fixture(autouse=True)
 async def real_ha_prerequisites(
     hass: HomeAssistant,
     enable_custom_integrations,
-    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     request: pytest.FixtureRequest,
 ) -> None:
@@ -40,11 +47,6 @@ async def real_ha_prerequisites(
         monkeypatch.setattr(
             _RestoreJournalStore, "_async_load_data", Store._async_load_data
         )
-
-    # The upstream fixture uses one package-owned testing_config directory.
-    # Genuine startup creates TTS cache and Recorder files there; xdist workers
-    # can race mkdir/schema creation. Give each HA instance its own filesystem.
-    hass.config.config_dir = str(tmp_path)
 
     # Core tests explicitly set up the Home Assistant integration before tests that
     # rely on exposed-entity preferences.  The lightweight test ``hass`` fixture does

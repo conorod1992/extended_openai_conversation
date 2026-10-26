@@ -14,6 +14,7 @@ from typing import Any
 from homeassistant.components import conversation
 
 from .context import (
+    HistoryEstimator,
     history_as_summary_text,
     keep_recent_messages,
     partition_history,
@@ -39,6 +40,29 @@ class ContextSummaryResult:
 
     content: list[conversation.Content]
     summarized: bool
+
+
+@dataclass(slots=True)
+class ContextSummaryPlan:
+    """Detached bulk work, prepared before creating tasks or publishing state."""
+
+    selected: tuple[list[conversation.Content], list[conversation.Content]]
+    fallback: list[conversation.Content]
+    signature: str
+
+
+def _prepare_summary_plan(
+    snapshot: list[conversation.Content],
+    observed: int,
+    target: int,
+    estimate: HistoryEstimator | None,
+) -> ContextSummaryPlan | None:
+    selected = select_summary_history(snapshot, observed, target, estimate)
+    if selected is None:
+        return None
+    fallback = list(snapshot)
+    keep_recent_messages(fallback, observed, target, estimate)
+    return ContextSummaryPlan(selected, fallback, _history_signature(snapshot[1:]))
 
 
 @dataclass(slots=True)
@@ -69,6 +93,8 @@ class DeferredContextSummaryManager:
         api_mode: str,
         summarize: SummaryCallback,
         scheduler: SummaryTaskScheduler,
+        estimate: HistoryEstimator | None = None,
+        _prepared: ContextSummaryPlan | None = None,
     ) -> bool:
         """Schedule one bounded summary without mutating the live chat log."""
         if not conversation_id or conversation_id in self._pending:
@@ -78,14 +104,12 @@ class DeferredContextSummaryManager:
             return False
 
         snapshot = list(content)
-        selected = select_summary_history(
-            snapshot, observed_input_tokens, target_tokens
+        plan = _prepared or _prepare_summary_plan(
+            snapshot, observed_input_tokens, target_tokens, estimate
         )
-        if selected is None:
+        if plan is None:
             return False
-
-        fallback = list(snapshot)
-        keep_recent_messages(fallback, observed_input_tokens, target_tokens)
+        selected, fallback = plan.selected, plan.fallback
         task = scheduler(
             self._async_build_result(
                 snapshot,
@@ -98,12 +122,54 @@ class DeferredContextSummaryManager:
         )
         self._pending[conversation_id] = PendingContextSummary(
             snapshot_length=len(snapshot),
-            snapshot_signature=_history_signature(snapshot[1:]),
+            snapshot_signature=plan.signature,
             fallback_content=fallback,
             task=task,
             created_at=time.monotonic(),
         )
         return True
+
+    async def async_schedule(
+        self,
+        conversation_id: str,
+        content: list[conversation.Content],
+        *,
+        observed_input_tokens: int,
+        target_tokens: int,
+        model: str,
+        api_mode: str,
+        summarize: SummaryCallback,
+        scheduler: SummaryTaskScheduler,
+        estimate: HistoryEstimator | None = None,
+    ) -> bool:
+        """Offload selection and signatures, keeping task ownership on the loop."""
+        if not conversation_id or conversation_id in self._pending:
+            return False
+        self._prune_completed()
+        if len(self._pending) >= MAX_PENDING_CONTEXT_SUMMARIES:
+            return False
+        snapshot = list(content)
+        plan = await asyncio.to_thread(
+            _prepare_summary_plan,
+            snapshot,
+            observed_input_tokens,
+            target_tokens,
+            estimate,
+        )
+        if plan is None:
+            return False
+        return self.schedule(
+            conversation_id,
+            snapshot,
+            observed_input_tokens=observed_input_tokens,
+            target_tokens=target_tokens,
+            model=model,
+            api_mode=api_mode,
+            summarize=summarize,
+            scheduler=scheduler,
+            estimate=estimate,
+            _prepared=plan,
+        )
 
     async def async_apply(
         self, conversation_id: str, content: list[conversation.Content]
@@ -123,17 +189,26 @@ class DeferredContextSummaryManager:
                 result = ContextSummaryResult(
                     list(pending.fallback_content), summarized=False
                 )
-            remove_pending = True
-
             if len(content) < pending.snapshot_length:
+                remove_pending = True
                 _LOGGER.warning(
                     "Deferred context summary was not applied because conversation "
                     "history became shorter while it was pending"
                 )
                 return False
+            prefix = list(content[1 : pending.snapshot_length])
+            signature = await asyncio.to_thread(_history_signature, prefix)
+            # Cancellation during worker preparation must leave this completed
+            # summary available for the next owned request to apply.
+            remove_pending = True
+            current_prefix = content[1 : pending.snapshot_length]
             if (
-                _history_signature(content[1 : pending.snapshot_length])
-                != pending.snapshot_signature
+                signature != pending.snapshot_signature
+                or len(current_prefix) != len(prefix)
+                or any(
+                    current is not original
+                    for current, original in zip(current_prefix, prefix, strict=True)
+                )
             ):
                 _LOGGER.warning(
                     "Deferred context summary was not applied because conversation "

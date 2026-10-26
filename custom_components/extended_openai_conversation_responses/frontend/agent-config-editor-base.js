@@ -1,30 +1,27 @@
-import {searchTokens, matchesFunctionSearchTokens} from "./function-search.js";
-import {beginOperation, invalidateOperation} from "./operation-ownership.js";
+import {invalidateImportPreview, renderConfigurationActions, bindSavedConfigurationActions} from "./assistant-configuration-actions.js";
+export {invalidateImportPreview, renderConfigurationActions} from "./assistant-configuration-actions.js";
+import {searchTokens, matchesFunctionSearchTokens, cachedFunctionSearchTokens} from "./function-search.js";
+export {matchesFunctionSearch} from "./function-search.js";
+import {beginOperation} from "./operation-ownership.js";
 import {bindOwnedEvent} from "./management-owned-events.js";
 import {ensureCompactChoiceStyle} from "./compact-choice-styles.js";
-import {readConfigurationDraft as readConfig} from "./configuration-controls.js";
+import {readConfigurationDraft as readConfig, recordReasoningChoice} from "./configuration-controls.js";
 import {bindConfigurationInputs, updateConfigurationControl} from "./configuration-inputs.js";
-import {modelFieldPresentation, modelFieldNotes, webSearchControlState} from "./agent-config-model-presentation.js";
+import {modelFieldPresentation, modelFieldNotes, webSearchControlState, modelCapabilitiesForDraft} from "./agent-config-model-presentation.js";
 import {friendlySettingLabel, friendlySettingValue, settingSearchAliases} from "./management-setting-metadata.js";
 import {settingBadgesMarkup} from "./management-decision-guidance.js";
 import {bindSingleRequestSave} from "./management-actions.js";
 import {saveBarMarkup} from "./unsaved-state.js";
 import {modelDataControls, bindModelDataControls} from "./model-catalog.js";
 import {bindHelp, helpButton, helpPopover} from "./agent-config-help.js";
+export {modelCapabilitiesForDraft} from "./agent-config-model-presentation.js";
 export {modelDataControls} from "./model-catalog.js";
 export {helpButton} from "./agent-config-help.js";
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const bool = (value) => value ? "checked" : "";
 export {skillNamesFromText} from "./configuration-controls.js";
-export function invalidateImportPreview(panel, applyButton, summary) {
-  invalidateOperation(panel, "import-preview");
-  panel._importDocument = null;
-  panel._importRevision = null;
-  if (applyButton) applyButton.disabled = true;
-  if (summary) summary.textContent = "Validate the document to preview it.";
-}
-export const option = (panel, value, selected, label = null, disabled = false) => `<option value="${panel._e(value)}" ${disabled ? "disabled" : ""} ${value === selected ? "selected" : ""}>${panel._e(label || panel._titleCase(value))}</option>`;
+export const option = (panel, value, selected, label = null, disabled = false) => `<option value="${panel._e(value)}" ${disabled ? "disabled" : ""} ${String(value) === String(selected) ? "selected" : ""}>${panel._e(label || panel._titleCase(value))}</option>`;
 const CHOICE_LABELS = Object.freeze({
   conversation_continuity: Object.freeze({
     ha_default: "Use Home Assistant sessions",
@@ -75,8 +72,10 @@ export const select = (panel, key, label, value, options, description = "", disa
   disabled = forceVisible || disabled;
   value = presentation.value ?? value;
   options = presentation.options ?? options;
-  return `<div class="setting ${forceVisible ? "is-disabled eoc-unavailable-model-setting" : ""}" data-field="${key}" data-setting data-search="${panel._e(settingSearch(label, description, key, helpKey))}">${labelRow(panel, label, key, helpKey, false, value, disabled)}<select id="config-${key}" data-config="${key}" ${disabled ? "disabled" : ""}>${options.map((item) => {
-    const choice = typeof item === "string" ? item : item.value;
+  // Numeric choices keep numeric draft values; DOM option values are strings.
+  const numeric = options.length > 0 && options.every(item => typeof (typeof item === "object" ? item.value : item) === "number");
+  return `<div class="setting ${forceVisible ? "is-disabled eoc-unavailable-model-setting" : ""}" data-field="${key}" data-setting data-search="${panel._e(settingSearch(label, description, key, helpKey))}">${labelRow(panel, label, key, helpKey, false, value, disabled)}<select id="config-${key}" data-config="${key}" ${numeric ? 'data-type="number"' : ""} ${disabled ? "disabled" : ""}>${options.map((item) => {
+    const choice = typeof item === "object" ? item.value : item;
     return option(panel, choice, value, friendlySettingValue(key, choice) || (typeof item === "string" ? null : item.label), presentation.disabledOption?.(choice));
   }).join("")}</select>${description ? `<small>${description}</small>` : ""}<span class="field-error" data-error="${key}"></span>${modelFieldNotes(panel, presentation)}</div>`;
 };
@@ -113,10 +112,6 @@ export async function copyTextToClipboard(text, clipboardNavigator = globalThis.
   }
 }
 
-
-export function matchesFunctionSearch(query, searchableText, minimumPrefixLength = 3) {
-  return matchesFunctionSearchTokens(searchTokens(query), searchTokens(searchableText), minimumPrefixLength);
-}
 
 export function section(panel, id, title, description, keywords, body, includeHeading = true) {
   if (panel._configSectionFilter && !panel._configSectionFilter.has(id)) return "";
@@ -171,17 +166,12 @@ export function saveBar(panel) {
   return saveBarMarkup({configuration: true, pending: Boolean(panel._configurationSaving)});
 }
 
-export function renderConfigurationActions(panel, sections = panel._configSections || []) {
-  const cleanOnly = panel._configDirty ? "disabled title=\"Save or revert the shared draft first\"" : "";
-  const includesBackup = sections.includes("backup");
-  return `<details class="agent-actions-menu eoc-details-base"><summary aria-haspopup="menu">Assistant actions</summary><div role="menu"><button type="button" class="secondary" role="menuitem" id="duplicate-agent" ${cleanOnly}>Duplicate agent</button>${includesBackup ? "" : `<button type="button" class="secondary" role="menuitem" id="import-agent">Import configuration</button><button type="button" class="secondary" role="menuitem" id="export-agent" ${cleanOnly}>Export configuration</button>`}</div></details>${panel._configDirty ? `<p class="action-help">Duplicate and Export configuration use the saved configuration. Save or revert your settings changes to enable them.</p>` : ""}`;
-}
 
 export function renderConfiguration(panel, {voiceIdentity = null, renderExposedAttributes = null, renderBackup = null} = {}) {
   const view = panel._viewKey?.();
   const webSkillsOnly = view === "capabilities/web-skills";
   const config = panel._draft || panel._result?.config || {};
-  const capabilities = panel._result?.model_capabilities || {};
+  const capabilities = modelCapabilitiesForDraft(panel);
   const defaults = panel._result?.defaults || {};
   const regexRules = config.speech_regex_replacements || [];
   const archive = config.archive_enabled;
@@ -307,6 +297,7 @@ export function bindConfiguration(panel) {
       // through the normal draft merger, retaining unrelated unsaved edits.
       await panel._loadConfigDraft?.();
     }
+    panel._eocPendingModelPreparation?.resumeIfIdle?.({retry:true});
     panel._render();
     panel._toast(message);
   });
@@ -315,9 +306,10 @@ export function bindConfiguration(panel) {
   bindConfigurationInputs(panel);
   root.querySelector("#local-intent-search")?.addEventListener("input", (event) => {
     const query = event.target.value;
+    const queryTokens = searchTokens(query);
     const choices = [...root.querySelectorAll("[data-local-intent-choice]")];
     choices.forEach((choice) => {
-      choice.hidden = !matchesFunctionSearch(query, choice.dataset.choiceSearch, 1);
+      choice.hidden = !matchesFunctionSearchTokens(queryTokens, cachedFunctionSearchTokens(choice, choice.dataset.choiceSearch), 1);
     });
     root.querySelector("#local-intents-empty").hidden = !query.trim() || choices.some(choice => !choice.hidden);
   });
@@ -377,11 +369,10 @@ export function bindConfiguration(panel) {
   });
   root.querySelector("#prompt-preview-close")?.addEventListener("click",()=>root.querySelector("#prompt-preview-dialog").close());
   root.querySelector("#copy-prompt-preview")?.addEventListener("click",async()=>{try{const text=(panel._effectiveRequestPreview?.sections||[]).map((section)=>`## ${section.label}\n${section.content}`).join("\n\n");await copyTextToClipboard(text);panel._toast("Effective request copied");}catch(err){panel._toast(`Unable to copy request: ${err.message||String(err)}`,true);}});
-  for(const selector of ["#reset-advanced","#reset-model-parameters"])root.querySelector(selector)?.addEventListener("click", () => { ["temperature","top_p","reasoning_effort","service_tier","shorten_tool_call_id"].forEach((key) => { let value=panel._result.defaults[key]; if(key==="reasoning_effort") { const proposed={...panel._draft,reasoning_effort:value}; const efforts=modelFieldPresentation({...panel,_draft:proposed},key,value).efforts || []; const metadata=panel._modelCatalogData?.requested_model===String(proposed.chat_model||"") ? panel._modelCatalogData.model_capabilities : panel._result.model_capabilities; const recommended=metadata?.recommended_profile?.reasoning_effort; if(efforts.length && !efforts.includes(value)) value=efforts.includes(recommended) ? recommended : efforts[0]; } panel._draft[key]=clone(value); const input=root.querySelector(`[data-config="${key}"]`); if(input) input.dataset.type==="boolean" ? input.checked=panel._draft[key] : input.value=panel._draft[key]; }); panel._setConfigDirty(true); dirty(panel); });
+  for(const selector of ["#reset-advanced","#reset-model-parameters"])root.querySelector(selector)?.addEventListener("click", () => { recordReasoningChoice(panel); ["temperature","top_p","reasoning_effort","service_tier","shorten_tool_call_id"].forEach((key) => { let value=panel._result.defaults[key]; if(key==="reasoning_effort") { const proposed={...panel._draft,reasoning_effort:value}; const efforts=modelFieldPresentation({...panel,_draft:proposed},key,value).efforts || []; const metadata=panel._modelCatalogData?.requested_model===String(proposed.chat_model||"") ? panel._modelCatalogData.model_capabilities : panel._result.model_capabilities; const recommended=metadata?.recommended_profile?.reasoning_effort; if(efforts.length && !efforts.includes(value)) value=efforts.includes(recommended) ? recommended : efforts[0]; } panel._draft[key]=clone(value); const input=root.querySelector(`[data-config="${key}"]`); if(input) input.dataset.type==="boolean" ? input.checked=panel._draft[key] : input.value=panel._draft[key]; }); panel._setConfigDirty(true); dirty(panel); });
   root.querySelector("#add-regex")?.addEventListener("click", () => { readConfig(panel); panel._draft.speech_regex_replacements.push({pattern:"",replacement:""}); panel._setConfigDirty(true); renderRegexRules(panel,panel._draft.speech_regex_replacements.length-1); });
   root.querySelector("#preview-speech")?.addEventListener("click", async () => { const token=(panel._eocSpeechPreviewToken||0)+1;panel._eocSpeechPreviewToken=token;const agentId=panel._agentId,view=panel._viewKey?.(),output=root.querySelector("#speech-output");output.value="";const current=()=>panel._eocSpeechPreviewToken===token&&panel._agentId===agentId&&panel._viewKey?.()===view&&root.querySelector("#speech-output")===output;try { const response=await panel._call("configuration","speech_preview",{config:readConfig(panel),sample_text:root.querySelector("#speech-sample").value});if(current())output.value=response.speech_text; } catch(err){if(current())panel._toast(`Unable to preview speech: ${err.message||String(err)}`,true);} });
-  bindOwnedEvent(root.querySelector("#duplicate-agent"), "click", "assistant-actions", async (event) => { const button=event.currentTarget; if(panel._configDirty||button.disabled||panel._eocAssistantDuplicatePending)return; panel._eocAssistantDuplicatePending=true; button.disabled=true; try { const result=await panel._call("configuration","duplicate"); await panel._loadAgents(result.subentry_id); panel._toast(`Created ${result.title}`); } catch(err){panel._toast(`Unable to duplicate agent: ${err.message||String(err)}`,true);} finally {panel._eocAssistantDuplicatePending=false;button.disabled=false;} });
-  bindOwnedEvent(root.querySelector("#export-agent"), "click", "assistant-actions", async () => { if(panel._configDirty)return; if(!await panel._confirm("Export saved agent configuration?","Export applies best-effort secret redaction, but Function Tool definitions may contain embedded credentials. Review the downloaded file before sharing it.","Export"))return; const result=await panel._call("configuration","export"); const blob=new Blob([result.json],{type:"application/json"}); const url=URL.createObjectURL(blob); const link=document.createElement("a"); link.href=url; link.download=`${(panel._draftTitle||"agent").replace(/[^a-z0-9]+/gi,"-").toLowerCase()}.json`; link.click(); URL.revokeObjectURL(url); });
+  bindSavedConfigurationActions(panel, root);
   const importDocument = root.querySelector("#import-document"), importApply = root.querySelector("#import-apply"), importSummary = root.querySelector("#import-summary");
   bindOwnedEvent(root.querySelector("#import-agent"), "click", "assistant-actions", () => { invalidateImportPreview(panel, importApply, importSummary); root.querySelector("#import-dialog")?.showModal(); });
   bindOwnedEvent(importDocument, "input", "assistant-actions", () => invalidateImportPreview(panel, importApply, importSummary));

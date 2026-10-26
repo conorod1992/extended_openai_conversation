@@ -399,7 +399,9 @@ async def test_public_script_function_cleanup_abort_and_repeat(hass, monkeypatch
     assert outcome(1, "first") == 0
     failure = outcome(3, "aborted")
     assert failure["status"] == "error"
-    assert "aborted before completion" in failure["error"]
+    assert failure["error"] == (
+        "Function execution failed. Check the tool configuration and permissions."
+    )
     assert outcome(5, "healthy") == 0
     assert effects == [
         "first before",

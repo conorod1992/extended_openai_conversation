@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import logging
 from typing import Any
 
@@ -39,6 +40,33 @@ _VALIDATION_MESSAGES = {
     "provider_unavailable": "The provider is temporarily unavailable, so the new API key could not be validated.",
     "provider_error": "The provider rejected the credential validation request.",
 }
+
+
+def restore_private_provider_connection(
+    hass: HomeAssistant,
+    entry: Any,
+    connection: dict[str, Any],
+    expected_data: dict[str, Any],
+    *,
+    confirmed: bool,
+) -> None:
+    """Restore captured credentials only after explicit shared-scope consent.
+
+    This is a separate connection update after agent restoration. A concurrent
+    connection edit must never be overwritten, even when agent restore succeeded.
+    """
+    if not confirmed:
+        raise HomeAssistantError(
+            "Confirm restoring the provider connection shared by other agents"
+        )
+    if not isinstance(connection, dict) or not connection:
+        raise HomeAssistantError("This private backup has no provider connection")
+    if dict(entry.data) != expected_data:
+        raise HomeAssistantError(
+            "The provider connection changed after preview; import and preview again"
+        )
+    hass.config_entries.async_update_entry(entry, data=deepcopy(connection))
+    hass.config_entries.async_schedule_reload(entry.entry_id)
 
 
 def _validation_error(error: OpenAIError) -> HomeAssistantError:

@@ -42,7 +42,7 @@ These commands use backend tools; they are not a promise made only in generated 
 >
 > Forget everything we discussed today.
 
-Private mode applies only to the exact active session. Enabling it deletes already retained turns and the conversation-derived title for that session, returns the exact turn count, and prevents future turns in that session from being archived. Existing private-session titles are removed when loaded; importing an older backup also removes those titles. Other browser or satellite sessions are unaffected. Resuming saving creates a new retained session; private messages are not restored or saved retroactively.
+Private mode applies only to the exact active session. Enabling it deletes already retained turns and the conversation-derived title for that session, returns the exact turn count, and prevents future turns in that session from being archived. Existing private-session titles are removed when loaded; importing an older backup also removes those titles. Other browser or satellite sessions are unaffected. Resuming saving creates a new retained session for future turns; private messages are not restored or saved retroactively. A request that makes the conversation private is never archived, even if it also resumes saving later in the same turn. This applies when saving was already active and is resumed before making the conversation private.
 
 Single-session deletion is exact. Semantic deletion begins with bounded search and requires selected session IDs. Date-range and whole-scope deletion require explicit confirmation and return exact session and turn counts. Deleting transcript text never changes token aggregates. You can verify the result under **Extended OpenAI → Conversations**.
 

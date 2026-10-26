@@ -1,7 +1,8 @@
 import {saveConfiguration, synchronizePersistedConfigurationFields} from "./management-actions.js";
-import {captureConfigurationSubmission, configurationSubmissionIsCurrent, presentAcknowledgedMutation} from "./configuration-acknowledgement.js";
+import {captureConfigurationDraftOwner, captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, presentAcknowledgedMutation, discardConfigurationDraft} from "./configuration-acknowledgement.js";
 import {formatWordingAlternatives, parseWordingAlternatives} from "./wording-alternatives.js";
 import {enhancementChanged} from "./management-enhancement-state.js";
+import {retainPageSaveAcknowledgement, hasPendingPageSaveRead, PAGE_SAVE_READ_EVENT, PAGE_SAVE_READ_MESSAGE} from "./page-save-acknowledgement.js";
 import {UnsavedState, clone, same, draftScope, saveBarMarkup} from "./unsaved-state.js";
 import {NAVIGATION} from "./frontend-navigation.js";
 
@@ -27,13 +28,7 @@ export function pageCoordinator(panel) {
       return Boolean(route && (!section || route.sections.some((item) => item.id === section))
         && panel._draftAgentId === panel._agentId);
     },
-    discard: () => {
-      if (panel._configData) {
-        panel._draft = clone(panel._configData.config);
-        panel._draftTitle = panel._configData.title;
-      }
-      panel._setConfigDirty(false);
-    },
+    discard: () => discardConfigurationDraft(panel),
   });
   return state;
 }
@@ -46,49 +41,92 @@ export function initializePageDraft(panel) {
   const state = pageCoordinator(panel), view = panel._viewKey?.(), result = panel._result;
   if (![GUEST, QUIET, RULES].includes(view) || !result || panel._busy || panel._error) return;
   const existing = state.scopes.get(view);
-  if (existing?.agent === panel._agentId) {
+  if (view === GUEST && !existing?.isCurrent?.()) {
+    // Reviewing a legacy policy is an explicit choice for this assistant.
+    // Same-owner refreshes retain it; a newly owned scope must review its own.
+    panel._guestMigrationReview = false;
+    panel._guestStartingFresh = false;
+  }
+  if (existing?.isCurrent?.()) {
+    const sameResult = existing.result === result;
     if (view === RULES && existing.result !== result && same(existing.baseline, settings(result))) existing.revision = result.revision;
-    if (existing.result === result || existing.dirty() || existing.pending) return;
+    // Keep the authoring baseline/revision while retaining the current saved
+    // projection for an explicit discard after a refresh or recovered ACK.
+    existing.result = result;
+    if (sameResult || existing.dirty() || existing.pending || existing.acknowledgedSave?.owns()) return;
   }
   const field = view === GUEST ? "_guestDraft" : view === QUIET ? "_quietHoursDraft" : "_rulesSettingsDraft";
   const baseline = view === RULES ? settings(result) : result.config || {};
   panel[field] = clone(baseline);
-  const ownerAgent = panel._agentId, ownerEntry = panel._selectedAgent?.()?.entry_id;
+  const owner = captureConfigurationDraftOwner(panel);
+  const isCurrent = () => {
+    const userId = panel.hass?.user?.id;
+    // HA can resolve its initial user after a settled page was authored. Bind
+    // that first identity before admission, never during a dispatched save.
+    // A known user/session or replaced registration cannot be rebound.
+    if (owner.userId == null && userId != null && !scope.pending && state.scopes.get(view) === scope
+        && configurationSubmissionIsCurrent(panel, {...owner, userId})) owner.userId = userId;
+    return configurationSubmissionIsCurrent(panel, owner) && state.scopes.get(view) === scope;
+  };
   const scope = draftScope({
+    captureSaveGuard:() => {
+      const submission = captureConfigurationOwner(panel);
+      return () => configurationSubmissionIsCurrent(panel, submission);
+    },
+    isCurrent,
     baseline, read: () => panel[field], write: (value) => {
-      if (panel._agentId === ownerAgent && panel._selectedAgent?.()?.entry_id === ownerEntry) panel[field] = value;
+      if (scope.isCurrent()) panel[field] = value;
     },
     owns: (destination) => destination === view,
     destinations: () => [view],
     save: async (submitted, current) => {
+      if (hasPendingPageSaveRead(panel)) throw new Error(PAGE_SAVE_READ_MESSAGE);
       if (view === RULES) return saveRuleSettings(panel, submitted, current);
-      const submission = captureConfigurationSubmission(panel);
-      const {agentId, entryId} = submission;
+      if (view === QUIET && !current.revision && !same(current.baseline, current.result?.config || {})) {
+        // Without a backend revision, do not overwrite a newer policy this
+        // panel has already observed with an older whole-policy draft.
+        throw new Error("The saved Quiet Hours policy changed. Your edits are retained. Discard to load the current policy before applying them again.");
+      }
+      // Guest also acknowledges agent configuration fields. Quiet Hours owns
+      // only this policy scope and needs no unrelated configuration snapshot.
+      const submission = view === GUEST ? captureConfigurationSubmission(panel) : captureConfigurationOwner(panel);
       const saved = await panel._call(view === GUEST ? "guest_mode" : "quiet_hours", view === GUEST ? "save_policy" : "update", {
         config: submitted, ...(current.revision ? {revision: current.revision} : {}),
       });
       const savedResult = {...(current.result || result), ...saved, ...(view === GUEST ? {legacy_policy: false, migration_notice: null} : {})};
-      if (configurationSubmissionIsCurrent(panel, submission) && panel._viewKey?.() === view) {
+      const ownsSave = configurationSubmissionIsCurrent(panel, submission);
+      if (ownsSave && scope.isCurrent() && panel._viewKey?.() === view) {
         panel._result = {...panel._result, ...saved, ...(view === GUEST ? {legacy_policy:false, migration_notice:null} : {})};
       }
       // The mutation acknowledgement owns the baseline and revision. A later
       // capability read must neither undo that commit nor discard newer edits.
-      current.result = savedResult;
+      if (ownsSave) current.result = savedResult;
       current.revision = saved.revision;
       current.refreshWarning = null;
       if (view === GUEST) {
-        if (configurationSubmissionIsCurrent(panel, submission)) {
+        if (ownsSave && scope.isCurrent()) {
           synchronizePersistedConfigurationFields(panel, saved, Object.keys(saved.config), submission);
           panel._guestMigrationReview = false;
           panel._guestStartingFresh = false;
         }
         const token = panel._loadToken;
-        current.refreshSavedPolicy = () => refreshSavedGuestPolicy(panel, current, {agentId, entryId, token, generation:panel._cacheGeneration, revision:saved.revision});
+        current.refreshSavedPolicy = () => refreshSavedGuestPolicy(panel, current, {submission, token, generation:panel._cacheGeneration, revision:saved.revision});
       }
+      retainPageSaveAcknowledgement(panel, current, submission, view);
       return saved.config;
     },
   });
-  Object.assign(scope, {agent: panel._agentId, result, revision: result.revision});
+  Object.assign(scope, {result, revision: result.revision,
+    // A detached current scope must still settle. Ownership is its authoring
+    // session and exact registration, not connection or the active route.
+    isCurrent});
+  scope.discard = () => {
+    // Recovery can retain an older baseline/revision while result contains the
+    // current saved policy. Explicit discard adopts that acknowledged read.
+    scope.baseline = clone(view === RULES ? settings(scope.result) : scope.result.config || {});
+    scope.revision = scope.result.revision;
+    scope.write(clone(scope.baseline));
+  };
   state.register(view, scope);
 }
 
@@ -97,7 +135,7 @@ function refreshSavedGuestPolicy(panel, scope, owner) {
   panel._eocGuestPolicyRefresh = state;
   const metrics = panel.shadowRoot?.querySelector(".metric-grid");
   const current = () => panel._eocGuestPolicyRefresh === state
-    && panel._agentId === owner.agentId && panel._selectedAgent?.()?.entry_id === owner.entryId
+    && configurationSubmissionIsCurrent(panel, owner.submission)
     && panel._loadToken === owner.token && panel._cacheGeneration === owner.generation && panel._viewKey?.() === GUEST
     && pageCoordinator(panel).scopes.get(GUEST) === scope && scope.revision === owner.revision;
   if (!current()) return;
@@ -123,7 +161,7 @@ function refreshSavedGuestPolicy(panel, scope, owner) {
     panel._toast?.(`Changes saved. ${scope.refreshWarning}`, true);
   }).finally(() => {
     if (panel._eocGuestPolicyRefresh !== state || panel.shadowRoot?.querySelector(".metric-grid") !== metrics
-        || panel._agentId !== owner.agentId || panel._selectedAgent?.()?.entry_id !== owner.entryId || panel._viewKey?.() !== GUEST) return;
+        || !configurationSubmissionIsCurrent(panel, owner.submission) || panel._viewKey?.() !== GUEST) return;
     metrics?.removeAttribute("aria-busy");
     if (!current() && metrics) metrics.innerHTML = panel._metric("Saved policy metrics", "Needs refresh");
   });
@@ -132,25 +170,26 @@ function refreshSavedGuestPolicy(panel, scope, owner) {
 async function saveRuleSettings(panel, submitted, scope) {
   const invalid = submitted.wording_groups.find((group) => group.validation_error);
   if (invalid) throw new Error(invalid.validation_error);
-  const submission = captureConfigurationSubmission(panel);
+  const submission = {...captureConfigurationOwner(panel), view:panel._viewKey?.()};
   const result = await panel._call("request_rules", "settings", {
     defaults: submitted.defaults,
     wording_groups: submitted.wording_groups,
     revision: scope.revision,
   });
-  scope.baseline = settings(result);
   scope.revision = result.revision;
   const acknowledged = {
     defaults: clone(result.defaults),
     wording_groups: clone(result.wording_groups),
     revision: result.revision,
   };
-  scope.result = {...scope.result, ...acknowledged};
-  if (configurationSubmissionIsCurrent(panel, submission) && panel._viewKey?.() === submission.view) {
+  const ownsSave = configurationSubmissionIsCurrent(panel, submission);
+  if (ownsSave) scope.result = {...scope.result, ...acknowledged};
+  if (ownsSave && scope.isCurrent() && panel._viewKey?.() === submission.view) {
     panel._result = {...panel._result, ...acknowledged};
     scope.result = panel._result;
   }
-  return clone(scope.baseline);
+  retainPageSaveAcknowledgement(panel, scope, submission, RULES);
+  return settings(result);
 }
 
 export function readRuleSettings(panel) {
@@ -188,8 +227,9 @@ export function refreshPageSaveBar(panel) {
   const scope = currentPageScope(panel), root = panel.shadowRoot;
   if (!scope || !root?.querySelector) return;
   const dirty = scope.dirty();
+  const refreshing = hasPendingPageSaveRead(panel);
   const invalid = panel._viewKey?.() === RULES && panel._rulesSettingsDraft?.wording_groups.some((group) => group.validation_error);
-  if (!enhancementChanged(panel, "page-save-bar", [scope, dirty, scope.pending, invalid])) return;
+  if (!enhancementChanged(panel, "page-save-bar", [scope, dirty, scope.pending, invalid, refreshing])) return;
   let bar = root.querySelector(".save-bar");
   if (!dirty) { bar?.remove(); root.dispatchEvent?.(new Event("eoc-config-dirty-changed")); return; }
   if (!bar) {
@@ -197,7 +237,7 @@ export function refreshPageSaveBar(panel) {
     bar = root.querySelector(".save-bar");
   }
   const save = bar?.querySelector("#save-page"), discard = bar?.querySelector("#discard-page");
-  if (save) { save.disabled = scope.pending || invalid; save.textContent = scope.pending ? "Saving…" : "Save changes"; }
+  if (save) { save.disabled = scope.pending || invalid || refreshing; save.textContent = scope.pending ? "Saving…" : refreshing ? "Refreshing saved policy…" : "Save changes"; }
   if (discard) discard.disabled = scope.pending;
   root.dispatchEvent?.(new Event("eoc-config-dirty-changed"));
 }
@@ -298,7 +338,11 @@ export async function savePageChanges(panel) {
   readRuleSettings(panel);
   const scope = currentPageScope(panel);
   if (!scope || scope.pending || !scope.dirty()) return false;
-  const submission = captureConfigurationSubmission(panel);
+  if (hasPendingPageSaveRead(panel)) {
+    panel._toast(PAGE_SAVE_READ_MESSAGE, true);
+    return false;
+  }
+  const submission = {...captureConfigurationOwner(panel), view:panel._viewKey?.()};
   const operation = scope.save();
   refreshPageSaveBar(panel);
   try {
@@ -321,6 +365,7 @@ export function bindPageDrafts(panel) {
   const root = panel.shadowRoot;
   if (!root || root.__eocPageDraftsBound) return;
   root.__eocPageDraftsBound = true;
+  root.addEventListener(PAGE_SAVE_READ_EVENT, () => refreshPageSaveBar(panel));
   const sync = () => {
     if (![GUEST, QUIET, RULES].includes(panel._viewKey?.())) return;
     queueMicrotask(() => {

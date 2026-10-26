@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from custom_components.extended_openai_conversation_responses.private_backup import encode_document
 from custom_components.extended_openai_conversation_responses import backup
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_CHAT_COMPLETIONS,
@@ -190,7 +191,7 @@ async def test_successful_loaded_restore_refreshes_live_subsystem_objects_and_tu
         current_knowledge.source_id
     )
 
-    restored = await backup.async_restore_backup(hass, entry, subentry, target_snapshot)
+    restored = await backup.async_restore_backup(hass, entry, subentry, encode_document(target_snapshot))
     assert restored["status"] == "restored"
     await hass.async_block_till_done()
 

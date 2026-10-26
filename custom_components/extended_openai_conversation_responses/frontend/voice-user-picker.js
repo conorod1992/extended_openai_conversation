@@ -1,5 +1,4 @@
-// HA's automation editor registers the same native picker used by its user conditions.
-let pickerLoadPromise;
+import {ensureNativePicker} from "./native-picker-loader.js";
 const userRequests = new WeakMap();
 const hassFor = panel => panel.hass || panel._hass;
 const connectionFor = hass => hass?.connection || hass;
@@ -14,21 +13,7 @@ export function voiceUserCatalogue(panel) {
 }
 
 export async function ensureVoiceUserPicker(documentRef = globalThis.document) {
-  const registry = documentRef?.defaultView?.customElements || globalThis.customElements;
-  if (registry?.get("ha-user-picker")) return;
-  if (!pickerLoadPromise) {
-    pickerLoadPromise = (async () => {
-      const resolver = documentRef.createElement("partial-panel-resolver");
-      const routes = (resolver.getRoutes || resolver._getRoutes)?.call(resolver, [
-        {component_name: "config", url_path: "config"},
-      ]);
-      await routes?.routes?.config?.load?.();
-      const config = documentRef.createElement("ha-panel-config");
-      await config.routerOptions?.routes?.automation?.load?.();
-      if (!registry?.get("ha-user-picker")) throw new Error("Home Assistant user picker could not be loaded.");
-    })().finally(() => { pickerLoadPromise = null; });
-  }
-  await pickerLoadPromise;
+  await ensureNativePicker("ha-user-picker", documentRef);
 }
 
 export function initializeVoiceUserPicker(panel, picker, value, onReady) {

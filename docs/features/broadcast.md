@@ -8,7 +8,7 @@ Broadcast accepts at most 4,096 characters and 32 destinations per message, 100 
 
 ## Destinations and delivery
 
-Select satellites directly or target them by device, area, floor, or label. A whole-home announcement targets eligible satellites except the originating satellite. Busy satellites are queued rather than interrupted; each queued delivery has an expiry (TTL). Turning Broadcast off stops pending delivery.
+Select satellites directly or target them by device, area, floor, or label. A whole-home announcement targets eligible satellites except the originating satellite. Choose either whole-home delivery or specific destinations; combining them is rejected. Busy satellites are queued rather than interrupted; each queued delivery has an expiry (TTL). Turning Broadcast off stops pending delivery. Pending deliveries remain tracked independently of the recent-history limit, and queued announcements retain the originating Home Assistant context.
 
 TTL limits waiting in the queue; it does not cancel an announcement already being delivered. Delivery waits for Home Assistant's blocking announcement call to finish synthesis and playback. A separate stall deadline allows 120 seconds plus one second per eight message characters, capped at 15 minutes. A timeout is reported as a failed delivery, and the next message still waits for an idle satellite.
 

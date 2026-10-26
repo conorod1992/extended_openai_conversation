@@ -324,12 +324,12 @@ export function requestDetailsDialog() {
   return `<dialog id="usage-request-dialog" class="editor-dialog wide" aria-labelledby="usage-request-title"><div class="dialog-header"><h2 id="usage-request-title">Provider requests</h2><button type="button" class="icon close-usage-requests" aria-label="Close">×</button></div><div id="usage-request-body" class="dialog-body"></div><div class="dialog-actions"><button type="button" class="secondary close-usage-requests">Close</button></div></dialog>`;
 }
 
-function renderRequestDetails(panel, requests) {
+function renderRequestDetails(panel, requests, offset = 0) {
   if (!requests.length) return `<div class="empty">No saved provider-request details are available for this run.</div>`;
   return `<div class="usage-request-list">${requests.map((request, index) => {
     const tokens = tokenBreakdown(request.total_tokens, request.cached_input_tokens);
     const timestamp = formatUsageTimestamp(request.timestamp, undefined, panel._hass?.config?.time_zone);
-    return `<article class="usage-request-card"><h3>Request ${index + 1} · ${panel._e(request.successful ? "Success" : request.error_type || "Failed")}</h3><p>${panel._e(request.provider || "Unknown provider")} · ${panel._e(request.model || "Unknown model")} · ${panel._e(request.api_mode || "Unknown API mode")}</p><div class="usage-request-meta"><span>${panel._e(timestamp.display)}</span><span>${panel._e(request.request_stage || "other")}</span><span>${formatUsageNumber(tokens.total)} tokens</span><span>${formatUsageNumber(tokens.cached)} cached</span><span>${formatUsageNumber(request.reasoning_tokens || 0)} reasoning</span><span>${panel._e(formatDuration(request.duration_ms))}</span>${request.tool_calls_requested ? `<span>${formatUsageNumber(request.tool_calls_requested)} tool call${request.tool_calls_requested === 1 ? "" : "s"}</span>` : ""}${request.web_search_used ? `<span>Web search</span>` : ""}</div></article>`;
+    return `<article class="usage-request-card"><h3>Request ${offset + index + 1} · ${panel._e(request.successful ? "Success" : request.error_type || "Failed")}</h3><p>${panel._e(request.provider || "Unknown provider")} · ${panel._e(request.model || "Unknown model")} · ${panel._e(request.api_mode || "Unknown API mode")}</p><div class="usage-request-meta"><span>${panel._e(timestamp.display)}</span><span>${panel._e(request.request_stage || "other")}</span><span>${formatUsageNumber(tokens.total)} tokens</span><span>${formatUsageNumber(tokens.cached)} cached</span><span>${formatUsageNumber(request.reasoning_tokens || 0)} reasoning</span><span>${panel._e(formatDuration(request.duration_ms))}</span>${request.tool_calls_requested ? `<span>${formatUsageNumber(request.tool_calls_requested)} tool call${request.tool_calls_requested === 1 ? "" : "s"}</span>` : ""}${request.web_search_used ? `<span>Web search</span>` : ""}</div></article>`;
   }).join("")}</div>`;
 }
 
@@ -448,21 +448,31 @@ export function bindUsageDiagnostics(panel) {
     panel._usageRequestGeneration = (panel._usageRequestGeneration || 0) + 1;
     dialog.close();
   };
-  root.querySelectorAll(".usage-run-details").forEach((button) => {
-    button.onclick = async () => {
-      const dialog = root.querySelector("#usage-request-dialog");
-      const body = root.querySelector("#usage-request-body");
-      if (!dialog || !body) return;
-      const generation = panel._usageRequestGeneration = (panel._usageRequestGeneration || 0) + 1;
-      body.innerHTML = panel._loading();
-      dialog.showModal();
-      try {
-        const response = await panel._call("usage", "requests", {run_id: button.dataset.usageRunId, limit: 100});
-        if (!dialog.open || generation !== panel._usageRequestGeneration) return;
-        body.innerHTML = renderRequestDetails(panel, response?.requests || []);
-      } catch (err) {
-        if (dialog.open && generation === panel._usageRequestGeneration) body.innerHTML = `<div class="error" role="alert">${panel._e(err.message || String(err))}</div>`;
+  const loadRequests = async (runId, offset = 0, previousOffsets = []) => {
+    const dialog = root.querySelector("#usage-request-dialog");
+    const body = root.querySelector("#usage-request-body");
+    if (!dialog || !body) return;
+    const generation = panel._usageRequestGeneration = (panel._usageRequestGeneration || 0) + 1;
+    const agentId = panel._agentId;
+    const current = () => dialog.isConnected && dialog.open && generation === panel._usageRequestGeneration && agentId === panel._agentId;
+    body.innerHTML = panel._loading();
+    if (!dialog.open) dialog.showModal();
+    try {
+      const response = await panel._call("usage", "requests", {run_id: runId, limit: 100, offset});
+      if (!current()) return;
+      const requests = response?.requests || [];
+      const nextOffset = response?.next_offset ?? offset + requests.length;
+      body.innerHTML = `${requests.length ? `<p id="usage-request-range" role="status">Requests ${offset + 1}–${offset + requests.length}</p>` : ""}${renderRequestDetails(panel, requests, offset)}<div class="dialog-actions"><button type="button" class="secondary" id="usage-request-previous" ${previousOffsets.length ? "" : "disabled"}>Previous</button><button type="button" class="secondary" id="usage-request-next" ${response?.has_more && nextOffset > offset ? "" : "disabled"}>Next</button></div>`;
+      body.querySelector("#usage-request-previous").onclick = () => { void loadRequests(runId, previousOffsets.at(-1), previousOffsets.slice(0,-1)); };
+      body.querySelector("#usage-request-next").onclick = () => { void loadRequests(runId, nextOffset, [...previousOffsets,offset]); };
+    } catch (err) {
+      if (current()) {
+        body.innerHTML = `<div class="error" role="alert">${panel._e(err.message || String(err))}</div><button type="button" class="secondary" id="usage-request-retry">Retry</button>`;
+        body.querySelector("#usage-request-retry").onclick = () => { void loadRequests(runId, offset, previousOffsets); };
       }
-    };
+    }
+  };
+  root.querySelectorAll(".usage-run-details").forEach((button) => {
+    button.onclick = () => loadRequests(button.dataset.usageRunId);
   });
 }

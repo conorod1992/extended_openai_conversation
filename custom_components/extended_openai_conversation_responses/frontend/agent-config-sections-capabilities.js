@@ -1,6 +1,6 @@
 // Generated from agent-config-editor-base.js by scripts/generate-agent-config-sections.mjs.
 import {section, field, select, toggle, option, labelRow, settingSearch,
-  configurationChoiceLabel, renderLocalHandling, regexRow, modelDataControls, helpButton}
+  configurationChoiceLabel, renderLocalHandling, regexRow, modelDataControls, helpButton, modelCapabilitiesForDraft}
   from "./agent-config-editor-base.js";
 export function renderConfigurationSections(panel, {voiceIdentity = null, renderExposedAttributes = null, renderBackup = null} = {}) {
   const view = panel._viewKey?.();

@@ -31,32 +31,33 @@ from .const import (
     CONF_VOICE_DEFAULT_USER_ID,
     CONF_VOICE_DEVICE_MAPPINGS,
 )
-from .conversation_archive import (
-    ArchiveSession,
-    ArchiveTurn,
-    ConversationArchive,
-    async_get_archive,
-)
+from .conversation_archive import ArchiveSession, ArchiveTurn, async_get_archive
 from .function_dependency_integrity import async_validate_request_rule_functions
 from .function_yaml import decoded_function_fields
 from .guest_mode import GuestModeManager, GuestModeSchedule, async_get_guest_mode
-from .knowledge import KnowledgeLibrary, KnowledgeSource, async_get_knowledge
+from .knowledge import KnowledgeSource, async_get_knowledge
 from .memory import ANONYMOUS_USER_ID, MemoryRecord, PersistentMemory, async_get_memory
+from .private_backup import (
+    PRIVATE_BACKUP_VERSION,
+    PRIVATE_TRANSFER_VERSION,
+    DecodedPrivateDocument,
+    decode_document,
+    is_private_document,
+)
 from .request_rules import RequestRules, async_get_request_rules
 from .secret_redaction import (
     LITERAL_TEXT_KEY,
     REDACTED_SECRET_SENTINEL,
     is_literal_text,
     is_redacted_secret,
+    is_redacted_url,
+    redact_http_url,
     redact_secrets,
     restore_redacted_secrets,
 )
-from .temporary_memory import (
-    TemporaryMemory,
-    TemporaryMemoryRecord,
-    async_get_temporary_memory,
-)
-from .usage import UsageManager, UsageRequest, UsageRun, UsageTotals, async_get_usage
+from .sharing import SHARING_VERSION, project_sharing_sections
+from .temporary_memory import TemporaryMemoryRecord, async_get_temporary_memory
+from .usage import UsageRequest, UsageRun, UsageTotals, async_get_usage
 
 TRANSFER_FORMAT = "extended_openai_conversation_transfer"
 TRANSFER_VERSION = 1
@@ -134,6 +135,9 @@ class PreparedTransfer:
     raw_configuration: Any = None
     raw_request_rules: Any = None
     redacted_sensitive_fields: tuple[str, ...] = ()
+    security: dict[str, Any] | None = None
+    private: bool = False
+    provider_connection: dict[str, Any] | None = None
 
     def summary(self) -> dict[str, Any]:
         """Return a bounded, frontend-friendly description of available content."""
@@ -168,6 +172,9 @@ class PreparedTransfer:
             "integration_version": self.integration_version,
             "redacted_sensitive_fields": list(self.redacted_sensitive_fields[:50]),
             "redacted_sensitive_field_count": len(self.redacted_sensitive_fields),
+            "security": self.security,
+            "private_backup": self.private,
+            "provider_connection_available": bool(self.provider_connection),
         }
 
 
@@ -343,10 +350,22 @@ def apply_user_scope_mappings(
     prepared: PreparedTransfer,
     selected: Iterable[str],
     mapping: Mapping[str, str],
+    *,
+    copy_categories: bool = True,
 ) -> PreparedTransfer:
     """Apply explicit cross-install user ownership mappings to selected sections."""
     selected_set = frozenset(selected)
-    mapped = deepcopy(prepared)
+    mapped = (
+        deepcopy(prepared)
+        if copy_categories
+        else replace(
+            prepared,
+            config=deepcopy(prepared.config),
+            request_rules=deepcopy(prepared.request_rules),
+            raw_configuration=deepcopy(prepared.raw_configuration),
+            raw_request_rules=deepcopy(prepared.raw_request_rules),
+        )
+    )
 
     if SECTION_CONFIGURATION in selected_set:
         mapped.config = _map_configuration_users(mapped.config, mapping)
@@ -354,6 +373,13 @@ def apply_user_scope_mappings(
             mapped.raw_configuration, mapping
         )
 
+    return _map_transfer_data_owners(mapped, selected_set, mapping)
+
+
+def _map_transfer_data_owners(
+    mapped: PreparedTransfer, selected_set: frozenset[str], mapping: Mapping[str, str]
+) -> PreparedTransfer:
+    """Remap detached data and check owner collisions without HA objects."""
     if SECTION_PERSISTENT_MEMORY in selected_set and mapped.memories is not None:
         mapped.memories = [
             replace(record, user_id=str(_map_owner_value(record.user_id, mapping)))
@@ -402,6 +428,32 @@ def apply_user_scope_mappings(
     return mapped
 
 
+async def async_apply_user_scope_mappings(
+    prepared: PreparedTransfer, selected: Iterable[str], mapping: Mapping[str, str]
+) -> PreparedTransfer:
+    """Remap/validate bulk data off-loop; copy HA-aware configuration on-loop."""
+    selected_set = frozenset(selected)
+    detached = await asyncio.to_thread(
+        _copy_and_map_transfer_data, prepared, selected_set, dict(mapping)
+    )
+    # The worker already mapped data-only categories. This pass copies HA-aware
+    # fields and applies only the configuration selection, without revalidation.
+    return apply_user_scope_mappings(
+        detached,
+        selected_set & {SECTION_CONFIGURATION},
+        mapping,
+        copy_categories=False,
+    )
+
+
+def _copy_and_map_transfer_data(
+    prepared: PreparedTransfer, selected: frozenset[str], mapping: Mapping[str, str]
+) -> PreparedTransfer:
+    return _map_transfer_data_owners(
+        _copy_transfer_categories(prepared), selected, mapping
+    )
+
+
 def _safe_title(title: str) -> str:
     return (
         re.sub(r"[^a-z0-9]+", "-", title.casefold()).strip("-") or "conversation-agent"
@@ -409,9 +461,9 @@ def _safe_title(title: str) -> str:
 
 
 def _new_transfer_document(entry: Any, subentry: Any, mode: str) -> dict[str, Any]:
-    return {
+    document = {
         "format": TRANSFER_FORMAT,
-        "version": TRANSFER_VERSION,
+        "version": SHARING_VERSION if mode == "setup" else PRIVATE_TRANSFER_VERSION,
         "mode": mode,
         "created_at": dt_util.utcnow().isoformat(),
         "integration_version": _integration_version(),
@@ -421,7 +473,13 @@ def _new_transfer_document(entry: Any, subentry: Any, mode: str) -> dict[str, An
             "source_subentry_id": subentry.subentry_id,
         },
         "sections": {},
+        **(
+            {"provider_connection": deepcopy(dict(getattr(entry, "data", {})))}
+            if mode == "custom"
+            else {}
+        ),
     }
+    return DecodedPrivateDocument(document) if mode == "custom" else document
 
 
 async def async_collect_transfer_snapshot(
@@ -449,10 +507,14 @@ async def async_collect_transfer_snapshot(
     document = await hass.async_add_executor_job(
         _new_transfer_document, entry, subentry, mode
     )
+    if SECTION_CONFIGURATION not in selected:
+        document.pop("provider_connection", None)
     payload = document["sections"]
     if SECTION_CONFIGURATION in selected:
-        payload[SECTION_CONFIGURATION] = backup.export_configuration_snapshot(
-            subentry.data
+        payload[SECTION_CONFIGURATION] = (
+            deepcopy(dict(subentry.data))
+            if mode == "custom"
+            else backup.export_configuration_snapshot(subentry.data)
         )
     if SECTION_REQUEST_RULES in selected:
         request_rules_manager = await async_get_request_rules(
@@ -493,7 +555,7 @@ async def async_collect_transfer_snapshot(
             hass, entry.entry_id, subentry.subentry_id
         )
         payload[SECTION_GUEST_MODE] = await guest_mode_manager.async_backup_data()
-    return document
+    return DecodedPrivateDocument(document) if mode == "custom" else document
 
 
 def _is_redacted_placeholder(value: Any) -> bool:
@@ -503,7 +565,7 @@ def _is_redacted_placeholder(value: Any) -> bool:
 
 def _normalize_redaction_placeholders(value: Any) -> Any:
     """Use one explicit placeholder in newly created transfer documents."""
-    if is_literal_text(value):
+    if is_literal_text(value) or is_redacted_url(value):
         return deepcopy(value)
     if _is_redacted_placeholder(value):
         return dict(REDACTED_SECRET_SENTINEL)
@@ -532,11 +594,33 @@ def redact_transfer_document(document: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def finalize_setup_export(document: dict[str, Any]) -> dict[str, Any]:
+def finalize_setup_export(
+    document: dict[str, Any], *, reviewed: bool = False
+) -> dict[str, Any]:
     """Serialize a lightweight shareable setup document."""
     try:
         check_redaction_budget(document, backup.MAX_LEGACY_EXPORT_BYTES)
-        redacted = redact_transfer_document(document)
+        if document.get("version") == SHARING_VERSION:
+            sections, security = project_sharing_sections(
+                document["sections"], reviewed=reviewed
+            )
+            redacted = {
+                "format": TRANSFER_FORMAT,
+                "version": SHARING_VERSION,
+                "mode": "setup",
+                "created_at": document["created_at"],
+                "integration_version": document["integration_version"],
+                "agent": {
+                    "title": "Shared conversation agent",
+                    "source_entry_id": "shared-entry",
+                    "source_subentry_id": "shared-agent",
+                },
+                "sections": sections,
+                "security": security,
+            }
+        else:
+            # Explicit legacy v1 semantics retained for old clients/fixtures.
+            redacted = redact_transfer_document(document)
         serialized = bounded_json_dumps(redacted, backup.MAX_LEGACY_EXPORT_BYTES)
     except JSONBudgetExceeded as err:
         raise backup.BackupError(
@@ -548,13 +632,14 @@ def finalize_setup_export(document: dict[str, Any]) -> dict[str, Any]:
         "document": redacted,
         "json": serialized,
         "filename": f"{_safe_title(title)}-shareable-setup-{date}.json",
+        "security": redacted.get("security"),
         "mode": "setup",
         "sections": list(SECTION_ORDER[:2]),
     }
 
 
 async def async_create_setup_export(
-    hass: HomeAssistant, entry: Any, subentry: Any
+    hass: HomeAssistant, entry: Any, subentry: Any, *, reviewed: bool = False
 ) -> dict[str, Any]:
     """Build a lightweight, redacted setup-sharing document."""
     from .agent_maintenance import get_agent_maintenance_gate
@@ -564,7 +649,7 @@ async def async_create_setup_export(
         document = await async_collect_transfer_snapshot(
             hass, entry, subentry, mode="setup"
         )
-    return await asyncio.to_thread(finalize_setup_export, document)
+    return await asyncio.to_thread(finalize_setup_export, document, reviewed=reviewed)
 
 
 def _secret_path(path: tuple[Any, ...]) -> str:
@@ -621,6 +706,12 @@ def _compatible_secret_context(
     """
     if is_literal_text(value):
         return bool(value[LITERAL_TEXT_KEY] == fallback)
+    if is_redacted_url(value):
+        return (
+            isinstance(fallback, str)
+            and None not in value.values()
+            and redact_http_url(fallback) == value
+        )
     if _is_redacted_placeholder(value):
         return (
             fallback is not _ABSENT
@@ -746,6 +837,29 @@ def _restore_with_fallback(
     return deepcopy(value)
 
 
+def _request_rule_secret_context(value: Any) -> Any:
+    """Exclude recomputed action metadata from credential-context matching."""
+    if not isinstance(value, Mapping) or not isinstance(value.get("rules"), list):
+        return value
+    rules = []
+    for rule in value["rules"]:
+        if (
+            isinstance(rule, Mapping)
+            and rule.get("action_type") == "local_action"
+            and isinstance(rule.get("action"), Mapping)
+        ):
+            rule = {
+                **rule,
+                "action": {
+                    key: item
+                    for key, item in rule["action"].items()
+                    if key != "canonical_signature"
+                },
+            }
+        rules.append(rule)
+    return {**value, "rules": rules}
+
+
 def _restore_section_secrets(
     value: Any, fallback: Any
 ) -> tuple[Any, tuple[str, ...], tuple[str, ...]]:
@@ -792,6 +906,8 @@ def _validate_transfer_document(
     value: Mapping[str, Any],
     target_agent_id: str,
     selected: Iterable[str] | None = None,
+    *,
+    validated_categories: dict[str, Any] | None = None,
 ) -> PreparedTransfer:
     expected = {
         "format",
@@ -802,9 +918,25 @@ def _validate_transfer_document(
         "agent",
         "sections",
     }
+    private = (
+        value.get("version") == PRIVATE_TRANSFER_VERSION
+        and value.get("mode") == "custom"
+    )
+    if (value.get("version") == PRIVATE_TRANSFER_VERSION and not private) or (
+        value.get("version") == SHARING_VERSION and value.get("mode") != "setup"
+    ):
+        raise backup.BackupError("This transfer uses an unsupported format version")
+    if private and "provider_connection" in value:
+        expected.add("provider_connection")
+    if value.get("version") == SHARING_VERSION and value.get("mode") == "setup":
+        expected.add("security")
     if set(value) != expected:
         raise backup.BackupError("The transfer file is incomplete or corrupted")
-    if value.get("version") != TRANSFER_VERSION:
+    if value.get("version") not in {
+        TRANSFER_VERSION,
+        SHARING_VERSION,
+        PRIVATE_TRANSFER_VERSION,
+    }:
         version = value.get("version")
         if isinstance(version, int) and version > TRANSFER_VERSION:
             raise backup.BackupError(
@@ -834,61 +966,65 @@ def _validate_transfer_document(
         available_sections=available,
         created_at=created_at,
         integration_version=integration_version,
+        security=value.get("security"),
+        private=private,
+        provider_connection=deepcopy(value.get("provider_connection"))
+        if private
+        else None,
     )
     redacted: list[str] = []
     try:
         if SECTION_CONFIGURATION in validating:
             raw = raw_sections[SECTION_CONFIGURATION]
-            prepared.raw_configuration = deepcopy(raw)
-            redacted.extend(
-                f"configuration.{path}" for path in _collect_secret_paths(raw)
-            )
-            restored = restore_redacted_secrets(raw)
+            prepared.raw_configuration = None if private else deepcopy(raw)
+            if not private:
+                redacted.extend(
+                    f"configuration.{path}" for path in _collect_secret_paths(raw)
+                )
+            restored = deepcopy(raw) if private else restore_redacted_secrets(raw)
             if not isinstance(restored, dict):
                 raise ValueError("configuration must be an object")
+            if private:
+                backup.private_configuration_snapshot(restored)
             prepared.config = (
                 restored
-                if _collect_secret_paths(raw)
+                if private or _collect_secret_paths(raw)
                 else backup.recoverable_configuration_snapshot(restored)
             )
         if SECTION_REQUEST_RULES in validating:
             raw = raw_sections[SECTION_REQUEST_RULES]
-            prepared.raw_request_rules = deepcopy(raw)
-            redacted.extend(
-                f"request_rules.{path}" for path in _collect_secret_paths(raw)
-            )
+            prepared.raw_request_rules = None if private else deepcopy(raw)
+            if not private:
+                redacted.extend(
+                    f"request_rules.{path}" for path in _collect_secret_paths(raw)
+                )
             prepared.request_rules = (
                 None
-                if _collect_secret_paths(raw)
-                else RequestRules.validate_backup_data(restore_redacted_secrets(raw))
-            )
-        if SECTION_PERSISTENT_MEMORY in validating:
-            prepared.memories = PersistentMemory.validate_backup_data(
-                raw_sections[SECTION_PERSISTENT_MEMORY]
-            )
-        if SECTION_TEMPORARY_MEMORY in validating:
-            prepared.temporary_memories = TemporaryMemory.validate_backup_data(
-                raw_sections[SECTION_TEMPORARY_MEMORY]
-            )
-        if SECTION_KNOWLEDGE in validating:
-            prepared.knowledge = KnowledgeLibrary.validate_backup_data(
-                raw_sections[SECTION_KNOWLEDGE]
-            )
-        if SECTION_CONVERSATION_ARCHIVE in validating:
-            prepared.archive_sessions, prepared.archive_turns = (
-                ConversationArchive.validate_backup_data(
-                    raw_sections[SECTION_CONVERSATION_ARCHIVE], target_agent_id
+                if not private and _collect_secret_paths(raw)
+                else RequestRules.validate_backup_data(
+                    raw if private else restore_redacted_secrets(raw)
                 )
             )
+        categories = validated_categories
+        if categories is None:
+            categories = backup._validate_data_categories(
+                _data_categories(raw_sections, validating), target_agent_id
+            )
+        if SECTION_PERSISTENT_MEMORY in validating:
+            prepared.memories = categories["memories"]
+        if SECTION_TEMPORARY_MEMORY in validating:
+            prepared.temporary_memories = categories["temporary_memories"]
+        if SECTION_KNOWLEDGE in validating:
+            prepared.knowledge = categories["knowledge"]
+        if SECTION_CONVERSATION_ARCHIVE in validating:
+            prepared.archive_sessions, prepared.archive_turns, _ = categories["archive"]
         if SECTION_USAGE in validating:
             (
                 prepared.usage_totals,
                 prepared.usage_daily,
                 prepared.usage_requests,
                 prepared.usage_runs,
-            ) = UsageManager.validate_backup_data(
-                raw_sections[SECTION_USAGE], target_agent_id
-            )
+            ) = categories["usage"]
         if SECTION_GUEST_MODE in validating:
             prepared.guest_mode_schedule = GuestModeManager.validate_backup_data(
                 raw_sections[SECTION_GUEST_MODE]
@@ -904,9 +1040,9 @@ def _validate_transfer_document(
 def _inspect_legacy_setup(
     value: Mapping[str, Any], *, inspect_only: bool = False
 ) -> PreparedTransfer:
-    if value.get("version") != AGENT_CONFIG_EXPORT_VERSION:
+    if value.get("version") not in {AGENT_CONFIG_EXPORT_VERSION, SHARING_VERSION}:
         raise backup.BackupError("This setup export uses an unsupported version")
-    unknown = set(value) - {"schema", "version", "title", "config"}
+    unknown = set(value) - {"schema", "version", "title", "config", "security"}
     if unknown:
         raise backup.BackupError(
             "The setup export contains unknown fields: " + ", ".join(sorted(unknown))
@@ -939,6 +1075,7 @@ def _inspect_legacy_setup(
         config=config,
         raw_configuration=deepcopy(raw_config),
         redacted_sensitive_fields=redacted,
+        security=value.get("security"),
     )
 
 
@@ -946,10 +1083,15 @@ def _inspect_full_backup(
     value: Mapping[str, Any],
     target_agent_id: str,
     selected: Iterable[str] | None = None,
+    *,
+    validated_categories: dict[str, Any] | None = None,
 ) -> PreparedTransfer:
     header = backup._inspect_decoded_backup(
         dict(value), target_agent_id, header_only=True
     )
+    private = value.get("version") == PRIVATE_BACKUP_VERSION
+    if private:
+        value = decode_document(value)
     sections = {
         SECTION_CONFIGURATION: value["agent"]["config"],
         SECTION_PERSISTENT_MEMORY: value["memories"],
@@ -963,14 +1105,21 @@ def _inspect_full_backup(
             sections[key] = value[key]
     portable = {
         "format": TRANSFER_FORMAT,
-        "version": TRANSFER_VERSION,
+        "version": PRIVATE_TRANSFER_VERSION if private else TRANSFER_VERSION,
         "mode": "custom",
         "created_at": header.created_at,
         "integration_version": header.integration_version,
         "agent": {key: item for key, item in value["agent"].items() if key != "config"},
         "sections": sections,
+        **(
+            {"provider_connection": value["provider_connection"]}
+            if "provider_connection" in value
+            else {}
+        ),
     }
-    prepared = _validate_transfer_document(portable, target_agent_id, selected)
+    prepared = _validate_transfer_document(
+        portable, target_agent_id, selected, validated_categories=validated_categories
+    )
     prepared.source_kind, prepared.mode = "full_backup", "full"
     return prepared
 
@@ -985,6 +1134,14 @@ def inspect_transfer(
     """Classify and fully validate portable, custom, legacy, or full backup input."""
     if isinstance(value, PreparedTransfer):
         return value
+    value = _decode_transfer_input(value)
+    return _inspect_decoded_transfer(
+        value, target_agent_id, sections=sections, inspect_only=inspect_only
+    )
+
+
+def _decode_transfer_input(value: Any) -> Mapping[str, Any]:
+    """Bound and decode an external document without HA schema validation."""
     if isinstance(value, str):
         try:
             check_utf8_budget(value, backup.MAX_BACKUP_BYTES)
@@ -1002,9 +1159,76 @@ def inspect_transfer(
         )
     if value.get("format") == backup.BACKUP_FORMAT:
         value = backup._decode_backup_document(value, backup.MAX_BACKUP_BYTES)
-    return _inspect_decoded_transfer(
-        value, target_agent_id, sections=sections, inspect_only=inspect_only
+    return decode_document(value) if is_private_document(value) else dict(value)
+
+
+async def async_inspect_transfer(
+    value: Any, target_agent_id: str, *, sections: Iterable[str] | None = None
+) -> PreparedTransfer:
+    """Inspect external transfers without running bulk category work on HA's loop."""
+    if isinstance(value, PreparedTransfer):
+        return value
+    document = await asyncio.to_thread(_decode_transfer_input, value)
+    return await async_inspect_decoded_transfer(
+        document, target_agent_id, sections=sections
     )
+
+
+async def async_inspect_decoded_transfer(
+    value: Mapping[str, Any],
+    target_agent_id: str,
+    *,
+    sections: Iterable[str] | None = None,
+    inspect_only: bool = False,
+) -> PreparedTransfer:
+    """Validate HA schemas on-loop, but bulk data categories in a worker."""
+    if is_private_document(value):
+        value = await asyncio.to_thread(decode_document, value)
+    header = _inspect_decoded_transfer(value, target_agent_id, inspect_only=True)
+    if inspect_only:
+        return header
+    selected = validate_section_selection(
+        sections, allowed=header.available_sections, default=header.available_sections
+    )
+    raw_categories = (
+        {
+            key: value[key]
+            for section, key in _DATA_CATEGORY_KEYS.items()
+            if section in selected
+        }
+        if value.get("format") == backup.BACKUP_FORMAT
+        else _data_categories(value.get("sections", {}), selected)
+    )
+    try:
+        categories = await asyncio.to_thread(
+            backup._validate_data_categories, raw_categories, target_agent_id
+        )
+    except (TypeError, ValueError) as err:
+        raise backup.BackupError(
+            f"The transfer is incomplete or corrupted: {err}"
+        ) from err
+    return _inspect_decoded_transfer(
+        value, target_agent_id, sections=selected, validated_categories=categories
+    )
+
+
+_DATA_CATEGORY_KEYS = {
+    SECTION_PERSISTENT_MEMORY: "memories",
+    SECTION_TEMPORARY_MEMORY: "temporary_memories",
+    SECTION_KNOWLEDGE: "knowledge",
+    SECTION_CONVERSATION_ARCHIVE: "archive",
+    SECTION_USAGE: "usage",
+}
+
+
+def _data_categories(
+    sections: Mapping[str, Any], selected: Iterable[str]
+) -> dict[str, Any]:
+    return {
+        key: sections[section]
+        for section, key in _DATA_CATEGORY_KEYS.items()
+        if section in selected
+    }
 
 
 def _inspect_decoded_transfer(
@@ -1013,6 +1237,7 @@ def _inspect_decoded_transfer(
     *,
     sections: Iterable[str] | None = None,
     inspect_only: bool = False,
+    validated_categories: dict[str, Any] | None = None,
 ) -> PreparedTransfer:
     """Validate HA-aware schemas after a bounded, context-free transport read.
 
@@ -1020,12 +1245,20 @@ def _inspect_decoded_transfer(
     Re-encoding their decoded document on HA's loop would block unrelated work.
     """
     if value.get("format") == TRANSFER_FORMAT:
+        if value.get("version") == PRIVATE_TRANSFER_VERSION:
+            value = decode_document(value)
         return _validate_transfer_document(
-            value, target_agent_id, frozenset() if inspect_only else sections
+            value,
+            target_agent_id,
+            frozenset() if inspect_only else sections,
+            validated_categories=validated_categories,
         )
     if value.get("format") == backup.BACKUP_FORMAT:
         return _inspect_full_backup(
-            value, target_agent_id, frozenset() if inspect_only else sections
+            value,
+            target_agent_id,
+            frozenset() if inspect_only else sections,
+            validated_categories=validated_categories,
         )
     if value.get("schema") == LEGACY_AGENT_SCHEMA:
         return _inspect_legacy_setup(
@@ -1080,12 +1313,33 @@ async def _async_validate_request_rule_function_dependencies(
             ) from err
 
 
+def _copy_transfer_categories(prepared: PreparedTransfer) -> PreparedTransfer:
+    """Detach data-only categories; never copy HA-aware configuration in a worker."""
+    fields = (
+        "memories",
+        "temporary_memories",
+        "knowledge",
+        "archive_sessions",
+        "archive_turns",
+        "usage_totals",
+        "usage_daily",
+        "usage_requests",
+        "usage_runs",
+        "guest_mode_schedule",
+    )
+    copied = deepcopy(tuple(getattr(prepared, name) for name in fields))
+    return replace(prepared, **dict(zip(fields, copied, strict=True)))
+
+
 def _prepared_restore_from_selection(
     current: backup.PreparedRestore,
     imported: PreparedTransfer,
     selected: frozenset[str],
+    *,
+    copy_categories: bool = True,
 ) -> tuple[backup.PreparedRestore, tuple[str, ...], tuple[str, ...]]:
     """Overlay selected replacement sections on one complete current snapshot."""
+    copy_category = deepcopy if copy_categories else lambda value: value
     preserved: list[str] = []
     missing: list[str] = []
 
@@ -1113,16 +1367,21 @@ def _prepared_restore_from_selection(
         else:
             raise backup.BackupError("Transferred configuration is unavailable")
     else:
-        # Recovery snapshots are persistence-shaped; older/prepared callers may
-        # still supply parsed Functions. Normalize that decoded representation,
-        # without reapplying legacy raw-value fallbacks.
-        config = backup.recoverable_configuration_snapshot(current.config)
+        # Unselected configuration is authoritative private source. Validate a
+        # separate projection without rewriting credentials, YAML or omissions.
+        backup.private_configuration_snapshot(current.config)
+        config = (
+            deepcopy(current.config)
+            if current.authoritative_config
+            else backup.private_configuration_snapshot(current.config)
+        )
 
     rules = current.request_rules
     if SECTION_REQUEST_RULES in selected:
         if imported.raw_request_rules is not None:
             raw, kept, absent = _restore_section_secrets(
-                imported.raw_request_rules, current.request_rules
+                _request_rule_secret_context(imported.raw_request_rules),
+                _request_rule_secret_context(current.request_rules),
             )
             preserved.extend(f"request_rules.{path}" for path in kept)
             missing.extend(f"request_rules.{path}" for path in absent)
@@ -1141,55 +1400,55 @@ def _prepared_restore_from_selection(
         title=title,
         config=config,
         memories=(
-            deepcopy(imported.memories)
+            copy_category(imported.memories)
             if SECTION_PERSISTENT_MEMORY in selected and imported.memories is not None
             else current.memories
         ),
         temporary_memories=(
-            deepcopy(imported.temporary_memories)
+            copy_category(imported.temporary_memories)
             if SECTION_TEMPORARY_MEMORY in selected
             and imported.temporary_memories is not None
             else current.temporary_memories
         ),
         knowledge=(
-            deepcopy(imported.knowledge)
+            copy_category(imported.knowledge)
             if SECTION_KNOWLEDGE in selected and imported.knowledge is not None
             else current.knowledge
         ),
         archive_sessions=(
-            deepcopy(imported.archive_sessions)
+            copy_category(imported.archive_sessions)
             if SECTION_CONVERSATION_ARCHIVE in selected
             and imported.archive_sessions is not None
             else current.archive_sessions
         ),
         archive_turns=(
-            deepcopy(imported.archive_turns)
+            copy_category(imported.archive_turns)
             if SECTION_CONVERSATION_ARCHIVE in selected
             and imported.archive_turns is not None
             else current.archive_turns
         ),
         usage_totals=(
-            deepcopy(imported.usage_totals)
+            copy_category(imported.usage_totals)
             if SECTION_USAGE in selected and imported.usage_totals is not None
             else current.usage_totals
         ),
         usage_daily=(
-            deepcopy(imported.usage_daily)
+            copy_category(imported.usage_daily)
             if SECTION_USAGE in selected and imported.usage_daily is not None
             else current.usage_daily
         ),
         usage_requests=(
-            deepcopy(imported.usage_requests)
+            copy_category(imported.usage_requests)
             if SECTION_USAGE in selected and imported.usage_requests is not None
             else current.usage_requests
         ),
         usage_runs=(
-            deepcopy(imported.usage_runs)
+            copy_category(imported.usage_runs)
             if SECTION_USAGE in selected and imported.usage_runs is not None
             else current.usage_runs
         ),
         guest_mode_schedule=(
-            deepcopy(imported.guest_mode_schedule)
+            copy_category(imported.guest_mode_schedule)
             if SECTION_GUEST_MODE in selected
             else current.guest_mode_schedule
         ),
@@ -1201,6 +1460,7 @@ def _prepared_restore_from_selection(
             if SECTION_CONVERSATION_ARCHIVE in selected
             else deepcopy(current.archive_active)
         ),
+        authoritative_config=True,
     )
     return target, tuple(preserved), tuple(missing)
 
@@ -1226,9 +1486,12 @@ async def async_materialize_restore(
     *,
     sections: Iterable[str] | None = None,
     current_snapshot: backup.PreparedRestore | None = None,
+    provider_connection: Mapping[str, Any] | None = None,
 ) -> tuple[backup.PreparedRestore, dict[str, Any]]:
     """Build and validate a complete restore target from a selective transfer."""
-    prepared = inspect_transfer(imported, subentry.subentry_id, sections=sections)
+    prepared = await async_inspect_transfer(
+        imported, subentry.subentry_id, sections=sections
+    )
     selected = validate_section_selection(
         sections,
         allowed=prepared.available_sections,
@@ -1239,8 +1502,9 @@ async def async_materialize_restore(
         if current_snapshot is not None
         else await _current_snapshot(hass, entry, subentry)
     )
+    prepared = await asyncio.to_thread(_copy_transfer_categories, prepared)
     target, preserved, missing = _prepared_restore_from_selection(
-        current, prepared, selected
+        current, prepared, selected, copy_categories=False
     )
     if missing:
         raise backup.BackupError(
@@ -1252,11 +1516,16 @@ async def async_materialize_restore(
     )
 
     try:
-        validate_routed_request_options(target.config, getattr(entry, "data", {}))
+        provider_data = (
+            provider_connection
+            if provider_connection is not None
+            else getattr(entry, "data", {})
+        )
+        validate_routed_request_options(target.config, provider_data)
         validate_saved_model_routes(
             target.request_rules.get("rules", []),
             target.config,
-            getattr(entry, "data", {}),
+            provider_data,
         )
     except HomeAssistantError as err:
         raise backup.BackupError(
@@ -1289,6 +1558,8 @@ async def async_restore_transfer(
     *,
     sections: Iterable[str] | None = None,
     precondition: Callable[[], Awaitable[None]] | None = None,
+    provider_connection: dict[str, Any] | None = None,
+    expected_provider_data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Preserve unselected state and commit under one shielded exclusive lease."""
     from .agent_maintenance import (
@@ -1303,13 +1574,49 @@ async def async_restore_transfer(
     async def restore_exclusively_owned() -> dict[str, Any]:
         if precondition is not None:
             await precondition()
+        if (
+            provider_connection is not None
+            and dict(entry.data) != expected_provider_data
+        ):
+            raise backup.BackupError(
+                "The provider connection changed after preview; preview again"
+            )
+        provider_options: dict[str, Any] = (
+            {"provider_connection": provider_connection}
+            if provider_connection is not None
+            else {}
+        )
         target, preview = await async_materialize_restore(
-            hass, entry, subentry, imported, sections=sections
+            hass,
+            entry,
+            subentry,
+            imported,
+            sections=sections,
+            **provider_options,
         )
         # Exclusivity already covers the destination snapshot. Call the journaled
         # inner restore directly: the public backup wrapper would reacquire this
         # non-reentrant gate. Lock order remains maintenance gate -> backup lock.
         result = await async_restore_backup_recoverably(hass, entry, subentry, target)
+        if provider_connection is not None:
+            from .provider_credentials import restore_private_provider_connection
+
+            assert expected_provider_data is not None
+            try:
+                restore_private_provider_connection(
+                    hass,
+                    entry,
+                    provider_connection,
+                    expected_provider_data,
+                    confirmed=True,
+                )
+            except HomeAssistantError:
+                result["provider_connection_restored"] = False
+                result["provider_connection_message"] = (
+                    "Agent data restored; provider connection was not changed. Import and preview again."
+                )
+            else:
+                result["provider_connection_restored"] = True
         return {**result, "transfer": preview}
 
     gate = get_agent_maintenance_gate(hass, entry.entry_id, subentry.subentry_id)

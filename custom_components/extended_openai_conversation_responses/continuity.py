@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Generator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from typing import Any, cast
 from uuid import uuid4
 
 from homeassistant.components import conversation
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -18,11 +20,47 @@ from .const import (
     CONVERSATION_CONTINUITY_HA_DEFAULT,
     CONVERSATION_CONTINUITY_USER,
 )
+from .conversation_ids import (
+    GUEST_CONTINUITY_NAMESPACE as GUEST_CONTINUITY_NAMESPACE,
+    GUEST_CONVERSATION_ID_PREFIX,
+    create_conversation_id,
+)
 from .scope import ResolvedDataScope
 
-GUEST_CONTINUITY_NAMESPACE = "guest"
-GUEST_CONVERSATION_ID_PREFIX = "extended-openai-guest-"
 _MAX_IGNORED_CONVERSATION_IDS = 64
+
+
+@dataclass(slots=True)
+class _ProcessingConversation:
+    manager: object
+    conversation_id: str | None
+    claimed_conversation_id: str | None
+    active: bool = True
+
+
+_PROCESSING_CONVERSATIONS: ContextVar[tuple[_ProcessingConversation, ...]] = ContextVar(
+    "eoai_processing_conversations", default=()
+)
+
+
+@contextmanager
+def processing_conversation_scope(
+    manager: object,
+    conversation_id: str | None,
+    claimed_conversation_id: str | None = None,
+) -> Generator[None]:
+    """Expose active ancestor requests to nested calls, including HA service tasks."""
+    # HA can allocate a different ChatLog ID while continuity still owns the
+    # caller-supplied ID's lock. Both names identify this active invocation.
+    owner = _ProcessingConversation(manager, conversation_id, claimed_conversation_id)
+    token = _PROCESSING_CONVERSATIONS.set((*_PROCESSING_CONVERSATIONS.get(), owner))
+    try:
+        yield
+    finally:
+        # Descendant background tasks can outlive this context. Their inherited
+        # record must stop authorizing rejection when the ancestor has completed.
+        owner.active = False
+        _PROCESSING_CONVERSATIONS.reset(token)
 
 
 @contextmanager
@@ -335,6 +373,17 @@ class ConversationContinuity:
 
     async def _async_claim_ha_default_conversation(self, conversation_id: str) -> str:
         """Serialize mutations of one caller-owned HA-default ChatLog."""
+        if any(
+            owner.active
+            and owner.manager is self
+            and conversation_id
+            in (owner.conversation_id, owner.claimed_conversation_id)
+            for owner in _PROCESSING_CONVERSATIONS.get()
+        ):
+            raise HomeAssistantError(
+                "Nested processing cannot reuse an active parent conversation; "
+                "supply a different conversation_id or omit it."
+            )
         lock = self._ha_default_locks.get(conversation_id)
         if lock is None:
             lock = asyncio.Lock()
@@ -374,10 +423,7 @@ class ConversationContinuity:
 
     def _new_conversation_id(self, namespace: str | None) -> str:
         """Create an integration-owned ID with an inspectable privacy namespace."""
-        prefix = f"extended-openai-{self._agent_id}-"
-        if namespace is not None:
-            prefix = f"extended-openai-{namespace}-{self._agent_id}-"
-        return f"{prefix}{uuid4().hex}"
+        return create_conversation_id(self._agent_id, namespace)
 
     def _is_namespaced_conversation_id(
         self, conversation_id: str | None, namespace: str

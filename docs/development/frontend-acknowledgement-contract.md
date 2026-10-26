@@ -37,7 +37,28 @@ baseline: unchanged fields adopt the server value, while changed fields, deleted
 keys and an edited title remain local. A field reverted to that baseline has no
 local delta. A newer baseline/revision, owner, route, load token or cache generation
 invalidates the pending read. Cold Retention reads remain partial; expansion and
-refresh of an existing full snapshot preserve unrelated fields.
+refresh of an existing full snapshot preserve unrelated fields. Recovering a full
+draft into a replacement panel on Retention requires a complete authoritative
+read before ownership transfers. Omitted fields in a partial projection are not
+deletions. Failed or superseded reads leave the original draft retained; retries
+stay scoped to the current user, assistant and visit.
+
+If the replacement form is edited while recovery reads are pending, recovery
+compares both drafts with their own authoring baselines. Disjoint or equal edits
+can join the current full snapshot without replacing a newer model intent.
+Conflicting fields remain available in a read-only recovered copy until explicit
+discard; they are never silently applied over the current draft. Pending model
+preparation follows the merged draft, and retained navigation markers identify
+the actual edited settings rather than the route open at disconnection.
+Clearing the whole draft for an assistant switch, import or restore also retires
+its model intent, pending preparation and reasoning-choice revision before any
+render can inspect the next owner's configuration.
+
+Raw Function repair indices are paired with the metadata revision published by
+their card. An accepted render can refresh the snapshot of a preserved control;
+an open confirmation or editor keeps the revision it originally presented. A
+refresh during confirmation therefore cannot authorize an old index against a
+newer raw collection.
 
 Focused regressions cover both rename projections, real UI Save/preview handlers,
 navigation guards, edits during refresh, presence/revert semantics and read races.

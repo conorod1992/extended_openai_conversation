@@ -103,6 +103,7 @@ def _hass_with_agent():
         data={},
         auth=_Auth(),
         config_entries=_ConfigEntries(entry),
+        async_add_executor_job=asyncio.to_thread,
     )
     return hass, entry, subentry
 
@@ -377,10 +378,10 @@ async def test_configuration_get_caches_normalized_persisted_snapshot(monkeypatc
     calls = 0
     revision_calls = 0
 
-    def counted(data):
+    def counted(data, **kwargs):
         nonlocal calls
         calls += 1
-        return original(data)
+        return original(data, **kwargs)
 
     def counted_revision(data, title):
         nonlocal revision_calls

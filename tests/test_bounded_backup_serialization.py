@@ -313,10 +313,10 @@ async def test_async_setup_serialization_runs_in_worker(hass, monkeypatch):
     finalize = transfer.finalize_setup_export
     worker_threads = []
 
-    def checked_finalize(value):
+    def checked_finalize(value, **kwargs):
         worker_threads.append(threading.get_ident())
         assert threading.get_ident() != event_loop_thread
-        return finalize(value)
+        return finalize(value, **kwargs)
 
     monkeypatch.setattr(
         transfer, "async_collect_transfer_snapshot", AsyncMock(return_value=snapshot)

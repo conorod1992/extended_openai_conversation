@@ -40,9 +40,20 @@ from tests_real_ha.test_provider_wire_e2e import (
 MODES = (API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES)
 
 
-async def _task_entity(hass: HomeAssistant, mode: str) -> tuple[Any, str]:
+async def _task_entity(hass: HomeAssistant, mode: str, **options) -> tuple[Any, str]:
     entry = _entry(mode)
     entry.add_to_hass(hass)
+    if options:
+        from custom_components.extended_openai_conversation_responses.agent_config import (
+            normalize_agent_config,
+        )
+
+        subentry = next(
+            s for s in entry.subentries.values() if s.subentry_type == "ai_task_data"
+        )
+        hass.config_entries.async_update_subentry(
+            entry, subentry, data=normalize_agent_config({**subentry.data, **options})
+        )
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     assert entry.state is ConfigEntryState.LOADED
@@ -387,7 +398,7 @@ async def test_failed_ai_task_does_not_leak_request_state_to_next_task(
             structure=vol.Schema({vol.Required("answer"): str}),
             attachments=[attachment],
         )
-    with pytest.raises(HomeAssistantError, match="provider rejected request"):
+    with pytest.raises(HomeAssistantError, match="Provider request failed"):
         await ai_task.async_generate_data(
             hass,
             task_name="Provider Failure Task",
@@ -787,9 +798,10 @@ async def test_provider_failure_script_respects_continue_on_error(
         await script.async_run(context=Context())
     else:
         with pytest.raises(
-            HomeAssistantError, match="Optional summary rate limited"
+            HomeAssistantError, match="Provider rate limit reached"
         ) as raised:
             await script.async_run(context=Context())
+        assert "Optional summary rate limited" not in str(raised.value)
         assert isinstance(raised.value.__cause__, RateLimitError)
     await hass.async_block_till_done()
     assert len(followups) == int(continue_on_error)
@@ -839,3 +851,45 @@ async def test_provider_cancellation_is_not_translated_or_retried(
         if not pending.done():
             pending.cancel()
             await asyncio.gather(pending, return_exceptions=True)
+
+
+@pytest.mark.parametrize("streaming", [True, False], ids=["streamed", "completed"])
+@pytest.mark.parametrize("structured", [False, True])
+async def test_ai_task_combines_final_response_messages_and_omits_commentary(
+    hass, monkeypatch, structured, streaming
+):
+    from tests_real_ha.test_provider_input_history import _multi_message_response
+
+    entry, entity_id = await _task_entity(
+        hass,
+        API_MODE_RESPONSES,
+        **(
+            {}
+            if streaming
+            else {"chat_model": "gpt-5.5-pro", "reasoning_effort": "medium"}
+        ),
+    )
+    parts = [
+        ("commentary", "Working on it"),
+        ("final_answer", '{"answer":"hel' if structured else "First answer"),
+        ("commentary", "Still working"),
+        ("final_answer", 'lo"}' if structured else "Second answer"),
+    ]
+    wire = _wire(
+        monkeypatch, entry, [_multi_message_response(parts, streaming=streaming)]
+    )
+    result = await ai_task.async_generate_data(
+        hass,
+        task_name="Multi-message task",
+        entity_id=entity_id,
+        instructions="Return the answer",
+        **(
+            {"structure": vol.Schema({vol.Required("answer"): str})}
+            if structured
+            else {}
+        ),
+    )
+    assert result.data == (
+        {"answer": "hello"} if structured else "First answer\n\nSecond answer"
+    )
+    _assert_paths(wire, API_MODE_RESPONSES, 1)

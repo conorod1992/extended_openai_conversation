@@ -20,7 +20,6 @@ from custom_components.extended_openai_conversation_responses.backup_transfer im
     WS_BACKUP_TRANSFER,
 )
 from custom_components.extended_openai_conversation_responses.const import (
-    CONF_FUNCTION_TOOLS,
     CONF_MEMORY_MODE,
     CONF_SKIP_AUTHENTICATION,
     CONFIG_ENTRY_VERSION,
@@ -319,6 +318,7 @@ async def test_custom_backup_selection_round_trip_through_registered_websocket(
     registered = conversation.async_get_agent(hass, entry.entry_id)
     memory = await async_get_memory(hass, entry.entry_id, subentry.subentry_id)
     original_config = agent_config_snapshot(subentry.data)
+    original_raw_config = dict(subentry.data)
     admin = MockUser(
         id="custom-backup-admin", name="Custom Backup Admin", is_owner=True
     )
@@ -399,5 +399,5 @@ async def test_custom_backup_selection_round_trip_through_registered_websocket(
         (original_id, "Custom backup acceptance marker.")
     ]
 
-    assert isinstance(subentry.data[CONF_FUNCTION_TOOLS], str)
+    assert dict(subentry.data) == original_raw_config
     assert agent_config_snapshot(subentry.data) == original_config

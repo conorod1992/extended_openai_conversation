@@ -244,6 +244,13 @@ def test_real_statistics_aggregation_and_change_queries(database, period, table,
 
 def test_statistics_cardinality_is_bounded_before_aggregation(database, monkeypatch):
     engine, hass = database
+    reads = []
+
+    @event.listens_for(engine, "before_cursor_execute")
+    def capture(connection, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().upper().startswith("SELECT"):
+            reads.append((statement, parameters))
+
     with engine.begin() as connection:
         connection.execute(
             insert(Statistics),
@@ -255,7 +262,7 @@ def test_statistics_cardinality_is_bounded_before_aggregation(database, monkeypa
                     mean=i,
                     mean_weight=3600,
                 )
-                for i in range(3000)
+                for i in range(budget.MAX_STATISTICS_AGGREGATION_ROWS + 1)
             ],
         )
 
@@ -265,8 +272,13 @@ def test_statistics_cardinality_is_bounded_before_aggregation(database, monkeypa
     monkeypatch.setattr(statistics, "_sorted_statistics_to_dict", no_aggregation)
     with pytest.raises(HomeAssistantError, match="safety budget"):
         budget.bounded_statistics(
-            hass, START, START + timedelta(days=300), {ENTITY}, "month", None, {"mean"}
+            hass, START, START + timedelta(days=1500), {ENTITY}, "month", None, {"mean"}
         )
+
+    assert reads and all("LIMIT" in sql for sql, _ in reads)
+    assert all(
+        values[-2] <= budget.MAX_STATISTICS_AGGREGATION_ROWS + 1 for _, values in reads
+    )
 
 
 async def test_native_history_runs_query_conversion_and_budget_in_executor(
@@ -349,3 +361,171 @@ def test_bounded_serialized_history_rejects_large_output_even_with_few_rows(data
     states(engine, 20, json.dumps({"text": "x" * 1500}))
     with pytest.raises(HomeAssistantError, match="safety budget"):
         read_history(hass, minimal=False, no_attributes=False)
+
+
+@pytest.mark.parametrize("count", [1440, 8784])
+@pytest.mark.parametrize("types", [{"mean", "min", "max"}, {"change", "sum", "state"}])
+async def test_native_year_statistics_keeps_ha_aggregation(
+    database, monkeypatch, count, types
+):
+    """Even a one-hour supplied interval reads and aggregates the full calendar year."""
+    engine, hass = database
+    start = datetime(2024, 1, 1, tzinfo=UTC)
+    with engine.begin() as connection:
+        connection.execute(
+            insert(Statistics),
+            [
+                dict(
+                    id=i + 1,
+                    metadata_id=1,
+                    start_ts=start.timestamp() + i * 3600,
+                    mean=10 + (i % 17),
+                    mean_weight=900 + (i % 4) * 900,
+                    min=5 + (i % 17),
+                    max=20 + (i % 17),
+                    state=i,
+                    sum=i * 2,
+                )
+                for i in range(count)
+            ],
+        )
+    args = (start, start + timedelta(hours=1), {ENTITY}, "year", None, types)
+    with Session(engine) as session:
+        expected = statistics._statistics_during_period_with_session(
+            hass, session, *args
+        )
+    assert len(expected[ENTITY]) == 1
+
+    async def executor(function, *args):
+        return await asyncio.to_thread(function, *args)
+
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.functions.native.recorder.get_instance",
+        lambda _: SimpleNamespace(async_add_executor_job=executor),
+    )
+    result = await NativeFunction().get_statistics(
+        hass,
+        {},
+        {
+            "statistic_ids": [ENTITY],
+            "start_time": start.isoformat(),
+            "end_time": (start + timedelta(hours=1)).isoformat(),
+            "period": "year",
+            "types": types,
+        },
+        None,
+        [{"entity_id": ENTITY}],
+    )
+    assert result == expected
+
+
+@pytest.mark.parametrize("period", ["day", "week", "month", "year"])
+def test_coarse_statistics_preserve_weighted_units_and_calendar_boundaries(
+    database, period
+):
+    from sqlalchemy import update
+    from zoneinfo import ZoneInfo
+    from homeassistant.util import dt as dt_util
+
+    engine, hass = database
+    # Includes the spring DST transition and deliberately unequal mean weights.
+    start = datetime(2024, 3, 1, tzinfo=UTC)
+    with engine.begin() as connection:
+        connection.execute(
+            update(StatisticsMeta).values(
+                unit_of_measurement="°C", unit_class="temperature"
+            )
+        )
+        connection.execute(
+            insert(Statistics),
+            [
+                dict(
+                    id=i + 1,
+                    metadata_id=1,
+                    start_ts=start.timestamp() + i * 3600,
+                    mean=i % 21,
+                    mean_weight=900 + (i % 4) * 900,
+                    min=-2,
+                    max=25,
+                )
+                for i in range(1440)
+            ],
+        )
+    old_zone = dt_util.DEFAULT_TIME_ZONE
+    dt_util.set_default_time_zone(ZoneInfo("Europe/Berlin"))
+    try:
+        args = (
+            start,
+            start + timedelta(days=59),
+            {ENTITY},
+            period,
+            {"temperature": "°F"},
+            {"mean", "min", "max"},
+        )
+        with Session(engine) as session:
+            expected = statistics._statistics_during_period_with_session(
+                hass, session, *args
+            )
+        assert expected[ENTITY]
+        assert budget.bounded_statistics(hass, *args) == expected
+    finally:
+        dt_util.set_default_time_zone(old_zone)
+
+
+def test_statistics_hourly_budget_remains_strict(database):
+    engine, hass = database
+    with engine.begin() as connection:
+        connection.execute(
+            insert(Statistics),
+            [
+                dict(
+                    id=i + 1,
+                    metadata_id=1,
+                    start_ts=START.timestamp() + i * 3600,
+                    mean=1,
+                    mean_weight=3600,
+                )
+                for i in range(1440)
+            ],
+        )
+    with pytest.raises(HomeAssistantError, match="safety budget"):
+        budget.bounded_statistics(
+            hass, START, START + timedelta(days=60), {ENTITY}, "hour", None, {"mean"}
+        )
+
+
+@pytest.mark.parametrize("kind", ["rows", "bytes"])
+def test_statistics_output_budget_applies_after_reduction(database, monkeypatch, kind):
+    _engine, hass = database
+    result = {
+        ENTITY: (
+            [{}] * (budget.MAX_RECORDER_ROWS + 1)
+            if kind == "rows"
+            else [{"text": "é" * budget.MAX_RECORDER_RESULT_BYTES}]
+        )
+    }
+    monkeypatch.setattr(
+        statistics, "_statistics_during_period_with_session", lambda *_: result
+    )
+    with pytest.raises(HomeAssistantError, match="safety budget"):
+        budget.bounded_statistics(
+            hass, START, START + timedelta(hours=1), {ENTITY}, "year", None, {"mean"}
+        )
+
+
+def test_aggregate_work_budget_is_shared_and_retains_byte_limits(database):
+    engine, _hass = database
+    states(engine, budget.MAX_STATISTICS_AGGREGATION_ROWS + 1)
+    work = budget._ReadBudget(budget.MAX_STATISTICS_AGGREGATION_ROWS, aggregation=True)
+    with Session(engine) as session:
+        guarded = budget._BoundedSession(session, work)
+        assert len(guarded.execute(select(States.state).limit(10)).all()) == 10
+        with pytest.raises(HomeAssistantError, match="fewer calendar periods"):
+            guarded.connection().execute(select(States.state)).all()
+    work = budget._ReadBudget(budget.MAX_STATISTICS_AGGREGATION_ROWS, aggregation=True)
+    with pytest.raises(HomeAssistantError, match="safety budget"):
+        work.consume(("x" * (budget.MAX_RECORDER_CELL_CHARACTERS + 1),))
+    work = budget._ReadBudget(budget.MAX_STATISTICS_AGGREGATION_ROWS, aggregation=True)
+    with pytest.raises(HomeAssistantError, match="safety budget"):
+        for _ in range(40):
+            work.consume(("x" * 8000,))

@@ -24,6 +24,7 @@ from ..const import (
 )
 from ..execution_outcomes import execution_completed, execution_started
 from ..function_execution import backend_failure
+from ..operation_settlement import async_wait_owned_cleanup
 from ..operational_errors import log_handled_failure
 from ..regex_execution import async_search_configured_patterns
 from .base import Function
@@ -177,6 +178,23 @@ async def _async_cleanup_process(
             if not reader.done():
                 reader.cancel()
         await asyncio.gather(*readers, return_exceptions=True)
+
+
+async def _async_settle_process_cleanup(
+    process: asyncio.subprocess.Process,
+    stdout_task: asyncio.Task[tuple[bytes, bool]],
+    stderr_task: asyncio.Task[tuple[bytes, bool]],
+    *,
+    graceful: bool,
+) -> None:
+    """Keep teardown owned and its private errors out of runtime shield logs."""
+    task = asyncio.create_task(
+        _async_cleanup_process(process, stdout_task, stderr_task, graceful=graceful)
+    )
+    cancellation = await async_wait_owned_cleanup(task)
+    task.result()
+    if cancellation is not None:
+        raise cancellation
 
 
 class BashFunction(Function):
@@ -416,7 +434,7 @@ class BashFunction(Function):
                         (stderr, stderr_truncated),
                     ) = await asyncio.gather(stdout_task, stderr_task)
             except TimeoutError as err:
-                await _async_cleanup_process(
+                await _async_settle_process_cleanup(
                     process,
                     stdout_task,
                     stderr_task,
@@ -428,14 +446,16 @@ class BashFunction(Function):
                     f"Command timed out after {timeout:g} seconds"
                 ) from err
             except asyncio.CancelledError:
-                await asyncio.shield(
-                    _async_cleanup_process(
+                # A second cancellation cannot abandon process/pipe ownership.
+                # Preserve the original cancellation after successful teardown;
+                # an underlying cleanup failure keeps its established priority.
+                with suppress(asyncio.CancelledError):
+                    await _async_settle_process_cleanup(
                         process,
                         stdout_task,
                         stderr_task,
                         graceful=True,
                     )
-                )
                 raise
 
             execution_completed(receipt)

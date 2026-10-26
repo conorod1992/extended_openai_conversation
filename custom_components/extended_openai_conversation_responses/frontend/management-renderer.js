@@ -1,6 +1,7 @@
 import {updateDialogs} from "./management-dialogs.js";
 import {NAVIGATION, pageMetadata} from "./frontend-navigation.js";
 import {writeOptionalStorage} from "./browser-storage.js";
+import {retireAssistantDraft} from "./management-catalog-ownership.js";
 
 export const ASSISTANT_INTRO_MARKUP = '<section class="page-intro assistant-parent-intro"><h1>Assistant settings</h1><p>Configure how this assistant responds, handles conversations, uses context, and works with voice.</p></section>';
 
@@ -24,9 +25,9 @@ function navigationMatches(panel, navigation) {
   return buttons.length === navigation.length && buttons.every((button, index) => button.dataset.page === navigation[index].id);
 }
 
-function updateAgentPicker(panel, agent) {
+export function updateAgentPicker(panel, agent = panel._selectedAgent?.()) {
   const root = panel.shadowRoot;
-  const picker = root.querySelector(".agent-picker");
+  const picker = root?.querySelector?.(".agent-picker");
   const select = picker?.querySelector("#agent");
   if (!picker || !select) return;
   const agents = panel._data?.agents || [];
@@ -162,13 +163,12 @@ function bindDynamicBase(panel) {
       control.value = panel._agentId;
       if (!await panel._confirmUnsavedNavigation(null)) return;
       control.value = nextAgent;
-      panel._unsavedState?.scopes.clear();
-      panel._agentId = nextAgent;
-      panel._ruleGroupFilter = "all";
+      // Editor protection belongs to the panel, not the selected assistant.
+      // The confirmed transition closed its old dialogs; future editors still
+      // need this scope even though connectedCallback will not run again.
+      retireAssistantDraft(panel,nextAgent);
       writeOptionalStorage("extended-openai-agent", panel._agentId);
       writeOptionalStorage("extended-openai-agent-entry", panel._selectedAgent()?.entry_id);
-      panel._clearConfigDraft();
-      panel._scopeId = null;
       panel._applyScopes(panel._scopeCatalogCache.get(panel._scopeCatalogKey()) || panel._baseScopes);
       await panel._loadSection();
       return;

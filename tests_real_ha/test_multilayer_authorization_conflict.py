@@ -205,8 +205,8 @@ async def test_guest_tool_policy_and_ha_permissions_resolve_conflicts_stably(
     assert "get_attributes" not in _tool_names(ha_wire.requests[0]["body"])
     ha_result = _tool_result(ha_wire.requests[1]["body"], ha_call_id)
     ha_result_text = json.dumps(ha_result)
-    assert "does not have permission to control" in ha_result_text
-    assert _HA_DENIED in ha_result_text
+    assert "Function execution failed. Check the tool configuration and permissions." in ha_result_text
+    assert _HA_DENIED not in ha_result_text
     assert "guest_mode" not in ha_result_text
 
     # Layer 2: HA permits this user's control, but Guest Mode explicitly excludes

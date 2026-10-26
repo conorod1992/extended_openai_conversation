@@ -26,8 +26,9 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 
-from .ha_tool_result_compat import execution_tool_result
+from .ha_tool_result_compat import HAToolResultError, execution_tool_result
 from .schema_errors import SCHEMA_ERRORS
+from .template_diagnostics import private_template_diagnostics
 
 _LOGGER = logging.getLogger(__name__)
 TOOL_TYPE = "ha_llm"
@@ -149,13 +150,15 @@ class LiveTool:
     prompt: str
     spec: dict[str, Any]
 
+    @private_template_diagnostics
     async def async_call(self, tool_input: llm.ToolInput) -> Any:
         """Validate with HA's authoritative schema, then dispatch exactly once."""
         matches = [tool for tool in self.instance.tools if tool.name == self.tool.name]
         if len(matches) != 1 or matches[0] is not self.tool:
             raise HomeAssistantError("HA tool changed before dispatch")
+        original_args = deepcopy(tool_input.tool_args)
         try:
-            args = self.tool.parameters(deepcopy(tool_input.tool_args))
+            args = self.tool.parameters(deepcopy(original_args))
         except SCHEMA_ERRORS:
             raise HomeAssistantError(
                 "Home Assistant tool arguments do not match the requested schema"
@@ -170,9 +173,28 @@ class LiveTool:
         receipt = execution_started(
             kind="ha_tool", prepared={"reference": self.reference, "arguments": args}
         )
-        result = await self.instance.async_call_tool(
-            llm.ToolInput(tool_name=self.tool.name, tool_args=args, id=tool_input.id)
-        )
+        try:
+            result = await self.instance.async_call_tool(
+                # Schema transformations need not be idempotent (named colours
+                # become RGBColor). HA owns validation of the dispatched input.
+                llm.ToolInput(
+                    tool_name=self.tool.name, tool_args=original_args, id=tool_input.id
+                )
+            )
+        except Exception as error:
+            # HA-owned implementations can echo private configuration too.
+            # Keep flagged data private until the shared model-result boundary.
+            if isinstance(error, HAToolResultError):
+                raise
+            from .public_errors import sanitize_backend_error
+
+            public = sanitize_backend_error(error)
+            if public is not error:
+                from .operational_errors import log_handled_failure
+
+                log_handled_failure(_LOGGER, "HA tool backend failed", error)
+                raise public from None
+            raise
         execution_completed(receipt)
         return execution_tool_result(result)
 

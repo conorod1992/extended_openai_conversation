@@ -20,6 +20,45 @@ _STATE_ENTITY_ID = "binary_sensor.extended_openai_quiet_hours"
 _RUNTIME_KEY = "quiet_hours_manager"
 
 
+@pytest.mark.parametrize("kind", ["volume", "switch"])
+@pytest.mark.parametrize("restart", [False, True])
+async def test_identical_policy_saves_do_not_reclaim_manual_choice(hass, kind, restart):
+    _, media_player_id, wake_sound_id = _install_satellite_entities(hass)
+    _install_control_services(hass)
+    manager = await async_get_quiet_hours(hass)
+    start, end = _active_window()
+    try:
+        await manager.async_update_config({
+            "enabled": True, "start": start, "end": end,
+            "max_volume": 0.2, "wake_sound": "off", "overrides": {},
+        })
+        entity_id = media_player_id if kind == "volume" else wake_sound_id
+        state = hass.states.get(entity_id)
+        hass.states.async_set(
+            entity_id, "idle" if kind == "volume" else "on",
+            {**state.attributes, **({"volume_level": 0.4} if kind == "volume" else {})},
+        )
+        manual = hass.states.get(entity_id)
+        for attempt in range(3):
+            await manager.async_update_config(manager.config.as_dict())
+            await hass.async_block_till_done(wait_background_tasks=True)
+            if restart and attempt == 0:
+                manager._cancel_scheduled_callbacks()
+                if manager._registry_unsubscribe is not None:
+                    manager._registry_unsubscribe()
+                    manager._registry_unsubscribe = None
+                hass.data[DOMAIN].pop(_RUNTIME_KEY, None)
+                manager = await async_get_quiet_hours(hass)
+                await hass.async_block_till_done(wait_background_tasks=True)
+            assert hass.states.get(entity_id) is manual
+            assert entity_id not in manager.active["controls"]
+            assert entity_id in manager.active["observed_controls"]
+        await manager.async_set_enabled(False)
+        assert hass.states.get(entity_id) is manual
+    finally:
+        await manager.async_shutdown()
+
+
 @pytest.mark.parametrize("restart", [False, True])
 async def test_delayed_corrective_feedback_does_not_exhaust_volume_budget(
     hass, restart

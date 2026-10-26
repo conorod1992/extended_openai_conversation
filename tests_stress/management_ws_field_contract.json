@@ -175,6 +175,10 @@
       "required": false,
       "kind": "string"
     },
+    "repair": {
+      "required": false,
+      "kind": "boolean"
+    },
     "review_token": {
       "required": false,
       "kind": "string"
@@ -313,6 +317,10 @@
     "yaml": {
       "required": false,
       "kind": "string"
+    },
+    "reviewed_custom": {
+      "required": false,
+      "kind": "boolean"
     }
   },
   "backup_transfer": {

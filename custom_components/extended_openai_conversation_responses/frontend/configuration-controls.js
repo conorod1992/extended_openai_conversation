@@ -3,6 +3,10 @@ import {same, clone} from "./unsaved-state.js";
 export const CONFIGURATION_CONTROLS = "[data-config],[data-memory-config],#voice-mappings,[data-local-intent-exclusion],.regex-pattern,.regex-replacement";
 export const skillNamesFromText = (value) => String(value || "").split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
 
+export function recordReasoningChoice(panel) {
+  panel._eocReasoningChoiceRevision = (panel._eocReasoningChoiceRevision || 0) + 1;
+}
+
 export function configKeyForControl(control) {
   if (!control) return null;
   if (control.dataset?.config) return control.dataset.config;
@@ -74,6 +78,7 @@ export function readConfigurationDraft(panel) {
     state._draft.speech_regex_replacements = [...root.querySelectorAll(".rule-row")].map(() => ({pattern:"", replacement:""}));
   }
   root.querySelectorAll(CONFIGURATION_CONTROLS).forEach((control) => applyConfigurationControl(state, control));
+  panel._eocPendingModelPreparation?.rebindDraft?.(panel._draft, state._draft);
   panel._draft = state._draft;
   panel._draftTitle = state._draftTitle;
   return panel._draft;

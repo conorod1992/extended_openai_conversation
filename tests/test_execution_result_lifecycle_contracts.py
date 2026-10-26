@@ -378,7 +378,9 @@ async def test_successful_restore_reports_cleanup_pending_without_repeating(
         bt, "_async_load_prepared_restore", AsyncMock(return_value=object())
     )
     monkeypatch.setattr(
-        bt.transfer, "apply_user_scope_mappings", lambda value, *_: value
+        bt.transfer,
+        "async_apply_user_scope_mappings",
+        AsyncMock(side_effect=lambda value, *_: value),
     )
 
     async def restore(*args, **kwargs):

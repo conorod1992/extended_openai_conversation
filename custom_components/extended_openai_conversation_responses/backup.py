@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 import json
@@ -54,6 +55,12 @@ from .function_yaml import json_safe_function_fields
 from .guest_mode import GuestModeManager, GuestModeSchedule, async_get_guest_mode
 from .knowledge import KnowledgeLibrary, KnowledgeSource, async_get_knowledge
 from .memory import MemoryRecord, PersistentMemory, async_get_memory
+from .private_backup import (
+    PRIVATE_BACKUP_VERSION,
+    DecodedPrivateDocument,
+    decode_document,
+    encode_document,
+)
 from .request_rules import RequestRules, async_get_request_rules
 from .secret_redaction import redact_secrets, restore_redacted_secrets
 from .temporary_memory import (
@@ -62,6 +69,10 @@ from .temporary_memory import (
     async_get_temporary_memory,
 )
 from .usage import UsageManager, UsageRequest, UsageRun, UsageTotals, async_get_usage
+
+type ValidatedUsage = tuple[
+    UsageTotals, dict[str, dict[str, Any]], list[UsageRequest], list[UsageRun]
+]
 
 BACKUP_FORMAT = "extended_openai_conversation_backup"
 BACKUP_VERSION = 5
@@ -100,6 +111,8 @@ class PreparedRestore:
     integration_version: str
     # Same-agent recovery only; portable archive imports deliberately have none.
     archive_active: dict[str, str] | None = None
+    # Internal provenance, never accepted as an import-document switch.
+    authoritative_config: bool = False
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -220,30 +233,33 @@ async def async_collect_backup_snapshot(
         guest_mode,
         request_rules,
     ) = await _managers(hass, entry.entry_id, subentry.subentry_id)
-    config_snapshot = export_configuration_snapshot(subentry.data)
-    return {
-        "format": BACKUP_FORMAT,
-        "version": BACKUP_VERSION,
-        "created_at": dt_util.utcnow().isoformat(),
-        "integration_version": _integration_version(),
-        "agent": {
-            "title": subentry.title,
-            "source_entry_id": entry.entry_id,
-            "source_subentry_id": subentry.subentry_id,
-            "config": config_snapshot,
-        },
-        "memories": await memory.async_backup_data(),
-        "temporary_memories": await temporary.async_backup_data(),
-        "knowledge": await knowledge.async_backup_data(),
-        "archive": await archive.async_backup_data(),
-        "usage": await usage.async_backup_data(),
-        "guest_mode": await guest_mode.async_backup_data(),
-        "request_rules": await request_rules.async_backup_data(),
-    }
+    config_snapshot = deepcopy(dict(subentry.data))
+    return DecodedPrivateDocument(
+        {
+            "format": BACKUP_FORMAT,
+            "version": PRIVATE_BACKUP_VERSION,
+            "created_at": dt_util.utcnow().isoformat(),
+            "integration_version": _integration_version(),
+            "provider_connection": deepcopy(dict(getattr(entry, "data", {}))),
+            "agent": {
+                "title": subentry.title,
+                "source_entry_id": entry.entry_id,
+                "source_subentry_id": subentry.subentry_id,
+                "config": config_snapshot,
+            },
+            "memories": await memory.async_backup_data(),
+            "temporary_memories": await temporary.async_backup_data(),
+            "knowledge": await knowledge.async_backup_data(),
+            "archive": await archive.async_backup_data(),
+            "usage": await usage.async_backup_data(),
+            "guest_mode": await guest_mode.async_backup_data(),
+            "request_rules": await request_rules.async_backup_data(),
+        }
+    )
 
 
 def finalize_backup_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
-    """Redact and serialize a small legacy one-message JSON backup."""
+    """Serialize private v6 data; retain the redacted semantics of legacy versions."""
     try:
         check_redaction_budget(snapshot, MAX_LEGACY_EXPORT_BYTES)
     except JSONBudgetExceeded as err:
@@ -251,14 +267,18 @@ def finalize_backup_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
             "This backup is too large for the legacy one-message JSON export; "
             "use the full backup transfer interface"
         ) from err
-    document = {
-        **snapshot,
-        "agent": {
-            **snapshot["agent"],
-            "config": _safe_configuration(snapshot["agent"]["config"]),
-        },
-        "request_rules": _safe_configuration(snapshot["request_rules"]),
-    }
+    document = (
+        encode_document(snapshot)
+        if snapshot.get("version") == PRIVATE_BACKUP_VERSION
+        else {
+            **snapshot,
+            "agent": {
+                **snapshot["agent"],
+                "config": _safe_configuration(snapshot["agent"]["config"]),
+            },
+            "request_rules": _safe_configuration(snapshot["request_rules"]),
+        }
+    )
     try:
         serialized = bounded_json_dumps(document, MAX_LEGACY_EXPORT_BYTES)
     except JSONBudgetExceeded as err:
@@ -307,18 +327,80 @@ def inspect_backup(
     )
 
 
-async def async_inspect_backup(value: Any, target_agent_id: str) -> PreparedRestore:
-    """Decode bounded legacy JSON off-loop, then validate in HA's loop context."""
+async def async_inspect_backup(
+    value: Any,
+    target_agent_id: str,
+    *,
+    max_bytes: int | None = None,
+    private_journal: bool = False,
+) -> PreparedRestore:
+    """Process bounded JSON and bulk categories off-loop; retain HA-aware schema context."""
     if isinstance(value, PreparedRestore):
         return value
     document = await asyncio.to_thread(
-        _decode_backup_document, value, MAX_LEGACY_EXPORT_BYTES
+        _decode_backup_document,
+        value,
+        MAX_LEGACY_EXPORT_BYTES if max_bytes is None else max_bytes,
     )
-    return _inspect_decoded_backup(document, target_agent_id)
+    # Check the envelope before accessing its potentially large Usage section.
+    _inspect_decoded_backup(document, target_agent_id, header_only=True)
+    try:
+        categories = await asyncio.to_thread(
+            _validate_data_categories,
+            document,
+            target_agent_id,
+            private_journal=private_journal,
+        )
+    except (TypeError, ValueError) as err:
+        raise BackupError(f"The backup is incomplete or corrupted: {err}") from err
+    return _inspect_decoded_backup(
+        document,
+        target_agent_id,
+        private_journal=private_journal,
+        validated_categories=categories,
+    )
+
+
+def _validate_data_categories(
+    value: Mapping[str, Any], target_agent_id: str, *, private_journal: bool = False
+) -> dict[str, Any]:
+    """Validate selected, context-free categories without accessing manager state."""
+    result: dict[str, Any] = {}
+    for key, validator in (
+        ("memories", PersistentMemory.validate_backup_data),
+        ("temporary_memories", TemporaryMemory.validate_backup_data),
+        ("knowledge", KnowledgeLibrary.validate_backup_data),
+    ):
+        if key in value:
+            result[key] = validator(value[key])
+    if "archive" in value:
+        archive_data = deepcopy(value["archive"])
+        has_active = (
+            private_journal
+            and isinstance(archive_data, dict)
+            and "active" in archive_data
+        )
+        active = archive_data.pop("active") if has_active else None
+        sessions, turns = ConversationArchive.validate_backup_data(
+            archive_data, target_agent_id, local_recovery=has_active
+        )
+        bindings = (
+            ConversationArchive.validate_recovery_bindings(active, sessions)
+            if has_active
+            else None
+        )
+        result["archive"] = sessions, turns, bindings
+    if "usage" in value:
+        result["usage"] = UsageManager.validate_backup_data(
+            value["usage"], target_agent_id
+        )
+    return result
 
 
 def _decode_backup_document(value: Any, max_bytes: int) -> dict[str, Any]:
     """Perform only context-free JSON processing and transport size checks."""
+    if isinstance(value, DecodedPrivateDocument):
+        return value
     if (
         isinstance(max_bytes, bool)
         or not isinstance(max_bytes, int)
@@ -350,7 +432,14 @@ def _decode_backup_document(value: Any, max_bytes: int) -> dict[str, Any]:
             raise BackupError("The backup is incomplete or corrupted") from err
     if not isinstance(value, dict):
         raise BackupError("This file is not an Extended OpenAI Conversation backup")
-    return value
+    try:
+        return (
+            decode_document(value)
+            if value.get("version") == PRIVATE_BACKUP_VERSION
+            else value
+        )
+    except (ValueError, TypeError, KeyError, yaml.YAMLError) as err:
+        raise BackupError("The private backup encoding is invalid") from err
 
 
 def _inspect_decoded_backup(
@@ -359,12 +448,13 @@ def _inspect_decoded_backup(
     *,
     private_journal: bool = False,
     header_only: bool = False,
+    validated_categories: dict[str, Any] | None = None,
 ) -> PreparedRestore:
     """Validate the decoded envelope and categories, including HA-aware schemas."""
     if value.get("format") != BACKUP_FORMAT:
         raise BackupError("This file is not an Extended OpenAI Conversation backup")
     version = value.get("version")
-    if version not in {1, 2, 3, 4, BACKUP_VERSION}:
+    if version not in {1, 2, 3, 4, BACKUP_VERSION, PRIVATE_BACKUP_VERSION}:
         if isinstance(version, int) and version > BACKUP_VERSION:
             raise BackupError(
                 "This backup was created using a newer unsupported backup format"
@@ -384,6 +474,8 @@ def _inspect_decoded_backup(
     }
     required = expected | ({"request_rules"} if version >= 3 else set())
     allowed = required | ({"guest_mode"} if version >= 2 else set())
+    if version == PRIVATE_BACKUP_VERSION:
+        allowed.add("provider_connection")
     # Version 4 contained one retired feature section. Ignore only that legacy
     # payload while retaining strict validation for every other top-level section.
     unexpected = set(value) - allowed
@@ -437,37 +529,37 @@ def _inspect_decoded_backup(
             integration_version,
         )
     try:
+        if version == PRIVATE_BACKUP_VERSION and not private_journal:
+            value = decode_document(value)
+            agent = value["agent"]
         raw_config = (
             deepcopy(agent["config"])
-            if private_journal
+            if private_journal or version == PRIVATE_BACKUP_VERSION
             else restore_redacted_secrets(agent["config"])
         )
         if not isinstance(raw_config, dict):
             raise ValueError("agent config must be an object")
-        config = recoverable_configuration_snapshot(raw_config)
-        memories = PersistentMemory.validate_backup_data(value["memories"])
-        temporary_memories = TemporaryMemory.validate_backup_data(
-            value["temporary_memories"]
+        config = (
+            deepcopy(raw_config)
+            if private_journal or version == PRIVATE_BACKUP_VERSION
+            else recoverable_configuration_snapshot(raw_config)
         )
-        knowledge = KnowledgeLibrary.validate_backup_data(value["knowledge"])
-        archive_data = deepcopy(value["archive"])
-        has_active = (
-            private_journal
-            and isinstance(archive_data, dict)
-            and "active" in archive_data
+        if private_journal or version == PRIVATE_BACKUP_VERSION:
+            # Validate an effective projection, never replace authoritative
+            # private source with reserialized YAML or injected defaults.
+            private_configuration_snapshot(raw_config)
+        categories = (
+            validated_categories
+            if validated_categories is not None
+            else _validate_data_categories(
+                value, target_agent_id, private_journal=private_journal
+            )
         )
-        active = archive_data.pop("active") if has_active else None
-        archive_sessions, archive_turns = ConversationArchive.validate_backup_data(
-            archive_data, target_agent_id, local_recovery=has_active
-        )
-        archive_active = (
-            ConversationArchive.validate_recovery_bindings(active, archive_sessions)
-            if has_active
-            else None
-        )
-        usage_totals, usage_daily, usage_requests, usage_runs = (
-            UsageManager.validate_backup_data(value["usage"], target_agent_id)
-        )
+        memories = categories["memories"]
+        temporary_memories = categories["temporary_memories"]
+        knowledge = categories["knowledge"]
+        archive_sessions, archive_turns, archive_active = categories["archive"]
+        usage_totals, usage_daily, usage_requests, usage_runs = categories["usage"]
         guest_mode_schedule = (
             GuestModeManager.validate_backup_data(value["guest_mode"])
             if version >= 2 and "guest_mode" in value
@@ -475,7 +567,7 @@ def _inspect_decoded_backup(
         )
         request_rules = RequestRules.validate_backup_data(
             deepcopy(value.get("request_rules", {"defaults": {}, "rules": []}))
-            if private_journal
+            if private_journal or version == PRIVATE_BACKUP_VERSION
             else restore_redacted_secrets(
                 value.get("request_rules", {"defaults": {}, "rules": []})
             )
@@ -499,6 +591,7 @@ def _inspect_decoded_backup(
         created_at,
         integration_version,
         archive_active=archive_active,
+        authoritative_config=private_journal or version == PRIVATE_BACKUP_VERSION,
     )
 
 
@@ -543,34 +636,36 @@ async def _snapshot_for_restore(
         guest_mode,
         request_rules,
     ) = managers
-    archive_data = await archive.async_recovery_data()
-    archive_sessions, archive_turns = ConversationArchive.validate_backup_data(
-        {key: archive_data[key] for key in ("sessions", "turns")},
+    raw_categories = {
+        "archive": await archive.async_recovery_data(),
+        "usage": await usage.async_backup_data(),
+        "memories": await memory.async_backup_data(),
+        "temporary_memories": await temporary.async_backup_data(),
+        "knowledge": await knowledge.async_backup_data(),
+    }
+    categories = await asyncio.to_thread(
+        _validate_data_categories,
+        raw_categories,
         subentry.subentry_id,
-        local_recovery=True,
+        private_journal=True,
     )
-    archive_active = ConversationArchive.validate_recovery_bindings(
-        archive_data["active"], archive_sessions
-    )
-    usage_totals, usage_daily, usage_requests, usage_runs = (
-        UsageManager.validate_backup_data(
-            await usage.async_backup_data(), subentry.subentry_id
-        )
-    )
+    archive_sessions, archive_turns, archive_active = categories["archive"]
+    usage_totals, usage_daily, usage_requests, usage_runs = categories["usage"]
     guest_mode_schedule = GuestModeManager.validate_backup_data(
         await guest_mode.async_backup_data()
     )
     request_rule_backup = RequestRules.validate_backup_data(
         await request_rules.async_backup_data()
     )
+    private_configuration_snapshot(subentry.data)
     return PreparedRestore(
         subentry.title,
         # Recovery applies this mapping directly, including during same-process
         # rollback. A frontend [] must not become a legacy persisted default.
-        private_configuration_snapshot(subentry.data),
-        PersistentMemory.validate_backup_data(await memory.async_backup_data()),
-        TemporaryMemory.validate_backup_data(await temporary.async_backup_data()),
-        KnowledgeLibrary.validate_backup_data(await knowledge.async_backup_data()),
+        deepcopy(dict(subentry.data)),
+        categories["memories"],
+        categories["temporary_memories"],
+        categories["knowledge"],
         archive_sessions,
         archive_turns,
         usage_totals,
@@ -582,6 +677,7 @@ async def _snapshot_for_restore(
         dt_util.utcnow().isoformat(),
         _integration_version(),
         archive_active=archive_active,
+        authoritative_config=True,
     )
 
 

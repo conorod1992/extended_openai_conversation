@@ -47,6 +47,36 @@ test('a successful no-update check releases the retained configuration buttons',
   assert.deepEqual(buttons.map(button=>button.disabled),[false,true,false]);
 });
 
+for (const detached of [false,true]) test(`an unrelated invalidation releases still-owned model buttons, detached=${detached}`, async () => {
+  const {panel,buttons}=fixture('check');
+  const draft=panel._draft;
+  let release;
+  panel._hass.callWS=()=>new Promise(resolve=>{release=resolve;});
+  const checking=buttons[0].click();
+  assert.deepEqual(buttons.map(button=>button.disabled),[true,true,true]);
+  panel._cacheGeneration++;
+  panel.isConnected=!detached;
+  release({catalog_version:1,update_available:true,model_capabilities:{stale:true}});
+  await checking;
+  assert.equal(panel._draft,draft,'stale data must not reach the draft-reading callback');
+  assert.equal(panel._modelCatalogData.update_available,false);
+  assert.deepEqual(buttons.map(button=>button.disabled),[false,true,false]);
+});
+
+test('an abandoned action cannot release replacement model buttons', async () => {
+  const {panel,buttons}=fixture('check');
+  let release;
+  panel._hass.callWS=()=>new Promise(resolve=>{release=resolve;});
+  const checking=buttons[0].click();
+  const replacements=buttons.map(button=>({...button,disabled:true}));
+  const original=panel.shadowRoot.querySelectorAll.bind(panel.shadowRoot);
+  panel.shadowRoot.querySelectorAll=selector=>selector==='[data-model-data]' ? replacements : original(selector);
+  release({catalog_version:1,update_available:false});
+  await checking;
+  assert.deepEqual(buttons.map(button=>button.disabled),[true,true,true]);
+  assert.deepEqual(replacements.map(button=>button.disabled),[true,true,true]);
+});
+
 function refreshingFixture(action) {
   const fixtureData = fixture(action,'low','high');
   const panel = Object.assign(new ExtendedOpenAIManagementPanel(),fixtureData.panel);
@@ -290,3 +320,22 @@ for (const action of ['apply','reset']) {
     assert.equal(panel._configDataStale,false);
   });
 }
+
+test('capability gates follow the draft catalogue after saved baseline replacement', async () => {
+  const {modelCapabilitiesForDraft} = await import('../custom_components/extended_openai_conversation_responses/frontend/agent-config-model-presentation.js');
+  const current = {supports_reasoning_effort:true, reasoning:{supported:true, efforts:['minimal','low']}};
+  const saved = {supports_reasoning_effort:false};
+  const panel = {_draft:{chat_model:'gpt-5-mini',reasoning_effort:'minimal'},_result:{config:{chat_model:'gpt-4o'},model_capabilities:saved},_modelCatalogData:{requested_model:'gpt-5-mini',model_capabilities:current}};
+  assert.equal(modelCapabilitiesForDraft(panel), current);
+  assert.equal(modelFieldPresentation(panel,'reasoning_effort','minimal').visible,true);
+  panel._modelCatalogData.requested_model = 'gpt-4o';
+  assert.deepEqual(modelCapabilitiesForDraft(panel), {}, 'a mismatched catalogue and saved baseline cannot describe this draft');
+  panel._draft = {chat_model:'azure-deployment',azure_model:'gpt-5-mini'};
+  panel._modelCatalogData = {requested_model:'gpt-5-mini',model_metadata:current};
+  assert.equal(modelCapabilitiesForDraft(panel), current);
+  delete panel._modelCatalogData;
+  panel._draft = {chat_model:'gpt-4o'};
+  assert.equal(modelCapabilitiesForDraft(panel), saved);
+  delete panel._draft;
+  assert.equal(modelCapabilitiesForDraft(panel), saved);
+});

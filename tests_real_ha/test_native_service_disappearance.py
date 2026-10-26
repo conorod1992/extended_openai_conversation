@@ -186,9 +186,7 @@ async def test_native_service_disappears_before_dispatch_and_next_turn_recovers(
         failure = failed_tool_result["result"][0]
         assert "error" in failure
         error_text = failure["error"].casefold()
-        assert error_text == "service_not_found" or (
-            _SERVICE in error_text and "not found" in error_text
-        )
+        assert error_text == "function execution failed. check the tool configuration and permissions."
 
     # Restore the exact same real HA service and prove the same loaded agent/tool
     # succeeds on a completely separate public Conversation turn.

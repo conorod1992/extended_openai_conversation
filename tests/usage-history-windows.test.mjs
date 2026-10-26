@@ -111,11 +111,10 @@ assert.doesNotMatch(
 );
 
 // The cold Usage load is bounded to 30 days; wider history is fetched only when selected.
-const panelSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js", import.meta.url), "utf8");
 const usageSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/usage-chart.js", import.meta.url), "utf8");
 const usageDataSource = await readFile(new URL("../custom_components/extended_openai_conversation_responses/frontend/usage-data.js", import.meta.url), "utf8");
-assert.match(panelSource, /const loadToken = \+\+this\._loadToken/);
-assert.match(panelSource, /if \(loadToken !== this\._loadToken\) return/);
+// Section-read retirement is exercised against the live loader in
+// management-ownership-sequences.test.mjs, including success and failure.
 assert.match(usageDataSource, /const agent = panel\._selectedAgent\?\.\(\)/);
 assert.match(usageDataSource, /entry_id: agent\.entry_id, subentry_id: agent\.subentry_id/);
 assert.match(usageSource, /await loadUsageWindow\(panel, next/);

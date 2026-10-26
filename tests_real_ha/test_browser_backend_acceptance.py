@@ -24,7 +24,7 @@ from custom_components.extended_openai_conversation_responses.const import (
 from homeassistant.components import conversation, onboarding
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.setup import async_setup_component
 from tests_real_ha.test_acceptance_lifecycle import _make_entry
 from tests_real_ha.test_management_backend_acceptance import (
@@ -460,6 +460,30 @@ async def real_ha_shell(
         )
         hass.states.async_set(entity.entity_id, "21", {"battery_level": 84})
         async_expose_entity(hass, conversation.DOMAIN, entity.entity_id, True)
+
+    # A genuine satellite with two candidates per domain exercises both native
+    # Quiet Hours selectors on a direct, fresh-document route visit.
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={("cold_quiet_fixture", "satellite")},
+        name="Cold Quiet Hours satellite",
+    )
+    for domain, object_id, label in (
+        ("assist_satellite", "cold_quiet", "Cold Quiet Hours satellite"),
+        ("media_player", "cold_quiet_a", "Cold speaker A"),
+        ("media_player", "cold_quiet_b", "Cold speaker B"),
+        ("switch", "cold_quiet_wake_a", "Cold wake sound A"),
+        ("switch", "cold_quiet_wake_b", "Cold wake sound B"),
+    ):
+        entity = registry.async_get_or_create(
+            domain, "cold_quiet_fixture", object_id,
+            suggested_object_id=object_id, original_name=label,
+            device_id=device.id, config_entry=entry,
+        )
+        attributes = {"friendly_name": label}
+        if domain == "media_player":
+            attributes["volume_level"] = 0.8
+        hass.states.async_set(entity.entity_id, "on" if domain == "switch" else "idle", attributes)
 
     admin = MockUser(
         id="browser-frontend-shell-admin",

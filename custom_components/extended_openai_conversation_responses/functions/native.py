@@ -41,12 +41,14 @@ from ..intercom import async_get_intercom
 from ..intercom_permissions import async_authorized_broadcast_targets
 from ..operational_errors import log_handled_failure
 from ..recorder_budget import bounded_history, bounded_statistics
+from ..request_origin import get_request_satellite
 from ..safety_hardening import (
     _async_require_admin,
     _normalized_statistics_arguments,
     _validate_execute_service_request,
     _validate_history_request,
 )
+from ..yaml_serialization import dump_yaml
 from .base import Function
 
 _LOGGER = logging.getLogger(__name__)
@@ -210,7 +212,7 @@ def _append_automation_atomic(
     else:
         current = []
 
-    raw_config = yaml.safe_dump([config], allow_unicode=True, sort_keys=False)
+    raw_config = dump_yaml([config], sort_keys=False)
     if not current:
         prefix = existing_text if current_node is None else ""
         if prefix and not prefix.endswith("\n"):
@@ -333,6 +335,10 @@ class NativeFunction(Function):
         manager = await async_get_intercom(hass)
         destination = arguments.get("destination")
         whole_home = bool(arguments.get("whole_home", False))
+        if whole_home and destination:
+            raise HomeAssistantError(
+                "Choose either whole_home or a Broadcast destination"
+            )
         target: dict[str, Any] = {"whole_home": whole_home}
         if destination:
             resolved = manager.resolve_named_target(str(destination))
@@ -352,18 +358,23 @@ class NativeFunction(Function):
         # Use the same resolved-target CONTROL boundary as the service and
         # WebSocket Broadcast entry points. Voice/system requests without an
         # authenticated HA user retain the existing trusted behavior.
+        origin_entity_id = get_request_satellite()
+        context = get_active_ha_context() or getattr(llm_context, "context", None)
         targets = await async_authorized_broadcast_targets(
             hass,
             manager,
-            context=get_active_ha_context(),
+            context=context,
+            origin_entity_id=origin_entity_id,
             origin_device_id=origin_device_id,
             **target,
         )
         result = await manager.async_send(
             str(arguments.get("message", "")),
             entity_ids=targets,
+            origin_entity_id=origin_entity_id,
             origin_device_id=origin_device_id,
             source="llm_tool",
+            context=context,
         )
         return {
             "success": True,
@@ -569,6 +580,10 @@ class NativeFunction(Function):
         async with lock:
             from ..execution_outcomes import execution_completed, execution_started
 
+            # Pin the destination once for the complete transaction. Replacing
+            # the configured symlink would detach HA from its shared file;
+            # resolving again during rollback could target a different file.
+            automation_path = await hass.async_add_executor_job(automation_path.resolve)
             receipt = execution_started(
                 kind="automation_update",
                 prepared={

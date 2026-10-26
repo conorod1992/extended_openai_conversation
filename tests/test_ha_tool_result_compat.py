@@ -5,12 +5,45 @@ from __future__ import annotations
 from dataclasses import dataclass, make_dataclass
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
 from custom_components.extended_openai_conversation_responses import (
     ha_tool_result_compat,
 )
+
+
+def test_constructor_contract_is_cached_but_follows_class_replacement(monkeypatch):
+    """Repeated results avoid inspection; a new Core class gets its own decision."""
+    legacy = make_dataclass(
+        "Legacy", ["agent_id", "tool_call_id", "tool_name", "tool_result"]
+    )
+    modern = make_dataclass(
+        "Modern", ["agent_id", "tool_call_id", "tool_name", "result"]
+    )
+    envelope = make_dataclass("Envelope", ["data", "error"])
+    inspect = Mock(wraps=ha_tool_result_compat.signature)
+    monkeypatch.setattr(ha_tool_result_compat, "signature", inspect)
+    monkeypatch.setattr(ha_tool_result_compat.llm, "ToolResult", envelope, raising=False)
+    ha_tool_result_compat._uses_result_envelope.cache_clear()
+    payload = {"value": 1}
+    for content_type in (legacy, modern, legacy):
+        monkeypatch.setattr(
+            ha_tool_result_compat.conversation, "ToolResultContent", content_type
+        )
+        for _ in range(3):
+            content = ha_tool_result_compat.make_tool_result_content(
+                agent_id="agent", tool_call_id="call", tool_name="tool",
+                tool_result=payload, error=True,
+            )
+            if content_type is modern:
+                assert content.result.data is payload
+                assert content.result.error is True
+            else:
+                assert isinstance(content.tool_result, ha_tool_result_compat.ExecutionFailure)
+                assert content.tool_result == payload
+    assert inspect.call_count == 3
 
 
 @pytest.mark.parametrize("depth", [1, 2, 3])

@@ -133,6 +133,58 @@ def iter_script_actions(
     )
 
 
+def script_selector_fields(value: Any) -> dict[int, frozenset[str]]:
+    """Identify concrete selectors only in actual native script structures.
+
+    Event payloads, repeat items, variables and service data are opaque even when
+    their keys resemble actions, conditions or triggers.
+    """
+    result: dict[int, frozenset[str]] = {}
+    selector_keys = frozenset({"entity_id", "zone", "device_id"})
+
+    def conditions(config: Any) -> None:
+        if isinstance(config, list):
+            for item in config:
+                conditions(item)
+        elif isinstance(config, Mapping):
+            result[id(config)] = selector_keys
+            condition = config.get("condition")
+            if isinstance(condition, (list, Mapping)):
+                conditions(condition)
+            elif isinstance(condition, str) and condition in {"and", "or", "not"}:
+                conditions(config.get("conditions", []))
+            elif condition is None:
+                # HA also accepts logical shorthand without a condition key.
+                for operator in ("and", "or", "not"):
+                    if operator in config:
+                        conditions(config[operator])
+
+    actions = [value] if isinstance(value, Mapping) else value
+    if not isinstance(actions, list):
+        return result
+    for action in iter_script_actions(actions):
+        if "scene" in action:
+            result[id(action)] = frozenset({"scene"})
+        if "condition" in action:
+            conditions(action)
+        conditions(action.get("if", []))
+        for branch in action.get("choose", []):
+            if isinstance(branch, Mapping):
+                conditions(branch.get("conditions", []))
+        repeat = action.get("repeat")
+        if isinstance(repeat, Mapping):
+            for key in ("while", "until"):
+                conditions(repeat.get(key, []))
+        triggers = action.get("wait_for_trigger", [])
+        if isinstance(triggers, Mapping):
+            triggers = [triggers]
+        if isinstance(triggers, list):
+            for trigger in triggers:
+                if isinstance(trigger, Mapping):
+                    result[id(trigger)] = selector_keys
+    return result
+
+
 def iter_unvalidated_script_actions(sequence: Any) -> Iterator[Mapping[str, Any]]:
     """Inspect Script Function preflight input without adding Request Rule quotas.
 

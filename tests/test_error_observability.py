@@ -437,7 +437,7 @@ async def test_startup_passes_safe_guidance_to_ha_retry(
         )
     assert "billing" in str(caught.value)
     assert SECRET not in str(caught.value) and SECRET not in caplog.text
-    assert "req_safe" in caplog.text
+    assert "req_safe" not in caplog.text
 
 
 @pytest.mark.parametrize("error", [RuntimeError(SECRET), OpenAIError(SECRET)])

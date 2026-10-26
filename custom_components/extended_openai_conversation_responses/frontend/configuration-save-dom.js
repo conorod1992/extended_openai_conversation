@@ -1,7 +1,33 @@
-import {same} from "./unsaved-state.js";
+import {same, saveBarMarkup} from "./unsaved-state.js";
 import {getRouteFeature} from "./management-route.js";
 
-// Reconcile only an unchanged form structure. Plan every edit before touching DOM.
+// Save controls can disappear while an in-flight write's draft becomes clean.
+// Their lifetime is independent of the form structure reconciled below.
+function reconcileSaveBar(panel, main) {
+  let bar = main.querySelector(".save-bar");
+  if (!panel._configDirty) { bar?.remove(); return true; }
+  const pending = Boolean(panel._configurationSaving);
+  if (!bar) {
+    const anchor = main.querySelector("#save-bar-anchor") || main.querySelector("#memory-settings-save-anchor");
+    if (!anchor) {
+      // A missing insertion point makes this live structure uncertifiable.
+      // Let the caller render it again instead of recording markup not in DOM.
+      panel._eocMainMarkup = null;
+      return false;
+    }
+    anchor.insertAdjacentHTML("beforebegin", saveBarMarkup({configuration:true, pending}));
+    bar = main.querySelector(".save-bar");
+  }
+  const save = bar.querySelector("#save-config"), discard = bar.querySelector("#revert-config");
+  if (save) {
+    save.disabled = pending;
+    save.textContent = pending ? "Saving…" : "Save changes";
+  }
+  if (discard) discard.disabled = pending;
+  return true;
+}
+
+// Reconcile only an unchanged form structure. Plan form edits before applying them.
 const mutableAttributes = new Set(["value", "checked", "selected", "disabled", "hidden", "aria-invalid", "data-initial-value"]);
 
 export function reconcileSavedConfiguration(panel, owner) {
@@ -11,6 +37,7 @@ export function reconcileSavedConfiguration(panel, owner) {
       || !owner.markup || panel._draft?.chat_model !== owner.model
       || !same(panel._draft?.voice_device_mappings || {}, owner.voiceMappings)
       || panel.shadowRoot.querySelector("dialog[open]")) return false;
+  if (!reconcileSaveBar(panel, main)) return false;
   const markup = panel._content(panel._selectedAgent());
   if (owner.view === "assistant/voice") {
     const draft = panel._draft;
@@ -26,7 +53,6 @@ export function reconcileSavedConfiguration(panel, owner) {
     const user = String(draft.voice_default_user_id || "").replace(/^user:/, "");
     if (picker && picker.value !== user) picker.value = user;
     feature.updatePolicy(panel);
-    if (!panel._configDirty) main.querySelector(".save-bar")?.remove();
     panel._eocMainMarkup = markup;
     return true;
   }
@@ -71,7 +97,6 @@ export function reconcileSavedConfiguration(panel, owner) {
   };
   if (!plan(oldTemplate.content, nextTemplate.content, main)) return false;
   for (const edit of edits) edit();
-  if (!panel._configDirty) main.querySelector(".save-bar")?.remove();
   panel._eocMainMarkup = markup;
   return true;
 }

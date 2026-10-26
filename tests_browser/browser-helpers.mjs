@@ -2,6 +2,14 @@ import {expect} from "@playwright/test";
 
 export const fixtureUrl = (route, extra = "") => `/tests_browser/fixture.html?route=${route}${extra}${process.env.SHIPPED_BUNDLE === "1" ? "&bundle=1" : ""}`;
 
+export async function acceptSharingReview(panel) {
+  const download = panel.locator("[data-download]");
+  await expect(download).toBeVisible();
+  const acknowledgement = panel.locator("[data-ack]");
+  if (await acknowledgement.isVisible()) await acknowledgement.check();
+  await download.click();
+}
+
 export function trackPageErrors(page) {
   const diagnostics = [];
   diagnostics.consoleErrors = [];

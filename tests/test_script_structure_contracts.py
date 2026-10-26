@@ -300,3 +300,25 @@ def test_request_rule_consumers_forward_the_same_existing_limits(monkeypatch):
     with pytest.raises(ValueError, match="exceeds 0 nodes"):
         request_rule_match_preview(rr.RuleMatch(rule, "run", False, 100.0))
     _reject_device_actions([{}])  # Device preflight still has no Request Rule quota.
+
+
+@pytest.mark.parametrize("form", ["list", "and", "or", "not"])
+def test_selector_walk_preserves_native_condition_shorthand_and_payload_boundaries(
+    form,
+):
+    state = {"condition": "state", "entity_id": "{device}", "state": "on"}
+    guard = {"condition": [state]} if form == "list" else {form: [state]}
+    payload = {
+        "scene": "{{ selected_scene }}",
+        "condition": [{"entity_id": "{{ arbitrary_payload }}"}],
+    }
+    sequence = [{"if": [guard], "then": [{"event": "selected", "event_data": payload}]}]
+    prepared = rr._prepare_concrete_captures(sequence, {"device": "light.kitchen"})
+    prepared_guard = prepared[0]["if"][0]
+    nested = (
+        prepared_guard["condition"][0] if form == "list" else prepared_guard[form][0]
+    )
+    assert nested["entity_id"] == "light.kitchen"
+    assert prepared[0]["then"][0]["event_data"] == payload
+    assert sequence[0]["if"][0] == guard
+    rr._validate_script_sequence(sequence, capture_names={"device"})

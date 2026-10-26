@@ -7,6 +7,28 @@ Missing, failed, cancelled, or unexpected dependencies fail the check. Changes
 to the selector or its policy run every lane. Checkouts validate GitHub's simulated
 merge commit. The final check also rejects a base branch that advanced during the run.
 
+Specialist rules can reference flat `dependency-groups` from
+`ci/pr_dependency_groups.json` alongside lane-specific `paths`. Both sets of paths
+are alternatives; branch restrictions and `paths-ignore` still apply. Unknown or
+malformed groups reject selection. Editing the shared groups is a selector change
+and therefore runs every lane, just like editing `pr_workflows.json`.
+
+| Shared production dependencies | Specialist PR coverage |
+| --- | --- |
+| Frontend assets/build inputs and Management configuration/data contracts | Frontend/backend version skew |
+| Integration Python, schemas and test environment | HA version upgrade; EOAI release upgrade |
+| Integration package, HACS metadata and release tooling | HACS install/update |
+| Provider clients, request processing and REST transport | IPv6-only networking |
+| Frontend and integration runtime | Native HA browser compatibility |
+
+Each specialist also selects changes to its own acceptance tests and supporting
+harness. General collection does not substitute for these lanes: they supply the
+environment flags and released/HA-version runtimes needed to execute the scenarios.
+Documentation-only and unrelated unit-test diffs do not select these specialists.
+`tests/test_pr_specialist_selection.py` exercises representative changed-file lists,
+negative cases, branch filters and dependency-group validation. Update the reviewed
+groups and these cases when introducing a new transport or UI/backend contract.
+
 ## Repository setting after rollout
 
 Once this workflow is merged and **PR validation** has appeared in Actions, open

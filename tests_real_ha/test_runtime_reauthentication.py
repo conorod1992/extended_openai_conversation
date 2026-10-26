@@ -108,7 +108,8 @@ async def test_runtime_401_drives_native_ha_reauthentication_and_reload(
     assert failed.response.error_code is not None
     failed_speech = failed.response.as_dict()["speech"]["plain"]["speech"]
     assert "problem talking to OpenAI" in failed_speech
-    assert "Incorrect API key provided" in failed_speech
+    assert "Provider authentication failed" in failed_speech
+    assert "Incorrect API key provided" not in failed_speech
     assert len(unauthorized_wire.requests) == 1
     assert unauthorized_wire.requests[0]["path"] == expected_path
     assert entry.data[CONF_API_KEY] == original_key

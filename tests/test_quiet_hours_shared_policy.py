@@ -95,8 +95,9 @@ async def test_shared_policy_does_not_restore_unattributed_prepared_effect(
 @pytest.mark.parametrize(
     "manager_type", [runtime.QuietHoursManager, public.QuietHoursManager]
 )
+@pytest.mark.parametrize("with_pending", [False, True])
 async def test_shared_policy_rechecks_registry_identity_after_save(
-    hass, monkeypatch, manager_type
+    hass, monkeypatch, manager_type, with_pending
 ):
     manager = _manager(hass, manager_type)
     old, new, current = (f"media_player.{name}" for name in ("old", "new", "current"))
@@ -113,6 +114,17 @@ async def test_shared_policy_rechecks_registry_identity_after_save(
         "controls": {old: _control("A", 0.8)},
         "observed_controls": [old],
     }
+
+    if with_pending:
+        lookup["B"] = "media_player.pending"
+        lookup["S"] = "assist_satellite.pending"
+        manager._active["pending_controls"] = {
+            "media_player.pending": {
+                **_control("B", 0.5),
+                "satellite_entity_id": "assist_satellite.pending",
+                "satellite_registry_identity": ["assist_satellite", "example", "S"],
+            }
+        }
 
     async def save(_data):
         lookup["A"] = current

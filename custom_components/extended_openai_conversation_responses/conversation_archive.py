@@ -875,29 +875,24 @@ class ConversationArchive:
                 if session.retention_state != "unretained"
             ]
             retained_ids = {session.session_id for session in sessions}
-            return {
-                "sessions": [_session_payload(session) for session in sessions],
-                "turns": [
-                    asdict(turn)
-                    for session_id, turns in self._turns.items()
-                    if session_id in retained_ids
-                    for turn in turns
-                ],
-            }
+            turns = [
+                turn
+                for session_id, items in self._turns.items()
+                if session_id in retained_ids
+                for turn in items
+            ]
+            return await asyncio.to_thread(_archive_payload, sessions, turns)
 
     async def async_recovery_data(self) -> dict[str, Any]:
         """Capture same-agent recovery state; portable exports omit active bindings."""
         async with self._lock:
             self._ensure_initialized()
-            return {
-                "sessions": [
-                    _session_payload(item) for item in self._sessions.values()
-                ],
-                "turns": [
-                    asdict(turn) for turns in self._turns.values() for turn in turns
-                ],
-                "active": dict(self._active),
-            }
+            # Records are immutable; the lock protects selection and serialization.
+            sessions = list(self._sessions.values())
+            turns = [turn for items in self._turns.values() for turn in items]
+            payload = await asyncio.to_thread(_archive_payload, sessions, turns)
+            payload["active"] = dict(self._active)
+            return payload
 
     @staticmethod
     def validate_recovery_bindings(
@@ -984,13 +979,12 @@ class ConversationArchive:
         active: dict[str, str] | None = None,
     ) -> None:
         """Replace durable archive data through the same restart-safe journal."""
-        sessions, turns = self.validate_backup_data(
-            {
-                "sessions": [asdict(session) for session in sessions],
-                "turns": [asdict(turn) for turn in turns],
-            },
-            self._agent_subentry_id,
-            local_recovery=active is not None,
+        sessions, turns = await asyncio.to_thread(
+            lambda: self.validate_backup_data(
+                _archive_payload(sessions, turns),
+                self._agent_subentry_id,
+                local_recovery=active is not None,
+            )
         )
         bindings = (
             self.validate_recovery_bindings(active, sessions)
@@ -1669,28 +1663,62 @@ def _search_features(turn: ArchiveTurn) -> tuple[str, frozenset[str]]:
     return normalized, tokens
 
 
+def _excerpt_match_offset(value: str, query: str) -> int:
+    """Use ranking's lexical matches, retaining offsets into the display text."""
+    from .retrieval_text import cjk_terms
+
+    folded_parts: list[str] = []
+    offsets: list[int] = []
+    for index, character in enumerate(value):
+        folded = character.casefold().replace("\u2019", "'")
+        folded_parts.append(folded)
+        offsets.extend([index] * len(folded))
+    folded_text = "".join(folded_parts)
+    words = list(_TOKEN_PATTERN.finditer(folded_text))
+    normalized = " ".join(word.group() for word in words)
+    normalized_query = _normalize(query)
+    # Prefer the same whole phrase bonus as the ranker, including punctuation
+    # normalized to spaces. A substring inside a different word is not a match.
+    phrase = f" {normalized} ".find(f" {normalized_query} ") if normalized_query else -1
+    if phrase >= 0:
+        position = 0
+        for word in words:
+            if position == phrase:
+                return offsets[word.start()]
+            position += len(word.group()) + 1
+
+    terms = _tokens_from_normalized(normalized_query)
+    for word in words:
+        token = word.group()
+        if not (_tokens_from_normalized(token) & terms):
+            continue
+        # Compounds and possessives are indexed both whole and by component.
+        # Anchor a matching component, even in a compound longer than a snippet.
+        stem = token[:-2] if token.endswith("'s") else token
+        positions = [
+            part.start()
+            for part in re.finditer(r"[^-]+", stem)
+            if part.group() not in _STOP_WORDS and _stem(part.group()) in terms
+        ]
+        if not token.isascii():
+            # Continuous CJK text has no word boundary; prefer the complete
+            # query when present, otherwise the character/bigram rank matches.
+            cjk_matches = cjk_terms(token) & terms
+            if cjk_matches:
+                exact = token.find(normalized_query) if normalized_query else -1
+                positions.append(
+                    exact
+                    if exact >= 0
+                    else min(token.find(term) for term in cjk_matches)
+                )
+        return offsets[word.start() + min(positions, default=0)]
+    return 0
+
+
 def _excerpt(value: str, query: str) -> str:
     normalized = _SPACE_PATTERN.sub(" ", unicodedata.normalize("NFC", value)).strip()
-    lower = normalized.casefold().replace("\u2019", "'")
-    raw_query = unicodedata.normalize("NFC", query).casefold().replace("\u2019", "'")
-    terms = _tokens(query)
-    matches = [lower.find(raw_query)] if raw_query.strip() else []
-    if not any(position >= 0 for position in matches):
-        matches = [
-            lower.find(token)
-            for token in _TOKEN_PATTERN.findall(raw_query)
-            if token not in _STOP_WORDS
-        ]
-    if not any(position >= 0 for position in matches):
-        matches.extend(lower.find(token) for token in terms)
-    if not any(position >= 0 for position in matches):
-        matches.extend(
-            match.start()
-            for match in _TOKEN_PATTERN.finditer(normalized)
-            if _stem(match.group().casefold().replace("\u2019", "'")) in terms
-        )
-    index = min((position for position in matches if position >= 0), default=0)
-    start = max(0, index - MAX_EXCERPT_LENGTH // 3) if index >= 0 else 0
+    index = _excerpt_match_offset(normalized, query)
+    start = max(0, index - MAX_EXCERPT_LENGTH // 3)
     excerpt = normalized[start : start + MAX_EXCERPT_LENGTH]
     return (
         ("…" if start else "")
@@ -1715,3 +1743,13 @@ def _session_payload(session: ArchiveSession) -> dict[str, Any]:
     if session.retention_state == "private":
         payload["title"] = ""
     return payload
+
+
+def _archive_payload(
+    sessions: list[ArchiveSession], turns: list[ArchiveTurn]
+) -> dict[str, Any]:
+    """Serialize immutable records without touching live manager collections."""
+    return {
+        "sessions": [_session_payload(item) for item in sessions],
+        "turns": [asdict(item) for item in turns],
+    }

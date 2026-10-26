@@ -36,7 +36,11 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_track_time_interval
 
 from . import ExtendedOpenAIConfigEntry, ha_actions
-from .agent_config import AgentConfigError, function_tool_enabled
+from .agent_config import (
+    AgentConfigError,
+    async_prepare_runtime_function_tools,
+    function_tool_enabled,
+)
 from .agent_configuration import (
     _archive_runtime_required,
     async_ensure_optional_manager,
@@ -44,6 +48,8 @@ from .agent_configuration import (
     sync_memory_embedding_provider,
 )
 from .agent_maintenance import conversation_request_lease, get_agent_maintenance_gate
+from .assistant_response import final_assistant_text
+from .completion_events import completion_event_scope, queue_completion_event
 from .const import (
     CONF_ARCHIVE_ENABLED,
     CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
@@ -87,7 +93,6 @@ from .const import (
     DEFAULT_USAGE_RUN_RETENTION_DAYS,
     DEFAULT_WORKING_DIRECTORY,
     DOMAIN,
-    EVENT_CONVERSATION_FINISHED,
     MEMORY_RETRIEVAL_HYBRID,
     SHARED_MEMORY_AUTOMATIC,
     SHARED_MEMORY_DISABLED,
@@ -99,6 +104,7 @@ from .continuity import (
     ConversationContinuity,
     async_get_continuity,
     forward_chat_log_deltas,
+    processing_conversation_scope,
 )
 from .conversation_archive import ArchiveSession, ConversationArchive, async_get_archive
 from .conversation_id_ownership import (
@@ -198,6 +204,7 @@ from .regex_execution import async_process_speech_text
 from .request import (
     assemble_integration_function_tools,
     build_provider_request_snapshot,
+    function_call_budget_available,
     provider_tool_limit,
 )
 from .request_diagnostics import (
@@ -206,6 +213,7 @@ from .request_diagnostics import (
     record_tool_assembly,
     record_tool_execution,
 )
+from .request_origin import bind_request_satellite
 from .request_rules import (
     RequestRuleRuntime,
     RequestRules,
@@ -252,6 +260,11 @@ _ACTIVE_SCOPE: ContextVar[ResolvedDataScope | None] = ContextVar(
 )
 _ACTIVE_ARCHIVE: ContextVar[tuple[str, str] | None] = ContextVar(
     "extended_openai_active_archive", default=None
+)
+# A privacy request is irreversible for this turn, even if saving is resumed
+# into another session before finalization. Nested requests own separate flags.
+_ARCHIVE_TURN_PRIVATE: ContextVar[bool] = ContextVar(
+    "extended_openai_archive_turn_private", default=False
 )
 _ACTIVE_TEMPORARY_SCOPE: ContextVar[str | None] = ContextVar(
     "extended_openai_active_temporary_scope", default=None
@@ -664,8 +677,13 @@ class ExtendedOpenAIAgentEntity(
         await super().async_will_remove_from_hass()
 
     async def async_process(self, user_input: ConversationInput) -> ConversationResult:
-        """Process a sentence."""
-        return await self._async_process(user_input)
+        """Process a sentence without inheriting an enclosing invocation's metadata."""
+        token = _PROCESS_METADATA.set(None)
+        try:
+            async with completion_event_scope():
+                return await self._async_process(user_input)
+        finally:
+            _PROCESS_METADATA.reset(token)
 
     async def async_process_direct(
         self, user_input: ConversationInput
@@ -674,7 +692,9 @@ class ExtendedOpenAIAgentEntity(
         metadata: dict[str, Any] = {"handled_locally": False}
         token = _PROCESS_METADATA.set(metadata)
         try:
-            return await self._async_process(user_input), dict(metadata)
+            async with completion_event_scope():
+                result = await self._async_process(user_input)
+            return result, dict(metadata)
         finally:
             _PROCESS_METADATA.reset(token)
 
@@ -698,7 +718,10 @@ class ExtendedOpenAIAgentEntity(
                 continue_conversation=False,
             )
 
-        with bind_active_ha_context(user_input.context):
+        with (
+            bind_active_ha_context(user_input.context),
+            bind_request_satellite(getattr(user_input, "satellite_id", None)),
+        ):
             async with conversation_request_lease(self):
                 with conversation_debug_trace(self, user_input) as trace:
                     with formatted_tool_cache():
@@ -710,6 +733,9 @@ class ExtendedOpenAIAgentEntity(
                                 await async_reconcile_runtime_configuration(self)
                                 reconciled_token = _ACTIVE_RUNTIME_RECONCILED.set(True)
                                 try:
+                                    await async_prepare_runtime_function_tools(
+                                        self.hass, self.subentry.data
+                                    )
                                     result = await self._async_process_with_continuity(
                                         user_input
                                     )
@@ -726,6 +752,10 @@ class ExtendedOpenAIAgentEntity(
     ) -> ConversationResult:
         """Resolve the request policy/scope and release any claimed continuity turn."""
         cache_token = _PROMPT_CACHE_CONTEXT.set(None)
+        # Nested Assist/direct calls inherit ContextVars. The initial Guest
+        # policy must resolve against this invocation's catalogue, before the
+        # later HA-tool bridge installs its provider projection.
+        function_config_token = _ACTIVE_FUNCTION_CONFIG.set(None)
         try:
             llm_context = user_input.as_llm_context(DOMAIN)
             llm_context_token = _ACTIVE_LLM_CONTEXT.set(llm_context)
@@ -798,6 +828,7 @@ class ExtendedOpenAIAgentEntity(
                 _ACTIVE_GUEST_POLICY.reset(guest_policy_token)
                 _ACTIVE_LLM_CONTEXT.reset(llm_context_token)
         finally:
+            _ACTIVE_FUNCTION_CONFIG.reset(function_config_token)
             _PROMPT_CACHE_CONTEXT.reset(cache_token)
 
     def _agent_not_ready_result(
@@ -833,6 +864,9 @@ class ExtendedOpenAIAgentEntity(
             async_get_chat_session(self.hass, resolution.conversation_id) as session,
             async_get_chat_log(self.hass, session, user_input) as chat_log,
             forward_chat_log_deltas(assist_chat_log, chat_log, user_input.text),
+            processing_conversation_scope(
+                continuity, chat_log.conversation_id, resolution.conversation_id
+            ),
         ):
             # HA allocates a ChatLog ID when the initial request has no ID.
             # Claim that actual ID before any processing can retain its history.
@@ -886,6 +920,7 @@ class ExtendedOpenAIAgentEntity(
                 request_policy,
             )
             scope_token = _ACTIVE_SCOPE.set(scope)
+            archive_privacy_token = _ARCHIVE_TURN_PRIVATE.set(False)
             archive_token = _ACTIVE_ARCHIVE.set(
                 (session_key, archive_session.session_id) if archive_session else None
             )
@@ -1097,6 +1132,7 @@ class ExtendedOpenAIAgentEntity(
                     _ACTIVE_FUNCTION_GROUP_SESSION.reset(function_group_token)
                     _ACTIVE_TEMPORARY_SCOPE.reset(temporary_token)
                     _ACTIVE_ARCHIVE.reset(archive_token)
+                    _ARCHIVE_TURN_PRIVATE.reset(archive_privacy_token)
                     _ACTIVE_MEMORY_SESSION.reset(memory_session_token)
                     _ACTIVE_SCOPE.reset(scope_token)
 
@@ -1152,7 +1188,13 @@ class ExtendedOpenAIAgentEntity(
             if is_ha_tool(tool) and function_tool_enabled(tool)
         ]
         snapshot = ToolSnapshot()
-        if references and not self._effective_guest_policy().guest_active:
+        if (
+            references
+            and function_call_budget_available(
+                {**config_data, **(request_options or {})}
+            )
+            and not self._effective_guest_policy().guest_active
+        ):
             snapshot = await async_discover(self.hass, llm_context, references)
         if self.subentry.data is not config_data:
             raise HomeAssistantError(
@@ -1300,18 +1342,13 @@ class ExtendedOpenAIAgentEntity(
         # Build response from chat log
         intent_response = intent.IntentResponse(language=user_input.language)
 
-        # Get last assistant message
-        last_content = chat_log.content[-1]
-        if isinstance(last_content, conversation.AssistantContent):
-            original_text = last_content.content or ""
-            if needs_async_speech_cleanup(original_text, self.subentry.data):
-                deferred_speech.append((original_text, self.subentry.data))
-                speech_text = original_text
-            else:
-                speech_text = process_speech_text(original_text, self.subentry.data)
-            intent_response.async_set_speech(speech_text)
+        original_text = final_assistant_text(chat_log.content)
+        if needs_async_speech_cleanup(original_text, self.subentry.data):
+            deferred_speech.append((original_text, self.subentry.data))
+            speech_text = original_text
         else:
-            intent_response.async_set_speech("")
+            speech_text = process_speech_text(original_text, self.subentry.data)
+        intent_response.async_set_speech(speech_text)
 
         return ConversationResult(
             response=intent_response,
@@ -1412,10 +1449,10 @@ class ExtendedOpenAIAgentEntity(
         handled_locally: bool = False,
         error_type: str | None = None,
     ) -> None:
-        """Emit exactly one completion event with backward-compatible fields."""
+        """Emit metadata only: HA Recorder can persist every custom bus event."""
         payload: dict[str, Any] = {
-            "user_input": user_input,
-            "messages": [content.as_dict() for content in chat_log.content],
+            "schema_version": 2,
+            "conversation_id": getattr(chat_log, "conversation_id", None),
             "agent_id": self.subentry.subentry_id,
             "status": status,
         }
@@ -1423,7 +1460,7 @@ class ExtendedOpenAIAgentEntity(
             payload["handled_locally"] = True
         if error_type is not None:
             payload["error_type"] = error_type
-        self.hass.bus.async_fire(EVENT_CONVERSATION_FINISHED, payload)
+        queue_completion_event(self.hass, payload)
 
     async def _async_archive_turn(
         self,
@@ -1438,14 +1475,11 @@ class ExtendedOpenAIAgentEntity(
         if (
             self._archive is None
             or archive_session is None
+            or _ARCHIVE_TURN_PRIVATE.get()
             or not self._effective_guest_policy().archive_retention
         ):
             return
-        assistant_text = ""
-        if chat_log.content and isinstance(
-            chat_log.content[-1], conversation.AssistantContent
-        ):
-            assistant_text = chat_log.content[-1].content or ""
+        assistant_text = final_assistant_text(chat_log.content)
         try:
             await self._archive.async_record_turn(
                 archive_session.session_id,
@@ -3060,6 +3094,9 @@ class ExtendedOpenAIAgentEntity(
                     text_offset=int(arguments.get("text_offset", 0)),
                 )
             if operation == "private":
+                # Do this before awaiting persistence: a failed privacy write must
+                # not cause finalization to save the current private request.
+                _ARCHIVE_TURN_PRIVATE.set(True)
                 return await self._archive.async_make_private(session_id)
             if operation == "resume":
                 session = await self._archive.async_resume_saving(

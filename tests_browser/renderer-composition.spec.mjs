@@ -92,7 +92,7 @@ test("configuration emits the shipped local, exposed-attribute, group and transf
   expect(result.exposed).toContain("&lt;Lamp&gt;");
   expect(result.exposedPosition).toBe("exposed-attribute-settings");
   expect(result.attributes).toEqual([["brightness",true],["color_mode",false]]);
-  expect(result.transfer).toContain("Secret-looking values");
+  expect(result.transfer).toContain("Custom content you choose to include may still contain secrets.");
   expect(result.dialog).toContain("Your unsaved configuration changes will be discarded");
   expect(result.dialog).toContain("Sections to replace");
   expect(result.group).toEqual({disabled:true, badge:"Disabled", edit:true, checked:false, name:"Group <one>"});

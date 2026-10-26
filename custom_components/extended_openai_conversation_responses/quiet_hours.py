@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import logging
 from typing import Any
 
 from homeassistant.core import HomeAssistant, ServiceCall, State
@@ -10,6 +11,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 
 from .const import DOMAIN
+from .operational_errors import log_handled_failure
 from .quiet_hours_runtime import (
     DEFAULT_END,
     DEFAULT_MAX_VOLUME,
@@ -61,8 +63,24 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         current = er.async_get(self.hass).async_get_entity_id(
             "binary_sensor", DOMAIN, _STATE_UNIQUE_ID
         )
-        if entity_id in {self._registered_state_entity_id, current}:
-            await self.async_reconcile()
+        changes = event.data.get("changes", {})
+        old_id = changes.get("entity_id") if isinstance(changes, dict) else None
+        selected = self._selected_entity_ids()
+        if (
+            entity_id in {self._registered_state_entity_id, current}
+            or entity_id in selected
+            or old_id in selected
+        ):
+            try:
+                await self.async_reconcile()
+            except (OSError, ValueError, HomeAssistantError) as err:
+                # Persisted selection/ownership recovery remains pending. A
+                # registry notification must not create an unobserved task error.
+                log_handled_failure(
+                    logging.getLogger(__name__),
+                    "Quiet Hours registry reconciliation deferred",
+                    err,
+                )
 
     def _state_entity_id(self) -> str:
         registry = er.async_get(self.hass)
@@ -145,7 +163,9 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
         self._published_state = self.hass.states.get(entity_id)
 
     def _discover_capabilities(self) -> list[SatelliteCapabilities]:
-        return discover_satellite_capabilities(self.hass, self._config)
+        return self._filter_selected_capabilities(
+            discover_satellite_capabilities(self.hass, self._config)
+        )
 
     def snapshot(self) -> dict[str, Any]:
         result = super().snapshot()

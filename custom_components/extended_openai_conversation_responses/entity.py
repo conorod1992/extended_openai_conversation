@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 from collections.abc import AsyncGenerator, Callable, Iterable, Mapping
+from contextlib import aclosing
 from copy import deepcopy
 from dataclasses import replace
 from hashlib import sha256
@@ -31,6 +32,7 @@ from homeassistant.helpers.entity import Entity
 from homeassistant.util import slugify
 
 from .const import (
+    API_MODE_CHAT_COMPLETIONS,
     API_MODE_RESPONSES,
     CONF_API_MODE,
     CONF_API_PROVIDER,
@@ -59,10 +61,11 @@ from .const import (
     MAX_FUNCTION_GROUP_LOAD_ROUNDS,
 )
 from .context import (
+    HistoryEstimator,
+    async_keep_recent_messages,
+    async_select_summary_history,
     history_as_summary_text,
-    keep_recent_messages,
     partition_history,
-    select_summary_history,
 )
 from .context_summary_performance import (
     async_apply_context_summary,
@@ -72,18 +75,23 @@ from .context_summary_performance import (
 from .context_usage_hardening import (
     ContextInputMeasurement,
     _trace_provider_usage,
+    async_prepared_input_revision,
     async_recover_trailing_usage,
+    async_validate_tool_call_ids_with_usage,
     estimate_prepared_request,
     normalized_chat_stream,
     normalized_responses_stream,
-    prepared_input_revision,
 )
 from .delayed_tools import (
     _DELAYED_EXECUTION_MARKER,
     DATA_DELAYED_TOOL_MANAGER,
     DelayedToolManager,
 )
-from .exceptions import ParseArgumentsFailed, TokenLengthExceededError
+from .exceptions import (
+    FunctionResponseParseError,
+    ParseArgumentsFailed,
+    TokenLengthExceededError,
+)
 from .execution_outcomes import with_execution_receipt
 from .function_call_budget import FunctionCallBudget
 from .function_execution import (
@@ -123,6 +131,7 @@ from .provider_loop import MAX_PROVIDER_REQUESTS, assert_provider_loop_completed
 from .request import (
     CONTINUE_CONVERSATION_TOOL,
     CONTINUE_CONVERSATION_TOOL_NAME,
+    ProviderRequestSnapshot,
     auxiliary_output_token_limit,
     build_provider_request_snapshot,
     format_function_tools,
@@ -130,12 +139,15 @@ from .request import (
 )
 from .request_static_cache import cached_format_tools
 from .resource_limits import MAX_ATTACHMENT_COUNT, read_bounded_local_file
+from .responses_stream_order import ordered_output_events
+from .schema_normalization import normalize_exclusive_bounds
 from .speech import async_streaming_speech_cleanup
 from .tool_exchange import (
     append_unresolved_tool_results,
     async_execute_tool_exchange,
+    downgrade_native_response_output,
     retained_tool_calls_since,
-    validate_tool_call_ids,
+    validate_retained_tool_calls,
 )
 from .usage import RequestUsage, UsageManager, extract_usage
 
@@ -208,11 +220,37 @@ def _normalize_url_citation(annotation: object) -> dict[str, Any] | None:
     }
 
 
-def _normalize_function_result(result: Any) -> Any:
+def _normalize_function_result(
+    result: Any, *, _ancestors: frozenset[int] = frozenset()
+) -> Any:
     """Preserve provider-serializable Function results, falling back compatibly."""
     try:
         orjson.dumps(result)
     except TypeError, OverflowError:
+        from .ha_tool_result_compat import BackendExecutionFailure, ExecutionFailure
+
+        if isinstance(result, (dict, list, tuple)):
+            # Normalize unsupported leaves, never stringify a container carrying
+            # private failure markers. Keep successful siblings and failure status.
+            if id(result) in _ancestors or len(_ancestors) >= 32:
+                return BackendExecutionFailure(
+                    error="Function result is recursive or too deep"
+                )
+            ancestors = _ancestors | {id(result)}
+            if isinstance(result, dict):
+                normalized = {
+                    str(key): _normalize_function_result(value, _ancestors=ancestors)
+                    for key, value in result.items()
+                }
+                if isinstance(result, BackendExecutionFailure):
+                    return BackendExecutionFailure(normalized)
+                if isinstance(result, ExecutionFailure):
+                    return ExecutionFailure(normalized)
+                return normalized
+            return [
+                _normalize_function_result(value, _ancestors=ancestors)
+                for value in result
+            ]
         return str(result)
     return result
 
@@ -344,6 +382,8 @@ def _adjust_schema(
             "pattern",
             "minimum",
             "maximum",
+            "exclusiveMinimum",
+            "exclusiveMaximum",
             "multipleOf",
             "patternProperties",
             "unevaluatedProperties",
@@ -358,6 +398,7 @@ def _adjust_schema(
             "maxItems",
         ):
             schema.pop(keyword, None)
+    normalize_exclusive_bounds(schema)
     if root and (
         schema.get("type") != "object" or "anyOf" in schema or "oneOf" in schema
     ):
@@ -556,6 +597,23 @@ def _convert_content_to_param(
     return messages
 
 
+def _discard_conditional_drafts(
+    chat_log: conversation.ChatLog, draft_ids: set[int], *, preserve_native: bool
+) -> None:
+    """Hide superseded speech while retaining complete native provider output."""
+    retained = []
+    for content in chat_log.content:
+        if id(content) not in draft_ids:
+            retained.append(content)
+        elif (
+            preserve_native
+            and isinstance(content, conversation.AssistantContent)
+            and content.native is not None
+        ):
+            retained.append(replace(content, content=None))
+    chat_log.content[:] = retained
+
+
 def _serialize_response_item(item: Any) -> dict[str, Any]:
     """Serialize an SDK Responses item for use as a subsequent input item."""
     if hasattr(item, "model_dump"):
@@ -600,7 +658,12 @@ def _convert_content_to_responses_param(
         if isinstance(content, conversation.AssistantContent):
             native = content.native
             native_type = getattr(native, "type", "") if native is not None else ""
-            if native_type in {"reasoning", "web_search_call", "message"}:
+            if native_type in {
+                "reasoning",
+                "web_search_call",
+                "message",
+                "function_call",
+            }:
                 items.append(_serialize_response_item(native))
 
         has_attachments = isinstance(content, conversation.UserContent) and bool(
@@ -620,6 +683,11 @@ def _convert_content_to_responses_param(
 
         if isinstance(content, conversation.AssistantContent):
             for tool_call in content.tool_calls or []:
+                if (
+                    native_type == "function_call"
+                    and tool_call.id == content.native.call_id
+                ):
+                    continue
                 items.append(
                     {
                         "type": "function_call",
@@ -722,10 +790,67 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             threshold = int(
                 options.get(CONF_CONTEXT_THRESHOLD, DEFAULT_CONTEXT_THRESHOLD)
             )
-            # Prepare attachment content before the API-aware budgeting boundary.
-            # Responses content provides a lossless intermediate for images and PDFs.
-            messages: Any = _convert_content_to_responses_param(chat_log.content)
-            await self._async_add_attachments(chat_log, messages, API_MODE_RESPONSES)
+
+            def snapshot_for_live_tools() -> tuple[
+                list[dict[str, Any]], ProviderRequestSnapshot
+            ]:
+                initial_tools = (
+                    function_tools_factory()
+                    if function_tools_factory is not None
+                    else function_tools
+                )
+                max_calls = options.get(
+                    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+                    DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+                )
+                if int(max_calls) == 0:
+                    initial_tools = [
+                        tool
+                        for tool in initial_tools
+                        if tool.get("function", {}).get("type")
+                        == "function_group_loader"
+                    ]
+                return initial_tools, build_provider_request_snapshot(
+                    options,
+                    getattr(self.entry, "data", {}),
+                    tools_required=bool(initial_tools) or conditional_continue,
+                )
+
+            attachment_io = any(
+                getattr(item, "attachments", None)
+                for item in chat_log.content
+                if isinstance(item, conversation.UserContent)
+            )
+            # Text-only turns still assemble their live catalogue exactly once,
+            # after the attachment await. File-bearing turns need an initial API
+            # choice so incompatible files never consume its replay budget.
+            attachment_api = (
+                snapshot_for_live_tools()[1].api_mode
+                if attachment_io
+                else API_MODE_RESPONSES
+            )
+
+            def prepare_messages(api: str) -> Any:
+                return (
+                    _convert_content_to_responses_param(chat_log.content)
+                    if api == API_MODE_RESPONSES
+                    else _convert_content_to_param(
+                        chat_log.content,
+                        options.get(
+                            CONF_SHORTEN_TOOL_CALL_ID, DEFAULT_SHORTEN_TOOL_CALL_ID
+                        ),
+                    )
+                )
+
+            messages: Any = prepare_messages(attachment_api)
+            await self._async_add_attachments(chat_log, messages, attachment_api)
+            initial_tools, provider_snapshot = snapshot_for_live_tools()
+            if attachment_io and provider_snapshot.api_mode != attachment_api:
+                raise HomeAssistantError(
+                    "Provider API availability changed while preparing attachments; retry the request"
+                )
+            if not attachment_io and provider_snapshot.api_mode != attachment_api:
+                messages = prepare_messages(provider_snapshot.api_mode)
             prepared_user_content = {
                 id(content): message["content"]
                 for content, message in zip(
@@ -733,32 +858,16 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         item
                         for item in chat_log.content
                         if isinstance(item, conversation.UserContent)
-                        and (item.content or getattr(item, "attachments", None))
+                        and (
+                            provider_snapshot.api_mode != API_MODE_RESPONSES
+                            or item.content
+                            or getattr(item, "attachments", None)
+                        )
                     ),
                     (item for item in messages if item.get("role") == "user"),
                     strict=True,
                 )
             }
-            initial_tools = (
-                function_tools_factory()
-                if function_tools_factory is not None
-                else function_tools
-            )
-            max_function_calls = options.get(
-                CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-                DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-            )
-            if int(max_function_calls) == 0:
-                initial_tools = [
-                    tool
-                    for tool in initial_tools
-                    if tool.get("function", {}).get("type") == "function_group_loader"
-                ]
-            provider_snapshot = build_provider_request_snapshot(
-                options,
-                getattr(self.entry, "data", {}),
-                tools_required=bool(initial_tools) or conditional_continue,
-            )
             api_kwargs = dict(provider_snapshot.api_kwargs)
             model = str(api_kwargs["model"])
             api_mode = provider_snapshot.api_mode
@@ -778,30 +887,6 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 CONF_SHORTEN_TOOL_CALL_ID,
                 DEFAULT_SHORTEN_TOOL_CALL_ID,
             )
-
-            if api_mode != API_MODE_RESPONSES:
-                for content_id, prepared in prepared_user_content.items():
-                    if not isinstance(prepared, list):
-                        continue
-                    converted = []
-                    for part in prepared:
-                        if part["type"] == "input_text":
-                            converted.append({"type": "text", "text": part["text"]})
-                        elif part["type"] == "input_image":
-                            converted.append(
-                                {
-                                    "type": "image_url",
-                                    "image_url": {"url": part["image_url"]},
-                                }
-                            )
-                        else:
-                            raise HomeAssistantError(
-                                "Chat Completions supports image attachments; Responses supports image and PDF attachments."
-                            )
-                    prepared_user_content[content_id] = converted
-                messages = _convert_content_to_param(
-                    chat_log.content, shorten_tool_call_id, prepared_user_content
-                )
 
             web_search_tool = (
                 provider_snapshot.provider_tools[0]
@@ -970,8 +1055,23 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
                 # Tool outputs and the live tool catalogue can grow between rounds.
                 # Trim complete older turns before submitting the next request.
-                round_estimate = estimate_provider_input_tokens(
-                    messages, tool_kwargs.get("tools")
+                def estimate_history(
+                    content: list[conversation.Content],
+                    tools: Any = tool_kwargs.get("tools"),
+                ) -> int:
+                    prepared = (
+                        _convert_content_to_responses_param(
+                            content, prepared_user_content
+                        )
+                        if api_mode == API_MODE_RESPONSES
+                        else _convert_content_to_param(
+                            content, shorten_tool_call_id, prepared_user_content
+                        )
+                    )
+                    return estimate_provider_input_tokens(prepared, tools)
+
+                round_estimate = await asyncio.to_thread(
+                    estimate_provider_input_tokens, messages, tool_kwargs.get("tools")
                 )
                 if (
                     round_estimate > threshold
@@ -980,6 +1080,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     await self._truncate_message_history(
                         chat_log,
                         observed_input_tokens=round_estimate,
+                        defer_summary=False,
+                        estimate=estimate_history,
                         model=model,
                         api_mode=api_mode,
                     )
@@ -997,13 +1099,21 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             prepared_user_content,
                         )
                     )
-                    immediate_estimate = estimate_provider_input_tokens(
-                        messages, tool_kwargs.get("tools")
+                    immediate_estimate = await asyncio.to_thread(
+                        estimate_provider_input_tokens,
+                        messages,
+                        tool_kwargs.get("tools"),
                     )
-                    if immediate_estimate > threshold:
-                        keep_recent_messages(
-                            chat_log.content, immediate_estimate, threshold
+                    round_estimate = immediate_estimate
+                    if (
+                        immediate_estimate > threshold
+                        and await async_keep_recent_messages(
+                            chat_log.content,
+                            immediate_estimate,
+                            threshold,
+                            estimate_history,
                         )
+                    ):
                         messages = (
                             _convert_content_to_responses_param(
                                 chat_log.content, prepared_user_content
@@ -1014,6 +1124,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                 shorten_tool_call_id,
                                 prepared_user_content,
                             )
+                        )
+                        round_estimate = await asyncio.to_thread(
+                            estimate_provider_input_tokens,
+                            messages,
+                            tool_kwargs.get("tools"),
                         )
                     primary_system_item_present = (
                         api_mode != API_MODE_RESPONSES
@@ -1032,11 +1147,15 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
                 request_usage = RequestUsage()
                 estimate_prepared_request(
-                    self, request_usage, messages, tool_kwargs.get("tools")
+                    self,
+                    request_usage,
+                    messages,
+                    tool_kwargs.get("tools"),
+                    input_tokens=round_estimate,
                 )
                 request_started = time.monotonic()
                 request_history_length = len(chat_log.content)
-                request_input_revision = prepared_input_revision(messages)
+                request_input_revision = await async_prepared_input_revision(messages)
                 existing_content_ids = {id(content) for content in chat_log.content}
                 pending_tool_calls: list[llm.ToolInput] = []
                 web_search_used = False
@@ -1106,6 +1225,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         self.entity_id,
                         retained_tool_calls_since(chat_log, existing_content_ids),
                         error=err,
+                        existing_content_ids=existing_content_ids,
                     )
                     if self._usage is not None:
                         await self._usage.async_record_request(
@@ -1158,6 +1278,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             self.entity_id,
                             pending_tool_calls,
                             error=err,
+                            existing_content_ids=existing_content_ids,
                         )
                         raise
                     context_measurement = ContextInputMeasurement(
@@ -1168,6 +1289,26 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 finally:
                     await _async_close_provider_streams(
                         transformed_stream, provider_stream
+                    )
+
+                if (
+                    api_mode != API_MODE_RESPONSES
+                    and not pending_tool_calls
+                    and not any(
+                        id(content) not in existing_content_ids
+                        and isinstance(content, conversation.AssistantContent)
+                        for content in chat_log.content
+                    )
+                ):
+                    # Successful parser completion validates the terminal finish
+                    # reason, including truncation/refusal/stream error handling.
+                    # HA drops wholly empty streamed answers. Retain their terminal
+                    # role explicitly so a preceding Tool result cannot ask for
+                    # another provider round after an accepted silent completion.
+                    chat_log.async_add_assistant_content_without_tools(
+                        conversation.AssistantContent(
+                            agent_id=self.entity_id, content=""
+                        )
                     )
 
                 if pending_tool_calls:
@@ -1196,6 +1337,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             round_tool_calls,
                             failed_call_id=unexpected.id,
                             error=error,
+                            existing_content_ids=existing_content_ids,
                         )
                         raise error
                 pending_tool_calls, loader_calls, control_calls = (
@@ -1203,6 +1345,16 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         pending_tool_calls,
                         integration_loader_seen=integration_loader_seen,
                     )
+                )
+                validate_retained_tool_calls(
+                    self,
+                    chat_log,
+                    round_tool_calls,
+                    request_config_data=request_config_data,
+                    existing_content_ids=existing_content_ids,
+                    consumed_calls=(
+                        control_calls if api_mode == API_MODE_CHAT_COMPLETIONS else ()
+                    ),
                 )
 
                 if loader_calls:
@@ -1230,6 +1382,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                 round_tool_calls,
                                 failed_call_id=loader_call.id,
                                 error=err,
+                                existing_content_ids=existing_content_ids,
                             )
                             raise
                         chat_log.async_add_assistant_content_without_tools(
@@ -1261,6 +1414,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             round_tool_calls,
                             failed_call_id=control_call.id,
                             error=parse_error,
+                            existing_content_ids=existing_content_ids,
                         )
                         raise parse_error
 
@@ -1272,15 +1426,16 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             chat_log,
                             existing_content_ids,
                             response_text if is_final else None,
+                            preserve_calls=api_mode == API_MODE_RESPONSES,
                         )
                     if is_final:
                         continuation_decision = decision
                         if draft_content_ids:
-                            chat_log.content[:] = [
-                                content
-                                for content in chat_log.content
-                                if id(content) not in draft_content_ids
-                            ]
+                            _discard_conditional_drafts(
+                                chat_log,
+                                draft_content_ids,
+                                preserve_native=api_mode == API_MODE_RESPONSES,
+                            )
 
                 await async_execute_tool_exchange(
                     self,
@@ -1293,6 +1448,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     function_tools_factory=function_tools_factory,
                     recovery_state=recovery_state,
                     request_config_data=request_config_data,
+                    existing_content_ids=existing_content_ids,
                 )
                 await async_prepare_tool_results(chat_log.content)
 
@@ -1340,11 +1496,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         CONTINUE_CONVERSATION_TOOL_NAME,
                     )
                     if draft_content_ids:
-                        chat_log.content[:] = [
-                            content
-                            for content in chat_log.content
-                            if id(content) not in draft_content_ids
-                        ]
+                        _discard_conditional_drafts(
+                            chat_log,
+                            draft_content_ids,
+                            preserve_native=api_mode == API_MODE_RESPONSES,
+                        )
                     if chat_log.delta_listener:
                         with async_streaming_speech_cleanup(chat_log, options):
                             for finalizer_content in chat_log.content:
@@ -1363,6 +1519,18 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                         },
                                     )
 
+                if (
+                    api_mode == API_MODE_RESPONSES
+                    and not round_tool_calls
+                    and chat_log.unresponded_tool_results
+                ):
+                    # A completed response without output is not an assistant
+                    # acknowledgement. Preserve the calls/results for replay
+                    # protection, but never resubmit them until the safety limit.
+                    raise HomeAssistantError(
+                        "OpenAI Responses completed without assistant output "
+                        "after tool results"
+                    )
                 if not chat_log.unresponded_tool_results:
                     break
 
@@ -1387,7 +1555,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         measured_prefix, shorten_tool_call_id, prepared_user_content
                     )
                 )
-                if context_measurement.applies_to(prepared_prefix):
+                if await context_measurement.async_applies_to(prepared_prefix):
                     observed_input_tokens = context_measurement.tokens
                 else:
                     prepared_current = (
@@ -1401,13 +1569,16 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             prepared_user_content,
                         )
                     )
-                    observed_input_tokens = estimate_provider_input_tokens(
-                        prepared_current, tool_kwargs.get("tools")
+                    observed_input_tokens = await asyncio.to_thread(
+                        estimate_provider_input_tokens,
+                        prepared_current,
+                        tool_kwargs.get("tools"),
                     )
             if observed_input_tokens > threshold:
                 await self._truncate_message_history(
                     chat_log,
                     observed_input_tokens=observed_input_tokens,
+                    estimate=estimate_history,
                     model=model,
                     api_mode=api_mode,
                 )
@@ -1419,9 +1590,12 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         chat_log: conversation.ChatLog,
         existing_content_ids: set[int],
         response_text: str | None,
+        *,
+        preserve_calls: bool = False,
     ) -> None:
-        """Convert the internal finalizer tool call into normal assistant content."""
+        """Expose finalizer speech without breaking native Responses replay."""
         updated_content: list[conversation.Content] = []
+        retained_calls: list[llm.ToolInput] = []
         already_delivered = False
         for content in chat_log.content:
             if (
@@ -1441,6 +1615,15 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 )
             ):
                 updated_content.append(content)
+                continue
+
+            if preserve_calls:
+                updated_content.append(content)
+                retained_calls.extend(
+                    call
+                    for call in content.tool_calls
+                    if call.tool_name == CONTINUE_CONVERSATION_TOOL_NAME
+                )
                 continue
 
             remaining_calls = [
@@ -1467,7 +1650,44 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     )
                 )
 
+        if retained_calls and already_delivered:
+            # Keep native output intact, but move its display text after the
+            # handling results so HA sees a terminal assistant answer exactly once.
+            updated_content = [
+                replace(content, content=None)
+                if id(content) not in existing_content_ids
+                and isinstance(content, conversation.AssistantContent)
+                and content.content == response_text
+                else content
+                for content in updated_content
+            ]
         chat_log.content[:] = updated_content
+        for call in retained_calls:
+            chat_log.async_add_assistant_content_without_tools(
+                make_tool_result_content(
+                    agent_id=self.entity_id,
+                    tool_call_id=call.id,
+                    tool_name=call.tool_name,
+                    tool_result={
+                        "result": {
+                            "status": "handled",
+                            "applied": response_text is not None
+                            and call is retained_calls[-1],
+                        }
+                    },
+                )
+            )
+        if response_text is not None and (
+            not response_text or (retained_calls and already_delivered)
+        ):
+            # A result at the tail means "request another provider turn" to HA.
+            # Explicit silence completes either API's answer even when the
+            # consumed Chat Completions finalizer was removed from history.
+            chat_log.async_add_assistant_content_without_tools(
+                conversation.AssistantContent(
+                    agent_id=self.entity_id, content=response_text
+                )
+            )
         if response_text and already_delivered and chat_log.delta_listener:
             chat_log.delta_listener(
                 chat_log, {"role": "assistant", "content": response_text}
@@ -1488,49 +1708,54 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         messages: list[Any],
         api_mode: str,
     ) -> None:
-        """Reconstruct attachments for every retained user turn."""
-        attachment_count = sum(
-            len(getattr(content, "attachments", None) or [])
-            for content in chat_log.content
-            if isinstance(content, conversation.UserContent)
-        )
-        if attachment_count > MAX_ATTACHMENT_COUNT:
-            raise HomeAssistantError(
-                f"At most {MAX_ATTACHMENT_COUNT} attachments can be sent in one request"
-            )
-        total_bytes = 0
+        """Prioritize new uploads and replay usable historical files within limits."""
+        users = [
+            item
+            for item in chat_log.content
+            if isinstance(item, conversation.UserContent)
+        ]
         user_messages = iter(
             message
             for message in messages
             if isinstance(message, dict) and message.get("role") == "user"
         )
-        for content in chat_log.content:
-            if isinstance(content, conversation.UserContent):
-                if api_mode == API_MODE_RESPONSES and not (
-                    getattr(content, "content", "")
-                    or getattr(content, "attachments", None)
-                ):
-                    continue
-                message = next(user_messages, None)
-                if getattr(content, "attachments", None):
-                    if message is None:
-                        message = {
-                            **(
-                                {"type": "message"}
-                                if api_mode == API_MODE_RESPONSES
-                                else {}
-                            ),
-                            "role": "user",
-                            "content": getattr(content, "content", "") or "",
-                        }
-                        messages.append(message)
-                    total_bytes = await ExtendedOpenAIBaseLLMEntity._async_prepare_user_attachments(
-                        self,
-                        content,
-                        message,
-                        api_mode,
-                        total_bytes=total_bytes,
-                    )
+        mapped = []
+        for content in users:
+            if api_mode == API_MODE_RESPONSES and not (
+                getattr(content, "content", "") or getattr(content, "attachments", None)
+            ):
+                continue
+            message = next(user_messages, None)
+            if not getattr(content, "attachments", None):
+                continue
+            if message is None:
+                message = {
+                    **({"type": "message"} if api_mode == API_MODE_RESPONSES else {}),
+                    "role": "user",
+                    "content": getattr(content, "content", "") or "",
+                }
+                messages.append(message)
+            mapped.append((content, message))
+        total_bytes = 0
+        count = 0
+        # Reserve the budget for the current upload, then the newest older files.
+        for content, message in reversed(mapped):
+            total_bytes = (
+                await ExtendedOpenAIBaseLLMEntity._async_prepare_user_attachments(
+                    self,
+                    content,
+                    message,
+                    api_mode,
+                    total_bytes=total_bytes,
+                    historical=content is not users[-1],
+                    remaining_count=MAX_ATTACHMENT_COUNT - count,
+                )
+            )
+            count += sum(
+                part.get("type") in {"input_image", "image_url", "input_file"}
+                for part in message.get("content", [])
+                if isinstance(part, dict)
+            )
 
     async def _async_prepare_user_attachments(
         self,
@@ -1539,6 +1764,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         api_mode: str,
         *,
         total_bytes: int = 0,
+        historical: bool = False,
+        remaining_count: int = MAX_ATTACHMENT_COUNT,
     ) -> int:
         """Read one turn's files once while enforcing the whole-request byte budget."""
         messages = [message]
@@ -1549,49 +1776,62 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             return total_bytes
 
         attachment_items = list(last_content.attachments or [])
-        if len(attachment_items) > MAX_ATTACHMENT_COUNT:
+        if not historical and len(attachment_items) > remaining_count:
             raise HomeAssistantError(
                 f"At most {MAX_ATTACHMENT_COUNT} attachments can be sent in one request"
             )
 
-        def prepare_attachments() -> tuple[list[dict[str, Any]], int]:
+        def prepare_attachments() -> tuple[list[dict[str, Any]], int, bool]:
             prepared: list[dict[str, Any]] = []
             prepared_bytes = total_bytes
+            omitted = False
             for attachment in attachment_items:
-                path = Path(attachment.path)
-                if not path.exists():
-                    raise HomeAssistantError(f"`{path}` does not exist")
-                if not path.is_file():
-                    raise HomeAssistantError(f"`{path}` is not a file")
-
-                content = read_bounded_local_file(path, prepared_bytes)
+                if historical and len(prepared) >= remaining_count:
+                    omitted = True
+                    continue
+                try:
+                    path = Path(attachment.path)
+                    if not path.exists():
+                        raise HomeAssistantError(f"`{path}` does not exist")
+                    if not path.is_file():
+                        raise HomeAssistantError(f"`{path}` is not a file")
+                    mime_type = attachment.mime_type or mimetypes.guess_type(path)[0]
+                    if not mime_type:
+                        raise HomeAssistantError(
+                            f"Unable to determine attachment type for `{path}`"
+                        )
+                    if not (
+                        mime_type.startswith("image/")
+                        or (
+                            mime_type == "application/pdf"
+                            and api_mode == API_MODE_RESPONSES
+                        )
+                    ):
+                        raise HomeAssistantError(
+                            "Chat Completions supports image attachments; Responses "
+                            "supports image and PDF attachments. "
+                            f"Unsupported attachment `{path}` ({mime_type})."
+                        )
+                    content = read_bounded_local_file(path, prepared_bytes)
+                except (HomeAssistantError, OSError) as err:
+                    if not historical:
+                        if isinstance(err, OSError):
+                            raise HomeAssistantError(
+                                "Unable to read attachment"
+                            ) from err
+                        raise
+                    omitted = True
+                    continue
                 prepared_bytes += len(content)
-
-                mime_type = attachment.mime_type or mimetypes.guess_type(path)[0]
-                if not mime_type:
-                    raise HomeAssistantError(
-                        f"Unable to determine attachment type for `{path}`"
-                    )
-
                 encoded = base64.b64encode(content).decode()
                 data_url = f"data:{mime_type};base64,{encoded}"
                 if mime_type.startswith("image/"):
-                    if api_mode == API_MODE_RESPONSES:
-                        prepared.append(
-                            {
-                                "type": "input_image",
-                                "image_url": data_url,
-                                "detail": "auto",
-                            }
-                        )
-                    else:
-                        prepared.append(
-                            {
-                                "type": "image_url",
-                                "image_url": {"url": data_url},
-                            }
-                        )
-                elif mime_type == "application/pdf" and api_mode == API_MODE_RESPONSES:
+                    prepared.append(
+                        {"type": "input_image", "image_url": data_url, "detail": "auto"}
+                        if api_mode == API_MODE_RESPONSES
+                        else {"type": "image_url", "image_url": {"url": data_url}}
+                    )
+                else:
                     prepared.append(
                         {
                             "type": "input_file",
@@ -1599,15 +1839,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             "file_data": data_url,
                         }
                     )
-                else:
-                    raise HomeAssistantError(
-                        "Chat Completions supports image attachments; Responses "
-                        "supports image and PDF attachments. "
-                        f"Unsupported attachment `{path}` ({mime_type})."
-                    )
-            return prepared, prepared_bytes
+            return prepared, prepared_bytes, omitted
 
-        attachments, total_bytes = await self.hass.async_add_executor_job(
+        attachments, total_bytes, omitted = await self.hass.async_add_executor_job(
             prepare_attachments
         )
         last_message = next(
@@ -1629,6 +1863,16 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         text_content = last_message.get("content", "")
         if not isinstance(text_content, str):
             raise HomeAssistantError("Unable to attach files to non-text user content")
+
+        if omitted:
+            text_content = "\n".join(
+                part
+                for part in (
+                    text_content,
+                    "[Earlier attachment omitted: unavailable, incompatible, or outside the current request limits.]",
+                )
+                if part
+            )
 
         if api_mode == API_MODE_RESPONSES:
             last_message["content"] = [
@@ -1678,6 +1922,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 continue
 
             if terminal_finish_seen:
+                await async_recover_trailing_usage(result, request_usage)
                 raise ProviderStreamError(
                     "Provider returned malformed data: event after terminal response",
                     error_type="invalid_event_sequence",
@@ -1763,7 +2008,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             external=True,  # Mark as external so ChatLog doesn't try to execute
                         )
                     )
-                validate_tool_call_ids(tool_calls_list)
+                await async_validate_tool_call_ids_with_usage(
+                    tool_calls_list, result, request_usage
+                )
                 yield {"tool_calls": tool_calls_list}
                 current_tool_calls.clear()
             if finish_reason in {"stop", "tool_calls", "function_call"}:
@@ -1806,30 +2053,21 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         """Retain reasoning only when its provider output group completes."""
         existing = {id(content) for content in getattr(chat_log, "content", ())}
         try:
-            async for (
-                delta
-            ) in ExtendedOpenAIBaseLLMEntity._transform_responses_stream_events(
-                self, chat_log, result, request_usage
-            ):
-                yield delta
+            async with aclosing(
+                ExtendedOpenAIBaseLLMEntity._transform_responses_stream_events(
+                    self, chat_log, result, request_usage
+                )
+            ) as events:
+                async for delta in events:
+                    yield delta
         except BaseException:
-            # Completed calls/results remain authoritative for side effects and
-            # replay protection. Only this failed request's native reasoning IDs
-            # are unsafe to send again without their associated complete output.
+            # An interrupted response has no complete native output graph. Downgrade
+            # this whole response, not guessed adjacent reasoning/message pairs.
+            # Keep plain text and completed calls/results for side-effect tracking
+            # and replay protection, without retaining dependent provider IDs.
             content = getattr(chat_log, "content", None)
             if content is not None:
-                for item in list(content):
-                    if (
-                        id(item) not in existing
-                        and getattr(getattr(item, "native", None), "type", None)
-                        == "reasoning"
-                    ):
-                        if getattr(item, "tool_calls", None) or getattr(
-                            item, "content", None
-                        ):
-                            item.native = None
-                        else:
-                            content.remove(item)
+                downgrade_native_response_output(chat_log, existing)
             raise
 
     async def _transform_responses_stream_events(
@@ -1847,259 +2085,193 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         response_refusal_lengths: dict[tuple[int | None, int | None], int] = {}
         url_citations: dict[tuple[int | None, int | None], list[dict[str, Any]]] = {}
         terminal_event_seen = False
-        completed_items: set[tuple[Any, Any]] = set()
-        output_items: dict[Any, tuple[Any, Any, Any]] = {}
         completed_calls: list[llm.ToolInput] = []
-        argument_fragments: dict[Any, str] = {}
         event_count = 0
-        async for event in normalized_responses_stream(chat_log, result, request_usage):
-            event_count += 1
-            event_type = getattr(event, "type", "")
-            if (
-                terminal_event_seen
-                and event_type.startswith("response.")
-                and event_type not in {"response.usage", "response.usage.updated"}
-            ):
-                raise ProviderStreamError(
-                    "Provider returned malformed data: event after terminal response",
-                    error_type="invalid_event_sequence",
-                )
+        async with aclosing(
+            ordered_output_events(
+                normalized_responses_stream(chat_log, result, request_usage),
+                recover_usage=lambda: async_recover_trailing_usage(
+                    result, request_usage
+                ),
+            )
+        ) as events:
+            async for event in events:
+                event_count += 1
+                event_type = getattr(event, "type", "")
+                if event_type == "response.output_item.added":
+                    item_type = getattr(event.item, "type", "")
+                    if item_type in {
+                        "message",
+                        "function_call",
+                        "reasoning",
+                        "web_search_call",
+                    }:
+                        yield {"role": "assistant"}
+                    continue
 
-            if event_type in {
-                "response.output_item.added",
-                "response.output_item.done",
-            }:
-                index = getattr(event, "output_index", None)
-                item = event.item
-                identity = (
-                    getattr(item, "id", None),
-                    getattr(item, "call_id", None),
-                    getattr(item, "name", None),
-                )
-                if (
-                    index is not None
-                    and index in output_items
-                    and output_items[index] != identity
-                ):
-                    raise ProviderStreamError(
-                        "Provider returned malformed data: conflicting output item",
-                        error_type="invalid_event_sequence",
+                if event_type == "response.output_text.delta":
+                    if event.delta:
+                        part_key = (
+                            getattr(event, "output_index", None),
+                            getattr(event, "content_index", None),
+                        )
+                        response_text_lengths[part_key] = response_text_lengths.get(
+                            part_key, 0
+                        ) + len(event.delta)
+                        yield {"content": event.delta}
+                    continue
+
+                if event_type == "response.refusal.delta":
+                    refusal_delta = getattr(event, "delta", None)
+                    if refusal_delta:
+                        if not isinstance(refusal_delta, str):
+                            refusal_delta = str(refusal_delta)
+                        part_key = (
+                            getattr(event, "output_index", None),
+                            getattr(event, "content_index", None),
+                        )
+                        response_refusal_lengths[part_key] = (
+                            response_refusal_lengths.get(part_key, 0)
+                            + len(refusal_delta)
+                        )
+                        yield {"content": refusal_delta}
+                    continue
+
+                if event_type == "response.refusal.done":
+                    refusal = getattr(event, "refusal", None)
+                    if refusal:
+                        if not isinstance(refusal, str):
+                            refusal = str(refusal)
+                        part_key = (
+                            getattr(event, "output_index", None),
+                            getattr(event, "content_index", None),
+                        )
+                        already_streamed = response_refusal_lengths.get(part_key, 0)
+                        if len(refusal) > already_streamed:
+                            yield {"content": refusal[already_streamed:]}
+                        response_refusal_lengths[part_key] = max(
+                            already_streamed, len(refusal)
+                        )
+                    continue
+
+                if event_type == "response.output_text.annotation.added":
+                    citation = _normalize_url_citation(
+                        getattr(event, "annotation", None)
                     )
-                if index is not None:
-                    if identity[0] and any(
-                        other_index != index and other_identity[0] == identity[0]
-                        for other_index, other_identity in output_items.items()
+                    if citation is not None:
+                        part_key = (
+                            getattr(event, "output_index", None),
+                            getattr(event, "content_index", None),
+                        )
+                        url_citations.setdefault(part_key, []).append(citation)
+                        current_length = response_text_lengths.get(part_key, 0)
+                        timing = (
+                            "after cited text"
+                            if citation["end_index"] <= current_length
+                            else "before cited text completed"
+                        )
+                        _LOGGER.debug(
+                            "Observed structured URL citation %s (%d total for content part)",
+                            timing,
+                            len(url_citations[part_key]),
+                        )
+                    continue
+
+                if event_type == "response.output_item.done":
+                    item = event.item
+                    item_type = getattr(item, "type", "")
+                    if item_type in {"reasoning", "web_search_call"}:
+                        # Preserve native hosted-tool and reasoning output so stateless
+                        # chained function calls retain the complete Responses context.
+                        yield {"native": item}
+                    elif (
+                        item_type == "message"
+                        and getattr(item, "content", None) is not None
                     ):
-                        raise ProviderStreamError(
-                            "Provider returned malformed data: duplicate output item id",
-                            error_type="invalid_event_sequence",
-                        )
-                    output_items[index] = identity
-                    if (
-                        event_type == "response.output_item.done"
-                        and index in argument_fragments
-                        and getattr(item, "arguments", None)
-                        != argument_fragments[index]
-                    ):
-                        raise ProviderStreamError(
-                            "Provider returned malformed data: conflicting tool arguments",
-                            error_type="invalid_event_sequence",
-                        )
-            elif event_type in {
-                "response.function_call_arguments.delta",
-                "response.function_call_arguments.done",
-            }:
-                index = getattr(event, "output_index", None)
-                if (
-                    index in output_items
-                    and getattr(event, "item_id", None) != output_items[index][0]
-                ):
-                    raise ProviderStreamError(
-                        "Provider returned malformed data: conflicting argument item",
-                        error_type="invalid_event_sequence",
-                    )
-
-                if event_type == "response.function_call_arguments.delta":
-                    argument_fragments[index] = (
-                        argument_fragments.get(index, "") + event.delta
-                    )
-                elif (
-                    index in argument_fragments
-                    and event.arguments != argument_fragments[index]
-                ):
-                    raise ProviderStreamError(
-                        "Provider returned malformed data: conflicting tool arguments",
-                        error_type="invalid_event_sequence",
-                    )
-
-            if event_type == "response.output_item.added":
-                item_type = getattr(event.item, "type", "")
-                if item_type in {
-                    "message",
-                    "function_call",
-                    "reasoning",
-                    "web_search_call",
-                }:
-                    yield {"role": "assistant"}
-                continue
-
-            if event_type == "response.output_text.delta":
-                if event.delta:
-                    part_key = (
-                        getattr(event, "output_index", None),
-                        getattr(event, "content_index", None),
-                    )
-                    response_text_lengths[part_key] = response_text_lengths.get(
-                        part_key, 0
-                    ) + len(event.delta)
-                    yield {"content": event.delta}
-                continue
-
-            if event_type == "response.refusal.delta":
-                refusal_delta = getattr(event, "delta", None)
-                if refusal_delta:
-                    if not isinstance(refusal_delta, str):
-                        refusal_delta = str(refusal_delta)
-                    part_key = (
-                        getattr(event, "output_index", None),
-                        getattr(event, "content_index", None),
-                    )
-                    response_refusal_lengths[part_key] = response_refusal_lengths.get(
-                        part_key, 0
-                    ) + len(refusal_delta)
-                    yield {"content": refusal_delta}
-                continue
-
-            if event_type == "response.refusal.done":
-                refusal = getattr(event, "refusal", None)
-                if refusal:
-                    if not isinstance(refusal, str):
-                        refusal = str(refusal)
-                    part_key = (
-                        getattr(event, "output_index", None),
-                        getattr(event, "content_index", None),
-                    )
-                    already_streamed = response_refusal_lengths.get(part_key, 0)
-                    if len(refusal) > already_streamed:
-                        yield {"content": refusal[already_streamed:]}
-                    response_refusal_lengths[part_key] = max(
-                        already_streamed, len(refusal)
-                    )
-                continue
-
-            if event_type == "response.output_text.annotation.added":
-                citation = _normalize_url_citation(getattr(event, "annotation", None))
-                if citation is not None:
-                    part_key = (
-                        getattr(event, "output_index", None),
-                        getattr(event, "content_index", None),
-                    )
-                    url_citations.setdefault(part_key, []).append(citation)
-                    current_length = response_text_lengths.get(part_key, 0)
-                    timing = (
-                        "after cited text"
-                        if citation["end_index"] <= current_length
-                        else "before cited text completed"
-                    )
-                    _LOGGER.debug(
-                        "Observed structured URL citation %s (%d total for content part)",
-                        timing,
-                        len(url_citations[part_key]),
-                    )
-                continue
-
-            if event_type == "response.output_item.done":
-                item = event.item
-                key = (getattr(event, "output_index", None), getattr(item, "id", None))
-                if key != (None, None):
-                    if key in completed_items:
-                        raise ProviderStreamError(
-                            "Provider returned malformed data: repeated completed output item",
-                            error_type="invalid_event_sequence",
-                        )
-                    completed_items.add(key)
-                item_type = getattr(item, "type", "")
-                if item_type in {"reasoning", "web_search_call"}:
-                    # Preserve native hosted-tool and reasoning output so stateless
-                    # chained function calls retain the complete Responses context.
-                    yield {"native": item}
-                elif (
-                    item_type == "message"
-                    and getattr(item, "content", None) is not None
-                ):
-                    # Keep URL citation annotations internally. Home Assistant's
-                    # native field is not exposed to the streaming listener, so the
-                    # original message and structured metadata remain available for
-                    # stateless replay while speech receives sanitized text deltas.
-                    yield {"native": item}
-                elif item_type == "function_call":
-                    try:
-                        arguments = json.loads(item.arguments)
-                    except json.JSONDecodeError as err:
-                        if recovery_state is None or not recovery_state.enabled:
+                        # Keep URL citation annotations internally. Home Assistant's
+                        # native field is not exposed to the streaming listener, so the
+                        # original message and structured metadata remain available for
+                        # stateless replay while speech receives sanitized text deltas.
+                        yield {"native": item}
+                    elif item_type == "function_call":
+                        try:
+                            arguments = json.loads(item.arguments)
+                        except json.JSONDecodeError as err:
+                            if recovery_state is None or not recovery_state.enabled:
+                                await async_recover_trailing_usage(
+                                    result, request_usage
+                                )
+                                raise ParseArgumentsFailed(item.arguments) from err
+                            arguments = recovery_state.remember_malformed(
+                                item.call_id, item.arguments
+                            )
+                        if item.name in {
+                            CONTINUE_CONVERSATION_TOOL_NAME,
+                            FUNCTION_GROUP_LOADER_TOOL_NAME,
+                        } and not isinstance(arguments, dict):
                             await async_recover_trailing_usage(result, request_usage)
-                            raise ParseArgumentsFailed(item.arguments) from err
-                        arguments = recovery_state.remember_malformed(
-                            item.call_id, item.arguments
-                        )
-                    if item.name in {
-                        CONTINUE_CONVERSATION_TOOL_NAME,
-                        FUNCTION_GROUP_LOADER_TOOL_NAME,
-                    } and not isinstance(arguments, dict):
-                        await async_recover_trailing_usage(result, request_usage)
-                        raise ParseArgumentsFailed(item.arguments)
-                    completed_calls.append(
-                        llm.ToolInput(
-                            id=item.call_id,
-                            tool_name=item.name,
-                            tool_args=arguments,
-                            external=True,
-                        )
-                    )
-                    validate_tool_call_ids(completed_calls)
-                    yield {
-                        "tool_calls": [
+                            raise ParseArgumentsFailed(item.arguments)
+                        completed_calls.append(
                             llm.ToolInput(
                                 id=item.call_id,
                                 tool_name=item.name,
                                 tool_args=arguments,
                                 external=True,
                             )
-                        ]
-                    }
-                continue
-
-            if event_type in {"response.completed", "response.incomplete"}:
-                if event_type == "response.completed":
-                    terminal_event_seen = True
-                response = event.response
-                if response.usage is not None:
-                    _trace_provider_usage(chat_log, extract_usage(response.usage))
-
-                if event_type == "response.incomplete":
-                    details = response.incomplete_details
-                    reason = (
-                        details.reason
-                        if details and details.reason
-                        else "unknown reason"
-                    )
-                    if reason == "max_output_tokens":
-                        raise TokenLengthExceededError(
-                            self.subentry.data.get(CONF_MAX_TOKENS, DEFAULT_MAX_TOKENS)
                         )
-                    raise HomeAssistantError(f"OpenAI response incomplete: {reason}")
-                continue
+                        await async_validate_tool_call_ids_with_usage(
+                            completed_calls, result, request_usage
+                        )
+                        yield {
+                            # SDK-native calls retain their original provider item ID
+                            # and arguments, alongside HA's executable call record.
+                            **({"native": item} if hasattr(item, "model_dump") else {}),
+                            "tool_calls": [
+                                llm.ToolInput(
+                                    id=item.call_id,
+                                    tool_name=item.name,
+                                    tool_args=arguments,
+                                    external=True,
+                                )
+                            ],
+                        }
+                    continue
 
-            if event_type == "response.failed":
-                response = getattr(event, "response", None)
-                raise provider_stream_error(
-                    "OpenAI response failed",
-                    getattr(response, "error", None),
-                    response_id=getattr(response, "id", None),
-                )
+                if event_type in {"response.completed", "response.incomplete"}:
+                    if event_type == "response.completed":
+                        terminal_event_seen = True
+                    response = event.response
+                    if response.usage is not None:
+                        _trace_provider_usage(chat_log, extract_usage(response.usage))
 
-            if event_type in {"error", "response.error"}:
-                raise provider_stream_error("OpenAI response error", event)
+                    if event_type == "response.incomplete":
+                        details = response.incomplete_details
+                        reason = (
+                            details.reason
+                            if details and details.reason
+                            else "unknown reason"
+                        )
+                        if reason == "max_output_tokens":
+                            raise TokenLengthExceededError(
+                                self.subentry.data.get(
+                                    CONF_MAX_TOKENS, DEFAULT_MAX_TOKENS
+                                )
+                            )
+                        raise HomeAssistantError(
+                            f"OpenAI response incomplete: {reason}"
+                        )
+                    continue
+
+                if event_type == "response.failed":
+                    response = getattr(event, "response", None)
+                    raise provider_stream_error(
+                        "OpenAI response failed",
+                        getattr(response, "error", None),
+                        response_id=getattr(response, "id", None),
+                    )
+
+                if event_type in {"error", "response.error"}:
+                    raise provider_stream_error("OpenAI response error", event)
 
         if not terminal_event_seen:
             raise HomeAssistantError(
@@ -2215,7 +2387,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
             if (
                 delayed
-                or isinstance(err, EffectReplayBlocked)
+                or isinstance(err, (EffectReplayBlocked, FunctionResponseParseError))
                 or strict_execution_failures_enabled()
                 or function_execution_errors_propagate()
             ):
@@ -2226,7 +2398,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             result = {"status": "error", "error": str(err)}
             execution_error = True
             if isinstance(err, HAToolResultError):
-                result["data"] = _normalize_function_result(err.data)
+                result = err.private_result(str(err))
 
         return make_tool_result_content(
             agent_id=self.entity_id,
@@ -2251,15 +2423,18 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         chat_log: conversation.ChatLog,
         *,
         observed_input_tokens: int | None = None,
+        defer_summary: bool = True,
+        estimate: HistoryEstimator | None = None,
         model: str | None = None,
         api_mode: str | None = None,
     ) -> None:
         """Truncate message history based on strategy."""
         await async_prepare_tool_results(chat_log.content)
-        if schedule_context_summary(
+        if defer_summary and await schedule_context_summary(
             self,
             chat_log,
             observed_input_tokens=observed_input_tokens,
+            estimate=estimate,
             model=model,
             api_mode=api_mode,
         ):
@@ -2281,8 +2456,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             return
 
         if strategy == CONTEXT_TRUNCATE_SUMMARIZE:
-            selected = select_summary_history(
-                chat_log.content, observed_input_tokens, threshold
+            selected = await async_select_summary_history(
+                chat_log.content, observed_input_tokens, threshold, estimate
             )
             if selected is not None:
                 older, retained = selected
@@ -2318,7 +2493,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             CONTEXT_TRUNCATE_SUMMARIZE,
         }:
             strategy = DEFAULT_CONTEXT_TRUNCATE_STRATEGY
-        if keep_recent_messages(chat_log.content, observed_input_tokens, threshold):
+        if await async_keep_recent_messages(
+            chat_log.content, observed_input_tokens, threshold, estimate
+        ):
             _LOGGER.info(
                 "Context threshold exceeded, oldest conversation turns removed"
             )
@@ -2332,7 +2509,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         """Summarize older turns once without tools or recursive truncation."""
         older = list(older)
         await async_prepare_tool_results(older)
-        transcript = history_as_summary_text(older)
+        transcript = await asyncio.to_thread(history_as_summary_text, list(older))
         if not transcript:
             return None
         prompt = (

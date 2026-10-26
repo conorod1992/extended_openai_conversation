@@ -179,7 +179,9 @@ async def test_import_can_be_inspected_then_restored_and_consumes_staging_file(
         ),
     )
     monkeypatch.setattr(
-        transfer, "apply_user_scope_mappings", lambda value, *_args: value
+        transfer,
+        "async_apply_user_scope_mappings",
+        AsyncMock(side_effect=lambda value, *_args: value),
     )
     monkeypatch.setattr(transfer, "_current_snapshot", current_snapshot)
     monkeypatch.setattr(
@@ -326,7 +328,9 @@ async def test_restore_failure_still_consumes_and_deletes_completed_upload(
     monkeypatch.setattr(backup_transfer, "_async_load_prepared_restore", load_prepared)
     monkeypatch.setattr(transfer, "async_restore_transfer", fail_restore)
     monkeypatch.setattr(
-        transfer, "apply_user_scope_mappings", lambda value, *_args: value
+        transfer,
+        "async_apply_user_scope_mappings",
+        AsyncMock(side_effect=lambda value, *_args: value),
     )
     monkeypatch.setattr(transfer, "_current_snapshot", AsyncMock(return_value=object()))
     monkeypatch.setattr(
@@ -587,7 +591,11 @@ async def test_cancelling_stalled_full_inspection_releases_maintenance_for_new_s
         AsyncMock(return_value={"missing_source_user_ids": [], "resolved": {}}),
     )
     monkeypatch.setattr(transfer, "_current_snapshot", AsyncMock(return_value=object()))
-    monkeypatch.setattr(transfer, "apply_user_scope_mappings", lambda value, *_: value)
+    monkeypatch.setattr(
+        transfer,
+        "async_apply_user_scope_mappings",
+        AsyncMock(side_effect=lambda value, *_: value),
+    )
     monkeypatch.setattr(
         transfer,
         "async_materialize_restore",

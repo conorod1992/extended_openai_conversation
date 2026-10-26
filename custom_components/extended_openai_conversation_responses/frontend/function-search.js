@@ -1,4 +1,19 @@
 // Shared Unicode-aware Function search for editors, groups and Local Handling.
+const functionSearchTokenCache = new WeakMap();
+
+export function cachedFunctionSearchTokens(node, searchableText) {
+  const value = String(searchableText || "");
+  const cached = functionSearchTokenCache.get(node);
+  if (cached?.value === value) return cached.tokens;
+  const tokens = searchTokens(value);
+  functionSearchTokenCache.set(node, {value, tokens});
+  return tokens;
+}
+
+export function matchesFunctionSearch(query, searchableText, minimumPrefixLength = 3) {
+  return matchesFunctionSearchTokens(searchTokens(query), searchTokens(searchableText), minimumPrefixLength);
+}
+
 export function searchTokens(value) {
   const raw = String(value || "");
   const tokens = raw.normalize("NFKD")

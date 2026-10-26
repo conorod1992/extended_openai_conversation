@@ -338,3 +338,55 @@ async def test_temporary_clear_rejects_non_owner_scopes(monkeypatch, scope):
     with pytest.raises(HomeAssistantError):
         await command("temporary_clear", admin=True, scope_id=scope, confirm=True)
     get.assert_not_awaited()
+
+
+@pytest.mark.parametrize("destination", ["user:user-7", "shared:household"])
+async def test_temporary_add_from_legacy_view_uses_selected_owner(
+    monkeypatch, destination
+):
+    """Creation authorizes its destination rather than its unrelated source view."""
+    manager = SimpleNamespace(
+        async_add_owned=AsyncMock(
+            return_value={"status": "created", "memory": {"memory_id": "created"}}
+        )
+    )
+    monkeypatch.setattr(
+        management_ui, "async_get_temporary_memory", AsyncMock(return_value=manager)
+    )
+    check_user = AsyncMock()
+    monkeypatch.setattr(management_ui, "_require_existing_user_destination", check_user)
+    result = await command(
+        "temporary_add",
+        admin=True,
+        scope_id="__anonymous__",
+        target_scope_id=destination,
+        content="New fact",
+        expires_at="2099-01-01T00:00:00Z",
+    )
+    assert result["scope_id"] == destination
+    assert check_user.await_count == 1
+    assert check_user.await_args.args[1] == destination
+    manager.async_add_owned.assert_awaited_once_with(
+        destination, "New fact", "2099-01-01T00:00:00Z", "general"
+    )
+
+
+@pytest.mark.parametrize(
+    "action",
+    ["temporary_list", "temporary_update", "temporary_delete", "temporary_clear"],
+)
+async def test_temporary_existing_operations_cannot_redirect_legacy_scope(
+    monkeypatch, action
+):
+    get = AsyncMock()
+    monkeypatch.setattr(management_ui, "async_get_temporary_memory", get)
+    with pytest.raises(HomeAssistantError, match="Personal or Shared"):
+        await command(
+            action,
+            admin=True,
+            scope_id="__anonymous__",
+            target_scope_id="user:user-7",
+            memory_id="other",
+            confirm=True,
+        )
+    get.assert_not_awaited()

@@ -1,6 +1,6 @@
 import {same} from "./unsaved-state.js";
 import {reconcileSavedConfiguration} from "./configuration-save-dom.js";
-import {captureConfigurationSubmission, configurationSubmissionIsCurrent, completeConfigurationAcknowledgement, reconcileConfigurationAcknowledgement} from "./configuration-acknowledgement.js";
+import {captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, completeConfigurationAcknowledgement, reconcileConfigurationAcknowledgement, discardConfigurationDraft} from "./configuration-acknowledgement.js";
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
 function fieldErrorKey(key) {
@@ -57,16 +57,16 @@ async function runFrontendMutation(panel, control, label, operation) {
 
 export async function saveConfigurationAcrossRestart(panel, payload, submitted, submittedTitle) {
   const baseline = panel._configData;
-  const agentId = panel._agentId;
+  const owner = captureConfigurationOwner(panel);
   try {
     return await panel._call("configuration", "save", payload);
   } catch (error) {
-    if (!String(error?.message || error).includes("Configuration changed in another tab") ||
+    if (!configurationSubmissionIsCurrent(panel, owner) || !String(error?.message || error).includes("Configuration changed in another tab") ||
         !baseline?.server_epoch || panel._configData !== baseline) throw error;
     const latest = await panel._call("configuration", "get");
     if (latest?.server_epoch === baseline.server_epoch || !latest?.server_epoch ||
         latest.title !== baseline.title || !same(latest.config, baseline.config) ||
-        panel._agentId !== agentId || !same(panel._draft, submitted) ||
+        !configurationSubmissionIsCurrent(panel, owner) || !same(panel._draft, submitted) ||
         panel._draftTitle !== submittedTitle) throw error;
     // A new HA process lost the in-memory revision lineage. The persisted
     // baseline is unchanged, so the draft can safely use its fresh revision.
@@ -76,6 +76,19 @@ export async function saveConfigurationAcrossRestart(panel, payload, submitted, 
 
 async function saveConfiguration(panel, button) {
   if (!panel._draft || !panel._selectedAgent?.() || panel._configurationSaving) return;
+  if (panel._eocAcknowledgedConfiguration && panel._configDataStale) {
+    const owner = captureConfigurationOwner(panel), visit = panel._loadToken;
+    try { await panel._loadConfigDraft({preserveResult:true}); }
+    catch (error) {
+      if (configurationSubmissionIsCurrent(panel, owner) && panel._loadToken === visit) panel._toast(`Changes already saved; refresh configuration before saving again: ${error.message || String(error)}`, true);
+      return;
+    }
+    if (configurationSubmissionIsCurrent(panel, owner) && panel._loadToken === visit && !panel._configDataStale) {
+      panel._render();
+      panel._toast("Configuration refreshed. Review your changes before saving.");
+    }
+    return;
+  }
   const submission = captureConfigurationSubmission(panel);
   const submitted = submission.draft, submittedTitle = submission.title;
   const owner = {...submission,
@@ -86,6 +99,9 @@ async function saveConfiguration(panel, button) {
   panel._syncConfigDirty?.();
   const dirty = panel._eocDirtyConfigKeys || new Set();
   const changed = Object.fromEntries([...dirty].filter(key => key !== "__title" && Object.hasOwn(submitted, key)).map(key => [key, submitted[key]]));
+  submission.fields = Object.keys(changed);
+  submission.writesTitle = dirty.has("__title");
+  panel._eocConfigurationSubmission = submission;
   panel._configurationSaving = true;
   panel._setSaving(button, true);
   try {
@@ -112,6 +128,8 @@ async function saveConfiguration(panel, button) {
   } catch (err) {
     if (configurationSubmissionIsCurrent(panel, submission)) panel._toast(`Unable to save configuration: ${err.message || String(err)}`, true);
   } finally {
+    if (panel._eocConfigurationSubmission === submission) panel._eocConfigurationSubmission = null;
+    if (panel.isConnected !== false && !panel._configDataStale) panel._eocAcknowledgedConfiguration = null;
     panel._configurationSaving = false;
     panel._setSaving(panel.shadowRoot.querySelector("#save-config") || button, false);
     const discard = panel.shadowRoot.querySelector("#revert-config");
@@ -124,7 +142,17 @@ export function bindSingleRequestSave(panel) {
   if (root.__eocSingleRequestSaveBound) return;
   root.__eocSingleRequestSaveBound = true;
   root.addEventListener("click", (event) => {
-    if (event.target?.closest?.("#revert-config") && panel._configurationSaving) { event.preventDefault(); event.stopImmediatePropagation(); return; }
+    if (event.target?.closest?.("#revert-config")) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (panel._configurationSaving || !panel._configData?.config) return;
+      discardConfigurationDraft(panel);
+      // Save acknowledgements can insert this bar after a feature bound its
+      // original controls. Delegation also covers those newly created buttons.
+      panel._eocMainMarkup = null;
+      panel._render();
+      return;
+    }
     const button = event.target?.closest?.("#save-config");
     if (!button) return;
     event.preventDefault();
@@ -180,11 +208,6 @@ export function bindFrontendCorrectness(panel) {
 
 
 
-  root.addEventListener("submit", (event) => {
-    if (event.target?.id !== "rule-form" || !panel._eocRuleSavePromise) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-  }, true);
 }
 
 

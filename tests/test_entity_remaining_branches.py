@@ -296,11 +296,16 @@ async def test_truncation_fallback_and_summary_success(monkeypatch) -> None:
     }
     calls: list[tuple[int | None, int]] = []
 
-    def fake_keep(content: list[Any], observed: int | None, threshold: int) -> bool:
+    def fake_keep(
+        content: list[Any], observed: int | None, threshold: int, estimate=None
+    ) -> bool:
+        assert estimate is None
         calls.append((observed, threshold))
         return False
 
-    monkeypatch.setattr(module, "keep_recent_messages", fake_keep)
+    monkeypatch.setattr(
+        module, "async_keep_recent_messages", AsyncMock(side_effect=fake_keep)
+    )
     await entity._truncate_message_history(
         SimpleNamespace(content=[]), observed_input_tokens=20
     )
@@ -309,14 +314,22 @@ async def test_truncation_fallback_and_summary_success(monkeypatch) -> None:
     older = [conversation.UserContent(content="old")]
     retained = [system, conversation.UserContent(content="new")]
     entity.subentry.data[CONF_CONTEXT_TRUNCATE_STRATEGY] = CONTEXT_TRUNCATE_SUMMARIZE
-    monkeypatch.setattr(module, "select_summary_history", lambda *_: (older, retained))
+    monkeypatch.setattr(
+        module,
+        "async_select_summary_history",
+        AsyncMock(return_value=(older, retained)),
+    )
     entity._async_summarize_history = AsyncMock(return_value="durable facts")
     chat_log = SimpleNamespace(content=[system, *older, *retained[1:]])
     await entity._truncate_message_history(chat_log, observed_input_tokens=20)
     assert "durable facts" in chat_log.content[1].content
 
-    monkeypatch.setattr(module, "select_summary_history", lambda *_: None)
-    monkeypatch.setattr(module, "keep_recent_messages", lambda *_: True)
+    monkeypatch.setattr(
+        module, "async_select_summary_history", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(
+        module, "async_keep_recent_messages", AsyncMock(return_value=True)
+    )
     await entity._truncate_message_history(chat_log, observed_input_tokens=20)
 
 

@@ -20,6 +20,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util.json import json_loads
 
+from .assistant_response import final_assistant_text
 from .debug import record_current_provider_failure
 from .entity import (
     ExtendedOpenAIBaseLLMEntity,
@@ -34,6 +35,7 @@ from .provider_errors import (
     request_reauthentication,
 )
 from .schema_errors import SCHEMA_ERRORS
+from .schema_normalization import normalize_exclusive_bounds
 from .tool_replay_guard import clear_unacknowledged_calls, remember_unacknowledged_calls
 
 _LOGGER = logging.getLogger(__name__)
@@ -192,6 +194,7 @@ def _optional_null_plan(
 
 def _normalize_caller_nullable(schema: dict[str, Any]) -> None:
     """Express OpenAPI nullable for branch validation without adding placeholders."""
+    normalize_exclusive_bounds(schema)
     if schema.pop("nullable", False):
         _make_schema_nullable(schema)
     for keyword in ("anyOf", "oneOf", "allOf"):
@@ -446,7 +449,9 @@ class ExtendedOpenAITaskEntity(
                 "Last content in chat log is not an AssistantContent"
             )
 
-        text = chat_log.content[-1].content or ""
+        text = final_assistant_text(
+            chat_log.content, separator="" if task.structure else "\n\n"
+        )
 
         # Handle structured output
         if not task.structure:

@@ -1,6 +1,7 @@
 import {expect, test} from "@playwright/test";
 import {readFile} from "node:fs/promises";
 import {openColdHaRoute, replaceNativeYaml} from "./real-ha-shell-helpers.mjs";
+import {acceptSharingReview} from "./browser-helpers.mjs";
 
 const baseUrl = process.env.REAL_HA_FRONTEND_URL;
 const authDataRaw = process.env.REAL_HA_FRONTEND_AUTH;
@@ -120,7 +121,9 @@ test("Rule Pack download from one assistant imports, conflicts, enables and exec
   const sharing = panel.locator("#rule-sharing");
   if (!(await sharing.evaluate(element => element.open))) await sharing.locator("summary").click();
   const downloadPromise = page.waitForEvent("download");
+  await panel.locator("#rule-pack-reviewed-custom").check();
   await panel.locator("#rule-pack-export").click();
+  await acceptSharingReview(panel);
   const download = await downloadPromise;
   const packPath = await download.path();
   expect(packPath).toBeTruthy();

@@ -1,6 +1,7 @@
 import {restoreScopeMarkup} from "./management-decision-guidance.js";
 import {TRANSFER_SECTIONS} from "./backup-transfer-shell.js";
 import {backupSummaryLines} from "./backup-summary.js";
+import {reviewSharingExport} from "./sharing-review.js";
 export {backupSummaryLines};
 export {TRANSFER_SECTIONS, renderBackupTransferPanel} from "./backup-transfer-shell.js";
 export const WS_BACKUP_TRANSFER = "extended_openai_conversation_responses/management/backup_transfer";
@@ -79,9 +80,10 @@ async function defaultSaveBlob(blob, filename) {
   }
 }
 
-export async function downloadSetupExport(panel, saveBlob = defaultSaveBlob) {
-  const result = await callBackupTransfer(panel, "setup_export");
+export async function downloadSetupExport(panel, saveBlob = defaultSaveBlob, {reviewedCustom = false, review = false} = {}) {
+  const result = await callBackupTransfer(panel, "setup_export", reviewedCustom ? {reviewed_custom: true} : {});
   if (!result?.json || !result?.filename) throw new Error("The server returned an invalid setup export");
+  if (review && !await reviewSharingExport(panel, result)) return {...result, cancelled: true};
   const blob = new Blob([result.json], {type: "application/json"});
   await saveBlob(blob, result.filename, result);
   return result;
@@ -243,7 +245,7 @@ export function renderRestoreTransferDialog(panel) {
   const dirtyWarning = panel?._configDirty
     ? '<p class="inline-error">Your unsaved configuration changes will be discarded if configuration is one of the restored sections.</p>'
     : "";
-  return `<dialog id="restore-dialog" class="editor-dialog" aria-labelledby="restore-dialog-title"><div class="dialog-header"><h2 id="restore-dialog-title">Import / Restore</h2></div><div class="dialog-body">${restoreScopeMarkup(panel)}<div><strong id="restore-backup-name"></strong><p id="restore-backup-meta" class="meta"></p></div><ul id="restore-summary" class="restore-summary"></ul><fieldset class="setting-group"><legend><strong>Sections to replace</strong></legend><p class="help">Only sections contained in this file are shown. Unselected destination sections remain unchanged.</p><div id="${RESTORE_SECTIONS_ID}" class="group-function-choices"></div></fieldset><fieldset class="setting-group" id="${RESTORE_USER_MAPPINGS_ID}" hidden><legend><strong>Map Home Assistant users</strong></legend><p class="help">This backup contains personal data owned by users that do not exist on this Home Assistant installation. Choose the destination owner for each source user before restoring.</p><div data-user-scope-mapping-list></div></fieldset><div id="${RESTORE_STATUS_ID}" class="validation" role="status" aria-live="polite"></div><div class="notice"><strong>Replacement, not merge</strong><p>Every selected section replaces that section on the current agent. The combined target is validated first, including Request Rule references to Function Tools. A final confirmation is required before applying it.</p></div>${dirtyWarning}</div><div class="dialog-actions"><button type="button" class="secondary" id="${CANCEL_ID}">Cancel</button><button type="button" class="danger" id="${APPLY_ID}" disabled>Restore selected sections</button></div></dialog>`;
+  return `<dialog id="restore-dialog" class="editor-dialog" aria-labelledby="restore-dialog-title"><div class="dialog-header"><h2 id="restore-dialog-title">Import / Restore</h2></div><div class="dialog-body">${restoreScopeMarkup(panel)}<div><strong id="restore-backup-name"></strong><p id="restore-backup-meta" class="meta"></p></div><ul id="restore-summary" class="restore-summary"></ul><label id="restore-provider-choice" hidden><input type="checkbox" id="restore-provider-connection"> Also restore the provider connection, including credentials, for ALL agents sharing it. This separate connection update runs after agent restoration.</label><fieldset class="setting-group"><legend><strong>Sections to replace</strong></legend><p class="help">Only sections contained in this file are shown. Unselected destination sections remain unchanged.</p><div id="${RESTORE_SECTIONS_ID}" class="group-function-choices"></div></fieldset><fieldset class="setting-group" id="${RESTORE_USER_MAPPINGS_ID}" hidden><legend><strong>Map Home Assistant users</strong></legend><p class="help">This backup contains personal data owned by users that do not exist on this Home Assistant installation. Choose the destination owner for each source user before restoring.</p><div data-user-scope-mapping-list></div></fieldset><div id="${RESTORE_STATUS_ID}" class="validation" role="status" aria-live="polite"></div><div class="notice"><strong>Replacement, not merge</strong><p>Every selected section replaces that section on the current agent. The combined target is validated first, including Request Rule references to Function Tools. A final confirmation is required before applying it.</p></div>${dirtyWarning}</div><div class="dialog-actions"><button type="button" class="secondary" id="${CANCEL_ID}">Cancel</button><button type="button" class="danger" id="${APPLY_ID}" disabled>Restore selected sections</button></div></dialog>`;
 }
 
 function selectedValues(root, selector) {
@@ -395,7 +397,7 @@ function sendLatestImportPreview(panel) {
     const status = panel.shadowRoot?.querySelector(`#${RESTORE_STATUS_ID}`);
     const apply = panel.shadowRoot?.querySelector(`#${APPLY_ID}`);
     try {
-      const result = await callBackupTransfer(panel, "import_inspect", {session_id: request.session.session_id, sections: request.sections, user_scope_mappings: request.userScopeMappings}, request.session.owner);
+      const result = await callBackupTransfer(panel, "import_inspect", {session_id: request.session.session_id, sections: request.sections, user_scope_mappings: request.userScopeMappings, ...(request.restoreProvider ? {restore_provider_connection:true} : {})}, request.session.owner);
       if (!current()) return;
       panel._backupTransferPreview = result.preview;
       panel._backupTransferPreviewToken = result.preview_token;
@@ -429,6 +431,11 @@ export function refreshImportPreview(panel) {
   if (!session) return false;
   if (!ownsTransfer(panel, session)) { void cancelBackupImport(panel, session); return false; }
   const sections = selectedValues(root, ".transfer-restore-section");
+  const providerControl = root.querySelector("#restore-provider-connection");
+  if (providerControl) {
+    providerControl.disabled = !sections.includes("configuration");
+    if (providerControl.disabled) providerControl.checked = false;
+  }
   const status = root.querySelector(`#${RESTORE_STATUS_ID}`);
   if (!sections.length) {
     if (status) {
@@ -442,7 +449,7 @@ export function refreshImportPreview(panel) {
     status.textContent = "Validating selected sections…";
   }
   const work = previewWork(panel);
-  work.latest = {session, sections, token, userScopeMappings: selectedUserScopeMappings(root)};
+  work.latest = {session, sections, token, userScopeMappings: selectedUserScopeMappings(root), restoreProvider:Boolean(providerControl?.checked)};
   work.timer = setTimeout(() => {
     work.timer = null;
     sendLatestImportPreview(panel);
@@ -451,6 +458,7 @@ export function refreshImportPreview(panel) {
 }
 
 export function bindBackupTransfer(panel) {
+  panel.shadowRoot?.querySelector("#restore-provider-connection")?.addEventListener("change", () => refreshImportPreview(panel));
   const root = panel?.shadowRoot;
   if (!root) return;
   panel._eocBackupTransferCleanup = () => retireBackupImports(panel);
@@ -474,6 +482,8 @@ export function bindBackupTransfer(panel) {
   const customOptions = root.querySelector(`#${CUSTOM_OPTIONS_ID}`);
   const syncExportMode = () => {
     if (customOptions) customOptions.hidden = exportMode?.value !== "custom";
+    const sharingOptions = root.querySelector("#transfer-sharing-options");
+    if (sharingOptions) sharingOptions.hidden = exportMode?.value !== "setup";
   };
   exportMode?.addEventListener("change", syncExportMode);
   syncExportMode();
@@ -488,7 +498,10 @@ export function bindBackupTransfer(panel) {
     }
     panel._setSaving(button, true);
     try {
-      if (mode === "setup") await downloadSetupExport(panel);
+      if (mode === "setup") {
+        const exported = await downloadSetupExport(panel, defaultSaveBlob, {reviewedCustom: Boolean(root.querySelector("#transfer-reviewed-custom")?.checked), review: true});
+        if (exported.cancelled) return;
+      }
       else if (mode === "custom") await downloadCustomBackup(panel, sections);
       else await downloadFullBackup(panel);
       panel._toast(mode === "setup" ? "Shareable setup exported" : mode === "custom" ? "Custom backup created" : "Full backup created");
@@ -538,6 +551,10 @@ export function bindBackupTransfer(panel) {
       // Header-only inspection has not decoded section contents yet. Do not
       // present its placeholder zeroes as the contents of a destructive restore.
       root.querySelector("#restore-summary").innerHTML = "";
+      const providerChoice = root.querySelector("#restore-provider-choice");
+      if (providerChoice) providerChoice.hidden = !result.summary?.provider_connection_available;
+      const providerCheckbox = root.querySelector("#restore-provider-connection");
+      if (providerCheckbox) providerCheckbox.checked = false;
       const sectionRoot = root.querySelector(`#${RESTORE_SECTIONS_ID}`);
       sectionRoot.innerHTML = sectionChoices(panel, {className: "transfer-restore-section", available: result.available_sections});
       sectionRoot.querySelectorAll(".transfer-restore-section").forEach((input) => input.addEventListener("change", () => void refreshImportPreview(panel)));
@@ -572,6 +589,7 @@ export function bindBackupTransfer(panel) {
       && (panel._backupImportGeneration || 0) === generation && panel._viewKey?.() === ownerView;
     const sections = selectedValues(root, ".transfer-restore-section");
     if (!sections.length) return;
+    const restoreProvider = Boolean(root.querySelector("#restore-provider-connection")?.checked);
     const labels = sections.map((key) => SECTION_LABELS[key] || key).join(", ");
     const previewToken = panel._transferPreviewToken;
     const serverPreviewToken = panel._backupTransferPreviewToken;
@@ -580,7 +598,7 @@ export function bindBackupTransfer(panel) {
       const losesDraft = panel._configDirty && panel._draftAgentId === panel._agentId && sections.includes("configuration");
       const confirmed = await panel._confirm(
         "Restore selected sections?",
-        `This will replace, not merge, the following sections on the current agent: ${labels}.${losesDraft ? " Your unsaved configuration changes will be replaced and lost." : ""}`,
+        `This will replace, not merge, the following sections on the current agent: ${labels}.${restoreProvider ? " The shared provider connection and credentials for ALL its agents will also be replaced." : ""}${losesDraft ? " Your unsaved configuration changes will be replaced and lost." : ""}`,
         "Restore",
       );
       if (!confirmed) return;
@@ -595,10 +613,12 @@ export function bindBackupTransfer(panel) {
     if (status) status.textContent = "Restoring selected sections… Please wait for the result.";
     let mustReselectFile = false;
     let restoreCommitted = false;
+    let providerNotice = "";
     const refreshOwner = {agentId: session.owner.subentry_id, entryId: session.owner.entry_id};
     panel._setSaving(button, true);
     try {
-      await callBackupTransfer(panel, "import_restore", {session_id: session.session_id, sections, preview_token: serverPreviewToken}, session.owner);
+      const outcome = await callBackupTransfer(panel, "import_restore", {session_id: session.session_id, sections, preview_token: serverPreviewToken, ...(restoreProvider ? {restore_provider_connection: true} : {})}, session.owner);
+      providerNotice = outcome?.provider_connection_message || "";
       restoreCommitted = true;
       panel._invalidateCleanConfiguration?.(session.owner.subentry_id);
       if (panel._backupTransferSession !== session || !ownsUI()) {
@@ -618,7 +638,7 @@ export function bindBackupTransfer(panel) {
       root.querySelector("#restore-dialog").close();
       if (sections.includes("configuration")) panel._clearConfigDraft();
       await panel._loadAgents(session.owner.subentry_id, refreshOwner);
-      panel._toast(ownsUI() ? "Selected sections restored" : `Selected sections restored for agent ${session.owner.subentry_id}`);
+      panel._toast((ownsUI() ? "Selected sections restored" : `Selected sections restored for agent ${session.owner.subentry_id}`) + (providerNotice ? `. ${providerNotice}` : ""), Boolean(providerNotice));
     } catch (err) {
       if (restoreCommitted) {
         panel._toast(`Selected sections restored for agent ${session.owner.subentry_id}, but displayed information could not be refreshed: ${err.message || String(err)}`, true);

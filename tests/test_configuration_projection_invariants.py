@@ -280,7 +280,7 @@ async def test_function_semantics_survive_duplicate_export_and_recovery(
         hass, "admin", True, management_message("configuration", "duplicate")
     )
     duplicate = hass.config_entries.async_add_subentry.call_args.args[1]
-    exported = ui._export_agent(subentry)
+    exported = ui._export_agent(subentry, reviewed=True)
     imported = ui._parse_import_document(exported)["config"]
     snapshots = [duplicate.data, imported]
     for snapshot in (
@@ -436,7 +436,9 @@ async def test_lightweight_settings_and_full_configuration_use_same_numeric_valu
 
 
 @pytest.mark.parametrize("saved", ["null", "[]", [], ""])
-async def test_rollback_preparation_preserves_function_runtime_interpretation(hass, saved):
+async def test_rollback_preparation_preserves_function_runtime_interpretation(
+    hass, saved
+):
     from unittest.mock import AsyncMock
 
     from tests.test_backup import _document
@@ -463,10 +465,10 @@ async def test_rollback_preparation_preserves_function_runtime_interpretation(ha
         subentry_id="rollback-projection", title="Projection", data={"functions": saved}
     )
     rollback = await backup._snapshot_for_restore(managers, subentry)
+    assert rollback.config == subentry.data
     assert config.parse_configured_function_tools(rollback.config) == (
-        config.parse_configured_function_tools(subentry.data) or []
+        config.parse_configured_function_tools(subentry.data)
     )
-    assert isinstance(rollback.config["functions"], str)
 
 
 @pytest.mark.parametrize("api", ["responses", "chat_completions"])
@@ -521,25 +523,36 @@ async def test_runtime_numeric_interpretation_keeps_capability_suppression():
 
 @pytest.mark.parametrize("saved", [None, [], "", "null", "[]"])
 @pytest.mark.parametrize("changed", [False, True])
+@pytest.mark.parametrize("authoritative", [False, True])
 async def test_restore_update_compares_persisted_and_prepared_effective_values(
-    hass, monkeypatch, saved, changed
+    hass, monkeypatch, saved, changed, authoritative
 ):
     from unittest.mock import AsyncMock, Mock
 
-    from custom_components.extended_openai_conversation_responses import restore_recovery
+    from custom_components.extended_openai_conversation_responses import (
+        restore_recovery,
+    )
     from custom_components.extended_openai_conversation_responses.const import DOMAIN
 
     raw = {"functions": saved, "memory_mode": "manual"}
     subentry = SimpleNamespace(data=raw, title="Unchanged", subentry_id="agent")
     entry = SimpleNamespace(entry_id="entry")
-    candidate = backup.private_configuration_snapshot(raw)
-    assert isinstance(candidate["functions"], str)
+    candidate = (
+        deepcopy(raw) if authoritative else backup.private_configuration_snapshot(raw)
+    )
+    if not authoritative:
+        assert isinstance(candidate["functions"], str)
     if changed:
         candidate["archive_enabled"] = True
     monkeypatch.setattr(restore_recovery, "update_live_subentry", Mock())
     monkeypatch.setattr(restore_recovery, "_async_persist_config_entries", AsyncMock())
     await restore_recovery._update_configuration(
-        hass, entry, subentry, SimpleNamespace(config=candidate, title=subentry.title)
+        hass,
+        entry,
+        subentry,
+        SimpleNamespace(
+            config=candidate, title=subentry.title, authoritative_config=authoritative
+        ),
     )
     assert (
         entry.entry_id in hass.data.get(f"{DOMAIN}.restore_reload_pending", set())

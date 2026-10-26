@@ -39,7 +39,11 @@ async def websocket_broadcast(
     try:
         manager = await async_get_intercom(hass)
         if msg["action"] == "snapshot":
-            catalog, history = manager.catalog(), manager.history()
+            catalog, history, pending = (
+                manager.catalog(),
+                manager.history(),
+                manager.pending(),
+            )
             if not connection.user.is_admin:
 
                 def can_read(entity_id: str) -> bool:
@@ -51,19 +55,24 @@ async def websocket_broadcast(
                     item["id"] for item in catalog["satellites"] if can_read(item["id"])
                 }
                 catalog = manager.catalog(entity_ids=readable)
-                history = [
-                    {**item, "origin_device_id": None}
-                    for item in history
-                    if item.get("targets")
-                    and all(can_read(entity_id) for entity_id in item["targets"])
-                    and all(
-                        can_read(entity_id) for entity_id in item.get("deliveries", {})
-                    )
-                    and (
-                        not item.get("origin_entity_id")
-                        or can_read(item["origin_entity_id"])
-                    )
-                ]
+
+                def visible(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+                    return [
+                        {**item, "origin_device_id": None}
+                        for item in items
+                        if item.get("targets")
+                        and all(can_read(entity_id) for entity_id in item["targets"])
+                        and all(
+                            can_read(entity_id)
+                            for entity_id in item.get("deliveries", {})
+                        )
+                        and (
+                            not item.get("origin_entity_id")
+                            or can_read(item["origin_entity_id"])
+                        )
+                    ]
+
+                history, pending = visible(history), visible(pending)
             connection.send_result(
                 msg["id"],
                 {
@@ -71,6 +80,7 @@ async def websocket_broadcast(
                     "can_manage": connection.user.is_admin,
                     "catalog": catalog,
                     "history": history,
+                    "pending": pending,
                 },
             )
             return

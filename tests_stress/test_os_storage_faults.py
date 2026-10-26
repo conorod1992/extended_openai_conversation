@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterator
-from contextlib import suppress
 from datetime import timedelta
 import errno
-import os
 from pathlib import Path
 
 import atomicwrites
@@ -61,6 +59,7 @@ from tests_stress.conftest import record
 # with its in-memory shim. This preserves the native writer on stable and dev,
 # including versions that no longer expose the synchronous _write_data helper.
 _REAL_STORE_ASYNC_WRITE_DATA = Store._async_write_data
+_REAL_STORE_ASYNC_REMOVE = Store.async_remove
 # Newer Core moves its fixture shim below Store into an injected I/O class.
 # Capture that class before hass_storage replaces it for each test as well.
 _REAL_FILE_STORE_IO = getattr(ha_storage, "_FileStoreIO", None)
@@ -442,20 +441,12 @@ async def test_public_consumer_recovers_first_after_commit_and_failed_readback(
 
 @pytest.fixture
 def real_store_io(
-    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[None]:
     """Undo pytest-HA's in-memory Store shim for these OS-boundary probes."""
-    hass.config.config_dir = str(tmp_path)
 
     async def load_from_disk(store: Store):
         return await store._async_load_data()
-
-    async def remove_from_disk(store: Store) -> None:
-        store._manager.async_invalidate(store.key)
-        store._async_cleanup_delay_listener()
-        store._async_cleanup_final_write_listener()
-        with suppress(FileNotFoundError):
-            await store.hass.async_add_executor_job(os.unlink, store.path)
 
     # Restore the plugin's Store shim before its own fixture tears down. A
     # function-scoped monkeypatch teardown runs too late for its autospec.
@@ -464,7 +455,7 @@ def real_store_io(
             scoped.setattr(ha_storage, "_FileStoreIO", _REAL_FILE_STORE_IO)
         scoped.setattr(Store, "_async_write_data", _REAL_STORE_ASYNC_WRITE_DATA)
         scoped.setattr(Store, "_async_load", load_from_disk)
-        scoped.setattr(Store, "async_remove", remove_from_disk)
+        scoped.setattr(Store, "async_remove", _REAL_STORE_ASYNC_REMOVE)
         yield
 
 
@@ -689,14 +680,21 @@ async def test_transactional_store_writer_failure_is_observable_and_retryable(
     store = stores[owner]
     await store.async_save({"generation": "A"})
     before = Path(store.path).read_bytes()
+    replacements = []
+
+    def fail_replace(_source, destination):
+        replacements.append(Path(destination))
+        raise OSError(errno.EACCES, "Injected storage replacement failure")
+
     with monkeypatch.context() as fault:
-        if store._atomic_writes:
-            fault.setattr(atomicwrites, "replace_atomic", _raise_os_error(errno.EACCES))
-        else:
-            fault.setattr(ha_file.os, "replace", _raise_os_error(errno.EACCES))
+        # Exercise either physical writer without depending on where Core keeps
+        # its private atomic-write flag. Each backend reaches exactly one seam.
+        fault.setattr(atomicwrites, "replace_atomic", fail_replace)
+        fault.setattr(ha_file.os, "replace", fail_replace)
         with pytest.raises(OSError) as error:
             await store.async_save({"generation": "B"})
     assert error.value.errno == errno.EACCES
+    assert replacements == [Path(store.path)]
     assert Path(store.path).read_bytes() == before
     assert await store.async_load() == {"generation": "A"}
     await store.async_save({"generation": "C"})

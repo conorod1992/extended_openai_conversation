@@ -6,6 +6,26 @@ from typing import Any
 import yaml
 
 
+def legacy_agent_export(subentry: Any) -> dict[str, Any]:
+    """Build an old v1 fixture to retain historical credential-recovery tests.
+
+    Production writers no longer emit this best-effort sharing format.
+    """
+    from custom_components.extended_openai_conversation_responses.backup import (
+        export_configuration_snapshot,
+    )
+    from custom_components.extended_openai_conversation_responses.secret_redaction import (
+        redact_secrets,
+    )
+
+    return {
+        "schema": "extended_openai_conversation.agent",
+        "version": 1,
+        "title": subentry.title,
+        "config": redact_secrets(export_configuration_snapshot(dict(subentry.data))),
+    }
+
+
 def load_function_tool_yaml(filename: str) -> list[dict[str, Any]]:
     """Load function definition from yaml file.
 

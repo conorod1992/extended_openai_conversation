@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
-from http import HTTPStatus
 import logging
 from typing import Any, cast
 from uuid import uuid4
+from xml.parsers.expat import ExpatError
 import zlib
 
 import aiohttp
 from bs4 import BeautifulSoup
+from multidict import CIMultiDict
 import voluptuous as vol
+import xmltodict
+from yarl import URL
 
 from homeassistant.components import rest, scrape
 from homeassistant.const import (
@@ -32,11 +35,16 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv, llm
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.json import json_dumps
 from homeassistant.helpers.template import Template, render_complex
 from homeassistant.util.json import JSON_DECODE_EXCEPTIONS, json_loads
 
 from ..const import CONF_PAYLOAD_TEMPLATE
+from ..exceptions import FunctionResponseParseError
+from ..execution_outcomes import execution_completed, execution_started
+from ..public_errors import SanitizedRequestError
 from ..resource_limits import MAX_REMOTE_RESPONSE_BYTES
+from ..template_diagnostics import private_template_diagnostics
 from .base import Function
 
 _ZSTD_COMPAT: Any = None
@@ -245,11 +253,7 @@ class _BoundedResponse:
             # Use only a standard reason, never the URL, headers or remote body.
             # Raising here keeps the underlying request's __aexit__ in charge
             # of cleanup, including when HA catches a transport exception.
-            try:
-                reason = HTTPStatus(status).phrase
-            except ValueError:
-                reason = "Unsuccessful response"
-            raise HomeAssistantError(f"REST request failed: HTTP {status} {reason}")
+            raise SanitizedRequestError(status)
         if self._body is not None:
             return self._body
 
@@ -358,6 +362,98 @@ def _payload_template(value: Any) -> Template:
     return result
 
 
+async def _private_rest_update(data: rest.data.RestData) -> None:
+    """Use HA's parsed request and bounded session without URL-bearing HA logs.
+
+    The request URL is unchanged. No process-global logger state is modified.
+    Keep this narrow adapter covered against supported HA dependency versions.
+    """
+    headers = render_complex(data._headers, parse_result=False)
+    params = render_complex(data._params)
+    if params:
+        params = {
+            key: str(value).lower()
+            if isinstance(value, bool)
+            else (
+                value
+                if isinstance(value, (str, int, float, type(None)))
+                else str(value)
+            )
+            for key, value in params.items()
+        }
+    kwargs: dict[str, Any] = {
+        "headers": headers,
+        "params": params,
+        "timeout": data._timeout,
+    }
+    # HA moved from _auth to separate basic/digest fields. Preserve its
+    # case-insensitive explicit Authorization precedence on newer releases.
+    basic_auth = getattr(data, "_basic_auth", None)
+    digest_auth = getattr(data, "_digest_auth", None)
+    legacy_auth = getattr(data, "_auth", None)
+    if basic_auth is not None:
+        auth_headers = CIMultiDict(headers or {})
+        auth_headers.setdefault("Authorization", basic_auth)
+        kwargs["headers"] = auth_headers
+    elif digest_auth is not None:
+        kwargs["middlewares"] = (digest_auth,)
+    elif isinstance(legacy_auth, aiohttp.BasicAuth):
+        kwargs["auth"] = legacy_auth
+    elif legacy_auth is not None:
+        kwargs["middlewares"] = (legacy_auth,)
+    if data._request_data:
+        kwargs["data"] = data._request_data
+    data.last_exception = None
+    session = data._session
+    if session is None:
+        raise HomeAssistantError("REST session is unavailable")
+    # Match the operation HA will dispatch, rather than the model arguments that
+    # produced it. Only the digest enters the continuation-recovery ledger.
+    receipt = None
+    if getattr(data, "_eoai_record_receipts", False) is True:
+        headers = CIMultiDict(kwargs.get("headers") or {})
+        if isinstance(kwargs.get("auth"), aiohttp.BasicAuth):
+            headers["Authorization"] = kwargs["auth"].encode()
+        normalized_headers: dict[str, list[str]] = {}
+        for name, value in headers.items():
+            normalized_headers.setdefault(name.casefold(), []).append(value)
+        receipt = execution_started(
+            kind="rest",
+            prepared={
+                "method": data._method.upper(),
+                "resource": str(
+                    URL(data._resource).extend_query(params or {}).with_fragment(None)
+                ),
+                "headers": sorted(normalized_headers.items()),
+                "payload": kwargs.get("data", ""),
+                # An opaque authentication middleware deliberately produces a
+                # conservative receipt, never an identity based on object repr().
+                "authentication": kwargs.get("middlewares"),
+            },
+        )
+    try:
+        async with session.request(data._method, data._resource, **kwargs) as response:
+            if not data._force_use_set_encoding and response.charset:
+                try:
+                    data.data = await response.text()
+                except UnicodeDecodeError:
+                    data._force_use_set_encoding = True
+            if data._force_use_set_encoding or not response.charset:
+                data.data = await response.text(encoding=data._encoding)
+            data.headers = response.headers
+            _LOGGER.debug(
+                "REST Function response received; status=%d characters=%d",
+                response.status,
+                len(data.data or ""),
+            )
+        if receipt is not None:
+            execution_completed(receipt)
+    except (aiohttp.ClientError, TimeoutError) as error:
+        data.last_exception = error
+        data.data = None
+        data.headers = None
+
+
 def _render_payload(
     template: Template, arguments: dict[str, Any], hass: HomeAssistant
 ) -> str:
@@ -407,14 +503,26 @@ def get_rest_data(
     rest_data = rest.create_rest_data_from_config(hass, rendered_config)
     if isinstance(rest_data, rest.data.RestData):
         _install_bounded_session(hass, rest_data)
-        original_update = rest_data.async_update
 
         async def sanitized_update(log_errors: bool = False) -> None:
             # ScrapeCoordinator also calls this entry point without arguments.
             # HA's ordinary error logger includes the credential-bearing URL.
-            await original_update(log_errors=False)
+            await _private_rest_update(rest_data)
 
         cast(Any, rest_data).async_update = sanitized_update
+
+        # HA's data_without_xml logs the complete response even on success.
+        # Keep conversion semantics without passing private content to its logger.
+        def private_data_without_xml() -> str | None:
+            value = rest_data.data
+            content_type = (
+                rest_data.headers.get("Content-Type", "") if rest_data.headers else ""
+            )
+            if value is not None and content_type.startswith(rest.const.XML_MIME_TYPES):
+                return json_dumps(xmltodict.parse(value))
+            return value
+
+        cast(Any, rest_data).data_without_xml = private_data_without_xml
     return rest_data
 
 
@@ -459,6 +567,7 @@ class RestFunction(Function):
     ) -> Any:
         """Execute REST API call."""
         rest_data = get_rest_data(hass, function_config, arguments)
+        cast(Any, rest_data)._eoai_record_receipts = True
 
         try:
             await rest_data.async_update(log_errors=False)
@@ -471,7 +580,14 @@ class RestFunction(Function):
             raise HomeAssistantError(
                 f"REST request failed: {type(error).__name__}"
             ) from error
-        value = await hass.async_add_executor_job(rest_data.data_without_xml)
+        try:
+            value = await hass.async_add_executor_job(rest_data.data_without_xml)
+        except ExpatError as parse_error:
+            # Response content is untrusted. Keep parser diagnostics (which can
+            # include response text) out of the public Function error.
+            raise FunctionResponseParseError(
+                "REST response parsing failed: ExpatError"
+            ) from parse_error
         value_template = function_config.get(CONF_VALUE_TEMPLATE)
 
         if value is not None and value_template is not None:
@@ -503,6 +619,7 @@ class ScrapeFunction(Function):
             )
         )
 
+    @private_template_diagnostics
     async def execute(
         self,
         hass: HomeAssistant,

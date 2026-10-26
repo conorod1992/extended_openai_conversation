@@ -12,6 +12,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
 from .const import DOMAIN
+from .operation_settlement import async_settle_owned_operation
 
 _AGENT_MAINTENANCE_GATES = f"{DOMAIN}.agent_maintenance_gates"
 
@@ -195,30 +196,10 @@ async def _async_run_exclusive_operation[T](
     operation: Callable[[], Awaitable[T]],
 ) -> T:
     """Finish one exclusive operation before propagating caller cancellation."""
-    cancellation: asyncio.CancelledError | None = None
     async with gate.exclusive():
-        task: asyncio.Future[T] = asyncio.ensure_future(operation())
-        while not task.done():
-            try:
-                await asyncio.shield(task)
-            except asyncio.CancelledError as err:
-                if task.cancelled():
-                    raise
-                if cancellation is None:
-                    cancellation = err
-            except Exception:
-                # The operation has reached an outcome. Inspect it below so its
-                # deterministic restore/rollback error takes precedence over a
-                # concurrent caller cancellation.
-                break
-
-        result = task.result()
-
-    # Release exclusivity before surfacing deferred cancellation so the next
-    # ordinary operation cannot observe a permanently wedged maintenance gate.
-    if cancellation is not None:
-        raise cancellation
-    return result
+        # Invoke only after admission. The gate's finally releases exclusivity
+        # before the caller observes the result, native failure or cancellation.
+        return await async_settle_owned_operation(operation())
 
 
 @asynccontextmanager

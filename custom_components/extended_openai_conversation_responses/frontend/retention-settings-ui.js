@@ -1,5 +1,6 @@
 import {applyTargetedConfigDirty} from "./management-state-safety.js";
-import {clone, saveBarMarkup} from "./unsaved-state.js";
+import {saveBarMarkup} from "./unsaved-state.js";
+import {discardConfigurationDraft} from "./configuration-acknowledgement.js";
 
 const FIELDS = [
   ["usage_request_retention_days", "Keep request details for"],
@@ -82,9 +83,7 @@ function bindDiscard(panel) {
   button.dataset.eocDiscardBound = "true";
   button.addEventListener("click", () => {
     if (panel._configurationSaving || !panel._configData?.config) return;
-    panel._draft = clone(panel._configData.config);
-    panel._draftTitle = panel._configData.title;
-    panel._setConfigDirty(false);
+    discardConfigurationDraft(panel);
     panel._eocMainMarkup = null;
     panel._render();
   });

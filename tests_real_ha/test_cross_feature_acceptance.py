@@ -4,6 +4,8 @@ from copy import deepcopy
 import json
 from unittest.mock import AsyncMock
 
+import pytest
+
 from openai.types.chat import ChatCompletionChunk
 
 from custom_components.extended_openai_conversation_responses.const import (
@@ -342,3 +344,141 @@ async def test_guest_rule_preflights_whole_sequence_and_returns_generic_denial(
     assert _speech(guest, successful=False) == GUEST_MODE_UNAVAILABLE
     assert calls == []  # Even the permitted first action must not execute.
     assert sent == []
+
+
+@pytest.mark.parametrize(
+    "domain", ["automation", "AUTOMATION", "ScEnE", "HOMEASSISTANT"]
+)
+@pytest.mark.parametrize("batch", [False, True])
+async def test_guest_service_casing_cannot_dispatch_indirect_actions(
+    hass, monkeypatch, domain, batch
+):
+    from custom_components.extended_openai_conversation_responses.built_in_functions import (
+        BUILT_IN_FUNCTION_PRESETS,
+    )
+    from custom_components.extended_openai_conversation_responses.const import (
+        CONF_GUEST_FUNCTION_POLICY,
+    )
+
+    name = "execute_service" if batch else "execute_service_single"
+    tool = deepcopy(
+        next(
+            item["tool"]
+            for item in BUILT_IN_FUNCTION_PRESETS
+            if item["tool"]["function"]["name"] == name
+        )
+    )
+    effects = []
+
+    async def apply(call):
+        effects.append(call)
+
+    for registered in ("automation", "scene"):
+        hass.services.async_register(registered, "turn_on", apply)
+    hass.states.async_set("scene.owner", "scening")
+    async_expose_entity(hass, "conversation", "scene.owner", True)
+    agent = await _agent(
+        hass,
+        **{
+            CONF_FUNCTION_TOOLS: [tool],
+            CONF_GUEST_FUNCTION_POLICY: "on",
+            CONF_GUEST_POLICY_VERSION: GUEST_POLICY_VERSION,
+        },
+    )
+    await agent._guest_mode.async_update_trusted(indefinite=True)
+    args = {
+        "domain": domain,
+        "service": "TURN_ON",
+        "service_data": {"entity_id": "scene.owner"},
+    }
+    sent = _provider(
+        monkeypatch,
+        agent,
+        [
+            {
+                "index": 0,
+                "id": "guest-case",
+                "type": "function",
+                "function": {
+                    "name": tool["spec"]["name"],
+                    "arguments": json.dumps({"list": [args]} if batch else args),
+                },
+            },
+            "Denied safely.",
+        ],
+    )
+    result = await _say(hass, agent, "Perform the action")
+    assert _speech(result) == "Denied safely."
+    assert not effects
+    assert len(sent) == 2
+    assert "guest_mode" in json.dumps(sent[-1]["messages"])
+
+
+@pytest.mark.parametrize("initial_private", [False, True])
+@pytest.mark.parametrize(
+    "operations",
+    [
+        ("resume_saving",),
+        ("resume_saving", "private"),
+        ("private", "resume_saving"),
+        ("resume_saving", "private", "resume_saving"),
+    ],
+)
+async def test_public_archive_privacy_transition_does_not_retain_private_turn(
+    hass, monkeypatch, initial_private, operations
+):
+    from pytest_homeassistant_custom_component.common import MockUser
+
+    user = MockUser(id="archive-owner").add_to_hass(hass)
+    agent = await _agent(hass, archive_enabled=True)
+
+    async def say(text, conversation_id=None):
+        return await conversation.async_converse(
+            hass=hass,
+            text=text,
+            conversation_id=conversation_id,
+            context=Context(user_id=user.id),
+            language="en",
+            agent_id=agent.entry.entry_id,
+        )
+
+    seed_replies = []
+    if initial_private:
+        seed_replies.append(
+            {
+                "index": 0,
+                "id": "seed-private",
+                "type": "function",
+                "function": {"name": "conversation_private", "arguments": "{}"},
+            }
+        )
+    seed_replies.append("Seed answer")
+    _provider(monkeypatch, agent, seed_replies)
+    first = await say("Seed request")
+    assert _speech(first) == "Seed answer"
+    replies = [
+        {
+            "index": 0,
+            "id": f"privacy-{i}",
+            "type": "function",
+            "function": {"name": "conversation_" + operation, "arguments": "{}"},
+        }
+        for i, operation in enumerate(operations)
+    ]
+    replies.append("Sensitive current answer")
+    _provider(monkeypatch, agent, replies)
+    second = await say("Sensitive current request", first.conversation_id)
+    assert _speech(second) == "Sensitive current answer"
+    exported = await agent._archive.async_backup_data()
+    serialized = json.dumps(exported)
+    should_retain = not initial_private and "private" not in operations
+    assert ("Sensitive current request" in serialized) is should_retain
+    assert ("Sensitive current answer" in serialized) is should_retain
+    _provider(monkeypatch, agent, ["Future answer"])
+    third = await say("Future request", second.conversation_id)
+    assert _speech(third) == "Future answer"
+    serialized = json.dumps(await agent._archive.async_backup_data())
+    assert ("Future request" in serialized) is (operations[-1] == "resume_saving")
+    if not should_retain:
+        assert "Sensitive current request" not in serialized
+        assert "Sensitive current answer" not in serialized

@@ -35,9 +35,11 @@ from homeassistant.helpers.selector import (
 )
 
 from .agent_config import (
+    AgentConfigError,
     agent_config_defaults,
     normalize_agent_config,
     project_agent_config_fields,
+    validate_agent_title,
 )
 from .agent_test import async_test_agent
 from .const import (
@@ -576,22 +578,31 @@ class ExtendedOpenAISubentryFlowHandler(ConfigSubentryFlow):
         if self._get_entry().state != ConfigEntryState.LOADED:
             return self.async_abort(reason="entry_not_loaded")
 
+        errors: dict[str, str] = {}
         if user_input is not None:
             if not self._is_new:
                 return self.async_abort(reason="agent_configuration_managed_in_panel")
-            title = str(user_input.get(CONF_NAME, DEFAULT_CONVERSATION_NAME)).strip()
-            initial = dict(self.options)
-            initial[CONF_SKILLS] = [
-                skill["name"] for skill in await self._async_get_skills()
-            ]
-            return self.async_create_entry(
-                title=title or DEFAULT_CONVERSATION_NAME,
-                data=normalize_agent_config(initial),
-            )
+            requested_title = user_input.get(CONF_NAME, DEFAULT_CONVERSATION_NAME)
+            if isinstance(requested_title, str) and not requested_title.strip():
+                requested_title = DEFAULT_CONVERSATION_NAME
+            try:
+                title = validate_agent_title(requested_title)
+            except AgentConfigError:
+                errors[CONF_NAME] = "invalid_name"
+            else:
+                initial = dict(self.options)
+                initial[CONF_SKILLS] = [
+                    skill["name"] for skill in await self._async_get_skills()
+                ]
+                return self.async_create_entry(
+                    title=title,
+                    data=normalize_agent_config(initial),
+                )
 
         if self._is_new:
             return self.async_show_form(
                 step_id="init",
+                errors=errors,
                 data_schema=schema_for_ha(
                     vol.Schema(
                         {

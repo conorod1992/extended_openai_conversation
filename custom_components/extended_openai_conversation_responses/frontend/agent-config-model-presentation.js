@@ -8,9 +8,7 @@ export function reasoningEffortOptionsForResult(result = {}) {
 
 export function webSearchControlState(panel) {
   const config = panel?._draft || panel?._result?.config || {};
-  const data = panel?._modelCatalogData;
-  const metadata = data?.requested_model === String(config.azure_model || config.chat_model || "")
-    ? data.model_capabilities : panel?._result?.model_capabilities;
+  const metadata = modelCapabilitiesForDraft(panel);
   if (!metadata?.evaluations) return {disabled:false, note:""};
   const effort = config.reasoning_effort ?? metadata.recommended_profile?.reasoning_effort ?? null;
   const functions = toolsRequired(config);
@@ -25,8 +23,21 @@ export function webSearchControlState(panel) {
 
 function toolsRequired(config) {
   return Number(config.max_function_calls_per_conversation ?? 10) !== 0
-    || config.continue_conversation === "conditional"
-    || (Array.isArray(config.function_groups) && config.function_groups.some((group) => group.enabled !== false && group.loading_mode === "on_demand"));
+    || config.continue_conversation === "conditional";
+}
+
+export function modelCapabilitiesForDraft(panel) {
+  const config = panel?._draft || panel?._result?.config || {};
+  const model = String(config.azure_model || config.chat_model || "");
+  const catalog = panel?._modelCatalogData;
+  const saved = panel?._result?.config;
+  const fallback = saved && String(saved.azure_model || saved.chat_model || "") !== model
+    ? {} : panel?._result?.model_capabilities || {};
+  if (catalog?.requested_model !== model) return fallback;
+  if (catalog.model_capabilities) return catalog.model_capabilities;
+  // Older catalogue envelopes expose metadata separately from the legacy
+  // support flags. Reuse those flags only when they belong to this same model.
+  return Object.keys(fallback).length ? {...fallback, ...catalog.model_metadata} : catalog.model_metadata || {};
 }
 
 // Presentation only: the catalogue and backend still own capability semantics.
@@ -35,7 +46,7 @@ export function modelFieldPresentation(panel, key, value) {
   const config = panel?._draft || panel?._result?.config || {};
   const catalog = panel?._modelCatalogData;
   const data = catalog?.requested_model === String(config.azure_model || config.chat_model || "") ? catalog : null;
-  const metadata = data?.model_capabilities || data?.model_metadata || panel?._result?.model_capabilities || {};
+  const metadata = modelCapabilitiesForDraft(panel);
   if (key === "chat_model" && data) {
     const note = metadata.status === "deprecated"
       ? `Deprecated model. It remains selected for this existing configuration and will not be changed automatically.${metadata.lifecycle_note ? ` ${metadata.lifecycle_note}` : ""}`
@@ -94,4 +105,39 @@ export function modelFieldNotes(panel, presentation) {
   const {note, noteClass = "capability-note", models} = presentation;
   const list = models ? `<datalist id="extended-openai-model-catalog">${models.map((item) => `<option value="${panel._e(item.id)}" label="${panel._e(`${item.display_name || item.id}${item.status === "deprecated" ? " — Deprecated" : ""}`)}"></option>`).join("")}</datalist>` : "";
   return `${list}${note ? `<small class="${noteClass}">${panel._e(note)}</small>` : ""}`;
+}
+
+// Catalogue work can finish after focus moves to another editable field. Keep
+// the mounted API selector current without replacing controls or moving focus.
+export function refreshApiModePresentation(panel) {
+  const control = panel.shadowRoot?.querySelector?.('[data-config="api_mode"]');
+  if (!control) return;
+  const presentation = modelFieldPresentation(panel, "api_mode", control.value);
+  for (const option of control.options) option.disabled = presentation.disabledOption(option.value);
+  const field = control.closest('[data-field="api_mode"]');
+  let note = field?.querySelector(".capability-note");
+  if (!presentation.note) { note?.remove(); return; }
+  if (!field) return;
+  if (!note) {
+    note = document.createElement("small");
+    note.className = "capability-note";
+    field.append(note);
+  }
+  note.textContent = presentation.note;
+}
+
+// A model recommendation changes the draft without a native input event. Keep
+// an already-mounted selector in sync before actions read the complete form.
+export function refreshReasoningEffortPresentation(panel) {
+  const control = panel.shadowRoot?.querySelector?.('[data-config="reasoning_effort"]');
+  if (!control) return;
+  const presentation = modelFieldPresentation(panel, "reasoning_effort", panel._draft?.reasoning_effort);
+  const options = presentation.options.map(({value, label}) => {
+    const option = control.ownerDocument.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    return option;
+  });
+  control.replaceChildren(...options);
+  control.value = presentation.value;
 }

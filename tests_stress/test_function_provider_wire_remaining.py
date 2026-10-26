@@ -1251,9 +1251,17 @@ async def test_public_assist_multicall_dispatch_concurrency(
                 "call-b",
             ]
             assert "Parallel owner" in json.dumps(tool_result_data(captured[0]))
-            assert "EXPECTED-SIBLING-FAILURE" in json.dumps(
-                tool_result_data(captured[1])
-            )
+            sibling_result = tool_result_data(captured[1])
+            assert sibling_result == {
+                "result": {
+                    "status": "error",
+                    "error": (
+                        "SanitizedBackendError: Function execution failed. "
+                        "Check the tool configuration and permissions."
+                    ),
+                }
+            }
+            assert "EXPECTED-SIBLING-FAILURE" not in json.dumps(sibling_result)
             assert cancelled == set()
             assert len(wire.requests) == 1
             healthy_wire = _install_wire(
@@ -1686,10 +1694,11 @@ async def test_bash_exited_leader_pipe_descendants_settle_on_public_assist(
     child_code = "import time; print('CHILD-STDOUT',flush=True); print('CHILD-STDERR',file=__import__('sys').stderr,flush=True); time.sleep(60)"
     leader_code = f"import subprocess, pathlib; child=subprocess.Popen([{sys.executable!r}, '-c', {child_code!r}]); pathlib.Path({str(child_file)!r}).write_text(str(child.pid))"
     command = f"{shlex.quote(sys.executable)} -c {shlex.quote(leader_code)}"
-    processes, readers = [], []
+    processes, readers, cleanups = [], [], []
     pipe_started = asyncio.Event()
     create = asyncio.create_subprocess_shell
     read = bash_module._read_bounded_stream
+    cleanup = bash_module._async_cleanup_process
 
     async def observed_create(*args, **kwargs):
         process = await create(*args, **kwargs)
@@ -1712,8 +1721,13 @@ async def test_bash_exited_leader_pipe_descendants_settle_on_public_assist(
             pipe_started.set()
         return await read(stream, *args)
 
+    async def observed_cleanup(process, stdout_task, stderr_task, *, graceful):
+        cleanups.append((process, graceful))
+        return await cleanup(process, stdout_task, stderr_task, graceful=graceful)
+
     monkeypatch.setattr(bash_module.asyncio, "create_subprocess_shell", observed_create)
     monkeypatch.setattr(bash_module, "_read_bounded_stream", observed_read)
+    monkeypatch.setattr(bash_module, "_async_cleanup_process", observed_cleanup)
     tool = {
         "spec": {
             "name": "tree_probe",
@@ -1791,12 +1805,14 @@ async def test_bash_exited_leader_pipe_descendants_settle_on_public_assist(
         else:
             result = await asyncio.wait_for(turn, 5)
             assert _speech(result) == "Tree settled"
-            assert (
-                "timed out"
-                in _provider_result(
-                    wire.requests[1], API_MODE_CHAT_COMPLETIONS, "tree"
-                )["error"]
+            # Provider errors follow the private backend-failure contract. The
+            # real forced teardown below proves the timeout independently.
+            assert _provider_result(
+                wire.requests[1], API_MODE_CHAT_COMPLETIONS, "tree"
+            )["error"] == (
+                "Function execution failed. Check the tool configuration and permissions."
             )
+        assert cleanups == [(processes[0], boundary == "cancel")]
         assert all(reader.done() for reader in readers)
         async with asyncio.timeout(5):
             while (
@@ -1819,6 +1835,8 @@ async def test_bash_exited_leader_pipe_descendants_settle_on_public_assist(
         assert _provider_result(
             healthy_wire.requests[1], API_MODE_CHAT_COMPLETIONS, "healthy-tree"
         ) == {"exit_code": 0, "stdout": "HEALTHY-TREE"}
+        assert len(processes) == 2
+        assert cleanups == [(processes[0], boundary == "cancel")]
         record(
             stress_trace,
             "summary",

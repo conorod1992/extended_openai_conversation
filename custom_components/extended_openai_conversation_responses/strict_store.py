@@ -7,7 +7,7 @@ managers must instead receive that failure before publishing the mutation.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, Self
 
@@ -15,26 +15,8 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util.file import WriteError
 
 from .agent_maintenance import AgentMaintenanceGate, get_agent_maintenance_gate
+from .operation_settlement import async_settle_owned_operation as _async_settle_store_io
 from .operational_errors import storage_failure_reason
-
-
-async def _async_settle_store_io[T](operation: Awaitable[T]) -> T:
-    """Keep storage ownership until surviving native work has finished."""
-    task = asyncio.ensure_future(operation)
-    cancelled: asyncio.CancelledError | None = None
-    while not task.done():
-        try:
-            await asyncio.shield(task)
-        except asyncio.CancelledError as err:
-            if task.cancelled():
-                raise
-            cancelled = cancelled or err
-        except Exception:
-            break
-    result = task.result()
-    if cancelled is not None:
-        raise cancelled
-    return result
 
 
 class RecoveryGuardedStore(Store[dict[str, Any]]):

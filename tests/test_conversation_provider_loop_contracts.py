@@ -476,7 +476,7 @@ async def test_conversation_provider_failure_before_output(hass, monkeypatch) ->
 
     assert client.responses.create.await_count == 1
     assert result.response.error_code is not None
-    assert "Provider request timed out" in result.response.speech["plain"]["speech"]
+    assert "Could not connect to provider" in result.response.speech["plain"]["speech"]
     entity._execute_function_tool.assert_not_awaited()
     continuity.async_record_success.assert_not_awaited()
     continuity.async_release.assert_awaited_once_with("device:kitchen", "claim-token")
@@ -554,7 +554,7 @@ async def test_conversation_followup_provider_failure(hass, monkeypatch) -> None
     assert client.responses.create.await_count == 2
     entity._execute_function_tool.assert_awaited_once()
     assert result.response.error_code is not None
-    assert "Provider request timed out" in result.response.speech["plain"]["speech"]
+    assert "Could not connect to provider" in result.response.speech["plain"]["speech"]
     tool_results = [
         item
         for item in logs[0].content
@@ -644,4 +644,51 @@ async def test_archive_turn_write_failure_is_best_effort(hass) -> None:
         user_text="hello",
         assistant_text="Persisting is best effort.",
         successful=True,
+    )
+
+
+async def test_malformed_response_is_terminal_with_recovery_disabled(hass, monkeypatch):
+    from custom_components.extended_openai_conversation_responses.functions import web
+    from homeassistant.components.rest.data import RestData
+
+    tools = [_tool("effect"), _tool("xml")]
+    tools[0]["function"] = {
+        "type": "template",
+        "value_template": SimpleNamespace(
+            async_render=MagicMock(return_value="effect completed")
+        ),
+    }
+    tools[1]["function"] = {"type": "rest"}
+    entity, client, _continuity, _logs, invoke = _provider_fixture(
+        hass,
+        monkeypatch,
+        [
+            _tool_stream(_function_call("effect", "{}", "effect-call")),
+            _tool_stream(_function_call("xml", "{}", "xml-call")),
+            _final_stream("Unexpected continuation after malformed XML"),
+        ],
+        tools=tools,
+        options={CONF_FUNCTION_TOOL_ERROR_RECOVERY: False},
+    )
+    # Use the real executor and legacy error classification, not the fixture's stub.
+    del entity._execute_function_tool
+    entity._configured_function_tools_from_data.return_value = tools
+    hass.config_entries.async_get_entry.return_value = None
+    data = SimpleNamespace(
+        data="<root><broken></root>",
+        headers={"Content-Type": "application/xml"},
+        async_update=AsyncMock(),
+        last_exception=None,
+    )
+    data.data_without_xml = lambda: RestData.data_without_xml(data)
+    monkeypatch.setattr(web, "get_rest_data", lambda *_args: data)
+    result = await invoke()
+    assert result.response.error_code is not None
+    assert (
+        "REST response parsing failed"
+        in result.response.speech["plain"]["speech"]
+    )
+    assert client.responses.create.await_count == 2
+    assert "effect completed" in json.dumps(
+        client.responses.create.await_args_list[1].kwargs["input"], default=str
     )

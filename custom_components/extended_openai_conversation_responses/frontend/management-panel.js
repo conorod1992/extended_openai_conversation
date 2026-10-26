@@ -15,14 +15,17 @@ import {
   savePageChanges,
 } from "./management-page-drafts.js";
 import {readSectionCache, writeSectionCache, pruneCacheTimes, SCOPE_CACHE_TTL_MS, CLEAN_CONFIG_TTL_MS} from "./management-cache.js";
-import {bindPanelDialogs, knowledgeSourceAvailabilityControl, updateDialogs} from "./management-dialogs.js";
+import {bindPanelDialogs, knowledgeSourceAvailabilityControl, updateDialogs, setDialogBaseline} from "./management-dialogs.js";
 import {ASSISTANT_INTRO_MARKUP, renderManagement, showPendingDestination, reconcileScopePicker, reconcileHistoryConfiguration} from "./management-renderer.js";
-import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, setControlPending, syncAgentPicker} from "./management-actions.js";
-import {configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
+import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, syncAgentPicker} from "./management-actions.js";
+import {captureConfigurationOwner, configurationSubmissionIsCurrent, configurationReadOvertookSubmission, mergeConfigurationRead} from "./configuration-acknowledgement.js";
+import {captureCatalogLoad, catalogFailureIsCurrent} from "./management-catalog-ownership.js";
+import {capturePageRead, acceptPageRead} from "./page-save-acknowledgement.js";
 import {loadAgentsWithOverviewPrefetch, loadRoute, bindRequestRuleSearch, applyRequestRuleSearch, warmRouteAsset, prefetchIntentRead, consumeIntentRead, consumeStoredConfigurationPrefetch, discardStoredConfigurationPrefetch, markConfigurationRead, measureConfigurationRead} from "./management-route.js";
 import {getConfigurationEditor, getConfigurationTools, getRouteFeature, routeAssetKind, routeFeaturesReady, isRestrictedManagementView, nonAdminOverviewKnowledgeSnapshot} from "./management-route.js";
 import {NAVIGATION, pageMetadata, routeFromPath, routePath, focusManagementSetting} from "./frontend-navigation.js";
 import {clone, same, mergeAcknowledgedDraft} from "./unsaved-state.js";
+import {retainPanelDrafts, restorePanelDrafts, stopDraftRecovery} from "./management-draft-lifecycle.js";
 import {bindGuide, renderGuide} from "./guide-page.js";
 import {bindOverview, renderOverview, enhanceOverviewHealthClarity, startOverviewDetailReads} from "./overview-page.js";
 import {formatUsageNumber} from "./usage-format.js";
@@ -297,12 +300,56 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   get hass() { return this._hass; }
 
+  get _eocAuthenticationGeneration() { return this._eocAuthentication?.generation || 0; }
+
   set hass(value) {
-    const first = !this._hass;
+    const userId = value.user?.id;
+    const previousUser = this._eocAuthentication ? this._eocAuthentication.userId : this._hass?.user?.id;
+    const changed = previousUser != null && previousUser !== userId;
+    if (!this._eocAuthentication || previousUser !== userId) {
+      // Keep the observed identity with its generation: HA payloads can reuse
+      // and mutate the same user object before invoking this setter again.
+      this._eocAuthentication = {userId, generation:this._eocAuthenticationGeneration + (changed ? 1 : 0)};
+    }
+    if (changed) {
+      // Retire outstanding reads and model preparation as well as mutations.
+      // These are operation lifetimes; keep authored drafts and their recovery
+      // baselines intact across a temporary authentication transition.
+      ++this._loadToken;
+      this._eocCatalogReadSequence = (this._eocCatalogReadSequence || 0) + 1;
+      this._eocModelChangeToken = (this._eocModelChangeToken || 0) + 1;
+    }
     this._hass = value;
     this.style.colorScheme = value.themes?.darkMode ? "dark" : "light";
     this.shadowRoot?.querySelectorAll("ha-selector, ha-entity-picker, ha-user-picker, ha-yaml-editor").forEach(element => { element.hass = value; });
-    if (first) this._loadAgents();
+    this._loadInitialAgents();
+  }
+
+  _loadInitialAgents(retry = false) {
+    // HA can assign hass before appending an already-defined custom panel.
+    // Schedule cold work only once connected; publication remains owner-gated.
+    if (this.isConnected === false || !this._hass) return;
+    const user = this._hass.user?.id;
+    const previous = this._eocCatalogBootstrap;
+    const resolved = previous?.pending && previous.user == null && user != null;
+    if (this._data && !retry && !resolved) return;
+    if (previous && previous.user === user) return;
+    this._interruptInitialAgents();
+    const attempt = {user, pending:true};
+    this._eocCatalogBootstrap = attempt;
+    // A newly available user requires a new owned read, never adoption of the
+    // old unknown-user result. Keep this attempt after failure as well: normal
+    // HA state updates must not become an unbounded catalog retry loop.
+    void Promise.resolve(this._loadAgents()).finally(() => {attempt.pending = false;});
+  }
+
+  _interruptInitialAgents() {
+    if (!this._eocCatalogBootstrap?.pending) return;
+    this._eocCatalogBootstrap.interrupted = true;
+    // Retire both page data and lazy presentation from the interrupted attempt.
+    // Its catalogue may already exist while its initial page is still pending.
+    ++this._loadToken;
+    this._eocViewAssetToken = (this._eocViewAssetToken || 0) + 1;
   }
 
   set route(value) {
@@ -313,6 +360,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   connectedCallback() {
+    const retry = Boolean(this._eocCatalogBootstrap?.interrupted);
+    this._eocCatalogBootstrap = null;
     this._markColdLifecycle("connected");
     if (!this._onHistoryNavigation) {
       this._onHistoryNavigation = () => {
@@ -341,9 +390,14 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (this._viewKey() === "usage-maintenance/diagnostics") {
       getRouteFeature("usage-maintenance/diagnostics")?.enhanceDiagnostics(this);
     }
+    this._eocPendingModelPreparation?.resumeIfIdle?.({reconnect:true});
+    this._loadInitialAgents(retry);
   }
 
   disconnectedCallback() {
+    this._interruptInitialAgents();
+    retainPanelDrafts(this);
+    stopDraftRecovery(this);
     if (this._onHistoryNavigation) {
       window.removeEventListener("popstate", this._onHistoryNavigation);
       this._onHistoryNavigation = null;
@@ -445,8 +499,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     }
     this._configDirty = true;
     if (this._eocDirtyConfigKeys instanceof Set) {
+      const keys = this._eocDirtyConfigKeys;
       queueMicrotask(() => {
-        if (!(this._eocDirtyConfigKeys instanceof Set) || this._eocDirtyConfigKeys.size) return;
+        // Clearing or transferring a draft replaces its key set. An older
+        // callback must not mark the consumed source dirty again.
+        if (this._eocDirtyConfigKeys !== keys || keys.size) return;
         const changed = rebuildConfigDirtyKeys(this);
         const dirty = changed.size > 0;
         const wasDirty = Boolean(this._configDirty);
@@ -457,6 +514,14 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _clearConfigDraft() {
+    this._eocDraftGeneration = (this._eocDraftGeneration || 0) + 1;
+    // Model work belongs to this draft owner. A new assistant or explicitly
+    // replaced configuration must not inherit its intent or choice revision.
+    this._eocModelChangeToken = (this._eocModelChangeToken || 0) + 1;
+    this._eocPendingModelPreparation = null;
+    this._eocModelIntent = null;
+    this._eocReasoningChoiceRevision = 0;
+    this._eocAcknowledgedConfiguration = null;
     this._setConfigDirty(false);
     this._configData = null;
     this._configDataStale = false;
@@ -502,6 +567,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const projection = view === "usage-maintenance/retention" ? "retention" : "full";
     const configData = this._freshCleanConfiguration(this._agentId, projection);
     if (!configData) return false;
+    this._observeConfigurationRead(configData);
     this._configData = configData;
     this._configDataStale = false;
     this._draft = JSON.parse(JSON.stringify(configData.config));
@@ -514,6 +580,37 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._busy = false;
     this._applyConfigurationLiveMetadata(view);
     return true;
+  }
+
+  _observeConfigurationRead(configData, options = {}) {
+    const {fresh = false, previousTitle} = options;
+    this._eocConfigurationReadEpoch = (this._eocConfigurationReadEpoch || 0) + 1;
+    // Cached, prefetched and retention projections do not certify that a later
+    // catalogue repair issue has cleared. Only a sequential full backend read
+    // validates the complete Function/Group configuration.
+    if (!fresh || configData?.projection === "retention"
+        || !Array.isArray(configData?.config?.functions)
+        || !Array.isArray(configData?.config?.function_groups)) return;
+    const agent = this._selectedAgent();
+    if (agent && Object.hasOwn(options, "previousTitle") && agent.title === previousTitle && typeof configData.title === "string") agent.title = configData.title;
+    const existing = agent?.configuration_issue;
+    if (!agent || (existing && existing.field !== "functions")) return;
+    const repair = configData.function_repair;
+    if (repair != null) {
+      if (typeof repair !== "object" || Array.isArray(repair)
+          || !Array.isArray(repair.invalid_tools) || !Array.isArray(repair.group_issues)
+          || !Number.isInteger(repair.invalid_count) || repair.invalid_count < 0
+          || typeof repair.tools_valid !== "boolean"
+          || (repair.validation_error != null && typeof repair.validation_error !== "string")) return;
+      const needsRepair = Boolean(repair.validation_error || repair.invalid_count || repair.invalid_tools.length || repair.group_issues.length);
+      if (needsRepair) {
+        agent.configuration_issue = {field:"functions", repairable:true,
+          message:repair.validation_error || existing?.message || "Saved Function Tools need repair."};
+        return;
+      }
+      if (!repair.tools_valid) return;
+    }
+    if (existing?.field === "functions") delete agent.configuration_issue;
   }
 
   _invalidateCleanConfiguration(agentId) {
@@ -686,7 +783,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const guidanceCall = section === "configuration"
       && ["get", "validate", "update", "save"].includes(action);
     const guidanceAgentId = this._agentId;
-    const owner = {agentId:this._agentId, entryId:this._selectedAgent?.()?.entry_id};
+    const owner = {...captureConfigurationOwner(this), readEpoch:this._eocConfigurationReadEpoch || 0};
     // A fresh list supersedes a previously tracked revision, unless navigation
     // or a newer read/mutation made that response obsolete while it was in flight.
     const ruleRead = section === "request_rules" && action === "list" ? {
@@ -714,6 +811,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
     if (
       ruleRead
+      && configurationSubmissionIsCurrent(this, owner)
       && ruleRead.agentId === this._agentId
       && ruleRead.generation === this._cacheGeneration
       && ruleRead.mutationEpoch === (this._eocRequestRuleMutationEpoch || 0)
@@ -726,7 +824,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (
       guidanceCall
       && guidanceRevision === this._eocGuidanceCallRevision
-      && this._agentId === guidanceAgentId
+      && configurationSubmissionIsCurrent(this, owner)
     ) {
       storeRuntimeGuidance(this, result, guidanceAgentId);
     }
@@ -738,8 +836,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (!effects) return this._callCore(section, action, extra);
 
     this._pendingMutations ||= new Map();
-    const owner = {agentId:this._agentId, entryId:this._selectedAgent?.()?.entry_id};
-    const key = JSON.stringify([owner.entryId, owner.agentId, section, action, extra]);
+    const owner = captureConfigurationOwner(this);
+    const key = JSON.stringify([owner.userId, owner.entryId, owner.agentId, owner.draftGeneration, owner.authenticationGeneration, section, action, extra]);
     if (this._pendingMutations.has(key)) return this._pendingMutations.get(key);
 
     const mutationTrace = effects.revision === "tools" ? {
@@ -806,7 +904,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   async _runAgentMutation(section, action, extra, mutationTrace = null) {
     const ruleMutation = mutationEffects(section, action)?.revision === "request_rules";
     const agentId = this._agentId;
-    const owner = {agentId, entryId:this._selectedAgent?.()?.entry_id};
+    const previousRuleRevision = ruleMutation ? (this._eocRequestRuleRevision?.agentId === agentId
+      ? this._eocRequestRuleRevision.value : this._result?.revision) : null;
+    const owner = {...captureConfigurationOwner(this), readEpoch:this._eocConfigurationReadEpoch || 0};
     if (ruleMutation) this._eocRequestRuleMutationEpoch = (this._eocRequestRuleMutationEpoch || 0) + 1;
     this._eocAgentMutations = Number(this._eocAgentMutations || 0) + 1;
     syncAgentPicker(this);
@@ -815,9 +915,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._applyToolRevision(section, action, result, owner);
       if (
         ruleMutation
-        && agentId === this._agentId
+        && configurationSubmissionIsCurrent(this, owner)
         && result?.revision !== undefined
         && result?.revision !== null
+        && (this._eocRequestRuleRevision?.agentId !== agentId
+          || [previousRuleRevision, result.revision].includes(this._eocRequestRuleRevision.value))
       ) {
         this._eocRequestRuleRevision = {agentId, value: result.revision};
       }
@@ -841,6 +943,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (
       mutationEffects(section, action)?.revision === "tools"
       && configurationSubmissionIsCurrent(this, owner)
+      && !configurationReadOvertookSubmission(this, owner)
       && typeof result?.revision === "string"
       && this._configData
     ) {
@@ -862,19 +965,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         if (payload[key]) payload[key] = normalizeGuestModeTimestamp(payload[key]);
       }
     }
-    const ruleSave = section === "request_rules" && ["create", "update"].includes(action)
-      && this.shadowRoot?.querySelector?.("#rule-dialog")?.open;
-    if (!ruleSave) return this._request(section, action, payload, mutationTrace);
-    if (this._eocRuleSavePromise) return this._eocRuleSavePromise;
-    const button = this.shadowRoot.querySelector("#rule-save");
-    setControlPending(this, button, true);
-    const request = Promise.resolve().then(() => this._request(section, action, payload));
-    const tracked = request.finally(() => {
-      setControlPending(this, button, false);
-      if (this._eocRuleSavePromise === tracked) this._eocRuleSavePromise = null;
-    });
-    this._eocRuleSavePromise = tracked;
-    return tracked;
+    return this._request(section, action, payload, mutationTrace);
   }
 
   async _request(section, action, extra = {}, mutationTrace = null) {
@@ -1049,14 +1140,16 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     return this._serviceCatalogPromise;
   }
 
-  async _loadAgents(selectedId = null, owner = null) {
+  async _loadAgents(selectedId = null, owner = null, selectionIntent = null) {
+    const context=captureCatalogLoad(this,owner,selectionIntent);
     this._markColdLifecycle("agents-start");
     try {
-      await loadAgentsWithOverviewPrefetch(this, selectedId, owner);
+      await loadAgentsWithOverviewPrefetch(this, selectedId, owner, context);
+      restorePanelDrafts(this);
       this._markColdLifecycle("agents-complete", {status: "fulfilled"});
     } catch (err) {
       this._markColdLifecycle("agents-complete", {status: "rejected"});
-      if (owner && !configurationSubmissionIsCurrent(this, owner)) return;
+      if (!catalogFailureIsCurrent(this,context)) return;
       // Failed catalogue reads cannot validate the owner of a mounted editor.
       // Close it so the failure can render and stale drafts cannot be submitted.
       this.shadowRoot?.querySelectorAll("dialog[open]").forEach(dialog => dialog.close());
@@ -1103,6 +1196,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     prepareMemoryBrowser(this);
     const value = await trackAsync(this, LOAD_MARK_PREFIX, () => loadRoute(this, silent));
     await getRouteFeature("memory-browser")?.finishMemoryBrowserLoad(this);
+    restorePanelDrafts(this);
     return value;
   }
 
@@ -1110,20 +1204,24 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (!this._selectedAgent()) return this._render();
     const view = this._viewKey();
     const loadToken = ++this._loadToken;
+    const owner = captureConfigurationOwner(this);
+    const ownsLoad = () => loadToken === this._loadToken && configurationSubmissionIsCurrent(this, owner);
     const cacheGeneration = this._cacheGeneration;
     const scopeCatalogKey = this._prepareScopeCatalogVisit(view);
+    const pageRead = capturePageRead(this, view);
     const configOnly = this._isDraftView() && view !== "data-memory/conversations" && !["capabilities/request-rules", "usage-maintenance/backup-restore"].includes(view);
     if (configOnly && this._hasConfigurationCatalogGeneration()) {
       try {
         if (!await this._validateConfigurationCatalog()) return;
       } catch (error) {
-        if (loadToken !== this._loadToken || cacheGeneration !== this._cacheGeneration) return;
+        if (!ownsLoad() || cacheGeneration !== this._cacheGeneration) return;
         this._invalidateCleanConfiguration(this._agentId);
         this._error = `Unable to verify current model data: ${error.message || String(error)}. Retry loading this section.`;
         this._busy = false;
         this._render();
         return;
       }
+      if (!ownsLoad()) return;
     }
     if (configOnly && this._configData && !this._configDataStale && this._draftAgentId === this._agentId
         && (this._configData.projection !== "retention" || view === "usage-maintenance/retention")) {
@@ -1186,7 +1284,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       if (needsScopes && (view !== "data-memory/conversations" || !prefetchedScopedCollection)) {
         await scopePromise;
       }
-      if (loadToken !== this._loadToken) return;
+      if (!ownsLoad()) return;
       const scopedCollection = async () => {
         if (prefetchedScopedCollection && initialScopeId === this._scopeId) {
           const settled = await prefetchedScopedCollection;
@@ -1206,7 +1304,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         this._markColdLifecycle("overview-summary-start");
         const primary = await consumeIntentRead(this, view, "overview", "primary");
         this._markColdLifecycle("overview-summary-complete");
-        if (loadToken !== this._loadToken || cacheGeneration !== this._cacheGeneration
+        if (!ownsLoad() || cacheGeneration !== this._cacheGeneration
             || overviewAgentId !== this._agentId) return;
         const {agent, ...overview} = primary;
         if (agent) Object.assign(this._selectedAgent(), agent);
@@ -1252,7 +1350,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         result = admin ? (this._configData || null) : contentData;
 
         const patchHistory = (key, settled, label) => {
-          if (loadToken !== this._loadToken || cacheGeneration !== this._cacheGeneration
+          if (!ownsLoad() || cacheGeneration !== this._cacheGeneration
               || this._viewKey() !== "data-memory/conversations" || !this._contentData) return;
           const loadErrors = (this._contentData.load_errors || []).filter((issue) => issue.key !== key);
           const loading = {...(this._contentData.loading || {}), [key]: false};
@@ -1282,12 +1380,12 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
         if (prefetchedScopedCollection) {
           void scopePromise.then(async () => {
-            if (loadToken !== this._loadToken || cacheGeneration !== this._cacheGeneration
+            if (!ownsLoad() || cacheGeneration !== this._cacheGeneration
                 || this._viewKey() !== "data-memory/conversations") return;
             let refreshedSessions = null;
             if (this._scopeId !== initialScopeId) {
               refreshedSessions = await loadScopedCollection(this._scopeId);
-              if (loadToken !== this._loadToken || cacheGeneration !== this._cacheGeneration
+              if (!ownsLoad() || cacheGeneration !== this._cacheGeneration
                   || this._viewKey() !== "data-memory/conversations") return;
             }
             if (this._contentData) {
@@ -1327,11 +1425,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
           load_errors: result.load_errors || [],
         };
         guestDetailsSecondary = detailsPromise;
-        if (this._unsavedState?.scopes.get("capabilities/guest-mode")?.agent !== this._agentId) this._guestDraft = JSON.parse(JSON.stringify(result.config || {}));
-        if (!result.legacy_policy) {
-          this._guestMigrationReview = false;
-          this._guestStartingFresh = false;
-        }
       } else if (view === "capabilities/request-rules") {
         result = await consumeIntentRead(this, view, "request_rules", "list");
       } else if (this._isDraftView() && view !== "usage-maintenance/backup-restore") {
@@ -1340,8 +1433,17 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       } else {
         result = null;
       }
-      if (loadToken !== this._loadToken) return;
+      if (!ownsLoad()) return;
       if (cacheGeneration !== this._cacheGeneration) return;
+      if (view === "capabilities/guest-mode") {
+        // Authoring mode belongs to the accepted policy read, just as its
+        // values do. A late response from another assistant cannot reset it.
+        if (!this._unsavedState?.scopes.get(view)?.isCurrent?.()) this._guestDraft = clone(result.config || {});
+        if (!result.legacy_policy) {
+          this._guestMigrationReview = false;
+          this._guestStartingFresh = false;
+        }
+      }
       this._contentData = contentData;
       this._result = result;
       if (view === "usage-maintenance/usage") {
@@ -1350,12 +1452,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         }
       } else if (view !== "overview") writeSectionCache(this, cacheKey, result);
       this._error = null;
+      acceptPageRead(this, result, pageRead);
       if (view === "overview") {
         void startOverviewDetailReads(this, {loadToken, cacheGeneration});
       }
       if (guestDetailsSecondary) {
         void guestDetailsSecondary.then((settled) => {
-          if (loadToken !== this._loadToken || cacheGeneration !== this._cacheGeneration
+          if (!ownsLoad() || cacheGeneration !== this._cacheGeneration
               || this._viewKey() !== "capabilities/guest-mode") return;
           const errors = (this._result?.load_errors || []).filter((issue) => issue.key !== "details");
           const loading = {...(this._result?.loading || {}), details: false};
@@ -1383,7 +1486,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       if (usageSecondary) {
         for (const [key, label, pending] of usageSecondary) {
           void pending.then((settled) => {
-            if (loadToken !== this._loadToken || cacheGeneration !== this._cacheGeneration
+            if (!ownsLoad() || cacheGeneration !== this._cacheGeneration
                 || (key === "runs" && usageDetailGeneration !== (this._usageDetailGeneration || 0))
                 || this._viewKey() !== "usage-maintenance/usage") return;
             const errors = (this._result?.load_errors || []).filter((issue) => issue.key !== key);
@@ -1406,14 +1509,14 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         }
       }
     } catch (err) {
-      if (loadToken === this._loadToken) this._error = err.message || String(err);
+      if (ownsLoad() && cacheGeneration === this._cacheGeneration) this._error = err.message || String(err);
     } finally {
-      if (loadToken === this._loadToken) {
+      if (ownsLoad()) {
         if (cacheGeneration !== this._cacheGeneration) {
           // A mutation of this agent superseded the response. Keep loading
           // until a current read settles instead of rendering an empty section.
           queueMicrotask(() => {
-            if (loadToken === this._loadToken) void this._loadSectionData(silent);
+            if (ownsLoad()) void this._loadSectionData(silent);
           });
         } else {
           this._busy = false;
@@ -1541,13 +1644,19 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     return true;
   }
 
-  async _loadConfigDraft() {
+  async _loadConfigDraft({preserveResult = false, full = false} = {}) {
+    // A global acknowledgement retains an authoring baseline until a complete
+    // read resolves it, including when the current route is Retention.
+    full ||= Boolean(this._eocAcknowledgedConfiguration);
+    const previousConfig = this._configData, previousResult = this._result;
+    const readOwner = captureConfigurationOwner(this);
     // Validate shared model data before reusing an active baseline, clean cache
     // or prefetched configuration on any route or assistant.
     if (this._hasConfigurationCatalogGeneration() && !await this._validateConfigurationCatalog()) return;
+    if (!configurationSubmissionIsCurrent(this, readOwner)) return;
     const diagnostics = this._eocConfigurationReadDiagnostics ||= {};
     if (!this._configData || this._configDataStale || this._draftAgentId !== this._agentId
-        || (this._configData.projection === "retention" && this._viewKey() !== "usage-maintenance/retention")) {
+        || (this._configData.projection === "retention" && (full || this._viewKey() !== "usage-maintenance/retention"))) {
       const agentId = this._agentId;
       const entryId = this._selectedAgent()?.entry_id;
       const baseline = this._draftAgentId === agentId ? this._configData : null;
@@ -1556,12 +1665,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const view = this._viewKey();
       // Cold Retention visits stay partial. Refresh an existing full baseline
       // with a full read so its unrelated draft fields cannot disappear.
-      const projection = view === "usage-maintenance/retention" && (!baseline || baseline.projection === "retention") ? "retention" : "full";
+      const projection = !full && view === "usage-maintenance/retention" && (!baseline || baseline.projection === "retention") ? "retention" : "full";
       const action = projection === "retention" ? "retention_get" : "get";
       const trace = (event, detail) => markConfigurationRead(event, {view, action, ...detail});
       const key = this._configurationSnapshotKey(agentId, projection);
       const cached = this._freshCleanConfiguration(agentId, projection);
       let configData = cached;
+      let healthReadOwner, healthReadIssue, healthReadTitle, certifiesHealth = false;
       if (cached) {
         discardStoredConfigurationPrefetch(this, "clean-snapshot");
         diagnostics.draft = {source: "clean-snapshot", action, sentAction: null};
@@ -1601,10 +1711,14 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
           trace("draft-source", {source: "new-backend-request"});
           trace("fallback-started", {source: "new-backend-request", status: "started"});
           const finishFallback = measureConfigurationRead("fallback-response", {view, action, source: "new-backend-request"});
+          healthReadOwner = this._selectedAgent();
+          healthReadIssue = healthReadOwner?.configuration_issue;
+          healthReadTitle = healthReadOwner?.title;
           try {
             configData = projection === "retention"
               ? await consumeIntentRead(this, view, "configuration", "retention_get")
               : await this._call("configuration", "get");
+            certifiesHealth = projection === "full";
             finishFallback("fulfilled");
           } catch (err) {
             finishFallback("rejected");
@@ -1614,6 +1728,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       }
       if (agentId !== this._agentId || entryId !== this._selectedAgent()?.entry_id
           || loadToken !== this._loadToken || cacheGeneration !== this._cacheGeneration || view !== this._viewKey()) return;
+      if (!configurationSubmissionIsCurrent(this, readOwner) || (preserveResult && this.isConnected === false)) return;
       const currentBaseline = this._draftAgentId === agentId ? this._configData : null;
       // A newer acknowledgement/read owns its revision and baseline. Metadata
       // additions may replace the envelope while retaining the same config.
@@ -1627,13 +1742,20 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const prior = key ? this._cleanConfigSnapshots.get(key)?.result : null;
       if (prior && prior.revision !== configData.revision) this._invalidateCleanConfiguration(agentId);
       observeCatalogGeneration(this, configData);
+      this._observeConfigurationRead(configData, {previousTitle:healthReadTitle, fresh:certifiesHealth
+        && this._selectedAgent() === healthReadOwner && healthReadOwner?.configuration_issue === healthReadIssue});
       this._configData = configData;
       this._configDataStale = false;
       if (!cached) this._rememberCleanConfiguration(configData, agentId);
       // Adopt fresh unchanged fields and keep the latest local delta, including
       // edits/deletions made while the read was pending and Retention expansion.
-      this._draft = retainedDraft ? mergeAcknowledgedDraft(retainedDraft.draft, baseline.config, configData.config) : clone(configData.config);
-      this._draftTitle = retainedDraft && retainedDraft.title !== baseline.title ? retainedDraft.title : configData.title;
+      const merged = retainedDraft ? mergeConfigurationRead(this, retainedDraft, baseline, configData) : {draft:clone(configData.config), title:configData.title};
+      const nextDraft = merged.draft;
+      if (retainedDraft) this._eocPendingModelPreparation?.rebindDraft?.(retainedDraft.draft, nextDraft,
+        {savedConfig:configData.projection === "retention" ? undefined : configData.config});
+      this._draft = nextDraft;
+      this._draftTitle = merged.title;
+      if (configData.projection !== "retention") this._eocAcknowledgedConfiguration = null;
       this._draftAgentId = agentId;
       this._setConfigDirty(false);
       if (retainedDraft) this._syncConfigDirty();
@@ -1641,7 +1763,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       diagnostics.draft = {source: "active-config", action: this._viewKey() === "usage-maintenance/retention" ? "retention_get" : "get", sentAction: null};
       markConfigurationRead("draft-source", {view: this._viewKey(), action: diagnostics.draft.action, source: "active-config"});
     }
-    this._result = this._configData;
+    if (!preserveResult || (this._result === previousResult && previousResult === previousConfig)) this._result = this._configData;
   }
 
   async _navigate(page, subsection = null) {
@@ -2213,7 +2335,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._knowledgeLoadToken = loadToken;
     this._editingSource = null;
     this._knowledgeMode = sourceId ? "edit-loading" : "create";
-    this._editorInitial = null;
+    setDialogBaseline(this, "knowledge-dialog", null);
     this._setDialogError("knowledge", "");
     root.querySelector("#knowledge-title").value = "";
     root.querySelector("#knowledge-description").value = "";
@@ -2244,7 +2366,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       }
     }
     if (["create", "edit"].includes(this._knowledgeMode)) {
-      this._editorInitial = this._knowledgeValues();
+      setDialogBaseline(this, "knowledge-dialog", this._knowledgeValues());
     }
     this._updateKnowledgeCounter();
     // The dialog and fields are ready; a deferred focus can steal later input.
@@ -2256,9 +2378,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     beginOperation(this, "memory-editor");
     this._setSaving(this.shadowRoot.querySelector("#memory-save"), false);
     const root = this.shadowRoot;
+    root.querySelectorAll("#memory-dialog input,#memory-dialog textarea,#memory-dialog select").forEach(control => {control.disabled = false;});
     const memory = getRouteFeature("memory-browser")?.findPersistentMemory(this, memoryId) || null;
     this._editingMemory = memory ? {...memory} : null;
     this._memoryEditorScope = this._scopeId;
+    this._memoryMutationScope = this._scopeId;
     this._memoryEditorAgent = this._agentId;
     this._editorKind = "memory";
     root.querySelector("#memory-dialog-title").textContent = memory ? "Edit memory" : "Add memory";
@@ -2268,7 +2392,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     root.querySelector("#memory-delete").hidden = !memory;
     root.querySelector("#memory-meta").textContent = memory ? [memory.source, memory.created_at ? `Created ${this._formatDate(memory.created_at)}` : "", memory.updated_at ? `Updated ${this._formatDate(memory.updated_at)}` : ""].filter(Boolean).join(" · ") : "Categories help organise memories.";
     this._setDialogError("memory", "");
-    this._editorInitial = this._memoryValues();
+    setDialogBaseline(this, "memory-dialog", this._memoryValues());
     root.querySelector("#memory-dialog").showModal();
     root.querySelector("#memory-content").focus();
   }
@@ -2302,11 +2426,38 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       kind: this._memoryKind, loadToken: this._loadToken};
   }
 
-  _ownsRetainedMutation(owner) {
+  _ownsRetainedMutation(owner, {allowRefresh = false} = {}) {
     return this._agentId === owner.agent && this._selectedAgent()?.entry_id === owner.entry
       && this._hass?.user?.id === owner.user && this._viewKey() === owner.route
       && this._scopeId === owner.scope && this._memoryKind === owner.kind
-      && this._loadToken === owner.loadToken;
+      && (allowRefresh || this._loadToken === owner.loadToken);
+  }
+
+  _revalidateAcknowledgedCollection(owner) {
+    if (!this._ownsRetainedMutation(owner, {allowRefresh:true})) return false;
+    if (!this.isConnected) {
+      if (!owner.user || !owner.entry || !owner.agent) return false;
+      // Recovery may have already read the collection before this detached
+      // editor's write committed. Hand off only cache invalidation/read intent;
+      // the saved response must never become another panel's collection data.
+      const sameIdentity = panel => panel._agentId === owner.agent
+        && panel._selectedAgent?.()?.entry_id === owner.entry && panel.hass?.user?.id === owner.user;
+      this._eocAcknowledgedCollection = panel => {
+        if (!panel.isConnected || !sameIdentity(this) || !sameIdentity(panel)) return {accepted:false, refreshing:false};
+        panel._invalidateAfterMutation(owner.agent, owner.route === "data-memory/knowledge" ? "knowledge" : "memories", "update");
+        return {accepted:true, refreshing:panel._revalidateAcknowledgedCollection(owner)};
+      };
+      return false;
+    }
+    // A read completed during this save may precede its commit, or may contain
+    // a newer write than this acknowledgement. Re-read through the normal route
+    // ownership guards instead of applying an old response over either case.
+    void this._loadSection(true).catch(() => {
+      if (this.isConnected && this._ownsRetainedMutation(owner, {allowRefresh:true})) {
+        this._toast("Changes saved, but the collection could not be refreshed. Refresh this section to retry.", true);
+      }
+    });
+    return true;
   }
 
   _patchScopeCount(scopeId, field, delta) {
@@ -2332,19 +2483,34 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const ownsOperation = beginOperation(this, "knowledge-editor");
     const current = () => ownsOperation() && dialog.open
       && this.shadowRoot.querySelector("#knowledge-dialog") === dialog
-      && this._ownsRetainedMutation(owner);
+      // A reconnect read can refresh the same editor's list without changing
+      // its operation, dialog or owner. Its save still needs acknowledgement.
+      && this._ownsRetainedMutation(owner, {allowRefresh:true});
     this._setSaving(button, true);
     try {
       const response = await this._call("knowledge", editing ? "update" : "create", { ...(editing ? { source_id: this._editingSource.source_id, expected_revision: this._editingSource.updated_at } : {}), ...values });
       if (!current()) return;
-      if (!getRouteFeature("data-memory/knowledge")?.applyKnowledgeMutation(this, response)) throw new Error("The saved source response was incomplete.");
+      const ownsList = this._ownsRetainedMutation(owner);
+      if (!response?.source?.source_id || (ownsList && !getRouteFeature("data-memory/knowledge")?.applyKnowledgeMutation(this, response))) throw new Error("The saved source response was incomplete.");
       this._setSaving(button, false);
-      dialog.close();
-      writeSectionCache(this, this._sectionCacheKey(), this._result);
+      if (same(this._knowledgeValues(), values)) dialog.close();
+      else {
+        // Acknowledge this submission without discarding text authored while
+        // it was saving. A subsequent save updates the acknowledged record.
+        this._editingSource = response.source;
+        this._knowledgeMode = "edit";
+        setDialogBaseline(this, "knowledge-dialog", values);
+        this.shadowRoot.querySelector("#knowledge-delete").hidden = false;
+        this.shadowRoot.querySelector("#knowledge-dialog-title").textContent = "Edit Knowledge source";
+      }
+      // The editor owns its acknowledgement across a refresh, but only the
+      // original visit owns collection data. A newer read must remain intact.
+      if (ownsList) writeSectionCache(this, this._sectionCacheKey(), this._result);
       const agent = this._selectedAgent();
-      if (agent && Number.isFinite(response?.feature_status?.source_count)) agent.knowledge_source_count = response.feature_status.source_count;
+      if (ownsList && agent && Number.isFinite(response?.feature_status?.source_count)) agent.knowledge_source_count = response.feature_status.source_count;
       this._render();
       this._toast(editing ? "Knowledge source updated" : "Knowledge source saved");
+      if (!this.isConnected || !this._ownsRetainedMutation(owner)) this._revalidateAcknowledgedCollection(owner);
     } catch (err) {
       if (current()) this._setDialogError("knowledge", `Unable to save source: ${err.message || String(err)}`);
     } finally { if (current()) this._setSaving(button, false); }
@@ -2354,47 +2520,67 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const button = this.shadowRoot.querySelector("#memory-save");
     if (button.disabled) return;
     const values = this._memoryValues();
+    const editing = Boolean(this._editingMemory);
+    const temporary = values.type === "temporary";
+    const sourceScope = this._memoryMutationScope;
     const owner = this._retainedMutationOwner();
     const dialog = this.shadowRoot.querySelector("#memory-dialog");
     const ownsOperation = beginOperation(this, "memory-editor");
     const current = () => ownsOperation() && dialog.open
       && this.shadowRoot.querySelector("#memory-dialog") === dialog
-      && this._ownsRetainedMutation(owner);
+      && this._ownsRetainedMutation(owner, {allowRefresh:true});
+    // Temporary creation has no movable-record editor in this form. Keep its
+    // fields stable until acknowledgement rather than risk a duplicate add.
+    // Persistent content/metadata can keep changing; only its type is fixed.
+    const locked = [...dialog.querySelectorAll(temporary ? "input,textarea,select" : "#memory-type")]
+      .map(control => ({control, disabled:control.disabled}));
+    const unlock = () => { for (const {control, disabled} of locked) control.disabled = disabled; };
+    for (const {control} of locked) control.disabled = true;
     this._setSaving(button, true);
     try {
       if (this._memoryEditorAgent !== this._agentId || this._memoryEditorScope !== this._scopeId) throw new Error("The selected agent or scope changed. Close and reopen this editor.");
       if (this._editingMemory && !this._editingMemory.revision) throw new Error("Refresh the Memory list and reopen this editor before saving.");
-      const temporary = values.type === "temporary";
       const feature = getRouteFeature("data-memory/memories");
       const response = await this._call("memories", temporary ? "temporary_add" : this._editingMemory ? "update" : "add", {
-        scope_id: this._memoryEditorScope,
+        scope_id: sourceScope,
         ...(this._editingMemory ? {memory_id: this._editingMemory.memory_id, expected_revision: this._editingMemory.revision} : {}),
         ...feature.memoryMutationValues(values, this._editingMemory),
         ...(temporary ? {expires_at: feature.memoryExpiryISO(this, values.expires_at)} : {}),
       });
       if (!current()) return;
       if (!response?.memory?.memory_id) throw new Error("The saved memory response was incomplete.");
-      if (temporary) {
+      const ownsList = this._ownsRetainedMutation(owner);
+      if (ownsList && temporary) {
         if (response.scope_id === owner.scope && owner.kind === "temporary") {
           this._result = {...this._result, memories: [...(this._result.memories || []).filter(memory => memory.memory_id !== response.memory.memory_id), response.memory]};
         }
         if (response.status === "created") this._patchScopeCount(response.scope_id, "temporary_memory_count", 1);
-      } else if (owner.kind === "persistent" && !await getRouteFeature("data-memory/memories")?.applyPersistentMemoryMutation(this, response, {sourceScope: owner.scope})) throw new Error("The saved memory response was incomplete.");
+      } else if (ownsList && owner.kind === "persistent" && !await getRouteFeature("data-memory/memories")?.applyPersistentMemoryMutation(this, response, {sourceScope: owner.scope})) throw new Error("The saved memory response was incomplete.");
       if (!current()) return;
       this._setSaving(button, false);
-      dialog.close();
-      if (!temporary && response.status === "created") this._patchScopeCount(response.scope_id, "memory_count", 1);
-      else if (this._editingMemory && response.scope_id !== owner.scope) {
-        this._patchScopeCount(owner.scope, "memory_count", -1);
+      unlock();
+      if (same(this._memoryValues(), values)) dialog.close();
+      else {
+        this._editingMemory = {...response.memory};
+        this._memoryMutationScope = response.scope_id;
+        setDialogBaseline(this, "memory-dialog", values);
+        this.shadowRoot.querySelector("#memory-type").disabled = true;
+        this.shadowRoot.querySelector("#memory-delete").hidden = false;
+        this.shadowRoot.querySelector("#memory-dialog-title").textContent = "Edit memory";
+      }
+      if (ownsList && !temporary && response.status === "created") this._patchScopeCount(response.scope_id, "memory_count", 1);
+      else if (ownsList && editing && response.scope_id !== sourceScope) {
+        this._patchScopeCount(sourceScope, "memory_count", -1);
         this._patchScopeCount(response.scope_id, "memory_count", 1);
       }
-      this._patchScopeCount(owner.scope, "memory_count", 0);
-      if (!temporary && response.status === "created") this._selectedAgent().memory_count = Number(this._selectedAgent().memory_count || 0) + 1;
+      if (ownsList) this._patchScopeCount(owner.scope, "memory_count", 0);
+      if (ownsList && !temporary && response.status === "created") this._selectedAgent().memory_count = Number(this._selectedAgent().memory_count || 0) + 1;
       this._render();
-      this._toast(this._editingMemory ? "Memory updated" : "Memory added");
+      this._toast(editing ? "Memory updated" : "Memory added");
+      if (!this.isConnected || !this._ownsRetainedMutation(owner)) this._revalidateAcknowledgedCollection(owner);
     } catch (err) {
       if (current()) this._setDialogError("memory", `Unable to save memory: ${err.message || String(err)}`);
-    } finally { if (current()) this._setSaving(button, false); }
+    } finally { if (current()) { unlock(); this._setSaving(button, false); if (this._editingMemory) this.shadowRoot.querySelector("#memory-type").disabled = true; } }
   }
 
   async _deleteSource(sourceId, fromDialog = false, button = null) {
@@ -2416,16 +2602,18 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   async _deleteMemory(memoryId, fromDialog = false, button = null) {
+    const sourceScope = fromDialog && this._editingMemory?.memory_id === memoryId
+      ? this._memoryMutationScope : this._scopeId;
     if (!memoryId || !await this._confirm("Delete memory?", "This memory will be permanently removed from the selected scope.", "Delete")) return;
     const owner = this._retainedMutationOwner();
     this._setSaving(button, true, "Deleting…");
     try {
-      const response = await this._call("memories", "delete", { scope_id: owner.scope, memory_id: memoryId });
+      const response = await this._call("memories", "delete", { scope_id: sourceScope, memory_id: memoryId });
       if (!this._ownsRetainedMutation(owner)) return;
       if (!await getRouteFeature("data-memory/memories")?.applyPersistentMemoryMutation(this, response, {deletedId: memoryId, sourceScope: owner.scope})) throw new Error("The deleted memory response was incomplete.");
       if (!this._ownsRetainedMutation(owner)) return;
       if (fromDialog) this.shadowRoot.querySelector("#memory-dialog").close();
-      this._patchScopeCount(owner.scope, "memory_count", -1);
+      this._patchScopeCount(sourceScope, "memory_count", -1);
       this._selectedAgent().memory_count = Math.max(0, Number(this._selectedAgent().memory_count || 0) - 1);
       getRouteFeature("data-memory/memories")?.reconcileMemories(this);
       this._toast("Memory deleted");

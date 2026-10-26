@@ -52,6 +52,7 @@ async def _state(hass, entry, *, title: str | None = None):
 
 async def _seed(hass, entry, config_dir: Path) -> None:
     from custom_components.extended_openai_conversation_responses import backup
+    from custom_components.extended_openai_conversation_responses.private_backup import encode_document
     from homeassistant.config_entries import ConfigSubentry
 
     subentry, memory, knowledge = await _state(hass, entry)
@@ -69,7 +70,7 @@ async def _seed(hass, entry, config_dir: Path) -> None:
     await memory.async_add(_OWNER, _TARGET, "test", "explicit")
     await knowledge.async_create(_TARGET, "", _TARGET)
     target = await backup.async_collect_backup_snapshot(hass, entry, subentry)
-    (config_dir / "target-backup.json").write_text(json.dumps(target), encoding="utf-8")
+    (config_dir / "target-backup.json").write_text(json.dumps(encode_document(target)), encoding="utf-8")
     for record in await memory.async_list(_OWNER):
         await memory.async_delete(_OWNER, [record.memory_id])
     for source in await knowledge.async_list():

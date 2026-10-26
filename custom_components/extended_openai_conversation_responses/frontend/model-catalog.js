@@ -137,6 +137,7 @@ export function bindModelDataControls(panel, onUpdated = () => {}) {
     buttons.forEach((item) => { item.disabled = true; });
     const status = root.querySelector("[data-model-data-status]");
     const agentId = panel._agentId;
+    const entryId = panel._selectedAgent?.()?.entry_id, userId = panel.hass?.user?.id;
     const view = panel._viewKey?.();
     const loadToken = panel._loadToken;
     const cacheGeneration = panel._cacheGeneration;
@@ -150,9 +151,11 @@ export function bindModelDataControls(panel, onUpdated = () => {}) {
       return String((azure ? azure.value : config.azure_model) || (chat ? chat.value : config.chat_model) || "");
     };
     const model = capabilityModel();
-    const ownsAction = () => panel._eocModelDataActionToken === token
+    const ownsControls = () => panel._eocModelDataActionToken === token
       && panel._agentId === agentId && panel._viewKey?.() === view
-      && panel._loadToken === loadToken && panel._cacheGeneration === cacheGeneration;
+      && panel._selectedAgent?.()?.entry_id === entryId && panel.hass?.user?.id === userId
+      && panel._loadToken === loadToken && panel.shadowRoot === root;
+    const ownsAction = () => ownsControls() && panel._cacheGeneration === cacheGeneration;
     const current = () => ownsAction() && panel._draft === draft
       && capabilityModel() === model;
     let catalogueSucceeded = false;
@@ -178,10 +181,12 @@ export function bindModelDataControls(panel, onUpdated = () => {}) {
         status.textContent = `Unable to restore bundled model data: ${err.message || String(err)}`;
       }
     } finally {
-      // The successful callback reads/refreshes config and replaces _draft.
-      // That is still this operation's mounted set of buttons to release.
-      if (ownsAction()) {
+      // Draft reads and unrelated invalidations can reject returned data while
+      // this operation still owns the same mounted controls to release.
+      if (ownsControls()) {
+        const mounted = new Set(root.querySelectorAll("[data-model-data]"));
         buttons.forEach((item) => {
+          if (!mounted.has(item)) return;
           if (item.dataset.modelData === "apply") item.disabled = !panel?._modelCatalogData?.update_available;
           else item.disabled = false;
         });

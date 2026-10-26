@@ -81,7 +81,8 @@ async def test_protocol_error_is_handled_and_next_request_recovers(
         return result.get("error") is not None, result["response"]
 
     failed, speech = await turn()
-    assert "malformed data" in speech
+    assert "Provider request failed" in speech
+    assert "malformed data" not in speech
     if route == "assist":
         assert failed
     assert not agent._usage.runs[-1].successful
@@ -150,7 +151,7 @@ async def test_invalid_history_argument_has_one_failed_terminal_outcome(
     result = await _say(hass, agent)
     assert result.response.error_code is not None
     assert (
-        "start_time must be an ISO 8601 datetime"
+        "Function execution failed. Check the tool configuration and permissions."
         in result.response.as_dict()["speech"]["plain"]["speech"]
     )
     assert not agent._usage.runs[-1].successful

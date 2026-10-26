@@ -173,7 +173,7 @@ async def test_loaded_failed_task_preserves_effect_until_provider_ack(
         with pytest.raises(asyncio.CancelledError):
             await task
     else:
-        with pytest.raises(HomeAssistantError, match="lost continuation"):
+        with pytest.raises(HomeAssistantError, match="Provider request failed"):
             await _generate_in_session(hass, entity, caller_api, conversation_id)
     assert hass.states.get("counter.receipt_probe").state == "1"
     assert len(tool.calls) == 1

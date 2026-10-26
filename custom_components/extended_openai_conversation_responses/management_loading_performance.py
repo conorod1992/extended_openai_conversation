@@ -133,7 +133,7 @@ def _agent_snapshot(
             else None
         ),
         "function_group_count": len(
-            options.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS)
+            options.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS) or []
         ),
         "archive_enabled": bool(
             options.get(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED)

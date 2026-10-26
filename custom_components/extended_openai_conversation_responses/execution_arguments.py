@@ -11,6 +11,11 @@ from typing import Any
 def prepare_service_arguments(arguments: Mapping[str, Any]) -> dict[str, Any]:
     """Resolve native service aliases and target representation before dispatch."""
     result = deepcopy(dict(arguments))
+    # HA dispatch lowercases both names. Canonicalize before authorization and
+    # receipt/replay preparation without rewriting target IDs or payload data.
+    for key in ("domain", "service"):
+        if isinstance(name := result.get(key), str):
+            result[key] = name.lower()
     data = dict(result.get("service_data", result.get("data", {})))
     entity_id = data.get("entity_id", result.get("entity_id"))
     if isinstance(entity_id, str):

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 import json
 import math
@@ -10,6 +12,8 @@ from typing import Any
 from homeassistant.components import conversation
 
 from .model_tool_results import model_tool_result_data
+
+HistoryEstimator = Callable[[list[conversation.Content]], int]
 
 
 @dataclass(slots=True)
@@ -67,10 +71,42 @@ def retained_turns(
     parts: HistoryParts,
     observed_input_tokens: int,
     target_tokens: int,
+    estimate: HistoryEstimator | None = None,
 ) -> list[list[conversation.Content]]:
-    """Choose newest complete turns using provider-reported input token usage."""
+    """Remeasure prepared requests after removing each complete oldest turn.
+
+    The proportional fallback supports callers without a prepared provider input.
+    Conversation requests supply the API-specific estimator, including attachments.
+    """
     if len(parts.turns) <= 1:
         return parts.turns
+
+    if estimate is not None:
+        # Suffix estimates are monotonic: every complete removed turn contributes
+        # non-negative provider input. Check an oversized current turn first, so
+        # no amount of old-history serialization is needed when it cannot fit.
+        def fits(start: int) -> bool:
+            return (
+                estimate(
+                    [
+                        *parts.prefix,
+                        *(item for turn in parts.turns[start:] for item in turn),
+                    ]
+                )
+                <= target_tokens
+            )
+
+        last = len(parts.turns) - 1
+        if not fits(last):
+            return parts.turns[-1:]
+        low, high = 0, last
+        while low < high:
+            middle = (low + high) // 2
+            if fits(middle):
+                high = middle
+            else:
+                low = middle + 1
+        return parts.turns[low:]
 
     all_items = [*parts.prefix, *(item for turn in parts.turns for item in turn)]
     total_weight = _weight(all_items)
@@ -91,10 +127,11 @@ def keep_recent_messages(
     content: list[conversation.Content],
     observed_input_tokens: int,
     target_tokens: int,
+    estimate: HistoryEstimator | None = None,
 ) -> bool:
     """Discard oldest complete turns while keeping system and recent context."""
     parts = partition_history(content)
-    retained = retained_turns(parts, observed_input_tokens, target_tokens)
+    retained = retained_turns(parts, observed_input_tokens, target_tokens, estimate)
     updated = [*parts.prefix, *(item for turn in retained for item in turn)]
     if len(updated) == len(content):
         return False
@@ -106,6 +143,7 @@ def select_summary_history(
     content: list[conversation.Content],
     observed_input_tokens: int,
     target_tokens: int,
+    estimate: HistoryEstimator | None = None,
 ) -> tuple[list[conversation.Content], list[conversation.Content]] | None:
     """Return older content to summarize and recent valid raw content to retain."""
     parts = partition_history(content)
@@ -114,7 +152,7 @@ def select_summary_history(
 
     # Reserve roughly one third of the configured context for the generated summary.
     recent = retained_turns(
-        parts, observed_input_tokens, max(1, target_tokens * 2 // 3)
+        parts, observed_input_tokens, max(1, target_tokens * 2 // 3), estimate
     )
     recent_count = max(1, len(recent))
     older_turns = parts.turns[:-recent_count]
@@ -157,3 +195,41 @@ def history_as_summary_text(items: list[conversation.Content]) -> str:
                 f"assistant native item: {json.dumps(native, ensure_ascii=False, default=str)}"
             )
     return "\n".join(lines)
+
+
+async def async_keep_recent_messages(
+    content: list[conversation.Content],
+    observed_input_tokens: int,
+    target_tokens: int,
+    estimate: HistoryEstimator | None = None,
+) -> bool:
+    """Prepare detached retention in a worker; publish only on the owning loop."""
+    snapshot = list(content)
+    retained = list(snapshot)
+    changed = await asyncio.to_thread(
+        keep_recent_messages, retained, observed_input_tokens, target_tokens, estimate
+    )
+    if len(content) != len(snapshot) or any(
+        current is not original
+        for current, original in zip(content, snapshot, strict=True)
+    ):
+        return False
+    if changed:
+        content[:] = retained
+    return changed
+
+
+async def async_select_summary_history(
+    content: list[conversation.Content],
+    observed_input_tokens: int,
+    target_tokens: int,
+    estimate: HistoryEstimator | None = None,
+) -> tuple[list[conversation.Content], list[conversation.Content]] | None:
+    """Select complete provider-aware turns without serializing on HA's loop."""
+    return await asyncio.to_thread(
+        select_summary_history,
+        list(content),
+        observed_input_tokens,
+        target_tokens,
+        estimate,
+    )

@@ -24,7 +24,7 @@ async def test_composite_backend_failure_stops_dependent_child(hass, monkeypatch
     first = SimpleNamespace(execute=fail, validate_schema=lambda value: value)
     second = SimpleNamespace(execute=AsyncMock(return_value="Success"), validate_schema=lambda value: value)
     monkeypatch.setattr(functions, "get_function", lambda kind: first if kind == "first" else second)
-    with pytest.raises(HomeAssistantError, match="first action failed"):
+    with pytest.raises(HomeAssistantError, match="Function execution failed"):
         await CompositeFunction().execute(hass, {"type": "composite", "sequence": [{"type": "first"}, {"type": "second"}]}, {}, None, [])
     second.execute.assert_not_awaited()
 

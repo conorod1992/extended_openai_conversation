@@ -25,24 +25,26 @@ export class UnsavedState {
   register(id, scope) { this.scopes.set(id, scope); return scope; }
   dirty() { return [...this.scopes.values()].filter((scope) => scope.dirty()); }
   hasChanges() { return this.dirty().length > 0; }
-  leaving(destination) { return this.dirty().filter((scope) => !scope.owns?.(destination)); }
+  leaving(destination) { return [...this.scopes.values()].filter((scope) => (scope.dirty() || scope.pending) && !scope.owns?.(destination)); }
   destinations() { return new Set(this.dirty().flatMap((scope) => scope.destinations?.() || [])); }
 }
 
-export function draftScope({read, write, baseline, save, owns, destinations}) {
+export function draftScope({read, write, baseline, save, owns, destinations, isCurrent, captureSaveGuard}) {
   return {
     baseline: clone(baseline), pending: false, read, write, owns, destinations,
     dirty() { return !same(this.read(), this.baseline); },
     discard() { this.write(clone(this.baseline)); },
     async save() {
       if (this.pending) return false;
+      if (isCurrent && !isCurrent()) throw new Error("The policy editor owner changed. Reopen the current editor before saving.");
+      const saveIsCurrent = captureSaveGuard?.();
       this.pending = true;
       const submitted = clone(this.read());
       try {
         const saved = await save(submitted, this);
         this.baseline = clone(saved);
         // Edits made during an in-flight save belong to the next save.
-        this.write(mergeAcknowledgedDraft(this.read(), submitted, saved));
+        if (!saveIsCurrent || saveIsCurrent()) this.write(mergeAcknowledgedDraft(this.read(), submitted, saved));
         return true;
       } finally { this.pending = false; }
     },

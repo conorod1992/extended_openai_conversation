@@ -141,6 +141,13 @@ async def test_typed_function_websocket_editor_and_draft_roundtrip(
         assert updated["revision"] != saved["revision"]
         exported = await call("configuration", "export")
         assert exported["document"] == json.loads(exported["json"])
+        assert exported["document"]["config"]["functions"] == []
+        assert exported["document"]["security"]["omitted"]
+        # Legacy typed public imports remain compatible; current public writers
+        # omit unsupported typed units. Complete typed export uses private backup.
+        from tests.helpers import legacy_agent_export
+
+        exported = {"document": legacy_agent_export(subentry)}
         preview = await call(
             "configuration",
             "import_preview",

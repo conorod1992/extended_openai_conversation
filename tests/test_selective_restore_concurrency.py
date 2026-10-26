@@ -78,6 +78,7 @@ class RestoreHarness:
             self.snapshots.append((self.gate._writer_active, self.lock.locked()))
             current = deepcopy(self.state)
             current.config = deepcopy(self.subentry.data)
+            current.authoritative_config = True
             current.title = self.subentry.title
             await self.pause("snapshot")
             return current

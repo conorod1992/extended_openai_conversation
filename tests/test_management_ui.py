@@ -409,7 +409,7 @@ async def test_ha_tool_add_validation_refresh_and_group_assignment(
 
 @pytest.mark.asyncio
 async def test_function_tool_validation_and_save_boundaries(
-    monkeypatch: pytest.MonkeyPatch,
+    hass, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     entry, subentry = _entry_pair()
     hass = _hass(entry)
@@ -899,7 +899,7 @@ def test_revision_and_reference_helpers_cover_validation_edges() -> None:
         (
             {
                 "schema": "extended_openai_conversation.agent",
-                "version": AGENT_CONFIG_EXPORT_VERSION + 1,
+                "version": 3,
                 "config": {},
             },
             "export version",
@@ -1189,7 +1189,8 @@ async def test_configuration_transfer_and_validation_routes(hass, monkeypatch) -
         hass, "admin", True, _residual_message("configuration", "export")
     )
     assert exported["document"]["schema"] == "extended_openai_conversation.agent"
-    assert '"title": "Jarvis"' in exported["json"]
+    assert '"title": "Shared conversation agent"' in exported["json"]
+    assert exported["document"]["security"]["mode"] == "restricted"
     document = {
         "schema": "extended_openai_conversation.agent",
         "version": AGENT_CONFIG_EXPORT_VERSION,

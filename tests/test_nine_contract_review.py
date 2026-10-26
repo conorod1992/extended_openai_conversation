@@ -28,17 +28,17 @@ from tests.test_speech import _config, _stream
 
 
 @pytest.mark.parametrize("field", ["content", "image_url"])
-def test_context_measurements_reject_in_place_payload_changes(field):
+async def test_context_measurements_reject_in_place_payload_changes(field):
     payload = [
         {"role": "user", "content": [{"type": "input_image", "image_url": "first"}]}
     ]
     measurement = ContextInputMeasurement(5000, 1, prepared_input_revision(payload))
-    assert measurement.applies_to(deepcopy(payload))
+    assert await measurement.async_applies_to(deepcopy(payload))
     if field == "content":
         payload[0][field] = "Changed text"
     else:
         payload[0]["content"][0][field] = "second"
-    assert not measurement.applies_to(payload)
+    assert not await measurement.async_applies_to(payload)
 
 
 def test_groups_alone_cannot_block_unrelated_settings(hass):

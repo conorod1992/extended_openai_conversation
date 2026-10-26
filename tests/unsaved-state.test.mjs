@@ -87,6 +87,24 @@ test("central navigation shares config context, cancels safely, and discards wit
   assert.equal(same({x: [1, 2]}, {x: [2, 1]}), false);
 });
 
+test("a clean pending scope guards its owner without claiming unsaved changes", async () => {
+  const state = new UnsavedState();
+  let pending = true, discarded = 0, prompts = 0;
+  const scope = {dirty:() => false, get pending() {return pending;}, owns:destination => destination === "assistant/basics", discard() {discarded++;}};
+  state.register("retained-write", scope);
+  const panel = {_unsavedState:state, _confirm:async () => {prompts++; return true;}};
+  assert.equal(state.hasChanges(), false);
+  assert.deepEqual(state.leaving(null), [scope]);
+  assert.deepEqual(state.leaving("assistant/basics"), []);
+  assert.equal(await confirmStateSafeNavigation(panel, null), false);
+  assert.equal(discarded, 0);
+  assert.equal(prompts, 0);
+  pending = false;
+  assert.equal(await confirmStateSafeNavigation(panel, null), true);
+  assert.deepEqual(state.leaving(null), []);
+  assert.equal(state.hasChanges(), false);
+});
+
 
 for (const refreshFails of [false, true]) {
   for (const newerEdit of [false, true]) {
@@ -166,3 +184,34 @@ test("a late Guest save cannot canonicalize another agent's identical draft", as
   assert.deepEqual(panel._guestDraft, {enabled:true, count:0});
   assert.equal(panel._result, current);
 });
+
+
+for (const view of ["capabilities/guest-mode", "capabilities/quiet-hours", "capabilities/request-rules"]) {
+  test(`${view}: recovered policy retains its authoring revision until discard`, async () => {
+    const {retainPanelDrafts, restorePanelDrafts} = await import("../custom_components/extended_openai_conversation_responses/frontend/management-draft-lifecycle.js");
+    const previousWindow = globalThis.window;
+    globalThis.window = {addEventListener() {}, removeEventListener() {}};
+    const rules = view.endsWith("request-rules");
+    const old = rules ? {defaults:{fuzzy:false}, wording_groups:[], revision:"old"} : {config:{enabled:false}, revision:"old"};
+    const fresh = rules ? {defaults:{fuzzy:false, fuzzy_threshold:99}, wording_groups:[], revision:"fresh"} : {config:{enabled:false, end:"04:02"}, revision:"fresh"};
+    const panel = result => ({_agentId:"agent", _viewKey:() => view, _result:result,
+      _selectedAgent:() => ({entry_id:"entry", subentry_id:view}), hass:{user:{id:"reviewer"}},
+      _data:{is_admin:true}, shadowRoot:{querySelector:() => null}, _render() {}, isConnected:true});
+    const source = panel(old), target = panel(fresh);
+    try {
+      initializePageDraft(source); initializePageDraft(target);
+      const from = currentPageScope(source), to = currentPageScope(target);
+      if (rules) from.read().defaults.fuzzy = true; else from.read().enabled = true;
+      source.isConnected = false;
+      retainPanelDrafts(source); restorePanelDrafts(target);
+      assert.equal(to.revision, "old");
+      assert.deepEqual(to.baseline, rules ? {defaults:old.defaults, wording_groups:[]} : old.config);
+      assert.equal(to.dirty(), true);
+      assert.equal(from.dirty(), false);
+      to.discard();
+      assert.equal(to.revision, "fresh");
+      assert.deepEqual(to.read(), rules ? {defaults:fresh.defaults, wording_groups:[]} : fresh.config);
+      assert.equal(to.dirty(), false);
+    } finally { globalThis.window = previousWindow; }
+  });
+}

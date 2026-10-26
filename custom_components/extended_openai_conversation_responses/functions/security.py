@@ -104,7 +104,7 @@ def _classify_script(sequence: Any) -> FunctionSecurity:
         service = step.get("service", step.get("action"))
         if not isinstance(service, str) or "{{" in service or "{%" in service:
             return FunctionSecurity.UNSCOPABLE
-        domain, separator, service_name = service.partition(".")
+        domain, separator, service_name = service.lower().partition(".")
         if not separator or not domain or not service_name:
             return FunctionSecurity.UNSCOPABLE
         target = step.get("target")
@@ -140,6 +140,11 @@ def contains_indirect_service_call(value: Any, hass: Any = None) -> bool:
     if isinstance(value, Mapping):
         domain = value.get("domain")
         service = value.get("service", value.get("action"))
+        # Match HA service dispatch before making any authorization decision.
+        if isinstance(domain, str):
+            domain = domain.lower()
+        if isinstance(service, str):
+            service = service.lower()
         if isinstance(domain, str) and domain in _INDIRECT_DOMAINS:
             return True
         if isinstance(service, str):
@@ -171,7 +176,7 @@ def contains_indirect_service_call(value: Any, hass: Any = None) -> bool:
                 ids = target.get("entity_id", []) if isinstance(target, Mapping) else []
                 ids = ids if isinstance(ids, list) else [ids]
                 if any(
-                    part.strip().partition(".")[0] in _INDIRECT_DOMAINS
+                    part.strip().lower().partition(".")[0] in _INDIRECT_DOMAINS
                     for item in ids
                     if isinstance(item, str)
                     for part in item.split(",")

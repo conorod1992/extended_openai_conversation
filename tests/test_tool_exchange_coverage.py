@@ -77,12 +77,12 @@ def test_error_text_handles_interruption_empty_detail_and_bounded_output() -> No
         tool_exchange._error_text(None)
         == "Tool execution was interrupted before completion"
     )
-    assert tool_exchange._error_text(RuntimeError()) == "RuntimeError"
+    safe = "SanitizedUnexpectedBackendError: Function execution failed. Check the tool configuration and permissions."
+    assert tool_exchange._error_text(RuntimeError()) == safe
 
     text = tool_exchange._error_text(ValueError("x" * 1000))
-    assert len(text) == tool_exchange._MAX_ERROR_TEXT
-    assert text.startswith("ValueError: ")
-    assert text.endswith("…")
+    assert len(text) <= tool_exchange._MAX_ERROR_TEXT
+    assert text == safe
 
 
 def test_retained_tool_calls_since_returns_only_new_assistant_calls(
@@ -120,7 +120,10 @@ def test_append_unresolved_results_preserves_completed_and_marks_failure_then_sk
 
     assert [item.tool_call_id for item in chat_log.added] == ["bad", "later"]
     assert tool_result_data(chat_log.added[0]) == {
-        "result": {"status": "error", "error": "RuntimeError: boom"}
+        "result": {
+            "status": "error",
+            "error": "SanitizedUnexpectedBackendError: Function execution failed. Check the tool configuration and permissions.",
+        }
     }
     assert tool_result_data(chat_log.added[1])["result"]["status"] == "skipped"
     assert "`second` failed" in tool_result_data(chat_log.added[1])["result"]["error"]
@@ -372,7 +375,10 @@ async def test_failed_tool_result_remains_ambiguous_with_fresh_call_id(monkeypat
     log.conversation_id = "ambiguous"
     execute = AsyncMock()
     entity = SimpleNamespace(entity_id="agent", _execute_function_tool=execute)
-    from custom_components.extended_openai_conversation_responses.tool_replay_guard import record_dispatch
+    from custom_components.extended_openai_conversation_responses.tool_replay_guard import (
+        record_dispatch,
+    )
+
     record_dispatch(entity, original)
     remember_unacknowledged_calls(entity, log, set())
     retry = _call("fresh-provider-id")
@@ -432,7 +438,10 @@ def test_replay_guard_bounds_ambiguous_conversation_ledger(monkeypatch) -> None:
             ]
         )
         log.conversation_id = f"conversation-{index}"
-        from custom_components.extended_openai_conversation_responses.tool_replay_guard import record_dispatch
+        from custom_components.extended_openai_conversation_responses.tool_replay_guard import (
+            record_dispatch,
+        )
+
         record_dispatch(entity, log.content[0].tool_calls[0])
         remember_unacknowledged_calls(entity, log, set())
 
@@ -602,7 +611,7 @@ async def test_parallel_exchange_records_success_and_failure_then_raises_first_e
     assert by_id["a"] is success
     assert tool_result_data(by_id["b"])["result"] == {
         "status": "error",
-        "error": "RuntimeError: beta failed",
+        "error": "SanitizedUnexpectedBackendError: Function execution failed. Check the tool configuration and permissions.",
     }
 
 
@@ -715,3 +724,4 @@ async def test_recovery_parallel_mixes_correctable_success_and_runtime_failure(
     assert by_id["ok"] is success
     assert tool_result_data(by_id["bad"])["result"]["status"] == "error"
     assert state.used == 1
+

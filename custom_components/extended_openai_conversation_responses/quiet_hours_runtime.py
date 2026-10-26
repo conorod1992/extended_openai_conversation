@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
+from hashlib import sha256
+import json
 import logging
 import math
 from typing import Any, cast
@@ -447,6 +449,7 @@ class QuietHoursManager:
             hass, _STORAGE_VERSION, _STORAGE_KEY
         )
         self._config = QuietHoursConfig()
+        self._selection_identities: dict[str, list[str]] = {}
         self._active: dict[str, Any] | None = None
         self._lock = asyncio.Lock()
         self._initialized = False
@@ -489,6 +492,9 @@ class QuietHoursManager:
                     self._config = _config_from_data(raw.get("config"))
                 except ValueError:
                     self._config = QuietHoursConfig()
+                self._selection_identities = self._normalize_selection_identities(
+                    raw.get("selection_identities"), self._config
+                )
                 self._active = self._normalize_active(raw.get("active"))
                 self._config_recovery_pending = False
                 self._initialized = True
@@ -506,17 +512,108 @@ class QuietHoursManager:
         async with self._lock:
             self._cancel_scheduled_callbacks()
             try:
-                await self._async_restore_locked()
+                await self._async_restore_locked(preserve_released=True)
             finally:
                 # Recovery can rearm an authoritative generation while stopping.
                 self._cancel_scheduled_callbacks()
                 self._unpublish_state()
 
+    def _selected_entity_ids(self, config: QuietHoursConfig | None = None) -> set[str]:
+        return {
+            entity_id
+            for override in (config or self._config).overrides
+            for entity_id in (
+                override.satellite_entity_id,
+                override.media_player_entity_id,
+                override.wake_sound_entity_id,
+            )
+            if entity_id
+        }
+
+    @staticmethod
+    def _normalize_selection_identities(
+        value: Any, config: QuietHoursConfig
+    ) -> dict[str, list[str]]:
+        if value is None:
+            return {}
+        if not isinstance(value, Mapping):
+            raise ValueError("Quiet Hours selection identities are invalid")
+        selected = {
+            entity_id
+            for override in config.overrides
+            for entity_id in (
+                override.satellite_entity_id,
+                override.media_player_entity_id,
+                override.wake_sound_entity_id,
+            )
+            if entity_id
+        }
+        result = {}
+        for entity_id in selected:
+            identity = value.get(entity_id)
+            if identity is None:
+                continue
+            if (
+                not isinstance(identity, list)
+                or len(identity) != 3
+                or not all(isinstance(part, str) and part for part in identity)
+                or identity[0] != entity_id.split(".")[0]
+            ):
+                raise ValueError("Quiet Hours selection identity is invalid")
+            result[entity_id] = list(identity)
+        return result
+
     def _discover_capabilities(self) -> list[SatelliteCapabilities]:
-        return discover_satellite_capabilities(self.hass, self._config)
+        return self._filter_selected_capabilities(
+            discover_satellite_capabilities(self.hass, self._config)
+        )
+
+    def _filter_selected_capabilities(
+        self, discovered: list[SatelliteCapabilities]
+    ) -> list[SatelliteCapabilities]:
+        """Do not redirect a removed manual selection to an ID's new owner."""
+        identities = getattr(self, "_selection_identities", {})
+        if not identities:
+            return discovered
+        registry = er.async_get(self.hass)
+
+        def matches(entity_id: str | None) -> bool:
+            identity = identities.get(entity_id)
+            return (
+                identity is None or registry.async_get_entity_id(*identity) == entity_id
+            )
+
+        capabilities = []
+        for item in discovered:
+            if not matches(item.satellite_entity_id):
+                continue
+            capabilities.append(
+                replace(
+                    item,
+                    media_player_entity_id=item.media_player_entity_id
+                    if item.media_player_source != "manual"
+                    or matches(item.media_player_entity_id)
+                    else None,
+                    wake_sound_entity_id=item.wake_sound_entity_id
+                    if item.wake_sound_source != "manual"
+                    or matches(item.wake_sound_entity_id)
+                    else None,
+                )
+            )
+        return capabilities
 
     def discovery_snapshot(self) -> list[dict[str, Any]]:
         return [item.as_dict() for item in self._discover_capabilities()]
+
+    def revision(self) -> str:
+        """Identify the saved policy and its selected physical controls."""
+        return sha256(
+            json.dumps(
+                [self._config.as_dict(), getattr(self, "_selection_identities", {})],
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
 
     def snapshot(self) -> dict[str, Any]:
         now = dt_util.now()
@@ -527,6 +624,7 @@ class QuietHoursManager:
         )
         return {
             "config": self._config.as_dict(),
+            "revision": self.revision(),
             "active": period is not None,
             "period_started_at": period.start.isoformat() if period else None,
             "period_ends_at": period.end.isoformat() if period else None,
@@ -539,11 +637,26 @@ class QuietHoursManager:
         """Enable or disable the daily schedule without changing its policy."""
         if not isinstance(enabled, bool):
             raise ValueError("enabled must be a boolean")
-        config = self.config.as_dict()
+        async with self._lock:
+            if not await self._async_recover_configuration_locked():
+                raise ValueError(
+                    "Quiet Hours configuration recovery is pending; retry later"
+                )
+            if (
+                self._selected_entity_ids()
+                and not await self._async_resolve_control_identities_locked()
+            ):
+                raise ValueError("Quiet Hours selections are changing; retry later")
+            config = self.config.as_dict()
+            revision = self.revision()
         config["enabled"] = enabled
-        return await self.async_update_config(config)
+        # A toggle owns only enabled, never a stale copy of a renamed selection
+        # or a concurrent administrator's policy edit.
+        return await self.async_update_config(config, expected_revision=revision)
 
-    async def async_update_config(self, value: Any) -> dict[str, Any]:
+    async def async_update_config(
+        self, value: Any, *, expected_revision: str | None = None
+    ) -> dict[str, Any]:
         candidate = _config_from_data(value)
         failure: BaseException | None = None
         async with self._lock:
@@ -553,9 +666,36 @@ class QuietHoursManager:
                 raise ValueError(
                     "Quiet Hours configuration recovery is pending; retry later"
                 )
+            # Resolve renames before comparing the editor's saved baseline.
+            if (
+                self._selected_entity_ids()
+                and not await self._async_resolve_control_identities_locked()
+            ):
+                raise ValueError(
+                    "Quiet Hours selections are changing; reload and try again"
+                )
+            if expected_revision is not None and expected_revision != self.revision():
+                raise ValueError(
+                    "Quiet Hours configuration changed; reload before saving"
+                )
+            # Legacy callers have no revision. Do not let an obsolete, newly
+            # introduced ID silently remove a currently bound manual selection.
+            if getattr(self, "_selection_identities", {}):
+                for entity_id in (
+                    self._selected_entity_ids(candidate) - self._selected_entity_ids()
+                ):
+                    if (
+                        er.async_get(self.hass).async_get(entity_id) is None
+                        and self.hass.states.get(entity_id) is None
+                    ):
+                        raise ValueError(
+                            "A Quiet Hours selection no longer exists; reload before saving"
+                        )
             previous = self._config
             self._config = candidate
             try:
+                self._migrate_selected_entity_ids()
+                candidate = self._config
                 await self._async_save_locked()
                 now = dt_util.now()
                 old_period = (
@@ -577,18 +717,42 @@ class QuietHoursManager:
                         period_started_at=new_period.start.isoformat(),
                         period_ends_at=new_period.end.isoformat(),
                     )
-                    self._active["observed_controls"] = list(
-                        self._active.get("controls", {})
+                    # Saving a policy must not erase observations that released
+                    # ownership or protect an unapplied intent's baseline. Only
+                    # a changed target can reconsider unowned controls of that
+                    # kind; schedule/other-control edits do not reclaim them.
+                    changed_domains = set()
+                    if candidate.max_volume != previous.max_volume:
+                        changed_domains.add("media_player")
+                    if candidate.wake_sound != previous.wake_sound:
+                        changed_domains.add("switch")
+                    controls = self._active.get("controls", {})
+                    observed = list(
+                        dict.fromkeys(
+                            [*self._active.get("observed_controls", []), *controls]
+                        )
                     )
+                    self._active["observed_controls"] = observed = [
+                        entity_id
+                        for entity_id in observed
+                        if entity_id in controls
+                        or entity_id.partition(".")[0] not in changed_domains
+                    ]
                     if "observed_identities" in self._active:
                         self._active["observed_identities"] = {
                             key: identity
                             for key, identity in self._active[
                                 "observed_identities"
                             ].items()
-                            if key in self._active["controls"]
+                            if key in observed
                         }
-                    self._active["pending_controls"] = {}
+                    self._active["pending_controls"] = {
+                        key: intent
+                        for key, intent in self._active.get(
+                            "pending_controls", {}
+                        ).items()
+                        if key in observed
+                    }
                     await self._async_save_control_state_locked()
             except BaseException as err:
                 failure = err
@@ -640,7 +804,11 @@ class QuietHoursManager:
         active = self._normalize_active(raw.get("active"))
         if raw.get("active") is not None and active is None:
             raise ValueError("Quiet Hours saved ownership is invalid")
+        identities = self._normalize_selection_identities(
+            raw.get("selection_identities"), config
+        )
         self._config = config
+        self._selection_identities = identities
         self._active = active
         self._mark_generation_available()
         # Installing a readback generation must also secure its callbacks before
@@ -683,7 +851,8 @@ class QuietHoursManager:
                 return
             if not await self._async_recover_configuration_locked():
                 return
-            await self._async_resolve_control_identities_locked()
+            if not await self._async_resolve_control_identities_locked():
+                return
             period = (
                 quiet_period_for(now, self._config.start, self._config.end)
                 if self._config.enabled
@@ -749,9 +918,103 @@ class QuietHoursManager:
                         controls,
                     )
 
-    async def _async_resolve_control_identities_locked(self) -> None:
-        if self._migrate_control_entity_ids():
+    async def _async_resolve_control_identities_locked(
+        self, *, settle_pending: bool = True
+    ) -> bool:
+        # A registry event can arrive while the prior migration is being saved.
+        # Settle the complete selection/ownership mapping before discovery can
+        # mistake a renamed satellite for a new one with automatic controls.
+        follow_bindings = bool(self._selected_entity_ids()) or (
+            settle_pending
+            and any(
+                isinstance(control, Mapping)
+                and control.get("satellite_registry_identity")
+                for control in (self._active or {}).get("pending_controls", {}).values()
+            )
+        )
+        for _ in range(8 if follow_bindings else 1):
+            changed = self._migrate_selected_entity_ids()
+            if self._migrate_control_entity_ids():
+                changed = True
+            if not changed:
+                return True
             await self._async_save_control_state_locked()
+        # Continuous registry churn must not cause unbounded writes or actions
+        # against a stale discovery snapshot. The next reconciliation retries.
+        return not follow_bindings
+
+    def _migrate_selected_entity_ids(self) -> bool:
+        """Follow manual selections before deciding which owned controls departed."""
+        previous = getattr(self, "_selection_identities", {})
+        selected = self._selected_entity_ids()
+        if not selected:
+            self._selection_identities = {}
+            return bool(previous)
+        registry = er.async_get(self.hass)
+        identities: dict[str, list[str]] = {}
+        destinations: dict[str, str] = {}
+        for entity_id in selected:
+            identity = previous.get(entity_id)
+            if identity is None:
+                # Upgrade an old policy from its existing ownership before trying
+                # the current ID, which might already have been renamed/reused.
+                identity = (
+                    (self._active or {})
+                    .get("controls", {})
+                    .get(entity_id, {})
+                    .get("registry_identity")
+                )
+            if identity is None:
+                entry = registry.async_get(entity_id)
+                parts = [
+                    getattr(entry, field, None)
+                    for field in ("domain", "platform", "unique_id")
+                ]
+                identity = (
+                    parts
+                    if all(isinstance(part, str) and part for part in parts)
+                    else None
+                )
+            current = registry.async_get_entity_id(*identity) if identity else entity_id
+            destination = current if isinstance(current, str) else entity_id
+            destinations[entity_id] = destination
+            if identity:
+                identities[destination] = list(cast(list[str], identity))
+
+        def selected_id(entity_id: str | None) -> str | None:
+            return destinations.get(entity_id, entity_id) if entity_id else None
+
+        overrides = tuple(
+            replace(
+                override,
+                satellite_entity_id=destinations.get(
+                    override.satellite_entity_id, override.satellite_entity_id
+                ),
+                media_player_entity_id=selected_id(override.media_player_entity_id),
+                wake_sound_entity_id=selected_id(override.wake_sound_entity_id),
+            )
+            for override in self._config.overrides
+        )
+        associations_changed = False
+        if self._active is not None:
+            for key in ("controls", "pending_controls"):
+                for control in self._active.get(key, {}).values():
+                    old_satellite = control.get("satellite_entity_id")
+                    satellite = destinations.get(old_satellite, old_satellite)
+                    if satellite != old_satellite:
+                        # The selected satellite's stable identity followed a
+                        # rename; this is not a change of device association.
+                        control["satellite_entity_id"] = satellite
+                        associations_changed = True
+        changed = (
+            associations_changed
+            or overrides != self._config.overrides
+            or identities != previous
+        )
+        if changed:
+            self._config = replace(self._config, overrides=overrides)
+            self._selection_identities = identities
+        return changed
 
     def _migrate_control_entity_ids(self) -> bool:
         """Follow registry identities when owned speakers or switches are renamed."""
@@ -759,6 +1022,7 @@ class QuietHoursManager:
             return False
         destinations: dict[str, list[tuple[str, str, dict[str, Any]]]] = {}
         moves: dict[str, str | None] = {}
+        associations_changed = False
         for key in ("controls", "pending_controls"):
             controls = self._active.get(key, {})
             if not isinstance(controls, Mapping):
@@ -766,6 +1030,14 @@ class QuietHoursManager:
             for old_id, control in controls.items():
                 if not isinstance(old_id, str) or not isinstance(control, dict):
                     continue
+                if identity := control.get("satellite_registry_identity"):
+                    satellite = er.async_get(self.hass).async_get_entity_id(*identity)
+                    if (
+                        isinstance(satellite, str)
+                        and satellite != control["satellite_entity_id"]
+                    ):
+                        control["satellite_entity_id"] = satellite
+                        associations_changed = True
                 identity = control.get("registry_identity")
                 new_id = (
                     er.async_get(self.hass).async_get_entity_id(*identity)
@@ -837,7 +1109,8 @@ class QuietHoursManager:
                 )
         observed = list(dict.fromkeys(observed + ambiguous))
         changed = (
-            any(self._active.get(key, {}) != value for key, value in rebuilt.items())
+            associations_changed
+            or any(self._active.get(key, {}) != value for key, value in rebuilt.items())
             or self._active.get("observed_controls", []) != observed
             or previous_identities != identities
         )
@@ -883,6 +1156,9 @@ class QuietHoursManager:
             if control["satellite_entity_id"] != target[1]:
                 # Ownership follows the physical control, even if its satellite changes.
                 control["satellite_entity_id"] = target[1]
+                control.pop("satellite_registry_identity", None)
+                if identity := self._entity_registry_identity(target[1]):
+                    control["satellite_registry_identity"] = identity
                 await self._async_save_control_state_locked()
             if control.get("application_state") == "prepared":
                 state = self.hass.states.get(entity_id)
@@ -1255,6 +1531,20 @@ class QuietHoursManager:
             control["application_state"] = "applied"
             await self._async_save_control_state_locked()
 
+    def _entity_registry_identity(self, entity_id: str) -> list[str] | None:
+        try:
+            entry = er.async_get(self.hass).async_get(entity_id)
+        except TypeError:
+            return None
+        parts = [
+            getattr(entry, field, None) for field in ("domain", "platform", "unique_id")
+        ]
+        return (
+            cast(list[str], parts)
+            if all(isinstance(part, str) and part for part in parts)
+            else None
+        )
+
     async def _async_prepare_control_locked(
         self,
         satellite_entity_id: str,
@@ -1321,6 +1611,11 @@ class QuietHoursManager:
             if (
                 intent["kind"] != kind
                 or intent["satellite_entity_id"] != satellite_entity_id
+                or (
+                    intent.get("satellite_registry_identity") is not None
+                    and intent["satellite_registry_identity"]
+                    != self._entity_registry_identity(satellite_entity_id)
+                )
                 or not same_baseline
                 or not self._baseline_context_matches(entity_id, intent, legacy=True)
             ):
@@ -1330,26 +1625,23 @@ class QuietHoursManager:
                 await self._async_save_control_state_locked()
                 return None
         else:
-            try:
-                entry = er.async_get(self.hass).async_get(entity_id)
-            except TypeError:
-                entry = None
-            identity = [
-                entity_id.partition(".")[0],
-                getattr(entry, "platform", None),
-                getattr(entry, "unique_id", None),
-            ]
+            identity = self._entity_registry_identity(entity_id)
             intent = {
                 "kind": kind,
                 "satellite_entity_id": satellite_entity_id,
+                **(
+                    {"satellite_registry_identity": satellite_identity}
+                    if (
+                        satellite_identity := self._entity_registry_identity(
+                            satellite_entity_id
+                        )
+                    )
+                    else {}
+                ),
                 "original_value": original,
                 "quiet_value": desired,
                 "baseline_context_id": self._control_context_id(entity_id),
-                **(
-                    {"registry_identity": identity}
-                    if all(isinstance(item, str) and item for item in identity)
-                    else {}
-                ),
+                **({"registry_identity": identity} if identity else {}),
             }
             observed.append(entity_id)
         if identity := intent.get("registry_identity"):
@@ -1409,10 +1701,23 @@ class QuietHoursManager:
             return left is not None and abs(left - right) <= _VOLUME_TOLERANCE
         return left is right
 
-    async def _async_restore_locked(self, *, pending_only: bool = False) -> None:
+    async def _async_restore_locked(
+        self, *, pending_only: bool = False, preserve_released: bool = False
+    ) -> None:
         if not await self._async_recover_configuration_locked():
             return
-        await self._async_resolve_control_identities_locked()
+        # Pending retries must not change when an existing restoration is
+        # deferred by a registry change during persistence.
+        if not await self._async_resolve_control_identities_locked(
+            settle_pending=False
+        ):
+            return
+        # Manager replacement does not start a new policy period. Retain only
+        # independently released choices; successfully restored controls must
+        # remain eligible for the replacement manager's cold-start catch-up.
+        released = set((self._active or {}).get("observed_controls", [])) - set(
+            (self._active or {}).get("controls", {})
+        )
         if self._active is not None:
             controls = self._active.get("controls", {})
             for entity_id, control in list(controls.items()):
@@ -1428,6 +1733,7 @@ class QuietHoursManager:
                     # Ending a period must not restore a value merely because an
                     # unacknowledged intent happens to match an independent effect.
                     controls.pop(entity_id)
+                    released.add(entity_id)
         if self._active is None:
             return
         controls = self._active.get("controls", {})
@@ -1459,9 +1765,11 @@ class QuietHoursManager:
                         current = _current_volume(self.hass, entity_id)
                         if current is None:
                             continue
-                        if math.isclose(
+                        if not math.isclose(
                             current, float(quiet), abs_tol=_VOLUME_TOLERANCE
-                        ) and not math.isclose(
+                        ):
+                            released.add(entity_id)
+                        elif not math.isclose(
                             current, float(original), abs_tol=_VOLUME_TOLERANCE
                         ):
                             await self._async_set_volume(entity_id, float(original))
@@ -1473,7 +1781,9 @@ class QuietHoursManager:
                         current_switch = _current_switch(self.hass, entity_id)
                         if current_switch is None:
                             continue
-                        if current_switch is quiet and current_switch is not original:
+                        if current_switch is not quiet:
+                            released.add(entity_id)
+                        elif current_switch is not original:
                             await self._async_set_switch(entity_id, original)
                     # A confirmed independent value releases ownership too.
                     controls.pop(entity_id)
@@ -1486,8 +1796,11 @@ class QuietHoursManager:
                         "restore", entity_id, str(kind), err, ownership="retained"
                     )
         if not pending_only:
-            if controls:
-                self._active["observed_controls"] = list(controls)
+            retained_observations = set(controls)
+            if preserve_released:
+                retained_observations.update(released)
+            if retained_observations:
+                self._active["observed_controls"] = sorted(retained_observations)
                 self._active["pending_controls"] = {}
             else:
                 self._active = None
@@ -1514,6 +1827,15 @@ class QuietHoursManager:
         self, domain: str, service: str, entity_id: str, data: dict[str, Any]
     ) -> None:
         """Associate an observable HA effect with its persisted prepared intent."""
+        # Discovery can yield to storage after choosing a target. Never perform
+        # a restoration or application from that snapshot if a manual selection
+        # moved while it was being persisted.
+        for selected, binding in getattr(self, "_selection_identities", {}).items():
+            current = er.async_get(self.hass).async_get_entity_id(*binding)
+            if isinstance(current, str) and current != selected:
+                raise HomeAssistantError(
+                    "Quiet Hours selection changed; retry reconciliation"
+                )
         control = (self._active or {}).get("controls", {}).get(entity_id, {})
         identity = control.get("registry_identity")
         if (
@@ -1543,7 +1865,15 @@ class QuietHoursManager:
     async def _async_save_locked(self) -> None:
         await _async_settle_transactional_save(
             self._store.async_save(
-                {"config": self._config.as_dict(), "active": self._active}
+                {
+                    "config": self._config.as_dict(),
+                    "active": self._active,
+                    **(
+                        {"selection_identities": self._selection_identities}
+                        if getattr(self, "_selection_identities", {})
+                        else {}
+                    ),
+                }
             ),
             self._invalidate_generation,
             self._mark_generation_available,
@@ -1721,14 +2051,15 @@ class QuietHoursManager:
                 or (kind == "switch" and isinstance(pending_value, bool))
             ):
                 controls[entity_id]["pending_quiet_value"] = pending_value
-            identity = raw.get("registry_identity")
-            if (
-                entity_id in controls
-                and isinstance(identity, list)
-                and len(identity) == 3
-                and all(isinstance(item, str) and item for item in identity)
-            ):
-                controls[entity_id]["registry_identity"] = list(identity)
+            for identity_key in ("registry_identity", "satellite_registry_identity"):
+                identity = raw.get(identity_key)
+                if (
+                    entity_id in controls
+                    and isinstance(identity, list)
+                    and len(identity) == 3
+                    and all(isinstance(item, str) and item for item in identity)
+                ):
+                    controls[entity_id][identity_key] = list(identity)
         return {
             "period_started_at": started.isoformat(),
             "period_ends_at": ended.isoformat(),

@@ -40,6 +40,11 @@ def prepared_input_revision(input_value: Any) -> str:
     return digest.hexdigest()
 
 
+async def async_prepared_input_revision(input_value: Any) -> str:
+    """Fingerprint a stable prepared request off-loop, including attachment bytes."""
+    return await asyncio.to_thread(prepared_input_revision, input_value)
+
+
 @dataclass(frozen=True, slots=True)
 class ContextInputMeasurement:
     """A request-local count, independent of cumulative usage accounting."""
@@ -48,9 +53,11 @@ class ContextInputMeasurement:
     history_length: int
     input_revision: str
 
-    def applies_to(self, prepared_prefix: Any) -> bool:
+    async def async_applies_to(self, prepared_prefix: Any) -> bool:
         """Allow appended output, but never a rewritten or reduced input prefix."""
-        return prepared_input_revision(prepared_prefix) == self.input_revision
+        return (
+            await async_prepared_input_revision(prepared_prefix) == self.input_revision
+        )
 
 
 def _has_token_count(usage: RequestUsage) -> bool:
@@ -372,6 +379,21 @@ async def async_recover_trailing_usage(result: Any, usage: RequestUsage) -> None
             task.cancel()
 
 
+async def async_validate_tool_call_ids_with_usage(
+    calls: Any, result: Any, usage: RequestUsage
+) -> None:
+    """Keep ambiguous calls fatal while recovering bounded provider accounting."""
+    from homeassistant.exceptions import HomeAssistantError
+
+    from .tool_exchange import validate_tool_call_ids
+
+    try:
+        validate_tool_call_ids(calls)
+    except HomeAssistantError:
+        await async_recover_trailing_usage(result, usage)
+        raise
+
+
 async def normalized_chat_stream(
     chat_log: Any, result: Any, request_usage: RequestUsage | None
 ) -> AsyncIterator[Any]:
@@ -392,26 +414,42 @@ async def normalized_responses_stream(
     chat_log: Any, result: Any, request_usage: RequestUsage | None
 ) -> AsyncIterator[Any]:
     """Apply usage before the Responses parser can yield, fail or be closed."""
-    async for event in result:
-        response = getattr(event, "response", None)
-        raw_usage = getattr(response, "usage", None)
-        if raw_usage is None:
-            raw_usage = getattr(event, "usage", None)
-        reported = _capture_provider_usage(request_usage, raw_usage)
-        if (
-            reported is not None
-            and _has_token_count(reported)
-            and getattr(event, "type", "")
-            not in {"response.completed", "response.incomplete"}
-        ):
-            _trace_provider_usage(chat_log, reported)
-        yield event
+    iterator = aiter(result)
+    try:
+        async for event in iterator:
+            response = getattr(event, "response", None)
+            raw_usage = getattr(response, "usage", None)
+            if raw_usage is None:
+                raw_usage = getattr(event, "usage", None)
+            reported = _capture_provider_usage(request_usage, raw_usage)
+            if (
+                reported is not None
+                and _has_token_count(reported)
+                and getattr(event, "type", "")
+                not in {"response.completed", "response.incomplete"}
+            ):
+                _trace_provider_usage(chat_log, reported)
+            yield event
+
+    finally:
+        if (close := getattr(iterator, "aclose", None)) is not None:
+            await close()
 
 
 def estimate_prepared_request(
-    entity: Any, request_usage: RequestUsage, input_value: Any, tools: Any
+    entity: Any,
+    request_usage: RequestUsage,
+    input_value: Any,
+    tools: Any,
+    *,
+    input_tokens: int | None = None,
 ) -> None:
     """Measure the already assembled provider round without rebuilding tools/history."""
+    if input_tokens is not None:
+        request_usage.input_tokens = input_tokens
+        request_usage.total_tokens = input_tokens
+        request_usage.details = {_LOCAL_ESTIMATE_DETAIL: input_tokens}
+        return
     # Materialize once; the shared measurement handles encoded attachments for
     # both preflight pruning and request diagnostics.
     measured = input_value if isinstance(input_value, list) else list(input_value)

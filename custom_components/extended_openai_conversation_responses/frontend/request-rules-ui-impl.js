@@ -1,3 +1,11 @@
+import {watchSelectorYaml, assertSelectorYamlReady, isSelectorValueEvent} from "./native-selector-drafts.js";
+import {setReasoningOptions, syncRequestRuleRoutingControls} from "./request-rule-routing-controls.js";
+import {beginOperation} from "./operation-ownership.js";
+import {captureConfigurationOwner, configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
+import {dialogState, setDialogBaseline} from "./management-dialogs.js";
+import {same} from "./unsaved-state.js";
+import {effectiveServicePayload, isFunctionServiceAction, setEffectiveServiceField} from "./script-payload.js";
+export {syncRequestRuleRoutingControls} from "./request-rule-routing-controls.js";
 import {applyRequestRuleMutation, fuzzyThresholdValue, matchingControls} from "./request-rules-ui-core.js";
 export {fuzzyThresholdValue, recoverRequestRuleMutation, reconcileRequestRules, renderRequestRules} from "./request-rules-ui-core.js";
 
@@ -116,24 +124,30 @@ const setFuzzyState = (root, prefix) => { const toggle = root.querySelector(`#${
 
 
 const editorTranslations = new WeakMap();
+const translationLanguage = hass => hass?.language || hass?.locale?.language;
 
 export function ensureRequestRuleTranslations(panel) {
   const hass = panel.hass || panel._hass;
   if (!hass?.loadFragmentTranslation) return Promise.resolve();
-  const language = hass.language || hass.locale?.language;
+  const language = translationLanguage(hass);
   const cached = editorTranslations.get(panel);
   if (cached?.language === language && cached.connection === hass.connection) return cached.promise;
-  const promise = Promise.resolve(hass.loadFragmentTranslation("config")).then(localize => {
-    if ((panel.hass || panel._hass)?.language !== hass.language) return;
+  const record = {language, connection:hass.connection, promise:null};
+  const current = () => editorTranslations.get(panel) === record
+    && (panel.hass || panel._hass)?.connection === record.connection
+    && translationLanguage(panel.hass || panel._hass) === record.language;
+  record.promise = Promise.resolve(hass.loadFragmentTranslation("config")).then(localize => {
+    if (!current()) return;
     panel.shadowRoot.querySelectorAll("#rule-condition-host ha-selector, #rule-action-sequence-host ha-selector").forEach(selector => {
       selector.hass = localize ? {...(panel.hass || panel._hass), localize} : (panel.hass || panel._hass);
     });
   }).catch(error => {
+    if (!current()) return;
     editorTranslations.delete(panel);
     panel._toast?.(`Unable to load Home Assistant editor labels: ${error.message || String(error)}`, true);
   });
-  editorTranslations.set(panel, {language, connection:hass.connection, promise});
-  return promise;
+  editorTranslations.set(panel, record);
+  return record.promise;
 }
 
 export function createRequestRuleActionSelector(panel, host) {
@@ -142,9 +156,11 @@ export function createRequestRuleActionSelector(panel, host) {
   actionSelector.selector = {action:{}};
   actionSelector.value = [];
   actionSelector.addEventListener("value-changed", (event) => {
-    actionSelector.value = event.detail.value || [];
+    if (isSelectorValueEvent(actionSelector, event)) actionSelector.value = event.detail.value || [];
   });
+  host.querySelector?.("ha-selector")?.__eocStopYamlDraft?.();
   host.replaceChildren(actionSelector);
+  watchSelectorYaml(actionSelector);
   return actionSelector;
 }
 
@@ -153,8 +169,10 @@ export function createRequestRuleConditionSelector(panel, host) {
   selector.hass = panel._hass;
   selector.selector = {condition:{}};
   selector.value = [];
-  selector.addEventListener("value-changed", (event) => { selector.value = event.detail.value || []; void labelConditionAddControl(panel, selector); });
+  selector.addEventListener("value-changed", (event) => { if (!isSelectorValueEvent(selector, event)) return; selector.value = event.detail.value || []; void labelConditionAddControl(panel, selector); });
+  host.querySelector?.("ha-selector")?.__eocStopYamlDraft?.();
   host.replaceChildren(selector);
+  watchSelectorYaml(selector);
   void labelConditionAddControl(panel, selector);
   return selector;
 }
@@ -227,20 +245,18 @@ function renderResultAliases(panel, selector) {
   const host = panel.shadowRoot.querySelector("#rule-result-aliases");
   if (!host) return;
   const actions = selector.value || [];
-  const calls = actions.map((action, index) => ({action, index})).filter(({action}) => action?.action === "extended_openai_conversation_responses.call_function" && action?.data?.function);
-  const suggested = new Set(calls.map(({action}) => action.data.result_alias).filter(Boolean));
-  host.innerHTML = calls.map(({action, index}) => {
-    const alias = action.data.result_alias || "";
-    const suggestion = suggestResultAlias(action.data.function, suggested);
+  const calls = actions.map((action, index) => ({action, index, data:effectiveServicePayload(action)})).filter(({action, data}) => isFunctionServiceAction(action) && data?.function);
+  const suggested = new Set(calls.map(({data}) => data.result_alias).filter(Boolean));
+  host.innerHTML = calls.map(({data, index}) => {
+    const alias = data.result_alias || "";
+    const suggestion = suggestResultAlias(data.function, suggested);
     suggested.add(suggestion);
-    return `<label>Result alias for ${panel._e(action.data.function)} (step ${index + 1})<input class="rule-result-alias" data-index="${index}" value="${panel._e(alias)}" placeholder="${panel._e(suggestion)}" pattern="[A-Za-z_][A-Za-z0-9_]*"><small>Optional. Name the result to use it in later steps or the local response. Each captured result needs a unique alias.</small></label>`;
+    return `<label>Result alias for ${panel._e(data.function)} (step ${index + 1})<input class="rule-result-alias" data-index="${index}" value="${panel._e(alias)}" placeholder="${panel._e(suggestion)}" pattern="[A-Za-z_][A-Za-z0-9_]*"><small>Optional. Name the result to use it in later steps or the local response. Each captured result needs a unique alias.</small></label>`;
   }).join("");
   host.querySelectorAll(".rule-result-alias").forEach((input) => input.addEventListener("change", () => {
     const index = Number(input.dataset.index), actions = structuredClone(selector.value || []);
     if (!actions[index]) return;
-    actions[index].data ||= {};
-    if (input.value.trim()) actions[index].data.result_alias = input.value.trim();
-    else delete actions[index].data.result_alias;
+    setEffectiveServiceField(actions[index], "result_alias", input.value.trim() || undefined);
     selector.value = actions;
   }));
 }
@@ -268,56 +284,17 @@ function ensureModelCatalog() {
   return modelCatalogPromise;
 }
 
-function setReasoningOptions(root, efforts, selected = "") {
-  const select = root?.querySelector("#rule-reasoning");
-  if (!select) return;
-  const values = Array.isArray(efforts) ? efforts : [];
-  const keepCurrent = select.ownerDocument.createElement("option");
-  keepCurrent.value = "";
-  keepCurrent.textContent = "Keep current";
-  const options = [keepCurrent, ...values.map((value) => {
-    const option = select.ownerDocument.createElement("option");
-    option.value = value;
-    option.textContent = value.charAt(0).toUpperCase() + value.slice(1);
-    return option;
-  })];
-  if (selected && !values.includes(selected)) {
-    const saved = select.ownerDocument.createElement("option");
-    saved.value = selected;
-    saved.textContent = selected;
-    options.push(saved);
-  }
-  select.replaceChildren(...options);
-  select.value = selected;
-}
-
 export function requestRuleCapabilityModel(panel, override = "") {
-  return String(override || panel._result?.effective_model || panel._result?.config?.azure_model || panel._result?.config?.chat_model || "").trim();
+  const result = panel._result || {};
+  const config = result.config || {};
+  const azure = result.api_provider === "azure" || (!result.api_provider && config.azure_model);
+  // Older backends did not expose the binding separately. Preserve their
+  // effective-model fallback while an explicit empty binding uses the route.
+  const azureModel = azure ? (Object.hasOwn(result, "azure_model")
+    ? result.azure_model : config.azure_model || result.effective_model) : null;
+  return String(azureModel || override || result.effective_model || config.chat_model || "").trim();
 }
 
-export function syncRequestRuleRoutingControls(root, efforts = null, selectedEffort = null) {
-  if (!root) return;
-  const actionType = root.querySelector("#rule-action-type");
-  const matchType = root.querySelector("#rule-match");
-  const scope = root.querySelector("#rule-scope");
-  const continueToAi = root.querySelector("#rule-continue-to-ai");
-  const reasoning = root.querySelector("#rule-reasoning");
-  const help = root.querySelector("#rule-routing-scope-help");
-  if (!actionType || !matchType || !scope) return;
-  const modelRouting = actionType.value === "model_routing";
-  const consumed = modelRouting && ["equals", "sentence_pattern"].includes(matchType.value) && !(continueToAi?.checked ?? false) && !(root.querySelector("#rule-continue-matching")?.checked ?? false);
-  const requestOption = scope.querySelector('option[value="request"]');
-  if (requestOption) requestOption.disabled = consumed;
-  if (consumed) scope.value = "conversation";
-  scope.disabled = consumed;
-  if (reasoning && efforts) {
-    const desired = selectedEffort ?? reasoning.value;
-    setReasoningOptions(root, efforts, desired);
-  }
-  if (help) help.textContent = consumed
-    ? "This is a complete routing command. It is acknowledged locally and is not sent to the AI provider, so it must change or reset the rest of this conversation."
-    : `This sends the ${root.querySelector("#rule-ai-input-mode")?.value === "capture" ? "selected captured value" : "original request"} to the AI after applying the route. This request only affects that provider call; Rest of this conversation also changes later requests.`;
-}
 
 function ensureDialog(panel) {
   const root = panel.shadowRoot;
@@ -331,8 +308,16 @@ function ensureDialog(panel) {
 }
 
 function editorState(panel) {
-  panel._eocRuleEditorState ||= {dialog:null, actionSelector:null, revision:null, modelRevision:0};
+  panel._eocRuleEditorState ||= {dialog:null, actionSelector:null, revision:null};
   return panel._eocRuleEditorState;
+}
+
+function captureRuleEditorOwner(panel) {
+  const state=editorState(panel), owner=state.owner, root=panel.shadowRoot;
+  const dialog=state.dialog, actionSelector=state.actionSelector, conditionSelector=state.conditionSelector;
+  return ()=>owner && configurationSubmissionIsCurrent(panel,owner)
+    && panel.shadowRoot===root && root.querySelector("#rule-dialog")===dialog
+    && state.actionSelector===actionSelector && state.conditionSelector===conditionSelector;
 }
 
 function refreshEditor(panel) {
@@ -369,13 +354,14 @@ function refreshEditor(panel) {
   help.hidden=!invalid;
   help.textContent=!handoff ? "Enable Continue to AI or choose Original request." : q("#rule-match").value!=="sentence_pattern" ? "Captured value requires Sentence Pattern matching." : common.length ? "The selected captured value is not available in every trigger. Choose a common value or Original request." : "No captured values are available for every trigger. Use Sentence Pattern matching and make each trigger capture the same value, such as {question}.";
   syncRequestRuleRoutingControls(root);
-  const state=editorState(panel), current=++state.modelRevision;
+  const state=editorState(panel), latest=beginOperation(panel,"rule-model-lookup");
   if(local)return;
   const model=requestRuleCapabilityModel(panel,q("#rule-model")?.value.trim());
   if(!model || /\{[^{}]+\}/.test(model))return;
-  void ensureModelCatalog().then((module)=>module.lookupModelData(panel,model)).then((data)=>{
-    if(current===state.modelRevision && root.querySelector("#rule-dialog")?.open) syncRequestRuleRoutingControls(root,data.reasoning_effort_options);
-  }).catch((err)=>panel._toast(`Unable to load model choices: ${err.message || String(err)}`,true));
+  const ownsEditor=captureRuleEditorOwner(panel), current=()=>latest() && ownsEditor() && state.dialog.open;
+  void ensureModelCatalog().then((module)=>current() ? module.lookupModelData(panel,model,"lookup",current) : null).then((data)=>{
+    if(current()) syncRequestRuleRoutingControls(root,data.reasoning_effort_options);
+  }).catch((err)=>{if(current())panel._toast(`Unable to load model choices: ${err.message || String(err)}`,true);});
 }
 
 function hasRuleConditions(value) {
@@ -429,19 +415,24 @@ export function bindRequestRuleEditor(panel) {
   q("#rule-form")?.addEventListener("submit",async(event)=>{
     event.preventDefault();
     const save=q("#rule-save");if(save.disabled)return;
+    const ownsEditor=captureRuleEditorOwner(panel), current=()=>ownsEditor() && dialog.open;
+    if(!current())return;
     panel._setSaving(save,true);
     try{
       const actionType=q("#rule-action-type").value;
+      if (actionType === "local_action") assertSelectorYamlReady(state.actionSelector);
+      assertSelectorYamlReady(state.conditionSelector);
       let actions=readRequestRuleActions(state.actionSelector);
       if(actionType==="local_action"&&!actions.length)throw new Error("Add at least one action before saving this rule.");
       const previous=(panel._result?.rules||[]).find((item)=>item.id===panel._editingRuleId);
       const aliasMappings = new Map();
       for (const oldStep of previous?.action?.actions || []) {
-        const oldAlias=oldStep?.data?.result_alias, stepId=oldStep?.data?.step_id;
+        const oldData=effectiveServicePayload(oldStep);
+        const oldAlias=oldData?.result_alias, stepId=oldData?.step_id;
         if (!oldAlias || !stepId) continue;
-        const edited=actions.find((step)=>step?.data?.step_id===stepId);
-        if (edited?.data?.result_alias && edited.data.result_alias!==oldAlias) {
-          aliasMappings.set(oldAlias, edited.data.result_alias);
+        const edited=actions.map(effectiveServicePayload).find((data)=>data?.step_id===stepId);
+        if (edited?.result_alias && edited.result_alias!==oldAlias) {
+          aliasMappings.set(oldAlias, edited.result_alias);
         }
       }
       actions=renameResultReferenceMap(actions,aliasMappings);
@@ -450,10 +441,24 @@ export function bindRequestRuleEditor(panel) {
       if(q("#rule-ai-input-mode").value==="capture" && (q("#rule-ai-input-settings").hidden || q("#rule-ai-input-capture").getAttribute("aria-invalid")==="true")) throw new Error(q("#rule-ai-input-help").textContent || "Choose a capture available in every trigger.");
       const rule={ai_input_mode:q("#rule-ai-input-mode").value,ai_input_capture:q("#rule-ai-input-mode").value==="capture"?q("#rule-ai-input-capture").value:null,name:q("#rule-name").value,enabled:previous?.enabled??true,phrases:q("#rule-phrases").value.split("\n").map((item)=>item.trim()).filter(Boolean),match_type:q("#rule-match").value,action_type:actionType,action:actionType==="local_action"?{actions,success_response:successResponse,failure_response:q("#rule-failure").value,continue_to_ai:q("#rule-local-continue-to-ai").checked}:{model:q("#rule-model").value,reasoning_effort:q("#rule-reasoning").value,scope:q("#rule-scope").value,reset:q("#rule-reset").checked,continue_to_ai:q("#rule-continue-to-ai").checked,success_response:q("#rule-routing-success").value},matching_behavior:q("#rule-matching-behavior").value,matching:{word_forms:q("#rule-word-forms").checked,wording_alternatives:q("#rule-wording").checked,fuzzy:q("#rule-fuzzy").checked,fuzzy_threshold:fuzzyThresholdValue(q("#rule-threshold").value)},order:rules.find((item)=>item.id===panel._editingRuleId)?.order??rules.length,conditions:state.conditionSelector.value||[],group_id:q("#rule-group").value||null,continue_matching:q("#rule-continue-matching").checked};
       const action=panel._editingRuleId?"update":"create";
-      const result=await panel._call("request_rules",action,{...(panel._editingRuleId?{rule_id:panel._editingRuleId}:{}),rule,revision:state.revision});
-      dialog.close();
-      applyRequestRuleMutation(panel,action,result,{ruleId:panel._editingRuleId});
+      const ruleId=panel._editingRuleId, revision=state.revision, baseline=panel._result;
+      const submitted=dialogState(dialog);
+      const result=await panel._call("request_rules",action,{...(ruleId?{rule_id:ruleId}:{}),rule,revision});
+      if(!current())return;
+      if(!result?.rule?.id || result.revision==null)throw new Error("The save did not return an acknowledged Request Rule. Reload the rules before retrying.");
+      const unchanged=same(dialogState(dialog),submitted);
+      setDialogBaseline(panel,dialog.id,submitted);
+      panel._editingRuleId=result.rule.id;
+      q("#rule-dialog-title").textContent="Edit Request Rule";
+      // Advance only this editor's own authoring baseline. A newer accepted
+      // collection remains authoritative and requires the normal conflict path.
+      if(panel._result===baseline || [revision,result.revision].includes(panel._result?.revision)) {
+        state.revision=result.revision;
+        applyRequestRuleMutation(panel,action,result,{ruleId:result.rule.id});
+      }
+      if(unchanged)dialog.close();
     }catch(err){
+      if(!current())return;
       const message = err.message || String(err);
       q("#rule-error").textContent = message;
       if (hasRuleConditions(state.conditionSelector.value)
@@ -461,13 +466,15 @@ export function bindRequestRuleEditor(panel) {
         showRuleConditions(panel);
       }
     }
-    finally{panel._setSaving(save,false);}
+    finally{if(ownsEditor())panel._setSaving(save,false);}
   });
   return dialog;
 }
 
 export function openRequestRuleEditor(panel,id=null) {
   const dialog=bindRequestRuleEditor(panel), root=panel.shadowRoot, q=(selector)=>root.querySelector(selector), state=editorState(panel);
+  state.owner=captureConfigurationOwner(panel);
+  panel._setSaving(q("#rule-save"),false);
   // Native YAML children retain their own draft and mode. Each opening owns
   // fresh selectors, so Cancel cannot leak an unsaved child draft into saved data.
   state.actionSelector=createRequestRuleActionSelector(panel,q("#rule-action-sequence-host"));

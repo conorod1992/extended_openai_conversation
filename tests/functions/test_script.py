@@ -335,3 +335,39 @@ async def test_script_scoped_service_boundary_preserves_response_or_blocks_dispa
             return_response=True,
         )
     assert authorize.await_args.kwargs["context"] is context
+
+@pytest.mark.parametrize("cancel", [True, False])
+async def test_older_script_cleanup_preserves_active_cancellation(hass, cancel):
+    import asyncio
+    from custom_components.extended_openai_conversation_responses.functions import script as module
+
+    cancellation = asyncio.CancelledError("original cancellation")
+    runner = SimpleNamespace(
+        async_run=AsyncMock(side_effect=cancellation if cancel else None, return_value=SimpleNamespace(variables={})),
+        async_stop=AsyncMock(side_effect=RuntimeError("PRIVATE_CLEANUP_FAILURE")),
+    )
+    with patch.object(module, "Script", return_value=runner):
+        if cancel:
+            with pytest.raises(asyncio.CancelledError) as caught:
+                await ScriptFunction().execute(hass, {"sequence": []}, {}, None, [])
+            assert caught.value is cancellation
+        else:
+            with pytest.raises(RuntimeError, match="PRIVATE_CLEANUP_FAILURE"):
+                await ScriptFunction().execute(hass, {"sequence": []}, {}, None, [])
+    runner.async_stop.assert_awaited_once()
+
+async def test_handled_outer_cancellation_does_not_hide_new_script_cleanup_failure(hass):
+    import asyncio
+    from custom_components.extended_openai_conversation_responses.functions import script as module
+
+    runner = SimpleNamespace(
+        async_run=AsyncMock(return_value=SimpleNamespace(variables={})),
+        async_stop=AsyncMock(side_effect=RuntimeError("new cleanup failure")),
+    )
+    with patch.object(module, "Script", return_value=runner):
+        try:
+            raise asyncio.CancelledError("already handled by the caller")
+        except asyncio.CancelledError:
+            with pytest.raises(RuntimeError, match="new cleanup failure"):
+                await ScriptFunction().execute(hass, {"sequence": []}, {}, None, [])
+    runner.async_stop.assert_awaited_once()

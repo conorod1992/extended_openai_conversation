@@ -135,11 +135,13 @@ async def test_broadcast_resolves_destination_and_passes_origin(
         native_module, "async_authorized_broadcast_targets", authorized_targets
     )
 
+    context = Context(parent_id="broadcast-origin")
+    monkeypatch.setattr(native_module, "get_active_ha_context", lambda: None)
     result = await NativeFunction().send_broadcast(
         hass,
         {},
         {"destination": "Kitchen", "message": "Dinner is ready"},
-        SimpleNamespace(device_id="origin-device"),
+        SimpleNamespace(device_id="origin-device", context=context),
         [],
     )
 
@@ -152,7 +154,8 @@ async def test_broadcast_resolves_destination_and_passes_origin(
     authorized_targets.assert_awaited_once_with(
         hass,
         manager,
-        context=ANY,
+        context=context,
+        origin_entity_id=None,
         origin_device_id="origin-device",
         whole_home=False,
         entity_ids=["assist_satellite.kitchen"],
@@ -160,8 +163,10 @@ async def test_broadcast_resolves_destination_and_passes_origin(
     manager.async_send.assert_awaited_once_with(
         "Dinner is ready",
         entity_ids=["assist_satellite.kitchen"],
+        origin_entity_id=None,
         origin_device_id="origin-device",
         source="llm_tool",
+        context=context,
     )
 
 
@@ -192,6 +197,7 @@ async def test_broadcast_whole_home_without_context(hass, monkeypatch) -> None:
         hass,
         manager,
         context=ANY,
+        origin_entity_id=None,
         origin_device_id=None,
         whole_home=True,
     )
@@ -222,6 +228,7 @@ async def test_broadcast_named_area_target_keeps_indirect_selection(
         hass,
         manager,
         context=ANY,
+        origin_entity_id=None,
         origin_device_id=None,
         whole_home=False,
         area_id="upstairs",

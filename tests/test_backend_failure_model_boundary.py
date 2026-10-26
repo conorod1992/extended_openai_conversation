@@ -26,11 +26,65 @@ from custom_components.extended_openai_conversation_responses.model_tool_results
     OwnedJSONPayload,
     project_tool_result,
 )
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.core import SupportsResponse
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 
 from .test_model_tool_result_boundary import wire_result  # noqa: F401
+
+
+@pytest.mark.parametrize(
+    "value", [b"ordinary binary response", {"ordinary set response"}, 2**128, {1: "one"}]
+)
+async def test_mixed_native_batch_fallback_preserves_private_failure(
+    hass, exposed_entities, wire_result, value
+):
+    secret = "FABRICATED-private-service-credential-42"
+    hass.services.async_call.side_effect = [
+        HomeAssistantError("Backend password=" + secret),
+        {"report": value},
+    ]
+    hass.services.supports_response.return_value = SupportsResponse.OPTIONAL
+    argument = {
+        "domain": "light",
+        "service": "turn_on",
+        "service_data": {"entity_id": "light.living_room"},
+    }
+    content = await execute_configured(
+        hass, exposed_entities, "execute_service", {"list": [argument, argument]}
+    )
+    retained = tool_result_data(content)["result"]
+    expected = {"1": "one"} if isinstance(value, dict) else str(value)
+    assert retained[0]["error"] == "Backend password=" + secret
+    assert isinstance(retained[0], ExecutionFailure)
+    assert retained[1]["response"]["report"] == expected
+    for prepared in (content, await project_tool_result(content, prepare_wire=True)):
+        wire = wire_result(prepared)["result"]
+        assert secret not in json.dumps(wire)
+        assert "Check the tool configuration and permissions" in wire[0]["error"]
+        assert wire[1]["response"]["report"] == expected
+    assert hass.services.async_call.await_count == 2
+
+
+def test_recursive_and_deep_fallback_cannot_erase_failure_provenance():
+    from custom_components.extended_openai_conversation_responses.entity import (
+        _normalize_function_result,
+    )
+    from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
+        BackendExecutionFailure,
+    )
+
+    recursive = []
+    recursive.append(recursive)
+    result = _normalize_function_result(recursive)
+    assert isinstance(result[0], BackendExecutionFailure)
+    nested = b"unsupported"
+    for _ in range(40):
+        nested = [nested]
+    result = _normalize_function_result(nested)
+    for _ in range(32):
+        result = result[0]
+    assert isinstance(result, BackendExecutionFailure)
 
 
 async def execute_configured(hass, exposed_entities, name, arguments):
@@ -50,6 +104,55 @@ async def execute_configured(hass, exposed_entities, name, arguments):
     return await ExtendedOpenAIBaseLLMEntity._execute_function_tool(
         entity, tool, call, None, exposed_entities
     )
+
+
+@pytest.mark.parametrize("batch", [False, True])
+async def test_small_native_failure_diagnostics_are_private_on_both_wires(
+    hass, exposed_entities, wire_result, batch
+):
+    secret = "unfamiliar private backend credential 42"
+    hass.services.async_call.side_effect = HomeAssistantError(secret)
+    argument = {
+        "domain": "light",
+        "service": "turn_on",
+        "service_data": {"entity_id": "light.living_room"},
+    }
+    content = await execute_configured(
+        hass,
+        exposed_entities,
+        "execute_service" if batch else "execute_service_single",
+        {"list": [argument]} if batch else argument,
+    )
+    retained = deepcopy(tool_result_data(content))
+    assert secret in json.dumps(retained)  # Local diagnostics remain complete.
+    for result in (content, await project_tool_result(content, prepare_wire=True)):
+        public = json.dumps(wire_result(result))
+        assert secret not in public
+        assert "Check the tool configuration and permissions" in public
+    assert tool_result_data(content) == retained
+
+
+@pytest.mark.parametrize("owned", [False, True])
+async def test_nested_marked_failure_is_contained_without_rewriting_business_data(
+    wire_result, owned
+):
+    secret = "unfamiliar private backend credential 42"
+    value = {
+        "items": [{"nested": backend_failure(secret)}],
+        "business": {"error": "legitimate result"},
+    }
+    content = make_tool_result_content(
+        agent_id="probe",
+        tool_call_id="nested",
+        tool_name="native",
+        tool_result=OwnedJSONPayload(value) if owned else {"result": value},
+    )
+    for result in (content, await project_tool_result(content, prepare_wire=True)):
+        payload = wire_result(result)["result"]
+        payload = json.loads(payload) if isinstance(payload, str) else payload
+        assert secret not in json.dumps(payload)
+        assert payload["business"] == {"error": "legitimate result"}
+    assert value["items"][0]["nested"]["error"] == secret
 
 
 @pytest.mark.parametrize("batch", [False, True])

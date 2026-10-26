@@ -24,7 +24,7 @@ This controls the short sound played when a compatible satellite detects its wak
 
 ## Satellite discovery and overrides
 
-Extended OpenAI discovers Assist satellites from Home Assistant and tries to associate each one with its speaker media player and wake-word sound switch. The Quiet Hours page shows the detected entities and whether the speaker is currently usable.
+Extended OpenAI discovers Assist satellites from Home Assistant and tries to associate each one with its speaker media player and wake-word sound switch. The Quiet Hours page shows the detected entities and whether the speaker is currently usable. Manual selections follow the Home Assistant entity registry when a satellite, speaker or wake-sound switch is renamed, including across restarts. Removing a selected entity does not transfer its selection or restoration ownership to another entity that reuses its old ID.
 
 Use the per-satellite overrides when automatic discovery finds the wrong entity or cannot identify one. Leaving an override empty returns that satellite to automatic discovery.
 
@@ -48,10 +48,25 @@ These actions simply turn the saved daily schedule on or off; they do not create
 
 ### Retrying restoration
 
-If a controlled speaker or wake-sound switch is unavailable when Quiet Hours ends, its original value remains stored. EOAI retries restoration on discovery ticks, including while the schedule is disabled, and keeps the baseline across Home Assistant restarts. A confirmed independent device change releases ownership without overwriting that change.
+If a controlled speaker or wake-sound switch is unavailable when Quiet Hours ends, its original value remains stored. EOAI retries restoration on discovery ticks, including while the schedule is disabled, and keeps the baseline across Home Assistant restarts. A confirmed independent device change releases ownership without overwriting that change. Released choices remain respected if the Quiet Hours manager is replaced during the same policy period. Controls that EOAI still owns are restored on shutdown and can be reapplied by the replacement manager; a new policy period can apply the policy again.
 
 Saving a changed policy succeeds before EOAI restores or changes devices. A failed settings save leaves the existing policy and device values in place.
+
+Saving the same policy or changing only its schedule does not reclaim a manually adjusted control. Changing the speaker volume target also leaves manual wake-sound choices alone, and changing the wake-sound target leaves manual volume choices alone.
 
 ### Removal and reinstallation
 
 The global Quiet Hours policy and Broadcast enabled setting are retained when the final EOAI integration entry is removed. Reinstalling EOAI loads these settings again. Disable each feature before removing EOAI if you do not want it to reactivate after reinstallation. Quiet Hours restoration records are also retained so unavailable controls can be restored when EOAI returns.
+
+Quiet Hours saves check the policy revision loaded by the editor. If selections
+or settings change while the page is open, reload the latest policy before
+saving. Renaming a selected satellite also migrates its pending applications,
+so interrupted changes can resume under the same physical satellite identity.
+
+Unsaved policy edits recovered after Home Assistant recreates the panel retain
+the revision they were based on. If the policy changed meanwhile, saving asks
+you to reload; explicitly discarding the recovered edits adopts the latest
+saved policy. Pending applications retain satellite registry identities for
+both automatic discovery and manual selections, so a rename can resume safely
+without treating a replacement satellite that reuses the old ID as the same
+application.

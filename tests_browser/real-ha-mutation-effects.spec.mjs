@@ -44,10 +44,79 @@ test("mutation declarations preserve real revisions and cached projections", asy
     const fresh = await panel.evaluate(async host => ({config:await host._call("configuration", "get"), rules:await host._call("request_rules", "list")}));
     expect(fresh.config.config.prompt).toBe("Mutation effects saved prompt");
     expect(fresh.rules.rules.map(r => r.name)).toContain("After configuration save");
+    // Commit through registered HA commands while holding only its response.
+    // Later controls must remain authored against this acknowledgement, and a
+    // retained creation's second save must update its real server-owned ID.
+    await page.evaluate(() => {
+      const {hass} = browserHarness, original = hass.callWS.bind(hass);
+      let hold = true;
+      hass.callWS = async message => {
+        const result = await original(message);
+        if (hold && message.section === "request_rules" && message.action === "create") {
+          hold = false;
+          window.realRuleAcknowledgement = result;
+          return new Promise(resolve => {window.releaseRealRuleAcknowledgement = () => resolve(result);});
+        }
+        return result;
+      };
+    });
+    await panel.getByRole("button", {name:"Create rule", exact:true}).first().click();
+    await panel.locator("#rule-name").fill("Submitted genuine HA Rule");
+    await panel.locator("#rule-phrases").fill("held genuine rule command");
+    await panel.locator("#rule-action-type").selectOption("model_routing");
+    await panel.locator("#rule-model").fill("gpt-5-mini");
+    await panel.locator("#rule-scope").selectOption("conversation");
+    await panel.locator("#rule-save").click();
+    await expect.poll(() => page.evaluate(() => typeof window.releaseRealRuleAcknowledgement)).toBe("function");
+    await panel.locator("#rule-name").fill("Later genuine HA Rule draft");
+    await page.evaluate(() => releaseRealRuleAcknowledgement());
+    await expect(panel.locator("#rule-save")).toBeEnabled();
+    await expect(panel.locator("#rule-dialog")).toHaveJSProperty("open", true);
+    await expect(panel.locator("#rule-name")).toHaveValue("Later genuine HA Rule draft");
+    expect(await panel.evaluate(host => host._editingRuleId)).toBe(await page.evaluate(() => realRuleAcknowledgement.rule.id));
+    await panel.locator("#rule-save").click();
+    await expect(panel.locator("#rule-dialog")).toHaveJSProperty("open", false);
+    const retained = await panel.evaluate(host => host._call("request_rules", "list"));
+    expect(retained.rules.filter(rule => rule.name === "Later genuine HA Rule draft")).toHaveLength(1);
+    expect(retained.rules.some(rule => rule.name === "Submitted genuine HA Rule")).toBe(false);
+    const update = await page.evaluate(() => mutationEffectsProbe.calls.find(call => call.message.section === "request_rules"
+      && call.message.action === "update" && call.message.rule_id === realRuleAcknowledgement.rule.id));
+    expect(update.message.revision).toBe(await page.evaluate(() => realRuleAcknowledgement.revision));
+    await page.evaluate(() => {
+      const {hass} = browserHarness, original = hass.callWS.bind(hass);
+      window.realRuleCollectionCall = original;
+      let hold = true;
+      hass.callWS = async message => {
+        const result = await original(message);
+        if (hold && message.section === "request_rules" && message.action === "update"
+            && Object.keys(message.rule || {}).join() === "enabled") {
+          hold = false;
+          window.realRuleToggleAcknowledgement = result;
+          return new Promise(resolve => {window.releaseRealRuleToggle = () => resolve(result);});
+        }
+        return result;
+      };
+    });
+    await panel.locator(".request-rule-card").filter({hasText:"After configuration save"}).locator(".rule-enabled").uncheck();
+    await expect.poll(() => page.evaluate(() => typeof window.releaseRealRuleToggle)).toBe("function");
+    const authoritative = await panel.evaluate(async host => {
+      await realRuleCollectionCall({type:"extended_openai_conversation_responses/management", section:"request_rules", action:"update",
+        entry_id:host._selectedAgent().entry_id, subentry_id:host._agentId, rule_id:realRuleToggleAcknowledgement.rule.id,
+        rule:{...realRuleToggleAcknowledgement.rule, name:"Newer genuine HA collection read"}, revision:realRuleToggleAcknowledgement.revision});
+      host._sectionCache.delete(host._sectionCacheKey());
+      await host._loadSection(true);
+      return structuredClone(host._result);
+    });
+    await page.evaluate(() => releaseRealRuleToggle());
+    await expect.poll(() => panel.evaluate(host => host._eocAgentMutations || 0)).toBe(0);
+    expect(await panel.evaluate(host => host._result)).toEqual(authoritative);
+    expect(await panel.evaluate(host => host._eocRequestRuleRevision.value)).toBe(authoritative.revision);
+    await panel.locator(".request-rule-card").filter({hasText:"Newer genuine HA collection read"}).locator(".rule-duplicate").click();
+    await expect.poll(() => panel.evaluate(host => host._result.rules.length)).toBe(authoritative.rules.length + 1);
   } else if (scenario === "rule_pack") {
     const pack = await panel.evaluate(async host => {
       await host._call("request_rules", "create", {rule:{name:"Original pack rule", enabled:true, phrases:["pack phrase"], match_type:"equals", action_type:"model_routing", action:{model:"gpt-5-mini", scope:"conversation"}}});
-      return host._call("request_rules", "rule_pack_export", {selection:"all"});
+      return host._call("request_rules", "rule_pack_export", {selection:"all", reviewed_custom:true});
     });
     pack.rules[0].name = "Imported pack rule";
     await panel.evaluate(host => host._loadSection());

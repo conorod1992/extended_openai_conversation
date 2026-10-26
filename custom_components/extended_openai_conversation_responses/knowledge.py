@@ -113,9 +113,7 @@ def _index_source(source: KnowledgeSource, index: _KnowledgeIndex) -> None:
         metadata_tokens=metadata_tokens,
         normalized_title=normalized_title,
         normalized_description=normalized_description,
-        normalized_metadata=" ".join(
-            filter(None, (normalized_title, normalized_description))
-        ),
+        normalized_metadata=_normalize_catalog(f"{source.title} {source.description}"),
     )
     for chunk_id, (start, text) in enumerate(_split_chunks(source.content)):
         chunk = _Chunk(
@@ -346,7 +344,7 @@ class KnowledgeLibrary:
                 raise ValueError("offset must be an integer")
             limit = max(1, min(limit, MAX_CATALOG_LIMIT))
             offset = max(0, offset)
-            normalized_query = _normalize(query or "")
+            normalized_query = _normalize_catalog(query or "")
             query_tokens = _tokens(query or "")
 
             sources = [
@@ -364,7 +362,12 @@ class KnowledgeLibrary:
                     if (features := self._source_features.get(source.source_id))
                     is not None
                     and (
-                        normalized_query in features.normalized_metadata
+                        # A one-character identifier must not match inside an
+                        # unrelated word or a distinct token such as C++/C#.
+                        (
+                            len(normalized_query) > 1
+                            and normalized_query in features.normalized_metadata
+                        )
                         or bool(query_tokens & features.metadata_tokens)
                     )
                 ]
@@ -1073,6 +1076,12 @@ def _normalize(value: str) -> str:
     return " ".join(
         _TOKEN_PATTERN.findall(unicodedata.normalize("NFC", value).casefold())
     )
+
+
+def _normalize_catalog(value: str) -> str:
+    from .retrieval_text import lexical_tokens
+
+    return " ".join(lexical_tokens(value))
 
 
 def _split_chunks(content: str) -> list[tuple[int, str]]:

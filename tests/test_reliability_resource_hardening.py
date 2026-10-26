@@ -152,6 +152,8 @@ class SkillHass:
         self.config = SimpleNamespace(config_dir=str(config_dir))
         self.skill_path = skill_path
         self.content = content
+        skill_path.parent.mkdir(parents=True, exist_ok=True)
+        skill_path.write_text(content, encoding="utf-8")
         self.calls = 0
         self.started = asyncio.Event()
         self.release = asyncio.Event()
@@ -165,7 +167,7 @@ class SkillHass:
         await self.release.wait()
         if self.fail:
             raise RuntimeError("simulated skill discovery failure")
-        return [(self.skill_path, self.content)]
+        return await asyncio.to_thread(_target, *_args)
 
 
 async def test_skill_first_load_waits_and_failed_reload_keeps_catalog(tmp_path) -> None:

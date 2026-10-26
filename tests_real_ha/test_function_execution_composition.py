@@ -484,8 +484,7 @@ async def test_ha_owned_tool_runtime_failure_skips_later_call_and_next_turn_reco
     failure = await _say(hass, agent, "Run the ordered Home Assistant entity actions")
     assert failure.response.error_code is not None
     failure_speech = failure.response.as_dict()["speech"]["plain"]["speech"]
-    assert entity_b in failure_speech
-    assert "unavailable" in failure_speech
+    assert "Check the tool configuration and permissions" in failure_speech
 
     assert tool.attempts == [entity_a, entity_b]
     assert tool.calls == [entity_a]
@@ -511,9 +510,9 @@ async def test_ha_owned_tool_runtime_failure_skips_later_call_and_next_turn_reco
 
     error_b = tool_result_data(failed_batch_results["call-ha-stale-b"])["result"]
     assert error_b["status"] == "error"
-    assert "HomeAssistantError" in error_b["error"]
-    assert entity_b in error_b["error"]
-    assert "unavailable" in error_b["error"]
+    assert "SanitizedBackendError" in error_b["error"]
+    assert "Check the tool configuration and permissions" in error_b["error"]
+    assert entity_b not in error_b["error"]
 
     skipped_c = tool_result_data(failed_batch_results["call-ha-valid-c"])["result"]
     assert skipped_c["status"] == "skipped"

@@ -57,6 +57,7 @@ from tests_stress.test_os_storage_faults import real_store_io  # noqa: F401
 from tests_stress.test_shared_runtime_request_lifetimes import _cancel, _endpoint
 
 CONTENT = {"prompt", "memory", "knowledge", "user", "argument", "aborted"}
+PRIVATE_BACKUP = CONTENT | {"credential"}
 
 
 def _markers(seed, mode):
@@ -114,17 +115,16 @@ def test_application_oracle_detects_disclosure_before_upload_redaction(destinati
     _audit(markers, uploaded, {})
 
 
-def test_authorized_retention_does_not_allow_credentials_or_unrelated_destinations():
+def test_credentials_require_explicit_private_backup_authorization():
     markers = _markers(2, "authorization")
-    permissions = {"owner_response": CONTENT, "requested_export": CONTENT}
+    permissions = {"owner_response": CONTENT, "requested_export": PRIVATE_BACKUP}
     _audit(
         markers,
-        {"owner_response": markers["user"], "requested_export": markers["memory"]},
+        {"owner_response": markers["user"], "requested_export": markers["credential"]},
         permissions,
     )
     for destination, name in [
         ("owner_response", "credential"),
-        ("requested_export", "credential"),
         ("unowned_temp", "memory"),
     ]:
         with pytest.raises(AssertionError, match="Application destination disclosure"):
@@ -402,11 +402,15 @@ async def test_populated_journey_respects_raw_application_destinations(
                 "owner_memory_creation": {"memory"},
                 "owner_response": CONTENT,
                 "native_effect": {"argument"},
-                "declared_ha_events": CONTENT,
+                "declared_ha_events": set(),
             }
         )
-        assert completion_events and any(
-            markers["user"] in _serialized(event) for event in completion_events
+        assert completion_events
+        assert all(event.get("schema_version") == 2 for event in completion_events)
+        assert not any(
+            marker in _serialized(event)
+            for marker in markers.values()
+            for event in completion_events
         )
         outsider = await hass_ws_client(hass, outsider_token)
         for section in ("memories", "conversations"):
@@ -507,7 +511,14 @@ async def test_populated_journey_respects_raw_application_destinations(
         authorized_export = export_path.relative_to(tmp_path).as_posix()
         assert all(
             markers[name] in files[authorized_export]
-            for name in ("prompt", "memory", "knowledge", "user", "argument")
+            for name in (
+                "prompt",
+                "memory",
+                "knowledge",
+                "user",
+                "argument",
+                "credential",
+            )
         )
         for relative, value in files.items():
             destination = "file:" + relative
@@ -523,22 +534,22 @@ async def test_populated_journey_respects_raw_application_destinations(
             elif relative == archive_prefix + ".metadata":
                 permissions[destination] = {"user", "aborted"}
             elif relative == authorized_export:
-                permissions[destination] = CONTENT
+                # Lossless private recovery backups explicitly include the provider
+                # connection; this permission does not apply to shareable exports.
+                permissions[destination] = PRIVATE_BACKUP
             elif relative == ".storage/core.config_entries":
                 permissions[destination] = {"credential", "prompt"}
         rows, states, attributes = await hass.async_add_executor_job(
             _recorder_records, database
         )
         assert rows and any(
-            event_type == EVENT_CONVERSATION_FINISHED and markers["user"] in value
+            event_type == EVENT_CONVERSATION_FINISHED and "schema_version" in value
             for event_type, value in rows
         )
         for index, (event_type, value) in enumerate(rows):
             destination = f"recorder_event:{event_type}:{index}"
             observations[destination] = value
-            if event_type == EVENT_CONVERSATION_FINISHED:
-                permissions[destination] = CONTENT
-            elif event_type == "call_service":
+            if event_type == "call_service":
                 permissions[destination] = {"argument"}
         observations["recorder_states"] = states
         observations["recorder_attributes"] = attributes

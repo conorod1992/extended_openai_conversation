@@ -217,3 +217,48 @@ async def test_nullable_delay_survives_real_store_restart(hass, monkeypatch):
         assert split_legacy_execution_delay(tool["spec"], validated) == ({}, {"minutes": 5})
     finally:
         second._handle_stop()
+
+
+@pytest.mark.parametrize("retry,blocked", [({"amount":1}, True), ({"ignored":"different"}, True), ({"amount":2}, False), ({"header":"other"}, False), ({"request":"other"}, False), ({"endpoint":"other"}, False), ({"endpoint":"dispense#ignored"}, True)])
+async def test_rest_recovery_matches_rendered_operation(hass, monkeypatch, retry, blocked):
+    """Completed HTTP effects survive changed argument spelling after lost acknowledgement."""
+    from contextlib import asynccontextmanager
+    from custom_components.extended_openai_conversation_responses.execution_outcomes import execute_backend, execution_attempt, execution_prepared
+    from custom_components.extended_openai_conversation_responses.tool_replay_guard import bind_effect_replay_scope, clear_unacknowledged_calls
+
+    sent=[]
+    class Session:
+        @asynccontextmanager
+        async def request(self, method, resource, **kwargs):
+            sent.append((method, resource, kwargs.get("data"), dict(kwargs.get("headers") or {}), kwargs.get("params")))
+            yield SimpleNamespace(status=200, charset="utf-8", headers={"Content-Type":"text/plain"}, text=AsyncMock(return_value="ok"))
+    monkeypatch.setattr(web, "_install_bounded_session", lambda _hass, data: setattr(data, "_session", Session()))
+    config={"type":"rest", "method":"POST", "resource_template":"https://example.invalid/{{ endpoint | default('dispense') }}", "headers":{"X-Operation":"{{ header | default('same') }}"}, "params":{"request":"{{ request | default('same') }}"}, "payload_template":"{{ amount | default(1) }}"}
+    tool=_tool("dispense", function=config, parameters={"type":"object", "properties":{"amount":{"type":"integer"}, "ignored":{"type":"string"}, "header":{"type":"string"}, "request":{"type":"string"}, "endpoint":{"type":"string"}}})
+    tool["spec"]["strict"]=False
+    entity, log=_entity(hass), _chat_log(hass)
+    async def dispatch(definition, call, *_):
+        with execution_attempt(entity, call, definition):
+            execution_prepared(call.tool_args)
+            runtime = {**definition["function"], "payload_template":Template(definition["function"]["payload_template"], hass), "resource_template":Template(definition["function"]["resource_template"], hass), "headers":{key:Template(value, hass) for key,value in definition["function"]["headers"].items()}, "params":{key:Template(value, hass) for key,value in definition["function"]["params"].items()}}
+            result=await execute_backend(web.RestFunction(), hass, runtime, call.tool_args, None, [])
+            return _result(entity, call, result)
+    entity._execute_function_tool.side_effect=dispatch
+    async def exchange(call):
+        _retain_calls(log, [call])
+        with bind_effect_replay_scope(entity, log.conversation_id):
+            return await async_execute_tool_exchange(entity, log, [call], [tool], FunctionCallBudget(10), None, [], recovery_state=ToolRecoveryState(enabled=False))
+    before={id(item) for item in log.content}
+    await exchange(_call("first", "dispense", {}))
+    assert len(sent)==1 and sent[0][:3]==("POST", "https://example.invalid/dispense", "1")
+    remember_unacknowledged_calls(entity, log, before)
+    if blocked:
+        with pytest.raises(HomeAssistantError):
+            await exchange(_call("retry", "dispense", retry))
+        assert len(sent)==1
+    else:
+        await exchange(_call("retry", "dispense", retry))
+        assert sent[-1]!=sent[0] and len(sent)==2
+    clear_unacknowledged_calls(entity, log.conversation_id)
+    await exchange(_call("acknowledged-repeat", "dispense", {"amount":1}))
+    assert sent[-1][2]=="1" and len(sent)==(2 if blocked else 3)

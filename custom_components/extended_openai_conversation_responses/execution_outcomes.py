@@ -7,10 +7,13 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from functools import wraps
+import logging
 from typing import Any, Literal
 from uuid import uuid4
 
 from homeassistant.exceptions import HomeAssistantError
+
+from .template_diagnostics import private_template_diagnostics
 
 _MAX_EFFECT_RECEIPTS = 4096
 _MAX_RETAINED_EFFECT_RECEIPTS = 4096
@@ -352,6 +355,7 @@ def execution_rejected(
         )
 
 
+@private_template_diagnostics
 async def execute_backend(
     function: Any,
     hass: Any,
@@ -362,12 +366,19 @@ async def execute_backend(
 ) -> Any:
     """Native effects/composite children own precise boundaries; opaque backends are conservative."""
     with execution_operation("backend", {"function": config, "arguments": arguments}):
-        owns_receipts = config.get("type") in {"native", "composite", "bash"}
+        owns_receipts = config.get("type") in {
+            "native",
+            "composite",
+            "bash",
+            "rest",
+            "edit_file",
+            "write_file",
+        }
         before = len(attempt.receipts) if (attempt := _ATTEMPT.get()) else 0
         receipt = None if owns_receipts else execution_started()
         try:
             result = await function.execute(hass, config, arguments, context, exposed)
-        except BaseException:
+        except BaseException as error:
             if attempt is not None and (
                 len(attempt.receipts) == before
                 or all(
@@ -375,6 +386,16 @@ async def execute_backend(
                 )
             ):
                 execution_rejected(before_dispatch=True)
+            from .public_errors import sanitize_backend_error
+
+            public_error = sanitize_backend_error(error)
+            if public_error is not error:
+                from .operational_errors import log_handled_failure
+
+                log_handled_failure(
+                    logging.getLogger(__name__), "Function backend failed", error
+                )
+                raise public_error from None
             raise
         if not owns_receipts:
             execution_completed(receipt)

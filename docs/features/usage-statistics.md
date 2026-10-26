@@ -4,7 +4,7 @@ Extended OpenAI records provider-reported token usage. It does not contain a pri
 
 ## Provider requests and conversation runs
 
-A **provider request** is one API call. A **conversation run** is one complete user turn, from the start of processing until the final response or error. Tool loops and context summarisation can cause one run to contain several provider requests. Every request made during a run shares its run ID. Hybrid Memory embedding calls also count as provider requests, including failed attempts; provider-reported embedding input tokens are included.
+A **provider request** is one API call. A **conversation run** is one complete user turn, from the start of processing until the final response or error. Tool loops and context summarisation can cause one run to contain several provider requests. Foreground requests, including a preflight context summary needed by the current turn, share that run’s ID. Deferred summaries after a reply remain detached from finalized runs and contribute to aggregate usage. Hybrid Memory embedding calls also count as provider requests, including failed attempts; provider-reported embedding input tokens are included.
 
 Provider-request counters and tokens are committed when each real provider request finishes; the conversation-run counter is committed once when the complete user turn finishes. This keeps one user turn distinct from any additional provider rounds it triggers and preserves completed request usage even if the run is interrupted before its normal final response.
 

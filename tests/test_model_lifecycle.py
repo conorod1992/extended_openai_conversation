@@ -88,7 +88,7 @@ def test_retirement_failure_creates_repair_and_deduplicates_log(monkeypatch) -> 
     assert create.call_count == 2
     logger.error.assert_called_once()
     assert "PRIVATE-PROVIDER-CANARY" not in str(logger.error.call_args)
-    assert "model_not_found" in str(logger.error.call_args)
+    assert "model_unavailable" in str(logger.error.call_args)
     assert model_lifecycle.confirmed_retirement_failure(
         hass, "entry", "agent", "gpt-5.1"
     )

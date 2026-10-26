@@ -165,15 +165,7 @@ async def test_projection_prewarm_discards_yaml_after_subentry_replacement(
     original_data = {CONF_FUNCTION_TOOLS: "[]"}
     entry, subentry = _entry_and_subentry(original_data)
     entry.state = ConfigEntryState.LOADED
-    projection = SimpleNamespace(
-        snapshot=None,
-        repair_state=None,
-        data=original_data,
-        title=subentry.title,
-    )
-    monkeypatch.setattr(
-        repair, "persisted_config_projection", lambda _subentry: projection
-    )
+    projection = repair.persisted_config_projection(subentry)
 
     async def executor(function, configured):
         assert function is parse_configured_function_tools
@@ -346,11 +338,16 @@ async def test_function_repair_save_one_replaces_only_selected_invalid_tool(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("representation", ["list", "yaml"])
 async def test_function_repair_save_replaces_invalid_collection(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, representation,
 ) -> None:
     """The whole-field repair publishes a valid replacement and new revision."""
     data, _mixed, valid_tool = _mixed_legacy_tool_data()
+    corrected = yaml.safe_dump([valid_tool], sort_keys=False)
+    if representation == "yaml":
+        data[CONF_FUNCTION_TOOLS] = corrected.replace("type: object", "type: [object", 1)
+        assert repair.editable_function_tools(data) == data[CONF_FUNCTION_TOOLS]
     entry, subentry = _entry_and_subentry(data)
     config_entries = _FakeConfigEntries()
     hass = SimpleNamespace(data={}, config_entries=config_entries)
@@ -376,7 +373,7 @@ async def test_function_repair_save_replaces_invalid_collection(
             "entry_id": entry.entry_id,
             "subentry_id": subentry.subentry_id,
             "revision": before["revision"],
-            "tools": [valid_tool],
+            "tools": corrected if representation == "yaml" else [valid_tool],
         },
     )
     assert saved["valid"] is True
@@ -463,7 +460,7 @@ async def test_function_repair_requires_admin() -> None:
         ("configuration_validate", {"config": []}, "config must be an object"),
         ("configuration_save", {"config": []}, "config must be an object"),
         ("unknown", {}, "Unknown Function Tool repair action"),
-        ("save", {"tools": "not-an-array"}, "tools must be a JSON array"),
+        ("save", {"tools": "not-an-array"}, "top-level value must be a list"),
     ],
 )
 async def test_function_repair_rejects_malformed_action_payloads(

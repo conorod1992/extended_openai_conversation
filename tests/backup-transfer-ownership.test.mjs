@@ -19,7 +19,8 @@ function harness() {
   const panel = {_selectedAgent:() => agent, _viewKey:() => "usage-maintenance/backup-restore", _e:String,
     _setSaving(){}, _toast(){}, _clearConfigDraft(){ assert.fail("must not clear another agent's draft"); },
     _loadAgents:async()=>{},
-    shadowRoot:{querySelector:selector => nodes.get(selector) || null, querySelectorAll:() => [section]},
+    shadowRoot:{querySelector:selector => nodes.get(selector) || null,
+      querySelectorAll:selector => [".transfer-restore-section", ".transfer-custom-section"].includes(selector) ? [section] : []},
     _hass:{async callWS(message) {
       calls.push(message);
       if (message.action === "import_start") return {session_id:message.subentry_id, chunk_size:1, chunk_count:1};

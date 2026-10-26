@@ -233,6 +233,9 @@ test("Quiet Hours uses compact healthy satellites and reveals problems and draft
   const panel=host(page);
   await expect(panel.locator("#qh-enabled")).toBeVisible();
   await panel.evaluate(p => {
+    // The layout fixture has no HA lazy components; native registration and
+    // selection are covered by the fresh-document real-ha-shell journey.
+    if (!customElements.get("ha-entity-picker")) customElements.define("ha-entity-picker", class extends HTMLElement {});
     p._hass.states={"media_player.kitchen":{state:"idle",attributes:{volume_level:0.5,friendly_name:"Kitchen speaker"}},"media_player.manual":{state:"idle",attributes:{volume_level:0.2}}};
     p._result.satellites=[
       {satellite_entity_id:"assist_satellite.kitchen",name:"Kitchen",media_player_entity_id:"media_player.kitchen",media_player_source:"auto",media_player_candidates:["media_player.kitchen","media_player.manual"],wake_sound_candidates:[]},

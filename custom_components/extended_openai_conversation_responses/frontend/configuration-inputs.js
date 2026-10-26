@@ -1,9 +1,10 @@
-import {CONFIGURATION_CONTROLS, applyConfigurationControl} from "./configuration-controls.js";
+import {CONFIGURATION_CONTROLS, applyConfigurationControl, recordReasoningChoice} from "./configuration-controls.js";
 import {applyTargetedConfigDirty} from "./management-state-safety.js";
 import {refreshSettingEffects} from "./management-setting-metadata.js";
 import {configurationGuidanceChanged} from "./management-configuration-guidance.js";
 import {bindSingleRequestSave} from "./management-actions.js";
-import {saveBarMarkup, clone} from "./unsaved-state.js";
+import {discardConfigurationDraft} from "./configuration-acknowledgement.js";
+import {saveBarMarkup} from "./unsaved-state.js";
 import {enhancementChanged} from "./management-enhancement-state.js";
 
 export function refreshConfigurationSaveBar(panel) {
@@ -76,16 +77,19 @@ export function bindConfigurationInputs(panel, handlers = {}) {
     const result = updateConfigurationControl(panel, control, event.type);
     if (!result || event.type !== "change") return;
     if (["chat_model", "azure_model"].includes(result.key)) void root.__eocConfigurationInputs.modelChanged?.(control);
-    if (result.key === "reasoning_effort") root.__eocConfigurationInputs.reasoningChanged?.(control);
-    if (result.key === "api_mode" || result.key === "web_search") root.__eocConfigurationInputs.capabilityChanged?.(control);
+    if (result.key === "reasoning_effort") {
+      recordReasoningChoice(panel);
+      root.__eocConfigurationInputs.reasoningChanged?.(control);
+    }
+    // Recompute dependent choices on commit, including after an input event
+    // already updated the draft. Numeric keystrokes must not rebuild the form.
+    if (["api_mode", "web_search", "max_function_calls_per_conversation", "continue_conversation"].includes(result.key)) root.__eocConfigurationInputs.capabilityChanged?.(control);
   };
   root.addEventListener("input", handle);
   root.addEventListener("change", handle);
   root.addEventListener("click", (event) => {
     if (!event.target?.closest?.("#revert-config") || panel._configurationSaving) return;
-    panel._draft = clone(panel._configData.config);
-    panel._draftTitle = panel._configData.title;
-    panel._setConfigDirty(false);
+    discardConfigurationDraft(panel);
     // Explicit discard restores every mounted control, even when the cached
     // pre-edit markup already equals the baseline being restored.
     panel._eocMainMarkup = null;

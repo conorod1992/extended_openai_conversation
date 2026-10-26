@@ -52,3 +52,76 @@ async def test_unchanged_target_releases_manual_adjustment_before_later_restore(
     await manager._async_restore_locked()
     manager._async_set_volume.assert_not_awaited()
     manager._async_set_switch.assert_not_awaited()
+
+
+@pytest.mark.parametrize("kind", ["volume", "switch"])
+@pytest.mark.parametrize("reconciled", [False, True])
+async def test_shutdown_replacement_preserves_released_choice_in_same_period(
+    hass, monkeypatch, kind, reconciled
+):
+    from datetime import UTC, datetime, timedelta
+    from tests.test_quiet_hours_runtime import (
+        _config,
+        _install_registry,
+        _install_services,
+        _seed_room,
+    )
+
+    _install_registry(monkeypatch, "bedroom")
+    manager = _stateful_public_manager(hass)
+    _seed_room(hass, "bedroom", volume=0.6)
+    manager._config = _config()
+    now = datetime(2026, 10, 21, 22, 30, tzinfo=UTC)
+    monkeypatch.setattr(runtime.dt_util, "now", lambda: now)
+    monkeypatch.setattr(runtime.QuietHoursManager, "_reschedule", lambda self: None)
+    volume_calls, switch_calls = await _install_services(hass)
+    persisted = {}
+
+    async def save(data):
+        persisted.clear()
+        persisted.update(deepcopy(data))
+
+    store = SimpleNamespace(
+        async_save=AsyncMock(side_effect=save),
+        async_load=AsyncMock(side_effect=lambda: deepcopy(persisted)),
+    )
+    manager._store = store
+    await manager.async_reconcile(now=now)
+    entity_id = (
+        "media_player.bedroom" if kind == "volume" else "switch.bedroom_wake_sound"
+    )
+    if kind == "volume":
+        hass.states.async_set(entity_id, "idle", {"volume_level": 0.4})
+    else:
+        hass.states.async_set(entity_id, "on")
+    hass.states.get(entity_id).context = SimpleNamespace(id="independent")
+    if reconciled:
+        await manager.async_reconcile(now=now)
+    await manager.async_shutdown()
+    # Still-owned controls restore, independently chosen values do not.
+    assert hass.states.get("media_player.bedroom").attributes["volume_level"] == (
+        0.4 if kind == "volume" else 0.6
+    )
+    assert hass.states.get("switch.bedroom_wake_sound").state == "on"
+    replacement = runtime.QuietHoursManager(hass)
+    replacement._store = store
+    await replacement.async_setup()
+    assert entity_id not in replacement.active["controls"]
+    assert entity_id in replacement.active["observed_controls"]
+    assert hass.states.get(entity_id).attributes.get("volume_level") == (
+        0.4 if kind == "volume" else None
+    )
+    assert hass.states.get("switch.bedroom_wake_sound").state == (
+        "on" if kind == "switch" else "off"
+    )
+    before = (list(volume_calls), list(switch_calls))
+    await manager._handle_discovery_tick(now)
+    await manager._handle_time_transition(now)
+    await replacement.async_update_config(_config().as_dict())
+    await replacement.async_update_config(_config().as_dict())
+    assert (volume_calls, switch_calls) == before
+    # Released observations expire with the policy period, not with the manager.
+    now += timedelta(days=1)
+    await replacement.async_reconcile(now=now)
+    assert entity_id in replacement.active["controls"]
+    await replacement.async_shutdown()

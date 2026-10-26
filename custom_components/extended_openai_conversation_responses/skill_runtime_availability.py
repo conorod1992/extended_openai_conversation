@@ -68,7 +68,9 @@ def effective_tool_runtime_scope(
             DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
         )
     )
-    function_tools_supported = max_function_calls > 0
+    from .request import function_call_budget_available
+
+    function_tools_supported = function_call_budget_available(options)
     group_loader_supported = function_tools_supported
     skill_status = effective_skill_loader_status(
         selected_names,

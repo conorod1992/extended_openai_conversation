@@ -66,6 +66,7 @@ def _tool_call_stream(
         [_chat_chunk(tool_calls=[tool_delta], finish_reason="tool_calls")]
     )
 
+
 def _duplicate_tool_call_id_stream() -> _FakeStream:
     """Return one malformed provider round with two different calls sharing an ID."""
     first = SimpleNamespace(
@@ -156,14 +157,14 @@ def _protocol_messages(messages: list[dict[str, Any]]) -> tuple[list[Any], list[
     return calls, outputs
 
 
-async def test_chat_completions_tool_result_is_paired_on_following_request(hass) -> None:
+async def test_chat_completions_tool_result_is_paired_on_following_request(
+    hass,
+) -> None:
     """A streamed tool call is executed once and replayed with its matching output."""
     entity = _entity(
         hass,
         [
-            _tool_call_stream(
-                "call-1", "get_state", {"entity_id": "light.kitchen"}
-            ),
+            _tool_call_stream("call-1", "get_state", {"entity_id": "light.kitchen"}),
             _final_stream("The kitchen light is on."),
         ],
     )
@@ -183,9 +184,7 @@ async def test_chat_completions_tool_result_is_paired_on_following_request(hass)
 
     await entity._async_handle_chat_log(chat_log, [_tool("get_state")], [])
 
-    assert executed == [
-        ("call-1", "get_state", {"entity_id": "light.kitchen"})
-    ]
+    assert executed == [("call-1", "get_state", {"entity_id": "light.kitchen"})]
     create = entity._client.chat.completions.create
     assert create.await_count == 2
     second_messages = create.await_args_list[1].kwargs["messages"]
@@ -196,7 +195,9 @@ async def test_chat_completions_tool_result_is_paired_on_following_request(hass)
     assert chat_log.content[-1].content == "The kitchen light is on."
 
 
-async def test_chat_completions_sequential_tool_rounds_preserve_ids_and_order(hass) -> None:
+async def test_chat_completions_sequential_tool_rounds_preserve_ids_and_order(
+    hass,
+) -> None:
     """Two provider rounds retain one ordered call/output pair for each side effect."""
     entity = _entity(
         hass,
@@ -220,9 +221,7 @@ async def test_chat_completions_sequential_tool_rounds_preserve_ids_and_order(ha
     entity._execute_function_tool = AsyncMock(side_effect=execute)
     chat_log = _chat_log(hass)
 
-    await entity._async_handle_chat_log(
-        chat_log, [_tool("first"), _tool("second")], []
-    )
+    await entity._async_handle_chat_log(chat_log, [_tool("first"), _tool("second")], [])
 
     assert executed == ["call-1", "call-2"]
     create = entity._client.chat.completions.create
@@ -242,7 +241,12 @@ async def test_chat_completions_sequential_tool_rounds_preserve_ids_and_order(ha
         for index, message in enumerate(third_messages)
         if message.get("role") == "tool"
     ]
-    assert call_positions[0] < output_positions[0] < call_positions[1] < output_positions[1]
+    assert (
+        call_positions[0]
+        < output_positions[0]
+        < call_positions[1]
+        < output_positions[1]
+    )
     assert chat_log.content[-1].content == "Both actions completed."
 
 
@@ -264,7 +268,8 @@ async def test_chat_completions_tool_failure_closes_retained_call(hass) -> None:
     assert [output["tool_call_id"] for output in outputs] == ["call-1"]
     error_result = json.loads(outputs[0]["content"])["result"]
     assert error_result["status"] == "error"
-    assert "service failed" in error_result["error"]
+    assert "Check the tool configuration and permissions" in error_result["error"]
+    assert "service failed" not in error_result["error"]
 
 
 async def test_chat_completions_provider_failure_after_tool_does_not_retry_side_effect(
@@ -305,6 +310,7 @@ async def test_chat_completions_provider_failure_after_tool_does_not_retry_side_
     assert [output["tool_call_id"] for output in outputs] == ["call-1"]
     assert json.loads(outputs[0]["content"]) == {"result": "done"}
 
+
 async def test_chat_completions_duplicate_tool_call_ids_fail_before_execution(
     hass,
 ) -> None:
@@ -330,3 +336,29 @@ async def test_chat_completions_duplicate_tool_call_ids_fail_before_execution(
     assert calls == []
     assert outputs == []
 
+
+async def test_api_change_during_attachment_preparation_fails_before_dispatch(hass):
+    import asyncio
+    from unittest.mock import Mock
+
+    entity = _entity(hass, [_final_stream()])
+    log = _chat_log(hass)
+    log.content[-1] = conversation.UserContent(
+        content="Use the image",
+        attachments=[
+            conversation.Attachment(
+                media_content_id="image", mime_type="image/png", path="unused.png"
+            )
+        ],
+    )
+
+    async def prepare(*_args):
+        await asyncio.sleep(0)
+        entity.subentry.data[CONF_API_MODE] = "responses"
+
+    entity._async_add_attachments = prepare
+    factory = Mock(return_value=[])
+    with pytest.raises(HomeAssistantError, match="API availability changed"):
+        await entity._async_handle_chat_log(log, [], [], function_tools_factory=factory)
+    assert factory.call_count == 2
+    entity.entry.runtime_data.chat.completions.create.assert_not_awaited()

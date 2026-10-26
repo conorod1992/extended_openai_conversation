@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {changeConfigurationModel} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-model-v2.js";
+import {recordReasoningChoice} from "../custom_components/extended_openai_conversation_responses/frontend/configuration-controls.js";
 
 const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return {promise, resolve}; };
 const first = deferred();
@@ -22,6 +23,23 @@ assert.equal(panel._draft.reasoning_effort, "high");
 assert.equal(panel._modelCatalogData.requested_model, "new");
 assert.deepEqual(panel._result.model_capabilities, {new:true});
 assert.deepEqual(calls, ["validate","render"]);
+
+// Even reaffirming an already selected effort is a newer explicit choice. A
+// delayed recommendation must not replace it merely because its value matches
+// the value that existed when the model lookup began.
+for (const explicitChoice of [false, true]) {
+  const lookup = deferred();
+  const draft = {chat_model:"reasoning", reasoning_effort:"high"};
+  const current = {...panel, _agentId:"a", _draftAgentId:"a", _draft:draft,
+    _configData:{config:{chat_model:"baseline"}}, _result:{},
+    _hass:{callWS:() => lookup.promise}, _render() {}, _call:async () => ({valid:true}),
+  };
+  const changing = changeConfigurationModel(current, {value:"reasoning"});
+  if (explicitChoice) recordReasoningChoice(current);
+  lookup.resolve({model_metadata:{reasoning:{supported:true, efforts:["low","high"]}, recommended_profile:{reasoning_effort:"low"}}});
+  await changing;
+  assert.equal(current._draft.reasoning_effort, explicitChoice ? "high" : "low");
+}
 
 const switched = deferred();
 panel._hass.callWS = () => switched.promise;

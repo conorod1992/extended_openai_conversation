@@ -2,6 +2,8 @@ import {getRouteFeature} from "./management-route.js";
 import {pageCoordinator, currentPageScope} from "./management-page-drafts.js";
 import {same, clone} from "./unsaved-state.js";
 import {SECTION_CACHE_TTL_MS} from "./management-cache.js";
+import {configurationDraftBaseline} from "./configuration-acknowledgement.js";
+import {editorControls, dialogState, setDialogBaseline} from "./management-dialogs.js";
 export {SECTION_CACHE_TTL_MS};
 
 const RESET_PROMPT_KEYS = [
@@ -39,20 +41,22 @@ function configBaselineReady(panel) {
 
 function configKeyChanged(panel, key) {
   if (!configBaselineReady(panel)) return false;
-  if (key === "__title") return panel._draftTitle !== panel._configData.title;
-  return !same(panel._draft[key], panel._configData.config[key]);
+  const baseline = configurationDraftBaseline(panel);
+  if (key === "__title") return panel._draftTitle !== baseline.title;
+  return !same(panel._draft[key], baseline.config[key]);
 }
 
 export function rebuildConfigDirtyKeys(panel) {
   const changed = new Set();
   if (configBaselineReady(panel)) {
-    const baseline = panel._configData.config;
+    const snapshot = configurationDraftBaseline(panel);
+    const baseline = snapshot.config;
     const draft = panel._draft;
     const keys = new Set([...Object.keys(baseline), ...Object.keys(draft)]);
     for (const key of keys) {
       if (!same(baseline[key], draft[key])) changed.add(key);
     }
-    if (panel._draftTitle !== panel._configData.title) changed.add("__title");
+    if (panel._draftTitle !== snapshot.title) changed.add("__title");
   }
   panel._eocDirtyConfigKeys = changed;
   return changed;
@@ -114,22 +118,6 @@ export function applyTargetedConfigDirty(panel, keys, control = null, renderWhen
   }
 }
 
-function dialogState(dialog) {
-  if (!dialog) return [];
-  return [...dialog.querySelectorAll("input,select,textarea,ha-selector")]
-    .filter((control) => !["button", "submit", "reset", "file", "search"].includes(control.type))
-    .map((control) => {
-      const isSelector = String(control.tagName || "").toUpperCase() === "HA-SELECTOR";
-      return {
-        id: control.id || control.name || "",
-        type: control.type || control.tagName,
-        checked: "checked" in control ? Boolean(control.checked) : undefined,
-        value: isSelector ? clone(control.value ?? null) : control.value,
-      };
-    });
-}
-
-
 export function dialogHasUnsavedChanges(dialog, baseline, toolInitialYaml = null) {
   if (!dialog) return false;
   if (dialog.id === "tool-dialog") {
@@ -138,7 +126,7 @@ export function dialogHasUnsavedChanges(dialog, baseline, toolInitialYaml = null
       return dialog.querySelector("#tool-yaml")?.value !== toolInitialYaml;
     }
   }
-  return Array.isArray(baseline) && !same(dialogState(dialog), baseline);
+  return baseline != null && !same(dialogState(dialog), baseline);
 }
 
 export function syncGuestDirty(panel) {
@@ -150,14 +138,16 @@ const EDITOR_IDS = ["rule-dialog", "tool-dialog", "group-dialog", "knowledge-dia
 
 export function openDialogBaseline(panel, dialog) {
   if (!dialog?.id || !EDITOR_IDS.includes(dialog.id)) return;
-  panel._eocDialogBaselines ||= new Map();
+  // These editors capture typed values at open/load/acknowledgement, rather
+  // than the primitive control array used to transport recovered input.
+  if (["memory-dialog", "knowledge-dialog"].includes(dialog.id)) return;
   if (dialog.id === "tool-dialog") {
     // Function Tools already keep their authoritative initial YAML on the panel,
     // but it arrives asynchronously after the dialog opens.
-    panel._eocDialogBaselines.set(dialog.id, null);
+    setDialogBaseline(panel, dialog.id, null);
     return;
   }
-  panel._eocDialogBaselines.set(dialog.id, dialogState(dialog));
+  setDialogBaseline(panel, dialog.id, dialogState(dialog));
 }
 
 function clearDialogBaseline(panel, dialog) {
@@ -169,7 +159,8 @@ function dialogDirty(panel, dialog) {
   if (!dialog?.open) return false;
   if (dialog.id === "knowledge-dialog" || dialog.id === "memory-dialog") {
     const read = dialog.id === "knowledge-dialog" ? panel._knowledgeValues : panel._memoryValues;
-    return panel._editorInitial != null && !same(read.call(panel), panel._editorInitial);
+    const baseline = panel._eocDialogBaselines?.get(dialog.id);
+    return baseline != null && !same(read.call(panel), baseline);
   }
   if (dialog.id === "temporary-memory-dialog") return getRouteFeature("data-memory/memories")?.temporaryMemoryDirty(panel) || false;
   return dialogHasUnsavedChanges(
@@ -187,6 +178,208 @@ function modifiedOpenDialog(panel) {
   return null;
 }
 
+export function showRecoveredDraftCopy(panel, {
+  title = "Recovered unsaved editor",
+  description = "The saved definition could not be safely reopened. Copy your recovered edits before opening the current definition.",
+  values,
+  label = "Recovered editor values",
+  canDiscard = () => false,
+  onDiscard = () => {},
+}) {
+  const recovery = document.createElement("dialog");
+  recovery.className = "editor-dialog";
+  recovery.dataset.eocRecoveredEditor = "";
+  const heading = document.createElement("h2");
+  heading.textContent = title;
+  const explanation = document.createElement("p");
+  explanation.textContent = description;
+  const text = document.createElement("textarea");
+  text.value = JSON.stringify(values, null, 2);
+  text.readOnly = true;
+  text.setAttribute("aria-label", label);
+  const close = document.createElement("button");
+  close.textContent = "Keep draft for later";
+  close.onclick = () => recovery.close();
+  const discard = document.createElement("button");
+  discard.textContent = "Discard recovered edits";
+  discard.onclick = () => {
+    if (recovery.open && canDiscard()) onDiscard();
+    recovery.close();
+  };
+  recovery.addEventListener("close", () => {
+    close.onclick = discard.onclick = null;
+    recovery.remove();
+  }, {once:true});
+  recovery.append(heading, explanation, text, close, discard);
+  panel.shadowRoot.append(recovery);
+  recovery.showModal();
+  return recovery;
+}
+
+function showRecoveredEditorValues(panel, old, values, ownsSource) {
+  showRecoveredDraftCopy(panel, {
+    values,
+    canDiscard:() => ownsSource() && same(dialogState(old), values),
+    onDiscard:() => old.close(),
+  });
+}
+
+export async function recoverDisconnectedEditor(panel, source, retry = () => recoverDisconnectedEditor(panel, source)) {
+  const old = modifiedOpenDialog(source);
+  if (!old || source.isConnected || !panel.isConnected) return;
+  const user = panel.hass?.user?.id, agent = panel._agentId, view = panel._viewKey(), scope = panel._scopeId;
+  const entry = panel._selectedAgent?.()?.entry_id, memoryKind = panel._memoryKind;
+  const visit = panel._loadToken;
+  const adminRequired = !["memory-dialog", "knowledge-dialog", "temporary-memory-dialog"].includes(old.id);
+  const ownsContext = () => panel.isConnected && !source.isConnected && panel.hass?.user?.id === user
+    && old.open && source.shadowRoot.querySelector(`#${old.id}`) === old
+    && source.hass?.user?.id === user && panel._agentId === agent && source._agentId === agent
+    && panel._selectedAgent?.()?.entry_id === entry && source._selectedAgent?.()?.entry_id === entry
+    && panel._viewKey() === view && source._viewKey() === view
+    && panel._scopeId === scope && source._scopeId === scope
+    && (!adminRequired || panel._data?.is_admin)
+    && (view !== "data-memory/memories" || (panel._memoryKind === memoryKind && source._memoryKind === memoryKind));
+  const current = () => ownsContext() && panel._loadToken === visit;
+  if (!user || !entry || !agent || !current()) return;
+  const canOpen = () => current() && !panel.shadowRoot.querySelector("dialog[open]");
+  const pending = source._eocRecoveringEditor || panel._eocReceivingEditor;
+  if (pending) {
+    // Repeated restore points from the active attempt must not displace a
+    // replacement panel that has already requested the retained source.
+    if (panel !== pending.panel || !pending.retry) pending.retry = {panel, run: retry};
+    return;
+  }
+  if (panel.shadowRoot.querySelector("dialog[open]")) return;
+  const values = dialogState(old);
+  const baseline = source._eocDialogBaselines?.get(old.id);
+  let openedEditor, dismissal;
+  const attempt = {panel, retry:null, dismiss:dialog => {
+    if (openedEditor?.dialog === dialog && ownsContext()) dismissal = {visit:panel._loadToken};
+  }};
+  const openRecoveryEditor = async (open, generation) => {
+    const opening = open();
+    const token = generation(), dialog = panel.shadowRoot.querySelector(`#${old.id}`);
+    const owns = () => generation() === token && panel.shadowRoot.querySelector(`#${old.id}`) === dialog;
+    openedEditor = {dialog, owns};
+    await opening;
+    return owns();
+  };
+  source._eocRecoveringEditor = panel._eocReceivingEditor = attempt;
+  try {
+    if (old.id === "rule-dialog") {
+      const {openRequestRuleEditor} = await import("./request-rules-ui-impl.js");
+      if (!canOpen()) return;
+      openRequestRuleEditor(panel, source._editingRuleId);
+    } else if (old.id === "tool-dialog") {
+      const {openTool} = await import("./agent-config-tools-base.js");
+      if (!canOpen()) return;
+      const index = source._toolOriginalName == null ? null : panel._draft?.functions?.findIndex(tool => tool.spec?.name === source._toolOriginalName);
+      if (index === -1 || index === undefined) return showRecoveredEditorValues(panel, old, values, ownsContext);
+      if (!await openRecoveryEditor(() => openTool(panel, index), () => panel._toolEditorLoad)) return;
+    } else if (old.id === "group-dialog") {
+      const {openFunctionGroup} = await import("./agent-config-tools-base.js");
+      if (!canOpen()) return;
+      openFunctionGroup(panel, source._groupOriginalId, source._groupRepair);
+    } else if (old.id === "memory-dialog") await panel._openMemory(source._editingMemory?.memory_id);
+    else if (old.id === "knowledge-dialog") {
+      if (!await openRecoveryEditor(() => panel._openKnowledge(source._editingSource?.source_id), () => panel._knowledgeLoadToken)) return;
+    }
+    else if (old.id === "temporary-memory-dialog") {
+      const {openTemporaryMemory} = await import("./management-temporary-memory.js");
+      if (!canOpen()) return;
+      const memoryId = source._temporaryMemoryDraft?.memory_id;
+      // Expiry or deletion can remove the saved item during a disconnect. Do
+      // not silently leave its retained edits in the detached panel, or reopen
+      // them as a new record. Preserve the original until explicit discard.
+      if (!panel._result?.memories?.some(memory => memory.memory_id === memoryId)) return showRecoveredEditorValues(panel, old, values, ownsContext);
+      openTemporaryMemory(panel, memoryId);
+    } else if (old.id === "ha-llm-tools-dialog") {
+      await panel._ensureHALlmTools?.();
+      if (!canOpen()) return;
+      if (!await openRecoveryEditor(() => panel._openHALlmTools?.(), () => panel.shadowRoot.querySelector("#ha-llm-tools-dialog"))) return;
+    } else return;
+    if (!current()) return;
+    // Finish asynchronous preparation before checking the fresh baseline or
+    // publishing edits. A detach must never retain a half-transferred source.
+    let toolEditor;
+    if (old.id === "tool-dialog") {
+      const {getToolYamlEditor} = await import("./tool-yaml-editor-adapter.js");
+      if (!current() || !openedEditor?.owns()) return;
+      toolEditor = getToolYamlEditor(panel);
+    }
+    const dialog = panel.shadowRoot.querySelector(`#${old.id}`);
+    if (!dialog?.open) return;
+    // A changed saved baseline needs review, not an automatic rebase of an
+    // editor's revision or selectors. Keep the original work available to copy.
+    const changed = old.id === "ha-llm-tools-dialog" ? false : old.id === "tool-dialog" ? source._toolInitialYaml !== panel._toolInitialYaml
+      : baseline && !same(baseline, panel._eocDialogBaselines?.get(old.id));
+    if (changed) {
+      dialog.close();
+      showRecoveredEditorValues(panel, old, values, ownsContext);
+      return;
+    }
+    if (dialog.__eocRestoreDraft) {
+      dialog.__eocRestoreDraft(values);
+      old.close();
+      return;
+    }
+    // Never turn an invalid native YAML draft into the last parsed valid value.
+    // If its native editing mode cannot be recreated safely, keep the raw copy.
+    if (values.some(value => value.yaml?.length)) {
+      dialog.close();
+      showRecoveredEditorValues(panel, old, values, ownsContext);
+      return;
+    }
+    const controls = editorControls(dialog);
+    for (const [index, value] of values.entries()) {
+      const control = value.id ? controls.find(control => (control.id || control.name) === value.id) : controls[index];
+      if (!control || (control.type || control.tagName) !== value.type) continue;
+      if (value.checked !== undefined) control.checked = value.checked;
+      control.value = clone(value.value);
+      control.dispatchEvent(new CustomEvent(control.tagName === "HA-SELECTOR" ? "value-changed" : "change", {bubbles:true, detail:{value:clone(value.value)}}));
+    }
+    if (old.id === "group-dialog") panel._groupIdEdited = source._groupIdEdited;
+    if (toolEditor) toolEditor.setYaml(old.querySelector("#tool-yaml").value);
+    // Select options and dynamically created controls may have changed without
+    // changing the saved definition. Never consume the source unless every
+    // authored value survived; retain the complete copy for explicit review.
+    if (!same(dialogState(dialog), values)) {
+      dialog.close();
+      showRecoveredEditorValues(panel, old, values, ownsContext);
+      return;
+    }
+    old.close();
+  } catch (_err) {
+    if (current() && (openedEditor?.owns() || !panel.shadowRoot.querySelector("dialog[open]"))) {
+      if (openedEditor?.owns()) openedEditor.dialog?.close();
+      showRecoveredEditorValues(panel, old, values, ownsContext);
+    }
+  } finally {
+    // An in-place reconnect refresh can supersede this visit while preserving
+    // its loading dialog. Retire only our own unchanged editor so it cannot
+    // block the fresh recovery. A cancelled/reopened or edited dialog belongs
+    // to the user and must survive cleanup of this older attempt.
+    try {
+      if (!current() && openedEditor?.owns() && openedEditor.dialog?.open && !dialogDirty(panel, openedEditor.dialog)) {
+        openedEditor.dialog.close();
+        attempt.retry ||= {panel, run:retry};
+      }
+    } finally {
+      if (source._eocRecoveringEditor === attempt) source._eocRecoveringEditor = null;
+      if (panel._eocReceivingEditor === attempt) panel._eocReceivingEditor = null;
+      const next = attempt.retry;
+      // A repeated restore point on this same, still-current panel must not
+      // reopen an editor the user just cancelled. Wake a replacement destination
+      // only when this attempt lost its context or a newer panel requested it.
+      const dismissedHere = dismissal && next?.panel === panel && dismissal.visit === panel._loadToken;
+      if (next && !dismissedHere && (!current() || next.panel !== panel)) queueMicrotask(() => {
+        if (!next.panel.isConnected) return;
+        void Promise.resolve().then(next.run).catch(() => next.panel._toast?.("Unsaved editor recovery is pending. Return to its original page to retry.", true));
+      });
+    }
+  }
+}
+
 export async function confirmDialogClose(panel, dialog) {
   if (panel._eocDialogClosePending) return false;
   panel._eocDialogClosePending = true;
@@ -197,6 +390,7 @@ export async function confirmDialogClose(panel, dialog) {
 async function closeEditor(panel, dialog) {
   if (!dialog?.open) return true;
   if (!dialogDirty(panel, dialog)) {
+    panel._eocReceivingEditor?.dismiss?.(dialog);
     clearDialogBaseline(panel, dialog);
     dialog.close();
     return true;
@@ -207,6 +401,7 @@ async function closeEditor(panel, dialog) {
     "Discard",
   );
   if (!discard) return false;
+  panel._eocReceivingEditor?.dismiss?.(dialog);
   clearDialogBaseline(panel, dialog);
   dialog.close();
   return true;
@@ -258,6 +453,11 @@ export function bindStateSafety(panel) {
 
     // Explicit Cancel remains an intentional discard. Protect close/X buttons.
     const dialog = button.closest?.("dialog");
+    const explicitCancel = button.id.endsWith("-cancel") || button.hasAttribute("data-cancel")
+      || (!button.classList.contains("icon") && (button.classList.contains("close-editor") || button.classList.contains("close-temporary-editor")));
+    if (EDITOR_IDS.includes(dialog?.id) && explicitCancel) {
+      panel._eocReceivingEditor?.dismiss?.(dialog);
+    }
     if (!button.closest?.(".dialog-header") || !button.classList.contains("icon") || !EDITOR_IDS.includes(dialog?.id)) return;
     if (!dialogDirty(panel, dialog)) return;
     event.preventDefault();
@@ -274,6 +474,8 @@ export function bindStateSafety(panel) {
   }, true);
 
   root.addEventListener("close", (event) => {
+    // A queued close can belong to an earlier opening of this same dialog.
+    if (event.target.open) return;
     clearDialogBaseline(panel, event.target);
     if (panel._eocDeferredEditorRender) queueMicrotask(() => panel._render());
   }, true);
@@ -298,6 +500,9 @@ async function navigateWithUnsavedState(panel, destination) {
   }
   // Close even clean editors before switching their owning context.
   if (destination !== panel._viewKey?.()) panel._eocBackupTransferCleanup?.();
+  // This is a read-only copy of a detached editor. The retained source keeps
+  // owning the edits; its modal must not follow a different route or assistant.
+  for (const recovery of panel.shadowRoot?.querySelectorAll?.("dialog[data-eoc-recovered-editor]") || []) recovery.close();
   for (const id of EDITOR_IDS) {
     const editor = panel.shadowRoot?.querySelector?.(`#${id}`);
     if (editor?.open) { clearDialogBaseline(panel, editor); editor.close(); }

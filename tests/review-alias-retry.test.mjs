@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {bindRequestRuleEditor} from "../custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-impl.js";
+import {captureConfigurationOwner} from "../custom_components/extended_openai_conversation_responses/frontend/configuration-acknowledgement.js";
 
 class Field extends EventTarget {
   value = "";
@@ -8,6 +9,7 @@ class Field extends EventTarget {
   hidden = false;
   ownerDocument = {createElement: () => new Field()};
   replaceChildren(child) { this.child = child; }
+  querySelectorAll() { return []; }
   close() { this.closed = true; }
   contains() { return false; }
 }
@@ -30,6 +32,9 @@ for (const swap of [true, false]) {
     },
   };
   bindRequestRuleEditor(panel);
+  // Model the opening contract while this fixture exercises only alias retry.
+  panel._eocRuleEditorState.owner = captureConfigurationOwner(panel);
+  q("#rule-dialog").open = true;
   const actions = [step("one", swap ? "right" : "renamed"), step("two", swap ? "left" : "right"), {action:"review_probe.record", data:{message:"{left.value}"}}];
   panel._eocRuleEditorState.actionSelector.value = actions;
   q("#rule-action-type").value = "local_action";

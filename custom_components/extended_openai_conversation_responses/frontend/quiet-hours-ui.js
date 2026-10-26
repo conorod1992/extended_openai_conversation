@@ -1,21 +1,34 @@
+import {ensureNativePicker} from "./native-picker-loader.js";
+import {captureConfigurationOwner, configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
+import {capturePageRead, acceptPageRead} from "./page-save-acknowledgement.js";
+
 export async function loadQuietHours(panel, silent = false) {
   const token = ++panel._loadToken;
+  const owner = captureConfigurationOwner(panel), generation = panel._cacheGeneration;
+  const read = capturePageRead(panel, VIEW);
+  const current = () => token === panel._loadToken && panel._viewKey?.() === VIEW
+    && panel.isConnected !== false && configurationSubmissionIsCurrent(panel, owner);
   if (!silent) { panel._busy = true; panel._render(); }
   try {
     const result = await panel._call("quiet_hours", "get");
-    if (token !== panel._loadToken) return;
+    if (!current() || generation !== panel._cacheGeneration) return;
     panel._result = result;
-    if (panel._unsavedState?.scopes.get(VIEW)?.agent !== panel._agentId) panel._quietHoursDraft = JSON.parse(JSON.stringify(result.config || {}));
+    if (!panel._unsavedState?.scopes.get(VIEW)?.isCurrent?.()) panel._quietHoursDraft = JSON.parse(JSON.stringify(result.config || {}));
     panel._error = null;
+    acceptPageRead(panel, result, read);
   } catch (err) {
-    if (token === panel._loadToken) panel._error = err.message || String(err);
+    if (current() && generation === panel._cacheGeneration) panel._error = err.message || String(err);
   } finally {
-    if (token === panel._loadToken) { panel._busy = false; panel._render(); }
+    if (current()) {
+      if (generation !== panel._cacheGeneration) queueMicrotask(() => { if (current()) void loadQuietHours(panel, silent); });
+      else { panel._busy = false; panel._render(); }
+    }
   }
 }
 
 const VIEW = "capabilities/quiet-hours";
 const QUIET_HOURS_STYLES = `
+      .qh-override[hidden]{display:none}
       .qh-satellite-summary{display:grid;gap:5px;overflow-wrap:anywhere;color:var(--secondary-text-color)}.qh-satellite-config{margin-top:12px;padding-top:6px}.qh-satellite-config>summary{min-height:42px}
 
       .qh-status,.qh-satellite-heading{display:flex;justify-content:space-between;gap:16px;align-items:center}.qh-status{padding-bottom:18px;border-bottom:1px solid var(--divider-color);margin-bottom:8px}.qh-status div,.qh-satellite-heading div{display:flex;flex-direction:column;gap:3px}.qh-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.qh-grid label{display:flex;flex-direction:column;gap:7px}.qh-grid label>span{font-weight:600}.qh-override{display:block;width:100%;min-width:0;max-width:100%}.qh-grid>*{min-width:0}.qh-satellite,.qh-satellite-config,.qh-satellite-heading>div,.qh-status>div{min-width:0;max-width:100%}.qh-volume input{min-width:0}.qh-satellite-heading,.qh-status{flex-wrap:wrap}.qh-grid small,.qh-entity-note small,.qh-satellite small{color:var(--secondary-text-color);line-height:1.45}.qh-policy{margin-top:20px}.qh-volume{display:flex;align-items:center;gap:12px}.qh-volume input{flex:1}.qh-volume output{min-width:44px;text-align:right;font-variant-numeric:tabular-nums}.qh-entity-note{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:20px;padding:14px;border-radius:10px;background:var(--secondary-background-color)}.qh-entity-note small{flex-basis:100%}.qh-entity-note code{min-width:0;max-width:100%;overflow-wrap:anywhere;white-space:normal}.qh-satellites{display:grid;gap:14px}.qh-satellite{border:1px solid var(--divider-color);border-radius:12px;padding:16px}.qh-satellite-heading{margin-bottom:14px}.config-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}@media(max-width:760px){.qh-grid{grid-template-columns:1fr}.qh-status,.qh-satellite-heading{align-items:flex-start}}`;
@@ -169,7 +182,7 @@ export function bindQuietHours(panel) {
           const source = picker.dataset.kind === "media_player_entity_id" ? satellite.media_player_source : satellite.wake_sound_source;
           const automatic = source === "auto" ? satellite[picker.dataset.kind] || "" : "";
           picker.dataset.autoEntity = automatic;
-          picker.placeholder = automatic ? `Automatic · ${automatic}` : "Automatic";
+          if (!picker.hidden) picker.placeholder = automatic ? `Automatic · ${automatic}` : "Automatic";
         }
       }
     });
@@ -194,18 +207,34 @@ export function bindQuietHours(panel) {
   const satellites = new Map((panel._result?.satellites || []).map((satellite) => [satellite.satellite_entity_id, satellite]));
   root.querySelectorAll(".qh-override").forEach((picker) => {
     const satellite = satellites.get(picker.dataset.satellite);
-    const candidates = picker.dataset.kind === "media_player_entity_id"
-      ? satellite?.media_player_candidates || []
-      : satellite?.wake_sound_candidates || [];
-    const selected = manualOverride(panel._quietHoursDraft, picker.dataset.satellite)?.[picker.dataset.kind] || "";
-    picker.hass = panel._hass;
-    picker.value = selected;
-    picker.includeDomains = [picker.dataset.domain];
-    picker.includeEntities = selected && !candidates.includes(selected)
-      ? [...candidates, selected]
-      : candidates;
-    picker.allowCustomEntity = false;
-    picker.placeholder = picker.dataset.autoEntity ? `Automatic · ${picker.dataset.autoEntity}` : "Automatic";
+    const agentId = panel._agentId;
+    // Assign native properties only after upgrade: pre-upgrade own properties
+    // can shadow HA's accessors even after its component has been registered.
+    picker.hidden = true;
+    const status = picker.ownerDocument.createElement("small");
+    status.setAttribute("role", "status");
+    status.textContent = "Loading entity selector…";
+    picker.after(status);
+    const current = () => picker.isConnected && panel._agentId === agentId && panel._viewKey?.() === VIEW;
+    const initialize = () => {
+      if (!current()) return;
+      const candidates = picker.dataset.kind === "media_player_entity_id"
+        ? satellite?.media_player_candidates || [] : satellite?.wake_sound_candidates || [];
+      const selected = manualOverride(panel._quietHoursDraft, picker.dataset.satellite)?.[picker.dataset.kind] || "";
+      picker.hass = panel._hass;
+      picker.value = selected;
+      picker.includeDomains = [picker.dataset.domain];
+      picker.includeEntities = selected && !candidates.includes(selected) ? [...candidates, selected] : candidates;
+      picker.allowCustomEntity = false;
+      picker.placeholder = picker.dataset.autoEntity ? `Automatic · ${picker.dataset.autoEntity}` : "Automatic";
+      picker.hidden = false;
+      status.remove();
+    };
+    ensureNativePicker("ha-entity-picker", picker.ownerDocument).then(initialize).catch(() => {
+      if (!current()) return;
+      status.setAttribute("role", "alert");
+      status.textContent = "Entity selector could not be loaded. Reload the page to try again.";
+    });
     picker.addEventListener("value-changed", (event) => {
       const value = String(event?.detail?.value || picker.value || "");
       picker.value = value;

@@ -260,3 +260,382 @@ async def test_public_getter_after_shutdown_cannot_reattach_registry_listener(
         if setup is not None:
             await setup
         await manager.async_shutdown()
+
+
+async def _manual_manager(hass, *, enabled=True):
+    satellite, automatic_media, automatic_wake = _install_satellite_entities(hass)
+    registry = er.async_get(hass)
+    media = registry.async_get_or_create(
+        "media_player", "test", "manual-speaker", suggested_object_id="chosen_speaker"
+    ).entity_id
+    wake = registry.async_get_or_create(
+        "switch", "test", "manual-wake", suggested_object_id="chosen_wake"
+    ).entity_id
+    hass.states.async_set(media, "idle", {"volume_level": 0.8})
+    hass.states.async_set(wake, "on")
+    calls = []
+    _install_control_services(hass, calls)
+    manager = await async_get_quiet_hours(hass)
+    now = dt_util.now()
+    await manager.async_update_config(
+        {
+            "enabled": enabled,
+            "start": (now - timedelta(hours=1)).strftime("%H:%M"),
+            "end": (now + timedelta(hours=1)).strftime("%H:%M"),
+            "max_volume": 0.2,
+            "wake_sound": "off",
+            "overrides": {
+                satellite: {
+                    "media_player_entity_id": media,
+                    "wake_sound_entity_id": wake,
+                }
+            },
+        }
+    )
+    return manager, satellite, media, wake, automatic_media, automatic_wake, calls
+
+
+def _rename_selected(hass, old_id, new_id):
+    registry = er.async_get(hass)
+    entry = registry.async_get(old_id)
+    registry.async_update_entity(old_id, new_entity_id=new_id)
+    state = hass.states.get(old_id)
+    hass.states.async_remove(old_id)
+    hass.states.async_set(
+        new_id, state.state, dict(state.attributes), context=state.context
+    )
+    return [entry.domain, entry.platform, entry.unique_id]
+
+
+def _retire_for_restart(manager):
+    # Model a process replacement without the graceful end-of-period restore.
+    manager._stopping = True
+    manager._cancel_scheduled_callbacks()
+    if manager._registry_unsubscribe is not None:
+        manager._registry_unsubscribe()
+        manager._registry_unsubscribe = None
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+async def test_manual_selections_follow_registry_renames_and_restart(hass, enabled):
+    (
+        manager,
+        satellite,
+        media,
+        wake,
+        auto_media,
+        auto_wake,
+        calls,
+    ) = await _manual_manager(hass, enabled=enabled)
+    new_satellite, new_media, new_wake = (
+        "assist_satellite.renamed",
+        "media_player.renamed",
+        "switch.renamed",
+    )
+    bindings = {
+        new_media: _rename_selected(hass, media, new_media),
+        new_wake: _rename_selected(hass, wake, new_wake),
+        new_satellite: _rename_selected(hass, satellite, new_satellite),
+    }
+    calls.clear()
+    await manager.async_reconcile()
+    await hass.async_block_till_done()
+    assert not calls, (
+        calls,
+        manager._config,
+        manager._selection_identities,
+        manager.active,
+    )
+    stored = await manager._store.async_load()
+    assert stored["config"]["overrides"] == {
+        new_satellite: {
+            "media_player_entity_id": new_media,
+            "wake_sound_entity_id": new_wake,
+        }
+    }
+    assert stored["selection_identities"] == bindings
+    _retire_for_restart(manager)
+    restarted = QuietHoursManager(hass)
+    await restarted.async_setup()
+    try:
+        assert not calls
+        if not enabled:
+            await restarted.async_set_enabled(True)
+            assert sorted(calls) == sorted(
+                [("volume_set", new_media), ("turn_off", new_wake)]
+            )
+        assert hass.states.get(new_media).attributes["volume_level"] == 0.2
+        assert hass.states.get(new_wake).state == "off"
+        assert hass.states.get(auto_media).attributes["volume_level"] == 0.6
+        assert hass.states.get(auto_wake).state == "on"
+        calls.clear()
+        await restarted.async_update_config(restarted._config.as_dict())
+        assert not calls
+        await restarted.async_set_enabled(False)
+        assert sorted(calls) == sorted(
+            [("volume_set", new_media), ("turn_on", new_wake)]
+        )
+        assert hass.states.get(new_media).attributes["volume_level"] == 0.8
+        assert hass.states.get(new_wake).state == "on"
+    finally:
+        await restarted.async_shutdown()
+
+
+async def test_manual_selection_rename_preserves_independent_choice(hass):
+    manager, satellite, media, wake, _, _, calls = await _manual_manager(hass)
+    try:
+        hass.states.async_set(wake, "on", context=Context(user_id="independent"))
+        await manager.async_reconcile()
+        renamed = "switch.released_choice"
+        _rename_selected(hass, wake, renamed)
+        calls.clear()
+        await manager.async_reconcile()
+        await manager.async_update_config(manager._config.as_dict())
+        assert not calls
+        assert hass.states.get(renamed).state == "on"
+        assert renamed not in manager.active["controls"]
+        await manager.async_set_enabled(False)
+        assert calls == [("volume_set", media)]
+    finally:
+        await manager.async_shutdown()
+
+
+async def test_deleted_manual_selection_does_not_control_reused_id(hass):
+    manager, _, media, wake, _, _, calls = await _manual_manager(hass)
+    try:
+        registry = er.async_get(hass)
+        registry.async_remove(wake)
+        hass.states.async_remove(wake)
+        replacement = registry.async_get_or_create(
+            "switch", "test", "different-wake", suggested_object_id=wake.split(".")[1]
+        )
+        assert replacement.entity_id == wake
+        hass.states.async_set(wake, "on")
+        calls.clear()
+        await manager.async_reconcile()
+        await manager.async_update_config(manager._config.as_dict())
+        assert not calls
+        assert hass.states.get(wake).state == "on"
+        await manager.async_set_enabled(False)
+        assert calls == [("volume_set", media)]
+    finally:
+        await manager.async_shutdown()
+
+
+async def test_selection_rename_save_failure_prevents_device_writes(hass, monkeypatch):
+    manager, _, media, _, _, _, calls = await _manual_manager(hass)
+    try:
+        renamed = "media_player.renamed_during_save_failure"
+        await manager._lock.acquire()
+        _rename_selected(hass, media, renamed)
+        original = manager._store.async_save
+
+        async def fail(_data):
+            raise OSError("save unavailable")
+
+        monkeypatch.setattr(manager._store, "async_save", fail)
+        calls.clear()
+        manager._lock.release()
+        with pytest.raises(OSError):
+            await manager.async_reconcile()
+        assert not calls
+        assert hass.states.get(renamed).attributes["volume_level"] == 0.2
+        monkeypatch.setattr(manager._store, "async_save", original)
+        await manager.async_reconcile()
+        assert not calls
+        await manager.async_set_enabled(False)
+        assert hass.states.get(renamed).attributes["volume_level"] == 0.8
+    finally:
+        monkeypatch.setattr(manager._store, "async_save", original)
+        await manager.async_shutdown()
+
+
+@pytest.mark.parametrize("kind", ["media_player", "switch", "assist_satellite"])
+@pytest.mark.parametrize(
+    "revisioned,reuse", [(False, False), (True, False), (True, True)]
+)
+async def test_stale_quiet_hours_save_cannot_undo_renames(
+    hass, kind, revisioned, reuse
+):
+    from homeassistant.exceptions import HomeAssistantError
+    from custom_components.extended_openai_conversation_responses.management_permissions import (
+        async_quiet_hours_command,
+    )
+
+    manager, satellite, media, wake, _, _, calls = await _manual_manager(hass)
+    stale = deepcopy(manager.snapshot())
+    old = {"media_player": media, "switch": wake, "assist_satellite": satellite}[kind]
+    new = f"{kind}.renamed_after_page_loaded"
+    _rename_selected(hass, old, new)
+    await manager.async_reconcile()
+    if reuse:
+        entry = er.async_get(hass).async_get_or_create(
+            kind, "test", "unrelated-replacement", suggested_object_id=old.split(".")[1]
+        )
+        assert entry.entity_id == old
+        hass.states.async_set(
+            old, "on" if kind == "switch" else "idle", {"volume_level": 0.95}
+        )
+    calls.clear()
+    stale["config"]["max_volume"] = 0.25
+    try:
+        if revisioned:
+            with pytest.raises(HomeAssistantError, match="changed; reload"):
+                await async_quiet_hours_command(
+                    hass,
+                    True,
+                    {
+                        "action": "update",
+                        "config": stale["config"],
+                        "revision": stale["revision"],
+                    },
+                )
+        else:
+            with pytest.raises(ValueError, match="no longer exists; reload"):
+                await manager.async_update_config(stale["config"])
+        assert not calls
+        assert manager.config.max_volume == 0.2
+        assert new in manager._selected_entity_ids()
+        if reuse:
+            assert hass.states.get(old).attributes["volume_level"] == 0.95
+        fresh = manager.snapshot()
+        fresh["config"]["max_volume"] = 0.25
+        await async_quiet_hours_command(
+            hass,
+            True,
+            {
+                "action": "update",
+                "config": fresh["config"],
+                "revision": fresh["revision"],
+            },
+        )
+        assert manager.config.max_volume == 0.25
+        current_media = new if kind == "media_player" else media
+        assert hass.states.get(current_media).attributes["volume_level"] == 0.25
+    finally:
+        await manager.async_shutdown()
+
+
+@pytest.mark.parametrize("kind", ["volume", "switch"])
+@pytest.mark.parametrize("manual", [True, False])
+@pytest.mark.parametrize("change", ["rename", "rename_during_save", "replacement"])
+async def test_pending_application_follows_satellite_identity_after_restart(
+    hass, monkeypatch, kind, manual, change
+):
+    (
+        manager,
+        satellite,
+        media,
+        wake,
+        auto_media,
+        auto_wake,
+        calls,
+    ) = await _manual_manager(hass, enabled=False)
+    if not manual:
+        config = manager.config.as_dict()
+        config["overrides"] = {}
+        await manager.async_update_config(config)
+        media, wake = auto_media, auto_wake
+    if kind == "switch":
+        hass.states.async_set(media, "idle", {"volume_level": 0.1})
+    target = media if kind == "volume" else wake
+    original = manager._store.async_save
+    captured = None
+
+    async def interrupted(data):
+        nonlocal captured
+        await original(data)
+        if captured is None and target in (data.get("active") or {}).get(
+            "pending_controls", {}
+        ):
+            captured = deepcopy(data)
+            raise OSError("process lost after durable intent")
+
+    monkeypatch.setattr(manager._store, "async_save", interrupted)
+    with pytest.raises(OSError):
+        await manager.async_set_enabled(True)
+    assert captured is not None
+    assert not calls
+    _retire_for_restart(manager)
+    renamed = "assist_satellite.renamed_before_dispatch"
+    if change == "replacement":
+        registry = er.async_get(hass)
+        previous = registry.async_get(satellite)
+        registry.async_remove(satellite)
+        hass.states.async_remove(satellite)
+        created = registry.async_get_or_create(
+            "assist_satellite",
+            previous.platform,
+            "replacement-before-dispatch",
+            suggested_object_id=satellite.split(".", 1)[1],
+            device_id=previous.device_id,
+        )
+        assert created.entity_id == satellite
+        hass.states.async_set(satellite, "idle")
+    else:
+        _rename_selected(hass, satellite, renamed)
+    restarted = QuietHoursManager(hass)
+    if change == "rename_during_save":
+        first_name = renamed
+        renamed += "_again"
+        save = restarted._store.async_save
+        renamed_again = False
+
+        async def save_with_rename(data):
+            nonlocal renamed_again
+            await save(data)
+            if not renamed_again:
+                renamed_again = True
+                _rename_selected(hass, first_name, renamed)
+
+        monkeypatch.setattr(restarted._store, "async_save", save_with_rename)
+    try:
+        await restarted.async_setup()
+        if change == "replacement":
+            assert not any(entity_id == target for _, entity_id in calls)
+            assert target not in restarted.active["controls"]
+            assert hass.states.get(media).attributes["volume_level"] == (
+                (0.8 if manual else 0.6) if kind == "volume" else 0.1
+            )
+            assert hass.states.get(wake).state == (
+                "off" if not manual and kind == "volume" else "on"
+            )
+            await restarted.async_reconcile()
+            assert not any(entity_id == target for _, entity_id in calls)
+            return
+        if manual:
+            assert restarted.config.overrides[0].satellite_entity_id == renamed
+        assert hass.states.get(media).attributes["volume_level"] == (
+            0.2 if kind == "volume" else 0.1
+        )
+        assert hass.states.get(wake).state == "off"
+        assert restarted.active["controls"][target]["satellite_entity_id"] == renamed
+        await restarted.async_reconcile()
+        assert (
+            calls.count(("volume_set" if kind == "volume" else "turn_off", target)) == 1
+        )
+        await restarted.async_set_enabled(False)
+        assert hass.states.get(media).attributes["volume_level"] == (
+            (0.8 if manual else 0.6) if kind == "volume" else 0.1
+        )
+        assert hass.states.get(wake).state == "on"
+    finally:
+        await restarted.async_shutdown()
+
+
+async def test_enable_toggle_resolves_unprocessed_manual_selection_rename(hass):
+    manager, _, media, _, _, _, calls = await _manual_manager(hass)
+    # Hold the registry notification to exercise the service path before a
+    # periodic/event reconciliation has migrated its saved selections.
+    manager._registry_unsubscribe()
+    manager._registry_unsubscribe = None
+    renamed = "media_player.renamed_before_toggle"
+    _rename_selected(hass, media, renamed)
+    calls.clear()
+    try:
+        await manager.async_set_enabled(False)
+        assert hass.states.get(renamed).attributes["volume_level"] == 0.8
+        assert calls.count(("volume_set", renamed)) == 1
+        assert manager.config.overrides[0].media_player_entity_id == renamed
+    finally:
+        await manager.async_shutdown()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from copy import deepcopy
 from dataclasses import asdict
@@ -149,7 +150,7 @@ def _new_journal(
     }
 
 
-def _load_journal(
+async def _async_load_journal(
     value: Any, entry_id: str, subentry_id: str
 ) -> tuple[dict[str, Any], backup.PreparedRestore, backup.PreparedRestore]:
     """Validate a pending transaction without trusting mutable journal fields."""
@@ -180,7 +181,7 @@ def _load_journal(
     journal = dict(value)
     try:
         try:
-            rollback = backup.inspect_backup(
+            rollback = await backup.async_inspect_backup(
                 value["rollback"],
                 subentry_id,
                 max_bytes=backup.MAX_BACKUP_BYTES,
@@ -191,14 +192,14 @@ def _load_journal(
             # only the target is authoritative; never replay that rollback.
             if phase != _PHASE_COMMITTED or "safety limit" not in str(err):
                 raise
-            rollback = backup.inspect_backup(
+            rollback = await backup.async_inspect_backup(
                 value["target"],
                 subentry_id,
                 max_bytes=backup.MAX_BACKUP_BYTES,
                 private_journal=True,
             )
         try:
-            target = backup.inspect_backup(
+            target = await backup.async_inspect_backup(
                 value["target"],
                 subentry_id,
                 max_bytes=backup.MAX_BACKUP_BYTES,
@@ -220,11 +221,11 @@ async def _async_write_journal_verified(
 ) -> bool:
     """Write and read back a journal state because HA Store logs some write failures."""
     try:
-        await store.async_save(deepcopy(journal))
+        await store.async_save(await asyncio.to_thread(deepcopy, journal))
         persisted = await store.async_load()
     except Exception as err:
         raise _JournalVerificationUnavailable from err
-    return persisted == journal
+    return await asyncio.to_thread(lambda: persisted == journal)
 
 
 async def _durable_managers(
@@ -475,10 +476,14 @@ async def _update_configuration(
     # configuration through the normal live-update path instead of starting an
     # unowned entry reload while exclusive recovery is still settling.
     if not configuration_supports_live_update(
-        # Current data is persisted; the candidate is already decoded/prepared.
-        # A raw legacy [] must not look like an empty edit and force a reload.
+        # Interpret authoritative private data as persisted on both sides.
+        # A raw legacy [] must not look like a decoded empty edit and reload.
         backup.private_configuration_snapshot(subentry.data),
-        backup.recoverable_configuration_snapshot(prepared.config),
+        (
+            backup.private_configuration_snapshot(prepared.config)
+            if prepared.authoritative_config
+            else backup.recoverable_configuration_snapshot(prepared.config)
+        ),
         title_changed=subentry.title != prepared.title,
     ):
         hass.data.setdefault(f"{DOMAIN}.restore_reload_pending", set()).add(
@@ -545,7 +550,7 @@ async def _async_restore_backup_recoverably(
     only the backup lock; both full and selective restores share its journal and
     rollback implementation without nesting maintenance-gate ownership.
     """
-    prepared = backup.inspect_backup(value, subentry.subentry_id)
+    prepared = await backup.async_inspect_backup(value, subentry.subentry_id)
     entry_id = entry.entry_id
     subentry_id = subentry.subentry_id
 
@@ -568,12 +573,14 @@ async def _async_restore_backup_recoverably(
             prepared, _preview = await async_materialize_restore(
                 hass, entry, subentry, value, current_snapshot=rollback
             )
-        journal = _new_journal(entry_id, subentry_id, prepared, rollback)
+        journal = await asyncio.to_thread(
+            _new_journal, entry_id, subentry_id, prepared, rollback
+        )
         # PreparedRestore bypasses inspect_backup's serialized-size validation.
         # Validate the actual journal documents before even the write-ahead save.
         for section in ("target", "rollback"):
             try:
-                backup.inspect_backup(
+                await backup.async_inspect_backup(
                     journal[section],
                     subentry_id,
                     max_bytes=backup.MAX_BACKUP_BYTES,
@@ -654,7 +661,9 @@ async def _async_recover_pending_restore(
         raw = await store.async_load()
         if raw is None:
             return False
-        journal, target, rollback = _load_journal(raw, entry_id, subentry_id)
+        journal, target, rollback = await _async_load_journal(
+            raw, entry_id, subentry_id
+        )
         managers = await _durable_managers(hass, entry_id, subentry_id)
         selected = target if journal["phase"] == _PHASE_COMMITTED else rollback
 

@@ -710,3 +710,73 @@ async def test_memory_canonical_unicode_ranking_dedup_and_reload(form):
     updated = unicodedata.normalize(form, "The café serves pâtisserie.")
     await fresh.async_update("owner", ident, updated)
     assert [item.memory_id for item in await fresh.async_search("owner", unicodedata.normalize("NFD", "pâtisserie"))] == [ident]
+
+
+@pytest.mark.parametrize(
+    "category",
+    [
+        "myApiKey: PRIVATE_VALUE",
+        "myapikey: private_value",
+        "deviceAccessToken=PRIVATE_VALUE",
+        "deviceaccesstoken=private_value",
+        "doorPin: 1234",
+        "doorpin: 1234",
+    ],
+)
+@pytest.mark.parametrize("operation", ["add", "upsert", "update", "backup", "load"])
+async def test_category_credentials_rejected_before_and_after_casefold(
+    category, operation
+):
+    storage = FakeStorage()
+    manager = await _memory(storage)
+    created = await manager.async_add(
+        "alice", "A harmless fact", "Preferences", "explicit"
+    )
+    memory_id = created["memory"]["memory_id"]
+    raw = deepcopy(storage.data)
+    raw["memories"][0]["category"] = category
+    if operation == "load":
+        repaired_storage = FakeStorage(raw)
+        repaired = await _memory(repaired_storage)
+        assert not repaired._memories
+        assert not repaired._key_index
+        assert repaired_storage.data == {"memories": []}
+        return
+    with pytest.raises(ValueError, match="secret"):
+        if operation == "backup":
+            PersistentMemory.validate_backup_data(raw)
+        elif operation == "update":
+            await manager.async_update("alice", memory_id, category=category)
+        else:
+            await getattr(manager, "async_" + operation)(
+                "alice", "Another harmless fact", category, "explicit"
+            )
+    assert storage.data["memories"][0]["category"] == "preferences"
+
+
+@pytest.mark.parametrize(
+    "category",
+    [
+        "Shopping",
+        "API documentation",
+        "Security policy",
+        "Spinning classes",
+        "PIN reset instructions",
+    ],
+)
+async def test_ordinary_category_normalization_is_preserved(category):
+    manager = await _memory()
+    result = await manager.async_add("alice", "A harmless fact", category, "explicit")
+    assert result["memory"]["category"] == category.casefold()
+
+
+@pytest.mark.parametrize("category", ["x" * 10000, "\u00df" * 33])
+def test_oversized_categories_are_rejected_before_privacy_scan(monkeypatch, category):
+    from custom_components.extended_openai_conversation_responses import memory
+
+    def must_not_scan(*_args):
+        pytest.fail("oversized category reached the privacy scanner")
+
+    monkeypatch.setattr(memory, "_validate_privacy", must_not_scan)
+    with pytest.raises(ValueError, match="category must be 1 to 64"):
+        memory._clean_category(category)

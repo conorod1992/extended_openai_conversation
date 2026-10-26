@@ -10,3 +10,4 @@ assert.equal(panel._draft.memory_auto_retrieve_limit,12);
 assert.equal(panel._draft.memory_retrieval_mode,"hybrid");
 assert.equal(panel._draft.memory_embedding_model,"custom");
 assert.equal(panel._draft.reasoning_effort,"high");
+assert.equal(panel._eocReasoningChoiceRevision,1,"reset records an explicit choice even when the effort is unchanged");

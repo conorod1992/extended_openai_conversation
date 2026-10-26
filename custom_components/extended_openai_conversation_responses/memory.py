@@ -83,6 +83,14 @@ _SECRET_PATTERN = re.compile(
     r"\bsk-[A-Za-z0-9_-]{12,}\b",
     re.IGNORECASE,
 )
+# Categories were historically casefolded before privacy validation. Recognize
+# credential assignments even when a prefixed camelCase label lost its boundary.
+# Keep this conservative recovery rule local to category metadata.
+_CATEGORY_SECRET_PATTERN = re.compile(
+    r"(?:password|passcode|api[_ -]?key|access[_ -]?token|auth[_ -]?token|"
+    r"security[_ -]?code|secret|pin)\b\s*(?:is|:|=)\s*\S+",
+    re.IGNORECASE,
+)
 _PAYMENT_CARD_CANDIDATE_PATTERN = re.compile(r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)")
 _PAYMENT_CARD_CONTEXT_PATTERN = re.compile(
     r"\b(?:card(?:\s+number)?|credit\s+card|debit\s+card|visa|mastercard|amex)\b",
@@ -310,61 +318,13 @@ class PersistentMemory:
                 return
             try:
                 data = await self._storage.async_load()
-                needs_save = False
-                if data is None:
-                    raw_memories: list[Any] = []
-                elif not isinstance(data, Mapping) or "memories" not in data:
-                    raw_memories = []
-                    needs_save = True
-                else:
-                    candidate = data.get("memories")
-                    if not isinstance(candidate, list):
-                        raw_memories = []
-                        needs_save = True
-                    else:
-                        raw_memories = candidate
-                        if len(raw_memories) > MAX_MEMORIES_PER_AGENT:
-                            raw_memories = raw_memories[:MAX_MEMORIES_PER_AGENT]
-                            needs_save = True
-
-                legacy_embeddings_found = False
-                seen_ids: set[str] = set()
-                seen_keys: set[tuple[str, str]] = set()
-                for raw in raw_memories:
-                    needs_save |= isinstance(raw, Mapping) and bool(
-                        {"importance", "last_confirmed_at"} & raw.keys()
-                    )
-                    legacy_embeddings_found |= (
-                        isinstance(raw, Mapping) and "embedding" in raw
-                    )
-                    try:
-                        memory = _validate_persistent_memory_record(raw)
-                        if memory.memory_id in seen_ids:
-                            raise ValueError("duplicate persistent memory ID")
-                        if memory.key is not None:
-                            key_pair = (memory.user_id, memory.key)
-                            if key_pair in seen_keys:
-                                raise ValueError(
-                                    "duplicate canonical key in memory scope"
-                                )
-                            seen_keys.add(key_pair)
-                    except TypeError, ValueError:
-                        needs_save = True
-                        _LOGGER.warning("Ignoring malformed persistent memory record")
-                        continue
-                    seen_ids.add(memory.memory_id)
-                    self._assert_key_available(memory)
-                    self._memories[memory.memory_id] = memory
-                    self._index(memory)
-                if legacy_embeddings_found or needs_save:
-                    await self._storage.async_save(
-                        {
-                            "memories": [
-                                _record_as_storage_dict(memory)
-                                for memory in self._memories.values()
-                            ]
-                        }
-                    )
+                memories, key_index, payload = await asyncio.to_thread(
+                    _prepare_stored_memories, data
+                )
+                if payload is not None:
+                    await self._storage.async_save(payload)
+                self._memories = memories
+                self._key_index = key_index
                 await self._async_load_embedding_cache_locked()
                 self._remember_committed_state()
                 self._initialized = True
@@ -1311,26 +1271,9 @@ class PersistentMemory:
             return
         try:
             data = await self._embedding_cache_storage.async_load()
-            raw_entries = (
-                data.get("embeddings", {}) if isinstance(data, Mapping) else {}
+            self._embedding_cache = await asyncio.to_thread(
+                _prepare_stored_embedding_cache, data
             )
-            if not isinstance(raw_entries, Mapping):
-                raise ValueError("embedding cache entries must be an object")
-            for memory_id, raw in raw_entries.items():
-                if not isinstance(memory_id, str) or not isinstance(raw, Mapping):
-                    raise ValueError("embedding cache entry is malformed")
-                model = raw.get("model")
-                fingerprint = raw.get("fingerprint")
-                if not isinstance(model, str) or not isinstance(fingerprint, str):
-                    raise ValueError("embedding cache metadata is malformed")
-                self._embedding_cache[memory_id] = EmbeddingCacheEntry(
-                    model=model,
-                    fingerprint=fingerprint,
-                    space_id=raw.get("space_id", "")
-                    if isinstance(raw.get("space_id", ""), str)
-                    else "",
-                    vector=_clean_embedding(raw.get("vector")),
-                )
         except Exception as err:
             self._embedding_cache.clear()
             log_handled_failure(
@@ -1930,6 +1873,86 @@ def _clean_embedding(value: Any) -> list[float]:
     return result
 
 
+def _prepare_stored_memories(
+    data: Any,
+) -> tuple[dict[str, MemoryRecord], dict[tuple[str, str], str], dict[str, Any] | None]:
+    """Validate detached stored facts and build indices without touching live state."""
+    memories: dict[str, MemoryRecord] = {}
+    key_index: dict[tuple[str, str], str] = {}
+    needs_save = False
+    if data is None:
+        raw_memories: list[Any] = []
+    elif not isinstance(data, Mapping) or "memories" not in data:
+        raw_memories = []
+        needs_save = True
+    else:
+        candidate = data.get("memories")
+        if not isinstance(candidate, list):
+            raw_memories = []
+            needs_save = True
+        else:
+            raw_memories = candidate
+            if len(raw_memories) > MAX_MEMORIES_PER_AGENT:
+                raw_memories = raw_memories[:MAX_MEMORIES_PER_AGENT]
+                needs_save = True
+
+    legacy_embeddings_found = False
+    seen_ids: set[str] = set()
+    seen_keys: set[tuple[str, str]] = set()
+    for raw in raw_memories:
+        needs_save |= isinstance(raw, Mapping) and bool(
+            {"importance", "last_confirmed_at"} & raw.keys()
+        )
+        legacy_embeddings_found |= isinstance(raw, Mapping) and "embedding" in raw
+        try:
+            memory = _validate_persistent_memory_record(raw)
+            if memory.memory_id in seen_ids:
+                raise ValueError("duplicate persistent memory ID")
+            if memory.key is not None:
+                key_pair = (memory.user_id, memory.key)
+                if key_pair in seen_keys:
+                    raise ValueError("duplicate canonical key in memory scope")
+                seen_keys.add(key_pair)
+        except TypeError, ValueError:
+            needs_save = True
+            _LOGGER.warning("Ignoring malformed persistent memory record")
+            continue
+        seen_ids.add(memory.memory_id)
+        memories[memory.memory_id] = memory
+        if memory.key:
+            key_index[(memory.user_id, memory.key)] = memory.memory_id
+    payload = (
+        {"memories": [_record_as_storage_dict(memory) for memory in memories.values()]}
+        if legacy_embeddings_found or needs_save
+        else None
+    )
+    return memories, key_index, payload
+
+
+def _prepare_stored_embedding_cache(data: Any) -> dict[str, EmbeddingCacheEntry]:
+    """Validate detached regenerable cache entries before atomic publication."""
+    entries: dict[str, EmbeddingCacheEntry] = {}
+    raw_entries = data.get("embeddings", {}) if isinstance(data, Mapping) else {}
+    if not isinstance(raw_entries, Mapping):
+        raise ValueError("embedding cache entries must be an object")
+    for memory_id, raw in raw_entries.items():
+        if not isinstance(memory_id, str) or not isinstance(raw, Mapping):
+            raise ValueError("embedding cache entry is malformed")
+        model = raw.get("model")
+        fingerprint = raw.get("fingerprint")
+        if not isinstance(model, str) or not isinstance(fingerprint, str):
+            raise ValueError("embedding cache metadata is malformed")
+        entries[memory_id] = EmbeddingCacheEntry(
+            model=model,
+            fingerprint=fingerprint,
+            space_id=raw.get("space_id", "")
+            if isinstance(raw.get("space_id", ""), str)
+            else "",
+            vector=_clean_embedding(raw.get("vector")),
+        )
+    return entries
+
+
 def _record_as_storage_dict(memory: MemoryRecord) -> dict[str, Any]:
     return asdict(memory)
 
@@ -2027,10 +2050,15 @@ def _clean_content(value: str) -> str:
 def _clean_category(value: str) -> str:
     if not isinstance(value, str):
         raise ValueError("category must be a string")
-    value = _SPACE_PATTERN.sub(" ", value).strip().casefold()
-    if not value or len(value) > MAX_CATEGORY_LENGTH:
+    value = _SPACE_PATTERN.sub(" ", value).strip()
+    normalized = value.casefold()
+    if not normalized or len(normalized) > MAX_CATEGORY_LENGTH:
         raise ValueError(f"category must be 1 to {MAX_CATEGORY_LENGTH} characters")
-    return value
+    # Check bounded authored text, keeping camelCase clues until validation ends.
+    _validate_privacy(value, "explicit")
+    if _CATEGORY_SECRET_PATTERN.search(value):
+        raise ValueError("memory rejected because it appears to contain a secret")
+    return normalized
 
 
 def _clean_optional(value: str | None, field: str, maximum: int) -> str | None:

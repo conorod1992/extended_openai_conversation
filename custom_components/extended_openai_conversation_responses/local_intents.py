@@ -124,6 +124,7 @@ async def _async_try_targeted_broadcast(
         origin_entity_id=getattr(user_input, "satellite_id", None),
         origin_device_id=getattr(user_input, "device_id", None),
         source="local_voice",
+        context=user_input.context,
     )
     response = ha_intent.IntentResponse(
         language=getattr(user_input, "language", None) or "en"
@@ -199,12 +200,29 @@ async def async_try_handle_local_intent(
         accepted_intent = result.intent.name
         return False
 
-    response = await handle_intents(
-        hass,
-        user_input,
-        chat_log,
-        intent_filter=intent_filter,
-    )
+    existing_content_ids = {id(item) for item in getattr(chat_log, "content", ())}
+    try:
+        response = await handle_intents(
+            hass,
+            user_input,
+            chat_log,
+            intent_filter=intent_filter,
+        )
+    except BaseException as err:
+        from .tool_exchange import (
+            append_unresolved_tool_results,
+            retained_tool_calls_since,
+        )
+
+        # HA can complete an action before rendering its reply. Close only newly
+        # retained, unanswered calls; never rerun the intent or replace results.
+        append_unresolved_tool_results(
+            chat_log,
+            conversation.HOME_ASSISTANT_AGENT,
+            retained_tool_calls_since(chat_log, existing_content_ids),
+            error=err,
+        )
+        raise
     if response is None:
         return None
     return LocalIntentResult(

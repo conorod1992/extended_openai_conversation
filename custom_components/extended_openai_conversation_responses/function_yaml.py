@@ -7,6 +7,7 @@ from typing import Any
 import yaml
 
 from .const import CONF_FUNCTION_TOOLS
+from .yaml_serialization import dump_yaml
 
 # Reserved only on the Management wire. A literal mapping with this key is itself
 # YAML-encoded, so decoding never confuses user-authored data with a scalar tag.
@@ -30,9 +31,7 @@ def _management_yaml_value(value: Any) -> Any:
         and set(value) != {_MANAGEMENT_YAML}
     ):
         return {key: _management_yaml_value(item) for key, item in value.items()}
-    return {
-        _MANAGEMENT_YAML: yaml.safe_dump(value, sort_keys=False, allow_unicode=True)
-    }
+    return {_MANAGEMENT_YAML: dump_yaml(value, sort_keys=False)}
 
 
 def management_function_response(value: Any, *, section: str | None = None) -> Any:
@@ -168,9 +167,7 @@ def json_safe_function_fields(config: dict[str, Any]) -> dict[str, Any]:
     result = dict(config)
     tools = result.get(CONF_FUNCTION_TOOLS)
     if isinstance(tools, list) and _contains_yaml_types(tools):
-        result[CONF_FUNCTION_TOOLS] = yaml.safe_dump(
-            tools, sort_keys=False, allow_unicode=True
-        )
+        result[CONF_FUNCTION_TOOLS] = dump_yaml(tools, sort_keys=False)
     return result
 
 

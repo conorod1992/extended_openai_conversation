@@ -34,6 +34,7 @@ async def test_websocket_broadcast_snapshot_returns_manager_state(
     """Snapshot exposes the current catalog, history, and permission state."""
     manager = SimpleNamespace(
         enabled=True,
+        pending=Mock(return_value=[]),
         catalog=Mock(return_value={"satellites": [{"id": "assist_satellite.kitchen"}]}),
         history=Mock(
             return_value=[
@@ -57,6 +58,7 @@ async def test_websocket_broadcast_snapshot_returns_manager_state(
         {
             "enabled": True,
             "can_manage": False,
+            "pending": [],
             "catalog": {"satellites": [{"id": "assist_satellite.kitchen"}]},
             "history": [
                 {
@@ -225,3 +227,44 @@ async def test_websocket_broadcast_sends_to_whole_home_targets(
         context="context",
     )
     connection.send_result.assert_called_once_with(7, {"id": "broadcast-1"})
+
+
+@pytest.mark.parametrize("is_admin", [False, True])
+async def test_pending_snapshot_uses_same_privacy_boundary_as_history(
+    hass, monkeypatch, is_admin
+):
+    visible = {
+        "id": "visible",
+        "targets": ["assist_satellite.hall"],
+        "deliveries": {"assist_satellite.hall": {"status": "queued_busy"}},
+        "origin_device_id": "private-device",
+    }
+    hidden = {
+        "id": "hidden",
+        "targets": ["assist_satellite.private"],
+        "deliveries": {"assist_satellite.private": {"status": "delivering"}},
+    }
+    hidden_origin = {
+        **visible,
+        "id": "hidden-origin",
+        "origin_entity_id": "assist_satellite.private",
+    }
+    items = [visible, hidden, hidden_origin]
+    manager = SimpleNamespace(
+        enabled=True,
+        catalog=Mock(return_value={"satellites": []}),
+        history=lambda: items,
+        pending=lambda: items,
+    )
+    monkeypatch.setattr(
+        intercom_panel, "async_get_intercom", AsyncMock(return_value=manager)
+    )
+    connection = _connection(is_admin=is_admin)
+    connection.user.permissions.check_entity.side_effect = lambda entity, _: (
+        entity != "assist_satellite.private"
+    )
+    await _call_handler(hass, connection, {"id": 1, "action": "snapshot"})
+    snapshot = connection.send_result.call_args.args[1]
+    expected = items if is_admin else [{**visible, "origin_device_id": None}]
+    assert snapshot["history"] == snapshot["pending"] == expected
+    assert visible["origin_device_id"] == "private-device"

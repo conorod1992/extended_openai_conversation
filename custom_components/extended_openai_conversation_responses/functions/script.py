@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import ExitStack
 from copy import deepcopy
 import logging
@@ -15,7 +16,9 @@ from homeassistant.helpers.script import Script, async_validate_actions_config
 
 from .. import ha_actions
 from ..const import DOMAIN
+from ..script_lifecycle import async_cleanup_script
 from ..script_structure import iter_unvalidated_script_actions
+from ..template_diagnostics import private_template_diagnostics
 from .base import Function, copy_runtime_function_config
 
 _LOGGER = logging.getLogger(__name__)
@@ -137,6 +140,7 @@ class ScriptFunction(Function):
         _reject_device_actions(validated["sequence"])
         return validated
 
+    @private_template_diagnostics
     async def execute(
         self,
         hass: HomeAssistant,
@@ -166,6 +170,7 @@ class ScriptFunction(Function):
         )
 
         context = llm_context.context if llm_context else None
+        cancelled = False
         try:
             # Own the transient runner's outcome without overwriting an enclosing
             # Request Rule's trace, stop reason, variables, or breakpoint identity.
@@ -213,8 +218,8 @@ class ScriptFunction(Function):
                             "Script Function aborted before completion"
                         )
                 return result.variables.get("_function_result", "Success")
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
         finally:
-            if unload := getattr(script, "async_unload", None):
-                await unload()
-            else:
-                await script.async_stop()
+            await async_cleanup_script(script, cancelled=cancelled)
