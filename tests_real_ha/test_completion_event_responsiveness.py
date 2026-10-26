@@ -2,16 +2,18 @@
 
 import asyncio
 import logging
+import threading
 from types import SimpleNamespace
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses.conversation import (
-    ExtendedOpenAIAgentEntity,
-)
 from custom_components.extended_openai_conversation_responses.const import (
     EVENT_CONVERSATION_FINISHED,
 )
+from custom_components.extended_openai_conversation_responses.conversation import (
+    ExtendedOpenAIAgentEntity,
+)
+from homeassistant.core import callback
 from tests.test_completion_event_workers import retained_sqlite_history
 
 
@@ -115,9 +117,16 @@ async def test_bus_failure_does_not_hide_later_native_completion_events(
     agent.hass = hass
     agent.subentry = SimpleNamespace(subentry_id="completion-failure-agent")
     finished = []
-    hass.bus.async_listen(
-        EVENT_CONVERSATION_FINISHED, lambda event: finished.append(event)
-    )
+    observer_threads = []
+    loop_thread = threading.get_ident()
+
+    @callback
+    def observe_completion(event):
+        # Observe bus delivery order; executor listeners can finish out of order.
+        observer_threads.append(threading.get_ident())
+        finished.append(event)
+
+    hass.bus.async_listen(EVENT_CONVERSATION_FINISHED, observe_completion)
 
     async def process(_request):
         for index in range(3):
@@ -145,6 +154,7 @@ async def test_bus_failure_does_not_hide_later_native_completion_events(
         assert [int(event.data["conversation_id"]) for event in finished] == [
             index for index in range(3) if index != failed_index
         ]
+        assert observer_threads == [loop_thread, loop_thread]
         assert "Completion notification failed" in caplog.text
         assert secret not in caplog.text
     finally:
@@ -159,10 +169,11 @@ async def test_completion_event_recording_contains_metadata_only(
     hass, monkeypatch, archive_enabled, private
 ):
     """Exercise public Assist and the actual Recorder event serialization boundary."""
+    from pytest_homeassistant_custom_component.common import MockUser
+
     from homeassistant.components import conversation
     from homeassistant.components.recorder.db_schema import EventData
     from homeassistant.core import Context
-    from pytest_homeassistant_custom_component.common import MockUser
     from tests_real_ha.test_cross_feature_acceptance import _agent, _provider
 
     agent = await _agent(hass, archive_enabled=archive_enabled)
