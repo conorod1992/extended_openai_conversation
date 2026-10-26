@@ -461,7 +461,7 @@ export function bindRequestRuleEditor(panel) {
         // focus restoration then targets a detached button (Firefox/WebKit can
         // lose sequential Tab navigation). Restore its current counterpart.
         dialog.close();
-        root.querySelector(`[data-rule-key="${CSS.escape(result.rule.id)}"] .rule-edit`)?.focus();
+        if(action === "update")root.querySelector(`[data-rule-key="${CSS.escape(result.rule.id)}"] .rule-edit`)?.focus();
       }
     }catch(err){
       if(!current())return;
