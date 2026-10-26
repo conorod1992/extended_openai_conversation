@@ -35,6 +35,7 @@ from .agent_maintenance import get_agent_maintenance_gate
 from .bounded_json import JSONBudgetExceeded, check_redaction_budget, iter_bounded_json
 from .const import DOMAIN
 from .ha_schema import websocket_command as ha_websocket_command
+from .operation_settlement import async_settle_owned_operation
 
 WS_BACKUP_TRANSFER = f"{DOMAIN}/management/backup_transfer"
 ARCHIVE_FORMAT = "extended_openai_conversation_backup_archive"
@@ -175,6 +176,16 @@ def _remove_file(path: str) -> None:
         os.unlink(path)
 
 
+async def _async_finish_cancelled_worker[T](task: asyncio.Future[T]) -> T:
+    """Recover a settled worker outcome inside an existing cancellation handler."""
+    # The caller already owns the original cancellation and its resource-specific
+    # reconciliation. Later cancellations must not cancel this executor wrapper
+    # while its native thread can still allocate, append or remove a staged file.
+    with suppress(BaseException):
+        await async_settle_owned_operation(task)
+    return task.result()
+
+
 async def _async_remove_path(hass: HomeAssistant, path: str) -> None:
     """Finish deleting a private temp file before propagating caller cancellation."""
     pending = _pending(hass).setdefault(
@@ -185,7 +196,7 @@ async def _async_remove_path(hass: HomeAssistant, path: str) -> None:
         await asyncio.shield(task)
     except asyncio.CancelledError:
         try:
-            await task
+            await _async_finish_cancelled_worker(task)
         except BaseException:
             pending.attempts += 1
             pending.retry_at = time.monotonic() + min(
@@ -490,11 +501,12 @@ async def _async_build_archive_file(
         return await asyncio.shield(task)
     except asyncio.CancelledError:
         try:
-            result = await task
+            result = await _async_finish_cancelled_worker(task)
         except BaseException:
             await _async_own_unregistered_files(hass, directory)
         else:
-            await _async_remove_path(hass, result["path"])
+            with suppress(asyncio.CancelledError):
+                await _async_remove_path(hass, result["path"])
         raise
     except BaseException:
         await _async_own_unregistered_files(hass, directory)
@@ -530,11 +542,12 @@ async def _async_create_upload_file(hass: HomeAssistant) -> str:
         return await asyncio.shield(task)
     except asyncio.CancelledError:
         try:
-            path = await task
+            path = await _async_finish_cancelled_worker(task)
         except BaseException:
             await _async_own_unregistered_files(hass, directory)
         else:
-            await _async_remove_path(hass, path)
+            with suppress(asyncio.CancelledError):
+                await _async_remove_path(hass, path)
         raise
     except BaseException:
         await _async_own_unregistered_files(hass, directory)
@@ -602,7 +615,7 @@ async def _async_append_file(
         return await asyncio.shield(task)
     except asyncio.CancelledError:
         with suppress(BaseException):
-            await task
+            await _async_finish_cancelled_worker(task)
         raise
 
 

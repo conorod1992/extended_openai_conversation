@@ -44,3 +44,18 @@ cleanup, so a new caller cancellation cannot interrupt teardown. Successful
 commands gain no task or wait; forced timeout cleanup gains one necessary owned
 task. The process-group grace period and cleanup deadlines are unchanged, and
 no interrupted command is retried or marked completed by the waiter.
+
+## Transfer worker recovery
+
+Normal transfer allocation, append and removal retain their existing shielded
+fast paths. After caller cancellation, a local recovery adapter drains the same
+already-started Future through repeated cancellation and then inspects its actual
+result. It does not create another worker. The existing handler still owns the
+original cancellation and decides whether to delete a late allocation, scan for
+lost identities, retain pending-removal backoff, or suppress an append failure.
+The failure-first waiter therefore supplies only resource lifetime; it does not
+replace the transfer's cancellation-first reconciliation policy.
+
+This prevents a cancelled executor wrapper releasing its start/session lock
+while its native thread can still mutate the staged path. In particular, import
+cleanup must not unlink a path before a surviving append opens and recreates it.
