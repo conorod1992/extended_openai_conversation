@@ -24,6 +24,7 @@ from ..const import (
 )
 from ..execution_outcomes import execution_completed, execution_started
 from ..function_execution import backend_failure
+from ..operation_settlement import async_settle_owned_operation
 from ..operational_errors import log_handled_failure
 from ..regex_execution import async_search_configured_patterns
 from .base import Function
@@ -416,11 +417,13 @@ class BashFunction(Function):
                         (stderr, stderr_truncated),
                     ) = await asyncio.gather(stdout_task, stderr_task)
             except TimeoutError as err:
-                await _async_cleanup_process(
-                    process,
-                    stdout_task,
-                    stderr_task,
-                    graceful=False,
+                await async_settle_owned_operation(
+                    _async_cleanup_process(
+                        process,
+                        stdout_task,
+                        stderr_task,
+                        graceful=False,
+                    )
                 )
                 # Settle through the outer failure handler after process cleanup.
                 # Its backend_failure call can then propagate outside this try.
@@ -428,14 +431,18 @@ class BashFunction(Function):
                     f"Command timed out after {timeout:g} seconds"
                 ) from err
             except asyncio.CancelledError:
-                await asyncio.shield(
-                    _async_cleanup_process(
-                        process,
-                        stdout_task,
-                        stderr_task,
-                        graceful=True,
+                # A second cancellation cannot abandon process/pipe ownership.
+                # Preserve the original cancellation after successful teardown;
+                # an underlying cleanup failure keeps its established priority.
+                with suppress(asyncio.CancelledError):
+                    await async_settle_owned_operation(
+                        _async_cleanup_process(
+                            process,
+                            stdout_task,
+                            stderr_task,
+                            graceful=True,
+                        )
                     )
-                )
                 raise
 
             execution_completed(receipt)

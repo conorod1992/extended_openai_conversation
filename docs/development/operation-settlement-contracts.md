@@ -33,3 +33,14 @@ internal consumers and test seams; they contain no wrappers or independent loops
 The maintenance gate remains a finally-only context manager: it does not choose
 outcomes based on which exception unwinds its body. Its condition sections do not
 hold the condition across suspended work (`wait_for` releases it while waiting).
+
+## Bash teardown
+
+The cancellation branch drains graceful process/pipe cleanup with the same owned
+waiter, suppressing only later caller cancellations before rethrowing the original
+one. An underlying cleanup failure keeps its established failure priority and
+legacy/strict backend error handling. The timeout branch separately owns forced
+cleanup, so a new caller cancellation cannot interrupt teardown. Successful
+commands gain no task or wait; forced timeout cleanup gains one necessary owned
+task. The process-group grace period and cleanup deadlines are unchanged, and
+no interrupted command is retried or marked completed by the waiter.
