@@ -1,4 +1,4 @@
-import {captureConfigurationOwner, configurationOwnerIsCurrent, configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
+import {captureConfigurationDraftOwner, captureConfigurationOwner, configurationOwnerIsCurrent, configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
 
 const VIEWS = new Set(["capabilities/guest-mode", "capabilities/quiet-hours", "capabilities/request-rules"]);
 const acceptedReads = new WeakMap();
@@ -63,7 +63,7 @@ export function hasPendingPageSaveRead(panel) {
   let pending = false;
   for (const entry of obligations || []) {
     if (!entry.acknowledgement.owns() || freshPageRead(panel, entry.state)) obligations.delete(entry);
-    else if (configurationSubmissionIsCurrent(panel, entry.owner)
+    else if (configurationSubmissionIsCurrent(panel, entry.state.owner)
         && panel._data?.is_admin && panel._viewKey?.() === entry.state.view) pending = true;
   }
   return pending;
@@ -84,20 +84,24 @@ export function retainPageSaveAcknowledgement(source, scope, submission, view) {
     if (!ownsDestination(destination) || source.isConnected !== false) return {accepted:false, refreshing:false};
     let state = states.get(destination);
     if (state && freshPageRead(destination, state)) return {accepted:true, refreshing:false};
-    if (state && !configurationSubmissionIsCurrent(destination, state.owner)) state = null;
+    if (state && !state.isCurrent()) state = null;
     if (state?.running) return {accepted:false, refreshing:true};
     if (state?.failedVisit === destination._loadToken) return {accepted:false, refreshing:false};
     const owner = captureConfigurationOwner(destination);
-    state = {view, sequence:acceptedReads.get(destination)?.sequence || 0, running:true, owner};
+    // The refresh attempt retires on authentication changes. Its obligation
+    // still belongs to this draft and requires a fresh accepted policy read.
+    state = {view, sequence:acceptedReads.get(destination)?.sequence || 0, running:true,
+      owner:captureConfigurationDraftOwner(destination),
+      isCurrent:() => configurationSubmissionIsCurrent(destination, owner)};
     states.set(destination, state);
     const obligations = readObligations.get(destination) || new Set();
-    obligations.add({acknowledgement, owner, state, retry});
+    obligations.add({acknowledgement, state, retry});
     readObligations.set(destination, obligations);
     notifyReadState(destination);
     destination._invalidateAfterMutation(submission.agentId,
       view === "capabilities/guest-mode" ? "guest_mode" : view === "capabilities/quiet-hours" ? "quiet_hours" : "request_rules",
       view === "capabilities/guest-mode" ? "save_policy" : view === "capabilities/quiet-hours" ? "update" : "settings");
-    const stillOwned = () => ownsSource() && ownsDestination(destination) && configurationSubmissionIsCurrent(destination, owner);
+    const stillOwned = () => ownsSource() && ownsDestination(destination) && state.isCurrent();
     void Promise.resolve().then(() => {
       if (stillOwned()) return destination._loadSection(true);
     }).catch(() => {

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {fixture, retire} from "./management-ownership-harness.mjs";
+import {deferred} from "./frontend-test-helpers.mjs";
 import {initializePageDraft, currentPageScope} from "../custom_components/extended_openai_conversation_responses/frontend/management-page-drafts.js";
 import {capturePageRead, acceptPageRead, hasPageSaveAcknowledgement, hasPendingPageSaveRead} from "../custom_components/extended_openai_conversation_responses/frontend/page-save-acknowledgement.js";
 
@@ -17,6 +18,42 @@ function policyPanel(create, policy) {
     ? {defaults:request.defaults,wording_groups:request.wording_groups,revision:"rules-2"}
     : {config:request.config,revision:policy.view.endsWith("quiet-hours") ? undefined : "guest-2"};
   return panel;
+}
+
+for (const policy of policies) for (const failed of [false, true]) {
+  test(`${policy.view}: retired held refresh cannot block a current authentication attempt, failure=${failed}`, async t => {
+    const {create} = fixture(), source = policyPanel(create, policy), target = policyPanel(create, policy);
+    policy.edit(source); source.isConnected = false;
+    const scope = currentPageScope(source); await scope.save();
+    const acknowledgement = scope.acknowledgedSave, gates = [deferred(), deferred()], reads = [];
+    target.toasts.length = 0;
+    target._loadSection = async () => {
+      const index = reads.length;
+      reads.push(capturePageRead(target));
+      await gates[index].promise;
+    };
+    t.after(() => {gates.forEach(gate => gate.resolve()); scope.acknowledgedSave = null; retire(source, target);});
+    assert.deepEqual(acknowledgement(target, () => {}), {accepted:false, refreshing:true});
+    await new Promise(resolve => setImmediate(resolve));
+    const user = target.hass.user;
+    target.hass = {...target.hass, user:{id:"another-user"}};
+    target.hass = {...target.hass, user};
+    assert.deepEqual(acknowledgement(target, () => {}), {accepted:false, refreshing:true});
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(reads.length, 2, "an obsolete held request must not retain the refresh slot");
+    if (failed) gates[0].reject(Error("obsolete refresh failed")); else gates[0].resolve();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(hasPendingPageSaveRead(target), true, "the authoritative read obligation survives attempt retirement");
+    assert.deepEqual(target.toasts, []);
+    assert.deepEqual(acknowledgement(target, () => {}), {accepted:false, refreshing:true});
+    assert.equal(reads.length, 2);
+    target._result = structuredClone(scope.result);
+    initializePageDraft(target);
+    assert.equal(acceptPageRead(target, target._result, reads[1]), true);
+    gates[1].resolve(); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(hasPendingPageSaveRead(target), false);
+    assert.deepEqual(acknowledgement(target, () => {}), {accepted:true, refreshing:false});
+  });
 }
 
 for(const revisioned of [false,true]) test(`Quiet Hours observed conflict respects backend revision support: ${revisioned}`, async () => {

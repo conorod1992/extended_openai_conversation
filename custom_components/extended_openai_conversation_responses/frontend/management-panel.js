@@ -17,7 +17,7 @@ import {
 import {readSectionCache, writeSectionCache, pruneCacheTimes, SCOPE_CACHE_TTL_MS, CLEAN_CONFIG_TTL_MS} from "./management-cache.js";
 import {bindPanelDialogs, knowledgeSourceAvailabilityControl, updateDialogs, setDialogBaseline} from "./management-dialogs.js";
 import {ASSISTANT_INTRO_MARKUP, renderManagement, showPendingDestination, reconcileScopePicker, reconcileHistoryConfiguration} from "./management-renderer.js";
-import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, setControlPending, syncAgentPicker} from "./management-actions.js";
+import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, syncAgentPicker} from "./management-actions.js";
 import {captureConfigurationOwner, configurationSubmissionIsCurrent, configurationReadOvertookSubmission, mergeConfigurationRead} from "./configuration-acknowledgement.js";
 import {captureCatalogLoad, catalogFailureIsCurrent} from "./management-catalog-ownership.js";
 import {capturePageRead, acceptPageRead} from "./page-save-acknowledgement.js";
@@ -301,6 +301,16 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   get hass() { return this._hass; }
 
   set hass(value) {
+    const previousUser = this._hass?.user?.id;
+    if (previousUser != null && previousUser !== value.user?.id) {
+      this._eocAuthenticationGeneration = (this._eocAuthenticationGeneration || 0) + 1;
+      // Retire outstanding reads and model preparation as well as mutations.
+      // These are operation lifetimes; keep authored drafts and their recovery
+      // baselines intact across a temporary authentication transition.
+      ++this._loadToken;
+      this._eocCatalogReadSequence = (this._eocCatalogReadSequence || 0) + 1;
+      this._eocModelChangeToken = (this._eocModelChangeToken || 0) + 1;
+    }
     this._hass = value;
     this.style.colorScheme = value.themes?.darkMode ? "dark" : "light";
     this.shadowRoot?.querySelectorAll("ha-selector, ha-entity-picker, ha-user-picker, ha-yaml-editor").forEach(element => { element.hass = value; });
@@ -819,7 +829,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
     this._pendingMutations ||= new Map();
     const owner = captureConfigurationOwner(this);
-    const key = JSON.stringify([owner.userId, owner.entryId, owner.agentId, owner.draftGeneration, section, action, extra]);
+    const key = JSON.stringify([owner.userId, owner.entryId, owner.agentId, owner.draftGeneration, owner.authenticationGeneration, section, action, extra]);
     if (this._pendingMutations.has(key)) return this._pendingMutations.get(key);
 
     const mutationTrace = effects.revision === "tools" ? {
@@ -943,19 +953,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         if (payload[key]) payload[key] = normalizeGuestModeTimestamp(payload[key]);
       }
     }
-    const ruleSave = section === "request_rules" && ["create", "update"].includes(action)
-      && this.shadowRoot?.querySelector?.("#rule-dialog")?.open;
-    if (!ruleSave) return this._request(section, action, payload, mutationTrace);
-    if (this._eocRuleSavePromise) return this._eocRuleSavePromise;
-    const button = this.shadowRoot.querySelector("#rule-save");
-    setControlPending(this, button, true);
-    const request = Promise.resolve().then(() => this._request(section, action, payload));
-    const tracked = request.finally(() => {
-      setControlPending(this, button, false);
-      if (this._eocRuleSavePromise === tracked) this._eocRuleSavePromise = null;
-    });
-    this._eocRuleSavePromise = tracked;
-    return tracked;
+    return this._request(section, action, payload, mutationTrace);
   }
 
   async _request(section, action, extra = {}, mutationTrace = null) {

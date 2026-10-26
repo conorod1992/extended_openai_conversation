@@ -1,5 +1,5 @@
 import {saveConfiguration, synchronizePersistedConfigurationFields} from "./management-actions.js";
-import {captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, presentAcknowledgedMutation, discardConfigurationDraft} from "./configuration-acknowledgement.js";
+import {captureConfigurationDraftOwner, captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, presentAcknowledgedMutation, discardConfigurationDraft} from "./configuration-acknowledgement.js";
 import {formatWordingAlternatives, parseWordingAlternatives} from "./wording-alternatives.js";
 import {enhancementChanged} from "./management-enhancement-state.js";
 import {retainPageSaveAcknowledgement, hasPendingPageSaveRead, PAGE_SAVE_READ_EVENT, PAGE_SAVE_READ_MESSAGE} from "./page-save-acknowledgement.js";
@@ -58,7 +58,7 @@ export function initializePageDraft(panel) {
   const field = view === GUEST ? "_guestDraft" : view === QUIET ? "_quietHoursDraft" : "_rulesSettingsDraft";
   const baseline = view === RULES ? settings(result) : result.config || {};
   panel[field] = clone(baseline);
-  const owner = captureConfigurationOwner(panel);
+  const owner = captureConfigurationDraftOwner(panel);
   const isCurrent = () => {
     const userId = panel.hass?.user?.id;
     // HA can resolve its initial user after a settled page was authored. Bind
@@ -69,6 +69,10 @@ export function initializePageDraft(panel) {
     return configurationSubmissionIsCurrent(panel, owner) && state.scopes.get(view) === scope;
   };
   const scope = draftScope({
+    captureSaveGuard:() => {
+      const submission = captureConfigurationOwner(panel);
+      return () => configurationSubmissionIsCurrent(panel, submission);
+    },
     isCurrent,
     baseline, read: () => panel[field], write: (value) => {
       if (scope.isCurrent()) panel[field] = value;
@@ -90,16 +94,17 @@ export function initializePageDraft(panel) {
         config: submitted, ...(current.revision ? {revision: current.revision} : {}),
       });
       const savedResult = {...(current.result || result), ...saved, ...(view === GUEST ? {legacy_policy: false, migration_notice: null} : {})};
-      if (scope.isCurrent() && panel._viewKey?.() === view) {
+      const ownsSave = configurationSubmissionIsCurrent(panel, submission);
+      if (ownsSave && scope.isCurrent() && panel._viewKey?.() === view) {
         panel._result = {...panel._result, ...saved, ...(view === GUEST ? {legacy_policy:false, migration_notice:null} : {})};
       }
       // The mutation acknowledgement owns the baseline and revision. A later
       // capability read must neither undo that commit nor discard newer edits.
-      current.result = savedResult;
+      if (ownsSave) current.result = savedResult;
       current.revision = saved.revision;
       current.refreshWarning = null;
       if (view === GUEST) {
-        if (scope.isCurrent()) {
+        if (ownsSave && scope.isCurrent()) {
           synchronizePersistedConfigurationFields(panel, saved, Object.keys(saved.config), submission);
           panel._guestMigrationReview = false;
           panel._guestStartingFresh = false;
@@ -177,8 +182,9 @@ async function saveRuleSettings(panel, submitted, scope) {
     wording_groups: clone(result.wording_groups),
     revision: result.revision,
   };
-  scope.result = {...scope.result, ...acknowledged};
-  if (scope.isCurrent() && panel._viewKey?.() === submission.view) {
+  const ownsSave = configurationSubmissionIsCurrent(panel, submission);
+  if (ownsSave) scope.result = {...scope.result, ...acknowledged};
+  if (ownsSave && scope.isCurrent() && panel._viewKey?.() === submission.view) {
     panel._result = {...panel._result, ...acknowledged};
     scope.result = panel._result;
   }

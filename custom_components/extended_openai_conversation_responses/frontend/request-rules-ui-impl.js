@@ -1,5 +1,7 @@
 import {watchSelectorYaml, assertSelectorYamlReady, isSelectorValueEvent} from "./native-selector-drafts.js";
 import {setReasoningOptions, syncRequestRuleRoutingControls} from "./request-rule-routing-controls.js";
+import {beginOperation} from "./operation-ownership.js";
+import {captureConfigurationOwner, configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
 import {effectiveServicePayload, isFunctionServiceAction, setEffectiveServiceField} from "./script-payload.js";
 export {syncRequestRuleRoutingControls} from "./request-rule-routing-controls.js";
 import {applyRequestRuleMutation, fuzzyThresholdValue, matchingControls} from "./request-rules-ui-core.js";
@@ -298,8 +300,16 @@ function ensureDialog(panel) {
 }
 
 function editorState(panel) {
-  panel._eocRuleEditorState ||= {dialog:null, actionSelector:null, revision:null, modelRevision:0};
+  panel._eocRuleEditorState ||= {dialog:null, actionSelector:null, revision:null};
   return panel._eocRuleEditorState;
+}
+
+function captureRuleEditorOwner(panel) {
+  const state=editorState(panel), owner=state.owner, root=panel.shadowRoot;
+  const dialog=state.dialog, actionSelector=state.actionSelector, conditionSelector=state.conditionSelector;
+  return ()=>owner && configurationSubmissionIsCurrent(panel,owner)
+    && panel.shadowRoot===root && root.querySelector("#rule-dialog")===dialog
+    && state.actionSelector===actionSelector && state.conditionSelector===conditionSelector;
 }
 
 function refreshEditor(panel) {
@@ -336,13 +346,14 @@ function refreshEditor(panel) {
   help.hidden=!invalid;
   help.textContent=!handoff ? "Enable Continue to AI or choose Original request." : q("#rule-match").value!=="sentence_pattern" ? "Captured value requires Sentence Pattern matching." : common.length ? "The selected captured value is not available in every trigger. Choose a common value or Original request." : "No captured values are available for every trigger. Use Sentence Pattern matching and make each trigger capture the same value, such as {question}.";
   syncRequestRuleRoutingControls(root);
-  const state=editorState(panel), current=++state.modelRevision;
+  const state=editorState(panel), latest=beginOperation(panel,"rule-model-lookup");
   if(local)return;
   const model=requestRuleCapabilityModel(panel,q("#rule-model")?.value.trim());
   if(!model || /\{[^{}]+\}/.test(model))return;
-  void ensureModelCatalog().then((module)=>module.lookupModelData(panel,model,"lookup",()=>current===state.modelRevision && root.querySelector("#rule-dialog")?.open)).then((data)=>{
-    if(current===state.modelRevision && root.querySelector("#rule-dialog")?.open) syncRequestRuleRoutingControls(root,data.reasoning_effort_options);
-  }).catch((err)=>panel._toast(`Unable to load model choices: ${err.message || String(err)}`,true));
+  const ownsEditor=captureRuleEditorOwner(panel), current=()=>latest() && ownsEditor() && state.dialog.open;
+  void ensureModelCatalog().then((module)=>current() ? module.lookupModelData(panel,model,"lookup",current) : null).then((data)=>{
+    if(current()) syncRequestRuleRoutingControls(root,data.reasoning_effort_options);
+  }).catch((err)=>{if(current())panel._toast(`Unable to load model choices: ${err.message || String(err)}`,true);});
 }
 
 function hasRuleConditions(value) {
@@ -396,6 +407,8 @@ export function bindRequestRuleEditor(panel) {
   q("#rule-form")?.addEventListener("submit",async(event)=>{
     event.preventDefault();
     const save=q("#rule-save");if(save.disabled)return;
+    const ownsEditor=captureRuleEditorOwner(panel), current=()=>ownsEditor() && dialog.open;
+    if(!current())return;
     panel._setSaving(save,true);
     try{
       const actionType=q("#rule-action-type").value;
@@ -421,9 +434,11 @@ export function bindRequestRuleEditor(panel) {
       const rule={ai_input_mode:q("#rule-ai-input-mode").value,ai_input_capture:q("#rule-ai-input-mode").value==="capture"?q("#rule-ai-input-capture").value:null,name:q("#rule-name").value,enabled:previous?.enabled??true,phrases:q("#rule-phrases").value.split("\n").map((item)=>item.trim()).filter(Boolean),match_type:q("#rule-match").value,action_type:actionType,action:actionType==="local_action"?{actions,success_response:successResponse,failure_response:q("#rule-failure").value,continue_to_ai:q("#rule-local-continue-to-ai").checked}:{model:q("#rule-model").value,reasoning_effort:q("#rule-reasoning").value,scope:q("#rule-scope").value,reset:q("#rule-reset").checked,continue_to_ai:q("#rule-continue-to-ai").checked,success_response:q("#rule-routing-success").value},matching_behavior:q("#rule-matching-behavior").value,matching:{word_forms:q("#rule-word-forms").checked,wording_alternatives:q("#rule-wording").checked,fuzzy:q("#rule-fuzzy").checked,fuzzy_threshold:fuzzyThresholdValue(q("#rule-threshold").value)},order:rules.find((item)=>item.id===panel._editingRuleId)?.order??rules.length,conditions:state.conditionSelector.value||[],group_id:q("#rule-group").value||null,continue_matching:q("#rule-continue-matching").checked};
       const action=panel._editingRuleId?"update":"create";
       const result=await panel._call("request_rules",action,{...(panel._editingRuleId?{rule_id:panel._editingRuleId}:{}),rule,revision:state.revision});
+      if(!current())return;
       dialog.close();
       applyRequestRuleMutation(panel,action,result,{ruleId:panel._editingRuleId});
     }catch(err){
+      if(!current())return;
       const message = err.message || String(err);
       q("#rule-error").textContent = message;
       if (hasRuleConditions(state.conditionSelector.value)
@@ -431,13 +446,15 @@ export function bindRequestRuleEditor(panel) {
         showRuleConditions(panel);
       }
     }
-    finally{panel._setSaving(save,false);}
+    finally{if(ownsEditor())panel._setSaving(save,false);}
   });
   return dialog;
 }
 
 export function openRequestRuleEditor(panel,id=null) {
   const dialog=bindRequestRuleEditor(panel), root=panel.shadowRoot, q=(selector)=>root.querySelector(selector), state=editorState(panel);
+  state.owner=captureConfigurationOwner(panel);
+  panel._setSaving(q("#rule-save"),false);
   // Native YAML children retain their own draft and mode. Each opening owns
   // fresh selectors, so Cancel cannot leak an unsaved child draft into saved data.
   state.actionSelector=createRequestRuleActionSelector(panel,q("#rule-action-sequence-host"));

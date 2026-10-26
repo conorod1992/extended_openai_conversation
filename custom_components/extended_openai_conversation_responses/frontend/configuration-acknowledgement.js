@@ -2,9 +2,15 @@ import {clone, same, mergeAcknowledgedDraft} from "./unsaved-state.js";
 
 const field = (config, key) => Object.hasOwn(config, key) ? [config[key]] : [];
 
-export function captureConfigurationOwner(panel) {
+// Authored values survive a temporary identity transition. An operation made
+// before it cannot regain authority merely because the same user returns.
+export function captureConfigurationDraftOwner(panel) {
   return {agentId:panel._agentId, entryId:panel._selectedAgent?.()?.entry_id,
     userId:panel.hass?.user?.id, draftGeneration:panel._eocDraftGeneration || 0};
+}
+
+export function captureConfigurationOwner(panel) {
+  return {...captureConfigurationDraftOwner(panel), authenticationGeneration:panel._eocAuthenticationGeneration || 0};
 }
 
 export function captureConfigurationSubmission(panel) {
@@ -31,7 +37,8 @@ export function configurationSubmissionIsCurrent(panel, submission) {
   return configurationOwnerIsCurrent(panel, submission)
     // Identity-only collection refresh descriptors remain supported. Draft
     // authoring and queue admission capture the full owner above.
-    && (!Object.hasOwn(submission, "draftGeneration") || (panel._eocDraftGeneration || 0) === submission.draftGeneration);
+    && (!Object.hasOwn(submission, "draftGeneration") || (panel._eocDraftGeneration || 0) === submission.draftGeneration)
+    && (!Object.hasOwn(submission, "authenticationGeneration") || (panel._eocAuthenticationGeneration || 0) === submission.authenticationGeneration);
 }
 
 export function configurationReadOvertookSubmission(panel, submission) {

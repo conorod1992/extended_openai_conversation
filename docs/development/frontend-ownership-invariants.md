@@ -163,3 +163,37 @@ dirty draft cannot overwrite it. The draft remains available; Discard adopts the
 current policy before edits are reapplied. This guards observed conflicts, not
 unseen concurrent writes from another client. When a backend supplies a revision,
 the original authoring revision remains responsible for conflict detection.
+
+Authentication transitions retire operations separately from authored values.
+`captureConfigurationOwner()` captures an authentication generation in addition
+to the user, entry, assistant and draft generation. The `hass` setter advances it
+when a known user leaves, including known-to-unknown transitions. A later return
+to the same identity cannot revive queued writes, reads or callbacks. Ordinary
+same-user HA updates and initial unknown-to-known resolution preserve their
+existing behavior. Mutation deduplication includes that generation.
+
+Policy authoring uses `captureConfigurationDraftOwner()` instead: a temporary
+identity transition does not discard its edits or rebase its authoring revision.
+Each save captures a separate publication guard. A retired save still settles
+its own acknowledged baseline/revision, but cannot merge values into controls,
+replace the accepted result, or present an obsolete success/failure. Likewise,
+a retained policy's accepted-read obligation outlives a retired refresh attempt.
+This is operation retirement, not a new same-panel cross-user draft store;
+recovery between panel instances still requires the existing owner/access gates.
+
+Normal Tool loading, repair loading, validation and acknowledgement share
+`captureToolEditorOwner()`. Exact root/dialog identity, normal/repair generation
+and repair index remain editor-visit guards; YAML equality and latest validation
+still protect submitted text. Repair revision and raw-index semantics are unchanged.
+
+Request Rule editor openings capture their owner once. Model lookups and submit
+callbacks reuse the exact dialog/selector ownership check; the existing latest
+operation primitive retires superseded model lookups, including changes to local
+actions or empty/template model values. Native selector drafts and backend Rule
+revisions retain their specialized contracts.
+
+The Rule editor alone owns its save button. Its synchronous admission guard
+prevents repeated form submissions; the shared owner-scoped mutation queue still
+serializes requests and deduplicates identical payloads. There is no additional
+panel-wide Rule save promise or submit interceptor whose completion can reset
+another opening's controls.

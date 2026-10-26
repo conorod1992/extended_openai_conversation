@@ -96,3 +96,23 @@ for (const saved of [{valid:false, revision:"r2", functions:[tool("old")]}, {rev
     assert.equal(host._toolRevision, "r1");
   });
 }
+
+for (const repair of [false, true]) {
+  for (const transition of ["user", "session", "root", "entry"]) {
+    test(`${repair ? "repair" : "healthy"} callbacks cannot adopt a retired ${transition} owner`, () => {
+      const host = panel(repair);
+      host.hass = {user:{id:"original"}};
+      const operation = captureToolEditorOperation(host);
+      const previous = {revision:"r1", config:host._configData.config};
+      if (transition === "user") host.hass = {user:{id:"replacement"}};
+      if (transition === "session") host._eocDraftGeneration = 1;
+      if (transition === "root") host.shadowRoot = {querySelector:selector => operation.root.querySelector(selector)};
+      if (transition === "entry") host.agent = {...host.agent, entry_id:"replacement"};
+      assert.equal(operation.isCurrent(), false);
+      assert.equal(operation.isUnchanged(), false);
+      acknowledgeToolEditor(host, operation, {revision:"r2", functions:[tool("renamed"), tool("other")]}, previous);
+      assert.equal(host._toolInitialYaml, "original");
+      assert.equal(repair ? host._repairToolRevision : host._toolRevision, "r1");
+    });
+  }
+}

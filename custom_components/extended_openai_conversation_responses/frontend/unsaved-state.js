@@ -29,7 +29,7 @@ export class UnsavedState {
   destinations() { return new Set(this.dirty().flatMap((scope) => scope.destinations?.() || [])); }
 }
 
-export function draftScope({read, write, baseline, save, owns, destinations, isCurrent}) {
+export function draftScope({read, write, baseline, save, owns, destinations, isCurrent, captureSaveGuard}) {
   return {
     baseline: clone(baseline), pending: false, read, write, owns, destinations,
     dirty() { return !same(this.read(), this.baseline); },
@@ -37,13 +37,14 @@ export function draftScope({read, write, baseline, save, owns, destinations, isC
     async save() {
       if (this.pending) return false;
       if (isCurrent && !isCurrent()) throw new Error("The policy editor owner changed. Reopen the current editor before saving.");
+      const saveIsCurrent = captureSaveGuard?.();
       this.pending = true;
       const submitted = clone(this.read());
       try {
         const saved = await save(submitted, this);
         this.baseline = clone(saved);
         // Edits made during an in-flight save belong to the next save.
-        this.write(mergeAcknowledgedDraft(this.read(), submitted, saved));
+        if (!saveIsCurrent || saveIsCurrent()) this.write(mergeAcknowledgedDraft(this.read(), submitted, saved));
         return true;
       } finally { this.pending = false; }
     },

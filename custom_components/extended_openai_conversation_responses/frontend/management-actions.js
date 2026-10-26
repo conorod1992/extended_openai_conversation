@@ -208,11 +208,6 @@ export function bindFrontendCorrectness(panel) {
 
 
 
-  root.addEventListener("submit", (event) => {
-    if (event.target?.id !== "rule-form" || !panel._eocRuleSavePromise) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-  }, true);
 }
 
 

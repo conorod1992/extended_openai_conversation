@@ -1,3 +1,5 @@
+import {captureConfigurationOwner, configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
+
 export function toolYamlChangeHandler(panel, _yaml, detail = {}) {
   const status = panel?.shadowRoot?.querySelector("#tool-error");
   if (!status) return;
@@ -60,33 +62,38 @@ export function destroyToolYamlEditor(panel) {
   }
 }
 
-// A dialog generation owns its controls; a submitted YAML snapshot owns only
-// its validation/result presentation. Typing during a request keeps the former
-// ownership while invalidating the latter.
-export function captureToolEditorOperation(panel) {
+// Loading, validation and acknowledgement belong to the same editor visit.
+// Keep its normal/repair generations as well as the configuration owner: a
+// dialog can remain mounted while its user, entry or draft session changes.
+export function captureToolEditorOwner(panel) {
   const root = panel.shadowRoot;
   const dialog = root.querySelector("#tool-dialog");
   const normalGeneration = panel._toolEditorLoad;
   const repairGeneration = panel._repairToolLoad;
   const repairIndex = panel._repairToolIndex;
-  const agentId = panel._agentId;
+  const owner = captureConfigurationOwner(panel);
+  const isCurrent = () => configurationSubmissionIsCurrent(panel, owner)
+    && panel._toolEditorLoad === normalGeneration
+    && panel._repairToolLoad === repairGeneration && panel._repairToolIndex === repairIndex
+    && panel.shadowRoot === root && root.querySelector("#tool-dialog") === dialog && dialog.open;
+  return {root, dialog, repairIndex, isCurrent};
+}
+
+// A submitted YAML snapshot owns only its validation/result presentation.
+// Typing keeps the editor visit while invalidating that snapshot.
+export function captureToolEditorOperation(panel) {
+  const owner = captureToolEditorOwner(panel);
   const agent = panel._selectedAgent?.();
-  const entryId = agent?.entry_id;
   const yaml = getToolYamlEditor(panel).getYaml();
   const originalName = panel._toolOriginalName;
   const otherNames = new Set((panel._configData?.config?.functions || [])
     .map(tool => tool.spec?.name).filter(name => name !== originalName));
-  const isCurrent = () => panel._toolEditorLoad === normalGeneration
-    && panel._repairToolLoad === repairGeneration && panel._repairToolIndex === repairIndex
-    && panel._agentId === agentId && panel._selectedAgent?.()?.entry_id === entryId
-    && panel.shadowRoot === root && root.querySelector("#tool-dialog") === dialog && dialog.open;
   return {
-    root, dialog, yaml, repairIndex, baselineConfig:panel._configData?.config,
+    ...owner, yaml, baselineConfig:panel._configData?.config,
     originalName, otherNames,
-    revision:Number.isInteger(repairIndex) ? panel._repairToolRevision : panel._toolRevision,
-    destination:agent ? {entry_id:entryId, subentry_id:agent.subentry_id} : {},
-    isCurrent,
-    isUnchanged:() => isCurrent() && getToolYamlEditor(panel).getYaml() === yaml,
+    revision:Number.isInteger(owner.repairIndex) ? panel._repairToolRevision : panel._toolRevision,
+    destination:agent ? {entry_id:agent.entry_id, subentry_id:agent.subentry_id} : {},
+    isUnchanged:() => owner.isCurrent() && getToolYamlEditor(panel).getYaml() === yaml,
   };
 }
 

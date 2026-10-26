@@ -1,6 +1,6 @@
 import {UnsavedState} from "./unsaved-state.js";
 import {captureConfigurationSubmission, configurationSubmissionIsCurrent, completeConfigurationAcknowledgement} from "./configuration-acknowledgement.js";
-import {getToolYamlEditor, captureToolEditorOperation, acknowledgeToolEditor} from "./tool-yaml-editor-adapter.js";
+import {getToolYamlEditor, captureToolEditorOwner, captureToolEditorOperation, acknowledgeToolEditor} from "./tool-yaml-editor-adapter.js";
 
 function repairIssue(panel) {
   const issue = panel._selectedAgent?.()?.configuration_issue;
@@ -154,12 +154,9 @@ async function openInvalidToolEditor(panel, item, revision = panel._result?.revi
   const status = root?.querySelector("#tool-error");
   if (!dialog || !editor?.textarea) return;
   panel._repairToolIndex = Number(item.index);
-  const loadToken = {};
-  panel._repairToolLoad = loadToken;
+  panel._repairToolLoad = {};
   panel._toolEditorLoad = null;
-  const agentId = panel._agentId;
-  const isCurrent = () => dialog.open && panel._repairToolLoad === loadToken
-    && panel._agentId === agentId && root.querySelector("#tool-dialog") === dialog;
+  const {isCurrent} = captureToolEditorOwner(panel);
   panel._repairToolRevision = revision;
   const save = root.querySelector("#tool-save");
   if (save) {

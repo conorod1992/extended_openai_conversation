@@ -19,7 +19,7 @@ import {captureConfigurationOwner, captureConfigurationSubmission, configuration
 import {same} from "./unsaved-state.js";
 import { haToolName, isHALlmTool, renderHAToolCard, toolDescription } from "./ha-llm-tools-list.js";
 import { bindHelp, helpButton, helpPopover } from "./agent-config-help.js";
-import {getToolYamlEditor, captureToolEditorOperation, acknowledgeToolEditor} from "./tool-yaml-editor-adapter.js";
+import {getToolYamlEditor, captureToolEditorOwner, captureToolEditorOperation, acknowledgeToolEditor} from "./tool-yaml-editor-adapter.js";
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 export const functionGroupIdFromName = (name) => String(name || "").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").replace(/^[^a-z]+/, "").slice(0, 64);
@@ -525,12 +525,8 @@ export async function openTool(panel, index = null, initialTool = null) {
   const dialog = root.querySelector("#tool-dialog");
   let editor = getToolYamlEditor(panel);
   const status = root.querySelector("#tool-error");
-  const agentId = panel._agentId;
-  const loadToken = {};
-  panel._toolEditorLoad = loadToken;
-  const isCurrent = () => panel._toolEditorLoad === loadToken
-    && panel._agentId === agentId && dialog.open
-    && root.querySelector("#tool-dialog") === dialog;
+  panel._toolEditorLoad = {};
+  const {isCurrent} = captureToolEditorOwner(panel);
   root.querySelector("#tool-dialog-title").textContent = index === null ? "Add Function Tool" : "Edit Function Tool";
   root.querySelector("#tool-dialog-meta").textContent = "Loading YAML...";
   panel._setSaving(root.querySelector("#tool-save"), false);
