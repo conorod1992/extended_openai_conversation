@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import fields, is_dataclass
+from functools import lru_cache
 from inspect import signature
 from typing import Any, cast
 
@@ -27,6 +28,12 @@ class BackendExecutionFailure(ExecutionFailure):
     """Backend-owned diagnostic prose; retain locally, contain at the model boundary."""
 
 
+@lru_cache(maxsize=1)
+def _uses_result_envelope(content_type: Any) -> bool:
+    """Resolve the constructor contract once, also following HA class reloads."""
+    return "result" in signature(content_type).parameters
+
+
 def make_tool_result_content(
     *,
     agent_id: str,
@@ -41,21 +48,18 @@ def make_tool_result_content(
         "tool_call_id": tool_call_id,
         "tool_name": tool_name,
     }
-    parameters = signature(conversation.ToolResultContent).parameters
-    if (
-        error
-        and "result" not in parameters
-        and not isinstance(tool_result, ExecutionFailure)
-    ):
+    content_type = conversation.ToolResultContent
+    uses_envelope = _uses_result_envelope(content_type)
+    if error and not uses_envelope and not isinstance(tool_result, ExecutionFailure):
         # Older HA has no native error flag. Keep the producer's explicit
         # indication in memory without adding fields to returned business data.
         tool_result = ExecutionFailure(tool_result)
-    if "result" in parameters:
+    if uses_envelope:
         tool_result_type = cast(Any, llm).ToolResult
         kwargs["result"] = tool_result_type(data=tool_result, error=error)
     else:
         kwargs["tool_result"] = tool_result
-    return conversation.ToolResultContent(**kwargs)
+    return content_type(**kwargs)
 
 
 class HAToolResultError(HomeAssistantError):
