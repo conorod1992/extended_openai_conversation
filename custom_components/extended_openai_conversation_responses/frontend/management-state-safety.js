@@ -3,6 +3,7 @@ import {pageCoordinator, currentPageScope} from "./management-page-drafts.js";
 import {same, clone} from "./unsaved-state.js";
 import {SECTION_CACHE_TTL_MS} from "./management-cache.js";
 import {configurationDraftBaseline} from "./configuration-acknowledgement.js";
+import {editorControls, dialogState} from "./management-dialogs.js";
 export {SECTION_CACHE_TTL_MS};
 
 const RESET_PROMPT_KEYS = [
@@ -116,28 +117,6 @@ export function applyTargetedConfigDirty(panel, keys, control = null, renderWhen
     restoreConfigFocus(panel, control);
   }
 }
-
-function editorControls(dialog) {
-  return [...dialog.querySelectorAll("input,select,textarea,ha-selector")]
-    .filter((control) => !["button", "submit", "reset", "file", "search"].includes(control.type));
-}
-
-function dialogState(dialog) {
-  if (!dialog) return [];
-  if (dialog.__eocReadDraft) return dialog.__eocReadDraft();
-  return editorControls(dialog)
-    .map((control) => {
-      const isSelector = String(control.tagName || "").toUpperCase() === "HA-SELECTOR";
-      return {
-        id: control.id || control.name || "",
-        type: control.type || control.tagName,
-        checked: "checked" in control ? Boolean(control.checked) : undefined,
-        value: isSelector ? clone(control.value ?? null) : control.value,
-        ...(isSelector && control.__eocYamlDraft?.().length ? {yaml:control.__eocYamlDraft()} : {}),
-      };
-    });
-}
-
 
 export function dialogHasUnsavedChanges(dialog, baseline, toolInitialYaml = null) {
   if (!dialog) return false;

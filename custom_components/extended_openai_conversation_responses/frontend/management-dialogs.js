@@ -1,5 +1,28 @@
 // Core dialog handlers are delegated from the host so owned dialogs can be
 // created on demand and removed when their route or agent changes.
+import {clone} from "./unsaved-state.js";
+
+export function editorControls(dialog) {
+  return [...dialog.querySelectorAll("input,select,textarea,ha-selector")]
+    .filter(control => !["button", "submit", "reset", "file", "search"].includes(control.type));
+}
+
+// This is the authored control state, including unparsed native YAML. Typed
+// Memory/Knowledge values remain separate from this lossless recovery payload.
+export function dialogState(dialog) {
+  if (!dialog) return [];
+  if (dialog.__eocReadDraft) return dialog.__eocReadDraft();
+  return editorControls(dialog).map(control => {
+    const isSelector = String(control.tagName || "").toUpperCase() === "HA-SELECTOR";
+    return {
+      id:control.id || control.name || "", type:control.type || control.tagName,
+      checked:"checked" in control ? Boolean(control.checked) : undefined,
+      value:isSelector ? clone(control.value ?? null) : control.value,
+      ...(isSelector && control.__eocYamlDraft?.().length ? {yaml:control.__eocYamlDraft()} : {}),
+    };
+  });
+}
+
 export const PERSISTENT_DIALOGS = new Set([
   "knowledge-dialog", "memory-dialog", "session-dialog", "reassign-dialog", "confirm-dialog",
 ]);

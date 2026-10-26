@@ -2,6 +2,7 @@ import {searchTokens, matchesFunctionSearchTokens, cachedFunctionSearchTokens} f
 export {matchesFunctionSearch} from "./function-search.js";
 import {functionAddMenu, bindFunctionAddMenu} from "./function-add-menu.js";
 import {bindOwnedEvent} from "./management-owned-events.js";
+import {dialogState} from "./management-dialogs.js";
 import {COMPACT_CHOICE_STYLE} from "./compact-choice-styles.js";
 const ROUTE_STYLE = `.function-groups-help{margin-bottom:18px}.tool-search{display:block;margin-bottom:18px}.function-groups{display:grid;gap:18px}.function-group-card{border:1px solid var(--divider-color);border-radius:12px;padding:18px;background:var(--card-background-color)}.function-group-heading{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:20px}.function-group-heading>.function-group-actions{display:grid;grid-template-columns:auto auto;gap:10px;align-items:center;justify-content:end}.function-group-actions>.group-enabled-control{grid-column:1/-1;justify-self:end}.function-group-heading h3,.tool-title h4{margin:0}.function-group-heading p{margin:7px 0;color:var(--secondary-text-color);line-height:1.45}.function-group-heading code{font-size:12px;color:var(--secondary-text-color)}.availability-badge,.function-count{display:inline-flex;padding:4px 9px;border-radius:999px;background:color-mix(in srgb,var(--success-color,#0f9d58) 15%,transparent);color:var(--eoc-success-text);font-size:11px;font-weight:600}.availability-badge.on-demand{background:color-mix(in srgb,var(--primary-color) 14%,transparent);color:var(--eoc-accent-text)}.availability-badge.group-disabled-badge{background:var(--secondary-background-color);color:var(--secondary-text-color)}.function-count{background:var(--secondary-background-color);color:var(--secondary-text-color)}.function-group-card details{margin-top:14px;padding-top:10px}.function-group-card summary{min-height:40px}.function-group-card .tool-list{padding-top:10px}.group-dialog{width:min(820px,calc(100vw - 28px))}.group-dialog-body{max-height:calc(100vh - 170px)}.group-functions-fieldset{margin:0;padding-top:18px}.${COMPACT_CHOICE_STYLE}@media(max-width:679px){.group-dialog{width:calc(100vw - 12px)}.function-group-heading{grid-template-columns:minmax(0,1fr)}.function-group-heading>.function-group-actions{justify-content:start}.function-group-actions>.group-enabled-control{justify-self:start}.group-function-choices{max-height:34vh}}`;
 function ensureRouteStyle(panel) {
@@ -663,13 +664,7 @@ async function saveFunctionGroup(panel) {
   const generation = panel._groupEditorLoad;
   const originalId = panel._groupOriginalId, repair = panel._groupRepair, revision = panel._groupRevision;
   const baselineConfig = panel._configData?.config;
-  // Use the same primitive control representation as the dialog draft tracker,
-  // including checkboxes and excluding its search filter.
-  const readState = () => [...dialog.querySelectorAll("input,select,textarea")]
-    .filter(control => !["button", "submit", "reset", "file", "search"].includes(control.type))
-    .map(control => ({id:control.id || control.name || "", type:control.type || control.tagName,
-      checked:"checked" in control ? Boolean(control.checked) : undefined, value:control.value}));
-  const authored = readState();
+  const authored = dialogState(dialog);
   const name=root.querySelector("#group-name").value.trim();
   const id=root.querySelector("#group-id").value.trim();
   const description=root.querySelector("#group-description").value.trim();
@@ -692,7 +687,7 @@ async function saveFunctionGroup(panel) {
   const ownsEditor = () => configurationSubmissionIsCurrent(panel, submission)
     && panel._groupEditorLoad === generation && panel.shadowRoot === root
     && root.querySelector("#group-dialog") === dialog && dialog.open;
-  const unchanged = () => ownsEditor() && same(readState(), authored);
+  const unchanged = () => ownsEditor() && same(dialogState(dialog), authored);
   try {
     const result=await queueFunctionGroupMutation(panel,()=>unchanged()
       ? panel._call("tools","save_group",{group:{id,name,description,loading_mode,functions,guest_allowed,enabled},
