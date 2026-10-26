@@ -1,6 +1,7 @@
 import {invalidateImportPreview, renderConfigurationActions, bindSavedConfigurationActions} from "./assistant-configuration-actions.js";
 export {invalidateImportPreview, renderConfigurationActions} from "./assistant-configuration-actions.js";
-import {searchTokens, matchesFunctionSearchTokens} from "./function-search.js";
+import {searchTokens, matchesFunctionSearchTokens, cachedFunctionSearchTokens} from "./function-search.js";
+export {matchesFunctionSearch} from "./function-search.js";
 import {beginOperation} from "./operation-ownership.js";
 import {bindOwnedEvent} from "./management-owned-events.js";
 import {ensureCompactChoiceStyle} from "./compact-choice-styles.js";
@@ -111,10 +112,6 @@ export async function copyTextToClipboard(text, clipboardNavigator = globalThis.
   }
 }
 
-
-export function matchesFunctionSearch(query, searchableText, minimumPrefixLength = 3) {
-  return matchesFunctionSearchTokens(searchTokens(query), searchTokens(searchableText), minimumPrefixLength);
-}
 
 export function section(panel, id, title, description, keywords, body, includeHeading = true) {
   if (panel._configSectionFilter && !panel._configSectionFilter.has(id)) return "";
@@ -309,9 +306,10 @@ export function bindConfiguration(panel) {
   bindConfigurationInputs(panel);
   root.querySelector("#local-intent-search")?.addEventListener("input", (event) => {
     const query = event.target.value;
+    const queryTokens = searchTokens(query);
     const choices = [...root.querySelectorAll("[data-local-intent-choice]")];
     choices.forEach((choice) => {
-      choice.hidden = !matchesFunctionSearch(query, choice.dataset.choiceSearch, 1);
+      choice.hidden = !matchesFunctionSearchTokens(queryTokens, cachedFunctionSearchTokens(choice, choice.dataset.choiceSearch), 1);
     });
     root.querySelector("#local-intents-empty").hidden = !query.trim() || choices.some(choice => !choice.hidden);
   });

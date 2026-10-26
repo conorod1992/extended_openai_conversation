@@ -124,6 +124,7 @@ const editorSource = (
     "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-base.js",
     "../custom_components/extended_openai_conversation_responses/frontend/agent-config-tools.js",
     "../custom_components/extended_openai_conversation_responses/frontend/agent-config-tools-base.js",
+    "../custom_components/extended_openai_conversation_responses/frontend/function-search.js",
   ].map((path) => readFile(new URL(path, import.meta.url), "utf8")))
 ).join("\n");
 assert.match(editorSource, /insertAdjacentHTML\("beforebegin", saveBar\(panel\)\)/, "the bar should appear as soon as a clean configuration becomes dirty");
@@ -142,7 +143,7 @@ assert.match(
 );
 assert.match(
   editorSource,
-  /#local-intent-search[\s\S]*?const queryTokens = searchTokens\(event\.target\.value\)[\s\S]*?cachedFunctionSearchTokens/,
+  /#local-intent-search[\s\S]*?const queryTokens = searchTokens\(query\)[\s\S]*?cachedFunctionSearchTokens/,
   "Local Intent search should tokenize its query once and cache static choice tokens",
 );
 assert.match(
