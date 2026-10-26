@@ -1251,9 +1251,17 @@ async def test_public_assist_multicall_dispatch_concurrency(
                 "call-b",
             ]
             assert "Parallel owner" in json.dumps(tool_result_data(captured[0]))
-            assert "EXPECTED-SIBLING-FAILURE" in json.dumps(
-                tool_result_data(captured[1])
-            )
+            sibling_result = tool_result_data(captured[1])
+            assert sibling_result == {
+                "result": {
+                    "status": "error",
+                    "error": (
+                        "SanitizedBackendError: Function execution failed. "
+                        "Check the tool configuration and permissions."
+                    ),
+                }
+            }
+            assert "EXPECTED-SIBLING-FAILURE" not in json.dumps(sibling_result)
             assert cancelled == set()
             assert len(wire.requests) == 1
             healthy_wire = _install_wire(
