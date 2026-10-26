@@ -120,6 +120,7 @@ function acknowledgeRuleGroupControls(panel, dialog, submitted) {
     const row = existing.get(group.id) || elementFromMarkup(groupManagerRows(panel, [group], rules));
     const input = row.querySelector(".rule-group-name");
     if (!submitted.names.has(group.id) || input.value === submitted.names.get(group.id)) input.value = group.name;
+    if (input.defaultValue !== group.name) input.defaultValue = group.name;
     const count = rules.filter(rule => rule.group_id === group.id).length;
     row.querySelector(".rule-group-count").textContent = `${count} rule${count === 1 ? "" : "s"}`;
     return row;
