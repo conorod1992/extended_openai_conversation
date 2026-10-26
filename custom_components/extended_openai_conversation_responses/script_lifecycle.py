@@ -4,6 +4,8 @@ import asyncio
 import logging
 from typing import Any
 
+from .operation_settlement import async_wait_owned_cleanup
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -28,15 +30,7 @@ async def async_cleanup_script(
     # Native unload marks its runner unloaded before awaiting stop. Retrying or
     # abandoning that await can leave the registry and cached resources behind.
     task = asyncio.create_task(cleanup())
-    cancellation: asyncio.CancelledError | None = None
-    while not task.done():
-        try:
-            # Wait does not forward parent cancellation or install HA's shield
-            # failure logger, which could expose a later private cleanup error.
-            await asyncio.wait({task})
-        except asyncio.CancelledError as err:
-            if cancellation is None:
-                cancellation = err
+    cancellation = await async_wait_owned_cleanup(task)
     try:
         task.result()
     except asyncio.CancelledError as err:

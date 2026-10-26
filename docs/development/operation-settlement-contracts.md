@@ -37,13 +37,21 @@ hold the condition across suspended work (`wait_for` releases it while waiting).
 ## Bash teardown
 
 The cancellation branch drains graceful process/pipe cleanup with the same owned
-waiter, suppressing only later caller cancellations before rethrowing the original
+cleanup waiter as Script, suppressing only later caller cancellations before rethrowing the original
 one. An underlying cleanup failure keeps its established failure priority and
 legacy/strict backend error handling. The timeout branch separately owns forced
 cleanup, so a new caller cancellation cannot interrupt teardown. Successful
 commands gain no task or wait; forced timeout cleanup gains one necessary owned
 task. The process-group grace period and cleanup deadlines are unchanged, and
 no interrupted command is retried or marked completed by the waiter.
+
+The cleanup waiter only returns the first newly delivered caller cancellation;
+it leaves result inspection, error precedence and sanitized logging to the owner.
+It is the existing Script `asyncio.wait` loop, which avoids the runtime shield
+callback logging an exception from a cancelled outer await. Bash applies its
+failure-first policy after this wait; Script retains its existing conditional
+secondary-failure policy. Ordinary Store/File settlement keeps its established
+shield fast path and does not acquire cleanup policy.
 
 ## Transfer worker recovery
 
