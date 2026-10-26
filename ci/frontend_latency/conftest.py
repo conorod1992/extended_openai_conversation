@@ -5,11 +5,18 @@ not contain today's fixtures (or today's production restore internals).
 """
 
 from pathlib import Path
+import sys
 
 import pytest
 
 from homeassistant.helpers import recorder as recorder_helper
 from homeassistant.setup import async_setup_component
+
+# Standalone pytest entry points need the overlay's repository on sys.path too;
+# the historical tests_real_ha conftest previously supplied this incidentally.
+repo_root = Path(__file__).resolve().parents[2]
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
 
 
 @pytest.fixture

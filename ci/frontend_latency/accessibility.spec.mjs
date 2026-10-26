@@ -107,6 +107,11 @@ test("scan genuine HA route and editor accessibility semantics", async ({browser
             await writeFile(output, JSON.stringify({scans, diagnostic_picker:process.env.EOAI_ACCESSIBILITY_DIAGNOSTIC_PICKER === "1", browser_environment:{chromium:browser.version(), playwright:require("@playwright/test/package.json").version, axe:require("axe-core/package.json").version}}, null, 2));
           };
           if (route.name === "capabilities-functions") {
+            // Seed the collision before the fresh authoritative page read.
+            // Mutating server configuration after opening its editor correctly
+            // produces a revision conflict, not duplicate-name validation.
+            const tool = {spec:{name:"accessibility_saved_tool", description:"Preserved saved tool", parameters:{type:"object", properties:{}}}, function:{type:"template", value_template:"healthy"}};
+            await panel.evaluate((host, tool) => host._call("tools", "save", {tool}), tool);
             for (const [id, description] of [["layout_short", "A short description."], ["layout_long", "A longer description of the available functions and when to use them. ".repeat(7)]]) {
               await panel.evaluate(async (host, {id, description}) => {
                 const existing = host._draft.function_groups?.find(group => group.id === id);
@@ -224,8 +229,6 @@ test("scan genuine HA route and editor accessibility semantics", async ({browser
             await panel.locator("#tool-yaml-native .cm-lint-marker-error").hover();
             await expect(panel.locator("#tool-yaml-native .cm-tooltip-lint")).toBeVisible();
             await scan("tool-invalid");
-            const tool = {spec:{name:"accessibility_saved_tool", description:"Preserved saved tool", parameters:{type:"object", properties:{}}}, function:{type:"template", value_template:"healthy"}};
-            await panel.evaluate((host, tool) => host._call("tools", "save", {tool}), tool);
             const yaml = `spec:\n  name: accessibility_saved_tool\n  description: Editable failed draft\n  parameters:\n    type: object\n    properties: {}\nfunction:\n  type: template\n  value_template: healthy\n`;
             await replaceNativeYaml(page, panel.locator("#tool-yaml-native"), yaml);
             await panel.locator("#tool-save").click();
