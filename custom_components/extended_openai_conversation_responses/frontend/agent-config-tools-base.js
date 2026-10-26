@@ -1,9 +1,9 @@
-import {downloadConfigurationSharing} from "./sharing-review.js";
+import {invalidateImportPreview, renderConfigurationActions, bindSavedConfigurationActions} from "./assistant-configuration-actions.js";
+export {invalidateImportPreview, renderConfigurationActions} from "./assistant-configuration-actions.js";
 import {searchTokens, matchesFunctionSearchTokens} from "./function-search.js";
-import {beginOperation, invalidateOperation} from "./operation-ownership.js";
+import {beginOperation} from "./operation-ownership.js";
 import {functionAddMenu, bindFunctionAddMenu} from "./function-add-menu.js";
 import {bindOwnedEvent} from "./management-owned-events.js";
-import {captureCatalogSelectionIntent} from "./management-catalog-ownership.js";
 import {COMPACT_CHOICE_STYLE} from "./compact-choice-styles.js";
 const ROUTE_STYLE = `.function-groups-help{margin-bottom:18px}.tool-search{display:block;margin-bottom:18px}.function-groups{display:grid;gap:18px}.function-group-card{border:1px solid var(--divider-color);border-radius:12px;padding:18px;background:var(--card-background-color)}.function-group-heading{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:20px}.function-group-heading>.function-group-actions{display:grid;grid-template-columns:auto auto;gap:10px;align-items:center;justify-content:end}.function-group-actions>.group-enabled-control{grid-column:1/-1;justify-self:end}.function-group-heading h3,.tool-title h4{margin:0}.function-group-heading p{margin:7px 0;color:var(--secondary-text-color);line-height:1.45}.function-group-heading code{font-size:12px;color:var(--secondary-text-color)}.availability-badge,.function-count{display:inline-flex;padding:4px 9px;border-radius:999px;background:color-mix(in srgb,var(--success-color,#0f9d58) 15%,transparent);color:var(--eoc-success-text);font-size:11px;font-weight:600}.availability-badge.on-demand{background:color-mix(in srgb,var(--primary-color) 14%,transparent);color:var(--eoc-accent-text)}.availability-badge.group-disabled-badge{background:var(--secondary-background-color);color:var(--secondary-text-color)}.function-count{background:var(--secondary-background-color);color:var(--secondary-text-color)}.function-group-card details{margin-top:14px;padding-top:10px}.function-group-card summary{min-height:40px}.function-group-card .tool-list{padding-top:10px}.group-dialog{width:min(820px,calc(100vw - 28px))}.group-dialog-body{max-height:calc(100vh - 170px)}.group-functions-fieldset{margin:0;padding-top:18px}.${COMPACT_CHOICE_STYLE}@media(max-width:679px){.group-dialog{width:calc(100vw - 12px)}.function-group-heading{grid-template-columns:minmax(0,1fr)}.function-group-heading>.function-group-actions{justify-content:start}.function-group-actions>.group-enabled-control{justify-self:start}.group-function-choices{max-height:34vh}}`;
 function ensureRouteStyle(panel) {
@@ -32,13 +32,6 @@ import {getToolYamlEditor, captureToolEditorOperation, acknowledgeToolEditor} fr
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const bool = (value) => value ? "checked" : "";
 export {skillNamesFromText} from "./configuration-controls.js";
-export function invalidateImportPreview(panel, applyButton, summary) {
-  invalidateOperation(panel, "import-preview");
-  panel._importDocument = null;
-  panel._importRevision = null;
-  if (applyButton) applyButton.disabled = true;
-  if (summary) summary.textContent = "Validate the document to preview it.";
-}
 const option = (panel, value, selected, label = null, disabled = false) => `<option value="${panel._e(value)}" ${disabled ? "disabled" : ""} ${value === selected ? "selected" : ""}>${panel._e(label || panel._titleCase(value))}</option>`;
 const CHOICE_LABELS = Object.freeze({
   conversation_continuity: Object.freeze({
@@ -230,11 +223,6 @@ export function saveBar(panel) {
   return saveBarMarkup({configuration: true, pending: Boolean(panel._configurationSaving)});
 }
 
-export function renderConfigurationActions(panel, sections = panel._configSections || []) {
-  const cleanOnly = panel._configDirty ? "disabled title=\"Save or revert the shared draft first\"" : "";
-  const includesBackup = sections.includes("backup");
-  return `<details class="agent-actions-menu eoc-details-base"><summary aria-haspopup="menu">Assistant actions</summary><div role="menu"><button type="button" class="secondary" role="menuitem" id="duplicate-agent" ${cleanOnly}>Duplicate agent</button>${includesBackup ? "" : `<button type="button" class="secondary" role="menuitem" id="import-agent">Import configuration</button><button type="button" class="secondary" role="menuitem" id="export-agent" ${cleanOnly}>Export configuration</button>`}</div></details>${panel._configDirty ? `<p class="action-help">Duplicate and Export configuration use the saved configuration. Save or revert your settings changes to enable them.</p>` : ""}`;
-}
 
 export function renderConfiguration(panel, {voiceIdentity = null, renderExposedAttributes = null, renderBackup = null} = {}) {
   const view = panel._viewKey?.();
@@ -392,8 +380,7 @@ export function bindConfiguration(panel) {
   root.querySelector("#reset-advanced")?.addEventListener("click", () => { ["temperature","top_p","reasoning_effort","service_tier","shorten_tool_call_id","memory_auto_retrieve_limit","memory_retrieval_mode","memory_embedding_model"].forEach((key) => { panel._draft[key]=clone(panel._result.defaults[key]); const input=root.querySelector(`[data-config="${key}"]`); if(input) input.dataset.type==="boolean" ? input.checked=panel._draft[key] : input.value=panel._draft[key]; }); panel._setConfigDirty(true); dirty(panel); });
   root.querySelector("#add-regex")?.addEventListener("click", () => { readConfig(panel); panel._draft.speech_regex_replacements.push({pattern:"",replacement:""}); panel._setConfigDirty(true); renderRegexRules(panel,panel._draft.speech_regex_replacements.length-1); });
   root.querySelector("#preview-speech")?.addEventListener("click", async () => { try { const response=await panel._call("configuration","speech_preview",{config:readConfig(panel),sample_text:root.querySelector("#speech-sample").value}); root.querySelector("#speech-output").value=response.speech_text; } catch(err){panel._toast(`Unable to preview speech: ${err.message||String(err)}`,true);} });
-  bindOwnedEvent(root.querySelector("#duplicate-agent"), "click", "assistant-actions", async (event) => { const button=event.currentTarget; if(panel._configDirty||button.disabled||panel._eocAssistantDuplicatePending)return; const intent=captureCatalogSelectionIntent(panel); panel._eocAssistantDuplicatePending=true; button.disabled=true; try { const result=await panel._call("configuration","duplicate"); await panel._loadAgents(result.subentry_id,null,intent); panel._toast(`Created ${result.title}`); } catch(err){panel._toast(`Unable to duplicate agent: ${err.message||String(err)}`,true);} finally {panel._eocAssistantDuplicatePending=false;button.disabled=false;} });
-  bindOwnedEvent(root.querySelector("#export-agent"), "click", "assistant-actions", async () => { if(panel._configDirty)return; try { await downloadConfigurationSharing(panel); } catch(err) { panel._toast(`Unable to export: ${err.message||String(err)}`,true); } });
+  bindSavedConfigurationActions(panel, root);
   const importDocument = root.querySelector("#import-document"), importApply = root.querySelector("#import-apply"), importSummary = root.querySelector("#import-summary");
   bindOwnedEvent(root.querySelector("#import-agent"), "click", "assistant-actions", () => { invalidateImportPreview(panel, importApply, importSummary); root.querySelector("#import-dialog")?.showModal(); });
   bindOwnedEvent(importDocument, "input", "assistant-actions", () => invalidateImportPreview(panel, importApply, importSummary));

@@ -19,6 +19,33 @@ function policyPanel(create, policy) {
   return panel;
 }
 
+for(const revisioned of [false,true]) test(`Quiet Hours observed conflict respects backend revision support: ${revisioned}`, async () => {
+  const {create}=fixture(), policy=policies.find(policy => policy.view.endsWith("quiet-hours"));
+  const configured={...policy,result:{...structuredClone(policy.result),...(revisioned ? {revision:"old-policy"} : {})}};
+  const panel=policyPanel(create,configured), writes=[];
+  policy.edit(panel);
+  const scope=currentPageScope(panel), original=structuredClone(scope.baseline);
+  panel._result={config:{...structuredClone(original),end:"04:02"},...(revisioned ? {revision:"new-policy"} : {})};
+  initializePageDraft(panel);
+  panel._hass.callWS=async request => {
+    writes.push(structuredClone(request));
+    if(revisioned && request.revision !== "new-policy") throw new Error("Quiet Hours configuration changed; reload before saving");
+    return {config:request.config,...(revisioned ? {revision:"new-policy"} : {})};
+  };
+  await assert.rejects(scope.save(),revisioned ? /reload before saving/ : /saved Quiet Hours policy changed/);
+  assert.equal(writes.length,revisioned ? 1 : 0);
+  if(revisioned) assert.equal(writes[0].revision,"old-policy");
+  assert.equal(panel._quietHoursDraft.enabled,true);
+  assert.deepEqual(scope.baseline,original);
+  scope.discard();
+  assert.equal(panel._quietHoursDraft.end,"04:02");
+  assert.equal(scope.revision,revisioned ? "new-policy" : undefined);
+  policy.edit(panel);await scope.save();
+  assert.equal(writes.length,revisioned ? 2 : 1);
+  assert.equal(writes.at(-1).config.end,"04:02");
+  assert.equal(scope.dirty(),false);retire(panel);
+});
+
 for(const policy of policies) {
   test(`${policy.view}: clean detached ACK survives metadata scope refresh until consumed`, async () => {
     const {create}=fixture(), panel=policyPanel(create,policy);policy.edit(panel);panel.isConnected=false;

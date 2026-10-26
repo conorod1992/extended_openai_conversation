@@ -1,8 +1,8 @@
-import {downloadConfigurationSharing} from "./sharing-review.js";
+import {invalidateImportPreview, renderConfigurationActions, bindSavedConfigurationActions} from "./assistant-configuration-actions.js";
+export {invalidateImportPreview, renderConfigurationActions} from "./assistant-configuration-actions.js";
 import {searchTokens, matchesFunctionSearchTokens} from "./function-search.js";
-import {beginOperation, invalidateOperation} from "./operation-ownership.js";
+import {beginOperation} from "./operation-ownership.js";
 import {bindOwnedEvent} from "./management-owned-events.js";
-import {captureCatalogSelectionIntent} from "./management-catalog-ownership.js";
 import {ensureCompactChoiceStyle} from "./compact-choice-styles.js";
 import {readConfigurationDraft as readConfig, recordReasoningChoice} from "./configuration-controls.js";
 import {bindConfigurationInputs, updateConfigurationControl} from "./configuration-inputs.js";
@@ -20,13 +20,6 @@ export {helpButton} from "./agent-config-help.js";
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const bool = (value) => value ? "checked" : "";
 export {skillNamesFromText} from "./configuration-controls.js";
-export function invalidateImportPreview(panel, applyButton, summary) {
-  invalidateOperation(panel, "import-preview");
-  panel._importDocument = null;
-  panel._importRevision = null;
-  if (applyButton) applyButton.disabled = true;
-  if (summary) summary.textContent = "Validate the document to preview it.";
-}
 export const option = (panel, value, selected, label = null, disabled = false) => `<option value="${panel._e(value)}" ${disabled ? "disabled" : ""} ${String(value) === String(selected) ? "selected" : ""}>${panel._e(label || panel._titleCase(value))}</option>`;
 const CHOICE_LABELS = Object.freeze({
   conversation_continuity: Object.freeze({
@@ -176,11 +169,6 @@ export function saveBar(panel) {
   return saveBarMarkup({configuration: true, pending: Boolean(panel._configurationSaving)});
 }
 
-export function renderConfigurationActions(panel, sections = panel._configSections || []) {
-  const cleanOnly = panel._configDirty ? "disabled title=\"Save or revert the shared draft first\"" : "";
-  const includesBackup = sections.includes("backup");
-  return `<details class="agent-actions-menu eoc-details-base"><summary aria-haspopup="menu">Assistant actions</summary><div role="menu"><button type="button" class="secondary" role="menuitem" id="duplicate-agent" ${cleanOnly}>Duplicate agent</button>${includesBackup ? "" : `<button type="button" class="secondary" role="menuitem" id="import-agent">Import configuration</button><button type="button" class="secondary" role="menuitem" id="export-agent" ${cleanOnly}>Export configuration</button>`}</div></details>${panel._configDirty ? `<p class="action-help">Duplicate and Export configuration use the saved configuration. Save or revert your settings changes to enable them.</p>` : ""}`;
-}
 
 export function renderConfiguration(panel, {voiceIdentity = null, renderExposedAttributes = null, renderBackup = null} = {}) {
   const view = panel._viewKey?.();
@@ -386,8 +374,7 @@ export function bindConfiguration(panel) {
   for(const selector of ["#reset-advanced","#reset-model-parameters"])root.querySelector(selector)?.addEventListener("click", () => { recordReasoningChoice(panel); ["temperature","top_p","reasoning_effort","service_tier","shorten_tool_call_id"].forEach((key) => { let value=panel._result.defaults[key]; if(key==="reasoning_effort") { const proposed={...panel._draft,reasoning_effort:value}; const efforts=modelFieldPresentation({...panel,_draft:proposed},key,value).efforts || []; const metadata=panel._modelCatalogData?.requested_model===String(proposed.chat_model||"") ? panel._modelCatalogData.model_capabilities : panel._result.model_capabilities; const recommended=metadata?.recommended_profile?.reasoning_effort; if(efforts.length && !efforts.includes(value)) value=efforts.includes(recommended) ? recommended : efforts[0]; } panel._draft[key]=clone(value); const input=root.querySelector(`[data-config="${key}"]`); if(input) input.dataset.type==="boolean" ? input.checked=panel._draft[key] : input.value=panel._draft[key]; }); panel._setConfigDirty(true); dirty(panel); });
   root.querySelector("#add-regex")?.addEventListener("click", () => { readConfig(panel); panel._draft.speech_regex_replacements.push({pattern:"",replacement:""}); panel._setConfigDirty(true); renderRegexRules(panel,panel._draft.speech_regex_replacements.length-1); });
   root.querySelector("#preview-speech")?.addEventListener("click", async () => { const token=(panel._eocSpeechPreviewToken||0)+1;panel._eocSpeechPreviewToken=token;const agentId=panel._agentId,view=panel._viewKey?.(),output=root.querySelector("#speech-output");output.value="";const current=()=>panel._eocSpeechPreviewToken===token&&panel._agentId===agentId&&panel._viewKey?.()===view&&root.querySelector("#speech-output")===output;try { const response=await panel._call("configuration","speech_preview",{config:readConfig(panel),sample_text:root.querySelector("#speech-sample").value});if(current())output.value=response.speech_text; } catch(err){if(current())panel._toast(`Unable to preview speech: ${err.message||String(err)}`,true);} });
-  bindOwnedEvent(root.querySelector("#duplicate-agent"), "click", "assistant-actions", async (event) => { const button=event.currentTarget; if(panel._configDirty||button.disabled||panel._eocAssistantDuplicatePending)return; const intent=captureCatalogSelectionIntent(panel); panel._eocAssistantDuplicatePending=true; button.disabled=true; try { const result=await panel._call("configuration","duplicate"); await panel._loadAgents(result.subentry_id,null,intent); panel._toast(`Created ${result.title}`); } catch(err){panel._toast(`Unable to duplicate agent: ${err.message||String(err)}`,true);} finally {panel._eocAssistantDuplicatePending=false;button.disabled=false;} });
-  bindOwnedEvent(root.querySelector("#export-agent"), "click", "assistant-actions", async () => { if(panel._configDirty)return; try { await downloadConfigurationSharing(panel); } catch(err) { panel._toast(`Unable to export: ${err.message||String(err)}`,true); } });
+  bindSavedConfigurationActions(panel, root);
   const importDocument = root.querySelector("#import-document"), importApply = root.querySelector("#import-apply"), importSummary = root.querySelector("#import-summary");
   bindOwnedEvent(root.querySelector("#import-agent"), "click", "assistant-actions", () => { invalidateImportPreview(panel, importApply, importSummary); root.querySelector("#import-dialog")?.showModal(); });
   bindOwnedEvent(importDocument, "input", "assistant-actions", () => invalidateImportPreview(panel, importApply, importSummary));

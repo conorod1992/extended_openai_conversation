@@ -68,9 +68,9 @@ export function initializePageDraft(panel) {
     save: async (submitted, current) => {
       if (hasPendingPageSaveRead(panel)) throw new Error(PAGE_SAVE_READ_MESSAGE);
       if (view === RULES) return saveRuleSettings(panel, submitted, current);
-      if (view === QUIET && !same(current.baseline, current.result?.config || {})) {
-        // Quiet Hours has no backend revision. Do not overwrite a newer policy
-        // this panel has already observed with an older whole-policy draft.
+      if (view === QUIET && !current.revision && !same(current.baseline, current.result?.config || {})) {
+        // Without a backend revision, do not overwrite a newer policy this
+        // panel has already observed with an older whole-policy draft.
         throw new Error("The saved Quiet Hours policy changed. Your edits are retained. Discard to load the current policy before applying them again.");
       }
       const submission = captureConfigurationSubmission(panel);

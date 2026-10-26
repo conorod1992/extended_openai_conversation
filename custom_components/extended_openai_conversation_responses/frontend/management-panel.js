@@ -301,11 +301,23 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   get hass() { return this._hass; }
 
   set hass(value) {
-    const first = !this._hass;
     this._hass = value;
     this.style.colorScheme = value.themes?.darkMode ? "dark" : "light";
     this.shadowRoot?.querySelectorAll("ha-selector, ha-entity-picker, ha-user-picker, ha-yaml-editor").forEach(element => { element.hass = value; });
-    if (first) this._loadAgents();
+    this._loadInitialAgents();
+  }
+
+  _loadInitialAgents() {
+    // HA can assign hass before appending an already-defined custom panel.
+    // Schedule cold work only once connected; publication remains owner-gated.
+    if (this.isConnected === false || !this._hass || this._data) return;
+    const user = this._hass.user?.id;
+    if (this._eocCatalogBootstrap && this._eocCatalogBootstrap.user === user) return;
+    this._eocCatalogBootstrap = {user};
+    // A newly available user requires a new owned read, never adoption of the
+    // old unknown-user result. Keep this attempt after failure as well: normal
+    // HA state updates must not become an unbounded catalog retry loop.
+    void this._loadAgents();
   }
 
   set route(value) {
@@ -316,6 +328,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   connectedCallback() {
+    this._eocCatalogBootstrap = null;
     this._markColdLifecycle("connected");
     if (!this._onHistoryNavigation) {
       this._onHistoryNavigation = () => {
@@ -345,6 +358,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       getRouteFeature("usage-maintenance/diagnostics")?.enhanceDiagnostics(this);
     }
     this._eocPendingModelPreparation?.resumeIfIdle?.({reconnect:true});
+    this._loadInitialAgents();
   }
 
   disconnectedCallback() {

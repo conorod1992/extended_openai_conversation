@@ -80,6 +80,12 @@ configuration prefetch. Startup, clean duplication and explicit same-owner
 import/restore refreshes retain their normal selection behaviour. Permission
 changes still invalidate protected presentation and cached user scopes.
 
+Cold catalogue reads start after connection, including when HA assigned `hass`
+before attaching the panel. Each connection attempts a cold read once per user
+identity. Resolving an initially unknown user starts a new owned read; ordinary
+HA state updates do not retry failed reads. Reconnection and explicit reload
+remain retry boundaries, and detached or superseded responses cannot publish.
+
 A detached Guest, Quiet Hours or Request Rules settings save can become clean
 while its replacement still holds a pre-commit read. The original page scope
 therefore retains an acknowledgement independently of its dirty state. Recovery
@@ -90,8 +96,9 @@ publishes the source's saved response over another panel's data.
 
 Original authoring baselines/revisions stay attached to later edits. An accepted
 saved projection is kept separately for explicit Discard. Policy saves wait
-while a required acknowledgement refresh is unresolved. Quiet Hours has no
-backend revision: after this panel observes a changed saved policy, its older
+while a required acknowledgement refresh is unresolved. Without a backend
+revision, after this panel observes a changed saved Quiet Hours policy, its older
 dirty draft cannot overwrite it. The draft remains available; Discard adopts the
 current policy before edits are reapplied. This guards observed conflicts, not
-unseen concurrent writes from another client.
+unseen concurrent writes from another client. When a backend supplies a revision,
+the original authoring revision remains responsible for conflict detection.
