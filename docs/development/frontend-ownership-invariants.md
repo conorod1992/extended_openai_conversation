@@ -70,6 +70,22 @@ their values are accepted. Successful saves clear the reviewed migration state.
 
 ## Catalogue selection and page-save handoffs
 
+Guest, Quiet Hours and Rule settings scopes use the same captured user, provider,
+assistant and authoring session predicate as asynchronous submissions. The exact
+coordinator registration also belongs to the scope: replacing a scope retires its
+callbacks even when identity is unchanged. Scope reuse, new-save admission, draft
+publication and Guest review reset share that predicate. The former separate
+`scope.agent` value and agent/provider-only write check are removed. A retired
+write may settle its original baseline/revision, but cannot publish into the new
+scope; detached current scopes still settle for recovery.
+
+One initial-identity rule remains explicit: an idle scope authored before HA
+resolved its user may bind the first known user when all other owner/session and
+registration fields match. This happens before save admission and never during a
+dispatched write. A known user cannot rebind. Captured asynchronous submissions
+and Guest metrics continue using the strict immutable owner check. The policy
+scope sequence tests cover both retirement and this initial resolution boundary.
+
 An assistant catalogue read owns membership separately from selection. A
 Duplicate operation captures its selection intent before the write starts;
 subsequent edits, an explicit assistant/route change, an opened editor or a

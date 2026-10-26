@@ -13,7 +13,7 @@ export async function loadQuietHours(panel, silent = false) {
     const result = await panel._call("quiet_hours", "get");
     if (!current() || generation !== panel._cacheGeneration) return;
     panel._result = result;
-    if (panel._unsavedState?.scopes.get(VIEW)?.agent !== panel._agentId) panel._quietHoursDraft = JSON.parse(JSON.stringify(result.config || {}));
+    if (!panel._unsavedState?.scopes.get(VIEW)?.isCurrent?.()) panel._quietHoursDraft = JSON.parse(JSON.stringify(result.config || {}));
     panel._error = null;
     acceptPageRead(panel, result, read);
   } catch (err) {

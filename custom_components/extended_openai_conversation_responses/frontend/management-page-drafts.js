@@ -1,5 +1,5 @@
 import {saveConfiguration, synchronizePersistedConfigurationFields} from "./management-actions.js";
-import {captureConfigurationSubmission, configurationSubmissionIsCurrent, presentAcknowledgedMutation, discardConfigurationDraft} from "./configuration-acknowledgement.js";
+import {captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, presentAcknowledgedMutation, discardConfigurationDraft} from "./configuration-acknowledgement.js";
 import {formatWordingAlternatives, parseWordingAlternatives} from "./wording-alternatives.js";
 import {enhancementChanged} from "./management-enhancement-state.js";
 import {retainPageSaveAcknowledgement, hasPendingPageSaveRead, PAGE_SAVE_READ_EVENT, PAGE_SAVE_READ_MESSAGE} from "./page-save-acknowledgement.js";
@@ -41,13 +41,13 @@ export function initializePageDraft(panel) {
   const state = pageCoordinator(panel), view = panel._viewKey?.(), result = panel._result;
   if (![GUEST, QUIET, RULES].includes(view) || !result || panel._busy || panel._error) return;
   const existing = state.scopes.get(view);
-  if (view === GUEST && existing?.agent !== panel._agentId) {
+  if (view === GUEST && !existing?.isCurrent?.()) {
     // Reviewing a legacy policy is an explicit choice for this assistant.
     // Same-owner refreshes retain it; a newly owned scope must review its own.
     panel._guestMigrationReview = false;
     panel._guestStartingFresh = false;
   }
-  if (existing?.agent === panel._agentId) {
+  if (existing?.isCurrent?.()) {
     const sameResult = existing.result === result;
     if (view === RULES && existing.result !== result && same(existing.baseline, settings(result))) existing.revision = result.revision;
     // Keep the authoring baseline/revision while retaining the current saved
@@ -58,10 +58,20 @@ export function initializePageDraft(panel) {
   const field = view === GUEST ? "_guestDraft" : view === QUIET ? "_quietHoursDraft" : "_rulesSettingsDraft";
   const baseline = view === RULES ? settings(result) : result.config || {};
   panel[field] = clone(baseline);
-  const ownerAgent = panel._agentId, ownerEntry = panel._selectedAgent?.()?.entry_id;
+  const owner = captureConfigurationOwner(panel);
+  const isCurrent = () => {
+    const userId = panel.hass?.user?.id;
+    // HA can resolve its initial user after a settled page was authored. Bind
+    // that first identity before admission, never during a dispatched save.
+    // A known user/session or replaced registration cannot be rebound.
+    if (owner.userId == null && userId != null && !scope.pending && state.scopes.get(view) === scope
+        && configurationSubmissionIsCurrent(panel, {...owner, userId})) owner.userId = userId;
+    return configurationSubmissionIsCurrent(panel, owner) && state.scopes.get(view) === scope;
+  };
   const scope = draftScope({
+    isCurrent,
     baseline, read: () => panel[field], write: (value) => {
-      if (panel._agentId === ownerAgent && panel._selectedAgent?.()?.entry_id === ownerEntry) panel[field] = value;
+      if (scope.isCurrent()) panel[field] = value;
     },
     owns: (destination) => destination === view,
     destinations: () => [view],
@@ -74,12 +84,11 @@ export function initializePageDraft(panel) {
         throw new Error("The saved Quiet Hours policy changed. Your edits are retained. Discard to load the current policy before applying them again.");
       }
       const submission = captureConfigurationSubmission(panel);
-      const {agentId, entryId} = submission;
       const saved = await panel._call(view === GUEST ? "guest_mode" : "quiet_hours", view === GUEST ? "save_policy" : "update", {
         config: submitted, ...(current.revision ? {revision: current.revision} : {}),
       });
       const savedResult = {...(current.result || result), ...saved, ...(view === GUEST ? {legacy_policy: false, migration_notice: null} : {})};
-      if (configurationSubmissionIsCurrent(panel, submission) && panel._viewKey?.() === view) {
+      if (scope.isCurrent() && panel._viewKey?.() === view) {
         panel._result = {...panel._result, ...saved, ...(view === GUEST ? {legacy_policy:false, migration_notice:null} : {})};
       }
       // The mutation acknowledgement owns the baseline and revision. A later
@@ -88,19 +97,22 @@ export function initializePageDraft(panel) {
       current.revision = saved.revision;
       current.refreshWarning = null;
       if (view === GUEST) {
-        if (configurationSubmissionIsCurrent(panel, submission)) {
+        if (scope.isCurrent()) {
           synchronizePersistedConfigurationFields(panel, saved, Object.keys(saved.config), submission);
           panel._guestMigrationReview = false;
           panel._guestStartingFresh = false;
         }
         const token = panel._loadToken;
-        current.refreshSavedPolicy = () => refreshSavedGuestPolicy(panel, current, {agentId, entryId, token, generation:panel._cacheGeneration, revision:saved.revision});
+        current.refreshSavedPolicy = () => refreshSavedGuestPolicy(panel, current, {submission, token, generation:panel._cacheGeneration, revision:saved.revision});
       }
       retainPageSaveAcknowledgement(panel, current, submission, view);
       return saved.config;
     },
   });
-  Object.assign(scope, {agent: panel._agentId, result, revision: result.revision});
+  Object.assign(scope, {result, revision: result.revision,
+    // A detached current scope must still settle. Ownership is its authoring
+    // session and exact registration, not connection or the active route.
+    isCurrent});
   scope.discard = () => {
     // Recovery can retain an older baseline/revision while result contains the
     // current saved policy. Explicit discard adopts that acknowledged read.
@@ -116,7 +128,7 @@ function refreshSavedGuestPolicy(panel, scope, owner) {
   panel._eocGuestPolicyRefresh = state;
   const metrics = panel.shadowRoot?.querySelector(".metric-grid");
   const current = () => panel._eocGuestPolicyRefresh === state
-    && panel._agentId === owner.agentId && panel._selectedAgent?.()?.entry_id === owner.entryId
+    && configurationSubmissionIsCurrent(panel, owner.submission)
     && panel._loadToken === owner.token && panel._cacheGeneration === owner.generation && panel._viewKey?.() === GUEST
     && pageCoordinator(panel).scopes.get(GUEST) === scope && scope.revision === owner.revision;
   if (!current()) return;
@@ -142,7 +154,7 @@ function refreshSavedGuestPolicy(panel, scope, owner) {
     panel._toast?.(`Changes saved. ${scope.refreshWarning}`, true);
   }).finally(() => {
     if (panel._eocGuestPolicyRefresh !== state || panel.shadowRoot?.querySelector(".metric-grid") !== metrics
-        || panel._agentId !== owner.agentId || panel._selectedAgent?.()?.entry_id !== owner.entryId || panel._viewKey?.() !== GUEST) return;
+        || !configurationSubmissionIsCurrent(panel, owner.submission) || panel._viewKey?.() !== GUEST) return;
     metrics?.removeAttribute("aria-busy");
     if (!current() && metrics) metrics.innerHTML = panel._metric("Saved policy metrics", "Needs refresh");
   });
@@ -165,7 +177,7 @@ async function saveRuleSettings(panel, submitted, scope) {
     revision: result.revision,
   };
   scope.result = {...scope.result, ...acknowledged};
-  if (configurationSubmissionIsCurrent(panel, submission) && panel._viewKey?.() === submission.view) {
+  if (scope.isCurrent() && panel._viewKey?.() === submission.view) {
     panel._result = {...panel._result, ...acknowledged};
     scope.result = panel._result;
   }

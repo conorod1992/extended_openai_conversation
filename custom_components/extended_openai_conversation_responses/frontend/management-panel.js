@@ -1428,7 +1428,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       if (view === "capabilities/guest-mode") {
         // Authoring mode belongs to the accepted policy read, just as its
         // values do. A late response from another assistant cannot reset it.
-        if (this._unsavedState?.scopes.get(view)?.agent !== this._agentId) this._guestDraft = clone(result.config || {});
+        if (!this._unsavedState?.scopes.get(view)?.isCurrent?.()) this._guestDraft = clone(result.config || {});
         if (!result.legacy_policy) {
           this._guestMigrationReview = false;
           this._guestStartingFresh = false;

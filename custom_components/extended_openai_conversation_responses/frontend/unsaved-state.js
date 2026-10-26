@@ -29,13 +29,14 @@ export class UnsavedState {
   destinations() { return new Set(this.dirty().flatMap((scope) => scope.destinations?.() || [])); }
 }
 
-export function draftScope({read, write, baseline, save, owns, destinations}) {
+export function draftScope({read, write, baseline, save, owns, destinations, isCurrent}) {
   return {
     baseline: clone(baseline), pending: false, read, write, owns, destinations,
     dirty() { return !same(this.read(), this.baseline); },
     discard() { this.write(clone(this.baseline)); },
     async save() {
       if (this.pending) return false;
+      if (isCurrent && !isCurrent()) throw new Error("The policy editor owner changed. Reopen the current editor before saving.");
       this.pending = true;
       const submitted = clone(this.read());
       try {
