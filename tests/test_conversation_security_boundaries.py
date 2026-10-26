@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from types import SimpleNamespace
 from typing import Any
 
@@ -162,8 +164,8 @@ def _memory_agent(
 def test_shared_conversation_cannot_write_personal_memory() -> None:
     """Shared conversations must never infer or select a personal owner."""
     agent = _memory_agent(shared_mode=SHARED_MEMORY_EXPLICIT)
-    token = conversation_module._ACTIVE_SCOPE.set(
-        SimpleNamespace(scope_type="shared", user_id=None, scope_id="household")
+    token = conversation_module._ACTIVE_TURN.set(
+        replace(conversation_module._ACTIVE_TURN.get(), scope=SimpleNamespace(scope_type="shared", user_id=None, scope_id="household"))
     )
     try:
         with pytest.raises(
@@ -177,14 +179,14 @@ def test_shared_conversation_cannot_write_personal_memory() -> None:
                 source="explicit",
             )
     finally:
-        conversation_module._ACTIVE_SCOPE.reset(token)
+        conversation_module._ACTIVE_TURN.reset(token)
 
 
 def test_personal_conversation_cannot_write_disabled_household_memory() -> None:
     """An explicit household selector must respect disabled shared memory."""
     agent = _memory_agent(shared_mode=SHARED_MEMORY_DISABLED)
-    token = conversation_module._ACTIVE_SCOPE.set(
-        SimpleNamespace(scope_type="user", user_id="user-1", scope_id="user-1")
+    token = conversation_module._ACTIVE_TURN.set(
+        replace(conversation_module._ACTIVE_TURN.get(), scope=SimpleNamespace(scope_type="user", user_id="user-1", scope_id="user-1"))
     )
     try:
         with pytest.raises(ValueError, match="shared household memory is disabled"):
@@ -195,14 +197,14 @@ def test_personal_conversation_cannot_write_disabled_household_memory() -> None:
                 source="explicit",
             )
     finally:
-        conversation_module._ACTIVE_SCOPE.reset(token)
+        conversation_module._ACTIVE_TURN.reset(token)
 
 
 def test_implicit_household_write_requires_automatic_shared_memory() -> None:
     """Explicit-only shared memory must reject automatic/implicit writes."""
     agent = _memory_agent(shared_mode=SHARED_MEMORY_EXPLICIT)
-    token = conversation_module._ACTIVE_SCOPE.set(
-        SimpleNamespace(scope_type="user", user_id="user-1", scope_id="user-1")
+    token = conversation_module._ACTIVE_TURN.set(
+        replace(conversation_module._ACTIVE_TURN.get(), scope=SimpleNamespace(scope_type="user", user_id="user-1", scope_id="user-1"))
     )
     try:
         with pytest.raises(
@@ -216,7 +218,7 @@ def test_implicit_household_write_requires_automatic_shared_memory() -> None:
                 source="implicit",
             )
     finally:
-        conversation_module._ACTIVE_SCOPE.reset(token)
+        conversation_module._ACTIVE_TURN.reset(token)
 
 
 def test_guest_cannot_select_personal_memory_for_write() -> None:
@@ -225,8 +227,8 @@ def test_guest_cannot_select_personal_memory_for_write() -> None:
         shared_mode=SHARED_MEMORY_EXPLICIT,
         policy=_policy(guest_active=True, shared_memory_write=True),
     )
-    token = conversation_module._ACTIVE_SCOPE.set(
-        SimpleNamespace(scope_type="user", user_id="user-1", scope_id="user-1")
+    token = conversation_module._ACTIVE_TURN.set(
+        replace(conversation_module._ACTIVE_TURN.get(), scope=SimpleNamespace(scope_type="user", user_id="user-1", scope_id="user-1"))
     )
     try:
         with pytest.raises(RuntimeError) as err:
@@ -237,6 +239,6 @@ def test_guest_cannot_select_personal_memory_for_write() -> None:
                 source="explicit",
             )
     finally:
-        conversation_module._ACTIVE_SCOPE.reset(token)
+        conversation_module._ACTIVE_TURN.reset(token)
 
     assert str(err.value) == conversation_module.GUEST_MODE_UNAVAILABLE

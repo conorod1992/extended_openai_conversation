@@ -1,4 +1,10 @@
-"""Ownership of metadata and speculative retrieval for one public invocation."""
+"""Typed bindings for public invocations and claimed conversation turns.
+
+The invocation owns response metadata and speculative retrieval. A claimed turn
+owns its data scope and borrows logical-conversation session handles. Native HA
+authorization, Guest policy, provider snapshots and effect receipts retain their
+own boundaries. Records are replaced within a task, never mutated across tasks.
+"""
 
 from __future__ import annotations
 
@@ -7,9 +13,36 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .operation_settlement import async_wait_owned_cleanup
+
+if TYPE_CHECKING:
+    from .function_groups import FunctionGroupSession
+    from .scope import ResolvedDataScope
+
+
+@dataclass(frozen=True, slots=True)
+class ConversationTurnContext:
+    """One claimed turn's data ownership and logical-conversation handles.
+
+    Scope and session keys stay fixed. Archive/privacy changes replace the current
+    task's record. The Function Group session is borrowed from its runtime: its
+    loaded groups intentionally remain shared by that logical conversation.
+    """
+
+    scope: ResolvedDataScope | None = None
+    archive: tuple[str, str] | None = None
+    archive_turn_private: bool = False
+    temporary_scope: str | None = None
+    function_group_session: FunctionGroupSession | None = None
+    memory_session: tuple[str, int] | None = None
+
+
+_NO_TURN = ConversationTurnContext()
+_ACTIVE_TURN: ContextVar[ConversationTurnContext] = ContextVar(
+    "extended_openai_conversation_turn", default=_NO_TURN
+)
 
 
 @dataclass(frozen=True, slots=True)

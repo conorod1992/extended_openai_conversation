@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from types import SimpleNamespace
 
 import pytest
@@ -149,13 +151,17 @@ def test_conversation_lifecycle_schedules_fresh_context_without_active_sessions(
         "request_fresh_conversation",
         lambda state_key, memory_key: calls.append((state_key, memory_key)),
     )
-    state_token = conv._ACTIVE_FUNCTION_GROUP_SESSION.set(None)
-    memory_token = conv._ACTIVE_MEMORY_SESSION.set(None)
+    state_token = conv._ACTIVE_TURN.set(
+        replace(conv._ACTIVE_TURN.get(), function_group_session=None)
+    )
+    memory_token = conv._ACTIVE_TURN.set(
+        replace(conv._ACTIVE_TURN.get(), memory_session=None)
+    )
     try:
         result = agent._execute_conversation_lifecycle_tool("start_fresh")
     finally:
-        conv._ACTIVE_FUNCTION_GROUP_SESSION.reset(state_token)
-        conv._ACTIVE_MEMORY_SESSION.reset(memory_token)
+        conv._ACTIVE_TURN.reset(state_token)
+        conv._ACTIVE_TURN.reset(memory_token)
 
     assert calls == [(None, None)]
     assert result["status"] == "scheduled"
@@ -165,8 +171,12 @@ async def test_temporary_memory_tool_requires_permission_store_and_scope(
     monkeypatch,
 ) -> None:
     agent = _agent(data={conv.CONF_TEMPORARY_MEMORY: "balanced"})
-    scope_token = conv._ACTIVE_SCOPE.set(user_scope("user-1", source="test"))
-    temporary_scope_token = conv._ACTIVE_TEMPORARY_SCOPE.set("conversation:test")
+    scope_token = conv._ACTIVE_TURN.set(
+        replace(conv._ACTIVE_TURN.get(), scope=user_scope("user-1", source="test"))
+    )
+    temporary_scope_token = conv._ACTIVE_TURN.set(
+        replace(conv._ACTIVE_TURN.get(), temporary_scope="conversation:test")
+    )
 
     try:
         monkeypatch.setattr(
@@ -186,17 +196,19 @@ async def test_temporary_memory_tool_requires_permission_store_and_scope(
             await agent._async_execute_temporary_memory_tool("add", {})
 
         agent._temporary_memory = SimpleNamespace()
-        missing_scope_token = conv._ACTIVE_TEMPORARY_SCOPE.set(None)
+        missing_scope_token = conv._ACTIVE_TURN.set(
+            replace(conv._ACTIVE_TURN.get(), temporary_scope=None)
+        )
         try:
             with pytest.raises(
                 RuntimeError, match="temporary memory is unavailable for this"
             ):
                 await agent._async_execute_temporary_memory_tool("add", {})
         finally:
-            conv._ACTIVE_TEMPORARY_SCOPE.reset(missing_scope_token)
+            conv._ACTIVE_TURN.reset(missing_scope_token)
     finally:
-        conv._ACTIVE_TEMPORARY_SCOPE.reset(temporary_scope_token)
-        conv._ACTIVE_SCOPE.reset(scope_token)
+        conv._ACTIVE_TURN.reset(temporary_scope_token)
+        conv._ACTIVE_TURN.reset(scope_token)
 
 
 class _TemporaryMemory:
@@ -223,8 +235,12 @@ async def test_temporary_memory_tool_validates_and_executes_add_delete(
         "_effective_guest_policy",
         lambda self: _policy(temporary_memory=True),
     )
-    scope_token = conv._ACTIVE_SCOPE.set(user_scope("user-1", source="test"))
-    temporary_scope_token = conv._ACTIVE_TEMPORARY_SCOPE.set("scope-1")
+    scope_token = conv._ACTIVE_TURN.set(
+        replace(conv._ACTIVE_TURN.get(), scope=user_scope("user-1", source="test"))
+    )
+    temporary_scope_token = conv._ACTIVE_TURN.set(
+        replace(conv._ACTIVE_TURN.get(), temporary_scope="scope-1")
+    )
     try:
         with pytest.raises(ValueError, match="content, expires_at, and category"):
             await agent._async_execute_temporary_memory_tool(
@@ -254,8 +270,8 @@ async def test_temporary_memory_tool_validates_and_executes_add_delete(
         with pytest.raises(ValueError, match="unknown temporary-memory operation"):
             await agent._async_execute_temporary_memory_tool("unknown", {})
     finally:
-        conv._ACTIVE_TEMPORARY_SCOPE.reset(temporary_scope_token)
-        conv._ACTIVE_SCOPE.reset(scope_token)
+        conv._ACTIVE_TURN.reset(temporary_scope_token)
+        conv._ACTIVE_TURN.reset(scope_token)
 
 
 async def test_archive_tool_requires_store_and_active_session() -> None:
@@ -265,16 +281,20 @@ async def test_archive_tool_requires_store_and_active_session() -> None:
         await agent._async_execute_archive_tool("search", {"query": "test"})
 
     agent._archive = SimpleNamespace()
-    scope_token = conv._ACTIVE_SCOPE.set(None)
-    archive_token = conv._ACTIVE_ARCHIVE.set(None)
+    scope_token = conv._ACTIVE_TURN.set(
+        replace(conv._ACTIVE_TURN.get(), scope=None)
+    )
+    archive_token = conv._ACTIVE_TURN.set(
+        replace(conv._ACTIVE_TURN.get(), archive=None)
+    )
     try:
         with pytest.raises(
             RuntimeError, match="active conversation session is unavailable"
         ):
             await agent._async_execute_archive_tool("search", {"query": "test"})
     finally:
-        conv._ACTIVE_SCOPE.reset(scope_token)
-        conv._ACTIVE_ARCHIVE.reset(archive_token)
+        conv._ACTIVE_TURN.reset(scope_token)
+        conv._ACTIVE_TURN.reset(archive_token)
 
 
 class _Archive:
@@ -294,8 +314,12 @@ async def test_archive_delete_operations_validate_inputs_and_preserve_scope() ->
     archive = _Archive()
     agent._archive = archive
     scope = SimpleNamespace(scope_id="scope-1")
-    scope_token = conv._ACTIVE_SCOPE.set(scope)
-    archive_token = conv._ACTIVE_ARCHIVE.set(("session-key", "session-1"))
+    scope_token = conv._ACTIVE_TURN.set(
+        replace(conv._ACTIVE_TURN.get(), scope=scope)
+    )
+    archive_token = conv._ACTIVE_TURN.set(
+        replace(conv._ACTIVE_TURN.get(), archive=("session-key", "session-1"))
+    )
     try:
         current = await agent._async_execute_archive_tool("delete_current", {})
         assert current == {"session_id": "session-1", "deleted": True}
@@ -318,5 +342,5 @@ async def test_archive_delete_operations_validate_inputs_and_preserve_scope() ->
         with pytest.raises(ValueError, match="unknown archive operation"):
             await agent._async_execute_archive_tool("unknown", {})
     finally:
-        conv._ACTIVE_SCOPE.reset(scope_token)
-        conv._ACTIVE_ARCHIVE.reset(archive_token)
+        conv._ACTIVE_TURN.reset(scope_token)
+        conv._ACTIVE_TURN.reset(archive_token)

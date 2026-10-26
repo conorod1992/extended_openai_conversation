@@ -111,6 +111,7 @@ from .conversation_id_ownership import (
     register_conversation_id_cleanup,
 )
 from .conversation_lifecycle import (
+    ConversationLifecycleToken,
     async_reset_conversation_context,
     begin_conversation_lifecycle,
     end_conversation_lifecycle,
@@ -133,7 +134,6 @@ from .function_execution import (
 )
 from .function_groups import (
     FunctionGroupRuntime,
-    FunctionGroupSession,
     assemble_function_tools,
     load_function_groups,
     remove_function_group_runtime,
@@ -209,6 +209,8 @@ from .request import (
 )
 from .request_context import (
     _ACTIVE_INVOCATION,
+    _ACTIVE_TURN,
+    ConversationTurnContext,
     conversation_invocation,
     set_temporary_memory_prefetch,
 )
@@ -256,26 +258,7 @@ from .voice_identity_runtime import voice_identity_scope, voice_source_device_id
 
 _LOGGER = logging.getLogger(__name__)
 
-_ACTIVE_SCOPE: ContextVar[ResolvedDataScope | None] = ContextVar(
-    "extended_openai_active_scope", default=None
-)
-_ACTIVE_ARCHIVE: ContextVar[tuple[str, str] | None] = ContextVar(
-    "extended_openai_active_archive", default=None
-)
-# A privacy request is irreversible for this turn, even if saving is resumed
-# into another session before finalization. Nested requests own separate flags.
-_ARCHIVE_TURN_PRIVATE: ContextVar[bool] = ContextVar(
-    "extended_openai_archive_turn_private", default=False
-)
-_ACTIVE_TEMPORARY_SCOPE: ContextVar[str | None] = ContextVar(
-    "extended_openai_active_temporary_scope", default=None
-)
-_ACTIVE_FUNCTION_GROUP_SESSION: ContextVar[FunctionGroupSession | None] = ContextVar(
-    "extended_openai_active_function_group_session", default=None
-)
-_ACTIVE_MEMORY_SESSION: ContextVar[tuple[str, int] | None] = ContextVar(
-    "extended_openai_active_memory_session", default=None
-)
+# Live changes may tighten this policy; nested requests resolve their own policy.
 _ACTIVE_GUEST_POLICY: ContextVar[GuestCapabilityPolicy | None] = ContextVar(
     "extended_openai_active_guest_policy", default=None
 )
@@ -911,14 +894,6 @@ class ExtendedOpenAIAgentEntity(
                 chat_log.conversation_id,
                 request_policy,
             )
-            scope_token = _ACTIVE_SCOPE.set(scope)
-            archive_privacy_token = _ARCHIVE_TURN_PRIVATE.set(False)
-            archive_token = _ACTIVE_ARCHIVE.set(
-                (session_key, archive_session.session_id) if archive_session else None
-            )
-            memory_session_token = _ACTIVE_MEMORY_SESSION.set(
-                (session_key, timeout_minutes if resolution.key else 5)
-            )
             rule_session_key = request_rule_session_id(
                 resolution.key, chat_log.conversation_id
             )
@@ -927,38 +902,49 @@ class ExtendedOpenAIAgentEntity(
                 if request_policy.guest_active or not scope.allows_retention
                 else resolution.key or f"conversation:{chat_log.conversation_id}"
             )
-            temporary_token = _ACTIVE_TEMPORARY_SCOPE.set(temporary_scope)
-            function_group_session = (
-                self._function_groups_runtime.begin(
-                    rule_session_key,
-                    timeout_minutes if resolution.key else 5,
-                )
-                if self._function_groups_runtime is not None
-                else None
-            )
-            function_group_token = _ACTIVE_FUNCTION_GROUP_SESSION.set(
-                function_group_session
-            )
             group_runtime = self._function_groups_runtime
             rule_runtime = self._request_rule_runtime
-            group_request = (
-                group_runtime.begin_request(function_group_session)
-                if group_runtime is not None and function_group_session is not None
+            function_group_session = (
+                group_runtime.begin(
+                    rule_session_key, timeout_minutes if resolution.key else 5
+                )
+                if group_runtime is not None
                 else None
             )
-            rule_request = (
-                rule_runtime.begin_request(rule_session_key, timeout_minutes)
-                if rule_runtime is not None
-                else None
-            )
+            group_request: object | None = None
+            rule_request: object | None = None
+            lifecycle_token: ConversationLifecycleToken | None = None
             request_successful = False
-            lifecycle_token = begin_conversation_lifecycle()
-            if resolution.history and len(chat_log.content) <= 2:
-                # Core chat logs expire independently after five minutes. Restore the
-                # integration-owned bounded model history when Core recreates the log.
-                current_user = chat_log.content[-1]
-                chat_log.content[:] = [*resolution.history, current_user]
+            turn_token = _ACTIVE_TURN.set(
+                ConversationTurnContext(
+                    scope=scope,
+                    archive=(session_key, archive_session.session_id)
+                    if archive_session
+                    else None,
+                    memory_session=(
+                        session_key,
+                        timeout_minutes if resolution.key else 5,
+                    ),
+                    temporary_scope=temporary_scope,
+                    function_group_session=function_group_session,
+                )
+            )
             try:
+                group_request = (
+                    group_runtime.begin_request(function_group_session)
+                    if group_runtime is not None and function_group_session is not None
+                    else None
+                )
+                rule_request = (
+                    rule_runtime.begin_request(rule_session_key, timeout_minutes)
+                    if rule_runtime is not None
+                    else None
+                )
+                lifecycle_token = begin_conversation_lifecycle()
+                if resolution.history and len(chat_log.content) <= 2:
+                    # Core history can expire before the integration's session.
+                    current_user = chat_log.content[-1]
+                    chat_log.content[:] = [*resolution.history, current_user]
                 async with (
                     self._usage.async_run(
                         home_assistant_conversation_id=user_input.conversation_id,
@@ -1097,36 +1083,46 @@ class ExtendedOpenAIAgentEntity(
                     request_successful = run.successful
                     return result
             finally:
-                reset_request = requested_conversation_reset()
                 try:
-                    if reset_request is not None:
-                        await asyncio.shield(
-                            async_reset_conversation_context(
-                                self.hass,
-                                continuity,
-                                self.entry.entry_id,
-                                self.subentry.subentry_id,
-                                continuity_key=resolution.key,
-                                state_session_id=reset_request.state_session_id,
-                                memory_session_id=reset_request.memory_session_id,
+                    try:
+                        # A failed admission must never consume its caller's reset.
+                        reset_request = (
+                            requested_conversation_reset()
+                            if lifecycle_token is not None
+                            else None
+                        )
+                        if reset_request is not None:
+                            await asyncio.shield(
+                                async_reset_conversation_context(
+                                    self.hass,
+                                    continuity,
+                                    self.entry.entry_id,
+                                    self.subentry.subentry_id,
+                                    continuity_key=resolution.key,
+                                    state_session_id=reset_request.state_session_id,
+                                    memory_session_id=reset_request.memory_session_id,
+                                )
                             )
-                        )
+                    finally:
+                        try:
+                            if group_runtime is not None and group_request is not None:
+                                group_runtime.finish_request(
+                                    group_request, successful=request_successful
+                                )
+                        finally:
+                            try:
+                                if (
+                                    rule_runtime is not None
+                                    and rule_request is not None
+                                ):
+                                    rule_runtime.finish_request(
+                                        rule_request, successful=request_successful
+                                    )
+                            finally:
+                                if lifecycle_token is not None:
+                                    end_conversation_lifecycle(lifecycle_token)
                 finally:
-                    if group_runtime is not None and group_request is not None:
-                        group_runtime.finish_request(
-                            group_request, successful=request_successful
-                        )
-                    if rule_runtime is not None and rule_request is not None:
-                        rule_runtime.finish_request(
-                            rule_request, successful=request_successful
-                        )
-                    end_conversation_lifecycle(lifecycle_token)
-                    _ACTIVE_FUNCTION_GROUP_SESSION.reset(function_group_token)
-                    _ACTIVE_TEMPORARY_SCOPE.reset(temporary_token)
-                    _ACTIVE_ARCHIVE.reset(archive_token)
-                    _ARCHIVE_TURN_PRIVATE.reset(archive_privacy_token)
-                    _ACTIVE_MEMORY_SESSION.reset(memory_session_token)
-                    _ACTIVE_SCOPE.reset(scope_token)
+                    _ACTIVE_TURN.reset(turn_token)
 
     async def _async_dispatch_message(
         self,
@@ -1291,7 +1287,7 @@ class ExtendedOpenAIAgentEntity(
                 function_tools_factory=self._get_function_tools,
                 function_group_loader=(
                     self._load_function_groups
-                    if _ACTIVE_FUNCTION_GROUP_SESSION.get() is not None
+                    if _ACTIVE_TURN.get().function_group_session is not None
                     else None
                 ),
                 request_options=request_options,
@@ -1467,7 +1463,7 @@ class ExtendedOpenAIAgentEntity(
         if (
             self._archive is None
             or archive_session is None
-            or _ARCHIVE_TURN_PRIVATE.get()
+            or _ACTIVE_TURN.get().archive_turn_private
             or not self._effective_guest_policy().archive_retention
         ):
             return
@@ -1660,7 +1656,7 @@ class ExtendedOpenAIAgentEntity(
             )
             if retrieve_limit <= 0:
                 return []
-            active_session = _ACTIVE_MEMORY_SESSION.get()
+            active_session = _ACTIVE_TURN.get().memory_session
             if active_session is None or self._continuity is None:
                 return await self._async_rank_memories(
                     readable_scope_ids, query, retrieve_limit
@@ -1806,8 +1802,8 @@ class ExtendedOpenAIAgentEntity(
         """Remove prefetched records that expired before prompt construction."""
         if not records:
             return records
-        scope_id = _ACTIVE_TEMPORARY_SCOPE.get()
-        owner = _owner_from_resolved_scope(_ACTIVE_SCOPE.get())
+        scope_id = _ACTIVE_TURN.get().temporary_scope
+        owner = _owner_from_resolved_scope(_ACTIVE_TURN.get().scope)
         if scope_id is None or owner is None:
             return []
         return TemporaryMemory.select_active_snapshot(records, scope_id, owner)
@@ -1820,8 +1816,8 @@ class ExtendedOpenAIAgentEntity(
             if (
                 self.subentry.data.get(CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY)
                 == TEMPORARY_MEMORY_OFF
-                or _ACTIVE_TEMPORARY_SCOPE.get() is None
-                or _owner_from_resolved_scope(_ACTIVE_SCOPE.get()) is None
+                or _ACTIVE_TURN.get().temporary_scope is None
+                or _owner_from_resolved_scope(_ACTIVE_TURN.get().scope) is None
                 or not self._effective_guest_policy().temporary_memory
             ):
                 if task is not None:
@@ -1847,8 +1843,8 @@ class ExtendedOpenAIAgentEntity(
             or not self._effective_guest_policy().temporary_memory
         ):
             return []
-        scope_id = _ACTIVE_TEMPORARY_SCOPE.get()
-        owner = _owner_from_resolved_scope(_ACTIVE_SCOPE.get())
+        scope_id = _ACTIVE_TURN.get().temporary_scope
+        owner = _owner_from_resolved_scope(_ACTIVE_TURN.get().scope)
         if self._temporary_memory is None or scope_id is None or owner is None:
             return []
         token = _ACTIVE_OWNER_SCOPE_ID.set(owner)
@@ -1963,7 +1959,7 @@ class ExtendedOpenAIAgentEntity(
                 configured_tools, groups = self._filter_guest_tools_and_groups(
                     configured_tools, groups, policy
                 )
-                session = _ACTIVE_FUNCTION_GROUP_SESSION.get()
+                session = _ACTIVE_TURN.get().function_group_session
                 assembly = assemble_function_tools(
                     tools_for_available_skills(
                         configured_tools,
@@ -1988,7 +1984,7 @@ class ExtendedOpenAIAgentEntity(
                         is not None,
                         temporary_scope_available=(
                             self._temporary_memory is not None
-                            and _ACTIVE_TEMPORARY_SCOPE.get() is not None
+                            and _ACTIVE_TURN.get().temporary_scope is not None
                         ),
                         knowledge_available=self._knowledge_available,
                         archive_available=self._archive is not None,
@@ -2023,7 +2019,7 @@ class ExtendedOpenAIAgentEntity(
 
     def _load_function_groups(self, requested: Any) -> dict[str, Any]:
         """Apply an integration-owned loader call to the active conversation."""
-        session = _ACTIVE_FUNCTION_GROUP_SESSION.get()
+        session = _ACTIVE_TURN.get().function_group_session
         if session is None:
             return {
                 "status": "error",
@@ -2405,8 +2401,8 @@ class ExtendedOpenAIAgentEntity(
         """Schedule a lifecycle change for the exact active conversation."""
         if operation != "start_fresh":
             raise ValueError("unknown conversation lifecycle operation")
-        state_session = _ACTIVE_FUNCTION_GROUP_SESSION.get()
-        memory_session = _ACTIVE_MEMORY_SESSION.get()
+        state_session = _ACTIVE_TURN.get().function_group_session
+        memory_session = _ACTIVE_TURN.get().memory_session
         request_fresh_conversation(
             state_session.session_key if state_session is not None else None,
             memory_session[0] if memory_session is not None else None,
@@ -2665,7 +2661,7 @@ class ExtendedOpenAIAgentEntity(
                 self.subentry.data
             ):
                 raise ValueError("automatic memory creation is disabled")
-            scope = _ACTIVE_SCOPE.get()
+            scope = _ACTIVE_TURN.get().scope
             if (
                 source == "implicit"
                 and scope is not None
@@ -2847,7 +2843,7 @@ class ExtendedOpenAIAgentEntity(
         self, llm_context: llm.LLMContext | None = None
     ) -> str | None:
         """Use the session-stable resolver for all memory operations."""
-        scope = _ACTIVE_SCOPE.get()
+        scope = _ACTIVE_TURN.get().scope
         if scope is None:
             # Compatibility for direct service/test invocations outside the
             # conversation lifecycle. Live conversations always set a resolved
@@ -2866,7 +2862,7 @@ class ExtendedOpenAIAgentEntity(
     def _personal_memory_scope_id(
         self, llm_context: llm.LLMContext | None = None
     ) -> str | None:
-        scope = _ACTIVE_SCOPE.get()
+        scope = _ACTIVE_TURN.get().scope
         if scope is not None:
             return scope.user_id if scope.scope_type == "user" else None
         fallback = memory_user_id(llm_context)
@@ -2876,7 +2872,7 @@ class ExtendedOpenAIAgentEntity(
         self, llm_context: llm.LLMContext | None = None
     ) -> list[str]:
         """Compose personal and enabled household scopes without crossing users."""
-        scope = _ACTIVE_SCOPE.get()
+        scope = _ACTIVE_TURN.get().scope
         if scope is not None and not scope.allows_retention:
             return []
         policy = self._effective_guest_policy()
@@ -2890,7 +2886,7 @@ class ExtendedOpenAIAgentEntity(
                 != SHARED_MEMORY_DISABLED
                 else []
             )
-        scope = _ACTIVE_SCOPE.get()
+        scope = _ACTIVE_TURN.get().scope
         shared_enabled = (
             self.subentry.data.get(CONF_SHARED_MEMORY_MODE, DEFAULT_SHARED_MEMORY_MODE)
             != SHARED_MEMORY_DISABLED
@@ -2942,7 +2938,7 @@ class ExtendedOpenAIAgentEntity(
             selector = "household"
         if selector is not None and selector not in {"personal", "household"}:
             raise ValueError("scope must be personal or household")
-        scope = _ACTIVE_SCOPE.get()
+        scope = _ACTIVE_TURN.get().scope
         if scope is None:
             if selector == "household":
                 raise ValueError("household scope requires a resolved conversation")
@@ -2974,8 +2970,8 @@ class ExtendedOpenAIAgentEntity(
     ) -> dict[str, Any]:
         """Execute a narrow operation within the request-derived scope."""
         owner = (
-            _owner_from_resolved_scope(_ACTIVE_SCOPE.get())
-            if _ACTIVE_TEMPORARY_SCOPE.get() is not None
+            _owner_from_resolved_scope(_ACTIVE_TURN.get().scope)
+            if _ACTIVE_TURN.get().temporary_scope is not None
             else None
         )
         if owner is None:
@@ -2993,7 +2989,7 @@ class ExtendedOpenAIAgentEntity(
                 raise RuntimeError(GUEST_MODE_UNAVAILABLE)
             if self._temporary_memory is None:
                 raise RuntimeError("temporary memory is unavailable")
-            scope_id = _ACTIVE_TEMPORARY_SCOPE.get()
+            scope_id = _ACTIVE_TURN.get().temporary_scope
             if scope_id is None:
                 raise RuntimeError("temporary memory is unavailable for this request")
             if operation == "add":
@@ -3054,8 +3050,8 @@ class ExtendedOpenAIAgentEntity(
                 raise RuntimeError("conversation archive is disabled")
             if self._archive is None:
                 raise RuntimeError("conversation archive is unavailable")
-            scope = _ACTIVE_SCOPE.get()
-            active = _ACTIVE_ARCHIVE.get()
+            scope = _ACTIVE_TURN.get().scope
+            active = _ACTIVE_TURN.get().archive
             if scope is None or active is None:
                 raise RuntimeError("active conversation session is unavailable")
             session_key, session_id = active
@@ -3088,7 +3084,7 @@ class ExtendedOpenAIAgentEntity(
             if operation == "private":
                 # Do this before awaiting persistence: a failed privacy write must
                 # not cause finalization to save the current private request.
-                _ARCHIVE_TURN_PRIVATE.set(True)
+                _ACTIVE_TURN.set(replace(_ACTIVE_TURN.get(), archive_turn_private=True))
                 return await self._archive.async_make_private(session_id)
             if operation == "resume":
                 session = await self._archive.async_resume_saving(
@@ -3101,7 +3097,11 @@ class ExtendedOpenAIAgentEntity(
                         )
                     ),
                 )
-                _ACTIVE_ARCHIVE.set((session_key, session.session_id))
+                _ACTIVE_TURN.set(
+                    replace(
+                        _ACTIVE_TURN.get(), archive=(session_key, session.session_id)
+                    )
+                )
                 return {
                     "private_mode_enabled": False,
                     "session_id": session.session_id,

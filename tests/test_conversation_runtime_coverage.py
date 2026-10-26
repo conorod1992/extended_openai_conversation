@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -76,11 +78,13 @@ async def test_memory_retrieval_selects_and_pins_continuity_bundle() -> None:
         retrieve_limit=2,
         rank=rank,
     )
-    token = conversation_module._ACTIVE_MEMORY_SESSION.set(("session-1", 30))
+    token = conversation_module._ACTIVE_TURN.set(
+        replace(conversation_module._ACTIVE_TURN.get(), memory_session=("session-1", 30))
+    )
     try:
         result = await agent._async_retrieve_memories(object(), "where are keys")
     finally:
-        conversation_module._ACTIVE_MEMORY_SESSION.reset(token)
+        conversation_module._ACTIVE_TURN.reset(token)
 
     assert result == resolved
     continuity.async_get_memory_bundle.assert_awaited_once_with("session-1", 30)
@@ -108,11 +112,13 @@ async def test_memory_retrieval_reuses_existing_bundle_without_reranking() -> No
         retrieve_limit=3,
         rank=rank,
     )
-    token = conversation_module._ACTIVE_MEMORY_SESSION.set(("session-1", 30))
+    token = conversation_module._ACTIVE_TURN.set(
+        replace(conversation_module._ACTIVE_TURN.get(), memory_session=("session-1", 30))
+    )
     try:
         result = await agent._async_retrieve_memories(object(), "same topic")
     finally:
-        conversation_module._ACTIVE_MEMORY_SESSION.reset(token)
+        conversation_module._ACTIVE_TURN.reset(token)
 
     assert result == ["memory"]
     rank.assert_not_awaited()
@@ -132,11 +138,13 @@ async def test_memory_retrieval_failure_is_isolated() -> None:
         subentry=SimpleNamespace(data={CONF_MEMORY_AUTO_RETRIEVE_LIMIT: 2}),
         _current_readable_memory_scope_ids=lambda _context: ["user-1"],
     )
-    token = conversation_module._ACTIVE_MEMORY_SESSION.set(("session-1", 30))
+    token = conversation_module._ACTIVE_TURN.set(
+        replace(conversation_module._ACTIVE_TURN.get(), memory_session=("session-1", 30))
+    )
     try:
         result = await Agent._async_select_memories(agent, object(), "hello")
     finally:
-        conversation_module._ACTIVE_MEMORY_SESSION.reset(token)
+        conversation_module._ACTIVE_TURN.reset(token)
 
     assert result == []
 

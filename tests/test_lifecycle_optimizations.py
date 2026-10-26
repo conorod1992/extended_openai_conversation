@@ -238,9 +238,8 @@ def _retrieval_agent(monkeypatch, retrieve_memories, retrieve_temporary):
     monkeypatch.setattr(
         conversation, "_owner_from_resolved_scope", lambda _scope: "user:alice"
     )
-    monkeypatch.setattr(
-        conversation, "_ACTIVE_TEMPORARY_SCOPE", SimpleNamespace(get=lambda: "session")
-    )
+    turn = conversation.ConversationTurnContext(temporary_scope="session")
+    monkeypatch.setattr(conversation, "_ACTIVE_TURN", SimpleNamespace(get=lambda: turn))
     return agent
 
 

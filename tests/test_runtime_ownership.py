@@ -178,11 +178,15 @@ def runtime_agent():
         }
     )
     agent._effective_guest_policy = GuestCapabilityPolicy.unrestricted
-    scope = owner._ACTIVE_SCOPE.set(
-        user_scope("alice", source="test")
+    scope = owner._ACTIVE_TURN.set(
+        replace(owner._ACTIVE_TURN.get(), scope=user_scope("alice", source="test"))
     )
-    temporary = owner._ACTIVE_TEMPORARY_SCOPE.set("session")
-    archive = owner._ACTIVE_ARCHIVE.set(("session", "id"))
+    temporary = owner._ACTIVE_TURN.set(
+        replace(owner._ACTIVE_TURN.get(), temporary_scope="session")
+    )
+    archive = owner._ACTIVE_TURN.set(
+        replace(owner._ACTIVE_TURN.get(), archive=("session", "id"))
+    )
     prefetch = _ACTIVE_INVOCATION.set(
         replace(_ACTIVE_INVOCATION.get(), temporary_memory_prefetch=None)
     )
@@ -190,9 +194,9 @@ def runtime_agent():
         yield agent
     finally:
         _ACTIVE_INVOCATION.reset(prefetch)
-        owner._ACTIVE_ARCHIVE.reset(archive)
-        owner._ACTIVE_TEMPORARY_SCOPE.reset(temporary)
-        owner._ACTIVE_SCOPE.reset(scope)
+        owner._ACTIVE_TURN.reset(archive)
+        owner._ACTIVE_TURN.reset(temporary)
+        owner._ACTIVE_TURN.reset(scope)
 
 
 async def test_live_memory_gate_and_embedding_provider(runtime_agent):

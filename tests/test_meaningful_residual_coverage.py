@@ -136,8 +136,12 @@ async def test_temporary_memory_request_cancellation_drains_prefetch(monkeypatch
     prefetch_token = conversation._ACTIVE_INVOCATION.set(
         replace(conversation._ACTIVE_INVOCATION.get(), temporary_memory_prefetch=child_task)
     )
-    temp_scope_token = conversation._ACTIVE_TEMPORARY_SCOPE.set("conversation:one")
-    scope_token = conversation._ACTIVE_SCOPE.set(SimpleNamespace())
+    temp_scope_token = conversation._ACTIVE_TURN.set(
+        replace(conversation._ACTIVE_TURN.get(), temporary_scope="conversation:one")
+    )
+    scope_token = conversation._ACTIVE_TURN.set(
+        replace(conversation._ACTIVE_TURN.get(), scope=SimpleNamespace())
+    )
     try:
         caller = asyncio.create_task(
             conversation.ExtendedOpenAIAgentEntity._async_retrieve_temporary_memories(
@@ -150,8 +154,8 @@ async def test_temporary_memory_request_cancellation_drains_prefetch(monkeypatch
             await caller
         assert child_task.cancelled()
     finally:
-        conversation._ACTIVE_SCOPE.reset(scope_token)
-        conversation._ACTIVE_TEMPORARY_SCOPE.reset(temp_scope_token)
+        conversation._ACTIVE_TURN.reset(scope_token)
+        conversation._ACTIVE_TURN.reset(temp_scope_token)
         conversation._ACTIVE_INVOCATION.reset(prefetch_token)
 
 

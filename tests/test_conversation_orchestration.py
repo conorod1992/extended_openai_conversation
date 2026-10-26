@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from contextlib import asynccontextmanager, nullcontext
 from datetime import timedelta
 from types import SimpleNamespace
@@ -28,12 +30,8 @@ from custom_components.extended_openai_conversation_responses.continuity import 
     ConversationContinuity,
 )
 from custom_components.extended_openai_conversation_responses.conversation import (
-    _ACTIVE_ARCHIVE,
-    _ACTIVE_FUNCTION_GROUP_SESSION,
-    _ACTIVE_MEMORY_SESSION,
-    _ACTIVE_SCOPE,
-    _ACTIVE_TEMPORARY_SCOPE,
     ExtendedOpenAIAgentEntity,
+    _ACTIVE_TURN,
 )
 from custom_components.extended_openai_conversation_responses.guest_mode import (
     GuestCapabilityPolicy,
@@ -432,29 +430,29 @@ async def test_unexpected_failure_restores_request_scoped_context(monkeypatch):
     outer_scope = user_scope("outer", source="test", device_id="hall")
     outer_function_group = object()
     tokens = [
-        (_ACTIVE_SCOPE, _ACTIVE_SCOPE.set(outer_scope)),
-        (_ACTIVE_ARCHIVE, _ACTIVE_ARCHIVE.set(("outer", "archive"))),
+        (_ACTIVE_TURN, _ACTIVE_TURN.set(replace(_ACTIVE_TURN.get(), scope=outer_scope))),
+        (_ACTIVE_TURN, _ACTIVE_TURN.set(replace(_ACTIVE_TURN.get(), archive=("outer", "archive")))),
         (
-            conversation_module._ARCHIVE_TURN_PRIVATE,
-            conversation_module._ARCHIVE_TURN_PRIVATE.set(True),
+            conversation_module._ACTIVE_TURN,
+            conversation_module._ACTIVE_TURN.set(replace(conversation_module._ACTIVE_TURN.get(), archive_turn_private=True)),
         ),
-        (_ACTIVE_TEMPORARY_SCOPE, _ACTIVE_TEMPORARY_SCOPE.set("outer-temp")),
+        (_ACTIVE_TURN, _ACTIVE_TURN.set(replace(_ACTIVE_TURN.get(), temporary_scope="outer-temp"))),
         (
-            _ACTIVE_FUNCTION_GROUP_SESSION,
-            _ACTIVE_FUNCTION_GROUP_SESSION.set(outer_function_group),
+            _ACTIVE_TURN,
+            _ACTIVE_TURN.set(replace(_ACTIVE_TURN.get(), function_group_session=outer_function_group)),
         ),
-        (_ACTIVE_MEMORY_SESSION, _ACTIVE_MEMORY_SESSION.set(("outer-memory", 5))),
+        (_ACTIVE_TURN, _ACTIVE_TURN.set(replace(_ACTIVE_TURN.get(), memory_session=("outer-memory", 5)))),
     ]
     try:
         with pytest.raises(RuntimeError, match="provider wrapper failed"):
             await process()
 
-        assert _ACTIVE_SCOPE.get() is outer_scope
-        assert _ACTIVE_ARCHIVE.get() == ("outer", "archive")
-        assert conversation_module._ARCHIVE_TURN_PRIVATE.get() is True
-        assert _ACTIVE_TEMPORARY_SCOPE.get() == "outer-temp"
-        assert _ACTIVE_FUNCTION_GROUP_SESSION.get() is outer_function_group
-        assert _ACTIVE_MEMORY_SESSION.get() == ("outer-memory", 5)
+        assert _ACTIVE_TURN.get().scope is outer_scope
+        assert _ACTIVE_TURN.get().archive == ("outer", "archive")
+        assert conversation_module._ACTIVE_TURN.get().archive_turn_private is True
+        assert _ACTIVE_TURN.get().temporary_scope == "outer-temp"
+        assert _ACTIVE_TURN.get().function_group_session is outer_function_group
+        assert _ACTIVE_TURN.get().memory_session == ("outer-memory", 5)
     finally:
         for context_var, token in reversed(tokens):
             context_var.reset(token)
@@ -911,7 +909,7 @@ async def test_archive_privacy_transitions_do_not_save_the_current_private_turn(
     async def handle(*_args, **_kwargs):
         for operation in operations:
             await entity._async_execute_archive_tool(operation, {})
-        final_ids.append(_ACTIVE_ARCHIVE.get()[1])
+        final_ids.append(_ACTIVE_TURN.get().archive[1])
         log.content.append(
             conversation.AssistantContent(agent_id="agent", content="Current answer")
         )

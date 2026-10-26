@@ -45,9 +45,8 @@ class Retrievals:
         monkeypatch.setattr(
             lifecycle, "_owner_from_resolved_scope", lambda _scope: "owner"
         )
-        monkeypatch.setattr(
-            lifecycle, "_ACTIVE_TEMPORARY_SCOPE", SimpleNamespace(get=lambda: "session")
-        )
+        turn = lifecycle.ConversationTurnContext(temporary_scope="session")
+        monkeypatch.setattr(lifecycle, "_ACTIVE_TURN", SimpleNamespace(get=lambda: turn))
 
     def _agent(self):
         agent = object.__new__(lifecycle.ExtendedOpenAIAgentEntity)

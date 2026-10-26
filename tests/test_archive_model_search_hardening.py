@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -245,13 +246,17 @@ async def test_archive_wrapper_reports_archive_specific_unavailability() -> None
     agent = _runtime_agent()
 
     agent._archive.async_search.side_effect = OSError("archive backend failed")
-    token = owner._ACTIVE_SCOPE.set(SimpleNamespace(scope_id="user:alice"))
-    active = owner._ACTIVE_ARCHIVE.set(("session", "id"))
+    token = owner._ACTIVE_TURN.set(
+        replace(owner._ACTIVE_TURN.get(), scope=SimpleNamespace(scope_id="user:alice"))
+    )
+    active = owner._ACTIVE_TURN.set(
+        replace(owner._ACTIVE_TURN.get(), archive=("session", "id"))
+    )
     try:
         result = await agent._async_execute_archive_tool("search", {"query": "kitchen"})
     finally:
-        owner._ACTIVE_ARCHIVE.reset(active)
-        owner._ACTIVE_SCOPE.reset(token)
+        owner._ACTIVE_TURN.reset(active)
+        owner._ACTIVE_TURN.reset(token)
 
     assert result == {
         "status": "unavailable",
@@ -311,16 +316,20 @@ async def test_archive_non_search_operation_does_not_require_query():
     expected = {"status": "ok"}
     get = AsyncMock(return_value=expected)
     agent._archive = SimpleNamespace(async_get=get)
-    scope = owner._ACTIVE_SCOPE.set(SimpleNamespace(scope_id="user:alice"))
-    active = owner._ACTIVE_ARCHIVE.set(("session", "id"))
+    scope = owner._ACTIVE_TURN.set(
+        replace(owner._ACTIVE_TURN.get(), scope=SimpleNamespace(scope_id="user:alice"))
+    )
+    active = owner._ACTIVE_TURN.set(
+        replace(owner._ACTIVE_TURN.get(), archive=("session", "id"))
+    )
     try:
         assert (
             await agent._async_execute_archive_tool("get", {"session_id": "item-1"})
             is expected
         )
     finally:
-        owner._ACTIVE_SCOPE.reset(scope)
-        owner._ACTIVE_ARCHIVE.reset(active)
+        owner._ACTIVE_TURN.reset(scope)
+        owner._ACTIVE_TURN.reset(active)
     get.assert_awaited_once_with("user:alice", "item-1", 0, 6, text_offset=0)
 
 
@@ -339,16 +348,20 @@ async def test_model_archive_search_can_discover_second_same_day_page(monkeypatc
             user_text="Archive marker", assistant_text="A matching discussion", successful=True)
     agent = _runtime_agent()
     agent._archive = archive
-    token = owner._ACTIVE_SCOPE.set(scope)
-    active = owner._ACTIVE_ARCHIVE.set(("browser-0", session.session_id))
+    token = owner._ACTIVE_TURN.set(
+        replace(owner._ACTIVE_TURN.get(), scope=scope)
+    )
+    active = owner._ACTIVE_TURN.set(
+        replace(owner._ACTIVE_TURN.get(), archive=("browser-0", session.session_id))
+    )
     try:
         day = dt_util.as_local(now).date().isoformat()
         arguments = {"query": "Archive marker", "limit": 10, "start_date": day, "end_date": day}
         first = await agent._async_execute_archive_tool("search", arguments)
         second = await agent._async_execute_archive_tool("search", {**arguments, "offset": 10})
     finally:
-        owner._ACTIVE_ARCHIVE.reset(active)
-        owner._ACTIVE_SCOPE.reset(token)
+        owner._ACTIVE_TURN.reset(active)
+        owner._ACTIVE_TURN.reset(token)
     assert first["has_more"] and len(first["results"]) == 10
     assert second["offset"] == 10 and len(second["results"]) == 2
     assert not second["has_more"]

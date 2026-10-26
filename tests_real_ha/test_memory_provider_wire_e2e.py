@@ -244,7 +244,7 @@ async def test_chat_memory_crosses_provider_tool_and_durable_retrieval_boundarie
     original_retrieve_temporary = agent._async_retrieve_temporary_memories
 
     async def _capture_temporary_retrieval() -> list[TemporaryMemoryRecord]:
-        runtime_scopes.append(conversation_module._ACTIVE_TEMPORARY_SCOPE.get())
+        runtime_scopes.append(conversation_module._ACTIVE_TURN.get().temporary_scope)
         records = await original_retrieve_temporary()
         retrieved_temporary.append([item.content for item in records])
         return records

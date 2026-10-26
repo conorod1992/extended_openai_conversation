@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -588,10 +589,12 @@ async def test_disabled_tool_guards_block_original_execution(
     entity = object.__new__(conversation.ExtendedOpenAIAgentEntity)
     entity.subentry = SimpleNamespace(data=options)
     monkeypatch.setattr(conversation, "memory_enabled", lambda _options: False)
-    scope = conversation._ACTIVE_SCOPE.set(
-        SimpleNamespace(scope_type="user", user_id="alice")
+    scope = conversation._ACTIVE_TURN.set(
+        replace(conversation._ACTIVE_TURN.get(), scope=SimpleNamespace(scope_type="user", user_id="alice"))
     )
-    temporary = conversation._ACTIVE_TEMPORARY_SCOPE.set("session")
+    temporary = conversation._ACTIVE_TURN.set(
+        replace(conversation._ACTIVE_TURN.get(), temporary_scope="session")
+    )
     try:
         method = getattr(entity, tool_name)
         args = (
@@ -602,5 +605,5 @@ async def test_disabled_tool_guards_block_original_execution(
         with pytest.raises(RuntimeError, match=message):
             await method(*args)
     finally:
-        conversation._ACTIVE_SCOPE.reset(scope)
-        conversation._ACTIVE_TEMPORARY_SCOPE.reset(temporary)
+        conversation._ACTIVE_TURN.reset(scope)
+        conversation._ACTIVE_TURN.reset(temporary)
