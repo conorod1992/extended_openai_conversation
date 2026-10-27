@@ -125,6 +125,10 @@ class _BoundedResult:
     def fetchall(self) -> list[Any]:
         return self.all()
 
+    def keys(self) -> Any:
+        """Expose column metadata without consuming or bypassing the read budget."""
+        return self._result.keys()
+
     def yield_per(self, count: int) -> _BoundedResult:
         self._result = self._result.yield_per(min(count, 64))
         return self
