@@ -1,11 +1,15 @@
 """Permanent deletion retires exact live Store handles, independent of managers."""
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
 
 from custom_components.extended_openai_conversation_responses.agent_deletion import (
     async_delete_agent_data,
+)
+from custom_components.extended_openai_conversation_responses.agent_maintenance import (
+    get_agent_maintenance_gate,
 )
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
 from custom_components.extended_openai_conversation_responses.conversation_archive import (
@@ -17,7 +21,63 @@ from custom_components.extended_openai_conversation_responses.memory import (
 from custom_components.extended_openai_conversation_responses.strict_store import (
     PropagatingWriteStore,
 )
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.storage import Store
+
+
+async def test_concurrent_deletion_rechecks_fence_after_exclusive_admission(
+    hass, monkeypatch
+):
+    gate = get_agent_maintenance_gate(hass, "provider", "departing")
+    store = PropagatingWriteStore(
+        hass, 1, f"{DOMAIN}.memory.provider.departing"
+    ).bind_agent("provider", "departing")
+    removing = asyncio.Event()
+    release = asyncio.Event()
+    second_retired = asyncio.Event()
+    calls = 0
+    retirements = 0
+    original_remove = store.async_remove
+    original_retire = gate.async_retire_readers
+
+    async def blocked_remove():
+        nonlocal calls
+        calls += 1
+        removing.set()
+        await release.wait()
+        await original_remove()
+
+    async def observe_retirement():
+        nonlocal retirements
+        retirements += 1
+        await original_retire()
+        if retirements == 2:
+            second_retired.set()
+
+    monkeypatch.setattr(store, "async_remove", blocked_remove)
+    monkeypatch.setattr(gate, "async_retire_readers", observe_retirement)
+    first = asyncio.create_task(async_delete_agent_data(hass, "provider", "departing"))
+    tasks = [first]
+    try:
+        await removing.wait()
+        second = asyncio.create_task(
+            async_delete_agent_data(hass, "provider", "departing")
+        )
+        tasks.append(second)
+        await second_retired.wait()
+        assert gate._waiting_writers == 1
+        assert not second.done()
+        release.set()
+        assert await asyncio.gather(*tasks, return_exceptions=True) == [None, None]
+        assert calls == 1
+        assert gate.deleted
+        assert not gate._writer_active
+        with pytest.raises(HomeAssistantError, match="deleted"):
+            await store.async_load()
+    finally:
+        release.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await Store.async_remove(store)
 
 
 @pytest.mark.parametrize("cached", [False, True])

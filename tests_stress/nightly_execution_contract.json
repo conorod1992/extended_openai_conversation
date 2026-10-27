@@ -1,6 +1,7 @@
 {
   "schema": "eoai-nightly-execution-contract/v1",
   "pytest": [
+    "tests_real_ha/test_agent_store_ownership.py::test_concurrent_deletion_rechecks_fence_after_exclusive_admission",
     "tests_real_ha/test_agent_store_ownership.py::test_delete_retires_bound_store_without_knowing_manager_attributes[False]",
     "tests_real_ha/test_agent_store_ownership.py::test_delete_retires_bound_store_without_knowing_manager_attributes[True]",
     "tests_real_ha/test_agent_store_ownership.py::test_delete_retires_live_archive_partition_outside_manager_cache",

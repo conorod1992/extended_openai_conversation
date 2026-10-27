@@ -132,6 +132,9 @@ async def async_delete_agent_data(hass: Any, entry_id: str, subentry_id: str) ->
     await gate.async_retire_readers()
 
     async def remove() -> None:
+        # Another queued deletion may have completed while admission was pending.
+        if gate.deleted:
+            return
         with gate.recovery_work():
             from .backup_transfer import async_remove_agent_transfers
             from .delayed_tools import (
