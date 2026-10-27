@@ -396,7 +396,7 @@ async def test_ai_task_explicit_model_transition_clears_dependent_sampling(hass)
 async def test_function_rename_owns_legacy_guest_reference_update(
     hass, monkeypatch, degraded
 ):
-    from custom_components.extended_openai_conversation_responses.management_function_repair import (
+    from custom_components.extended_openai_conversation_responses.function_configuration_repair import (
         editable_function_tools,
     )
     from tests.test_management_ui import _entry_pair, _tool

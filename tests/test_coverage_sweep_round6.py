@@ -213,7 +213,7 @@ def test_guest_mode_live_or_future_schedule_expiry_and_indefinite(hass) -> None:
 
 def test_management_effective_function_groups_filters_unavailable_members() -> None:
     from custom_components.extended_openai_conversation_responses import (
-        management_function_repair as repair,
+        function_configuration_repair as repair,
     )
 
     options = {
@@ -244,7 +244,7 @@ def test_management_effective_function_groups_filters_unavailable_members() -> N
 
 def test_management_effective_function_groups_preserves_non_list_shape() -> None:
     from custom_components.extended_openai_conversation_responses import (
-        management_function_repair as repair,
+        function_configuration_repair as repair,
     )
 
     options = {repair.CONF_FUNCTION_GROUPS: "invalid"}

@@ -12,7 +12,7 @@ import yaml
 from homeassistant.exceptions import HomeAssistantError
 
 from .const import CONF_FUNCTION_TOOLS
-from .management_function_repair import (
+from .function_configuration_repair import (
     isolated_function_tools as _isolated_function_tools,
 )
 from .operational_errors import failure_diagnostic

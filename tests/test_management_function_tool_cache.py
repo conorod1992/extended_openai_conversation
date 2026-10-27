@@ -3,12 +3,15 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-import custom_components.extended_openai_conversation_responses.management_function_repair as repair
-import custom_components.extended_openai_conversation_responses.management_loading_performance as loading
-from custom_components.extended_openai_conversation_responses import management_ui
+from custom_components.extended_openai_conversation_responses import (
+    function_configuration_repair as analysis,
+    management_ui,
+)
 from custom_components.extended_openai_conversation_responses.agent_config import (
     agent_config_defaults,
 )
+import custom_components.extended_openai_conversation_responses.management_function_repair as repair
+import custom_components.extended_openai_conversation_responses.management_loading_performance as loading
 
 
 def test_agent_snapshot_uses_authoritative_cached_function_metadata(monkeypatch) -> None:
@@ -23,7 +26,7 @@ def test_agent_snapshot_uses_authoritative_cached_function_metadata(monkeypatch)
         cached_metadata,
     )
     monkeypatch.setattr(
-        repair,
+        analysis,
         "configured_function_tools_from_data",
         Mock(side_effect=AssertionError("runtime Function Tool copies must not be used")),
     )

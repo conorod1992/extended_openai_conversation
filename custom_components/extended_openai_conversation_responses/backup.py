@@ -164,7 +164,7 @@ def _configuration_snapshot_preserving_quarantine(
         # validation failure. Normalize every unrelated field strictly using a
         # safe Function projection, then put the original persisted Function
         # Tool/Group values back so the user can repair them after restore.
-        from .management_function_repair import function_configuration_repair_state
+        from .function_configuration_repair import function_configuration_repair_state
 
         state = function_configuration_repair_state(raw)
         if state is None:

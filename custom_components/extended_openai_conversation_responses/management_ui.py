@@ -79,6 +79,7 @@ from .continuity import async_get_continuity
 from .conversation_archive import async_get_archive
 from .exposed_attributes import exposed_attribute_catalog
 from .frontend_assets import async_register_frontend_assets, frontend_entry_url
+from .function_configuration_repair import has_unavailable_native_tool
 from .function_dependency_integrity import (
     _TOOL_MUTATIONS,
     _is_template_string,
@@ -129,9 +130,8 @@ from .management_function_quarantine import (
     merge_unchanged_function_configuration,
 )
 from .management_function_repair import (
-    agent_config_revision as _agent_config_revision,  # noqa: F401 - test seam
+    agent_config_revision as _agent_config_revision,  # noqa: F401
     async_prepare_persisted_function_tools,
-    has_unavailable_native_tool,
     normalized_persisted_config_snapshot,
     peek_function_tool_health,
     persisted_config_projection,
@@ -375,7 +375,7 @@ async def _persist_function_configuration(
     rules_manager: Any = None,
 ) -> dict[str, Any]:
     """Persist one revision-checked tool edit without discarding quarantined siblings."""
-    from .management_function_repair import (
+    from .function_configuration_repair import (
         editable_function_tools,
         isolated_function_tools,
     )
@@ -555,8 +555,8 @@ def _request_rule_function_tools(
     rule: Mapping[str, Any], data: Mapping[str, Any]
 ) -> list[dict[str, Any]]:
     """Parse only the Function Tools referenced by this native action tree."""
+    from .function_configuration_repair import editable_function_tools
     from .function_dependency_integrity import _rule_script_actions
-    from .management_function_repair import editable_function_tools
 
     names = set()
     for step in _rule_script_actions(rule):
@@ -583,7 +583,7 @@ def _request_rule_function_tools(
     ]
     if not rule.get("enabled", True):
         # Disabling must remain possible even when its dependency is quarantined.
-        from .management_function_repair import isolated_function_tools
+        from .function_configuration_repair import isolated_function_tools
 
         return isolated_function_tools({CONF_FUNCTION_TOOLS: selected})[0]
     return validate_function_tools(selected)

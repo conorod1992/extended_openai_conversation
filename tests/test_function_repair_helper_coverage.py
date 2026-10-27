@@ -8,7 +8,8 @@ import pytest
 import yaml
 
 from custom_components.extended_openai_conversation_responses import (
-    management_function_repair as repair,
+    function_configuration_repair as repair,
+    management_function_repair as management_repair,
 )
 from custom_components.extended_openai_conversation_responses.agent_config import (
     agent_config_defaults,
@@ -223,8 +224,8 @@ def test_group_repair_helpers_preserve_malformed_siblings() -> None:
         {"id": "valid", "functions": ["legacy", "keep"]},
     ]
 
-    renamed = repair._replace_group_function_name(groups, "legacy", "repaired")
-    removed = repair._remove_group_function_name(renamed, "keep")
+    renamed = management_repair._replace_group_function_name(groups, "legacy", "repaired")
+    removed = management_repair._remove_group_function_name(renamed, "keep")
 
     assert removed == [
         "legacy-invalid-group",

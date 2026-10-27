@@ -11,6 +11,7 @@ import yaml
 
 import custom_components.extended_openai_conversation_responses as integration
 from custom_components.extended_openai_conversation_responses import (
+    function_configuration_repair as function_analysis,
     management_function_repair as repair,
     management_ui,
     model_lifecycle,
@@ -239,9 +240,9 @@ async def test_repairable_prewarm_reuses_quarantine_on_first_read(
     subentry.data = {**subentry.data, "functions": yaml.safe_dump([*tools, invalid])}
     original_data = deepcopy(subentry.data)
     monkeypatch.setattr(repair, "_persisted_projections", OrderedDict())
-    repair._cached_isolated_function_tools.cache_clear()
-    isolate = Mock(wraps=repair._isolate_function_tools_uncached)
-    monkeypatch.setattr(repair, "_isolate_function_tools_uncached", isolate)
+    function_analysis._cached_isolated_function_tools.cache_clear()
+    isolate = Mock(wraps=function_analysis._isolate_function_tools_uncached)
+    monkeypatch.setattr(function_analysis, "_isolate_function_tools_uncached", isolate)
 
     await repair.async_prewarm_persisted_config_projection(hass, entry, subentry)
     assert isolate.call_count == 1

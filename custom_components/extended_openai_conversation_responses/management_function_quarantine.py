@@ -26,17 +26,19 @@ from .agent_test import (
     async_test_agent as async_test_configured_agent,
 )
 from .const import CONF_FUNCTION_GROUPS, CONF_FUNCTION_TOOLS, DEFAULT_FUNCTION_GROUPS
-from .live_subentry_updates import update_live_subentry
-from .management_function_repair import (
+from .function_configuration_repair import (
     editable_function_tools,
     function_configuration_repair_state,
     function_tools_issue,
     isolated_function_tools,
+    safe_function_configuration as _safe_function_configuration,
+)
+from .live_subentry_updates import update_live_subentry
+from .management_function_repair import (
     persist_valid_function_configuration,
     persisted_config_projection,
     repair_revision,
     repair_state_for_projection,
-    safe_function_configuration as _safe_function_configuration,
 )
 from .yaml_serialization import dump_yaml
 
