@@ -3,15 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import asdict
 from types import SimpleNamespace
 
 import pytest
 
 from custom_components.extended_openai_conversation_responses.context_usage_hardening import (
-    _LOCAL_ESTIMATE_DETAIL,
-    _PARTIAL_PROVIDER_USAGE_DETAIL,
-    usage_for_accounting,
+    RequestTokenMeasurements,
 )
 from custom_components.extended_openai_conversation_responses.exceptions import (
     TokenLengthExceededError,
@@ -29,9 +26,7 @@ from tests.test_provider_stream_terminals import (
 
 
 def _estimated():
-    return RequestUsage(
-        input_tokens=800, total_tokens=800, details={_LOCAL_ESTIMATE_DETAIL: 800}
-    )
+    return RequestTokenMeasurements(context_estimate=800)
 
 
 def _reported(kind):
@@ -65,15 +60,14 @@ def _provider_expected(kind):
 
 
 def _context_expected(kind):
-    if kind in {"missing", "zero"}:
-        return _estimated()
-    result = _provider_expected(kind)
-    if result.input_tokens == 0:
-        result.input_tokens = 800
-        result.details.update(
-            {_LOCAL_ESTIMATE_DETAIL: 800, _PARTIAL_PROVIDER_USAGE_DETAIL: 1}
-        )
-    return result
+    """Literal context count and active-fallback expectations, separate from usage."""
+    return (120, None) if kind in {"full", "input"} else (800, 800)
+
+
+def _assert_context(usage, kind):
+    tokens, estimate = _context_expected(kind)
+    assert usage.context_tokens == tokens
+    assert usage.context_estimate == estimate
 
 
 def _terminal(mode, raw, *, limited=False):
@@ -127,9 +121,8 @@ async def test_terminal_usage_context_accounting_and_diagnostics(mode, limited, 
     else:
         _ = [delta async for delta in transformed]
 
-    expected = _context_expected(kind)
-    assert asdict(usage) == asdict(expected)
-    assert usage_for_accounting(usage) == _provider_expected(kind)
+    _assert_context(usage, kind)
+    assert usage.reported == _provider_expected(kind)
     expected_traces = (
         []
         if kind == "missing"
@@ -162,8 +155,8 @@ async def test_repeated_usage_updates_supplied_fields_without_addition(mode, las
     expected = _provider_expected("full")
     if last == "output":
         expected.total_tokens = 30
-    assert usage == expected
-    assert usage_for_accounting(usage) == expected
+    assert usage.reported == expected
+    _assert_context(usage, "full")
     assert traces[0] == {"stats": {"input_tokens": 120, "output_tokens": 30}}
     assert len(traces) == (1 if last == "missing" else 2)
 
@@ -208,8 +201,8 @@ async def test_interrupted_usage_retains_partial_provider_counts(mode, ending):
             asyncio.CancelledError if ending == "cancel" else ConnectionError
         ):
             await task
-    assert usage == _context_expected("output")
-    assert usage_for_accounting(usage) == _provider_expected("output")
+    _assert_context(usage, "output")
+    assert usage.reported == _provider_expected("output")
     assert traces == [{"stats": {"input_tokens": 0, "output_tokens": 30}}]
 
 
@@ -235,8 +228,8 @@ async def test_failed_responses_event_preserves_context(kind):
                 "responses", FakeStream([failed]), usage, traces
             )
         ]
-    assert usage == _context_expected(kind)
-    assert usage_for_accounting(usage) == _provider_expected(kind)
+    _assert_context(usage, kind)
+    assert usage.reported == _provider_expected(kind)
     assert len(traces) == (0 if kind in {"missing", "zero"} else 1)
 
 
@@ -258,7 +251,8 @@ async def test_zero_nonterminal_usage_retains_previous_provider_snapshot(mode):
             mode, FakeStream([first, second, *_terminal(mode, None)]), usage, traces
         )
     ]
-    assert usage == _provider_expected("full")
+    assert usage.reported == _provider_expected("full")
+    _assert_context(usage, "full")
     assert traces == [{"stats": {"input_tokens": 120, "output_tokens": 30}}]
 
 
@@ -274,7 +268,8 @@ async def test_chat_terminal_stats_wait_for_parser_admission():
     )
     assert await anext(transformed) == {"role": "assistant"}
     await transformed.aclose()
-    assert usage_for_accounting(usage) == _provider_expected("full")
+    assert usage.reported == _provider_expected("full")
+    _assert_context(usage, "full")
     assert traces == []
 
 

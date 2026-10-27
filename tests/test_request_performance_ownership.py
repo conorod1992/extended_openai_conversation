@@ -32,7 +32,6 @@ from custom_components.extended_openai_conversation_responses.guest_mode import 
 from custom_components.extended_openai_conversation_responses.request import (
     format_function_tools,
 )
-from custom_components.extended_openai_conversation_responses.usage import RequestUsage
 from tests.test_conversation_provider_loop_contracts import (
     _final_stream,
     _provider_fixture,
@@ -306,15 +305,14 @@ def test_prepared_measurement_reuses_wire_artifacts_without_mutation(
     ]
     tools = format_function_tools([_tool("lookup")], "responses")
     original = deepcopy((payload, tools))
-    usage = RequestUsage()
-    estimate_prepared_request(agent, usage, payload, tools)
+    estimate = estimate_prepared_request(payload, tools)
     measured = [
         {"role": "system", "content": "system"},
         {"role": "user", "content": [{"type": text_type, "text": "hello"}]},
     ]
     # Unknown image dimensions still reserve the documented fallback image budget.
     expected = measure_provider_input(measured, tools)[2] + 2048
-    assert usage.input_tokens == expected
+    assert estimate == expected
     assert agent.hass.data == {}
     assert (payload, tools) == original
 

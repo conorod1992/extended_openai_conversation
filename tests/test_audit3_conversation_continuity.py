@@ -29,7 +29,6 @@ from custom_components.extended_openai_conversation_responses.tool_replay_guard 
     remember_unacknowledged_calls,
     was_unacknowledged_equivalent,
 )
-from custom_components.extended_openai_conversation_responses.usage import RequestUsage
 from homeassistant.components import conversation
 from homeassistant.helpers import llm
 
@@ -64,9 +63,7 @@ def test_encoded_attachment_size_does_not_destroy_history_budget(part):
     estimate = estimate_provider_input_tokens(large)
     assert estimate == estimate_provider_input_tokens(small)
     assert 2000 < estimate < 10000
-    usage = RequestUsage()
-    estimate_prepared_request(object(), usage, large, None)
-    assert usage.input_tokens == estimate
+    assert estimate_prepared_request(large, None) == estimate
     assert large == original
 
 

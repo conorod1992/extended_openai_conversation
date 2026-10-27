@@ -8,7 +8,7 @@ import zstandard
 
 from custom_components.extended_openai_conversation_responses.functions import web
 from custom_components.extended_openai_conversation_responses.speech import _SpeechDeltaListener
-from custom_components.extended_openai_conversation_responses.usage import RequestUsage
+from custom_components.extended_openai_conversation_responses.context_usage_hardening import RequestTokenMeasurements
 from homeassistant.exceptions import TemplateError
 from homeassistant.helpers.template import Template
 
@@ -53,14 +53,14 @@ async def test_token_limit_consumes_trailing_usage():
     from tests.test_provider_stream_terminals import FakeStream, _chat_chunk, _entity
     from custom_components.extended_openai_conversation_responses.exceptions import TokenLengthExceededError
 
-    usage = RequestUsage()
+    usage = RequestTokenMeasurements()
     stream = FakeStream([_chat_chunk(content="partial", finish_reason="length"),
         SimpleNamespace(choices=[], usage=SimpleNamespace(prompt_tokens=1200, completion_tokens=500, total_tokens=1700))])
     with pytest.raises(TokenLengthExceededError):
         async for _ in _entity()._transform_chat_stream(SimpleNamespace(async_trace=lambda _value: None), stream, usage):
             pass
-    assert usage.input_tokens == 1200
-    assert usage.output_tokens == 500
+    assert usage.reported.input_tokens == 1200
+    assert usage.reported.output_tokens == 500
 
 
 async def test_structured_result_is_bounded_after_serialization():
