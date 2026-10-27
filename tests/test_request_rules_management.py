@@ -798,7 +798,7 @@ async def test_management_create_assigns_id_and_validates_canonical_function_ref
         get_rules,
     )
     monkeypatch.setattr(
-        "custom_components.extended_openai_conversation_responses.management_ui.configured_function_tools_from_data",
+        "custom_components.extended_openai_conversation_responses.management_ui.inspect_function_tools",
         lambda _data: [configured_tool],
     )
 

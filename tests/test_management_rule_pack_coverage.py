@@ -275,7 +275,7 @@ async def test_management_rule_pack_review_registers_token(hass, monkeypatch) ->
     )
     monkeypatch.setattr(
         management_ui,
-        "configured_function_tools_from_data",
+        "inspect_function_tools",
         lambda _data: [],
     )
     monkeypatch.setattr(
@@ -325,7 +325,7 @@ async def test_management_rule_pack_import_requires_confirmation(
     )
     monkeypatch.setattr(
         management_ui,
-        "configured_function_tools_from_data",
+        "inspect_function_tools",
         lambda _data: [],
     )
     monkeypatch.setattr(
@@ -363,7 +363,7 @@ async def test_management_rule_pack_import_rejects_changed_revision(
     )
     monkeypatch.setattr(
         management_ui,
-        "configured_function_tools_from_data",
+        "inspect_function_tools",
         lambda _data: [],
     )
     monkeypatch.setattr(
@@ -407,7 +407,7 @@ async def test_management_rule_pack_import_consumes_review_and_appends(
     monkeypatch.setattr(request_rules, "validate_rule_model_request", validate_model)
     monkeypatch.setattr(
         management_ui,
-        "configured_function_tools_from_data",
+        "inspect_function_tools",
         lambda _data: [],
     )
     review = {"revision": "revision-1", "rules": []}
