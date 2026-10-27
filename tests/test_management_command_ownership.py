@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from custom_components.extended_openai_conversation_responses import (
+    agent_config,
     agent_maintenance,
     management_function_quarantine as quarantine,
     management_ui as ui,
@@ -285,8 +286,8 @@ async def test_pending_maintenance_blocks_dispatch_and_releases_on_error(
     assert entered.is_set()
     async with asyncio.timeout(1), gate.exclusive():
         assert gate._active_readers == 0
-    assert not quarantine._ALLOW_QUARANTINED_TOOLS.get()
-    assert not quarantine._QUARANTINED_FUNCTION_NAMES.get()
+    with pytest.raises(HomeAssistantError):
+        agent_config.configured_function_tools_from_data({"functions": "not a collection"})
 
 
 @pytest.mark.parametrize(
@@ -349,28 +350,33 @@ async def test_invalid_configuration_validation_has_no_projection_or_write(
     hass.config_entries.async_update_subentry.assert_not_called()
 
 
-async def test_strict_rule_preflight_precedes_quarantine_scope(
+async def test_strict_rule_preflight_precedes_explicit_inspection(
     hass, management_message, monkeypatch
 ):
-    """Do not accidentally move outer dependency validation into tolerant parsing."""
+    """Dependency validation and dispatched work cannot inherit tolerant parsing."""
     seen = []
     candidate = {"name": "Rule", "action": {"actions": []}}
+    damaged = {"functions": "not a collection"}
     monkeypatch.setattr(ui, "_prepare_request_rule", lambda *_: candidate)
 
     def strict(rule, _data):
         assert rule is candidate
-        assert not quarantine._ALLOW_QUARANTINED_TOOLS.get()
+        with pytest.raises(HomeAssistantError):
+            agent_config.configured_function_tools_from_data(damaged)
         seen.append("strict")
         return []
 
     async def validate(_hass, value, tools):
-        assert not quarantine._ALLOW_QUARANTINED_TOOLS.get()
+        with pytest.raises(HomeAssistantError):
+            agent_config.configured_function_tools_from_data(damaged)
         assert value is candidate
         assert tools == []
         seen.append("validate")
 
     async def handler(request):
-        assert quarantine._ALLOW_QUARANTINED_TOOLS.get()
+        assert quarantine.inspect_function_tools(damaged) == []
+        with pytest.raises(HomeAssistantError):
+            agent_config.configured_function_tools_from_data(damaged)
         seen.append("route")
         return {"ok": True}
 
@@ -381,7 +387,8 @@ async def test_strict_rule_preflight_precedes_quarantine_scope(
         hass, "admin", True, management_message("request_rules", "create", rule={})
     ) == {"ok": True}
     assert seen == ["strict", "validate", "route"]
-    assert not quarantine._ALLOW_QUARANTINED_TOOLS.get()
+    with pytest.raises(HomeAssistantError):
+        agent_config.configured_function_tools_from_data(damaged)
 
 
 @pytest.mark.parametrize(

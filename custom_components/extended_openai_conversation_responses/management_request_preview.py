@@ -7,7 +7,11 @@ from typing import Any
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
-from .agent_config import function_tool_enabled
+from .agent_config import (
+    configured_function_tools_from_data,
+    function_tool_enabled,
+    validate_function_groups,
+)
 from .const import (
     CONF_CONTINUE_CONVERSATION,
     CONF_FUNCTION_GROUPS,
@@ -31,10 +35,6 @@ from .guest_mode import async_get_guest_mode, resolve_guest_policy
 from .ha_llm_tools import ToolSnapshot, async_discover, is_ha_tool
 from .helpers import get_exposed_entities
 from .knowledge import get_loaded_knowledge
-from .management_function_quarantine import (
-    _management_configured_tools as configured_function_tools_from_data,
-    _management_validate_function_groups as validate_function_groups,
-)
 from .memory import memory_enabled
 from .prompt import render_effective_prompt
 from .request import (

@@ -367,10 +367,10 @@ async def test_ha_tool_add_validation_refresh_and_group_assignment(
 
     hass.config_entries.async_get_entry.return_value = entry
     monkeypatch.setattr(
-        management_ui, "configured_function_tools_from_data", lambda _data: []
+        management_ui, 'inspect_function_tools', lambda _data: []
     )
     group = {"id": "group", "functions": []}
-    monkeypatch.setattr(management_ui, "validate_function_groups", lambda *_: [group])
+    monkeypatch.setattr(management_ui, 'inspect_function_groups', lambda *_: [group])
     with pytest.raises(HomeAssistantError, match="Function Group no longer exists"):
         await management_ui.async_management_command(
             hass,
@@ -417,10 +417,10 @@ async def test_function_tool_validation_and_save_boundaries(
     tools = [_tool("one"), _tool("two")]
     monkeypatch.setattr(
         management_ui,
-        "configured_function_tools_from_data",
+        'inspect_function_tools',
         lambda _data: deepcopy(tools),
     )
-    monkeypatch.setattr(management_ui, "validate_function_groups", lambda *_: [])
+    monkeypatch.setattr(management_ui, 'inspect_function_groups', lambda *_: [])
     monkeypatch.setattr(
         management_ui,
         "validate_function_tools",
@@ -475,11 +475,11 @@ async def test_function_enable_delete_and_group_validation_boundaries(
     subentry.data = {**subentry.data, "function_groups": deepcopy(groups)}
     monkeypatch.setattr(
         management_ui,
-        "configured_function_tools_from_data",
+        'inspect_function_tools',
         lambda _data: deepcopy(tools),
     )
     monkeypatch.setattr(
-        management_ui, "validate_function_groups", lambda *_: deepcopy(groups)
+        management_ui, 'inspect_function_groups', lambda *_: deepcopy(groups)
     )
     monkeypatch.setattr(
         management_ui,
@@ -573,10 +573,10 @@ async def test_function_rename_propagates_failure_after_successful_rollback(
     tools = [_tool("old")]
     monkeypatch.setattr(
         management_ui,
-        "configured_function_tools_from_data",
+        'inspect_function_tools',
         lambda _data: deepcopy(tools),
     )
-    monkeypatch.setattr(management_ui, "validate_function_groups", lambda *_: [])
+    monkeypatch.setattr(management_ui, 'inspect_function_groups', lambda *_: [])
     monkeypatch.setattr(
         management_ui, "validate_function_tools", lambda value: deepcopy(value)
     )
@@ -684,10 +684,10 @@ async def test_fallthrough_branches_and_scope_catalog(
     )
     monkeypatch.setattr(
         management_ui,
-        "configured_function_tools_from_data",
+        'inspect_function_tools',
         lambda _data: [],
     )
-    monkeypatch.setattr(management_ui, "validate_function_groups", lambda *_: [])
+    monkeypatch.setattr(management_ui, 'inspect_function_groups', lambda *_: [])
     monkeypatch.setattr(
         management_ui,
         "async_get_continuity",

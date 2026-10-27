@@ -32,7 +32,7 @@ def test_agent_snapshot_uses_authoritative_cached_function_metadata(monkeypatch)
     )
     monkeypatch.setattr(
         management_ui,
-        "configured_function_tools_from_data",
+        'inspect_function_tools',
         Mock(side_effect=AssertionError("management quarantine alias must not be used")),
     )
     hass = SimpleNamespace(data={})

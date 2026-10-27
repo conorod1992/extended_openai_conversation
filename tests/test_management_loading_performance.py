@@ -644,7 +644,7 @@ async def test_guest_mode_primary_get_skips_heavy_catalogues(monkeypatch) -> Non
     )
     monkeypatch.setattr(
         management_ui,
-        "configured_function_tools_from_data",
+        'inspect_function_tools',
         MagicMock(side_effect=AssertionError("tool catalog must stay off primary path")),
     )
 
@@ -678,8 +678,8 @@ async def test_guest_mode_details_reuses_one_exposed_entity_projection(monkeypat
 
     monkeypatch.setattr(management_ui, "async_get_guest_mode", AsyncMock(return_value=guest))
     monkeypatch.setattr(management_ui, "async_get_knowledge", AsyncMock(return_value=library))
-    monkeypatch.setattr(management_ui, "configured_function_tools_from_data", lambda _data: [])
-    monkeypatch.setattr(management_ui, "validate_function_groups", lambda _groups, _tools: [])
+    monkeypatch.setattr(management_ui, 'inspect_function_tools', lambda _data: [])
+    monkeypatch.setattr(management_ui, 'inspect_function_groups', lambda _groups, _tools: [])
     monkeypatch.setattr(management_ui, "get_exposed_entities", exposed_loader)
 
     def resolve_policy(_hass, _options, _manager, _tools, *, exposed_entities=None):

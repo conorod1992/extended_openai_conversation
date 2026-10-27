@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
-from contextvars import ContextVar
+from collections.abc import Mapping
 from copy import deepcopy
 from types import SimpleNamespace
 from typing import Any, cast
@@ -42,45 +40,20 @@ from .management_function_repair import (
 )
 from .yaml_serialization import dump_yaml
 
-_ALLOW_QUARANTINED_TOOLS: ContextVar[bool] = ContextVar(
-    "extended_openai_management_allow_quarantined_tools", default=False
-)
-_QUARANTINED_FUNCTION_NAMES: ContextVar[frozenset[str]] = ContextVar(
-    "extended_openai_management_quarantined_function_names", default=frozenset()
-)
 
-
-def _usable_function_tools(data: Any) -> list[dict[str, Any]]:
-    """Return valid siblings when persisted Function Tools contain repairable errors."""
+def inspect_function_tools(data: Any) -> list[dict[str, Any]]:
+    """Inspect valid siblings without certifying the persisted source for execution."""
     raw = dict(data)
     tools, issue = function_tools_issue(raw)
     if issue is not None:
-        _valid, invalid, _isolated_issue = isolated_function_tools(raw)
-        _QUARANTINED_FUNCTION_NAMES.set(
-            frozenset(
-                str(item["name"])
-                for item in invalid
-                if isinstance(item.get("name"), str) and item["name"]
-            )
-        )
         return tools
-    _QUARANTINED_FUNCTION_NAMES.set(frozenset())
     return _STRICT_CONFIGURED_TOOLS(data)
 
 
-def _management_configured_tools(data: Any) -> list[dict[str, Any]]:
-    """Use tolerant Function Tool loading only inside isolated management sections."""
-    if _ALLOW_QUARANTINED_TOOLS.get():
-        return _usable_function_tools(data)
-    return _STRICT_CONFIGURED_TOOLS(data)
-
-
-def _management_validate_function_groups(
+def inspect_function_groups(
     value: Any, function_tools: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
     """Ignore quarantined members without weakening normal group validation."""
-    if not _ALLOW_QUARANTINED_TOOLS.get():
-        return _STRICT_VALIDATE_FUNCTION_GROUPS(value, function_tools)
     try:
         return _STRICT_VALIDATE_FUNCTION_GROUPS(value, function_tools)
     except HomeAssistantError, TypeError, ValueError:
@@ -98,27 +71,6 @@ def _management_validate_function_groups(
         if state
         else _STRICT_VALIDATE_FUNCTION_GROUPS(value, function_tools)
     )
-
-
-def _management_merge_agent_config(
-    source: Any, updates: dict[str, Any]
-) -> dict[str, Any]:
-    """Validate unrelated section edits without rewriting repair-owned Function fields."""
-    if not _ALLOW_QUARANTINED_TOOLS.get():
-        return _STRICT_MERGE_AGENT_CONFIG(source, updates)
-
-    raw = dict(source)
-    state = function_configuration_repair_state(raw)
-    if state is None or not is_field_only_configuration_update(updates):
-        return _STRICT_MERGE_AGENT_CONFIG(source, updates)
-
-    normalized = _STRICT_MERGE_AGENT_CONFIG(_safe_function_configuration(raw), updates)
-    for key in (CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS):
-        if key in raw:
-            normalized[key] = deepcopy(raw[key])
-        else:
-            normalized.pop(key, None)
-    return normalized
 
 
 def is_field_only_configuration_update(updates: Mapping[str, Any]) -> bool:
@@ -488,18 +440,3 @@ async def _tolerant_agent_test(
         )
     result.status = _overall(result.checks)
     return result
-
-
-@contextmanager
-def management_function_tools(section: str) -> Iterator[None]:
-    """Limit tolerant reads to the three existing repair-aware Management sections."""
-    if section not in {"request_rules", "guest_mode", "tools"}:
-        yield
-        return
-    token = _ALLOW_QUARANTINED_TOOLS.set(True)
-    names_token = _QUARANTINED_FUNCTION_NAMES.set(frozenset())
-    try:
-        yield
-    finally:
-        _QUARANTINED_FUNCTION_NAMES.reset(names_token)
-        _ALLOW_QUARANTINED_TOOLS.reset(token)

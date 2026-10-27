@@ -91,17 +91,13 @@ def test_effective_configuration_quarantines_tool_but_retains_group_assignment()
     ]
 
 
-def test_usable_tools_records_names_for_invalid_siblings() -> None:
+def test_inspected_tools_exclude_invalid_siblings_without_changing_source() -> None:
     data, valid, invalid = _mixed_grouped_data()
-    token = quarantine._QUARANTINED_FUNCTION_NAMES.set(frozenset())
-    try:
-        usable = quarantine._usable_function_tools(data)
-        assert [tool["spec"]["name"] for tool in usable] == [valid["spec"]["name"]]
-        assert quarantine._QUARANTINED_FUNCTION_NAMES.get() == frozenset(
-            {invalid["spec"]["name"]}
-        )
-    finally:
-        quarantine._QUARANTINED_FUNCTION_NAMES.reset(token)
+    original = deepcopy(data)
+    usable = quarantine.inspect_function_tools(data)
+    assert [tool["spec"]["name"] for tool in usable] == [valid["spec"]["name"]]
+    assert invalid["spec"]["name"] not in {tool["spec"]["name"] for tool in usable}
+    assert data == original
 
 
 def test_tolerant_group_validation_ignores_only_quarantined_members(
@@ -110,8 +106,7 @@ def test_tolerant_group_validation_ignores_only_quarantined_members(
     """Guest Mode and Functions validate the usable group view, not broken members."""
     data, valid, _invalid = _mixed_grouped_data()
     original = deepcopy(data[CONF_FUNCTION_GROUPS])
-    with quarantine.management_function_tools("guest_mode"):
-        groups = quarantine._management_validate_function_groups(original, [valid])
+    groups = quarantine.inspect_function_groups(original, [valid])
     assert groups[0]["functions"] == [valid["spec"]["name"]]
     assert original == data[CONF_FUNCTION_GROUPS]
 
@@ -125,67 +120,42 @@ def test_group_quarantine_keeps_non_list_input_for_strict_validation(
         "_STRICT_VALIDATE_FUNCTION_GROUPS",
         lambda value, _tools: observed.append(value) or value,
     )
-    allow_token = quarantine._ALLOW_QUARANTINED_TOOLS.set(True)
-    names_token = quarantine._QUARANTINED_FUNCTION_NAMES.set(frozenset({"broken"}))
-    try:
-        value = {"unexpected": "shape"}
-        assert quarantine._management_validate_function_groups(value, []) == value
-    finally:
-        quarantine._QUARANTINED_FUNCTION_NAMES.reset(names_token)
-        quarantine._ALLOW_QUARANTINED_TOOLS.reset(allow_token)
+    value = {"unexpected": "shape"}
+    assert quarantine.inspect_function_groups(value, []) == value
 
     assert observed == [{"unexpected": "shape"}]
 
 
-def test_management_merge_uses_strict_path_for_valid_functions(monkeypatch) -> None:
+def test_unchanged_function_merge_uses_strict_validation_for_valid_functions(monkeypatch) -> None:
     data = agent_config_defaults()
     delegated: list[tuple[Any, dict[str, Any]]] = []
     monkeypatch.setattr(
         quarantine,
         "_STRICT_MERGE_AGENT_CONFIG",
-        lambda source, updates: (
+        lambda source, updates, **_kwargs: (
             delegated.append((source, updates)) or {**source, **updates}
         ),
     )
-    allow_token = quarantine._ALLOW_QUARANTINED_TOOLS.set(True)
-    try:
-        merged = quarantine._management_merge_agent_config(
-            data, {"guest_mode_enabled": True}
-        )
-    finally:
-        quarantine._ALLOW_QUARANTINED_TOOLS.reset(allow_token)
+    merged, _display = quarantine.merge_unchanged_function_configuration(
+        SimpleNamespace(data=data, title="Assistant"), {"guest_mode_enabled": True}
+    )
 
     assert merged["guest_mode_enabled"] is True
     assert delegated == [(data, {"guest_mode_enabled": True})]
 
 
-def test_management_merge_keeps_missing_group_key_absent(monkeypatch) -> None:
+def test_unchanged_function_merge_keeps_missing_group_key_absent() -> None:
     data, _valid, _invalid = _mixed_grouped_data()
     original_tools = data[CONF_FUNCTION_TOOLS]
     data.pop(CONF_FUNCTION_GROUPS)
-    monkeypatch.setattr(
-        quarantine,
-        "_safe_function_configuration",
-        lambda raw: dict(raw),
+    merged, display = quarantine.merge_unchanged_function_configuration(
+        SimpleNamespace(data=data, title="Assistant"), {"guest_mode_enabled": True}
     )
-    monkeypatch.setattr(
-        quarantine,
-        "_STRICT_MERGE_AGENT_CONFIG",
-        lambda _source, _updates: {
-            CONF_FUNCTION_TOOLS: "safe normalized tools",
-            CONF_FUNCTION_GROUPS: [{"id": "normalized"}],
-        },
-    )
-    allow_token = quarantine._ALLOW_QUARANTINED_TOOLS.set(True)
-    try:
-        merged = quarantine._management_merge_agent_config(
-            data, {"guest_mode_enabled": True}
-        )
-    finally:
-        quarantine._ALLOW_QUARANTINED_TOOLS.reset(allow_token)
 
     assert merged[CONF_FUNCTION_TOOLS] == original_tools
     assert CONF_FUNCTION_GROUPS not in merged
+    assert merged["guest_mode_enabled"] is True
+    assert display[CONF_FUNCTION_GROUPS] == []
 
 
 def test_unchanged_merge_does_not_add_an_omitted_group_key(monkeypatch) -> None:

@@ -36,7 +36,7 @@ from .agent_config import (
     agent_config_snapshot,
     function_tool_enabled,
     function_tool_yaml,
-    merge_agent_config as merge_validated_agent_config,
+    merge_agent_config,
     model_capabilities,
     normalize_agent_config,
     normalize_persisted_agent_config,
@@ -120,13 +120,11 @@ from .management_configuration_guidance import (
     decorate_configuration_result,
 )
 from .management_function_quarantine import (
-    _management_configured_tools as configured_function_tools_from_data,
-    _management_merge_agent_config as merge_agent_config,
-    _management_validate_function_groups as validate_function_groups,
     _tolerant_agent_test as async_test_agent,
     _tolerant_persist_function_configuration,
+    inspect_function_groups,
+    inspect_function_tools,
     is_field_only_configuration_update,
-    management_function_tools,
     merge_unchanged_function_configuration,
 )
 from .management_function_repair import (
@@ -928,7 +926,7 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
             validate_rule_model_request(
                 candidate, subentry.data, getattr(request.entry, "data", {})
             )
-        tools = configured_function_tools_from_data(subentry.data)
+        tools = inspect_function_tools(subentry.data)
         review = await _review_rule_pack(hass, prepared, rules, tools)
         if action == "rule_pack_review":
             review["review_token"] = _register_rule_pack_review(
@@ -953,9 +951,7 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
             for rule in snapshot["rules"]
         ]
         configured_tools = (
-            configured_function_tools_from_data(subentry.data)
-            if hasattr(subentry, "data")
-            else []
+            inspect_function_tools(subentry.data) if hasattr(subentry, "data") else []
         )
         snapshot["function_catalog"] = [
             {
@@ -1118,7 +1114,7 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
         if legacy_policy and is_admin:
             # Migration translation is safety-sensitive: retain the existing
             # conservative legacy projection on the admin primary response.
-            configured_tools = configured_function_tools_from_data(subentry.data)
+            configured_tools = inspect_function_tools(subentry.data)
             exposed_entities = get_exposed_entities(hass)
 
         primary_result: dict[str, Any] = {
@@ -1149,7 +1145,7 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
         started = perf_counter()
 
         phase = perf_counter()
-        configured_tools = configured_function_tools_from_data(subentry.data)
+        configured_tools = inspect_function_tools(subentry.data)
         configured_tools_ms = _elapsed_ms(phase)
 
         phase = perf_counter()
@@ -1193,7 +1189,7 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
             knowledge_manager_ms = _elapsed_ms(phase)
 
             phase = perf_counter()
-            groups = validate_function_groups(
+            groups = inspect_function_groups(
                 subentry.data.get(CONF_FUNCTION_GROUPS, []), configured_tools
             )
             groups_ms = _elapsed_ms(phase)
@@ -1370,7 +1366,7 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
         if not tools_changed and projection.snapshot is not None:
             validated_functions = (projection.snapshot[CONF_FUNCTION_TOOLS], None)
         validation = _validation_result(
-            lambda: merge_validated_agent_config(
+            lambda: merge_agent_config(
                 dict(subentry.data), updates, validated_functions=validated_functions
             )
         )
@@ -1992,7 +1988,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             raise HomeAssistantError("Agent no longer exists")
         entry = latest_entry
         subentry = entry.subentries[subentry_id]
-        tools = configured_function_tools_from_data(subentry.data)
+        tools = inspect_function_tools(subentry.data)
         ha_existing = {
             reference_key(tool["function"]): tool for tool in tools if is_ha_tool(tool)
         }
@@ -2031,7 +2027,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             raise HomeAssistantError(
                 "A selected HA tool is no longer available; refresh the catalogue"
             )
-        groups = validate_function_groups(
+        groups = inspect_function_groups(
             subentry.data.get(CONF_FUNCTION_GROUPS, []), tools
         )
         group_id = message.get("group_id")
@@ -2146,10 +2142,8 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
                 "group_issues": deepcopy(state.group_issues),
             },
         }
-    tools = configured_function_tools_from_data(subentry.data)
-    groups = validate_function_groups(
-        subentry.data.get(CONF_FUNCTION_GROUPS, []), tools
-    )
+    tools = inspect_function_tools(subentry.data)
+    groups = inspect_function_groups(subentry.data.get(CONF_FUNCTION_GROUPS, []), tools)
     if action == "save":
         if "yaml" in message:
             if "tool" in message:
@@ -3233,8 +3227,7 @@ async def _async_management_request(
         else None
     )
     dispatch_ms = _elapsed_ms(dispatch_started)
-    with management_function_tools(section):
-        result = await handler(request)
+    result = await handler(request)
     handler_ms = _elapsed_ms(handler_started) if handler_started is not None else None
 
     if isinstance(result.get("config"), dict):

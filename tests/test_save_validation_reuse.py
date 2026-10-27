@@ -178,12 +178,11 @@ async def test_specialised_settings_reuse_and_seed_exact_projection(
         "safe_dump",
         Mock(side_effect=AssertionError("unchanged YAML must not be emitted")),
     )
-    with quarantine.management_function_tools(section):
-        result = await (
-            management_ui.async_guest_mode_command(request)
-            if section == "guest_mode"
-            else management_ui.async_knowledge_command(request)
-        )
+    result = await (
+        management_ui.async_guest_mode_command(request)
+        if section == "guest_mode"
+        else management_ui.async_knowledge_command(request)
+    )
     assert subentry.data["functions"] == raw["functions"]
     assert subentry.data["function_groups"] == raw["function_groups"]
     after, _ = repair.normalized_persisted_config_snapshot(
@@ -208,10 +207,9 @@ def test_unrelated_guest_merge_preserves_quarantined_fields_and_valid_subset():
     _hass, _entry, subentry = _hass_with_agent()
     subentry.data = {**subentry.data, "functions": _persisted_invalid_function_tools()}
     raw = deepcopy(subentry.data)
-    with quarantine.management_function_tools("guest_mode"):
-        persisted, snapshot = quarantine.merge_unchanged_function_configuration(
-            subentry, {"guest_mode_enabled": True}
-        )
+    persisted, snapshot = quarantine.merge_unchanged_function_configuration(
+        subentry, {"guest_mode_enabled": True}
+    )
     assert persisted["functions"] == raw["functions"]
     assert persisted["function_groups"] == raw["function_groups"]
     assert all(

@@ -1273,7 +1273,7 @@ def normalize_agent_config(
 
 
 def merge_agent_config(
-    current: dict[str, Any],
+    current: Mapping[str, Any],
     updates: dict[str, Any],
     *,
     validated_functions: tuple[list[dict[str, Any]], list[dict[str, Any]] | None]
