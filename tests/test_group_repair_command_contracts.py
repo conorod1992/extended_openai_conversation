@@ -300,7 +300,7 @@ async def test_group_only_repair_preserves_hydrated_tools_source(
     tools[0]["function"] = _RuntimeFunctionConfig(
         {"type": "native", "name": object()}, persisted_function
     )
-    monkeypatch.setattr(ui, "configured_function_tools_from_data", lambda _: tools)
+    monkeypatch.setattr(ui, 'inspect_function_tools', lambda _: tools)
     monkeypatch.setattr(ui, "_async_validate_configuration_dependencies", AsyncMock())
     await ui.async_management_command(
         hass,

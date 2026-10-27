@@ -276,7 +276,7 @@ async def async_set_function_tools_enabled(
         if entry is None:
             raise HomeAssistantError("Config entry not found")
         subentry = entry.subentries[subentry_id]
-        from .management_function_repair import function_configuration_repair_state
+        from .function_configuration_repair import function_configuration_repair_state
 
         repair_state = function_configuration_repair_state(dict(subentry.data))
         if repair_state is not None and repair_state.field_updates_allowed:
@@ -329,7 +329,7 @@ async def async_set_function_groups_enabled(
         if entry is None:
             raise HomeAssistantError("Config entry not found")
         subentry = entry.subentries[subentry_id]
-        from .management_function_repair import function_configuration_repair_state
+        from .function_configuration_repair import function_configuration_repair_state
 
         repair_state = function_configuration_repair_state(dict(subentry.data))
         if repair_state is not None and repair_state.field_updates_allowed:

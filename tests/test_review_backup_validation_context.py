@@ -11,7 +11,7 @@ from voluptuous import SchemaError
 
 from custom_components.extended_openai_conversation_responses import (
     backup,
-    management_function_repair as repair,
+    function_configuration_repair as repair,
 )
 from custom_components.extended_openai_conversation_responses.functions.web import (
     RestFunction,

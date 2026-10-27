@@ -18,8 +18,8 @@ not a runtime registration mechanism.
    revision checks. These checks run only for administrators; non-admin requests
    receive the section's authorization error rather than schema diagnostics.
 5. Call one explicit section handler. Section-specific authorization, confirmation,
-   validation and persistence remain in the handler. Management-only Function Tool
-   quarantine is scoped to the eligible sections and resets even after an error.
+   validation and persistence remain in the handler. Repair-aware sections call
+   explicit inspection helpers; configuration preview and execution stay strict.
 6. Project shared configuration guidance, exposed-attribute and repair metadata,
    then return while releasing the maintenance lease on success or failure.
 
@@ -42,6 +42,52 @@ projections. They do not install Management dispatch behavior. Function-group
 reference changes are passed explicitly to the single configuration persistence
 operation, with the expected revision, rather than through request-local patch
 state.
+
+## Tool and Group operation classification
+
+`management_operations.is_tool_mutation()` owns the backend classification used
+by revision admission and Tool timing. The inventory no longer belongs to the
+dependency-integrity module. It does not dispatch, authorize or validate requests.
+
+| Action | Handler-owned payload and validation |
+| --- | --- |
+| `save` | One `yaml` or `tool` definition, optional `original_name`; strict validation and reference reconciliation. |
+| `set_enabled` | Existing string `name`, Boolean `enabled`. |
+| `delete` | Existing string `name`, explicit confirmation and dependency checks. |
+| `save_group` | Valid Group object and member names, optional original ID; specialized repair and capacity rules. |
+| `delete_group` | Unambiguous saved Group ID and explicit confirmation. |
+| `ha_add` | Selected HA references, asynchronous discovery and agent reread; optional destination Group. |
+
+All six retain section-owned administrator checks after agent selection and the
+dispatcher's shared maintenance lease. Shared admission does not mean read-only,
+and mutation status must never select exclusive admission automatically. The
+outer revision check remains administrator-guarded and permits omitted revisions
+for legacy clients. Persistence captures and rechecks the revision around awaited
+dependency validation; that is a separate guarantee, not redundant admission.
+Named `serialize` reads retain their conditional revision check in the handler.
+
+Frontend `mutationEffects()` remains bundle-local: these operations invalidate
+Configuration and Request Rules and use the Tools revision queue. That queue is
+not a server authorization or mandatory-revision rule. Function Repair and
+Configuration saves have different acknowledgement ownership and stay separate.
+Unknown operations retain existing server errors and frontend null effects.
+
+`management-operation-contract.test.mjs` runs the actual pure backend classifier
+against actual frontend effects, using candidate names discovered from consumers
+instead of another hand-maintained action list. Deliberate classification and
+invalidation changes must fail the check. This prevents one-sided drift without
+runtime metadata loading, code generation or version negotiation. It cannot infer
+a newly mutating operation if both consumers omit it; public persistence/revision
+and frontend observable-effect tests remain independent safeguards.
+
+Early permissions, resource permissions, self-owned Backup/diagnostic/live-test
+gates and operation-specific request schemas remain with their existing owners.
+They do not share equivalent contracts and do not need a universal registry.
+
+`is_configuration_timing_operation()` similarly owns the existing `get`/`save`/
+`update` timing classification. It is deliberately narrower than configuration
+response guidance, which also handles validation and Function Repair responses.
+Changing timing metadata must not change validation, authorization or guidance.
 
 ## Boundaries
 

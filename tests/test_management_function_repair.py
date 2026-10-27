@@ -25,10 +25,12 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
 )
-from custom_components.extended_openai_conversation_responses.management_function_repair import (
-    async_function_repair,
+from custom_components.extended_openai_conversation_responses.function_configuration_repair import (
     function_tools_issue,
     isolated_function_tools,
+)
+from custom_components.extended_openai_conversation_responses.management_function_repair import (
+    async_function_repair,
 )
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.config_entries import ConfigEntryState

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import management_ui
+from custom_components.extended_openai_conversation_responses import agent_config, management_ui
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
 from custom_components.extended_openai_conversation_responses.guest_mode import (
     resolve_guest_policy,
@@ -129,7 +129,7 @@ async def test_legacy_retention_websocket_and_function_service_preserve_policy(
         assert {key: value for key, value in after.items() if key != "functions"} == {
             key: value for key, value in before.items() if key != "functions"
         }
-        assert not management_ui.configured_function_tools_from_data(after)[0][
+        assert not agent_config.configured_function_tools_from_data(after)[0][
             "enabled"
         ]
     finally:

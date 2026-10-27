@@ -1281,7 +1281,7 @@ async def _async_validate_request_rule_function_dependencies(
     try:
         tools = configured_function_tools_from_data(config)
     except HomeAssistantError, yaml.YAMLError, TypeError, ValueError:
-        from .management_function_repair import (
+        from .function_configuration_repair import (
             function_tools_issue,
             isolated_function_tools,
         )

@@ -13,6 +13,7 @@ from custom_components.extended_openai_conversation_responses import (
     debug_ui,
     frontend_assets,
     function_tool_quarantine as quarantine,
+    function_configuration_repair as function_analysis,
     management_function_repair as function_repair,
     management_loading_performance as loading,
     management_ui,
@@ -296,10 +297,10 @@ def test_agent_snapshot_keeps_invalid_function_tool_agent_discoverable() -> None
 def test_invalid_function_tool_health_is_cached_per_persisted_revision(
     monkeypatch,
 ) -> None:
-    function_repair._cached_isolated_function_tools.cache_clear()
-    function_repair._cached_function_tool_state.cache_clear()
+    function_analysis._cached_isolated_function_tools.cache_clear()
+    function_analysis._cached_function_tool_state.cache_clear()
     function_repair._health_cache.clear()
-    original = function_repair._isolate_function_tools_uncached
+    original = function_analysis._isolate_function_tools_uncached
     calls = 0
 
     def counted(options):
@@ -307,7 +308,7 @@ def test_invalid_function_tool_health_is_cached_per_persisted_revision(
         calls += 1
         return original(options)
 
-    monkeypatch.setattr(function_repair, "_isolate_function_tools_uncached", counted)
+    monkeypatch.setattr(function_analysis, "_isolate_function_tools_uncached", counted)
     options = {"functions": _persisted_invalid_function_tools()}
 
     first = function_repair.management_function_tool_health(options)
@@ -643,7 +644,7 @@ async def test_guest_mode_primary_get_skips_heavy_catalogues(monkeypatch) -> Non
     )
     monkeypatch.setattr(
         management_ui,
-        "configured_function_tools_from_data",
+        'inspect_function_tools',
         MagicMock(side_effect=AssertionError("tool catalog must stay off primary path")),
     )
 
@@ -677,8 +678,8 @@ async def test_guest_mode_details_reuses_one_exposed_entity_projection(monkeypat
 
     monkeypatch.setattr(management_ui, "async_get_guest_mode", AsyncMock(return_value=guest))
     monkeypatch.setattr(management_ui, "async_get_knowledge", AsyncMock(return_value=library))
-    monkeypatch.setattr(management_ui, "configured_function_tools_from_data", lambda _data: [])
-    monkeypatch.setattr(management_ui, "validate_function_groups", lambda _groups, _tools: [])
+    monkeypatch.setattr(management_ui, 'inspect_function_tools', lambda _data: [])
+    monkeypatch.setattr(management_ui, 'inspect_function_groups', lambda _groups, _tools: [])
     monkeypatch.setattr(management_ui, "get_exposed_entities", exposed_loader)
 
     def resolve_policy(_hass, _options, _manager, _tools, *, exposed_entities=None):
@@ -909,9 +910,9 @@ async def test_unavailable_native_full_get_reuses_one_quarantine_state(monkeypat
     monkeypatch.setattr(
         function_repair, "_persisted_projections", function_repair.OrderedDict()
     )
-    function_repair._cached_isolated_function_tools.cache_clear()
-    isolate = Mock(wraps=function_repair._isolate_function_tools_uncached)
-    monkeypatch.setattr(function_repair, "_isolate_function_tools_uncached", isolate)
+    function_analysis._cached_isolated_function_tools.cache_clear()
+    isolate = Mock(wraps=function_analysis._isolate_function_tools_uncached)
+    monkeypatch.setattr(function_analysis, "_isolate_function_tools_uncached", isolate)
     strict = Mock(side_effect=AssertionError("repairable native tools must skip strict snapshot"))
     monkeypatch.setattr(function_repair, "agent_config_snapshot", strict)
     message = {
@@ -1064,7 +1065,7 @@ async def test_repair_preflight_keeps_valid_sibling_collection_checks(monkeypatc
     monkeypatch.setattr(
         function_repair, "_persisted_projections", function_repair.OrderedDict()
     )
-    function_repair._cached_isolated_function_tools.cache_clear()
+    function_analysis._cached_isolated_function_tools.cache_clear()
 
     with pytest.raises(agent_config.AgentConfigError, match="duplicate tool name"):
         agent_config.validate_function_tools(tools)
@@ -1503,15 +1504,15 @@ async def test_unrelated_save_preserves_quarantine_without_reisolation(
     monkeypatch.setattr(
         function_repair, "_persisted_projections", function_repair.OrderedDict()
     )
-    function_repair._cached_isolated_function_tools.cache_clear()
+    function_analysis._cached_isolated_function_tools.cache_clear()
     from custom_components.extended_openai_conversation_responses import (
         management_configuration_guidance as guidance,
     )
 
     monkeypatch.setattr(guidance, "exposed_attribute_catalog", lambda *_: {})
     management_ui._configuration_defaults()
-    isolate = Mock(wraps=function_repair._isolate_function_tools_uncached)
-    monkeypatch.setattr(function_repair, "_isolate_function_tools_uncached", isolate)
+    isolate = Mock(wraps=function_analysis._isolate_function_tools_uncached)
+    monkeypatch.setattr(function_analysis, "_isolate_function_tools_uncached", isolate)
     message = {
         "entry_id": "entry-1", "subentry_id": "agent-1", "section": "configuration",
     }
@@ -1665,15 +1666,15 @@ async def test_cold_repairable_save_uses_one_quarantine_state(monkeypatch, caplo
     monkeypatch.setattr(
         function_repair, "_persisted_projections", function_repair.OrderedDict()
     )
-    function_repair._cached_isolated_function_tools.cache_clear()
+    function_analysis._cached_isolated_function_tools.cache_clear()
     from custom_components.extended_openai_conversation_responses import (
         management_configuration_guidance as guidance,
     )
 
     monkeypatch.setattr(guidance, "exposed_attribute_catalog", lambda *_: {})
     management_ui._configuration_defaults()
-    isolate = Mock(wraps=function_repair._isolate_function_tools_uncached)
-    monkeypatch.setattr(function_repair, "_isolate_function_tools_uncached", isolate)
+    isolate = Mock(wraps=function_analysis._isolate_function_tools_uncached)
+    monkeypatch.setattr(function_analysis, "_isolate_function_tools_uncached", isolate)
     strict = Mock(side_effect=AssertionError("repairable save must not validate raw tools"))
     monkeypatch.setattr(agent_config, "validate_function_tools", strict)
     message = {

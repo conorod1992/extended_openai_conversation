@@ -15,6 +15,7 @@ from custom_components.extended_openai_conversation_responses import (
 )
 from custom_components.extended_openai_conversation_responses.agent_config import (
     agent_config_defaults,
+    configured_function_tools_from_data,
 )
 from custom_components.extended_openai_conversation_responses.agent_test import (
     AgentTestResult,
@@ -92,54 +93,42 @@ def test_field_only_updates_preserve_quarantine_without_section_scope(hass, upda
 
 
 def test_management_merge_preserves_repair_owned_function_fields(
-    monkeypatch: pytest.MonkeyPatch,
+    hass,
 ) -> None:
     """Saving Guest Mode cannot silently rewrite quarantined Function Tools."""
     data, _valid_tool, _invalid_tool = _mixed_unknown_native_data()
     original_tools = data[CONF_FUNCTION_TOOLS]
     original_groups = deepcopy(data[CONF_FUNCTION_GROUPS])
 
-    monkeypatch.setattr(
-        quarantine,
-        "_STRICT_MERGE_AGENT_CONFIG",
-        lambda source, updates: {**dict(source), **updates},
+    subentry = SimpleNamespace(data=data, title="Assistant")
+    merged, display = quarantine.merge_unchanged_function_configuration(
+        subentry, {"guest_mode_enabled": True}
     )
-    token = quarantine._ALLOW_QUARANTINED_TOOLS.set(True)
-    try:
-        merged = quarantine._management_merge_agent_config(
-            data, {"guest_mode_enabled": True}
-        )
-    finally:
-        quarantine._ALLOW_QUARANTINED_TOOLS.reset(token)
 
     assert merged["guest_mode_enabled"] is True
     assert merged[CONF_FUNCTION_TOOLS] == original_tools
     assert merged[CONF_FUNCTION_GROUPS] == original_groups
+    assert display[CONF_FUNCTION_TOOLS] == [_valid_tool]
 
 
-@pytest.mark.parametrize("section", ["request_rules", "guest_mode", "tools"])
-def test_tolerant_management_scope_is_limited_and_reset_after_errors(
-    monkeypatch, section
+@pytest.mark.parametrize("inspection_error", [False, True])
+def test_tolerant_inspection_does_not_change_strict_loading_after_errors(
+    hass, monkeypatch, inspection_error
 ):
-    sentinel = [{"spec": {"name": "valid"}, "function": {"type": "template"}}]
-    monkeypatch.setattr(quarantine, "_usable_function_tools", lambda _: sentinel)
+    data, valid, _invalid = _mixed_unknown_native_data()
+    original = deepcopy(data)
+    if inspection_error:
+        def fail_inspection(_data):
+            raise RuntimeError("inspection failed")
 
-    def strict(_):
-        raise AssertionError("strict parser used")
-
-    monkeypatch.setattr(quarantine, "_STRICT_CONFIGURED_TOOLS", strict)
-    with pytest.raises(RuntimeError, match="handler failed"):
-        with quarantine.management_function_tools(section):
-            assert (
-                quarantine._management_configured_tools({CONF_FUNCTION_TOOLS: "broken"})
-                == sentinel
-            )
-            raise RuntimeError("handler failed")
-    with pytest.raises(AssertionError, match="strict parser used"):
-        quarantine._management_configured_tools({})
-    with quarantine.management_function_tools("configuration"):
-        with pytest.raises(AssertionError, match="strict parser used"):
-            quarantine._management_configured_tools({})
+        monkeypatch.setattr(quarantine, "function_tools_issue", fail_inspection)
+        with pytest.raises(RuntimeError, match="inspection failed"):
+            quarantine.inspect_function_tools(data)
+    else:
+        assert quarantine.inspect_function_tools(data) == [valid]
+    with pytest.raises(quarantine.HomeAssistantError):
+        configured_function_tools_from_data(data)
+    assert data == original
 
 
 @pytest.mark.asyncio
@@ -214,37 +203,24 @@ async def test_overview_fallback_uses_persisted_provider_and_model(
     assert runtime["client_loaded"] is False
 
 
-def test_management_quarantine_clean_paths_use_strict_helpers_and_reset_names(
+def test_management_inspection_clean_paths_use_strict_helpers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     data = {CONF_FUNCTION_TOOLS: "clean"}
     strict_tools = Mock(return_value=[{"spec": {"name": "clean"}}])
     strict_groups = Mock(return_value=[{"id": "g", "functions": ["clean"]}])
-    strict_merge = Mock(return_value={"merged": True})
     monkeypatch.setattr(quarantine, "function_tools_issue", lambda _raw: ([], None))
     monkeypatch.setattr(quarantine, "_STRICT_CONFIGURED_TOOLS", strict_tools)
     monkeypatch.setattr(quarantine, "_STRICT_VALIDATE_FUNCTION_GROUPS", strict_groups)
-    monkeypatch.setattr(quarantine, "_STRICT_MERGE_AGENT_CONFIG", strict_merge)
-
-    token = quarantine._QUARANTINED_FUNCTION_NAMES.set(frozenset({"stale"}))
-    try:
-        assert quarantine._usable_function_tools(data) == [{"spec": {"name": "clean"}}]
-        assert quarantine._QUARANTINED_FUNCTION_NAMES.get() == frozenset()
-    finally:
-        quarantine._QUARANTINED_FUNCTION_NAMES.reset(token)
+    assert quarantine.inspect_function_tools(data) == [{"spec": {"name": "clean"}}]
+    strict_tools.assert_called_once_with(data)
 
     groups = [{"id": "g", "functions": ["clean"]}]
     tools = [{"spec": {"name": "clean"}}]
-    assert quarantine._management_validate_function_groups(groups, tools) == [
+    assert quarantine.inspect_function_groups(groups, tools) == [
         {"id": "g", "functions": ["clean"]}
     ]
     strict_groups.assert_called_once_with(groups, tools)
-
-    assert quarantine._management_merge_agent_config(data, {"x": 1}) == {
-        "merged": True
-    }
-    strict_merge.assert_called_once_with(data, {"x": 1})
-
 
 def test_management_group_validation_filters_only_quarantined_members(
     monkeypatch: pytest.MonkeyPatch,
@@ -253,8 +229,7 @@ def test_management_group_validation_filters_only_quarantined_members(
     name = valid["spec"]["name"]
     groups = [{"id": "g", "name": "Group", "description": "Group tools", "loading_mode": "on_demand", "functions": [name, invalid["spec"]["name"], 123]}]
     original = deepcopy(groups)
-    with quarantine.management_function_tools("guest_mode"):
-        result = quarantine._management_validate_function_groups(groups, [valid])
+    result = quarantine.inspect_function_groups(groups, [valid])
     assert result[0]["functions"] == [name]
     assert groups == original
 
@@ -289,38 +264,21 @@ def test_restore_quarantined_group_members_preserves_hidden_raw_members() -> Non
 
 
 def test_management_merge_in_quarantine_preserves_raw_function_fields(
-    monkeypatch: pytest.MonkeyPatch,
+    hass,
 ) -> None:
-    raw = {
-        CONF_FUNCTION_TOOLS: "raw-tools",
-        CONF_FUNCTION_GROUPS: [{"id": "raw-group"}],
-        "other": "old",
-    }
-    monkeypatch.setattr(
-        quarantine, "function_tools_issue", lambda _raw: ([], "broken")
+    raw, valid, _invalid = _mixed_unknown_native_data()
+    raw[CONF_FUNCTION_GROUPS] = [{"id": "raw-group"}]
+    raw["opaque_extension"] = {"future": [None, False, {"shape": 7}]}
+    original = deepcopy(raw)
+    merged, display = quarantine.merge_unchanged_function_configuration(
+        SimpleNamespace(data=raw, title="Assistant"), {"prompt": "new"}
     )
-    monkeypatch.setattr(
-        quarantine,
-        "_safe_function_configuration",
-        lambda _raw: {"safe": True},
-    )
-    monkeypatch.setattr(
-        quarantine,
-        "_STRICT_MERGE_AGENT_CONFIG",
-        lambda source, updates: {**source, **updates},
-    )
-
-    token = quarantine._ALLOW_QUARANTINED_TOOLS.set(True)
-    try:
-        merged = quarantine._management_merge_agent_config(
-            raw, {"other": "new"}
-        )
-    finally:
-        quarantine._ALLOW_QUARANTINED_TOOLS.reset(token)
-
-    assert merged["other"] == "new"
-    assert merged[CONF_FUNCTION_TOOLS] == "raw-tools"
+    assert merged["prompt"] == "new"
+    assert merged[CONF_FUNCTION_TOOLS] == original[CONF_FUNCTION_TOOLS]
     assert merged[CONF_FUNCTION_GROUPS] == [{"id": "raw-group"}]
+    assert merged["opaque_extension"] == original["opaque_extension"]
+    assert display[CONF_FUNCTION_TOOLS] == [valid]
+    assert raw == original
 
 
 def test_tolerant_persist_delegates_when_configuration_is_clean(

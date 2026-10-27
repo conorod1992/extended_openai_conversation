@@ -17,7 +17,7 @@ from homeassistant.exceptions import HomeAssistantError
 def test_backup_recovery_preserves_absence_of_function_fields(monkeypatch) -> None:
     from custom_components.extended_openai_conversation_responses import backup
     from custom_components.extended_openai_conversation_responses import (
-        management_function_repair as repair,
+        function_configuration_repair as repair,
     )
 
     calls = 0

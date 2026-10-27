@@ -33,6 +33,30 @@ while an absent setting may inherit future model or integration behavior. Do not
 reconstruct explicitness by comparing values with current defaults, and do not add
 a second synchronized explicit-fields collection.
 
+### Explicit inspection and execution boundaries
+
+`function_configuration_repair.py` owns read-only Tool/Group analysis and its
+existing bounded validation caches. `FunctionConfigurationRepairState` describes
+usable source siblings, damage and raw Group data; it does not authorize execution
+or supply a lossless save payload. Runtime quarantine, backup preparation and
+management inspection share this analysis without importing management writes.
+
+Repair-aware Request Rules, Guest Mode and Function editor operations call
+`inspect_function_tools()` and `inspect_function_groups()` explicitly. These
+operations do not change an ambient validation mode. Configuration request
+preview and submitted Tool definitions use the strict `agent_config` interfaces,
+including inside child tasks spawned by an inspection operation.
+
+`management_function_repair.py` retains projection caching, revision lineage and
+revision-checked writes. `merge_unchanged_function_configuration()` returns a raw
+field-scoped persistence payload separately from its validation/display candidate.
+Private backup preparation restores raw repair-owned fields after validation;
+shareable exports retain their separate redaction and decoding requirements.
+
+Runtime quarantine keeps its request-local Tool-to-Group exclusion state. It may
+retain strictly validated siblings, but never makes an invalid Tool executable.
+That execution policy is distinct from tolerant editor inspection.
+
 `normalize_agent_config()` validates values and, with `apply_defaults=True`, supplies
 integration/model defaults and compatibility normalization. `merge_agent_config()`
 validates the final merged candidate, preserves opaque current fields and controls

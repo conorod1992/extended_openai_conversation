@@ -21,7 +21,7 @@ async def test_policy_projection_avoids_catalogue_loading(monkeypatch, is_admin)
     exposed = Mock(return_value=[])
     monkeypatch.setattr(management_ui, "async_get_guest_mode", AsyncMock(return_value=guest))
     monkeypatch.setattr(management_ui, "async_get_knowledge", knowledge)
-    monkeypatch.setattr(management_ui, "validate_function_groups", groups)
+    monkeypatch.setattr(management_ui, 'inspect_function_groups', groups)
     monkeypatch.setattr(management_ui, "resolve_guest_policy", policy)
     monkeypatch.setattr(management_ui, "get_exposed_entities", exposed)
     request = management_ui._ManagementRequest(
