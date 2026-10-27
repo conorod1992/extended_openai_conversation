@@ -15,9 +15,9 @@ Repeated binding deduplicates the handle; rebinding moves cleanup ownership
 along with the existing I/O guard.
 
 The regenerable embedding cache registers its plain HA Store separately. Its
-best-effort persistence semantics are unchanged. Integration-global Stores,
-including delayed-job queues and restore journals, are not adopted by an agent
-merely because they use the same storage implementation.
+best-effort persistence semantics are unchanged. Shared delayed-job Stores and
+per-agent, transaction-owned restore journals remain outside this live cleanup
+contract; sharing a storage implementation does not transfer their ownership.
 
 Permanent deletion keeps the established order:
 
