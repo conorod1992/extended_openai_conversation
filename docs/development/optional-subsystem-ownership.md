@@ -35,6 +35,8 @@ not a cross-Store transaction. Failures retain the existing retry behavior.
 The gate's resource snapshot requires no configuration or directory scan on a
 conversation request. Cached gate lookup constructs no discarded replacement
 owners.
+Cold lookup retains the existing atomic publication through `setdefault`, so
+concurrent construction cannot publish different maintenance owners for one key.
 
 Adding an agent-bound guarded Store no longer requires teaching deletion its
 manager's private attribute names. A new durable namespace still needs an

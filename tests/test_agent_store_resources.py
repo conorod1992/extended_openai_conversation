@@ -1,6 +1,8 @@
 """Agent storage ownership follows live handles, not manager object layouts."""
 
+import asyncio
 import gc
+from threading import Barrier
 from unittest.mock import AsyncMock, Mock
 from weakref import ref
 
@@ -35,6 +37,30 @@ def test_gate_lookup_does_not_construct_discarded_owners(hass, monkeypatch):
         )
     sibling = agent_maintenance.get_agent_maintenance_gate(hass, "provider", "sibling")
     assert created == [owner, sibling]
+
+
+async def test_concurrent_cold_gate_lookup_publishes_one_owner(hass, monkeypatch):
+    original = agent_maintenance.AgentMaintenanceGate
+    constructing = Barrier(2, timeout=10)
+
+    class ConcurrentGate(original):
+        def __init__(self):
+            super().__init__()
+            constructing.wait()
+
+    monkeypatch.setattr(agent_maintenance, "AgentMaintenanceGate", ConcurrentGate)
+    first, second = await asyncio.gather(
+        *(
+            asyncio.to_thread(
+                agent_maintenance.get_agent_maintenance_gate, hass, "provider", "agent"
+            )
+            for _ in range(2)
+        )
+    )
+    assert first is second
+    assert (
+        agent_maintenance.get_agent_maintenance_gate(hass, "provider", "agent") is first
+    )
 
 
 def test_store_binding_is_deduplicated_and_exactly_scoped(hass):

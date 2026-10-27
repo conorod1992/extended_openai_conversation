@@ -209,7 +209,7 @@ def get_agent_maintenance_gate(
     key = (entry_id, subentry_id)
     gate = gates.get(key)
     if gate is None:
-        gate = gates[key] = AgentMaintenanceGate()
+        gate = gates.setdefault(key, AgentMaintenanceGate())
     return gate
 
 
