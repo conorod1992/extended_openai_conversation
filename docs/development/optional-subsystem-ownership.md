@@ -63,3 +63,39 @@ Archive retention still prunes older data when collection is disabled; Knowledge
 keeps its existing management/startup access. Live reconciliation retains its
 configuration-identity fast path, immediate capability gating, manager reuse and
 retry semantics. This boundary adds no work to ordinary conversation requests.
+
+## Scope and availability boundaries
+
+| Capability | Owner and initialization | Retained lifecycle responsibility |
+| --- | --- | --- |
+| Persistent Memory | Agent; conversational manager when enabled, management getter otherwise | Authoritative Store and regenerable embedding cache; existing recovery and embedding-provider boundaries |
+| Temporary Memory | Agent; enabled mode or explicit management access | Expiry/prune persistence is drained before permanent deletion |
+| Knowledge | Agent; existing startup preload, including disabled conversational access | Live enablement still gates model access; management data remains available |
+| Archive | Agent metadata and transient partition handles | Registration-owned retention remains necessary for older data even when collection is disabled |
+| Usage | Agent; durable or existing volatile fallback | Retention tasks, final flush and permanent-erasure preparation have distinct policies |
+| Guest Mode and Request Rules | Agent; policy state is established before request processing | An unreadable policy must not silently become an unrestricted request; Rule condition listeners retain explicit unload |
+| Skills | Shared manager and working directory | Existing discovery, recovery and activation policy remain separate from agent-private Store erasure |
+| Quiet Hours | Integration-global manager and status entity | Scheduling, volume ownership and registry identity survive individual provider unload |
+| Broadcast | Global services/API; manager is acquired when needed | Successful registration alone publishes the API setup marker; a failed registration remains retryable |
+| Diagnostics | Agent-scoped bounded runtime capture | Clearing captured data is separate from durable Store deletion |
+| Delayed Tools and transfers | Shared durable queues/staging with per-agent contents | Remove the departing agent's items through their specialized APIs; do not erase a shared Store |
+
+These boundaries intentionally do not form a generic subsystem registry.
+Manager preparation, durable schemas, authorization and shared queue semantics
+have different responsibilities; sharing a storage class does not unify them.
+
+## Deliberate non-changes
+
+A normal per-provider Quiet Hours `BinarySensorEntity` would acquire provider
+ownership: provider unload/removal would affect a status entity that currently
+outlives that provider. A global platform would avoid that coupling, but the
+supported Core registry re-enable path skips ownerless entries, requiring custom
+reattachment anyway. Moving platforms would therefore add handoff, migration and
+re-enable coordination while risking renamed entity IDs and automation references.
+The existing status entity, schedule and volume restoration behavior remain.
+
+Disabled managers are not uniformly made lazy. Startup Knowledge availability,
+Archive retention of existing data, management/backup access and authorization
+policy recovery are established contracts. Their current load/retry isolation
+and direct live-update paths are retained. This work introduces no first-request
+initialization or new conversation-time scans, serialization or task creation.
