@@ -6,13 +6,17 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+from weakref import WeakSet
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
 from .const import DOMAIN
 from .operation_settlement import async_settle_owned_operation
+
+if TYPE_CHECKING:
+    from homeassistant.helpers.storage import Store
 
 _AGENT_MAINTENANCE_GATES = f"{DOMAIN}.agent_maintenance_gates"
 
@@ -38,6 +42,20 @@ class AgentMaintenanceGate:
         )
         self._active_owner: object | None = None
         self._recovery_owner: object | None = None
+        self._stores: WeakSet[Store[Any]] = WeakSet()
+
+    def register_store(self, store: Store[Any]) -> None:
+        """Track one exact live handle without retaining unloaded resources."""
+        self._stores.add(store)
+
+    def unregister_store(self, store: Store[Any]) -> None:
+        """Move a handle's cleanup ownership when its existing binding changes."""
+        self._stores.discard(store)
+
+    @property
+    def storage_resources(self) -> tuple[Store[Any], ...]:
+        """Hold live handles strongly for the duration of exclusive deletion."""
+        return tuple(self._stores)
 
     def require_available(self) -> None:
         """Reject indeterminate generations except inside owned recovery work."""
@@ -188,7 +206,11 @@ def get_agent_maintenance_gate(
         dict[tuple[str, str], AgentMaintenanceGate],
         hass.data.setdefault(_AGENT_MAINTENANCE_GATES, {}),
     )
-    return gates.setdefault((entry_id, subentry_id), AgentMaintenanceGate())
+    key = (entry_id, subentry_id)
+    gate = gates.get(key)
+    if gate is None:
+        gate = gates[key] = AgentMaintenanceGate()
+    return gate
 
 
 async def _async_run_exclusive_operation[T](

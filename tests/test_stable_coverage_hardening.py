@@ -61,7 +61,7 @@ async def test_agent_deletion_cancels_owned_background_work_and_fences_agent(
     key = ("entry-1", "agent-1")
     hass.data[f"{DOMAIN}.usage_managers"] = {key: manager}
 
-    monkeypatch.setattr(agent_deletion, "Store", _FakeStore)
+    agent_deletion.get_agent_maintenance_gate(hass, *key).register_store(store)
     monkeypatch.setattr(agent_deletion, "PropagatingWriteStore", _FakeStore)
 
     from custom_components.extended_openai_conversation_responses import model_lifecycle as lifecycle

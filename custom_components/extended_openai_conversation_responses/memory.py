@@ -20,6 +20,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
+from .agent_maintenance import get_agent_maintenance_gate
 from .const import (
     CONF_MEMORY_AUTO_CREATE,
     CONF_MEMORY_ENABLED,
@@ -266,6 +267,10 @@ class HomeAssistantEmbeddingCacheStorage:
             private=True,
             atomic_writes=True,
             serialize_in_event_loop=False,
+        )
+        # Register cleanup ownership without changing best-effort cache I/O.
+        get_agent_maintenance_gate(hass, entry_id, subentry_id).register_store(
+            self._store
         )
 
     async def async_load(self) -> dict[str, Any] | None:

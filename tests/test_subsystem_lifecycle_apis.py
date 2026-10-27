@@ -148,12 +148,12 @@ async def test_coordinator_calls_explicit_preparation_before_store_discovery(
     manager = Mock(async_prepare_for_deletion=AsyncMock())
     hass.data[f"{DOMAIN}.{suffix}"] = {key: manager}
 
-    def stores(owner):
-        assert owner is manager
+    async def remove_stores(gate):
+        assert gate is agent_deletion.get_agent_maintenance_gate(hass, *key)
+        assert gate.owns_exclusive()
         manager.async_prepare_for_deletion.assert_awaited_once()
-        return []
 
-    monkeypatch.setattr(agent_deletion, "_owned_stores", stores)
+    monkeypatch.setattr(agent_deletion, "async_remove_agent_stores", remove_stores)
     monkeypatch.setattr(agent_deletion, "_storage_names", lambda *_: [])
     await agent_deletion.async_delete_agent_data(hass, *key)
     assert key not in hass.data[f"{DOMAIN}.{suffix}"]
