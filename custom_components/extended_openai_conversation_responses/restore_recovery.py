@@ -27,6 +27,7 @@ from .live_subentry_updates import (
     configuration_supports_live_update,
     update_live_subentry,
 )
+from .operation_settlement import async_settle_owned_operation
 from .operational_errors import log_handled_failure
 
 _LOGGER = logging.getLogger(__name__)
@@ -783,12 +784,21 @@ async def async_finish_restore_reload(
         return
     from homeassistant.config_entries import ConfigEntryState
 
-    if getattr(
-        entry, "state", None
-    ) is ConfigEntryState.LOADED and not await hass.config_entries.async_reload(
-        entry.entry_id
-    ):
-        raise HomeAssistantError(
-            "Restore completed, but reloading the assistant failed"
+    async def reload_and_reconcile() -> None:
+        if getattr(
+            entry, "state", None
+        ) is ConfigEntryState.LOADED and not await hass.config_entries.async_reload(
+            entry.entry_id
+        ):
+            raise HomeAssistantError(
+                "Restore completed, but reloading the assistant failed"
+            )
+        pending.discard(entry.entry_id)
+
+    # This transition spans removal of the old entry's runtime. HA must own and
+    # track the task; binding it to the unloading entry would cancel the reload.
+    await async_settle_owned_operation(
+        hass.async_create_task(
+            reload_and_reconcile(), name="EOAI restore reload and reconciliation"
         )
-    pending.discard(entry.entry_id)
+    )

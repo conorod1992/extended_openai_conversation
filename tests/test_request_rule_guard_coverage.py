@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -165,14 +167,16 @@ async def test_action_guard_service_calls_active_authorizer_and_registers_once(
     )
     request_rules._ensure_action_guard_service(hass)
     authorizer = Mock()
-    token = request_rules._ACTIVE_ACTION_GUARD.set(authorizer)
+    token = request_rules._ACTIVE_RULE_ACTION.set(
+        replace(request_rules._ACTIVE_RULE_ACTION.get(), authorize_action=authorizer)
+    )
     try:
         pending = {"action": "light.turn_on"}
         await registered[(DOMAIN, request_rules._GUARD_SERVICE)](
             SimpleNamespace(data={"pending_action": pending})
         )
     finally:
-        request_rules._ACTIVE_ACTION_GUARD.reset(token)
+        request_rules._ACTIVE_RULE_ACTION.reset(token)
 
     authorizer.assert_called_once_with(pending)
 

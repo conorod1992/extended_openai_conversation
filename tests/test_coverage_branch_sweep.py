@@ -1092,23 +1092,7 @@ def test_request_rule_result_references_recurse_but_ignore_identity_fields() -> 
     }
 
 
-def test_request_rule_result_paths_collect_nested_references() -> None:
-    from custom_components.extended_openai_conversation_responses import request_rules
 
-    paths = request_rules._result_paths_by_alias(
-        {
-            "message": "{first.answer} / {first.name}",
-            "nested": [{"value": "{second.value}"}],
-        }
-    )
-
-    assert paths == {
-        "first": {
-            "{first.answer}",
-            "{first.name}",
-        },
-        "second": {"{second.value}"},
-    }
 
 
 @pytest.mark.parametrize(
@@ -1598,6 +1582,7 @@ async def test_finish_restore_reload_surfaces_loaded_reload_failure(
     )
     hass.data[f"{restore_recovery.DOMAIN}.restore_reload_pending"] = {"entry"}
     hass.config_entries.async_reload = AsyncMock(return_value=False)
+    hass.async_create_task = asyncio.create_task
 
     with pytest.raises(HomeAssistantError, match="reloading the assistant failed"):
         await restore_recovery.async_finish_restore_reload(hass, entry, subentry)
@@ -1626,6 +1611,7 @@ async def test_finish_restore_reload_discards_successful_pending_marker(
     pending = {"entry"}
     hass.data[f"{restore_recovery.DOMAIN}.restore_reload_pending"] = pending
     hass.config_entries.async_reload = AsyncMock(return_value=True)
+    hass.async_create_task = asyncio.create_task
 
     await restore_recovery.async_finish_restore_reload(hass, entry, subentry)
 

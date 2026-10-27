@@ -18,7 +18,11 @@ from homeassistant.helpers import llm
 
 from .exceptions import EffectReplayBlocked
 from .execution_arguments import execution_identity
-from .function_execution import _schema_without_patterns, validate_function_arguments
+from .function_execution import (
+    _schema_without_patterns,
+    retained_function_input,
+    validate_function_arguments,
+)
 from .ha_tool_result_compat import is_tool_result_content
 from .parallel_tool_execution import is_parallel_safe_integration_tool
 from .schema_errors import SCHEMA_ERRORS
@@ -221,23 +225,6 @@ def check_effect_replay(entity: Any, signature: str) -> None:
         )
 
 
-_dispatch_origin: ContextVar[tuple[llm.ToolInput, llm.ToolInput] | None] = ContextVar(
-    "tool_dispatch_origin", default=None
-)
-
-
-@contextmanager
-def bind_dispatch_origin(
-    dispatched: llm.ToolInput, retained: llm.ToolInput
-) -> Iterator[None]:
-    """Link a validated copy to its retained call only during this execution."""
-    token = _dispatch_origin.set((dispatched, retained))
-    try:
-        yield
-    finally:
-        _dispatch_origin.reset(token)
-
-
 def record_dispatch(
     entity: Any,
     tool_input: llm.ToolInput,
@@ -324,9 +311,9 @@ def dispatch_conversation_id(entity: Any) -> str | None:
 
 def dispatch_inputs(tool_input: llm.ToolInput) -> list[llm.ToolInput]:
     retained = [tool_input]
-    origin = _dispatch_origin.get()
-    if origin is not None and origin[0] is tool_input:
-        retained.append(origin[1])
+    origin = retained_function_input(tool_input)
+    if origin is not None:
+        retained.append(origin)
     return retained
 
 

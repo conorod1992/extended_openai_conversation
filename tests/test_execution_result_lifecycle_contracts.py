@@ -1,5 +1,7 @@
 """Combined guarantees for execution provenance, local dataflow and durable cleanup."""
 
+from dataclasses import replace
+
 from dataclasses import asdict, dataclass
 from io import BytesIO
 import json
@@ -228,14 +230,16 @@ def test_alias_copy_uses_current_producer_and_leaves_authored_response_untouched
         rr.ScriptVariables({"second": "{{ shared.result }}"}), "second", "shared"
     )
     shared = {"shared": {"result": "from A"}}
-    token = rr._ACTIVE_FUNCTION_RESULTS.set({"first": "from A"})
+    token = rr._ACTIVE_RULE_ACTION.set(
+        replace(rr._ACTIVE_RULE_ACTION.get(), function_results={"first": "from A"})
+    )
     try:
         assert binding.async_simple_render(shared) == {}
-        rr._ACTIVE_FUNCTION_RESULTS.get()["second"] = False
+        rr._ACTIVE_RULE_ACTION.get().function_results["second"] = False
         assert binding.async_simple_render(shared) == {"second": False}
         assert shared == {"shared": {"result": "from A"}}
     finally:
-        rr._ACTIVE_FUNCTION_RESULTS.reset(token)
+        rr._ACTIVE_RULE_ACTION.reset(token)
 
 
 def test_unrelated_result_alias_fields_are_not_function_metadata():

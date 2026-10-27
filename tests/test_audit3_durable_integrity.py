@@ -1,5 +1,7 @@
 """Restore and persistence regressions from audit PR 5."""
 
+from dataclasses import replace
+
 from dataclasses import asdict
 from types import SimpleNamespace
 
@@ -9,8 +11,8 @@ from custom_components.extended_openai_conversation_responses import (
     management_function_quarantine as quarantine,
 )
 from custom_components.extended_openai_conversation_responses.conversation import (
-    _ACTIVE_SCOPE,
     ExtendedOpenAIAgentEntity,
+    _ACTIVE_TURN,
 )
 from custom_components.extended_openai_conversation_responses.conversation_archive import (
     ArchiveSession,
@@ -146,7 +148,9 @@ async def test_guest_write_only_memory_dispatches_with_write_scope(operation):
     agent._effective_guest_policy = lambda: GuestCapabilityPolicy(
         True, shared_memory_read=False, shared_memory_write=True
     )
-    token = _ACTIVE_SCOPE.set(shared_scope(source="test"))
+    token = _ACTIVE_TURN.set(
+        replace(_ACTIVE_TURN.get(), scope=shared_scope(source="test"))
+    )
     try:
         existing = await memory.async_add(
             SHARED_HOUSEHOLD_SCOPE_ID, "Existing fact", "home", "explicit"
@@ -163,7 +167,7 @@ async def test_guest_write_only_memory_dispatches_with_write_scope(operation):
         with pytest.raises(RuntimeError, match="disabled for this data scope"):
             await agent._async_execute_memory_tool("list", {}, None)
     finally:
-        _ACTIVE_SCOPE.reset(token)
+        _ACTIVE_TURN.reset(token)
 
 
 def test_configuration_redaction_preserves_named_counts_and_flags():

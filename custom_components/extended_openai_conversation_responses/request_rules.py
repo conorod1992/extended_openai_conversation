@@ -146,18 +146,25 @@ DEFAULT_WORDING_GROUPS: tuple[dict[str, Any], ...] = (
 )
 SENSITIVE_DOMAINS = {"lock", "alarm_control_panel"}
 RequestRuleFunctionExecutor = Callable[[str, dict[str, Any]], Awaitable[Any]]
-_ACTIVE_FUNCTION_EXECUTOR: ContextVar[RequestRuleFunctionExecutor | None] = ContextVar(
-    "request_rule_function_executor", default=None
-)
 _GUARD_SERVICE = "request_rule_guard"
-_ACTIVE_ACTION_GUARD: ContextVar[Callable[[Mapping[str, Any]], None] | None] = (
-    ContextVar("request_rule_action_guard", default=None)
-)
-_ACTIVE_FUNCTION_RESULTS: ContextVar[dict[str, Any] | None] = ContextVar(
-    "request_rule_function_results", default=None
-)
-_ACTIVE_RESULT_PATHS: ContextVar[dict[str, set[str]] | None] = ContextVar(
-    "request_rule_result_paths", default=None
+
+
+@dataclass(frozen=True, slots=True)
+class RuleActionExecution:
+    """One native script's callbacks and intentionally shared captured results.
+
+    Child script tasks inherit this immutable binding and the same result map.
+    A nested rule installs its own binding and restores the enclosing execution.
+    """
+
+    function_executor: RequestRuleFunctionExecutor | None = None
+    authorize_action: Callable[[Mapping[str, Any]], None] | None = None
+    function_results: dict[str, Any] | None = None
+
+
+_NO_RULE_ACTION = RuleActionExecution()
+_ACTIVE_RULE_ACTION: ContextVar[RuleActionExecution] = ContextVar(
+    "request_rule_action_execution", default=_NO_RULE_ACTION
 )
 
 
@@ -2184,25 +2191,6 @@ def _result_references(value: Any) -> set[str]:
     return set()
 
 
-def _result_paths_by_alias(value: Any) -> dict[str, set[str]]:
-    """Collect paths whose absence must stop later HA actions."""
-    paths: dict[str, set[str]] = {}
-
-    def visit(item: Any) -> None:
-        if isinstance(item, str):
-            for match in RESULT_REFERENCE.finditer(item):
-                paths.setdefault(match.group(1), set()).add(match.group(0))
-        elif isinstance(item, Mapping):
-            for child in item.values():
-                visit(child)
-        elif isinstance(item, list):
-            for child in item:
-                visit(child)
-
-    visit(value)
-    return paths
-
-
 def _is_function_action(step: Mapping[str, Any]) -> bool:
     """Recognize only a statically identified EOAI Function service action."""
     return is_function_service_action(step)
@@ -2491,7 +2479,7 @@ async def async_call_active_function(
     function: str, arguments: Any, result_alias: str | None = None
 ) -> Any:
     """Execute an integration function in the active Request Rule context."""
-    executor = _ACTIVE_FUNCTION_EXECUTOR.get()
+    executor = _ACTIVE_RULE_ACTION.get().function_executor
     if executor is None:
         raise HomeAssistantError(
             "This action is only available while a Request Rule is running"
@@ -2500,7 +2488,7 @@ async def async_call_active_function(
         raise HomeAssistantError("Function arguments must be an object")
     result = await executor(function, dict(arguments))
     if result_alias is not None:
-        results = _ACTIVE_FUNCTION_RESULTS.get()
+        results = _ACTIVE_RULE_ACTION.get().function_results
         if results is None:
             raise HomeAssistantError("Function results require an active Request Rule")
         from .ha_tool_result_compat import tool_result_data
@@ -2717,7 +2705,7 @@ class _ResultAliasVariables(ScriptVariables):
     def async_simple_render(self, run_variables: Mapping[str, Any]) -> dict[str, Any]:
         # The producer publishes only after this invocation returns successfully.
         # Authored HA response variables may contain any earlier service's value.
-        results = _ACTIVE_FUNCTION_RESULTS.get() or {}
+        results = _ACTIVE_RULE_ACTION.get().function_results or {}
         return {self._alias: results[self._alias]} if self._alias in results else {}
 
 
@@ -3203,7 +3191,7 @@ def _ensure_action_guard_service(hass: HomeAssistant) -> None:
         return
 
     async def guard(call: ServiceCall) -> None:
-        authorize = _ACTIVE_ACTION_GUARD.get()
+        authorize = _ACTIVE_RULE_ACTION.get().authorize_action
         if authorize is None:
             raise HomeAssistantError("No active Request Rule action authorization")
         authorize(call.data["pending_action"])
@@ -3645,11 +3633,8 @@ async def _async_evaluate_matched_rule(
                 if not _guest_script_allowed(hass, [pending], policy):
                     raise GuestModeDenied()
 
-            guard_token = _ACTIVE_ACTION_GUARD.set(authorize_pending)
-            token = _ACTIVE_FUNCTION_EXECUTOR.set(function_executor)
-            result_token = _ACTIVE_FUNCTION_RESULTS.set(result_values)
-            paths_token = _ACTIVE_RESULT_PATHS.set(
-                _result_paths_by_alias(executable_actions)
+            action_token = _ACTIVE_RULE_ACTION.set(
+                RuleActionExecution(function_executor, authorize_pending, result_values)
             )
             execution = StopReason()
             execution_token = script_execution_cv.set(execution)
@@ -3691,10 +3676,7 @@ async def _async_evaluate_matched_rule(
                 raise
             finally:
                 script_execution_cv.reset(execution_token)
-                _ACTIVE_RESULT_PATHS.reset(paths_token)
-                _ACTIVE_FUNCTION_RESULTS.reset(result_token)
-                _ACTIVE_FUNCTION_EXECUTOR.reset(token)
-                _ACTIVE_ACTION_GUARD.reset(guard_token)
+                _ACTIVE_RULE_ACTION.reset(action_token)
                 # Script.async_unload was added after our minimum supported HA.
                 # Older Script releases expose async_stop for the same final
                 # run cleanup; keep using async_unload where it is available.

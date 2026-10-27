@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from inspect import unwrap
 from pathlib import Path
 from types import SimpleNamespace
@@ -65,15 +67,17 @@ def _agent(*, data: dict | None = None) -> SimpleNamespace:
 
 async def _retrieve_temporary_direct(agent: SimpleNamespace):
     """Exercise the owned retrieval path with an explicit retained scope."""
-    prefetch_token = lifecycle._TEMPORARY_MEMORY_PREFETCH.set(None)
-    scope_token = conversation_module._ACTIVE_SCOPE.set(
-        user_scope("test", source="coverage")
+    prefetch_token = lifecycle._ACTIVE_INVOCATION.set(
+        replace(lifecycle._ACTIVE_INVOCATION.get(), temporary_memory_prefetch=None)
+    )
+    scope_token = conversation_module._ACTIVE_TURN.set(
+        replace(conversation_module._ACTIVE_TURN.get(), scope=user_scope("test", source="coverage"))
     )
     try:
         return await Agent._async_retrieve_temporary_memories(agent)
     finally:
-        conversation_module._ACTIVE_SCOPE.reset(scope_token)
-        lifecycle._TEMPORARY_MEMORY_PREFETCH.reset(prefetch_token)
+        conversation_module._ACTIVE_TURN.reset(scope_token)
+        lifecycle._ACTIVE_INVOCATION.reset(prefetch_token)
 
 
 @pytest.mark.asyncio
@@ -162,11 +166,13 @@ async def test_retrieval_short_circuits_and_isolates_temporary_store_failures() 
     agent._continuity = SimpleNamespace(
         async_get_memory_bundle=AsyncMock(side_effect=RuntimeError("offline"))
     )
-    token = conversation_module._ACTIVE_MEMORY_SESSION.set(("session", 30))
+    token = conversation_module._ACTIVE_TURN.set(
+        replace(conversation_module._ACTIVE_TURN.get(), memory_session=("session", 30))
+    )
     try:
         assert await Agent._async_retrieve_memories(agent, object(), "query") == []
     finally:
-        conversation_module._ACTIVE_MEMORY_SESSION.reset(token)
+        conversation_module._ACTIVE_TURN.reset(token)
 
     agent._effective_guest_policy = lambda: GuestCapabilityPolicy(
         True, temporary_memory=False
@@ -179,11 +185,13 @@ async def test_retrieval_short_circuits_and_isolates_temporary_store_failures() 
     agent._temporary_memory = SimpleNamespace(
         async_active=AsyncMock(side_effect=RuntimeError("offline"))
     )
-    token = conversation_module._ACTIVE_TEMPORARY_SCOPE.set("request:one")
+    token = conversation_module._ACTIVE_TURN.set(
+        replace(conversation_module._ACTIVE_TURN.get(), temporary_scope="request:one")
+    )
     try:
         assert await _retrieve_temporary_direct(agent) == []
     finally:
-        conversation_module._ACTIVE_TEMPORARY_SCOPE.reset(token)
+        conversation_module._ACTIVE_TURN.reset(token)
 
 
 @pytest.mark.asyncio
@@ -212,11 +220,13 @@ async def test_embedding_and_temporary_retrieval_success_paths() -> None:
     agent._temporary_memory = SimpleNamespace(
         async_active=AsyncMock(return_value=records)
     )
-    token = conversation_module._ACTIVE_TEMPORARY_SCOPE.set("request:one")
+    token = conversation_module._ACTIVE_TURN.set(
+        replace(conversation_module._ACTIVE_TURN.get(), temporary_scope="request:one")
+    )
     try:
         assert await _retrieve_temporary_direct(agent) is records
     finally:
-        conversation_module._ACTIVE_TEMPORARY_SCOPE.reset(token)
+        conversation_module._ACTIVE_TURN.reset(token)
 
 
 def test_simple_properties_skill_and_entity_filters(
@@ -362,11 +372,13 @@ def test_function_group_loader_requires_session_and_routes_active_request(
     loader = Mock(return_value=expected)
     monkeypatch.setattr(conversation_module, "load_function_groups", loader)
     session = FunctionGroupSession("session", 1.0)
-    token = conversation_module._ACTIVE_FUNCTION_GROUP_SESSION.set(session)
+    token = conversation_module._ACTIVE_TURN.set(
+        replace(conversation_module._ACTIVE_TURN.get(), function_group_session=session)
+    )
     try:
         assert Agent._load_function_groups(agent, ["group-1"]) is expected
     finally:
-        conversation_module._ACTIVE_FUNCTION_GROUP_SESSION.reset(token)
+        conversation_module._ACTIVE_TURN.reset(token)
     loader.assert_called_once_with(session, ["group-1"], groups, configured, max_tools=None, extra_tool_count=0)
 
 
@@ -546,7 +558,9 @@ async def test_memory_tool_validation_and_shared_automatic_write_guard() -> None
             await Agent._async_execute_memory_tool(agent, operation, arguments, None)
 
     agent._current_write_memory_scope_id = Mock()
-    token = conversation_module._ACTIVE_SCOPE.set(shared_scope(source="test"))
+    token = conversation_module._ACTIVE_TURN.set(
+        replace(conversation_module._ACTIVE_TURN.get(), scope=shared_scope(source="test"))
+    )
     try:
         with pytest.raises(
             ValueError, match="automatic shared memory creation is disabled"
@@ -558,26 +572,30 @@ async def test_memory_tool_validation_and_shared_automatic_write_guard() -> None
                 None,
             )
     finally:
-        conversation_module._ACTIVE_SCOPE.reset(token)
+        conversation_module._ACTIVE_TURN.reset(token)
     agent._current_write_memory_scope_id.assert_not_called()
 
 
 def test_memory_scope_resolution_covers_guest_shared_and_unretained_paths() -> None:
     agent = _agent(data={CONF_SHARED_MEMORY_MODE: SHARED_MEMORY_DISABLED})
     shared = shared_scope(source="test")
-    token = conversation_module._ACTIVE_SCOPE.set(shared)
+    token = conversation_module._ACTIVE_TURN.set(
+        replace(conversation_module._ACTIVE_TURN.get(), scope=shared)
+    )
     try:
         assert Agent._current_memory_scope_id(agent) is None
         assert Agent._personal_memory_scope_id(agent) is None
     finally:
-        conversation_module._ACTIVE_SCOPE.reset(token)
+        conversation_module._ACTIVE_TURN.reset(token)
 
     personal = user_scope("one", source="test")
-    token = conversation_module._ACTIVE_SCOPE.set(personal)
+    token = conversation_module._ACTIVE_TURN.set(
+        replace(conversation_module._ACTIVE_TURN.get(), scope=personal)
+    )
     try:
         assert Agent._personal_memory_scope_id(agent) == "one"
     finally:
-        conversation_module._ACTIVE_SCOPE.reset(token)
+        conversation_module._ACTIVE_TURN.reset(token)
 
     agent.subentry.data[CONF_SHARED_MEMORY_MODE] = SHARED_MEMORY_EXPLICIT
     agent._effective_guest_policy = lambda: GuestCapabilityPolicy(
@@ -588,23 +606,27 @@ def test_memory_scope_resolution_covers_guest_shared_and_unretained_paths() -> N
     ]
 
     agent._effective_guest_policy = GuestCapabilityPolicy.unrestricted
-    token = conversation_module._ACTIVE_SCOPE.set(user_scope("one", source="test"))
+    token = conversation_module._ACTIVE_TURN.set(
+        replace(conversation_module._ACTIVE_TURN.get(), scope=user_scope("one", source="test"))
+    )
     try:
         assert Agent._current_memory_scope_id(agent) == "one"
     finally:
-        conversation_module._ACTIVE_SCOPE.reset(token)
+        conversation_module._ACTIVE_TURN.reset(token)
 
     agent._effective_guest_policy = lambda: GuestCapabilityPolicy(
         True, shared_memory_read=True, shared_memory_write=True
     )
-    token = conversation_module._ACTIVE_SCOPE.set(shared)
+    token = conversation_module._ACTIVE_TURN.set(
+        replace(conversation_module._ACTIVE_TURN.get(), scope=shared)
+    )
     try:
         assert (
             Agent._current_write_memory_scope_id(agent, None, None, source="explicit")
             == SHARED_HOUSEHOLD_SCOPE_ID
         )
     finally:
-        conversation_module._ACTIVE_SCOPE.reset(token)
+        conversation_module._ACTIVE_TURN.reset(token)
 
     agent._effective_guest_policy = lambda: GuestCapabilityPolicy(
         True, shared_memory_write=False
@@ -620,12 +642,14 @@ def test_memory_scope_resolution_covers_guest_shared_and_unretained_paths() -> N
             agent, "household", None, source="explicit"
         )
 
-    token = conversation_module._ACTIVE_SCOPE.set(unretained_scope())
+    token = conversation_module._ACTIVE_TURN.set(
+        replace(conversation_module._ACTIVE_TURN.get(), scope=unretained_scope())
+    )
     try:
         with pytest.raises(RuntimeError, match="disabled for this data scope"):
             Agent._current_write_memory_scope_id(agent, None, None, source="explicit")
     finally:
-        conversation_module._ACTIVE_SCOPE.reset(token)
+        conversation_module._ACTIVE_TURN.reset(token)
 
 
 @pytest.mark.asyncio
@@ -637,23 +661,27 @@ async def test_temporary_and_archive_argument_validation() -> None:
     execute_temporary = unwrap(Agent._async_execute_temporary_memory_tool)
     with pytest.raises(RuntimeError, match="unavailable for this retained-data scope"):
         await execute_temporary(agent, "update", {})
-    owner_token = conversation_module._ACTIVE_SCOPE.set(
-        user_scope("one", source="test")
+    owner_token = conversation_module._ACTIVE_TURN.set(
+        replace(conversation_module._ACTIVE_TURN.get(), scope=user_scope("one", source="test"))
     )
-    token = conversation_module._ACTIVE_TEMPORARY_SCOPE.set("request:one")
+    token = conversation_module._ACTIVE_TURN.set(
+        replace(conversation_module._ACTIVE_TURN.get(), temporary_scope="request:one")
+    )
     try:
         with pytest.raises(ValueError, match="memory_id is required"):
             await execute_temporary(agent, "update", {})
     finally:
-        conversation_module._ACTIVE_TEMPORARY_SCOPE.reset(token)
-        conversation_module._ACTIVE_SCOPE.reset(owner_token)
+        conversation_module._ACTIVE_TURN.reset(token)
+        conversation_module._ACTIVE_TURN.reset(owner_token)
 
     agent._archive = SimpleNamespace()
     execute_archive = unwrap(Agent._async_execute_archive_tool)
-    scope_token = conversation_module._ACTIVE_SCOPE.set(
-        user_scope("one", source="test")
+    scope_token = conversation_module._ACTIVE_TURN.set(
+        replace(conversation_module._ACTIVE_TURN.get(), scope=user_scope("one", source="test"))
     )
-    archive_token = conversation_module._ACTIVE_ARCHIVE.set(("key", "session"))
+    archive_token = conversation_module._ACTIVE_TURN.set(
+        replace(conversation_module._ACTIVE_TURN.get(), archive=("key", "session"))
+    )
     try:
         with pytest.raises(RuntimeError, match="model archive search is disabled"):
             await execute_archive(agent, "search", {"query": "hello"})
@@ -664,8 +692,8 @@ async def test_temporary_and_archive_argument_validation() -> None:
         with pytest.raises(ValueError, match="session_id is required"):
             await execute_archive(agent, "get", {})
     finally:
-        conversation_module._ACTIVE_ARCHIVE.reset(archive_token)
-        conversation_module._ACTIVE_SCOPE.reset(scope_token)
+        conversation_module._ACTIVE_TURN.reset(archive_token)
+        conversation_module._ACTIVE_TURN.reset(scope_token)
 
 
 @pytest.mark.asyncio

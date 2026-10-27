@@ -200,6 +200,7 @@ test("keyboard-only Function Tool journey authors, edits and deletes YAML", asyn
 
   await tabTo(page, panel.locator("#function-add"));
   await page.keyboard.press("Enter");
+  await expect(panel.locator("#add-tool")).toBeFocused();
   await tabTo(page, panel.locator("#add-tool"));
   await page.keyboard.press("Enter");
   await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", true);

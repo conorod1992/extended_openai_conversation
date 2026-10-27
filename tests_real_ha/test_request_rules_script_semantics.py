@@ -12,7 +12,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     SERVICE_CALL_FUNCTION,
 )
 from custom_components.extended_openai_conversation_responses.request_rules import (
-    _ACTIVE_FUNCTION_RESULTS,
+    _ACTIVE_RULE_ACTION,
 )
 from homeassistant.components import conversation
 from homeassistant.core import Context
@@ -256,7 +256,7 @@ async def test_function_capture_preserves_ha_variables_and_survives_reload(
     assert _speech(await _say(hass, agent, "run rule")) == "Battery 62"
     assert calls == ["kitchen:62"]
     assert function_calls.await_count == 1
-    assert _ACTIVE_FUNCTION_RESULTS.get() is None
+    assert _ACTIVE_RULE_ACTION.get().function_results is None
 
     entry_id = agent.entry.entry_id
     assert await hass.config_entries.async_reload(entry_id)
@@ -265,7 +265,7 @@ async def test_function_capture_preserves_ha_variables_and_survives_reload(
     assert _speech(await _say(hass, agent, "run rule")) == "Battery 62"
     assert calls == ["kitchen:62", "kitchen:62"]
     assert function_calls.await_count == 2
-    assert _ACTIVE_FUNCTION_RESULTS.get() is None
+    assert _ACTIVE_RULE_ACTION.get().function_results is None
     await agent._request_rules.async_create(
         _local(
             [
@@ -288,7 +288,7 @@ async def test_function_capture_preserves_ha_variables_and_survives_reload(
     )
     assert calls == ["kitchen:62", "kitchen:62"]
     assert function_calls.await_count == 3
-    assert _ACTIVE_FUNCTION_RESULTS.get() is None
+    assert _ACTIVE_RULE_ACTION.get().function_results is None
 
 
 async def test_wait_timeout_stops_actions_and_next_request_works(hass, monkeypatch):

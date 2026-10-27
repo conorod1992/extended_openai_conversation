@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -624,13 +625,15 @@ async def test_active_function_context_and_guest_slot_boundaries() -> None:
         await rr.async_call_active_function("demo", {})
 
     executor = AsyncMock(return_value={"ok": True})
-    token = rr._ACTIVE_FUNCTION_EXECUTOR.set(executor)
+    token = rr._ACTIVE_RULE_ACTION.set(
+        replace(rr._ACTIVE_RULE_ACTION.get(), function_executor=executor)
+    )
     try:
         with pytest.raises(HomeAssistantError, match="must be an object"):
             await rr.async_call_active_function("demo", [])
         assert await rr.async_call_active_function("demo", {"value": 1}) == {"ok": True}
     finally:
-        rr._ACTIVE_FUNCTION_EXECUTOR.reset(token)
+        rr._ACTIVE_RULE_ACTION.reset(token)
 
     with pytest.raises(rr.GuestModeDenied):
         rr._resolve_guest_slot_templates("{{ missing }}", {})

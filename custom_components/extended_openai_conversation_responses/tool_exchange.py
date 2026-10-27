@@ -40,11 +40,7 @@ from .parallel_tool_execution import (
     resolve_parallel_safe_batch,
 )
 from .public_errors import sanitize_backend_error
-from .tool_replay_guard import (
-    bind_dispatch_origin,
-    was_unacknowledged_equivalent,
-    with_effect_replay_scope,
-)
+from .tool_replay_guard import was_unacknowledged_equivalent, with_effect_replay_scope
 
 _MAX_ERROR_TEXT = 512
 
@@ -398,9 +394,12 @@ async def _execute_bound(
 ) -> conversation.ToolResultContent:
     """Execute one prepared call with strict runtime-failure semantics bound."""
     with (
-        bind_dispatch_origin(tool_input, retained_tool_input),
         bind_tool_recovery_state(recovery_state),
-        validated_function_call(tool_input, function_tool.get("spec", {})),
+        validated_function_call(
+            tool_input,
+            function_tool.get("spec", {}),
+            retained_tool_input=retained_tool_input,
+        ),
     ):
         return cast(
             conversation.ToolResultContent,

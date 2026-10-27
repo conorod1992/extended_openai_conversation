@@ -1,6 +1,7 @@
 """Persistent-memory v2 retrieval, metadata, scope, and bundle tests."""
 
 from copy import deepcopy
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -19,9 +20,8 @@ from custom_components.extended_openai_conversation_responses.continuity import 
     ConversationContinuity,
 )
 from custom_components.extended_openai_conversation_responses.conversation import (
-    _ACTIVE_MEMORY_SESSION,
-    _ACTIVE_SCOPE,
     ExtendedOpenAIAgentEntity,
+    _ACTIVE_TURN,
 )
 from custom_components.extended_openai_conversation_responses.memory import (
     EMBEDDING_CACHE_BATCH_SIZE,
@@ -520,8 +520,12 @@ async def test_conversation_bundle_selects_once_reuses_and_resets() -> None:
     entity._memory = memory
     entity._continuity = ConversationContinuity("agent")
     context = SimpleNamespace(context=SimpleNamespace(user_id="alice"))
-    scope_token = _ACTIVE_SCOPE.set(user_scope("alice", source="test"))
-    session_token = _ACTIVE_MEMORY_SESSION.set(("conversation:first", 5))
+    scope_token = _ACTIVE_TURN.set(
+        replace(_ACTIVE_TURN.get(), scope=user_scope("alice", source="test"))
+    )
+    session_token = _ACTIVE_TURN.set(
+        replace(_ACTIVE_TURN.get(), memory_session=("conversation:first", 5))
+    )
     try:
         assert await entity._async_retrieve_memories(context, "tea") == [first]
         current["one"] = MemoryRecord(
@@ -530,13 +534,15 @@ async def test_conversation_bundle_selects_once_reuses_and_resets() -> None:
         second = await entity._async_retrieve_memories(context, "unrelated topic")
         assert second[0].content == "Alice likes coffee."
         assert memory.async_search.await_count == 1
-        _ACTIVE_MEMORY_SESSION.reset(session_token)
-        session_token = _ACTIVE_MEMORY_SESSION.set(("conversation:second", 5))
+        _ACTIVE_TURN.reset(session_token)
+        session_token = _ACTIVE_TURN.set(
+            replace(_ACTIVE_TURN.get(), memory_session=("conversation:second", 5))
+        )
         await entity._async_retrieve_memories(context, "tea")
         assert memory.async_search.await_count == 2
     finally:
-        _ACTIVE_MEMORY_SESSION.reset(session_token)
-        _ACTIVE_SCOPE.reset(scope_token)
+        _ACTIVE_TURN.reset(session_token)
+        _ACTIVE_TURN.reset(scope_token)
 
 
 def test_scope_composition_and_strict_write_destinations() -> None:
@@ -546,7 +552,9 @@ def test_scope_composition_and_strict_write_destinations() -> None:
     )
     context = SimpleNamespace(context=SimpleNamespace(user_id="alice"))
 
-    token = _ACTIVE_SCOPE.set(user_scope("alice", source="test"))
+    token = _ACTIVE_TURN.set(
+        replace(_ACTIVE_TURN.get(), scope=user_scope("alice", source="test"))
+    )
     try:
         assert entity._current_readable_memory_scope_ids(context) == [
             "alice",
@@ -563,9 +571,11 @@ def test_scope_composition_and_strict_write_destinations() -> None:
             == SHARED_HOUSEHOLD_SCOPE_ID
         )
     finally:
-        _ACTIVE_SCOPE.reset(token)
+        _ACTIVE_TURN.reset(token)
 
-    token = _ACTIVE_SCOPE.set(shared_scope(source="test"))
+    token = _ACTIVE_TURN.set(
+        replace(_ACTIVE_TURN.get(), scope=shared_scope(source="test"))
+    )
     try:
         assert entity._current_readable_memory_scope_ids(context) == [
             SHARED_HOUSEHOLD_SCOPE_ID
@@ -575,13 +585,15 @@ def test_scope_composition_and_strict_write_destinations() -> None:
                 "personal", context, source="explicit"
             )
     finally:
-        _ACTIVE_SCOPE.reset(token)
+        _ACTIVE_TURN.reset(token)
 
-    token = _ACTIVE_SCOPE.set(unretained_scope())
+    token = _ACTIVE_TURN.set(
+        replace(_ACTIVE_TURN.get(), scope=unretained_scope())
+    )
     try:
         assert entity._current_readable_memory_scope_ids(context) == []
     finally:
-        _ACTIVE_SCOPE.reset(token)
+        _ACTIVE_TURN.reset(token)
 
 
 async def test_explicit_memory_search_uses_configured_hybrid_semantics() -> None:

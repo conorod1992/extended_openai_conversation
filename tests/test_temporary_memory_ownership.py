@@ -77,18 +77,20 @@ async def test_conversation_contract_binds_and_resets_owner_context(
     with pytest.raises(RuntimeError, match="temporary memory is unavailable"):
         await entity._async_execute_temporary_memory_tool("add", {})
 
-    scope_token = conversation._ACTIVE_SCOPE.set(
-        SimpleNamespace(scope_type="user", user_id="alice")
+    scope_token = conversation._ACTIVE_TURN.set(
+        replace(conversation._ACTIVE_TURN.get(), scope=SimpleNamespace(scope_type="user", user_id="alice"))
     )
-    temporary_token = conversation._ACTIVE_TEMPORARY_SCOPE.set("conversation:one")
+    temporary_token = conversation._ACTIVE_TURN.set(
+        replace(conversation._ACTIVE_TURN.get(), temporary_scope="conversation:one")
+    )
     try:
         records = await entity_cls._async_retrieve_temporary_memories(entity)
         result = await entity_cls._async_execute_temporary_memory_tool(
             entity, "add", {"content": "fact", "expires_at": "later"}
         )
     finally:
-        conversation._ACTIVE_TEMPORARY_SCOPE.reset(temporary_token)
-        conversation._ACTIVE_SCOPE.reset(scope_token)
+        conversation._ACTIVE_TURN.reset(temporary_token)
+        conversation._ACTIVE_TURN.reset(scope_token)
 
     assert [record.memory_id for record in records] == ["one"]
     assert result == {"ok": True}

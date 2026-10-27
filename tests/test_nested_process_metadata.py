@@ -17,7 +17,7 @@ async def test_nested_assist_invocations_cannot_write_parent_metadata(
     child = parent if same_agent else object.__new__(owner.ExtendedOpenAIAgentEntity)
 
     async def child_core(request):
-        metadata = owner._PROCESS_METADATA.get()
+        metadata = owner._ACTIVE_INVOCATION.get().metadata
         if metadata is not None:
             metadata.update(handled_locally=True, matched_rule={"id": "child-rule"})
         return "Child local answer"
@@ -38,4 +38,4 @@ async def test_nested_assist_invocations_cannot_write_parent_metadata(
     result, metadata = await parent.async_process_direct("parent")
     assert result == "Parent provider answered"
     assert metadata == {"handled_locally": False}
-    assert owner._PROCESS_METADATA.get() is None
+    assert owner._ACTIVE_INVOCATION.get().metadata is None

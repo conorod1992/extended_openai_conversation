@@ -1,6 +1,7 @@
 """Temporary-memory lifecycle, ownership, and safety tests."""
 
 from copy import deepcopy
+from dataclasses import replace
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -15,8 +16,8 @@ from custom_components.extended_openai_conversation_responses.const import (
     TEMPORARY_MEMORY_BALANCED,
 )
 from custom_components.extended_openai_conversation_responses.conversation import (
-    _ACTIVE_TEMPORARY_SCOPE,
     ExtendedOpenAIAgentEntity,
+    _ACTIVE_TURN,
 )
 from custom_components.extended_openai_conversation_responses.scope import unretained_scope
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
@@ -809,19 +810,21 @@ async def test_unretained_request_has_no_active_temporary_memory_scope(monkeypat
         "_effective_guest_policy",
         lambda self: SimpleNamespace(temporary_memory=True),
     )
-    token = _ACTIVE_TEMPORARY_SCOPE.set(None)
+    token = _ACTIVE_TURN.set(
+        replace(_ACTIVE_TURN.get(), temporary_scope=None)
+    )
     try:
         assert await entity._async_retrieve_temporary_memories() == []
     finally:
-        _ACTIVE_TEMPORARY_SCOPE.reset(token)
+        _ACTIVE_TURN.reset(token)
 
     active.assert_not_awaited()
 
 
 async def test_model_update_cannot_inherit_manual_sensitive_permission(monkeypatch):
     from custom_components.extended_openai_conversation_responses.conversation import (
-        _ACTIVE_SCOPE,
-    )
+    _ACTIVE_TURN,
+)
     from custom_components.extended_openai_conversation_responses.scope import (
         user_scope,
     )
@@ -842,8 +845,12 @@ async def test_model_update_cannot_inherit_manual_sensitive_permission(monkeypat
         "_effective_guest_policy",
         lambda self: SimpleNamespace(temporary_memory=True),
     )
-    scope_token = _ACTIVE_SCOPE.set(user_scope("alice", source="authenticated_user"))
-    temporary_token = _ACTIVE_TEMPORARY_SCOPE.set("user:alice")
+    scope_token = _ACTIVE_TURN.set(
+        replace(_ACTIVE_TURN.get(), scope=user_scope("alice", source="authenticated_user"))
+    )
+    temporary_token = _ACTIVE_TURN.set(
+        replace(_ACTIVE_TURN.get(), temporary_scope="user:alice")
+    )
     try:
         with pytest.raises(ValueError, match="explicit user request"):
             await agent._async_execute_temporary_memory_tool(
@@ -864,8 +871,8 @@ async def test_model_update_cannot_inherit_manual_sensitive_permission(monkeypat
             "My medical diagnosis is diabetes", None, None, owner_scope_id="user:alice", source="manual")
         assert explicit.source == "manual"
     finally:
-        _ACTIVE_SCOPE.reset(scope_token)
-        _ACTIVE_TEMPORARY_SCOPE.reset(temporary_token)
+        _ACTIVE_TURN.reset(scope_token)
+        _ACTIVE_TURN.reset(temporary_token)
     records = await memory.async_active("user:alice", owner_scope_id="user:alice")
     assert records[0].content == "My medical diagnosis is diabetes"
     assert records[0].source == "manual"

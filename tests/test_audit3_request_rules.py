@@ -1,5 +1,7 @@
 """Native action shorthand and typed Function result regression contracts."""
 
+from dataclasses import replace
+
 from types import SimpleNamespace
 
 import pytest
@@ -100,15 +102,19 @@ async def test_result_alias_preserves_native_return_type(value):
         return SimpleNamespace(tool_result={"result": value})
 
     results = {}
-    executor = rules._ACTIVE_FUNCTION_EXECUTOR.set(execute)
-    context = rules._ACTIVE_FUNCTION_RESULTS.set(results)
+    executor = rules._ACTIVE_RULE_ACTION.set(
+        replace(rules._ACTIVE_RULE_ACTION.get(), function_executor=execute)
+    )
+    context = rules._ACTIVE_RULE_ACTION.set(
+        replace(rules._ACTIVE_RULE_ACTION.get(), function_results=results)
+    )
     try:
         captured = await rules.async_call_active_function("lookup", {}, "reading")
         assert captured == value
         assert type(captured) is type(value)
     finally:
-        rules._ACTIVE_FUNCTION_RESULTS.reset(context)
-        rules._ACTIVE_FUNCTION_EXECUTOR.reset(executor)
+        rules._ACTIVE_RULE_ACTION.reset(context)
+        rules._ACTIVE_RULE_ACTION.reset(executor)
 
 
 @pytest.mark.parametrize(

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -149,10 +151,12 @@ async def test_temporary_memory_dispatcher_uses_request_scope_for_all_mutations(
         async_update=AsyncMock(return_value=record),
         async_delete=AsyncMock(return_value=1),
     )
-    scope_token = conversation._ACTIVE_SCOPE.set(
-        user_scope("user-1", source="test")
+    scope_token = conversation._ACTIVE_TURN.set(
+        replace(conversation._ACTIVE_TURN.get(), scope=user_scope("user-1", source="test"))
     )
-    temporary_token = conversation._ACTIVE_TEMPORARY_SCOPE.set("conversation:test")
+    temporary_token = conversation._ACTIVE_TURN.set(
+        replace(conversation._ACTIVE_TURN.get(), temporary_scope="conversation:test")
+    )
     try:
         created = await entity._async_execute_temporary_memory_tool(
             "add",
@@ -175,8 +179,8 @@ async def test_temporary_memory_dispatcher_uses_request_scope_for_all_mutations(
             "delete", {"memory_ids": ["temporary-1"]}
         )
     finally:
-        conversation._ACTIVE_TEMPORARY_SCOPE.reset(temporary_token)
-        conversation._ACTIVE_SCOPE.reset(scope_token)
+        conversation._ACTIVE_TURN.reset(temporary_token)
+        conversation._ACTIVE_TURN.reset(scope_token)
 
     entity._temporary_memory.async_add.assert_awaited_once_with(
         "conversation:test",
@@ -222,8 +226,12 @@ async def test_archive_dispatcher_routes_session_operations_and_resume_boundary(
         async_delete_date_range=AsyncMock(return_value={"deleted_sessions": 3}),
     )
     scope = user_scope("alice", source="test")
-    scope_token = conversation._ACTIVE_SCOPE.set(scope)
-    archive_token = conversation._ACTIVE_ARCHIVE.set(("session-key", "session-1"))
+    scope_token = conversation._ACTIVE_TURN.set(
+        replace(conversation._ACTIVE_TURN.get(), scope=scope)
+    )
+    archive_token = conversation._ACTIVE_TURN.set(
+        replace(conversation._ACTIVE_TURN.get(), archive=("session-key", "session-1"))
+    )
     try:
         searched = await entity._async_execute_archive_tool(
             "search",
@@ -239,7 +247,7 @@ async def test_archive_dispatcher_routes_session_operations_and_resume_boundary(
         )
         private = await entity._async_execute_archive_tool("private", {})
         resumed = await entity._async_execute_archive_tool("resume", {})
-        assert conversation._ACTIVE_ARCHIVE.get() == ("session-key", "session-2")
+        assert conversation._ACTIVE_TURN.get().archive == ("session-key", "session-2")
         current_deleted = await entity._async_execute_archive_tool(
             "delete_current", {}
         )
@@ -256,8 +264,8 @@ async def test_archive_dispatcher_routes_session_operations_and_resume_boundary(
             },
         )
     finally:
-        conversation._ACTIVE_ARCHIVE.reset(archive_token)
-        conversation._ACTIVE_SCOPE.reset(scope_token)
+        conversation._ACTIVE_TURN.reset(archive_token)
+        conversation._ACTIVE_TURN.reset(scope_token)
 
     entity._archive.async_search.assert_awaited_once_with(
         "user:alice",
@@ -309,29 +317,35 @@ async def test_conversation_tool_dispatchers_reject_malformed_control_arguments(
             "search", {"query": "dog", "limit": True}, _llm_context()
         )
 
-    temporary_scope_token = conversation._ACTIVE_SCOPE.set(
-        user_scope("user-1", source="test")
+    temporary_scope_token = conversation._ACTIVE_TURN.set(
+        replace(conversation._ACTIVE_TURN.get(), scope=user_scope("user-1", source="test"))
     )
-    temporary_token = conversation._ACTIVE_TEMPORARY_SCOPE.set("conversation:test")
+    temporary_token = conversation._ACTIVE_TURN.set(
+        replace(conversation._ACTIVE_TURN.get(), temporary_scope="conversation:test")
+    )
     try:
         with pytest.raises(ValueError, match="memory_ids must be a list of strings"):
             await entity._async_execute_temporary_memory_tool(
                 "delete", {"memory_ids": "temporary-1"}
             )
     finally:
-        conversation._ACTIVE_TEMPORARY_SCOPE.reset(temporary_token)
-        conversation._ACTIVE_SCOPE.reset(temporary_scope_token)
+        conversation._ACTIVE_TURN.reset(temporary_token)
+        conversation._ACTIVE_TURN.reset(temporary_scope_token)
 
-    scope_token = conversation._ACTIVE_SCOPE.set(user_scope("alice", source="test"))
-    archive_token = conversation._ACTIVE_ARCHIVE.set(("session-key", "session-1"))
+    scope_token = conversation._ACTIVE_TURN.set(
+        replace(conversation._ACTIVE_TURN.get(), scope=user_scope("alice", source="test"))
+    )
+    archive_token = conversation._ACTIVE_TURN.set(
+        replace(conversation._ACTIVE_TURN.get(), archive=("session-key", "session-1"))
+    )
     try:
         with pytest.raises(ValueError, match="start_date and end_date are required"):
             await entity._async_execute_archive_tool(
                 "delete_range", {"start_date": "2026-09-01", "confirm": True}
             )
     finally:
-        conversation._ACTIVE_ARCHIVE.reset(archive_token)
-        conversation._ACTIVE_SCOPE.reset(scope_token)
+        conversation._ACTIVE_TURN.reset(archive_token)
+        conversation._ACTIVE_TURN.reset(scope_token)
 
     entity._memory.async_list.assert_not_awaited()
     entity._temporary_memory.async_delete.assert_not_awaited()
@@ -446,10 +460,12 @@ async def test_conversation_lifecycle_tool_captures_active_session_ids() -> None
     entity = _agent()
     entity._attr_entity_id = "conversation.test"
     lifecycle_token = conversation.begin_conversation_lifecycle()
-    group_token = conversation._ACTIVE_FUNCTION_GROUP_SESSION.set(
-        SimpleNamespace(session_key="state-session")
+    group_token = conversation._ACTIVE_TURN.set(
+        replace(conversation._ACTIVE_TURN.get(), function_group_session=SimpleNamespace(session_key="state-session"))
     )
-    memory_token = conversation._ACTIVE_MEMORY_SESSION.set(("memory-session", 15))
+    memory_token = conversation._ACTIVE_TURN.set(
+        replace(conversation._ACTIVE_TURN.get(), memory_session=("memory-session", 15))
+    )
     tool_input = llm.ToolInput(
         id="call-1",
         tool_name="start_fresh_conversation",
@@ -470,8 +486,8 @@ async def test_conversation_lifecycle_tool_captures_active_session_ids() -> None
         )
         reset = conversation.requested_conversation_reset()
     finally:
-        conversation._ACTIVE_MEMORY_SESSION.reset(memory_token)
-        conversation._ACTIVE_FUNCTION_GROUP_SESSION.reset(group_token)
+        conversation._ACTIVE_TURN.reset(memory_token)
+        conversation._ACTIVE_TURN.reset(group_token)
         conversation.end_conversation_lifecycle(lifecycle_token)
 
     assert json.loads(tool_result_data(result)["result"])["status"] == "scheduled"

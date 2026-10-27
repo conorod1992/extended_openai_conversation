@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
@@ -30,8 +31,6 @@ from custom_components.extended_openai_conversation_responses.request import (
     build_provider_request_snapshot,
 )
 from custom_components.extended_openai_conversation_responses.request_rules import (
-    _ACTIVE_FUNCTION_EXECUTOR,
-    _ACTIVE_FUNCTION_RESULTS,
     DEFAULT_MATCHING,
     DEFAULT_WORDING_GROUPS,
     RequestRuleRuntime,
@@ -50,6 +49,7 @@ from custom_components.extended_openai_conversation_responses.request_rules impo
     validate_rule,
     validate_rule_groups,
     validate_wording_groups,
+    _ACTIVE_RULE_ACTION,
 )
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.typing import UNDEFINED
@@ -888,12 +888,14 @@ async def test_result_alias_validation_and_substitution() -> None:
 
 async def test_function_result_capture_requires_active_result_context() -> None:
     executor = AsyncMock(return_value={"result": "completed"})
-    token = _ACTIVE_FUNCTION_EXECUTOR.set(executor)
+    token = _ACTIVE_RULE_ACTION.set(
+        replace(_ACTIVE_RULE_ACTION.get(), function_executor=executor)
+    )
     try:
         with pytest.raises(HomeAssistantError, match="require an active Request Rule"):
             await async_call_active_function("lookup", {}, result_alias="lookup_result")
     finally:
-        _ACTIVE_FUNCTION_EXECUTOR.reset(token)
+        _ACTIVE_RULE_ACTION.reset(token)
 
     executor.assert_awaited_once_with("lookup", {})
 
@@ -913,13 +915,17 @@ async def test_function_capture_preserves_unwrapped_and_non_json_results(
     async def execute(_function, _arguments):
         return SimpleNamespace(tool_result=payload)
 
-    executor_token = _ACTIVE_FUNCTION_EXECUTOR.set(execute)
-    results_token = _ACTIVE_FUNCTION_RESULTS.set(results)
+    executor_token = _ACTIVE_RULE_ACTION.set(
+        replace(_ACTIVE_RULE_ACTION.get(), function_executor=execute)
+    )
+    results_token = _ACTIVE_RULE_ACTION.set(
+        replace(_ACTIVE_RULE_ACTION.get(), function_results=results)
+    )
     try:
         captured = await async_call_active_function("lookup", {}, "value")
     finally:
-        _ACTIVE_FUNCTION_RESULTS.reset(results_token)
-        _ACTIVE_FUNCTION_EXECUTOR.reset(executor_token)
+        _ACTIVE_RULE_ACTION.reset(results_token)
+        _ACTIVE_RULE_ACTION.reset(executor_token)
 
     assert captured == expected
     assert results["value"] == expected
@@ -1312,7 +1318,7 @@ async def test_function_result_capture_feeds_later_step_and_response(
                         step["data"]["arguments"],
                         step["data"].get("result_alias"),
                     )
-                    variables.update(module._ACTIVE_FUNCTION_RESULTS.get())
+                    variables.update(module._ACTIVE_RULE_ACTION.get().function_results)
                 elif "data" in step and "message" in step["data"]:
                     message = step["data"]["message"]
                     calls.append(
@@ -1429,14 +1435,18 @@ async def test_function_capture_accepts_false_zero_empty_and_null(value) -> None
     async def execute(_name, _arguments):
         return SimpleNamespace(tool_result={"result": value})
 
-    executor_token = module._ACTIVE_FUNCTION_EXECUTOR.set(execute)
-    result_token = module._ACTIVE_FUNCTION_RESULTS.set(results)
+    executor_token = module._ACTIVE_RULE_ACTION.set(
+        replace(module._ACTIVE_RULE_ACTION.get(), function_executor=execute)
+    )
+    result_token = module._ACTIVE_RULE_ACTION.set(
+        replace(module._ACTIVE_RULE_ACTION.get(), function_results=results)
+    )
     try:
         await async_call_active_function("value", {}, "captured")
         assert "captured" in results and results["captured"] == value
     finally:
-        module._ACTIVE_FUNCTION_RESULTS.reset(result_token)
-        module._ACTIVE_FUNCTION_EXECUTOR.reset(executor_token)
+        module._ACTIVE_RULE_ACTION.reset(result_token)
+        module._ACTIVE_RULE_ACTION.reset(executor_token)
 
 
 @pytest.mark.parametrize(

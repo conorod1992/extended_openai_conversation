@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 import json
 from types import SimpleNamespace
 from typing import Any
@@ -17,9 +18,8 @@ from custom_components.extended_openai_conversation_responses.continuity import 
     ConversationContinuity,
 )
 from custom_components.extended_openai_conversation_responses.conversation import (
-    _ACTIVE_MEMORY_SESSION,
-    _ACTIVE_SCOPE,
     ExtendedOpenAIAgentEntity,
+    _ACTIVE_TURN,
 )
 from custom_components.extended_openai_conversation_responses.guest_mode import (
     GuestCapabilityPolicy,
@@ -132,10 +132,12 @@ async def test_memory_store_bundle_prompt_and_tool_update_form_one_runtime_contr
 
     context = Context(user_id="alice")
     first_input, llm_context = _request("What breed is Oscar?", context)
-    scope_token = _ACTIVE_SCOPE.set(
-        user_scope("alice", source="test", device_id="kitchen")
+    scope_token = _ACTIVE_TURN.set(
+        replace(_ACTIVE_TURN.get(), scope=user_scope("alice", source="test", device_id="kitchen"))
     )
-    session_token = _ACTIVE_MEMORY_SESSION.set(("memory-runtime-acceptance", 30))
+    session_token = _ACTIVE_TURN.set(
+        replace(_ACTIVE_TURN.get(), memory_session=("memory-runtime-acceptance", 30))
+    )
     try:
         await entity._async_handle_message(first_input, _chat_log(first_input.text))
 
@@ -184,5 +186,5 @@ async def test_memory_store_bundle_prompt_and_tool_update_form_one_runtime_contr
             or []
         ) == [("alice", memory_id)]
     finally:
-        _ACTIVE_MEMORY_SESSION.reset(session_token)
-        _ACTIVE_SCOPE.reset(scope_token)
+        _ACTIVE_TURN.reset(session_token)
+        _ACTIVE_TURN.reset(scope_token)

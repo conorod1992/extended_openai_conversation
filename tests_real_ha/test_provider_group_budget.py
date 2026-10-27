@@ -1,9 +1,11 @@
 """Effective tool contracts through the real conversation group's loader."""
 
+from dataclasses import replace
+
 import pytest
 
 from custom_components.extended_openai_conversation_responses.conversation import (
-    _ACTIVE_FUNCTION_GROUP_SESSION,
+    _ACTIVE_TURN,
 )
 from custom_components.extended_openai_conversation_responses.function_groups import (
     FunctionGroupRuntime,
@@ -37,7 +39,9 @@ async def test_group_loading_obeys_effective_provider_budget(
     await _setup_entry(hass, entry)
     agent = conversation.async_get_agent(hass, entry.entry_id)
     session = FunctionGroupRuntime().begin("budget", 30)
-    token = _ACTIVE_FUNCTION_GROUP_SESSION.set(session)
+    token = _ACTIVE_TURN.set(
+        replace(_ACTIVE_TURN.get(), function_group_session=session)
+    )
     try:
         assert agent._load_function_groups(["first"])["status"] == "success"
         second = agent._load_function_groups(["second"])
@@ -49,4 +53,4 @@ async def test_group_loading_obeys_effective_provider_budget(
             assert second["status"] == "success"
             assert len(agent._get_function_tools()) >= 160
     finally:
-        _ACTIVE_FUNCTION_GROUP_SESSION.reset(token)
+        _ACTIVE_TURN.reset(token)

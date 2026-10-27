@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -62,6 +63,8 @@ class FakeConfigEntries:
 
 
 class FakeHass:
+    async_create_task = staticmethod(asyncio.create_task)
+
     def __init__(self) -> None:
         self.data: dict = {}
         self.config_entries = FakeConfigEntries()

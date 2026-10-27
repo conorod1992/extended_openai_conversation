@@ -64,7 +64,7 @@ async def test_local_action_uses_older_script_stop_and_clears_context(
     assert result.successful is True
     local_script.async_run.assert_awaited_once()
     local_script.async_stop.assert_awaited_once_with()
-    assert rr._ACTIVE_ACTION_GUARD.get() is None
+    assert rr._ACTIVE_RULE_ACTION.get().authorize_action is None
     with pytest.raises(HomeAssistantError, match="only available"):
         await rr.async_call_active_function("outside-request", {})
 
@@ -77,7 +77,7 @@ async def test_pending_scene_rechecks_live_guest_policy(
     monkeypatch.setattr(rr, "_guest_script_allowed", authorizations)
 
     async def run(*_args):
-        rr._ACTIVE_ACTION_GUARD.get()({"scene": "scene.evening"})
+        rr._ACTIVE_RULE_ACTION.get().authorize_action({"scene": "scene.evening"})
         return local_script.async_run.return_value
 
     local_script.async_run.side_effect = run
@@ -95,7 +95,7 @@ async def test_pending_scene_rechecks_live_guest_policy(
         authorizations.assert_not_called()
     assert result.successful is allowed
     local_script.async_stop.assert_awaited_once()
-    assert rr._ACTIVE_ACTION_GUARD.get() is None
+    assert rr._ACTIVE_RULE_ACTION.get().authorize_action is None
 
 
 async def test_captured_results_with_live_policy_remain_guarded(hass, local_script):

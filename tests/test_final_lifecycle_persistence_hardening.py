@@ -129,7 +129,7 @@ async def test_failed_platform_unload_keeps_template_lifecycle_acquired() -> Non
     config_entries = SimpleNamespace(
         async_unload_platforms=AsyncMock(return_value=False)
     )
-    hass = SimpleNamespace(config_entries=config_entries)
+    hass = SimpleNamespace(config_entries=config_entries, data={})
     entry = SimpleNamespace(entry_id="entry-1")
 
     with patch(
@@ -145,7 +145,7 @@ async def test_successful_platform_unload_releases_exact_entry() -> None:
     config_entries = SimpleNamespace(
         async_unload_platforms=AsyncMock(return_value=True)
     )
-    hass = SimpleNamespace(config_entries=config_entries)
+    hass = SimpleNamespace(config_entries=config_entries, data={})
     entry = SimpleNamespace(entry_id="entry-2")
 
     with patch(

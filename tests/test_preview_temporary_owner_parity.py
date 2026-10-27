@@ -85,8 +85,12 @@ async def test_preview_includes_temporary_memory_available_to_same_owner(
     entity._temporary_memory = manager
     entity._knowledge = None
     entity.skill_manager = SimpleNamespace(get_all_skills=lambda: [])
-    owner_token = runtime._ACTIVE_SCOPE.set(scope)
-    temporary_token = runtime._ACTIVE_TEMPORARY_SCOPE.set(runtime_scope)
+    owner_token = runtime._ACTIVE_TURN.set(
+        replace(runtime._ACTIVE_TURN.get(), scope=scope)
+    )
+    temporary_token = runtime._ACTIVE_TURN.set(
+        replace(runtime._ACTIVE_TURN.get(), temporary_scope=runtime_scope)
+    )
     try:
         actual_memories = await entity._async_load_temporary_memories()
         production_prompt = entity._build_system_prompt(
@@ -96,8 +100,8 @@ async def test_preview_includes_temporary_memory_available_to_same_owner(
             temporary_memories=actual_memories,
         )
     finally:
-        runtime._ACTIVE_TEMPORARY_SCOPE.reset(temporary_token)
-        runtime._ACTIVE_SCOPE.reset(owner_token)
+        runtime._ACTIVE_TURN.reset(temporary_token)
+        runtime._ACTIVE_TURN.reset(owner_token)
     assert record.content in production_prompt
     manager.async_active.assert_awaited_once_with(runtime_scope)
 

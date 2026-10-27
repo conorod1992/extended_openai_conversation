@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -82,15 +84,17 @@ def test_temporary_memory_revalidation_drops_records_without_live_request_scope(
         selector,
     )
 
-    active_scope = conversation_module._ACTIVE_SCOPE.set(
-        user_scope("alice", source="test")
+    active_scope = conversation_module._ACTIVE_TURN.set(
+        replace(conversation_module._ACTIVE_TURN.get(), scope=user_scope("alice", source="test"))
     )
-    temporary_scope = conversation_module._ACTIVE_TEMPORARY_SCOPE.set(None)
+    temporary_scope = conversation_module._ACTIVE_TURN.set(
+        replace(conversation_module._ACTIVE_TURN.get(), temporary_scope=None)
+    )
     try:
         assert Agent._revalidate_temporary_memory_expiry(agent, records) == []
     finally:
-        conversation_module._ACTIVE_TEMPORARY_SCOPE.reset(temporary_scope)
-        conversation_module._ACTIVE_SCOPE.reset(active_scope)
+        conversation_module._ACTIVE_TURN.reset(temporary_scope)
+        conversation_module._ACTIVE_TURN.reset(active_scope)
 
     selector.assert_not_called()
 
@@ -108,13 +112,17 @@ def test_temporary_memory_revalidation_drops_records_without_retained_owner(
         selector,
     )
 
-    active_scope = conversation_module._ACTIVE_SCOPE.set(None)
-    temporary_scope = conversation_module._ACTIVE_TEMPORARY_SCOPE.set("request:one")
+    active_scope = conversation_module._ACTIVE_TURN.set(
+        replace(conversation_module._ACTIVE_TURN.get(), scope=None)
+    )
+    temporary_scope = conversation_module._ACTIVE_TURN.set(
+        replace(conversation_module._ACTIVE_TURN.get(), temporary_scope="request:one")
+    )
     try:
         assert Agent._revalidate_temporary_memory_expiry(agent, records) == []
     finally:
-        conversation_module._ACTIVE_TEMPORARY_SCOPE.reset(temporary_scope)
-        conversation_module._ACTIVE_SCOPE.reset(active_scope)
+        conversation_module._ACTIVE_TURN.reset(temporary_scope)
+        conversation_module._ACTIVE_TURN.reset(active_scope)
 
     selector.assert_not_called()
 
@@ -133,15 +141,17 @@ def test_temporary_memory_revalidation_filters_against_current_scope(
         selector,
     )
 
-    active_scope = conversation_module._ACTIVE_SCOPE.set(
-        user_scope("alice", source="test")
+    active_scope = conversation_module._ACTIVE_TURN.set(
+        replace(conversation_module._ACTIVE_TURN.get(), scope=user_scope("alice", source="test"))
     )
-    temporary_scope = conversation_module._ACTIVE_TEMPORARY_SCOPE.set("request:one")
+    temporary_scope = conversation_module._ACTIVE_TURN.set(
+        replace(conversation_module._ACTIVE_TURN.get(), temporary_scope="request:one")
+    )
     try:
         result = Agent._revalidate_temporary_memory_expiry(agent, records)
     finally:
-        conversation_module._ACTIVE_TEMPORARY_SCOPE.reset(temporary_scope)
-        conversation_module._ACTIVE_SCOPE.reset(active_scope)
+        conversation_module._ACTIVE_TURN.reset(temporary_scope)
+        conversation_module._ACTIVE_TURN.reset(active_scope)
 
     assert result is expected
     selector.assert_called_once()

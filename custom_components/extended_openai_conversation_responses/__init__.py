@@ -14,7 +14,7 @@ from homeassistant.config_entries import ConfigEntry, ConfigEntryState, ConfigSu
 from homeassistant.const import CONF_API_KEY, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
-from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import config_validation as cv, entity_platform
 from homeassistant.helpers.typing import ConfigType
 
 from .backup_transfer import setup_backup_transfer_websocket
@@ -115,6 +115,7 @@ from .native_function_schema_migration import (
     migrate_legacy_stock_native_function_tools_yaml,
 )
 from .openai_compat import apply_openai_compatibility
+from .operation_settlement import async_settle_owned_operation
 from .prompt_cache import PerformanceOpenAIClientProxy
 from .provider_credentials import setup_provider_credentials_websocket
 from .quiet_hours import async_get_quiet_hours
@@ -299,9 +300,19 @@ async def async_setup_entry(
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload OpenAI and discard transient per-conversation routing state."""
+    platforms = [
+        platform
+        for platform in entity_platform.async_get_platforms(hass, DOMAIN)
+        if platform.config_entry is entry
+    ]
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if not unloaded:
         return False
+    # Core's reset returns early for an already-empty platform, before stopping
+    # its poller, and destroy then removes it from the platform registry. Retire
+    # only this successfully unloaded generation, using its captured owners.
+    for platform in platforms:
+        platform.async_unsub_polling()
     hass_data = getattr(hass, "data", None)
     subentries = getattr(entry, "subentries", None)
     if isinstance(hass_data, dict) and subentries is not None:
@@ -334,8 +345,16 @@ async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
         # reauthenticates the provider and rebuilds every platform.
         await async_delete_removed_subentries(hass, entry)
         return
-    await hass.config_entries.async_reload(entry.entry_id)
-    await async_delete_removed_subentries(hass, entry)
+
+    async def reload_and_cleanup() -> None:
+        await hass.config_entries.async_reload(entry.entry_id)
+        await async_delete_removed_subentries(hass, entry)
+
+    # A reload outlives the entry being replaced. Keep it tracked by HA rather
+    # than that unloading entry, including its normal eager dispatch behavior.
+    await async_settle_owned_operation(
+        hass.async_create_task(reload_and_cleanup(), name="EOAI reload and cleanup")
+    )
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:

@@ -266,10 +266,20 @@ def test_statistics_cardinality_is_bounded_before_aggregation(database, monkeypa
             ],
         )
 
-    def no_aggregation(*args, **kwargs):
-        pytest.fail("oversized raw data must fail before aggregation")
+    class ReductionStarted(Exception):
+        pass
 
-    monkeypatch.setattr(statistics, "_sorted_statistics_to_dict", no_aggregation)
+    def no_aggregation(*args, **kwargs):
+        raise ReductionStarted("oversized raw data must fail before aggregation")
+
+    # New Core streams bounded rows through conversion before reducing each
+    # statistic. Probe calendar reduction itself rather than converter entry.
+    reducer = (
+        "_reduce_statistic"
+        if hasattr(statistics, "_reduce_statistic")
+        else "_sorted_statistics_to_dict"
+    )
+    monkeypatch.setattr(statistics, reducer, no_aggregation)
     with pytest.raises(HomeAssistantError, match="safety budget"):
         budget.bounded_statistics(
             hass, START, START + timedelta(days=1500), {ENTITY}, "month", None, {"mean"}
@@ -279,6 +289,12 @@ def test_statistics_cardinality_is_bounded_before_aggregation(database, monkeypa
     assert all(
         values[-2] <= budget.MAX_STATISTICS_AGGREGATION_ROWS + 1 for _, values in reads
     )
+    # A small query must reach the selected hook; an obsolete probe cannot make
+    # the oversized-query assertion pass without guarding real reduction.
+    with pytest.raises(ReductionStarted):
+        budget.bounded_statistics(
+            hass, START, START + timedelta(hours=1), {ENTITY}, "month", None, {"mean"}
+        )
 
 
 async def test_native_history_runs_query_conversion_and_budget_in_executor(

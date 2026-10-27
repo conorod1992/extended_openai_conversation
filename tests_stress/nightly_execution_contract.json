@@ -1,6 +1,10 @@
 {
   "schema": "eoai-nightly-execution-contract/v1",
   "pytest": [
+    "tests_real_ha/test_agent_registration_ownership.py::test_unload_during_rename_initialization_cannot_publish_after_removal",
+    "tests_real_ha/test_agent_registration_ownership.py::test_request_waiting_on_retired_readiness_cannot_enter_new_registration",
+    "tests_real_ha/test_agent_registration_ownership.py::test_owned_reload_settles_after_cancellation_and_keeps_new_registration[restore]",
+    "tests_real_ha/test_agent_registration_ownership.py::test_owned_reload_settles_after_cancellation_and_keeps_new_registration[listener]",
     "tests_real_ha/test_fixture_store_isolation.py::test_core_config_store_and_fresh_reader_share_physical_path",
     "tests_stress/test_fixture_store_isolation.py::test_core_config_store_and_fresh_reader_share_physical_path",
     "tests_real_ha/test_provider_cleanup_file_recovery.py::test_consumed_chat_control_does_not_relax_same_round_id_validation[chat_completions]",
@@ -4130,6 +4134,7 @@
       "tests_stress/test_responses_scale_fairness.py"
     ],
     "lifecycle": [
+      "tests_real_ha/test_agent_registration_ownership.py",
       "tests_real_ha/test_config_flow_lifecycle_contracts.py",
       "tests_real_ha/test_multi_entry_lifecycle.py",
       "tests_real_ha/test_partial_platform_setup_retry.py",

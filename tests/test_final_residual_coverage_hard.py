@@ -220,7 +220,7 @@ async def test_request_rule_live_guest_policy_reauthorizes_scene(hass, monkeypat
             pass
 
         async def async_run(self, variables, context):
-            guard = request_rules._ACTIVE_ACTION_GUARD.get()
+            guard = request_rules._ACTIVE_RULE_ACTION.get().authorize_action
             guard({"scene": "scene.movie"})
             return None
 

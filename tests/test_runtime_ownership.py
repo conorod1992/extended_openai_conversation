@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import ast
 import asyncio
 from copy import deepcopy
@@ -24,7 +26,7 @@ from custom_components.extended_openai_conversation_responses.agent_configuratio
     MemoryEmbeddingProvider,
 )
 from custom_components.extended_openai_conversation_responses.conversation import (
-    _TEMPORARY_MEMORY_PREFETCH,
+    _ACTIVE_INVOCATION,
 )
 from custom_components.extended_openai_conversation_responses.delayed_tools import (
     DelayedToolManager,
@@ -176,19 +178,25 @@ def runtime_agent():
         }
     )
     agent._effective_guest_policy = GuestCapabilityPolicy.unrestricted
-    scope = owner._ACTIVE_SCOPE.set(
-        user_scope("alice", source="test")
+    scope = owner._ACTIVE_TURN.set(
+        replace(owner._ACTIVE_TURN.get(), scope=user_scope("alice", source="test"))
     )
-    temporary = owner._ACTIVE_TEMPORARY_SCOPE.set("session")
-    archive = owner._ACTIVE_ARCHIVE.set(("session", "id"))
-    prefetch = _TEMPORARY_MEMORY_PREFETCH.set(None)
+    temporary = owner._ACTIVE_TURN.set(
+        replace(owner._ACTIVE_TURN.get(), temporary_scope="session")
+    )
+    archive = owner._ACTIVE_TURN.set(
+        replace(owner._ACTIVE_TURN.get(), archive=("session", "id"))
+    )
+    prefetch = _ACTIVE_INVOCATION.set(
+        replace(_ACTIVE_INVOCATION.get(), temporary_memory_prefetch=None)
+    )
     try:
         yield agent
     finally:
-        _TEMPORARY_MEMORY_PREFETCH.reset(prefetch)
-        owner._ACTIVE_ARCHIVE.reset(archive)
-        owner._ACTIVE_TEMPORARY_SCOPE.reset(temporary)
-        owner._ACTIVE_SCOPE.reset(scope)
+        _ACTIVE_INVOCATION.reset(prefetch)
+        owner._ACTIVE_TURN.reset(archive)
+        owner._ACTIVE_TURN.reset(temporary)
+        owner._ACTIVE_TURN.reset(scope)
 
 
 async def test_live_memory_gate_and_embedding_provider(runtime_agent):
@@ -284,12 +292,12 @@ async def test_disabled_temporary_memory_cancels_and_drains_prefetch(runtime_age
             finished.set()
 
     task = asyncio.create_task(load())
-    _TEMPORARY_MEMORY_PREFETCH.set(task)
+    _ACTIVE_INVOCATION.set(replace(_ACTIVE_INVOCATION.get(), temporary_memory_prefetch=task))
     await started.wait()
     runtime_agent.subentry.data["temporary_memory"] = "off"
     assert await runtime_agent._async_retrieve_temporary_memories() == []
     assert finished.is_set() and task.cancelled()
-    assert _TEMPORARY_MEMORY_PREFETCH.get() is None
+    assert _ACTIVE_INVOCATION.get().temporary_memory_prefetch is None
 
 
 @pytest.mark.parametrize("parallel", [False, True])
@@ -483,7 +491,7 @@ async def test_prefetch_uses_resolved_owner_and_records_each_retrieval_once(
         "temporary_memory_retrieval",
     }
     assert _ACTIVE_OWNER_SCOPE_ID.get() is None
-    assert _TEMPORARY_MEMORY_PREFETCH.get() is None
+    assert _ACTIVE_INVOCATION.get().temporary_memory_prefetch is None
 
 
 async def test_request_cancellation_survives_disabled_prefetch_cleanup(runtime_agent):
@@ -503,7 +511,7 @@ async def test_request_cancellation_survives_disabled_prefetch_cleanup(runtime_a
                 finished.set()
 
     prefetch = asyncio.create_task(load())
-    _TEMPORARY_MEMORY_PREFETCH.set(prefetch)
+    _ACTIVE_INVOCATION.set(replace(_ACTIVE_INVOCATION.get(), temporary_memory_prefetch=prefetch))
     await started.wait()
     runtime_agent.subentry.data["temporary_memory"] = "off"
     request = asyncio.create_task(runtime_agent._async_retrieve_temporary_memories())
@@ -516,14 +524,14 @@ async def test_request_cancellation_survives_disabled_prefetch_cleanup(runtime_a
 
 async def test_prefetch_is_drained_when_live_policy_check_fails(runtime_agent):
     task = asyncio.create_task(asyncio.sleep(60))
-    _TEMPORARY_MEMORY_PREFETCH.set(task)
+    _ACTIVE_INVOCATION.set(replace(_ACTIVE_INVOCATION.get(), temporary_memory_prefetch=task))
     runtime_agent._effective_guest_policy = Mock(
         side_effect=RuntimeError("policy failed")
     )
     with pytest.raises(RuntimeError, match="policy failed"):
         await runtime_agent._async_retrieve_temporary_memories()
     assert task.cancelled()
-    assert _TEMPORARY_MEMORY_PREFETCH.get() is None
+    assert _ACTIVE_INVOCATION.get().temporary_memory_prefetch is None
 
 
 async def test_failed_completed_prefetch_is_drained_on_policy_failure(
@@ -533,7 +541,7 @@ async def test_failed_completed_prefetch_is_drained_on_policy_failure(
         raise RuntimeError("prefetch policy failed")
 
     task = asyncio.create_task(fail())
-    _TEMPORARY_MEMORY_PREFETCH.set(task)
+    _ACTIVE_INVOCATION.set(replace(_ACTIVE_INVOCATION.get(), temporary_memory_prefetch=task))
     await asyncio.sleep(0)
     assert task.done()
     runtime_agent._effective_guest_policy = Mock(
@@ -541,6 +549,6 @@ async def test_failed_completed_prefetch_is_drained_on_policy_failure(
     )
     with pytest.raises(RuntimeError, match="policy failed"):
         await runtime_agent._async_retrieve_temporary_memories()
-    assert _TEMPORARY_MEMORY_PREFETCH.get() is None
+    assert _ACTIVE_INVOCATION.get().temporary_memory_prefetch is None
     del task
     assert "Task exception was never retrieved" not in caplog.text

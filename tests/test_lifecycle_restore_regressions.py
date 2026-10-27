@@ -129,6 +129,7 @@ async def test_removed_subentry_remains_known_until_cleanup_succeeds(hass, monke
 
 
 async def test_restore_reload_is_deferred_until_exclusive_lease_released(hass):
+    hass.async_create_task = asyncio.create_task
     entry = SimpleNamespace(entry_id="entry", state=ConfigEntryState.LOADED)
     subentry = SimpleNamespace(subentry_id="agent")
     hass.data[f"{DOMAIN}.restore_reload_pending"] = {"entry"}
