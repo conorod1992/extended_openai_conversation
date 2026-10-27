@@ -498,6 +498,7 @@ async def test_disabled_runtime_has_no_memory_behavior(hass) -> None:
 async def test_options_update_reloads_runtime(hass) -> None:
     """Conversation subentry option changes reload their parent config entry."""
     hass.config_entries.async_reload = AsyncMock()
+    hass.async_create_task = asyncio.create_task
 
     await update_listener(hass, SimpleNamespace(entry_id="entry-1", subentries={}))
 

@@ -1582,6 +1582,7 @@ async def test_finish_restore_reload_surfaces_loaded_reload_failure(
     )
     hass.data[f"{restore_recovery.DOMAIN}.restore_reload_pending"] = {"entry"}
     hass.config_entries.async_reload = AsyncMock(return_value=False)
+    hass.async_create_task = asyncio.create_task
 
     with pytest.raises(HomeAssistantError, match="reloading the assistant failed"):
         await restore_recovery.async_finish_restore_reload(hass, entry, subentry)
@@ -1610,6 +1611,7 @@ async def test_finish_restore_reload_discards_successful_pending_marker(
     pending = {"entry"}
     hass.data[f"{restore_recovery.DOMAIN}.restore_reload_pending"] = pending
     hass.config_entries.async_reload = AsyncMock(return_value=True)
+    hass.async_create_task = asyncio.create_task
 
     await restore_recovery.async_finish_restore_reload(hass, entry, subentry)
 
