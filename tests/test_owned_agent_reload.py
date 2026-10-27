@@ -17,6 +17,7 @@ from custom_components.extended_openai_conversation_responses.live_subentry_upda
 )
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import entity_platform
 
 
 async def _cancel_twice_while_pending(task):
@@ -50,6 +51,7 @@ async def test_restore_reload_settles_core_and_marker_before_cancellation(outcom
     hass = SimpleNamespace(
         data={f"{DOMAIN}.restore_reload_pending": pending},
         config_entries=SimpleNamespace(async_reload=reload_call),
+        async_create_task=asyncio.create_task,
     )
     task = asyncio.create_task(
         restore_recovery.async_finish_restore_reload(hass, entry, subentry)
@@ -101,7 +103,10 @@ async def test_listener_settles_reload_and_deletion_before_cancellation(monkeypa
 
     reload_call = AsyncMock(side_effect=reload)
     cleanup = AsyncMock(side_effect=delete)
-    hass = SimpleNamespace(config_entries=SimpleNamespace(async_reload=reload_call))
+    hass = SimpleNamespace(
+        config_entries=SimpleNamespace(async_reload=reload_call),
+        async_create_task=asyncio.create_task,
+    )
     monkeypatch.setattr(integration, "sync_entry_model_lifecycle", Mock())
     monkeypatch.setattr(agent_deletion, "async_delete_removed_subentries", cleanup)
     task = asyncio.create_task(integration.update_listener(hass, entry))
@@ -146,3 +151,52 @@ async def test_live_listener_keeps_no_reload_no_settlement_fast_path(monkeypatch
         await integration.update_listener(hass, entry)
     reload_call.assert_not_awaited()
     cleanup.assert_awaited_once_with(hass, entry)
+
+
+@pytest.mark.parametrize("outcome", ["success", "rejected", "failed"])
+async def test_unload_retires_only_its_completed_platform_generation(
+    monkeypatch, outcome
+):
+    entered, release = asyncio.Event(), asyncio.Event()
+    entry = SimpleNamespace(entry_id="entry", subentries={})
+    sibling_entry = SimpleNamespace(entry_id="sibling")
+    owned = SimpleNamespace(config_entry=entry, async_unsub_polling=Mock())
+    sibling = SimpleNamespace(config_entry=sibling_entry, async_unsub_polling=Mock())
+    registry = [owned, sibling]
+
+    async def unload(_entry, _platforms):
+        entered.set()
+        await release.wait()
+        if outcome == "failed":
+            raise OSError("platform unload unavailable")
+        if outcome == "success":
+            # Core destroys the platform before returning, so rediscovery after
+            # unload cannot find the retired owner whose timer needs cleanup.
+            registry.remove(owned)
+        return outcome == "success"
+
+    hass = SimpleNamespace(
+        data={},
+        config_entries=SimpleNamespace(
+            async_unload_platforms=AsyncMock(side_effect=unload)
+        ),
+    )
+    monkeypatch.setattr(entity_platform, "async_get_platforms", lambda *_: registry)
+    monkeypatch.setattr(integration, "async_unload_templates", AsyncMock())
+    task = asyncio.create_task(integration.async_unload_entry(hass, entry))
+    await entered.wait()
+    try:
+        owned.async_unsub_polling.assert_not_called()
+        sibling.async_unsub_polling.assert_not_called()
+        release.set()
+        if outcome == "failed":
+            with pytest.raises(OSError, match="platform unload unavailable"):
+                await task
+        else:
+            assert await task is (outcome == "success")
+        assert owned.async_unsub_polling.call_count == (outcome == "success")
+        sibling.async_unsub_polling.assert_not_called()
+        assert sibling in registry
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)

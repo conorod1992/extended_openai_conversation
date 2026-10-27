@@ -51,6 +51,20 @@ The existing settlement helper preserves an underlying failure over caller
 cancellation. Live configuration updates and restores without a pending reload
 retain their direct paths without a settlement task.
 
+The reload task is created through HA's tracked, eagerly started task API before
+the settlement helper awaits it. A plain untracked task changes HA's existing
+reload ordering and can let its drain boundary miss replacement initialization.
+The task belongs to HA rather than the entry being unloaded; entry-owned tasks
+would be cancelled by that same reload. The helper awaits the existing task and
+does not create a second one.
+
+Full entry unload captures its own platform objects before Core removes them from
+the registry. Only after successful unload does it idempotently stop those old
+objects' polling. This covers Core's empty-platform reset path, which returns
+before stopping polling. Failed unloads retain active polling, and other entries
+and replacement platform generations are excluded by owner identity. No private
+timer fields, global patches or request-path work are introduced.
+
 Core owns the outer state transition when another caller directly invokes its
 config-entry unload API. Cancelling that operation can leave the entry in
 `UNLOAD_IN_PROGRESS`, even after the entity's initialization and cleanup settle.

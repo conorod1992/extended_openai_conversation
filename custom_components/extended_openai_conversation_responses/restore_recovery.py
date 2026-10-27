@@ -795,4 +795,10 @@ async def async_finish_restore_reload(
             )
         pending.discard(entry.entry_id)
 
-    await async_settle_owned_operation(reload_and_reconcile())
+    # This transition spans removal of the old entry's runtime. HA must own and
+    # track the task; binding it to the unloading entry would cancel the reload.
+    await async_settle_owned_operation(
+        hass.async_create_task(
+            reload_and_reconcile(), name="EOAI restore reload and reconciliation"
+        )
+    )
