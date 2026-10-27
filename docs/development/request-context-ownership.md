@@ -44,13 +44,20 @@ pending initialization to settle before finishing HA teardown, so HA's final add
 state write cannot happen after removal. Already-ready registrations keep the
 ordinary removal path without an additional task or wait.
 
-Core owns the outer config-entry unload state transition. Cancelling that public
-operation can leave it in `UNLOAD_IN_PROGRESS`, even after the entity's owned
-initialization and cleanup settle. The same entry then cannot be set up again
-until Core recovers that state or restarts. The entity hook cannot complete the
-outer Core transition; callers that own a reload must settle the entire Core
-operation. Treat this as a remaining cancellation limitation when certifying
-reload and shutdown behavior.
+EOAI-owned reloads settle the entire Core transition and their reconciliation
+before propagating caller cancellation. Restore reloads clear the pending marker
+only after success; configuration listeners finish removed-subentry cleanup.
+The existing settlement helper preserves an underlying failure over caller
+cancellation. Live configuration updates and restores without a pending reload
+retain their direct paths without a settlement task.
+
+Core owns the outer state transition when another caller directly invokes its
+config-entry unload API. Cancelling that operation can leave the entry in
+`UNLOAD_IN_PROGRESS`, even after the entity's initialization and cleanup settle.
+The same entry then cannot be set up again until Core recovers or restarts. The
+entity hook cannot complete an outer transition it does not own. This remains a
+limitation for independently cancelled Core unload calls, rather than EOAI-owned
+restore or configuration-listener reloads.
 
 ## Identity and configuration boundaries
 
@@ -118,6 +125,7 @@ of either owner, repeated cancellation, setup failures and finalization failures
 - `tests/test_turn_context_ownership.py`
 - `tests/test_prepared_call_provenance.py`
 - `tests/test_agent_registration_ownership.py`
+- `tests/test_owned_agent_reload.py`
 - `tests_real_ha/test_agent_registration_ownership.py`
 
 Preserve their positive controls as well as rejection checks. Existing genuine

@@ -115,6 +115,7 @@ from .native_function_schema_migration import (
     migrate_legacy_stock_native_function_tools_yaml,
 )
 from .openai_compat import apply_openai_compatibility
+from .operation_settlement import async_settle_owned_operation
 from .prompt_cache import PerformanceOpenAIClientProxy
 from .provider_credentials import setup_provider_credentials_websocket
 from .quiet_hours import async_get_quiet_hours
@@ -334,8 +335,12 @@ async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
         # reauthenticates the provider and rebuilds every platform.
         await async_delete_removed_subentries(hass, entry)
         return
-    await hass.config_entries.async_reload(entry.entry_id)
-    await async_delete_removed_subentries(hass, entry)
+
+    async def reload_and_cleanup() -> None:
+        await hass.config_entries.async_reload(entry.entry_id)
+        await async_delete_removed_subentries(hass, entry)
+
+    await async_settle_owned_operation(reload_and_cleanup())
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
