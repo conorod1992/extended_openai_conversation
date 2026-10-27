@@ -16,7 +16,7 @@ from custom_components.extended_openai_conversation_responses.guest_mode import 
 from custom_components.extended_openai_conversation_responses.prompt import (
     render_effective_prompt,
 )
-from homeassistant.config_entries import ConfigSubentry
+from homeassistant.config_entries import ConfigEntries, ConfigSubentry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import (
     area_registry as ar,
@@ -59,13 +59,25 @@ class Entries:
         return True
 
 
-async def test_archive_retention_websocket_preserves_guest_prompt(
-    tmp_path, monkeypatch, hass
-):
+@pytest.fixture
+async def registry_hass(tmp_path):
+    """Initialize native registry prerequisites and own cleanup from construction."""
     real_hass = HomeAssistant(str(tmp_path))
-    dr.async_setup(real_hass)
-    for registry in (ar, dr, er):
-        await registry.async_load(real_hass, load_empty=True)
+    try:
+        real_hass.config_entries = ConfigEntries(real_hass, {})
+        await real_hass.config_entries.async_initialize()
+        dr.async_setup(real_hass)
+        for registry in (ar, dr, er):
+            await registry.async_load(real_hass, load_empty=True)
+        yield real_hass
+    finally:
+        await real_hass.async_stop(force=True)
+
+
+async def test_archive_retention_websocket_preserves_guest_prompt(
+    registry_hass, monkeypatch, hass
+):
+    real_hass = registry_hass
     raw = legacy_config()
     subentry = ConfigSubentry(
         data=MappingProxyType(raw),
@@ -124,21 +136,18 @@ async def test_archive_retention_websocket_preserves_guest_prompt(
             "revision": ui.persisted_config_projection(subentry).revision,
         }
     )
-    try:
-        await inspect.unwrap(ui.websocket_management)(real_hass, connection, message)
-        connection.send_error.assert_not_called()
-        connection.send_result.assert_called_once()
-        saved = entry.subentries[subentry.subentry_id].data
-        after, text = prompt(saved)
-        assert "lock.private" not in text
-        assert after.readable_entity_ids == before.readable_entity_ids
-        assert (after.shared_memory_read, after.shared_memory_write) == (
-            before.shared_memory_read,
-            before.shared_memory_write,
-        )
-        assert dict(saved) == {**raw, "archive_retention_days": 7}
-    finally:
-        await real_hass.async_stop(force=True)
+    await inspect.unwrap(ui.websocket_management)(real_hass, connection, message)
+    connection.send_error.assert_not_called()
+    connection.send_result.assert_called_once()
+    saved = entry.subentries[subentry.subentry_id].data
+    after, text = prompt(saved)
+    assert "lock.private" not in text
+    assert after.readable_entity_ids == before.readable_entity_ids
+    assert (after.shared_memory_read, after.shared_memory_write) == (
+        before.shared_memory_read,
+        before.shared_memory_write,
+    )
+    assert dict(saved) == {**raw, "archive_retention_days": 7}
 
 
 @pytest.mark.parametrize("version", [None, 2])
