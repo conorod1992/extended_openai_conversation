@@ -19,7 +19,7 @@ const frontend = readFileSync(new URL("frontend/management-mutation-effects.js",
 // if BOTH consumers omit it; public persistence/revision tests remain necessary.
 const identifiers = new Set(["__proto__", "constructor", "future_contract_probe"]);
 for (const source of [dispatch.slice(begin, end), frontend]) {
-  for (const match of source.matchAll(/["']([a-z_][a-z0-9_]*)["']/g)) identifiers.add(match[1]);
+  for (const match of source.matchAll(/["']([A-Za-z_][A-Za-z0-9_.-]*)["']/g)) identifiers.add(match[1]);
 }
 for (const match of frontend.matchAll(/\b([a-z_][a-z0-9_]*)\s*:/g)) identifiers.add(match[1]);
 const actions = [...identifiers].sort();
@@ -65,4 +65,10 @@ test("contract tripwire rejects changed frontend invalidation effects", () => {
     const effects = mutationEffects("tools", action);
     return action === changed ? {...effects, configuration:false} : effects;
   }), /mutation effects drift/);
+});
+
+test("contract tripwire rejects frontend-only mutation admission", () => {
+  assert.throws(() => assertContract(classifications, action =>
+    action === "future_contract_probe" ? {} : mutationEffects("tools", action)
+  ), /classification drift/);
 });

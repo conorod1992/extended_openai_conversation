@@ -84,6 +84,11 @@ Early permissions, resource permissions, self-owned Backup/diagnostic/live-test
 gates and operation-specific request schemas remain with their existing owners.
 They do not share equivalent contracts and do not need a universal registry.
 
+`is_configuration_timing_operation()` similarly owns the existing `get`/`save`/
+`update` timing classification. It is deliberately narrower than configuration
+response guidance, which also handles validation and Function Repair responses.
+Changing timing metadata must not change validation, authorization or guidance.
+
 ## Boundaries
 
 This refactor does not change stored formats, frontend assets, the standalone

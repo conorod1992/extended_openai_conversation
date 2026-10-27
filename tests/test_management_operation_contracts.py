@@ -11,6 +11,7 @@ from custom_components.extended_openai_conversation_responses import (
 )
 from custom_components.extended_openai_conversation_responses.management_operations import (
     TOOL_MUTATIONS,
+    is_configuration_timing_operation,
     is_tool_mutation,
 )
 from homeassistant.exceptions import HomeAssistantError
@@ -32,6 +33,19 @@ def test_reads_and_other_families_do_not_enter_tool_mutation_policy(action):
     assert not is_tool_mutation("tools", action)
     assert not is_tool_mutation("function_repair", "save")
     assert not is_tool_mutation("configuration", "save")
+
+
+@pytest.mark.parametrize("action", ["get", "save", "update"])
+def test_configuration_timing_does_not_replace_response_guidance(action):
+    assert is_configuration_timing_operation("configuration", action)
+    assert not is_configuration_timing_operation("function_repair", action)
+
+
+@pytest.mark.parametrize(
+    "action", ["validate", "request_preview", "configuration_save", None, [], {}]
+)
+def test_configuration_timing_excludes_other_guidance_and_invalid_actions(action):
+    assert not is_configuration_timing_operation("configuration", action)
 
 
 @pytest.mark.parametrize("action", sorted(TOOL_MUTATIONS))

@@ -147,7 +147,7 @@ from .management_history_queries import (
     usage_runs_page,
     usage_summary,
 )
-from .management_operations import is_tool_mutation
+from .management_operations import is_configuration_timing_operation, is_tool_mutation
 from .management_permissions import (
     async_quiet_hours_command,
     require_management_permission,
@@ -3133,10 +3133,8 @@ async def async_management_command(
     except yaml.YAMLError as err:
         raise HomeAssistantError("Invalid typed YAML in Management request") from err
     action = message.get("action")
-    trace_configuration = (
-        message.get("section") == "configuration"
-        and isinstance(action, str)
-        and action in {"get", "save", "update"}
+    trace_configuration = is_configuration_timing_operation(
+        message.get("section"), action
     )
     trace_tool_mutation = is_tool_mutation(message.get("section"), action)
     started = perf_counter() if trace_configuration or trace_tool_mutation else None
@@ -3247,7 +3245,7 @@ async def _async_management_request(
         if isinstance(performance, dict):
             performance["decoration_ms"] = decoration_ms
             performance["request_total_ms"] = request_total_ms
-            if section == "configuration" and action in {"get", "save", "update"}:
+            if is_configuration_timing_operation(section, action):
                 performance["dispatch_ms"] = dispatch_ms
                 performance["agent_resolution_ms"] = resolution_ms
                 performance["handler_ms"] = handler_ms
@@ -3363,9 +3361,8 @@ async def websocket_management(
     except (HomeAssistantError, RuntimeError, ValueError) as err:
         connection.send_error(msg["id"], "invalid_request", str(err))
         return
-    trace_request = (
-        msg.get("section") == "configuration"
-        and msg.get("action") in {"get", "save", "update"}
+    trace_request = is_configuration_timing_operation(
+        msg.get("section"), msg.get("action")
     ) or is_tool_mutation(msg.get("section"), msg.get("action"))
     if trace_request:
         performance = result.get("_performance")
