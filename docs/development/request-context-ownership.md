@@ -79,6 +79,9 @@ Authenticated Home Assistant context remains the authority for native actions.
 Voice Identity resolves data ownership and physical origin independently. The LLM
 context is created after the Voice Identity scope has entered; moving it earlier
 can capture the wrong request identity.
+Its binding is restored even when initial Guest policy resolution fails before
+the turn is claimed. Failed nested admission must leave the enclosing LLM and
+Home Assistant authorization contexts intact.
 
 Guest policy is resolved before continuity and may tighten during a turn. A later
 disable does not restore authority to a turn already restricted by Guest Mode.

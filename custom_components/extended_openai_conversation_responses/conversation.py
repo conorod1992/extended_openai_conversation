@@ -763,6 +763,7 @@ class ExtendedOpenAIAgentEntity(
         # policy must resolve against this invocation's catalogue, before the
         # later HA-tool bridge installs its provider projection.
         function_config_token = _ACTIVE_FUNCTION_CONFIG.set(None)
+        llm_context_token = None
         try:
             llm_context = user_input.as_llm_context(DOMAIN)
             llm_context_token = _ACTIVE_LLM_CONTEXT.set(llm_context)
@@ -833,8 +834,9 @@ class ExtendedOpenAIAgentEntity(
                     )
             finally:
                 _ACTIVE_GUEST_POLICY.reset(guest_policy_token)
-                _ACTIVE_LLM_CONTEXT.reset(llm_context_token)
         finally:
+            if llm_context_token is not None:
+                _ACTIVE_LLM_CONTEXT.reset(llm_context_token)
             _ACTIVE_FUNCTION_CONFIG.reset(function_config_token)
             _PROMPT_CACHE_CONTEXT.reset(cache_token)
 
