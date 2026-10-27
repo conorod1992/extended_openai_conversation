@@ -18,6 +18,9 @@ The regenerable embedding cache registers its plain HA Store separately. Its
 best-effort persistence semantics are unchanged. Shared delayed-job Stores and
 per-agent, transaction-owned restore journals remain outside this live cleanup
 contract; sharing a storage implementation does not transfer their ownership.
+Hybrid refresh retains its manager lease through best-effort cache persistence,
+including native work that survives caller cancellation. Cache errors still
+degrade to lexical retrieval; cancellation propagates after that work settles.
 
 Permanent deletion keeps the established order:
 

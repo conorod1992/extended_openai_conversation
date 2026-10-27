@@ -1,6 +1,10 @@
 {
   "schema": "eoai-nightly-execution-contract/v1",
   "pytest": [
+    "tests_real_ha/test_embedding_cache_deletion_ownership.py::test_hybrid_cache_worker_settles_before_permanent_deletion[False-False]",
+    "tests_real_ha/test_embedding_cache_deletion_ownership.py::test_hybrid_cache_worker_settles_before_permanent_deletion[False-True]",
+    "tests_real_ha/test_embedding_cache_deletion_ownership.py::test_hybrid_cache_worker_settles_before_permanent_deletion[True-False]",
+    "tests_real_ha/test_embedding_cache_deletion_ownership.py::test_hybrid_cache_worker_settles_before_permanent_deletion[True-True]",
     "tests_real_ha/test_agent_store_ownership.py::test_concurrent_deletion_rechecks_fence_after_exclusive_admission",
     "tests_real_ha/test_agent_store_ownership.py::test_delete_retires_bound_store_without_knowing_manager_attributes[False]",
     "tests_real_ha/test_agent_store_ownership.py::test_delete_retires_bound_store_without_knowing_manager_attributes[True]",
@@ -4141,6 +4145,7 @@
       "tests_stress/test_responses_scale_fairness.py"
     ],
     "lifecycle": [
+      "tests_real_ha/test_embedding_cache_deletion_ownership.py",
       "tests_real_ha/test_agent_store_ownership.py",
       "tests_real_ha/test_optional_startup_ownership.py",
       "tests_real_ha/test_agent_registration_ownership.py",
