@@ -8,6 +8,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
 from homeassistant.helpers.storage import Store
+from tests_real_ha.native_storage import hass_storage  # noqa: F401
 from tests_stress.test_os_storage_faults import real_store_io  # noqa: F401
 
 
