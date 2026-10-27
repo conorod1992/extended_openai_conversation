@@ -5,13 +5,10 @@ import json
 
 import pytest
 
+from custom_components.extended_openai_conversation_responses import entity
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_CHAT_COMPLETIONS,
     API_MODE_RESPONSES,
-)
-from custom_components.extended_openai_conversation_responses.context_usage_hardening import (
-    _LOCAL_ESTIMATE_DETAIL,
-    _PARTIAL_PROVIDER_USAGE_DETAIL,
 )
 from custom_components.extended_openai_conversation_responses.debug import (
     get_debug_manager,
@@ -25,6 +22,30 @@ from tests_real_ha.test_provider_wire_e2e import (
     _say,
 )
 from tests_stress.test_os_storage_faults import real_store_io  # noqa: F401
+
+
+def _observe_measurements(monkeypatch):
+    """Observe request-local context state without mixing accounting payloads."""
+    captured = []
+    original = entity.RequestTokenMeasurements
+
+    def create(*args, **kwargs):
+        measurement = original(*args, **kwargs)
+        captured.append((measurement, measurement.context_estimate))
+        return measurement
+
+    monkeypatch.setattr(entity, "RequestTokenMeasurements", create)
+    return captured
+
+
+def _assert_context(measurement, original_estimate, kind):
+    assert original_estimate > 0
+    if kind in {"full", "input"}:
+        assert measurement.context_estimate is None
+        assert measurement.context_tokens == 120
+    else:
+        assert measurement.context_estimate == original_estimate
+        assert measurement.context_tokens == original_estimate
 
 
 def _body(mode, kind, limited, *, prior_full=False, failed=False):
@@ -103,6 +124,7 @@ async def test_public_stream_usage_matches_accounting_storage_and_diagnostics(
     debug = get_debug_manager(hass, agent.entry.entry_id, agent.subentry.subentry_id)
     debug.configure(enabled=True)
     captured = []
+    measurements = _observe_measurements(monkeypatch)
     original = manager.async_record_request
 
     async def record(**kwargs):
@@ -126,23 +148,11 @@ async def test_public_stream_usage_matches_accounting_storage_and_diagnostics(
         assert getattr(manager.totals, key) == getattr(expected, key)
         assert debug.summaries()[0][key] == getattr(expected, key)
     assert manager.requests[0].successful == (not limited)
-    context = captured[0]
-    retains_estimate = kind in {
-        "missing",
-        "zero",
-        "output",
-        "total",
-        "reasoning",
-        "cached",
-    }
-    assert (_LOCAL_ESTIMATE_DETAIL in context.details) == retains_estimate
-    if retains_estimate:
-        assert context.input_tokens == context.details[_LOCAL_ESTIMATE_DETAIL] > 0
-        assert (_PARTIAL_PROVIDER_USAGE_DETAIL in context.details) == (
-            kind not in {"missing", "zero"}
-        )
-    else:
-        assert context.input_tokens == expected.input_tokens
+    assert captured[0] == expected
+    assert len(measurements) == 1
+    context, original_estimate = measurements[0]
+    assert context.reported == expected
+    _assert_context(context, original_estimate, kind)
 
     # Read the real HA Store snapshots, rather than just the live aggregate objects.
     aggregates = await manager._daily_storage.async_load()
@@ -156,7 +166,9 @@ async def test_public_stream_usage_matches_accounting_storage_and_diagnostics(
     ):
         assert aggregates["totals"][key] == getattr(expected, key)
         assert details["requests"][0][key] == getattr(expected, key)
-    assert _LOCAL_ESTIMATE_DETAIL not in json.dumps(details)
+    assert details["requests"][0]["details"] == expected.details
+    assert "__extended_openai_local_context_estimate" not in json.dumps(details)
+    assert "__extended_openai_partial_provider_usage" not in json.dumps(details)
 
 
 @pytest.mark.usefixtures("real_store_io")
@@ -190,6 +202,7 @@ async def test_failed_responses_persists_provider_counts_and_next_turn_recovers(
     agent = await _agent(hass, API_MODE_RESPONSES)
     manager = agent._usage
     captured = []
+    measurements = _observe_measurements(monkeypatch)
     original = manager.async_record_request
 
     async def record(**kwargs):
@@ -207,12 +220,17 @@ async def test_failed_responses_persists_provider_counts_and_next_turn_recovers(
     )
     failed = await _say(hass, agent)
     assert failed.response.error_code is not None
-    assert (_LOCAL_ESTIMATE_DETAIL in captured[0].details) == (
-        kind not in {"full", "input"}
-    )
+    assert captured[0] == _provider_expected(kind)
+    assert len(measurements) == 1
+    _assert_context(*measurements[0], kind)
     recovered = await _say(hass, agent)
     assert recovered.response.error_code is None
     expected = _provider_expected(kind)
+    assert len(captured) == len(measurements) == 2
+    assert captured[1] == _provider_expected("missing")
+    assert measurements[0][0].reported == expected
+    assert measurements[1][0].reported == _provider_expected("missing")
+    _assert_context(*measurements[1], "missing")
     aggregates = await manager._daily_storage.async_load()
     details = await manager._detail_storage.async_load()
     assert aggregates["totals"]["failed_request_count"] == 1
@@ -227,4 +245,7 @@ async def test_failed_responses_persists_provider_counts_and_next_turn_recovers(
         assert aggregates["totals"][key] == getattr(expected, key)
         assert details["requests"][0][key] == getattr(expected, key)
         assert details["requests"][1][key] == 0
-    assert _LOCAL_ESTIMATE_DETAIL not in json.dumps(details)
+    assert details["requests"][0]["details"] == expected.details
+    assert details["requests"][1]["details"] == {}
+    assert "__extended_openai_local_context_estimate" not in json.dumps(details)
+    assert "__extended_openai_partial_provider_usage" not in json.dumps(details)

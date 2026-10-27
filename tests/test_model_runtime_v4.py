@@ -8,6 +8,9 @@ from types import SimpleNamespace
 import pytest
 
 from custom_components.extended_openai_conversation_responses import model_catalog
+from custom_components.extended_openai_conversation_responses.context_usage_hardening import (
+    RequestTokenMeasurements,
+)
 from custom_components.extended_openai_conversation_responses.entity import (
     ExtendedOpenAIBaseLLMEntity,
 )
@@ -23,7 +26,6 @@ from custom_components.extended_openai_conversation_responses.non_streaming impo
 from custom_components.extended_openai_conversation_responses.request import (
     build_provider_request_snapshot,
 )
-from custom_components.extended_openai_conversation_responses.usage import RequestUsage
 from homeassistant.exceptions import HomeAssistantError
 
 
@@ -143,7 +145,7 @@ async def test_completed_responses_reuse_tool_loop_and_usage_transformer():
     deltas = [
         delta
         async for delta in ExtendedOpenAIBaseLLMEntity._transform_responses_stream(
-            entity, _ChatLog(), completed_responses_events(response), RequestUsage()
+            entity, _ChatLog(), completed_responses_events(response), RequestTokenMeasurements()
         )
     ]
     assert {"content": "Done"} in deltas
@@ -166,7 +168,7 @@ async def test_completed_chat_response_preserves_tool_calls():
     deltas = [
         delta
         async for delta in ExtendedOpenAIBaseLLMEntity._transform_chat_stream(
-            entity, _ChatLog(), completed_chat_chunks(response), RequestUsage()
+            entity, _ChatLog(), completed_chat_chunks(response), RequestTokenMeasurements()
         )
     ]
     assert any(delta.get("tool_calls") for delta in deltas)

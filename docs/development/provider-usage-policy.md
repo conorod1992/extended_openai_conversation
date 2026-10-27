@@ -1,64 +1,72 @@
-# Streamed provider usage policy
+# Context measurements and provider usage
 
-This follow-up adopts two deliberate changes to the behavior characterized in
-PR #1245. That PR remains unchanged and records the historical baseline.
-The follow-up carries forward the same characterization test files with deliberate
-policy updates, rather than introducing a second suite of conflicting assertions.
-If #1245 is merged first, retain the follow-up expectations when rebasing this PR.
+Context management and usage accounting have separate representations for each
+provider round. `RequestTokenMeasurements` owns a provider-only `RequestUsage`
+snapshot in `reported` and a separate `context_estimate`. Only `reported` crosses
+the accounting boundary. Estimates never occupy its token fields or details,
+and `UsageManager` does not interpret context metadata or strip private markers.
 
-## Usage snapshots
+## Provider snapshots
 
-Missing and all-zero usage reports do not retract an earlier usable report from
-the same provider request. A usable report contains a nonzero input, output,
-total, cached-input or reasoning count. Each new usable report replaces the
-previous provider snapshot as a whole; reports are neither accumulated nor merged
-field by field. This applies to ordinary, trailing and terminal events alike.
+Each accepted observation merges explicitly supplied cumulative provider fields
+into the previous snapshot. Repeated observations are not added together.
+Absent fields and SDK defaults do not erase known counts. This applies to
+ordinary, trailing and terminal observations from both APIs and completed-response
+adapters.
 
-When no usable report arrives, accounting records zero provider tokens. The
-request's local input estimate remains available for context management. EOAI
-does not interpret a zero terminal snapshot as an authoritative correction; a
-provider-specific correction contract would require a separately reviewed change.
+Missing and all-zero headline-only reports leave the existing snapshot intact.
+An otherwise usable report can explicitly correct a field to zero, including
+input tokens. Valid explicit detail observations are usable independently;
+zero detail corrections clear the earlier detail count. Provider-specific positive
+details, cached tokens and reasoning tokens retain their existing interpretation.
 
-## Context fallback and accounting
+Positive explicit provider totals remain authoritative. When they are absent,
+totals are derived from the known provider components only under the existing
+completeness rules; an unexplained provider total is retained until those rules
+allow replacement. Local estimates never participate in that calculation.
 
-An active local input estimate survives missing input counts whether the stream
-completes, fails or is incomplete. A usable provider input count replaces and
-retires that fallback, as before. Later partial snapshots are still replacements;
-this change does not resurrect retired estimates or merge earlier provider counts.
+With no usable report, accounting retains zero provider tokens and still records
+the request's existing success/failure and duration metadata. Stored aggregate,
+daily, run and request formats, historical records, pricing interpretation and
+the token-only management UI are unchanged. No storage migration is needed.
 
-`usage_for_accounting()` continues to remove local estimates before persisting
-Usage aggregates and details, while preserving genuine partial counts. ChatLog
-stats and provider diagnostics report raw provider values, never local estimates.
-Thus a zero diagnostic event can coexist with retained earlier accounting usage.
+## Context selection
 
-The request loop observes context usage on its success path. Consistent fallback
-on incomplete errors is not itself evidence of a billing or public context-trimming
-defect in the old implementation.
+Before dispatch, the request's existing prepared-input estimate supplies the
+context fallback. Output-, total- and detail-only reports leave that fallback
+active. The first accepted positive provider input permanently retires it for
+that round. A later explicit correction to zero input then uses the known provider
+total, rather than resurrecting the earlier estimate.
 
-## One application owner
+After a successful round, the selected count is bound to the prepared prefix in
+the immutable `ContextInputMeasurement`. Its history length and input revision
+continue to reject rewritten or shortened prefixes while allowing appended output.
+Preflight trimming, summary-before-pruning order, remeasurement, model limits,
+attachment budgeting and formatted-tool caches retain their existing policies.
 
-The Chat and Responses adapters apply usage through `_capture_provider_usage()`
-before yielding each event. The parsers no longer assign usage, and neither
-adapter repairs usage after yielding. `_restore_local_estimate()` and its saved
-estimate override are removed. This reduces the two production files by 54 lines
-without adding a usage accumulator, event-state framework or shared stream parser.
+## Observation and lifecycle ownership
 
-Terminal stats remain after parser admission, including the initial Chat role
-yield and Responses terminal-sequence validation. Their read-only normalization
-does not apply usage. `_trace_provider_usage()` shares the stats shape while
-keeping diagnostic admission and timing unchanged. Provider debug summaries still
-describe the raw wire events; they are independent from the retained accounting
-snapshot.
+The same round-local record flows through completed-response adaptation,
+stream normalization, parsing and bounded trailing recovery. Capture happens
+before output interpretation, so malformed output cannot discard an already
+observed provider report. Capture publishes a new independent provider snapshot;
+previously retained snapshots and their details do not change.
 
-## Scope and validation
+Diagnostics and ChatLog stats still describe raw normalized provider observations,
+not context estimates or the merged accounting snapshot. A zero diagnostic event
+can therefore coexist with earlier retained accounting counts.
 
-Chat length finishes still drain trailing usage before raising. Responses
-incomplete events still raise at the terminal event. Stream closure, cancellation,
-tool handling and auxiliary non-streamed requests retain their existing policies.
+Success and failure paths each record the current provider snapshot once. A new
+provider round starts a fresh record, including after tool execution or recovery.
+Nested requests and usage-run ownership keep their existing boundaries. Trailing
+recovery deadlines, event limits, cancellation, stream closure and late-result
+rejection remain unchanged.
 
-Focused tests check all token categories, repeated snapshots, successful/failed/
-incomplete terminals, interruption and suspended-generator closure. Genuine HA
-tests exercise public processing, actual SDK SSE parsing, native Store snapshots,
-in-flight context values and provider diagnostics. Historical zero-retraction and
-incomplete-fallback assertions are deliberately replaced by the policies above;
-other characterization expectations remain intact.
+## Verification
+
+Focused tests independently check context selection and provider accounting for
+missing, explicit zero, partial, repeated and corrected reports, including SDK
+field-presence rules. They also check that estimates cannot enter persisted
+totals, runs or request details. Genuine HA acceptance exercises SDK transport,
+trimming and immutable prefix measurements, native storage, parser failures and
+trailing usage using the same behavioral oracle against baseline and candidate.

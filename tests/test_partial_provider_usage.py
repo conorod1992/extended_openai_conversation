@@ -9,10 +9,7 @@ import pytest
 from custom_components.extended_openai_conversation_responses import (
     context_usage_hardening as context_usage,
 )
-from custom_components.extended_openai_conversation_responses.usage import (
-    RequestUsage,
-    UsageManager,
-)
+from custom_components.extended_openai_conversation_responses.usage import UsageManager
 from tests.test_usage_accounting_recovery import FakeStorage
 
 COMPLETE = {
@@ -161,11 +158,7 @@ def wire_usage(report, api, objects):
 async def test_partial_stream_usage_reaches_persisted_accounting(
     api, objects, reports, expected
 ):
-    request_usage = RequestUsage(
-        input_tokens=900,
-        total_tokens=900,
-        details={context_usage._LOCAL_ESTIMATE_DETAIL: 900},
-    )
+    request_usage = context_usage.RequestTokenMeasurements(context_estimate=900)
     chat_log = SimpleNamespace(async_trace=lambda _payload: None)
 
     async def stream():
@@ -187,7 +180,7 @@ async def test_partial_stream_usage_reaches_persisted_accounting(
     assert len(
         [item async for item in normalize(chat_log, stream(), request_usage)]
     ) == len(reports)
-    accounted = context_usage.usage_for_accounting(request_usage)
+    accounted = request_usage.reported
     fields = (
         "input_tokens",
         "output_tokens",
@@ -196,7 +189,7 @@ async def test_partial_stream_usage_reaches_persisted_accounting(
         "reasoning_tokens",
     )
     assert tuple(getattr(accounted, field) for field in fields) == expected
-    assert context_usage._LOCAL_ESTIMATE_DETAIL not in accounted.details
+    assert "__extended_openai_local_context_estimate" not in accounted.details
     assert accounted.details.get("input_cached_tokens", 0) == expected[3]
     assert accounted.details.get("output_reasoning_tokens", 0) == expected[4]
 
@@ -205,7 +198,7 @@ async def test_partial_stream_usage_reaches_persisted_accounting(
     await manager.async_initialize()
     async with manager.async_run() as run:
         await manager.async_record_request(
-            successful=True, usage=request_usage, api_mode=api
+            successful=True, usage=request_usage.reported, api_mode=api
         )
     await manager.async_prepare_for_deletion()
     assert tuple(getattr(manager.totals, field) for field in fields) == expected
@@ -218,18 +211,22 @@ async def test_partial_stream_usage_reaches_persisted_accounting(
 @pytest.mark.parametrize("objects", ["mapping", "attributes", "model-defaults"])
 @pytest.mark.parametrize("correction", [None, 0, -1, True, "0"])
 async def test_detail_only_prediction_counts_are_persisted(api, objects, correction):
-    usage = RequestUsage()
+    usage = context_usage.RequestTokenMeasurements()
     context_usage._capture_provider_usage(usage, wire_usage(COMPLETE, api, objects))
     report = {"output_tokens_details": {"accepted_prediction_tokens": 7}}
     context_usage._capture_provider_usage(usage, wire_usage(report, api, objects))
-    assert usage.details["output_accepted_prediction_tokens"] == 7
+    assert usage.reported.details["output_accepted_prediction_tokens"] == 7
     if correction is not None:
         report["output_tokens_details"]["accepted_prediction_tokens"] = correction
         # Invalid counts are passed without Pydantic's coercion to integers.
         raw = wire_usage(report, api, objects if correction == 0 else "mapping")
         context_usage._capture_provider_usage(usage, raw)
     expected = 0 if correction == 0 and not isinstance(correction, bool) else 7
-    assert (usage.input_tokens, usage.output_tokens, usage.total_tokens) == (
+    assert (
+        usage.reported.input_tokens,
+        usage.reported.output_tokens,
+        usage.reported.total_tokens,
+    ) == (
         120,
         30,
         150,
@@ -238,7 +235,9 @@ async def test_detail_only_prediction_counts_are_persisted(api, objects, correct
     manager = UsageManager(FakeStorage(), FakeStorage(), details)
     await manager.async_initialize()
     async with manager.async_run():
-        await manager.async_record_request(successful=True, usage=usage, api_mode=api)
+        await manager.async_record_request(
+            successful=True, usage=usage.reported, api_mode=api
+        )
     await manager.async_prepare_for_deletion()
     assert (
         details.data["requests"][0]["details"].get(

@@ -56,31 +56,25 @@ def test_model_tool_result_knowledge_payload_preserves_explicit_filters(
     )
 
 
-def test_context_usage_local_estimate_accepts_only_positive_integer() -> None:
+@pytest.mark.parametrize("value", [None, 0, "10", 10])
+def test_context_measurement_does_not_read_estimates_from_provider_details(value) -> None:
     from custom_components.extended_openai_conversation_responses import (
         context_usage_hardening as hardening,
     )
-    from custom_components.extended_openai_conversation_responses.usage import RequestUsage
+    from custom_components.extended_openai_conversation_responses.usage import (
+        RequestUsage,
+    )
 
-    usage = RequestUsage()
-    assert hardening._local_estimate(None) is None
-    assert hardening._local_estimate(usage) is None
-
-    usage.details = {hardening._LOCAL_ESTIMATE_DETAIL: 0}
-    assert hardening._local_estimate(usage) is None
-    usage.details = {hardening._LOCAL_ESTIMATE_DETAIL: "10"}
-    assert hardening._local_estimate(usage) is None
-    usage.details = {hardening._LOCAL_ESTIMATE_DETAIL: 10}
-    assert hardening._local_estimate(usage) == 10
+    usage = RequestUsage(details={"__extended_openai_local_context_estimate": value})
+    measurements = hardening.RequestTokenMeasurements(reported=usage)
+    assert measurements.context_tokens == 0
+    assert usage.input_tokens == usage.total_tokens == 0
 
 
 def test_context_usage_estimation_failure_is_best_effort(monkeypatch) -> None:
     from custom_components.extended_openai_conversation_responses import (
         context_usage_hardening as hardening,
     )
-    from custom_components.extended_openai_conversation_responses.usage import RequestUsage
-
-    usage = RequestUsage()
     log = Mock()
     monkeypatch.setattr(
         hardening,
@@ -89,16 +83,13 @@ def test_context_usage_estimation_failure_is_best_effort(monkeypatch) -> None:
     )
     monkeypatch.setattr(hardening, "log_handled_failure", log)
 
-    hardening.estimate_prepared_request(
-        SimpleNamespace(),
-        usage,
+    estimate = hardening.estimate_prepared_request(
         [{"role": "user", "content": "hello"}],
         None,
     )
 
     log.assert_called_once()
-    assert usage.input_tokens == 0
-    assert usage.total_tokens == 0
+    assert estimate is None
 
 
 @pytest.mark.asyncio

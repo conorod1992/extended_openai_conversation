@@ -1,16 +1,10 @@
-"""Keep context truncation reliable when providers omit stream usage metadata.
-
-Provider-reported usage remains authoritative for accounting. A conservative local
-estimate is attached only to the in-flight RequestUsage object so the existing
-context-management decision can still fire; UsageManager is wrapped to strip that
-estimate before totals/details are persisted.
-"""
+"""Keep context measurements separate from provider-reported token accounting."""
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Iterator, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field as dataclass_field, replace
 from hashlib import sha256
 import json
 import logging
@@ -25,8 +19,6 @@ from .request_static_cache import (
 from .usage import RequestUsage, extract_usage
 
 _LOGGER = logging.getLogger(__name__)
-_LOCAL_ESTIMATE_DETAIL = "__extended_openai_local_context_estimate"
-_PARTIAL_PROVIDER_USAGE_DETAIL = "__extended_openai_partial_provider_usage"
 _TRAILING_USAGE_TIMEOUT = 0.2
 _TRAILING_USAGE_EVENT_LIMIT = 128
 
@@ -60,6 +52,28 @@ class ContextInputMeasurement:
         )
 
 
+@dataclass(slots=True)
+class RequestTokenMeasurements:
+    """One provider round's reported snapshot and separate context fallback.
+
+    Only ``reported`` is eligible for accounting. Positive provider input retires
+    the fallback permanently, including if a later report corrects input to zero.
+    The immutable revision-bound context measurement is made after the round.
+    """
+
+    reported: RequestUsage = dataclass_field(default_factory=RequestUsage)
+    context_estimate: int | None = None
+
+    @property
+    def context_tokens(self) -> int:
+        """Retain the existing input, active-estimate, then provider-total policy."""
+        return (
+            self.reported.input_tokens
+            or self.context_estimate
+            or self.reported.total_tokens
+        )
+
+
 def _has_token_count(usage: RequestUsage) -> bool:
     """Return whether normalized provider metadata contains any real token count."""
     return any(
@@ -71,24 +85,6 @@ def _has_token_count(usage: RequestUsage) -> bool:
             usage.reasoning_tokens,
         )
     )
-
-
-def _local_estimate(usage: RequestUsage | None) -> int | None:
-    """Return the request-local context estimate when one is currently active."""
-    if usage is None:
-        return None
-    value = usage.details.get(_LOCAL_ESTIMATE_DETAIL)
-    return value if isinstance(value, int) and value > 0 else None
-
-
-def _copy_usage(target: RequestUsage, source: RequestUsage) -> None:
-    """Copy reconciled provider counts into the in-flight record."""
-    target.input_tokens = source.input_tokens
-    target.output_tokens = source.output_tokens
-    target.total_tokens = source.total_tokens
-    target.cached_input_tokens = source.cached_input_tokens
-    target.reasoning_tokens = source.reasoning_tokens
-    target.details = dict(source.details)
 
 
 def _usage_value(source: Any, key: str) -> Any:
@@ -186,7 +182,7 @@ def _merge_provider_usage(
 
 
 def _capture_provider_usage(
-    target: RequestUsage | None, raw_usage: Any
+    target: RequestTokenMeasurements | None, raw_usage: Any
 ) -> RequestUsage | None:
     """Apply one usable provider snapshot and return its provider-only diagnostics.
 
@@ -197,15 +193,9 @@ def _capture_provider_usage(
         return None
     normalized = extract_usage(raw_usage)
     if _has_token_count(normalized) or _has_reported_details(raw_usage):
-        estimate = _local_estimate(target)
-        provider = usage_for_accounting(target)
-        assert provider is not None
-        merged = _merge_provider_usage(provider, raw_usage, normalized)
-        _copy_usage(target, merged)
-        if estimate is not None and merged.input_tokens <= 0:
-            target.input_tokens = estimate
-            target.details[_LOCAL_ESTIMATE_DETAIL] = estimate
-            target.details[_PARTIAL_PROVIDER_USAGE_DETAIL] = 1
+        target.reported = _merge_provider_usage(target.reported, raw_usage, normalized)
+        if target.reported.input_tokens > 0:
+            target.context_estimate = None
     return normalized
 
 
@@ -306,29 +296,9 @@ def estimate_provider_input_tokens(input_value: Any, tools: Any = None) -> int:
     return measure_provider_input(input_value, tools)[2]
 
 
-def usage_for_accounting(usage: RequestUsage | None) -> RequestUsage | None:
-    """Strip local estimates while preserving genuine partial provider usage."""
-    if usage is None or _LOCAL_ESTIMATE_DETAIL not in usage.details:
-        return usage
-    if _PARTIAL_PROVIDER_USAGE_DETAIL not in usage.details:
-        return RequestUsage()
-
-    details = {
-        key: value
-        for key, value in usage.details.items()
-        if key not in {_LOCAL_ESTIMATE_DETAIL, _PARTIAL_PROVIDER_USAGE_DETAIL}
-    }
-    return RequestUsage(
-        input_tokens=0,
-        output_tokens=usage.output_tokens,
-        total_tokens=usage.total_tokens,
-        cached_input_tokens=usage.cached_input_tokens,
-        reasoning_tokens=usage.reasoning_tokens,
-        details=details,
-    )
-
-
-async def async_recover_trailing_usage(result: Any, usage: RequestUsage) -> None:
+async def async_recover_trailing_usage(
+    result: Any, usage: RequestTokenMeasurements
+) -> None:
     """Read accounting only after an output interpretation failure, best effort.
 
     A separate task and bounded wait keep an uncooperative iterator from extending
@@ -380,7 +350,7 @@ async def async_recover_trailing_usage(result: Any, usage: RequestUsage) -> None
 
 
 async def async_validate_tool_call_ids_with_usage(
-    calls: Any, result: Any, usage: RequestUsage
+    calls: Any, result: Any, usage: RequestTokenMeasurements
 ) -> None:
     """Keep ambiguous calls fatal while recovering bounded provider accounting."""
     from homeassistant.exceptions import HomeAssistantError
@@ -395,7 +365,7 @@ async def async_validate_tool_call_ids_with_usage(
 
 
 async def normalized_chat_stream(
-    chat_log: Any, result: Any, request_usage: RequestUsage | None
+    chat_log: Any, result: Any, request_usage: RequestTokenMeasurements | None
 ) -> AsyncIterator[Any]:
     """Apply usage before the Chat parser can yield, fail or be closed."""
     async for chunk in result:
@@ -411,7 +381,7 @@ async def normalized_chat_stream(
 
 
 async def normalized_responses_stream(
-    chat_log: Any, result: Any, request_usage: RequestUsage | None
+    chat_log: Any, result: Any, request_usage: RequestTokenMeasurements | None
 ) -> AsyncIterator[Any]:
     """Apply usage before the Responses parser can yield, fail or be closed."""
     iterator = aiter(result)
@@ -437,19 +407,14 @@ async def normalized_responses_stream(
 
 
 def estimate_prepared_request(
-    entity: Any,
-    request_usage: RequestUsage,
     input_value: Any,
     tools: Any,
     *,
     input_tokens: int | None = None,
-) -> None:
+) -> int | None:
     """Measure the already assembled provider round without rebuilding tools/history."""
     if input_tokens is not None:
-        request_usage.input_tokens = input_tokens
-        request_usage.total_tokens = input_tokens
-        request_usage.details = {_LOCAL_ESTIMATE_DETAIL: input_tokens}
-        return
+        return input_tokens
     # Materialize once; the shared measurement handles encoded attachments for
     # both preflight pruning and request diagnostics.
     measured = input_value if isinstance(input_value, list) else list(input_value)
@@ -467,7 +432,5 @@ def estimate_prepared_request(
         log_handled_failure(
             _LOGGER, "Unable to estimate provider input size", err, level=logging.DEBUG
         )
-        return
-    request_usage.input_tokens = estimate
-    request_usage.total_tokens = estimate
-    request_usage.details = {_LOCAL_ESTIMATE_DETAIL: estimate}
+        return None
+    return estimate

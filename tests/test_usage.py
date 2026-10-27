@@ -8,9 +8,11 @@ from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
-from homeassistant.util import dt as dt_util
 
 from custom_components.extended_openai_conversation_responses import usage
+from custom_components.extended_openai_conversation_responses.context_usage_hardening import (
+    RequestTokenMeasurements,
+)
 from custom_components.extended_openai_conversation_responses.entity import (
     ExtendedOpenAIBaseLLMEntity,
 )
@@ -19,6 +21,7 @@ from custom_components.extended_openai_conversation_responses.usage import (
     UsageManager,
     extract_usage,
 )
+from homeassistant.util import dt as dt_util
 
 
 class FakeStream:
@@ -181,7 +184,7 @@ async def test_chat_stream_consumes_usage_chunk_after_stop() -> None:
         usage=SimpleNamespace(prompt_tokens=9, completion_tokens=2, total_tokens=11),
     )
     entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
-    request_usage = RequestUsage()
+    request_usage = RequestTokenMeasurements()
     chat_log = SimpleNamespace(async_trace=lambda _: None)
 
     deltas = [
@@ -192,7 +195,7 @@ async def test_chat_stream_consumes_usage_chunk_after_stop() -> None:
     ]
 
     assert any(delta.get("content") == "OK" for delta in deltas)
-    assert request_usage.total_tokens == 11
+    assert request_usage.reported.total_tokens == 11
 
 
 async def test_run_lifecycle_groups_multiple_requests_and_finalizes_once() -> None:

@@ -19,13 +19,15 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_CONTEXT_TRUNCATE_STRATEGY,
     CONTEXT_TRUNCATE_SUMMARIZE,
 )
+from custom_components.extended_openai_conversation_responses.context_usage_hardening import (
+    RequestTokenMeasurements,
+)
 from custom_components.extended_openai_conversation_responses.entity import (
     ExtendedOpenAIBaseLLMEntity,
 )
 from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
     tool_result_data,
 )
-from custom_components.extended_openai_conversation_responses.usage import RequestUsage
 from homeassistant.components import conversation
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
@@ -82,7 +84,7 @@ async def test_chat_stream_usage_coercion_and_partial_tool_deltas() -> None:
     """Usage-only chunks and unusual provider delta values are normalized."""
     usage = SimpleNamespace(prompt_tokens=3, completion_tokens=2, total_tokens=5)
     trace = SimpleNamespace(async_trace=Mock())
-    request_usage = RequestUsage()
+    request_usage = RequestTokenMeasurements()
 
     class TruthyBlank:
         def __bool__(self) -> bool:
@@ -145,7 +147,7 @@ async def test_chat_stream_usage_coercion_and_partial_tool_deltas() -> None:
     assert {"content": "{'unexpected': True}"} not in deltas
     assert {"content": "123"} in deltas
     assert deltas[-1]["tool_calls"][0].tool_args == {}
-    assert request_usage.total_tokens == 5
+    assert request_usage.reported.total_tokens == 5
     trace.async_trace.assert_called_once()
 
 

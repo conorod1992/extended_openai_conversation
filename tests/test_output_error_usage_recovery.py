@@ -16,10 +16,7 @@ from custom_components.extended_openai_conversation_responses.non_streaming impo
     completed_chat_chunks,
     completed_responses_events,
 )
-from custom_components.extended_openai_conversation_responses.usage import (
-    RequestUsage,
-    UsageManager,
-)
+from custom_components.extended_openai_conversation_responses.usage import UsageManager
 from homeassistant.exceptions import HomeAssistantError
 from tests.test_provider_stream_terminals import (
     FakeStream,
@@ -185,7 +182,7 @@ async def test_completed_adapter_captures_usage_before_output(mode, arguments):
         )
         adapter = completed_chat_chunks
         transform = parser_entity()._transform_chat_stream
-    usage = RequestUsage()
+    usage = hardening.RequestTokenMeasurements()
     source = adapter(response, usage)
     log = SimpleNamespace(async_trace=lambda _payload: None)
     if arguments == "{":
@@ -193,7 +190,11 @@ async def test_completed_adapter_captures_usage_before_output(mode, arguments):
             _ = [delta async for delta in transform(log, source, usage)]
     else:
         _ = [delta async for delta in transform(log, source, usage)]
-    assert (usage.input_tokens, usage.output_tokens, usage.total_tokens) == (
+    assert (
+        usage.reported.input_tokens,
+        usage.reported.output_tokens,
+        usage.reported.total_tokens,
+    ) == (
         120,
         30,
         150,
@@ -214,7 +215,7 @@ async def test_recovery_errors_cannot_replace_original_output_error(failure):
         _ = [
             delta
             async for delta in parser_entity()._transform_chat_stream(
-                SimpleNamespace(), source, RequestUsage()
+                SimpleNamespace(), source, hardening.RequestTokenMeasurements()
             )
         ]
 
@@ -252,7 +253,7 @@ async def test_recovery_deadline_excludes_late_usage(monkeypatch, suppress_cance
                 finished.set()
 
     source = Stalled([_chat_chunk(finish_reason="content_filter")])
-    usage = RequestUsage()
+    usage = hardening.RequestTokenMeasurements()
     started = asyncio.get_running_loop().time()
     try:
         with pytest.raises(HomeAssistantError, match="content filter"):
@@ -267,7 +268,7 @@ async def test_recovery_deadline_excludes_late_usage(monkeypatch, suppress_cance
         release.set()
         await asyncio.wait_for(finished.wait(), 0.3)
         await asyncio.sleep(0)
-    assert usage.total_tokens == 0
+    assert usage.reported.total_tokens == 0
 
 
 async def test_cancellation_interrupts_recovery_immediately(monkeypatch):
@@ -288,7 +289,7 @@ async def test_cancellation_interrupts_recovery_immediately(monkeypatch):
         return [
             delta
             async for delta in parser_entity()._transform_chat_stream(
-                SimpleNamespace(), stream, RequestUsage()
+                SimpleNamespace(), stream, hardening.RequestTokenMeasurements()
             )
         ]
 
@@ -320,7 +321,7 @@ async def test_transport_and_cancellation_do_not_start_recovery(monkeypatch, err
         _ = [
             delta
             async for delta in parser_entity()._transform_chat_stream(
-                SimpleNamespace(), source(), RequestUsage()
+                SimpleNamespace(), source(), hardening.RequestTokenMeasurements()
             )
         ]
     recovered.assert_not_awaited()
@@ -335,7 +336,7 @@ async def test_recovery_cannot_publish_late_output_or_tools():
             usage_event("chat", FULL),
         ]
     )
-    usage, emitted, traces = RequestUsage(), [], []
+    usage, emitted, traces = hardening.RequestTokenMeasurements(), [], []
     with pytest.raises(HomeAssistantError, match="content filter"):
         async for delta in parser_entity()._transform_chat_stream(
             SimpleNamespace(async_trace=traces.append), source, usage
@@ -343,7 +344,7 @@ async def test_recovery_cannot_publish_late_output_or_tools():
             emitted.append(delta)
     assert emitted == [{"role": "assistant"}]
     assert traces == []
-    assert usage.total_tokens == 150
+    assert usage.reported.total_tokens == 150
 
 
 @pytest.mark.parametrize("cancel", [False, True])
@@ -414,10 +415,10 @@ async def test_public_recovery_timeout_and_cancel_record_failure_once(
 async def test_recovery_has_an_event_limit(monkeypatch):
     monkeypatch.setattr(hardening, "_TRAILING_USAGE_EVENT_LIMIT", 3)
     stream = Stream([usage_event("chat", FULL)] * 4)
-    usage = RequestUsage()
+    usage = hardening.RequestTokenMeasurements()
     await hardening.async_recover_trailing_usage(stream, usage)
     assert stream._index == 3
-    assert usage.total_tokens == 150
+    assert usage.reported.total_tokens == 150
 
 
 @pytest.mark.parametrize("cancel", [False, True])
@@ -436,7 +437,7 @@ async def test_duplicate_id_recovery_remains_bounded_and_cancellable(
                 finished.set()
 
     calls = [SimpleNamespace(id="duplicate"), SimpleNamespace(id="duplicate")]
-    usage = RequestUsage()
+    usage = hardening.RequestTokenMeasurements()
     task = asyncio.create_task(
         hardening.async_validate_tool_call_ids_with_usage(calls, Stalled([]), usage)
     )
@@ -447,7 +448,7 @@ async def test_duplicate_id_recovery_remains_bounded_and_cancellable(
         with pytest.raises(asyncio.CancelledError if cancel else HomeAssistantError):
             await asyncio.wait_for(task, 0.3)
         await asyncio.wait_for(finished.wait(), 0.3)
-        assert usage.total_tokens == 0
+        assert usage.reported.total_tokens == 0
     finally:
         if not task.done():
             task.cancel()

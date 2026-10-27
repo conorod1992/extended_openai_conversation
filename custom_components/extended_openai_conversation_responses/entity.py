@@ -74,6 +74,7 @@ from .context_summary_performance import (
 )
 from .context_usage_hardening import (
     ContextInputMeasurement,
+    RequestTokenMeasurements,
     _trace_provider_usage,
     async_prepared_input_revision,
     async_recover_trailing_usage,
@@ -1145,13 +1146,12 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     len(messages),
                 )
 
-                request_usage = RequestUsage()
-                estimate_prepared_request(
-                    self,
-                    request_usage,
-                    messages,
-                    tool_kwargs.get("tools"),
-                    input_tokens=round_estimate,
+                request_usage = RequestTokenMeasurements(
+                    context_estimate=estimate_prepared_request(
+                        messages,
+                        tool_kwargs.get("tools"),
+                        input_tokens=round_estimate,
+                    )
                 )
                 request_started = time.monotonic()
                 request_history_length = len(chat_log.content)
@@ -1230,7 +1230,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     if self._usage is not None:
                         await self._usage.async_record_request(
                             successful=False,
-                            usage=request_usage,
+                            usage=request_usage.reported,
                             provider=getattr(self.entry, "data", {}).get(
                                 CONF_API_PROVIDER, DEFAULT_API_PROVIDER
                             ),
@@ -1257,7 +1257,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         if self._usage is not None:
                             await self._usage.async_record_request(
                                 successful=True,
-                                usage=request_usage,
+                                usage=request_usage.reported,
                                 provider=getattr(self.entry, "data", {}).get(
                                     CONF_API_PROVIDER, DEFAULT_API_PROVIDER
                                 ),
@@ -1282,7 +1282,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         )
                         raise
                     context_measurement = ContextInputMeasurement(
-                        request_usage.input_tokens or request_usage.total_tokens,
+                        request_usage.context_tokens,
                         request_history_length,
                         request_input_revision,
                     )
@@ -1894,12 +1894,12 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         self,
         chat_log: conversation.ChatLog,
         result: AsyncStream[ChatCompletionChunk],
-        request_usage: RequestUsage | None = None,
+        request_usage: RequestTokenMeasurements | None = None,
     ) -> AsyncGenerator[
         conversation.AssistantContentDeltaDict | conversation.ToolResultContentDeltaDict
     ]:
         """Transform OpenAI stream to Home Assistant format."""
-        request_usage = request_usage or RequestUsage()
+        request_usage = request_usage or RequestTokenMeasurements()
         recovery_state = current_tool_recovery_state()
         current_tool_calls: dict[int, dict[str, Any]] = {}
         first_chunk = True
@@ -2046,7 +2046,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         self,
         chat_log: conversation.ChatLog,
         result: AsyncStream[Any],
-        request_usage: RequestUsage | None = None,
+        request_usage: RequestTokenMeasurements | None = None,
     ) -> AsyncGenerator[
         conversation.AssistantContentDeltaDict | conversation.ToolResultContentDeltaDict
     ]:
@@ -2074,12 +2074,12 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         self,
         chat_log: conversation.ChatLog,
         result: AsyncStream[Any],
-        request_usage: RequestUsage | None = None,
+        request_usage: RequestTokenMeasurements | None = None,
     ) -> AsyncGenerator[
         conversation.AssistantContentDeltaDict | conversation.ToolResultContentDeltaDict
     ]:
         """Transform a Responses API event stream to Home Assistant format."""
-        request_usage = request_usage or RequestUsage()
+        request_usage = request_usage or RequestTokenMeasurements()
         recovery_state = current_tool_recovery_state()
         response_text_lengths: dict[tuple[int | None, int | None], int] = {}
         response_refusal_lengths: dict[tuple[int | None, int | None], int] = {}
