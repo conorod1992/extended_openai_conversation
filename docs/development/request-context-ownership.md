@@ -9,6 +9,7 @@ it does not acquire a new conversation, user, execution receipt or storage lease
 | Owner | State | Lifetime and inheritance |
 | --- | --- | --- |
 | Public invocation | `RequestInvocation` in `request_context.py` | Each `async_process` or `async_process_direct` call installs fresh metadata and prefetch ownership. Ordinary child helpers inherit the binding; another public invocation installs its own. |
+| Entity registration | Existing readiness event in `conversation.py` | Each HA add captures its own event. Removal retires that registration before initialization can resume; completion signals only its captured event. Requests reject a changed registration after waiting. |
 | Claimed turn | `ConversationTurnContext` in `request_context.py` | One resolved data scope, archive identity, privacy veto, temporary-memory scope, memory-session identity and Function Group session reference. Installed atomically after session lookup; restored even if admission or finalization fails. |
 | Native Request Rule script | `RuleActionExecution` in `request_rules.py` | The function callback, action authorizer and captured-result map are installed and restored together. Native script branches intentionally share that result map. A nested rule installs another record. |
 | Prepared Function call | `PreparedFunctionCall` in `function_execution.py` | The exact prepared input, validation snapshots and retained original input share one dispatch boundary. Nested dispatch restores its caller's binding. |
@@ -31,6 +32,25 @@ with persistent-memory retrieval. Cleanup preserves the primary request error or
 cancellation, retrieves speculative-read failures without logging their private
 prose, and drains through repeated caller cancellation. Completion notifications
 retain their existing ordering inside the invocation boundary.
+
+Registration retirement is bound before the first initialization await. Stage
+boundaries prevent an obsolete add from publishing a retention interval or legacy
+alias. An older add's failure cannot mark a newer registration failed. This also
+protects requests waiting through a rename, reload or same-object re-add: waking
+an old readiness event does not grant access to a later registration. Already
+running initialization helpers retain their existing storage and settlement
+contracts; these checks own publication and request admission. Removal waits for
+pending initialization to settle before finishing HA teardown, so HA's final add
+state write cannot happen after removal. Already-ready registrations keep the
+ordinary removal path without an additional task or wait.
+
+Core owns the outer config-entry unload state transition. Cancelling that public
+operation can leave it in `UNLOAD_IN_PROGRESS`, even after the entity's owned
+initialization and cleanup settle. The same entry then cannot be set up again
+until Core recovers that state or restarts. The entity hook cannot complete the
+outer Core transition; callers that own a reload must settle the entire Core
+operation. Treat this as a remaining cancellation limitation when certifying
+reload and shutdown behavior.
 
 ## Identity and configuration boundaries
 
@@ -97,6 +117,8 @@ of either owner, repeated cancellation, setup failures and finalization failures
 - `tests/test_request_invocation_cleanup.py`
 - `tests/test_turn_context_ownership.py`
 - `tests/test_prepared_call_provenance.py`
+- `tests/test_agent_registration_ownership.py`
+- `tests_real_ha/test_agent_registration_ownership.py`
 
 Preserve their positive controls as well as rejection checks. Existing genuine
 Home Assistant suites additionally establish native Script results, user and

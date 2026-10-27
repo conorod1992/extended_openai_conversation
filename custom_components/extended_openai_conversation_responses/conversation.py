@@ -197,6 +197,7 @@ from .model_tool_results import (
     model_memory_as_dict,
     omit_null_paging_cursor,
 )
+from .operation_settlement import async_settle_owned_operation
 from .operational_errors import log_handled_failure
 from .prompt import render_effective_prompt
 from .prompt_cache import _PROMPT_CACHE_CONTEXT, prompt_cache_context
@@ -392,22 +393,46 @@ class ExtendedOpenAIAgentEntity(
 
     async def async_added_to_hass(self) -> None:
         """When entity is added to Home Assistant."""
-        self._agent_ready = asyncio.Event()
+        ready = self._agent_ready = asyncio.Event()
         self._agent_initialization_failed = False
+
+        def retire_registration() -> None:
+            if self._agent_ready is ready:
+                self._agent_initialization_failed = True
+
+        def owns_registration() -> bool:
+            return (
+                self._agent_ready is ready
+                and not self._agent_initialization_failed
+                and not ready.is_set()
+            )
+
         try:
+            # Rename can re-add this object while entry unload removes it. Bind
+            # retirement before waiting, so an obsolete add cannot publish later.
+            self.async_on_remove(retire_registration)
             async with conversation_request_lease(self):
+                if not owns_registration():
+                    return
                 await super().async_added_to_hass()
+                if not owns_registration():
+                    return
                 await self._async_initialize_agent_state()
+                if not owns_registration():
+                    return
                 await self._async_initialize_optional_managers()
+                if not owns_registration():
+                    return
                 # Shared managers can retain a provider bound to the previous entity.
                 sync_memory_embedding_provider(self)
                 self._schedule_archive_retention()
                 register_legacy_agent(self.hass, self.entry, self)
         except BaseException:
-            self._agent_initialization_failed = True
+            if self._agent_ready is ready:
+                self._agent_initialization_failed = True
             raise
         finally:
-            self._agent_ready.set()
+            ready.set()
 
     async def _async_initialize_agent_state(self) -> None:
         """Load required shared state and reset per-registration request state."""
@@ -651,11 +676,19 @@ class ExtendedOpenAIAgentEntity(
 
     async def async_will_remove_from_hass(self) -> None:
         """When entity will be removed from Home Assistant."""
-        unregister_legacy_agent(self.hass, self.entry, self)
-        remove_function_group_runtime(
-            self.hass, self.entry.entry_id, self.subentry.subentry_id
-        )
-        await super().async_will_remove_from_hass()
+        ready = self._agent_ready
+        try:
+            if ready is not None and not ready.is_set():
+                # HA finishes an in-flight add after this hook returns. Keep
+                # removal open until that add settles, so its final state write
+                # cannot resurrect the removed registration or block a reload.
+                await async_settle_owned_operation(ready.wait())
+        finally:
+            unregister_legacy_agent(self.hass, self.entry, self)
+            remove_function_group_runtime(
+                self.hass, self.entry.entry_id, self.subentry.subentry_id
+            )
+            await super().async_will_remove_from_hass()
 
     async def async_process(self, user_input: ConversationInput) -> ConversationResult:
         """Process a sentence without inheriting an enclosing invocation's metadata."""
@@ -678,9 +711,10 @@ class ExtendedOpenAIAgentEntity(
         surround debug capture, request caches, Voice Identity and reconciliation.
         No installer may replace this method or any of its request-entry owners.
         """
-        if self._agent_ready is not None:
-            await self._agent_ready.wait()
-            if self._agent_initialization_failed:
+        ready = self._agent_ready
+        if ready is not None:
+            await ready.wait()
+            if self._agent_ready is not ready or self._agent_initialization_failed:
                 return self._agent_not_ready_result(user_input)
         if not user_input.text.strip():
             response = intent.IntentResponse(language=user_input.language)
