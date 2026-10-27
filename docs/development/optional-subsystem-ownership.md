@@ -58,6 +58,8 @@ initialization and availability/error policies. The registration owns the four
 initializer tasks until they settle. If one is cancelled or registration aborts,
 it cancels unfinished siblings once and drains their cleanup before releasing
 the maintenance lease, signalling readiness or admitting a replacement.
+Children already cancelling are drained without this owner issuing another
+cancellation into their finalizers.
 Repeated caller cancellation cannot interrupt that drain or replace its original
 cancellation. Shared managers are not shut down by this task cleanup.
 

@@ -564,7 +564,10 @@ class ExtendedOpenAIAgentEntity(
             group.result()
         except BaseException:
             for task in tasks:
-                task.cancel()
+                # Another owner may already have cancelled this child. Do not
+                # interrupt the finalizer whose completion we are about to drain.
+                if not task.done() and not task.cancelling():
+                    task.cancel()
             cleanup = asyncio.gather(*tasks, return_exceptions=True)
             await async_wait_owned_cleanup(cleanup)
             cleanup.result()

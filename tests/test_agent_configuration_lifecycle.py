@@ -198,6 +198,56 @@ async def test_required_startup_failure_propagates_before_optional_work(startup)
     assert startup.scheduled == []
 
 
+async def test_startup_does_not_recancel_sibling_finalization(startup, monkeypatch):
+    cleaning, release, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    draining = asyncio.Event()
+    children = []
+
+    async def memory_loader(*_):
+        child = asyncio.current_task()
+        children.append(child)
+        child.cancel("memory cancelled")
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleaning.set()
+            await release.wait()
+            finished.set()
+
+    async def temporary_loader(*_):
+        await cleaning.wait()
+        raise asyncio.CancelledError("temporary cancelled")
+
+    original_drain = conversation.async_wait_owned_cleanup
+
+    async def observe_drain(task):
+        draining.set()
+        return await original_drain(task)
+
+    monkeypatch.setattr(conversation, "async_wait_owned_cleanup", observe_drain)
+    startup.getters["memory"].side_effect = memory_loader
+    startup.getters["temporary_memory"].side_effect = temporary_loader
+    task = asyncio.create_task(startup.agent.async_added_to_hass())
+    try:
+        await draining.wait()
+        await asyncio.sleep(0)
+        assert children[0].cancelling() == 1
+        assert not task.done() and not finished.is_set()
+        assert not startup.agent._agent_ready.is_set()
+        assert startup.scheduled == []
+        release.set()
+        with pytest.raises(asyncio.CancelledError, match="temporary cancelled"):
+            await task
+        assert finished.is_set()
+        assert startup.agent._agent_ready.is_set()
+        assert startup.agent._agent_initialization_failed
+        assert startup.scheduled == []
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+        startup.remove()
+
+
 @pytest.mark.parametrize("cancel_from_child", [False, True])
 async def test_startup_keeps_registration_until_optional_sibling_cleanup_settles(
     startup, cancel_from_child

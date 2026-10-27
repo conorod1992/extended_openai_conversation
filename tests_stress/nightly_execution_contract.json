@@ -1,6 +1,9 @@
 {
   "schema": "eoai-nightly-execution-contract/v1",
   "pytest": [
+    "tests_real_ha/test_optional_startup_ownership.py::test_already_cancelling_sibling_finishes_cleanup_before_owner_returns",
+    "tests_real_ha/test_optional_startup_ownership.py::test_cleanup_failure_preserves_original_startup_cancellation[caller]",
+    "tests_real_ha/test_optional_startup_ownership.py::test_cleanup_failure_preserves_original_startup_cancellation[child]",
     "tests_real_ha/test_embedding_cache_deletion_ownership.py::test_hybrid_cache_worker_settles_before_permanent_deletion[False-False]",
     "tests_real_ha/test_embedding_cache_deletion_ownership.py::test_hybrid_cache_worker_settles_before_permanent_deletion[False-True]",
     "tests_real_ha/test_embedding_cache_deletion_ownership.py::test_hybrid_cache_worker_settles_before_permanent_deletion[True-False]",
