@@ -161,8 +161,22 @@ async def test_shipped_browser_frontend_talks_to_real_management_websocket(
     await _setup_entry(hass, entry)
     # Both assistants are genuine loaded entries; identity coverage must not skip.
     await _setup_entry(hass, _entry("Dependent Journey"))
-    client = await _admin_client(hass, hass_ws_client)
-    runner, backend_url = await _start_ws_bridge(client)
+
+    class BrowserClient:
+        # Slow runner startup must not age an authenticated, unpolled test socket.
+        # Authenticate once on first use; a later disconnect still fails the test.
+        client = None
+        _eoai_test_hass = hass
+
+        async def send_json_auto_id(self, message):
+            if self.client is None:
+                self.client = await _admin_client(hass, hass_ws_client)
+            await self.client.send_json_auto_id(message)
+
+        async def receive_json(self):
+            return await self.client.receive_json()
+
+    runner, backend_url = await _start_ws_bridge(BrowserClient())
 
     repo_root = Path(__file__).resolve().parent.parent
     try:
