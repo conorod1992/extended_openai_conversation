@@ -81,7 +81,6 @@ from .exposed_attributes import exposed_attribute_catalog
 from .frontend_assets import async_register_frontend_assets, frontend_entry_url
 from .function_configuration_repair import has_unavailable_native_tool
 from .function_dependency_integrity import (
-    _TOOL_MUTATIONS,
     _is_template_string,
     _rule_script_actions,
     async_validate_request_rule_functions,
@@ -148,6 +147,7 @@ from .management_history_queries import (
     usage_runs_page,
     usage_summary,
 )
+from .management_operations import is_tool_mutation
 from .management_permissions import (
     async_quiet_hours_command,
     require_management_permission,
@@ -3138,11 +3138,7 @@ async def async_management_command(
         and isinstance(action, str)
         and action in {"get", "save", "update"}
     )
-    trace_tool_mutation = (
-        message.get("section") == "tools"
-        and isinstance(action, str)
-        and action in _TOOL_MUTATIONS
-    )
+    trace_tool_mutation = is_tool_mutation(message.get("section"), action)
     started = perf_counter() if trace_configuration or trace_tool_mutation else None
     async with management_command_lease(hass, message):
         lease_ms = _elapsed_ms(started) if started is not None else None
@@ -3216,11 +3212,11 @@ async def _async_management_request(
         await async_validate_request_rule_functions(
             hass, candidate, _request_rule_function_tools(candidate, subentry.data)
         )
-    elif is_admin and section == "tools" and action in _TOOL_MUTATIONS:
+    elif is_admin and is_tool_mutation(section, action):
         _require_agent_config_revision(subentry, message.get("revision"))
 
     configuration_action = _configuration_action(message)
-    trace_tool_mutation = section == "tools" and action in _TOOL_MUTATIONS
+    trace_tool_mutation = is_tool_mutation(section, action)
     handler_started = (
         perf_counter()
         if configuration_action is not None or trace_tool_mutation
@@ -3370,7 +3366,7 @@ async def websocket_management(
     trace_request = (
         msg.get("section") == "configuration"
         and msg.get("action") in {"get", "save", "update"}
-    ) or (msg.get("section") == "tools" and msg.get("action") in _TOOL_MUTATIONS)
+    ) or is_tool_mutation(msg.get("section"), msg.get("action"))
     if trace_request:
         performance = result.get("_performance")
         if isinstance(performance, dict):

@@ -20,9 +20,6 @@ from .script_payload import (
 )
 from .script_structure import iter_script_actions
 
-_TOOL_MUTATIONS = frozenset(
-    {"save", "set_enabled", "delete", "save_group", "delete_group", "ha_add"}
-)
 _TEMPLATE_MARKERS = ("{{", "{%", "{#")
 
 
