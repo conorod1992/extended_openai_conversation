@@ -45,3 +45,19 @@ Normal entity unload does not erase persisted data or stop a shared manager
 needed by management, recovery or a replacement registration. Permanent deletion
 is a distinct, exclusive operation; its Store removal API rejects callers that
 do not own that maintenance boundary.
+
+## Optional startup work
+
+Memory, temporary memory, Knowledge and Archive keep their existing parallel
+initialization and availability/error policies. The registration owns the four
+initializer tasks until they settle. If one is cancelled or registration aborts,
+it cancels unfinished siblings once and drains their cleanup before releasing
+the maintenance lease, signalling readiness or admitting a replacement.
+Repeated caller cancellation cannot interrupt that drain or replace its original
+cancellation. Shared managers are not shut down by this task cleanup.
+
+Disabled conversational capabilities do not imply their data is disposable.
+Archive retention still prunes older data when collection is disabled; Knowledge
+keeps its existing management/startup access. Live reconciliation retains its
+configuration-identity fast path, immediate capability gating, manager reuse and
+retry semantics. This boundary adds no work to ordinary conversation requests.
