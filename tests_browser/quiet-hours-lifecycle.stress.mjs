@@ -9,6 +9,7 @@ const satellite = (id = "assist_satellite.kitchen", suffix = "kitchen") => ({
 });
 
 async function installSatelliteFixture(panel, satellites = [satellite()]) {
+  await expect(panel.locator("#qh-enabled")).toBeVisible();
   await panel.evaluate((host, items) => {
     // This harness tests draft lifecycle; genuine native component loading is
     // covered by the fresh-document real-ha-shell Quiet Hours regression.
