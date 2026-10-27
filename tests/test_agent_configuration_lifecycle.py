@@ -198,6 +198,121 @@ async def test_required_startup_failure_propagates_before_optional_work(startup)
     assert startup.scheduled == []
 
 
+async def test_startup_does_not_recancel_sibling_finalization(startup, monkeypatch):
+    cleaning, release, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    draining = asyncio.Event()
+    children = []
+
+    async def memory_loader(*_):
+        child = asyncio.current_task()
+        children.append(child)
+        child.cancel("memory cancelled")
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleaning.set()
+            await release.wait()
+            finished.set()
+
+    async def temporary_loader(*_):
+        await cleaning.wait()
+        raise asyncio.CancelledError("temporary cancelled")
+
+    original_drain = conversation.async_wait_owned_cleanup
+
+    async def observe_drain(task):
+        draining.set()
+        return await original_drain(task)
+
+    monkeypatch.setattr(conversation, "async_wait_owned_cleanup", observe_drain)
+    startup.getters["memory"].side_effect = memory_loader
+    startup.getters["temporary_memory"].side_effect = temporary_loader
+    task = asyncio.create_task(startup.agent.async_added_to_hass())
+    try:
+        await draining.wait()
+        await asyncio.sleep(0)
+        assert children[0].cancelling() == 1
+        assert not task.done() and not finished.is_set()
+        assert not startup.agent._agent_ready.is_set()
+        assert startup.scheduled == []
+        release.set()
+        with pytest.raises(asyncio.CancelledError, match="temporary cancelled"):
+            await task
+        assert finished.is_set()
+        assert startup.agent._agent_ready.is_set()
+        assert startup.agent._agent_initialization_failed
+        assert startup.scheduled == []
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+        startup.remove()
+
+
+@pytest.mark.parametrize("cancel_from_child", [False, True])
+async def test_startup_keeps_registration_until_optional_sibling_cleanup_settles(
+    startup, cancel_from_child
+):
+    memory_started = asyncio.Event()
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+    cleanup_finished = asyncio.Event()
+    reads = []
+
+    async def load_memory(*_):
+        reads.append(asyncio.current_task())
+        memory_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleanup_started.set()
+            await release_cleanup.wait()
+            cleanup_finished.set()
+
+    async def load_temporary(*_):
+        await memory_started.wait()
+        if cancel_from_child:
+            raise asyncio.CancelledError("optional initialization cancelled")
+        return object()
+
+    startup.getters["memory"].side_effect = load_memory
+    startup.getters["temporary_memory"].side_effect = load_temporary
+    task = asyncio.create_task(startup.agent.async_added_to_hass())
+    cleanup = asyncio.create_task(cleanup_started.wait())
+    try:
+        await memory_started.wait()
+        if not cancel_from_child:
+            task.cancel("registration cancelled")
+        await asyncio.wait({task, cleanup}, return_when=asyncio.FIRST_COMPLETED)
+        assert cleanup_started.is_set()
+        assert not task.done()
+        assert not startup.agent._agent_ready.is_set()
+        task.cancel("repeated cancellation during cleanup")
+        await asyncio.sleep(0)
+        assert not task.done()
+        assert not cleanup_finished.is_set()
+        release_cleanup.set()
+        with pytest.raises(asyncio.CancelledError) as error:
+            await task
+        expected = (
+            "optional initialization cancelled"
+            if cancel_from_child
+            else "registration cancelled"
+        )
+        assert error.value.args == (expected,)
+        assert cleanup_finished.is_set()
+        assert startup.agent._agent_ready.is_set()
+        assert startup.agent._agent_initialization_failed
+        assert startup.scheduled == []
+        conversation.conversation.async_set_agent.assert_not_called()
+    finally:
+        release_cleanup.set()
+        task.cancel()
+        cleanup.cancel()
+        for read in reads:
+            read.cancel()
+        await asyncio.gather(task, cleanup, *reads, return_exceptions=True)
+
+
 async def test_disabled_archive_prunes_without_enabling_collection_and_search_only_initializes(
     startup,
 ):

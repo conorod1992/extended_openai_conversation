@@ -197,7 +197,7 @@ from .model_tool_results import (
     model_memory_as_dict,
     omit_null_paging_cursor,
 )
-from .operation_settlement import async_settle_owned_operation
+from .operation_settlement import async_settle_owned_operation, async_wait_owned_cleanup
 from .operational_errors import log_handled_failure
 from .prompt import render_effective_prompt
 from .prompt_cache import _PROMPT_CACHE_CONTEXT, prompt_cache_context
@@ -547,12 +547,33 @@ class ExtendedOpenAIAgentEntity(
             ):
                 sync_memory_embedding_provider(self)
 
-        await asyncio.gather(
-            initialize_temporary_memory(),
-            self._async_initialize_archive(archive_configured),
-            initialize_knowledge(),
-            initialize_persistent_memory(),
-        )
+        tasks = [
+            asyncio.create_task(initializer)
+            for initializer in (
+                initialize_temporary_memory(),
+                self._async_initialize_archive(archive_configured),
+                initialize_knowledge(),
+                initialize_persistent_memory(),
+            )
+        ]
+        group = asyncio.gather(*tasks)
+        try:
+            # Observe completion without forwarding repeated caller cancellation
+            # into a sibling's cleanup. The registration still owns every child.
+            await asyncio.wait({group})
+            group.result()
+        except BaseException:
+            for task in tasks:
+                # Another owner may already have cancelled this child. Do not
+                # interrupt the finalizer whose completion we are about to drain.
+                if not task.done() and not task.cancelling():
+                    task.cancel()
+            cleanup = asyncio.gather(*tasks, return_exceptions=True)
+            await async_wait_owned_cleanup(cleanup)
+            cleanup.result()
+            with suppress(BaseException):
+                group.result()
+            raise
 
     def _schedule_archive_retention(self) -> None:
         """Tie daily retention to this entity's HA registration lifetime."""

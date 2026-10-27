@@ -85,6 +85,7 @@ nav:
   - Reference:
       - Compatibility: reference/compatibility.md
       - Request context ownership: development/request-context-ownership.md
+      - Optional subsystem ownership: development/optional-subsystem-ownership.md
       - Logging: reference/logging.md
       - Migration: migration.md
   - Help:

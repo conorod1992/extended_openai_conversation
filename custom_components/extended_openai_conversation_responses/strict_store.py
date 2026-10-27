@@ -25,9 +25,11 @@ class RecoveryGuardedStore(Store[dict[str, Any]]):
     _recovery_gate: AgentMaintenanceGate | None = None
 
     def bind_agent(self, entry_id: str, subentry_id: str) -> Self:
-        self._recovery_gate = get_agent_maintenance_gate(
-            self.hass, entry_id, subentry_id
-        )
+        gate = get_agent_maintenance_gate(self.hass, entry_id, subentry_id)
+        if self._recovery_gate is not None and self._recovery_gate is not gate:
+            self._recovery_gate.unregister_store(self)
+        self._recovery_gate = gate
+        gate.register_store(self)
         return self
 
     @property
@@ -91,6 +93,21 @@ class PropagatingWriteStore(RecoveryGuardedStore):
                 f"Private storage write failed: {storage_failure_reason(number)}; "
                 "the EOAI state change could not be persisted",
             ) from None
+
+
+async def async_remove_agent_stores(gate: AgentMaintenanceGate) -> None:
+    """Retire actual Store callbacks before erasure under exclusive ownership.
+
+    Disk orphan discovery remains separate: weak ownership covers live callbacks,
+    not files whose handles have already gone away. All manager workers must have
+    settled before the caller enters this deletion phase.
+    """
+    if not gate.owns_exclusive():
+        raise RuntimeError("Store deletion requires exclusive agent maintenance")
+    for store in gate.storage_resources:
+        store._async_cleanup_delay_listener()
+        store._async_cleanup_final_write_listener()
+        await store.async_remove()
 
 
 @asynccontextmanager

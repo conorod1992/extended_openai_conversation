@@ -33,6 +33,24 @@ async def test_broadcast_api_registration_is_idempotent(hass) -> None:
 
 
 @pytest.mark.asyncio
+async def test_broadcast_api_failed_registration_remains_retryable(hass) -> None:
+    register = MagicMock(side_effect=[RuntimeError("registration failed"), None])
+    with patch.object(intercom_panel.websocket_api, "async_register_command", register):
+        with pytest.raises(RuntimeError, match="registration failed"):
+            await intercom_panel.async_setup_broadcast_api(hass)
+        assert not hass.data.get(intercom_panel._SETUP_KEY)
+        await asyncio.gather(
+            *(intercom_panel.async_setup_broadcast_api(hass) for _ in range(3))
+        )
+    assert hass.data[intercom_panel._SETUP_KEY]
+    assert register.call_count == 2
+    assert all(
+        call.args == (hass, intercom_panel.websocket_broadcast)
+        for call in register.call_args_list
+    )
+
+
+@pytest.mark.asyncio
 async def test_broadcast_service_registration_is_idempotent(hass) -> None:
     """Repeated integration setup never replaces or duplicates the service handler."""
     hass.services.has_service.side_effect = [False, True]

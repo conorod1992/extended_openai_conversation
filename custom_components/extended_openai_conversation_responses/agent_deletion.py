@@ -11,14 +11,13 @@ from homeassistant.config_entries import SIGNAL_CONFIG_ENTRY_CHANGED, ConfigEntr
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.event import async_call_later
-from homeassistant.helpers.storage import Store
 
 from .agent_maintenance import (
     _async_run_exclusive_operation,
     get_agent_maintenance_gate,
 )
 from .const import DOMAIN
-from .strict_store import PropagatingWriteStore
+from .strict_store import PropagatingWriteStore, async_remove_agent_stores
 
 KNOWN_AGENTS = f"{DOMAIN}.known_agents"
 _LOGGER = logging.getLogger(__name__)
@@ -125,25 +124,6 @@ def async_setup_agent_deletion(hass: Any) -> None:
     hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, stop)
 
 
-def _owned_stores(owner: Any) -> list[Store[Any]]:
-    """Find manager-owned Store handles so pending delayed writes are cancelled too."""
-    if isinstance(owner, Store):
-        return [owner]
-    result = []
-    for attribute in (
-        "_store",
-        "_storage",
-        "_daily_storage",
-        "_detail_storage",
-        "_embedding_cache_storage",
-        "_metadata",
-    ):
-        child = getattr(owner, attribute, None)
-        if child is not None:
-            result.extend(_owned_stores(child))
-    return result
-
-
 async def async_delete_agent_data(hass: Any, entry_id: str, subentry_id: str) -> None:
     """Drain old requests, erase durable stores, then fence out detached writers."""
     gate = get_agent_maintenance_gate(hass, entry_id, subentry_id)
@@ -152,6 +132,9 @@ async def async_delete_agent_data(hass: Any, entry_id: str, subentry_id: str) ->
     await gate.async_retire_readers()
 
     async def remove() -> None:
+        # Another queued deletion may have completed while admission was pending.
+        if gate.deleted:
+            return
         with gate.recovery_work():
             from .backup_transfer import async_remove_agent_transfers
             from .delayed_tools import (
@@ -167,7 +150,6 @@ async def async_delete_agent_data(hass: Any, entry_id: str, subentry_id: str) ->
                 await async_remove_stored_agent_calls(hass, entry_id, subentry_id)
             await async_remove_agent_transfers(hass, entry_id, subentry_id)
             key = (entry_id, subentry_id)
-            stores = []
             for suffix in _MANAGER_KEYS:
                 manager = hass.data.get(f"{DOMAIN}.{suffix}", {}).get(key)
                 if manager is None:
@@ -182,13 +164,7 @@ async def async_delete_agent_data(hass: Any, entry_id: str, subentry_id: str) ->
                     "temporary_memory_managers",
                 }:
                     await manager.async_prepare_for_deletion()
-                stores.extend(_owned_stores(manager))
-            for store in stores:
-                # Cancel delayed/final writers on the actual owned handle before
-                # erasing its files, including HA's in-memory Store test adapter.
-                store._async_cleanup_delay_listener()
-                store._async_cleanup_final_write_listener()
-                await store.async_remove()
+            await async_remove_agent_stores(gate)
             names = await hass.async_add_executor_job(
                 _storage_names, hass, entry_id, subentry_id
             )

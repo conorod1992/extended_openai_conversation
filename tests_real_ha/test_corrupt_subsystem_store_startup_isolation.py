@@ -33,6 +33,7 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
+from tests_real_ha.native_storage import hass_storage  # noqa: F401
 from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
 from tests_real_ha.test_knowledge_provider_wire_e2e import _chat_sse_text
 from tests_real_ha.test_provider_wire_e2e import _install_wire, _speech

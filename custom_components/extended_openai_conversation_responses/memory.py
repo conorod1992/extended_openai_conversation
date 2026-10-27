@@ -20,6 +20,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
+from .agent_maintenance import get_agent_maintenance_gate
 from .const import (
     CONF_MEMORY_AUTO_CREATE,
     CONF_MEMORY_ENABLED,
@@ -32,6 +33,7 @@ from .const import (
     MEMORY_MODE_OFF,
     MEMORY_MODES,
 )
+from .operation_settlement import async_settle_owned_operation
 from .operational_errors import log_handled_failure
 from .persistence_hardening import _async_settle_transactional_save
 from .provider_errors import provider_failure_category, provider_log_remediation
@@ -266,6 +268,10 @@ class HomeAssistantEmbeddingCacheStorage:
             private=True,
             atomic_writes=True,
             serialize_in_event_loop=False,
+        )
+        # Register cleanup ownership without changing best-effort cache I/O.
+        get_agent_maintenance_gate(hass, entry_id, subentry_id).register_store(
+            self._store
         )
 
     async def async_load(self) -> dict[str, Any] | None:
@@ -1197,7 +1203,11 @@ class PersistentMemory:
                 if not batch_generated:
                     continue
                 self._embedding_cache_dirty = True
-                if not await self._async_save_embedding_cache_locked():
+                # Keep the manager lease until its best-effort native write has
+                # settled, including when reader retirement cancels this refresh.
+                if not await async_settle_owned_operation(
+                    self._async_save_embedding_cache_locked()
+                ):
                     return False
         return True
 

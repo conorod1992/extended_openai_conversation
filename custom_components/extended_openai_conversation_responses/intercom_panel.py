@@ -130,5 +130,5 @@ async def async_setup_broadcast_api(hass: HomeAssistant) -> None:
     """Register the typed Broadcast API once."""
     if hass.data.get(_SETUP_KEY):
         return
-    hass.data[_SETUP_KEY] = True
     websocket_api.async_register_command(hass, websocket_broadcast)
+    hass.data[_SETUP_KEY] = True
