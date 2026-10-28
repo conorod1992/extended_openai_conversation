@@ -261,7 +261,7 @@ test("Functions: adding HA tools refreshes saved metadata without rebinding exis
       }
       if (message.section === "tools" && message.action === "ha_add") {
         const config = browserHarness.panel._draft;
-        return Promise.resolve({functions: [...structuredClone(config.functions), {spec: {name: "new_ha_tool"}, function: reference}], function_groups: structuredClone(config.function_groups), ha_saved: {new_ha_tool: {description: "Saved tool metadata", available: true, source: "fixture"}}});
+        return Promise.resolve({revision:browserHarness.panel._configData.revision, functions: [...structuredClone(config.functions), {spec: {name: "new_ha_tool"}, function: reference}], function_groups: structuredClone(config.function_groups), ha_saved: {new_ha_tool: {description: "Saved tool metadata", available: true, source: "fixture"}}});
       }
       return original(message);
     };

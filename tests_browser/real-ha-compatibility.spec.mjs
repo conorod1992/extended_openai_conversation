@@ -19,7 +19,8 @@ test("HA native components and actual Assist path remain compatible", async ({co
   await panel.locator('[data-config="voice_unmapped_policy"]').selectOption("default_user");
   await expect(picker).toBeVisible();
   await picker.locator("ha-picker-field").click();
-  await picker.locator("ha-combo-box-item").filter({hasText:"Browser Frontend Shell Admin"}).locator("button").click();
+  await picker.getByRole("option", {name:/Browser Frontend Shell Admin/})
+    .or(picker.locator("ha-combo-box-item").filter({hasText:"Browser Frontend Shell Admin"}).locator("button")).first().click();
   await expect(picker).toHaveJSProperty("value", process.env.REAL_HA_SMOKE_USER_ID);
   await panel.locator("#save-config").click();
   await expect.poll(() => panel.evaluate(host => host._configDirty)).toBe(false);
@@ -46,7 +47,8 @@ test("HA native components and actual Assist path remain compatible", async ({co
   }
   if (process.env.ENHANCED_EXECUTION_EVIDENCE === "1") {
     await entity.locator("ha-picker-field").click();
-    const choice = entity.locator("ha-combo-box-item").filter({hasText:"sensor.cold_attribute_kitchen"}).locator("button");
+    const choice = entity.getByRole("option", {name:/sensor\.cold_attribute_kitchen/})
+      .or(entity.locator("ha-combo-box-item").filter({hasText:"sensor.cold_attribute_kitchen"}).locator("button")).first();
     await choice.click();
     await expect(entity).toHaveJSProperty("value", "sensor.cold_attribute_kitchen");
   } else {

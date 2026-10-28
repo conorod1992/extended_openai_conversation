@@ -641,7 +641,8 @@ test("HA tool chooser retains filtered selections by identity and selected group
       if (message.section === "tools" && message.action === "ha_catalog") return {tools:["Alpha", "Beta"].map(name => ({name, description:name, source:name, reference:{source_id:name, api_id:name, tool_name:name}}))};
       if (message.section === "tools" && message.action === "ha_add") {
         window.__addedReferences = message.tools;
-        return call({...message, section:"configuration", action:"get"});
+        const saved = await call({...message, section:"configuration", action:"get"});
+        return {...saved, functions:saved.config.functions, function_groups:saved.config.function_groups};
       }
       return call(message);
     };
