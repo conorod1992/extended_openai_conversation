@@ -10,6 +10,7 @@ from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.extended_openai_conversation_responses import (
     agent_config,
+    function_configuration_mutations as mutations,
     management_function_repair as repair,
     management_function_quarantine as quarantine,
     management_ui,
@@ -88,11 +89,11 @@ def test_function_save_validates_once_and_reuses_group_only_tools(
         groups[0]["functions"] = []
     normalization = Mock(wraps=agent_config.normalize_agent_config)
     validation = Mock(wraps=agent_config.validate_function_tools)
-    emission = Mock(wraps=repair.dump_yaml)
+    emission = Mock(wraps=mutations.dump_yaml)
     parsing = Mock(wraps=yaml.safe_load)
     monkeypatch.setattr(agent_config, "normalize_agent_config", normalization)
     monkeypatch.setattr(agent_config, "validate_function_tools", validation)
-    monkeypatch.setattr(repair, "dump_yaml", emission)
+    monkeypatch.setattr(mutations, "dump_yaml", emission)
     monkeypatch.setattr(yaml, "safe_load", parsing)
     saved = repair.persist_valid_function_configuration(
         hass, entry, subentry, tools, groups, expected_revision=revision

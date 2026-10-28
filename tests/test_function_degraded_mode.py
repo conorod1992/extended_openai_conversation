@@ -188,21 +188,6 @@ def test_unchanged_merge_does_not_add_an_omitted_group_key(monkeypatch) -> None:
     assert CONF_FUNCTION_GROUPS not in persisted
 
 
-def test_group_restoration_skips_malformed_normalized_siblings() -> None:
-    malformed = [None, {"id": "reminders", "functions": ["safe"]}]
-
-    restored = quarantine._restore_quarantined_group_members(
-        malformed,
-        [{"id": "reminders", "functions": ["safe", "broken"]}],
-        frozenset({"broken"}),
-    )
-
-    assert restored == [
-        None,
-        {"id": "reminders", "functions": ["safe", "broken"]},
-    ]
-
-
 def test_tolerant_function_persist_keeps_invalid_raw_sibling_and_membership() -> None:
     """Editing valid tools/groups cannot silently delete a quarantined sibling."""
     data, valid, invalid = _mixed_grouped_data()

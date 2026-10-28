@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from custom_components.extended_openai_conversation_responses import function_configuration_mutations as mutations
 from homeassistant.exceptions import HomeAssistantError
 
 
@@ -982,7 +983,7 @@ async def test_service_function_tool_enable_rejects_missing_entry_and_unknown_to
     entry = SimpleNamespace(entry_id="entry", subentries={"agent": subentry})
     hass.config_entries.async_get_entry = Mock(return_value=entry)
     monkeypatch.setattr(
-        services,
+        mutations,
         "validate_function_tools",
         Mock(return_value=[{"spec": {"name": "known"}, "enabled": True}]),
     )
@@ -1013,10 +1014,10 @@ async def test_service_function_tool_enable_updates_requested_tool(
     entry = SimpleNamespace(entry_id="entry", subentries={"agent": subentry})
     hass.config_entries.async_get_entry = Mock(return_value=entry)
     monkeypatch.setattr(
-        services, "validate_function_tools", Mock(return_value=deepcopy(configured))
+        mutations, "validate_function_tools", Mock(return_value=deepcopy(configured))
     )
     monkeypatch.setattr(
-        services, "merge_agent_config", Mock(side_effect=lambda _base, update: update)
+        mutations, "merge_agent_config", Mock(side_effect=lambda _base, update: update)
     )
     update = Mock()
     monkeypatch.setattr(services, "update_live_subentry", update)
@@ -1025,7 +1026,7 @@ async def test_service_function_tool_enable_updates_requested_tool(
         hass, "entry", "agent", ["two", "two"], False
     )
 
-    persisted = update.call_args.kwargs["data"][services.CONF_FUNCTION_TOOLS]
+    persisted = update.call_args.kwargs["data"][mutations.CONF_FUNCTION_TOOLS]
     assert persisted[0]["enabled"] is True
     assert persisted[1]["enabled"] is False
 
@@ -1045,13 +1046,13 @@ async def test_service_function_group_enable_missing_and_success_paths(
     subentry = SimpleNamespace(subentry_id="agent", data={})
     entry = SimpleNamespace(entry_id="entry", subentries={"agent": subentry})
     hass.config_entries.async_get_entry = Mock(return_value=entry)
-    monkeypatch.setattr(services, "validate_function_tools", Mock(return_value=[]))
+    monkeypatch.setattr(mutations, "validate_function_tools", Mock(return_value=[]))
     groups = [
         {"id": "one", "name": "One", "functions": [], "enabled": True},
         {"id": "two", "name": "Two", "functions": [], "enabled": True},
     ]
     monkeypatch.setattr(
-        services, "validate_function_groups", Mock(return_value=deepcopy(groups))
+        mutations, "validate_function_groups", Mock(return_value=deepcopy(groups))
     )
 
     with pytest.raises(HomeAssistantError, match="Function Group not found: missing"):
@@ -1060,7 +1061,7 @@ async def test_service_function_group_enable_missing_and_success_paths(
         )
 
     monkeypatch.setattr(
-        services, "merge_agent_config", Mock(side_effect=lambda _base, update: update)
+        mutations, "merge_agent_config", Mock(side_effect=lambda _base, update: update)
     )
     update = Mock()
     monkeypatch.setattr(services, "update_live_subentry", update)
@@ -1069,7 +1070,7 @@ async def test_service_function_group_enable_missing_and_success_paths(
         hass, "entry", "agent", ["two", "two"], False
     )
 
-    persisted = update.call_args.kwargs["data"][services.CONF_FUNCTION_GROUPS]
+    persisted = update.call_args.kwargs["data"][mutations.CONF_FUNCTION_GROUPS]
     assert persisted[0]["enabled"] is True
     assert persisted[1]["enabled"] is False
 

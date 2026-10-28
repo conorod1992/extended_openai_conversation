@@ -11,6 +11,7 @@ import pytest
 import yaml
 
 from custom_components.extended_openai_conversation_responses import (
+    function_configuration_mutations as mutations,
     management_function_quarantine as quarantine,
 )
 from custom_components.extended_openai_conversation_responses.agent_config import (
@@ -234,33 +235,29 @@ def test_management_group_validation_filters_only_quarantined_members(
     assert groups == original
 
 
-def test_restore_quarantined_group_members_preserves_hidden_raw_members() -> None:
-    groups = [
-        {"id": "g1", "functions": ["valid"]},
-        {"id": "g2", "functions": ["already", "broken"]},
-        {"id": "missing-original", "functions": ["valid"]},
-    ]
-    raw = [
-        {"id": "g1", "functions": ["valid", "broken", "other"]},
-        {"id": "g2", "functions": ["already", "broken"]},
+def test_quarantined_preparation_preserves_hidden_members_and_malformed_groups(hass) -> None:
+    raw, valid, invalid = _mixed_unknown_native_data()
+    name, hidden = valid["spec"]["name"], invalid["spec"]["name"]
+    raw[CONF_FUNCTION_GROUPS] = [
+        {"id": "g1", "name": "Group", "description": "Tools", "loading_mode": "on_demand", "functions": [name, hidden]},
         {"id": "malformed", "functions": "not-a-list"},
+        None,
     ]
+    original = deepcopy(raw)
+    state = mutations.function_configuration_repair_state(raw)
+    assert state is not None
+    edited = deepcopy(state.groups)
+    edited[0]["description"] = "Updated usable group"
 
-    restored = quarantine._restore_quarantined_group_members(
-        groups, raw, frozenset({"broken"})
-    )
+    prepared = mutations.prepare_quarantined_function_configuration(raw, state.valid, edited, state)
 
-    assert restored[0]["functions"] == ["valid", "broken"]
-    assert restored[1]["functions"] == ["already", "broken"]
-    assert restored[2]["functions"] == ["valid"]
-    assert groups[0]["functions"] == ["valid"]
-
-    assert quarantine._restore_quarantined_group_members(
-        groups, raw, frozenset()
-    ) == groups
-    assert quarantine._restore_quarantined_group_members(
-        groups, object(), frozenset({"broken"})
-    ) == groups
+    saved_groups = prepared.persisted[CONF_FUNCTION_GROUPS]
+    assert saved_groups[0]["functions"] == [name, hidden]
+    assert saved_groups[0]["description"] == "Updated usable group"
+    assert saved_groups[1:] == original[CONF_FUNCTION_GROUPS][1:]
+    assert prepared.persisted[CONF_FUNCTION_TOOLS] == original[CONF_FUNCTION_TOOLS]
+    assert raw == original
+    assert edited[0]["functions"] == [name]
 
 
 def test_management_merge_in_quarantine_preserves_raw_function_fields(
@@ -311,114 +308,50 @@ def test_tolerant_persist_delegates_when_configuration_is_clean(
     delegated.assert_called_once()
 
 
-def test_tolerant_persist_rejects_stale_duplicate_and_unisolatable_state(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    invalid = [{"index": 0, "name": "broken"}]
-    monkeypatch.setattr(
-        quarantine,
-        "isolated_function_tools",
-        lambda _raw: ([], invalid, "broken"),
-    )
+def test_tolerant_persist_rejects_stale_duplicate_and_unisolatable_state(monkeypatch, hass) -> None:
+    raw, _valid, invalid = _mixed_unknown_native_data()
     monkeypatch.setattr(quarantine, "repair_revision", lambda _subentry: "current")
-    subentry = SimpleNamespace(data={CONF_FUNCTION_TOOLS: "raw"})
-
+    subentry = SimpleNamespace(data=raw)
     with pytest.raises(quarantine.HomeAssistantError, match="changed in another tab"):
-        quarantine._tolerant_persist_function_configuration(
-            SimpleNamespace(),
-            SimpleNamespace(),
-            subentry,
-            [],
-            [],
-            expected_revision="stale",
-        )
-
-    monkeypatch.setattr(
-        quarantine,
-        "editable_function_tools",
-        lambda _raw: [{"spec": {"name": "broken"}}],
-    )
+        quarantine._tolerant_persist_function_configuration(hass, SimpleNamespace(), subentry, [], [], expected_revision="stale")
     with pytest.raises(quarantine.HomeAssistantError, match="already exists"):
         quarantine._tolerant_persist_function_configuration(
-            SimpleNamespace(),
-            SimpleNamespace(),
-            subentry,
-            [{"spec": {"name": "broken"}}],
-            [],
-            expected_revision="current",
+            hass, SimpleNamespace(), subentry,
+            [{"spec": {"name": invalid["spec"]["name"]}}], [], expected_revision="current"
         )
-
-    monkeypatch.setattr(quarantine, "editable_function_tools", lambda _raw: "bad")
-    with pytest.raises(
-        quarantine.HomeAssistantError, match="cannot be isolated safely"
-    ):
-        quarantine._tolerant_persist_function_configuration(
-            SimpleNamespace(),
-            SimpleNamespace(),
-            subentry,
-            [],
-            [],
-            expected_revision="current",
-        )
+    subentry.data = {CONF_FUNCTION_TOOLS: "[unclosed"}
+    with pytest.raises(quarantine.HomeAssistantError, match="cannot be isolated safely"):
+        quarantine._tolerant_persist_function_configuration(hass, SimpleNamespace(), subentry, [], [], expected_revision="current")
+    hass.config_entries.async_update_subentry.assert_not_called()
 
 
-def test_tolerant_persist_keeps_invalid_raw_tool_and_hidden_group_member(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    invalid_tool = {"spec": {"name": "broken"}, "function": {"type": "legacy"}}
-    raw_groups = [{"id": "g", "functions": ["valid", "broken"]}]
-    subentry = SimpleNamespace(
-        data={
-            CONF_FUNCTION_TOOLS: yaml.safe_dump([invalid_tool]),
-            CONF_FUNCTION_GROUPS: raw_groups,
-            "guest_mode_enabled": False,
-        }
-    )
-    invalid = [{"index": 0, "name": "broken"}]
-    monkeypatch.setattr(
-        quarantine,
-        "isolated_function_tools",
-        lambda _raw: ([], invalid, "broken"),
-    )
-    monkeypatch.setattr(
-        quarantine,
-        "editable_function_tools",
-        lambda _raw: [deepcopy(invalid_tool)],
-    )
+def test_tolerant_persist_keeps_invalid_raw_tool_and_hidden_group_member(monkeypatch, hass) -> None:
+    raw, valid, invalid_tool = _mixed_unknown_native_data()
+    name, hidden = valid["spec"]["name"], invalid_tool["spec"]["name"]
+    raw_groups = [{"id": "g", "functions": [name, hidden]}]
+    raw[CONF_FUNCTION_GROUPS] = deepcopy(raw_groups)
+    subentry = SimpleNamespace(data=raw)
     monkeypatch.setattr(quarantine, "repair_revision", lambda _subentry: "new-revision")
-
-    class ConfigEntries:
-        def async_update_subentry(self, _entry, target, *, data):
-            target.data = data
-
-    hass = SimpleNamespace(config_entries=ConfigEntries())
-    tools = [{"spec": {"name": "valid"}, "function": {"type": "template"}}]
-    groups = [{"id": "g", "functions": ["valid"]}]
+    hass.config_entries.async_update_subentry.side_effect = lambda _entry, target, *, data: setattr(target, "data", data)
+    tools = [deepcopy(valid)]
+    tools[0]["spec"]["description"] = "Edited while the other Tool needs repair"
+    groups = [{"id": "g", "functions": [name]}]
 
     result = quarantine._tolerant_persist_function_configuration(
-        hass,
-        SimpleNamespace(),
-        subentry,
-        tools,
-        groups,
-        extra_updates={"guest_mode_enabled": True},
-        expected_revision="new-revision",
+        hass, SimpleNamespace(), subentry, tools, groups,
+        extra_updates={"guest_mode_enabled": True}, expected_revision="new-revision"
     )
 
-    persisted = yaml.safe_load(subentry.data[CONF_FUNCTION_TOOLS])
-    assert persisted == [*tools, invalid_tool]
-    assert subentry.data[CONF_FUNCTION_GROUPS] == [
-        {"id": "g", "functions": ["valid", "broken"]}
-    ]
+    assert yaml.safe_load(subentry.data[CONF_FUNCTION_TOOLS]) == [*tools, invalid_tool]
+    assert subentry.data[CONF_FUNCTION_GROUPS] == raw_groups
     assert subentry.data["guest_mode_enabled"] is True
     assert {key: result[key] for key in ("functions", "function_groups", "revision")} == {
         "functions": tools,
-        # This raw Group lacks its required name/description. Retain it for repair,
-        # but never advertise it as usable in a post-save acknowledgement.
+        # Missing Group metadata remains repair-owned, not a usable response Group.
         "function_groups": [],
         "revision": "new-revision",
     }
-    assert result["function_repair"]["persisted_groups"] == subentry.data[CONF_FUNCTION_GROUPS]
+    assert result["function_repair"]["persisted_groups"] == raw_groups
     assert result["function_repair"]["group_issues"]
 
 

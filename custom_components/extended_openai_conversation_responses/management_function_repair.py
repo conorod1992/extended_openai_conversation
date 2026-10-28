@@ -18,6 +18,7 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
+from . import function_configuration_mutations as function_mutations
 from .agent_config import (
     AgentConfigError,
     agent_config_defaults,
@@ -25,9 +26,7 @@ from .agent_config import (
     agent_retention_snapshot,
     configured_function_tool_metadata_from_data,
     function_tool_enabled,
-    merge_agent_config as _strict_merge_agent_config,
     parse_configured_function_tools,
-    project_agent_config_fields,
     project_agent_config_updates,
     validate_function_groups,
     validate_function_tools,
@@ -457,53 +456,14 @@ def persist_valid_function_configuration(
     require_agent_config_revision(subentry, expected_revision)
     revision_check_ms = (perf_counter() - started) * 1000
     phase = perf_counter()
-    updates: dict[str, Any] = {
-        CONF_FUNCTION_TOOLS: deepcopy(tools),
-        CONF_FUNCTION_GROUPS: deepcopy(groups),
-    }
-    if extra_updates:
-        updates.update(extra_updates)
-    projection = persisted_config_projection(subentry)
-    snapshot = projection.snapshot
-    reuse_tools = (
-        snapshot is not None
-        and updates[CONF_FUNCTION_TOOLS] == snapshot[CONF_FUNCTION_TOOLS]
-    )
-    validated_functions = None
-    if reuse_tools:
-        assert snapshot is not None
-        updates.pop(CONF_FUNCTION_TOOLS)
-        validated_functions = (
-            snapshot[CONF_FUNCTION_TOOLS],
-            snapshot[CONF_FUNCTION_GROUPS]
-            if updates[CONF_FUNCTION_GROUPS] == snapshot[CONF_FUNCTION_GROUPS]
-            else None,
-        )
-    candidate = _strict_merge_agent_config(
+    prepared = function_mutations.prepare_valid_function_configuration(
         subentry.data,
-        updates,
-        validated_functions=validated_functions,
-        function_tools_as_list=True,
+        tools,
+        groups,
+        extra_updates=extra_updates,
+        validated_snapshot=persisted_config_projection(subentry).snapshot,
     )
-    # Keep the final validated objects for the response. Only persistence needs
-    # YAML; unchanged tools retain their exact stored representation.
-    response_snapshot = deepcopy(candidate)
-    if reuse_tools:
-        if CONF_FUNCTION_TOOLS in subentry.data:
-            candidate[CONF_FUNCTION_TOOLS] = deepcopy(
-                subentry.data[CONF_FUNCTION_TOOLS]
-            )
-        else:
-            candidate.pop(CONF_FUNCTION_TOOLS, None)
-    else:
-        candidate[CONF_FUNCTION_TOOLS] = dump_yaml(
-            candidate[CONF_FUNCTION_TOOLS], sort_keys=False
-        )
-    # Function edits must not turn implicit model-dependent defaults into saved
-    # settings. For example, an absent effort follows each routed model's profile;
-    # persisting the default model's effort can invalidate an unchanged route.
-    changed_fields = {CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS, *(extra_updates or {})}
-    normalized = project_agent_config_fields(subentry.data, changed_fields, candidate)
+    normalized = prepared.persisted
     normalization_ms = (perf_counter() - phase) * 1000
     from .management_ui import _validated_model_request
 
@@ -515,8 +475,8 @@ def persist_valid_function_configuration(
     from .management_loading_performance import _snapshot_normalized_configuration
 
     response_data = dict(normalized)
-    response_data[CONF_FUNCTION_TOOLS] = response_snapshot[CONF_FUNCTION_TOOLS]
-    response_data[CONF_FUNCTION_GROUPS] = response_snapshot[CONF_FUNCTION_GROUPS]
+    response_data[CONF_FUNCTION_TOOLS] = prepared.tools
+    response_data[CONF_FUNCTION_GROUPS] = prepared.groups
     snapshot = _snapshot_normalized_configuration(response_data, validated=True)
     revision = saved_agent_config_revision(subentry, normalized, subentry.title)
     seed_persisted_config_projection(entry, subentry, snapshot, revision)
