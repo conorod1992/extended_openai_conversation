@@ -1,4 +1,4 @@
-import {callMutation, captureConfigurationOwner, presentAcknowledgedMutation, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
+import {callMutation, captureConfigurationOwner, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
 import {watchLiveStatus, stopLiveStatus} from "./management-live-status.js";
 const ROUTE_STYLE = `/* Overview Broadcast */
 #broadcast-card{background:color-mix(in srgb,var(--secondary-background-color) 20%,var(--card-background-color));border-color:color-mix(in srgb,var(--divider-color) 72%,var(--secondary-text-color))}
@@ -160,7 +160,13 @@ function bindBroadcastControls(panel, snapshot) {
       requireMutationAcknowledgement(typeof result?.status === "string", "queuing Broadcast");
       const current = captureConfigurationOwner(panel);
       if (current.userId === submission.userId && current.authenticationGeneration === submission.authenticationGeneration
-          && (panel._broadcastDraftRevision || 0) === draftRevision) panel._broadcastMessage = "";
+          && (panel._broadcastDraftRevision || 0) === draftRevision) {
+        panel._broadcastMessage = "";
+        processMutationResponse(result, () => {
+          const composer = panel.shadowRoot.querySelector("#broadcast-message");
+          if (composer && composer.value.trim() === message) composer.value = "";
+        });
+      }
       await presentAcknowledgedMutation(panel, submission, "Broadcast queued", async () => {
         if (!await loadBroadcast(panel)) throw Error("Broadcast history could not be refreshed.");
       }, result);
