@@ -2,7 +2,7 @@ import {localRuleActionSummary} from "./request-rule-response-summary.js";
 import {formatWordingAlternatives} from "./wording-alternatives.js";
 import {adoptKeyedElements, elementFromMarkup, keyedElement, placeChildren, pruneKeys} from "./keyed-collection.js";
 import {requestRuleEmptyContent, updateRequestRuleEmptyState} from "./request-rule-empty-state.js";
-import {captureConfigurationOwner, configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
+import {captureConfigurationOwner, configurationSubmissionIsCurrent, presentAcknowledgedMutation} from "./configuration-acknowledgement.js";
 import {beginOperation, invalidateOperation} from "./operation-ownership.js";
 
 const sharingGroupOptions = new WeakMap();
@@ -89,7 +89,7 @@ function captureRuleCollectionOperation(panel, control, {queued = false} = {}) {
   const ownsControls = () => latest() && panel.shadowRoot === root && root.contains(control);
   const owns = () => latest() && panel.shadowRoot === root
     && configurationSubmissionIsCurrent(panel, owner) && panel._viewKey?.() === view;
-  return {revision:panel._result?.revision, ownsControls,
+  return {owner, revision:panel._result?.revision, ownsControls,
     isCurrent:() => owns() && panel._loadToken === visit,
     // A read before commit cannot hide this own ACK. A genuinely newer read
     // retires it through the shared tracked-revision admission boundary.
@@ -103,8 +103,7 @@ async function runRuleCollectionMutation(panel, operation, action, payload, acce
   try {
     const result = await panel._call("request_rules", action, payload);
     if (!operation.accepts(result)) return false;
-    accept(result);
-    return true;
+    return await presentAcknowledgedMutation(panel, operation.owner, null, () => accept(result), result);
   } catch (error) {
     if (operation.isCurrent()) rollback?.();
     await recoverRequestRuleMutation(panel, error, label, operation.isCurrent);

@@ -198,10 +198,11 @@ async function openInvalidToolEditor(panel, item, revision = panel._result?.revi
   }
 }
 
-export async function refreshAfterRepair(panel, message, saved, submission = captureConfigurationSubmission(panel), {reload = true} = {}) {
+export async function refreshAfterRepair(panel, message, saved, submission = captureConfigurationSubmission(panel), {reload = true, refresh} = {}) {
   return completeConfigurationAcknowledgement(panel, saved, submission, {
     fields:["functions", "function_groups"], metadata:["function_repair"], message,
     refresh:async () => {
+      await refresh?.();
       if (panel._viewKey && panel._viewKey() !== "capabilities/functions") return;
       if (panel._configData) panel._result = panel._configData;
       if (!reload) {
@@ -251,12 +252,13 @@ async function saveInvalidTool(panel, button) {
     });
     if (!configurationSubmissionIsCurrent(panel, submission)) return true;
     const previous = {revision:panel._configData?.revision, config:panel._configData?.config};
-    if (operation.isUnchanged()) {
-      operation.dialog.close();
-      panel._repairToolIndex = null;
-    }
-    finishingOperation = acknowledgeToolEditor(panel, operation, saved, previous);
-    await refreshAfterRepair(panel, "Function Tool repaired", saved, submission, {reload:false});
+    await refreshAfterRepair(panel, "Function Tool repaired", saved, submission, {reload:false, refresh:() => {
+      if (operation.isUnchanged()) {
+        panel._repairToolIndex = null;
+        operation.dialog.close();
+      }
+      finishingOperation = acknowledgeToolEditor(panel, operation, saved, previous);
+    }});
   } catch (err) {
     if (operation.isUnchanged()) panel._toast(`Unable to repair Function Tool: ${err.message || String(err)}`, true);
   } finally {

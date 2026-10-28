@@ -1,3 +1,4 @@
+import {captureConfigurationOwner, presentAcknowledgedMutation, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
 import {watchLiveStatus, stopLiveStatus} from "./management-live-status.js";
 const ROUTE_STYLE = `/* Overview Broadcast */
 #broadcast-card{background:color-mix(in srgb,var(--secondary-background-color) 20%,var(--card-background-color));border-color:color-mix(in srgb,var(--divider-color) 72%,var(--secondary-text-color))}
@@ -108,10 +109,13 @@ function bindBroadcastControls(panel, snapshot) {
   root.querySelector("#broadcast-enabled")?.addEventListener("change", async (event) => {
     const enabled = event.target.checked;
     event.target.disabled = true;
+    const submission = captureConfigurationOwner(panel);
     try {
-      await panel._hass.callWS({type: WS_BROADCAST, action: "set_enabled", enabled});
-      await loadBroadcast(panel);
-      panel._toast(`Broadcast ${enabled ? "enabled" : "disabled"}`);
+      const result = await panel._hass.callWS({type: WS_BROADCAST, action: "set_enabled", enabled});
+      requireMutationAcknowledgement(typeof result?.enabled === "boolean", "changing Broadcast");
+      await presentAcknowledgedMutation(panel, submission, `Broadcast ${result.enabled ? "enabled" : "disabled"}`, async () => {
+        if (!await loadBroadcast(panel)) throw Error("Broadcast status could not be refreshed.");
+      }, result);
     } catch (err) {
       panel._toast(`Unable to change Broadcast: ${err.message || String(err)}`, true);
       await loadBroadcast(panel);
@@ -137,6 +141,7 @@ function bindBroadcastControls(panel, snapshot) {
     if (panel._broadcastSending) return;
     const button = event.currentTarget;
     const draftRevision = panel._broadcastDraftRevision || 0;
+    const submission = captureConfigurationOwner(panel);
     const message = String(panel._broadcastMessage || "").trim();
     const selected = [...(panel._broadcastSelected || new Set())];
     const wholeHome = Boolean(panel._broadcastWholeHome);
@@ -145,16 +150,18 @@ function bindBroadcastControls(panel, snapshot) {
     panel._broadcastSending = true;
     button.disabled = true;
     try {
-      await panel._hass.callWS({
+      const result = await panel._hass.callWS({
         type: WS_BROADCAST,
         action: "send",
         message,
         whole_home: wholeHome,
         entity_ids: wholeHome ? [] : selected,
       });
-      if ((panel._broadcastDraftRevision || 0) === draftRevision) panel._broadcastMessage = "";
-      await loadBroadcast(panel);
-      panel._toast("Broadcast queued");
+      requireMutationAcknowledgement(typeof result?.status === "string", "queuing Broadcast");
+      await presentAcknowledgedMutation(panel, submission, "Broadcast queued", async () => {
+        if ((panel._broadcastDraftRevision || 0) === draftRevision) panel._broadcastMessage = "";
+        if (!await loadBroadcast(panel)) throw Error("Broadcast history could not be refreshed.");
+      }, result);
     } catch (err) {
       panel._toast(`Unable to send Broadcast: ${err.message || String(err)}`, true);
     } finally {
@@ -212,8 +219,10 @@ async function loadBroadcast(panel) {
   try {
     const snapshot = await panel._hass.callWS({type: WS_BROADCAST, action: "snapshot"});
     if (panel._eocBroadcastReadToken === token) applyBroadcastSnapshot(panel, snapshot);
+    return true;
   } catch (err) {
     if (panel._eocBroadcastReadToken === token) applyBroadcastError(panel, err);
+    return false;
   }
 }
 

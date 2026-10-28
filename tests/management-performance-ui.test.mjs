@@ -1210,7 +1210,7 @@ for (const refreshOutcome of ["failure", "scope-change"]) {
     assert.equal(panel._contentData.sessions.offset, 0);
     assert.equal(panel._contentData.sessions.next_offset, null);
     assert.deepEqual(panel._contentData.sessions.sessions, []);
-    assert.match(toasts.at(-1)[0], /Unable to load conversation history/);
+    assert.match(toasts.at(-1)[0], /Conversation deleted, but .*could not be refreshed/);
     assert.equal(toasts.at(-1)[1], true, "success toast must not hide the refresh error");
   } else {
     assert.equal(panel._contentData, otherScope, "late search refresh cannot overwrite another scope");

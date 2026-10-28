@@ -1,6 +1,6 @@
 import {same} from "./unsaved-state.js";
 import {reconcileSavedConfiguration} from "./configuration-save-dom.js";
-import {captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, completeConfigurationAcknowledgement, reconcileConfigurationAcknowledgement, discardConfigurationDraft} from "./configuration-acknowledgement.js";
+import {requireMutationAcknowledgement, captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, completeConfigurationAcknowledgement, reconcileConfigurationAcknowledgement, discardConfigurationDraft} from "./configuration-acknowledgement.js";
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
 function fieldErrorKey(key) {
@@ -111,15 +111,17 @@ async function saveConfiguration(panel, button) {
       revision: submission.revision,
     }, submitted, submittedTitle);
     if (!configurationSubmissionIsCurrent(panel, submission)) return;
-    showErrors(panel, result.errors || {});
-    if (!result.valid) {
+    if (result?.valid === false) {
+      showErrors(panel, result?.errors || {});
       panel._toast("Fix the highlighted configuration errors", true);
       return;
     }
 
+    requireMutationAcknowledgement(result?.valid === true && result?.config && typeof result.config === "object", "saving configuration");
     await completeConfigurationAcknowledgement(panel, result, submission, {
       message:"Changes saved",
       refresh:() => {
+        showErrors(panel, result.errors || {});
         if (panel._viewKey?.() === submission.view) panel._result = panel._configData;
         reconcileSavedConfiguration(panel, owner);
         panel._render();

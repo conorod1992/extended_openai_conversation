@@ -1,7 +1,7 @@
 import {watchSelectorYaml, assertSelectorYamlReady, isSelectorValueEvent} from "./native-selector-drafts.js";
 import {setReasoningOptions, syncRequestRuleRoutingControls} from "./request-rule-routing-controls.js";
 import {beginOperation} from "./operation-ownership.js";
-import {captureConfigurationOwner, configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
+import {presentAcknowledgedMutation, requireMutationAcknowledgement, captureConfigurationOwner, configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
 import {dialogState, setDialogBaseline} from "./management-dialogs.js";
 import {same} from "./unsaved-state.js";
 import {effectiveServicePayload, isFunctionServiceAction, setEffectiveServiceField} from "./script-payload.js";
@@ -445,24 +445,28 @@ export function bindRequestRuleEditor(panel) {
       const submitted=dialogState(dialog);
       const result=await panel._call("request_rules",action,{...(ruleId?{rule_id:ruleId}:{}),rule,revision});
       if(!current())return;
-      if(!result?.rule?.id || result.revision==null)throw new Error("The save did not return an acknowledged Request Rule. Reload the rules before retrying.");
-      const unchanged=same(dialogState(dialog),submitted);
-      setDialogBaseline(panel,dialog.id,submitted);
+      requireMutationAcknowledgement(result?.rule?.id && result.revision != null, "saving the Request Rule");
+      // Identity belongs to the commit even if keyed rendering fails.
       panel._editingRuleId=result.rule.id;
-      q("#rule-dialog-title").textContent="Edit Request Rule";
-      // Advance only this editor's own authoring baseline. A newer accepted
-      // collection remains authoritative and requires the normal conflict path.
-      if(panel._result===baseline || [revision,result.revision].includes(panel._result?.revision)) {
-        state.revision=result.revision;
-        applyRequestRuleMutation(panel,action,result,{ruleId:result.rule.id});
-      }
-      if(unchanged) {
-        // Updating a keyed card can replace the original opener. Native modal
-        // focus restoration then targets a detached button (Firefox/WebKit can
-        // lose sequential Tab navigation). Restore its current counterpart.
-        dialog.close();
-        if(action === "update")root.querySelector(`[data-rule-key="${CSS.escape(result.rule.id)}"] .rule-edit`)?.focus();
-      }
+      await presentAcknowledgedMutation(panel, state.owner, "Request Rule saved", () => {
+        const unchanged=same(dialogState(dialog),submitted);
+        setDialogBaseline(panel,dialog.id,submitted);
+        panel._editingRuleId=result.rule.id;
+        q("#rule-dialog-title").textContent="Edit Request Rule";
+        // Advance only this editor's own authoring baseline. A newer accepted
+        // collection remains authoritative and requires the normal conflict path.
+        if(panel._result===baseline || [revision,result.revision].includes(panel._result?.revision)) {
+          state.revision=result.revision;
+          applyRequestRuleMutation(panel,action,result,{ruleId:result.rule.id});
+        }
+        if(unchanged) {
+          // Updating a keyed card can replace the original opener. Native modal
+          // focus restoration then targets a detached button (Firefox/WebKit can
+          // lose sequential Tab navigation). Restore its current counterpart.
+          dialog.close();
+          if(action === "update")root.querySelector(`[data-rule-key="${CSS.escape(result.rule.id)}"] .rule-edit`)?.focus();
+        }
+      }, result);
     }catch(err){
       if(!current())return;
       const message = err.message || String(err);

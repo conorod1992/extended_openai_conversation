@@ -1,5 +1,30 @@
 import {clone, same, mergeAcknowledgedDraft} from "./unsaved-state.js";
 
+// These errors belong to response processing, never to the server mutation.
+// Keep them out of the wire payload and retain them only as long as its owner.
+const responseProcessingErrors = new WeakMap();
+export function processMutationResponse(result, process) {
+  const failed = error => {
+    if (!result || typeof result !== "object") throw error;
+    responseProcessingErrors.set(result, error);
+    return result;
+  };
+  try {
+    const pending = process();
+    if (typeof pending?.then === "function") return pending.then(() => result, failed);
+  } catch (error) {
+    return failed(error);
+  }
+  return result;
+}
+
+export function requireMutationAcknowledgement(confirmed, operation) {
+  if (confirmed) return;
+  const error = new Error(`The server response did not confirm ${operation}. Refresh before retrying; the outcome is unknown.`);
+  error.mutationOutcome = "uncertain";
+  throw error;
+}
+
 const field = (config, key) => Object.hasOwn(config, key) ? [config[key]] : [];
 
 // Authored values survive a temporary identity transition. An operation made
@@ -239,7 +264,7 @@ export function reconcileConfigurationAcknowledgement(panel, saved, submission, 
 
 // Once the backend acknowledges a write, presentation errors cannot turn it
 // into a rejected mutation or cause a replay. Feature refresh policies stay local.
-export async function completeConfigurationAcknowledgement(panel, saved, submission, {message, refresh, ...projection}) {
+export async function completeConfigurationAcknowledgement(panel, saved, submission, {message, refresh, response = saved, ...projection}) {
   if (!configurationSubmissionIsCurrent(panel, submission) || saved?.valid === false || !saved?.config) return false;
   return presentAcknowledgedMutation(panel, submission, message, async () => {
     const overtaken = configurationReadOvertookSubmission(panel, submission);
@@ -254,19 +279,27 @@ export async function completeConfigurationAcknowledgement(panel, saved, submiss
       if (panel.isConnected !== false && configurationSubmissionIsCurrent(panel, submission)
           && panel._viewKey?.() === view && panel._loadToken === visit && panel._result === panel._configData) panel._render?.();
     }
-  });
+  }, response);
 }
 
-export async function presentAcknowledgedMutation(panel, submission, message, refresh) {
-  if (!configurationSubmissionIsCurrent(panel, submission)) return false;
+export async function presentAcknowledgedMutation(panel, submission, message, refresh, result) {
+  const current = typeof submission === "function" ? submission : () => configurationSubmissionIsCurrent(panel, submission);
+  if (!current()) return false;
+  let processingError = responseProcessingErrors.get(result);
   try {
     await refresh?.();
   } catch (error) {
-    if (configurationSubmissionIsCurrent(panel, submission)) {
-      panel._toast(`${message}, but some displayed information could not be refreshed: ${error.message || String(error)}`, true);
-    }
-    return true;
+    processingError = error;
   }
-  if (configurationSubmissionIsCurrent(panel, submission)) panel._toast(message);
+  // Notification is also presentation. Once confirmed, even a broken toast must
+  // not enter a caller's rejection/retry path.
+  try {
+    if (current()) {
+      if (processingError) panel._toast(`${message || "Changes saved"}, but some displayed information could not be refreshed: ${processingError.message || String(processingError)}`, true);
+      else if (message) panel._toast(message);
+    }
+  } catch {
+    // A detached or failed renderer may have no usable notification surface.
+  }
   return true;
 }

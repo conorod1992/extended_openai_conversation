@@ -1,5 +1,5 @@
 import {saveConfiguration, synchronizePersistedConfigurationFields} from "./management-actions.js";
-import {captureConfigurationDraftOwner, captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, presentAcknowledgedMutation, discardConfigurationDraft} from "./configuration-acknowledgement.js";
+import {processMutationResponse, requireMutationAcknowledgement, captureConfigurationDraftOwner, captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, presentAcknowledgedMutation, discardConfigurationDraft} from "./configuration-acknowledgement.js";
 import {formatWordingAlternatives, parseWordingAlternatives} from "./wording-alternatives.js";
 import {enhancementChanged} from "./management-enhancement-state.js";
 import {retainPageSaveAcknowledgement, hasPendingPageSaveRead, PAGE_SAVE_READ_EVENT, PAGE_SAVE_READ_MESSAGE} from "./page-save-acknowledgement.js";
@@ -93,26 +93,31 @@ export function initializePageDraft(panel) {
       const saved = await panel._call(view === GUEST ? "guest_mode" : "quiet_hours", view === GUEST ? "save_policy" : "update", {
         config: submitted, ...(current.revision ? {revision: current.revision} : {}),
       });
-      const savedResult = {...(current.result || result), ...saved, ...(view === GUEST ? {legacy_policy: false, migration_notice: null} : {})};
-      const ownsSave = configurationSubmissionIsCurrent(panel, submission);
-      if (ownsSave && scope.isCurrent() && panel._viewKey?.() === view) {
-        panel._result = {...panel._result, ...saved, ...(view === GUEST ? {legacy_policy:false, migration_notice:null} : {})};
-      }
-      // The mutation acknowledgement owns the baseline and revision. A later
-      // capability read must neither undo that commit nor discard newer edits.
-      if (ownsSave) current.result = savedResult;
+      requireMutationAcknowledgement(saved?.config && typeof saved.config === "object" && !Array.isArray(saved.config), "saving the policy");
+      current.acknowledgedResponse = saved;
       current.revision = saved.revision;
-      current.refreshWarning = null;
-      if (view === GUEST) {
-        if (ownsSave && scope.isCurrent()) {
-          synchronizePersistedConfigurationFields(panel, saved, Object.keys(saved.config), submission);
-          panel._guestMigrationReview = false;
-          panel._guestStartingFresh = false;
-        }
-        const token = panel._loadToken;
-        current.refreshSavedPolicy = () => refreshSavedGuestPolicy(panel, current, {submission, token, generation:panel._cacheGeneration, revision:saved.revision});
-      }
       retainPageSaveAcknowledgement(panel, current, submission, view);
+      processMutationResponse(saved, () => {
+        const savedResult = {...(current.result || result), ...saved, ...(view === GUEST ? {legacy_policy: false, migration_notice: null} : {})};
+        const ownsSave = configurationSubmissionIsCurrent(panel, submission);
+        if (ownsSave && scope.isCurrent() && panel._viewKey?.() === view) {
+          panel._result = {...panel._result, ...saved, ...(view === GUEST ? {legacy_policy:false, migration_notice:null} : {})};
+        }
+        // The mutation acknowledgement owns the baseline and revision. A later
+        // capability read must neither undo that commit nor discard newer edits.
+        if (ownsSave) current.result = savedResult;
+        current.revision = saved.revision;
+        current.refreshWarning = null;
+        if (view === GUEST) {
+          if (ownsSave && scope.isCurrent()) {
+            synchronizePersistedConfigurationFields(panel, saved, Object.keys(saved.config), submission);
+            panel._guestMigrationReview = false;
+            panel._guestStartingFresh = false;
+          }
+          const token = panel._loadToken;
+          current.refreshSavedPolicy = () => refreshSavedGuestPolicy(panel, current, {submission, token, generation:panel._cacheGeneration, revision:saved.revision});
+        }
+      });
       return saved.config;
     },
   });
@@ -176,19 +181,24 @@ async function saveRuleSettings(panel, submitted, scope) {
     wording_groups: submitted.wording_groups,
     revision: scope.revision,
   });
+  requireMutationAcknowledgement(result?.defaults && Array.isArray(result?.wording_groups), "saving Request Rules settings");
+  scope.acknowledgedResponse = result;
   scope.revision = result.revision;
-  const acknowledged = {
-    defaults: clone(result.defaults),
-    wording_groups: clone(result.wording_groups),
-    revision: result.revision,
-  };
-  const ownsSave = configurationSubmissionIsCurrent(panel, submission);
-  if (ownsSave) scope.result = {...scope.result, ...acknowledged};
-  if (ownsSave && scope.isCurrent() && panel._viewKey?.() === submission.view) {
-    panel._result = {...panel._result, ...acknowledged};
-    scope.result = panel._result;
-  }
   retainPageSaveAcknowledgement(panel, scope, submission, RULES);
+  processMutationResponse(result, () => {
+    scope.revision = result.revision;
+    const acknowledged = {
+      defaults: clone(result.defaults),
+      wording_groups: clone(result.wording_groups),
+      revision: result.revision,
+    };
+    const ownsSave = configurationSubmissionIsCurrent(panel, submission);
+    if (ownsSave) scope.result = {...scope.result, ...acknowledged};
+    if (ownsSave && scope.isCurrent() && panel._viewKey?.() === submission.view) {
+      panel._result = {...panel._result, ...acknowledged};
+      scope.result = panel._result;
+    }
+  });
   return settings(result);
 }
 
@@ -354,7 +364,7 @@ export async function savePageChanges(panel) {
       const refresh = scope.refreshSavedPolicy;
       scope.refreshSavedPolicy = null;
       refresh?.();
-    });
+    }, scope.acknowledgedResponse);
   } catch (err) {
     if (configurationSubmissionIsCurrent(panel, submission)) panel._toast(`Unable to save changes: ${err.message || String(err)}`, true);
     return false;

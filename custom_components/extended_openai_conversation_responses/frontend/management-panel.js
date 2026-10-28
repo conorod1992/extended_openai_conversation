@@ -18,7 +18,7 @@ import {readSectionCache, writeSectionCache, pruneCacheTimes, SCOPE_CACHE_TTL_MS
 import {bindPanelDialogs, knowledgeSourceAvailabilityControl, updateDialogs, setDialogBaseline} from "./management-dialogs.js";
 import {ASSISTANT_INTRO_MARKUP, renderManagement, showPendingDestination, reconcileScopePicker, reconcileHistoryConfiguration} from "./management-renderer.js";
 import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, syncAgentPicker} from "./management-actions.js";
-import {captureConfigurationOwner, configurationSubmissionIsCurrent, configurationReadOvertookSubmission, mergeConfigurationRead} from "./configuration-acknowledgement.js";
+import {captureConfigurationOwner, configurationSubmissionIsCurrent, configurationReadOvertookSubmission, mergeConfigurationRead, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
 import {captureCatalogLoad, catalogFailureIsCurrent} from "./management-catalog-ownership.js";
 import {capturePageRead, acceptPageRead} from "./page-save-acknowledgement.js";
 import {loadAgentsWithOverviewPrefetch, loadRoute, bindRequestRuleSearch, applyRequestRuleSearch, warmRouteAsset, prefetchIntentRead, consumeIntentRead, consumeStoredConfigurationPrefetch, discardStoredConfigurationPrefetch, markConfigurationRead, measureConfigurationRead} from "./management-route.js";
@@ -806,28 +806,32 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       result = nonAdminOverviewKnowledgeSnapshot(this);
     } else {
       result = await this._callWithMutationSafety(section, action, extra);
-      this._applyToolRevision(section, action, result, owner);
+      processMutationResponse(result, () => this._applyToolRevision(section, action, result, owner));
     }
 
-    if (
-      ruleRead
-      && configurationSubmissionIsCurrent(this, owner)
-      && ruleRead.agentId === this._agentId
-      && ruleRead.generation === this._cacheGeneration
-      && ruleRead.mutationEpoch === (this._eocRequestRuleMutationEpoch || 0)
-      && ruleRead.sequence === this._eocRequestRuleReadSequence
-      && result?.revision !== undefined
-      && result?.revision !== null
-    ) {
-      this._eocRequestRuleRevision = {agentId: ruleRead.agentId, value: result.revision};
-    }
-    if (
-      guidanceCall
-      && guidanceRevision === this._eocGuidanceCallRevision
-      && configurationSubmissionIsCurrent(this, owner)
-    ) {
-      storeRuntimeGuidance(this, result, guidanceAgentId);
-    }
+    const publish = () => {
+      if (
+        ruleRead
+        && configurationSubmissionIsCurrent(this, owner)
+        && ruleRead.agentId === this._agentId
+        && ruleRead.generation === this._cacheGeneration
+        && ruleRead.mutationEpoch === (this._eocRequestRuleMutationEpoch || 0)
+        && ruleRead.sequence === this._eocRequestRuleReadSequence
+        && result?.revision !== undefined
+        && result?.revision !== null
+      ) {
+        this._eocRequestRuleRevision = {agentId: ruleRead.agentId, value: result.revision};
+      }
+      if (
+        guidanceCall
+        && guidanceRevision === this._eocGuidanceCallRevision
+        && configurationSubmissionIsCurrent(this, owner)
+      ) {
+        storeRuntimeGuidance(this, result, guidanceAgentId);
+      }
+    };
+    if (mutationEffects(section, action)) processMutationResponse(result, publish);
+    else publish();
     return result;
   }
 
@@ -910,9 +914,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (ruleMutation) this._eocRequestRuleMutationEpoch = (this._eocRequestRuleMutationEpoch || 0) + 1;
     this._eocAgentMutations = Number(this._eocAgentMutations || 0) + 1;
     syncAgentPicker(this);
+    let result;
     try {
-      const result = await this._callCore(section, action, extra, mutationTrace);
-      this._applyToolRevision(section, action, result, owner);
+      result = await this._callCore(section, action, extra, mutationTrace);
+      processMutationResponse(result, () => this._applyToolRevision(section, action, result, owner));
       if (
         ruleMutation
         && configurationSubmissionIsCurrent(this, owner)
@@ -935,7 +940,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       // Reads begun during the mutation must not overwrite its acknowledgement.
       if (ruleMutation) this._eocRequestRuleMutationEpoch += 1;
       this._eocAgentMutations = Math.max(0, Number(this._eocAgentMutations || 1) - 1);
-      syncAgentPicker(this);
+      if (result) processMutationResponse(result, () => syncAgentPicker(this));
+      else syncAgentPicker(this);
     }
   }
 
@@ -997,8 +1003,12 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         if (result && typeof result === "object") functionMutationResults.set(result, mutationTrace);
       }
       const invalidationStarted = performanceNow();
-      this._invalidateAfterMutation(agent?.subentry_id, section, action);
-      pruneCacheTimes(this);
+      const process = () => {
+        this._invalidateAfterMutation(agent?.subentry_id, section, action);
+        pruneCacheTimes(this);
+      };
+      if (mutationEffects(section, action)) processMutationResponse(result, process);
+      else process();
       requestTrace.invalidationMs = performanceNow() - invalidationStarted;
       if (mutationTrace) mutationTrace.invalidationMs = requestTrace.invalidationMs;
       return result;
@@ -1009,6 +1019,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       if (mutationTrace) {
         mutationTrace.wsResponseAt = requestTrace.responseAt;
         mutationTrace.wsDurationMs = requestTrace.durationMs;
+      }
+      if (mutationEffects(section, action) && !err?.code) {
+        const uncertain = new Error(`${err?.message || String(err)}. The mutation outcome is unknown; refresh before retrying.`, {cause:err});
+        uncertain.mutationOutcome = "uncertain";
+        throw uncertain;
       }
       throw err;
     } finally {
@@ -2121,6 +2136,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     return this._runGuestOperation(async () => {
       const root = this.shadowRoot;
       const agentId = this._agentId;
+      const submission = captureConfigurationOwner(this);
       const indefinite = root.querySelector("#guest-indefinite")?.checked ?? true;
       const start = now ? new Date().toISOString() : root.querySelector("#guest-start")?.value;
       const endInput = root.querySelector("#guest-end");
@@ -2136,8 +2152,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
           ...(!indefinite && end ? {active_until: originalInstant(end, status.active_until)} : {}),
           indefinite,
         });
-        await this._refreshGuestModeMutation(agentId, result);
-        this._toast("Guest Mode updated");
+        requireMutationAcknowledgement(result?.status && typeof result.status === "object", "the Guest Mode change");
+        await presentAcknowledgedMutation(this, submission, "Guest Mode updated", () => this._refreshGuestModeMutation(agentId, result), result);
       } catch (err) {
         this._toast(`Unable to update Guest Mode: ${err.message || String(err)}`, true);
       }
@@ -2148,10 +2164,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     return this._runGuestOperation(async () => {
       if (!await this._confirm("End Guest Mode?", "This immediately ends an active interval or cancels a future schedule.", "End Guest Mode")) return;
       const agentId = this._agentId;
+      const submission = captureConfigurationOwner(this);
       try {
         const result = await this._call("guest_mode", "disable");
-        await this._refreshGuestModeMutation(agentId, result);
-        this._toast("Guest Mode ended");
+        requireMutationAcknowledgement(result?.status && typeof result.status === "object", "the Guest Mode change");
+        await presentAcknowledgedMutation(this, submission, "Guest Mode ended", () => this._refreshGuestModeMutation(agentId, result), result);
       } catch (err) {
         this._toast(`Unable to end Guest Mode: ${err.message || String(err)}`, true);
       }
@@ -2198,24 +2215,27 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this.shadowRoot.querySelectorAll(".end-active").forEach((button) => button.addEventListener("click", async () => {
       const agentId = this._agentId;
       const loadToken = this._loadToken;
+      const submission = captureConfigurationOwner(this);
       if (!await this._confirm("End active conversation?", "The next matching Assist request will start with fresh model context.", "End conversation")) return;
       if (agentId !== this._agentId || loadToken !== this._loadToken
           || this._viewKey() !== "data-memory/conversations") return;
       this._setSaving(button, true, "Ending…");
       try {
         const response = await this._call("conversations", "end_active", { continuity_key: button.dataset.key });
-        if (response?.ended && agentId === this._agentId && loadToken === this._loadToken
-            && this._viewKey() === "data-memory/conversations" && this._contentData?.active?.active) {
-          this._contentData = {
-            ...this._contentData,
-            active: {
-              ...this._contentData.active,
-              active: this._contentData.active.active.filter((item) => item.key !== button.dataset.key),
-            },
-          };
-          getRouteFeature("data-memory/conversations")?.reconcileActiveConversations(this);
-        }
-        this._toast("Conversation will start fresh next time");
+        requireMutationAcknowledgement(Number.isInteger(response?.ended) && response.ended >= 0, "ending the conversation");
+        await presentAcknowledgedMutation(this, submission, "Conversation will start fresh next time", () => {
+          if (response?.ended && agentId === this._agentId && loadToken === this._loadToken
+              && this._viewKey() === "data-memory/conversations" && this._contentData?.active?.active) {
+            this._contentData = {
+              ...this._contentData,
+              active: {
+                ...this._contentData.active,
+                active: this._contentData.active.active.filter((item) => item.key !== button.dataset.key),
+              },
+            };
+            getRouteFeature("data-memory/conversations")?.reconcileActiveConversations(this);
+          }
+        }, response);
       } catch (err) {
         this._toast(`Unable to end conversation: ${err.message || String(err)}`, true);
       } finally {
@@ -2479,9 +2499,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const values = this._knowledgeValues();
     const editing = this._knowledgeMode === "edit";
     const owner = this._retainedMutationOwner();
+    const submission = captureConfigurationOwner(this);
     const dialog = this.shadowRoot.querySelector("#knowledge-dialog");
     const ownsOperation = beginOperation(this, "knowledge-editor");
-    const current = () => ownsOperation() && dialog.open
+    const current = () => ownsOperation() && configurationSubmissionIsCurrent(this, submission) && dialog.open
       && this.shadowRoot.querySelector("#knowledge-dialog") === dialog
       // A reconnect read can refresh the same editor's list without changing
       // its operation, dialog or owner. Its save still needs acknowledgement.
@@ -2491,26 +2512,33 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const response = await this._call("knowledge", editing ? "update" : "create", { ...(editing ? { source_id: this._editingSource.source_id, expected_revision: this._editingSource.updated_at } : {}), ...values });
       if (!current()) return;
       const ownsList = this._ownsRetainedMutation(owner);
-      if (!response?.source?.source_id || (ownsList && !getRouteFeature("data-memory/knowledge")?.applyKnowledgeMutation(this, response))) throw new Error("The saved source response was incomplete.");
-      this._setSaving(button, false);
-      if (same(this._knowledgeValues(), values)) dialog.close();
-      else {
-        // Acknowledge this submission without discarding text authored while
-        // it was saving. A subsequent save updates the acknowledged record.
-        this._editingSource = response.source;
-        this._knowledgeMode = "edit";
-        setDialogBaseline(this, "knowledge-dialog", values);
-        this.shadowRoot.querySelector("#knowledge-delete").hidden = false;
-        this.shadowRoot.querySelector("#knowledge-dialog-title").textContent = "Edit Knowledge source";
-      }
-      // The editor owns its acknowledgement across a refresh, but only the
-      // original visit owns collection data. A newer read must remain intact.
-      if (ownsList) writeSectionCache(this, this._sectionCacheKey(), this._result);
-      const agent = this._selectedAgent();
-      if (ownsList && agent && Number.isFinite(response?.feature_status?.source_count)) agent.knowledge_source_count = response.feature_status.source_count;
-      this._render();
-      this._toast(editing ? "Knowledge source updated" : "Knowledge source saved");
-      if (!this.isConnected || !this._ownsRetainedMutation(owner)) this._revalidateAcknowledgedCollection(owner);
+      requireMutationAcknowledgement(response?.source?.source_id, "saving the Knowledge source");
+      // Retain the committed identity before touching the collection or DOM. A
+      // failed patch/close must never turn the next save into another create.
+      this._editingSource = response.source;
+      this._knowledgeMode = "edit";
+      setDialogBaseline(this, "knowledge-dialog", values);
+      return await presentAcknowledgedMutation(this, submission, editing ? "Knowledge source updated" : "Knowledge source saved", async () => {
+        if (ownsList && !getRouteFeature("data-memory/knowledge")?.applyKnowledgeMutation(this, response)) throw new Error("The saved source could not be displayed.");
+        this._setSaving(button, false);
+        if (same(this._knowledgeValues(), values)) dialog.close();
+        else {
+          // Acknowledge this submission without discarding text authored while
+          // it was saving. A subsequent save updates the acknowledged record.
+          this._editingSource = response.source;
+          this._knowledgeMode = "edit";
+          setDialogBaseline(this, "knowledge-dialog", values);
+          this.shadowRoot.querySelector("#knowledge-delete").hidden = false;
+          this.shadowRoot.querySelector("#knowledge-dialog-title").textContent = "Edit Knowledge source";
+        }
+        // The editor owns its acknowledgement across a refresh, but only the
+        // original visit owns collection data. A newer read must remain intact.
+        if (ownsList) writeSectionCache(this, this._sectionCacheKey(), this._result);
+        const agent = this._selectedAgent();
+        if (ownsList && agent && Number.isFinite(response?.feature_status?.source_count)) agent.knowledge_source_count = response.feature_status.source_count;
+        this._render();
+        if (!this.isConnected || !this._ownsRetainedMutation(owner)) this._revalidateAcknowledgedCollection(owner);
+      }, response);
     } catch (err) {
       if (current()) this._setDialogError("knowledge", `Unable to save source: ${err.message || String(err)}`);
     } finally { if (current()) this._setSaving(button, false); }
@@ -2524,9 +2552,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const temporary = values.type === "temporary";
     const sourceScope = this._memoryMutationScope;
     const owner = this._retainedMutationOwner();
+    const submission = captureConfigurationOwner(this);
     const dialog = this.shadowRoot.querySelector("#memory-dialog");
     const ownsOperation = beginOperation(this, "memory-editor");
-    const current = () => ownsOperation() && dialog.open
+    const current = () => ownsOperation() && configurationSubmissionIsCurrent(this, submission) && dialog.open
       && this.shadowRoot.querySelector("#memory-dialog") === dialog
       && this._ownsRetainedMutation(owner, {allowRefresh:true});
     // Temporary creation has no movable-record editor in this form. Keep its
@@ -2539,64 +2568,73 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._setSaving(button, true);
     try {
       if (this._memoryEditorAgent !== this._agentId || this._memoryEditorScope !== this._scopeId) throw new Error("The selected agent or scope changed. Close and reopen this editor.");
-      if (this._editingMemory && !this._editingMemory.revision) throw new Error("Refresh the Memory list and reopen this editor before saving.");
+      if (!temporary && this._editingMemory && !this._editingMemory.revision) throw new Error("Refresh the Memory list and reopen this editor before saving.");
       const feature = getRouteFeature("data-memory/memories");
-      const response = await this._call("memories", temporary ? "temporary_add" : this._editingMemory ? "update" : "add", {
+      const response = await this._call("memories", temporary ? (editing ? "temporary_update" : "temporary_add") : editing ? "update" : "add", {
         scope_id: sourceScope,
         ...(this._editingMemory ? {memory_id: this._editingMemory.memory_id, expected_revision: this._editingMemory.revision} : {}),
         ...feature.memoryMutationValues(values, this._editingMemory),
         ...(temporary ? {expires_at: feature.memoryExpiryISO(this, values.expires_at)} : {}),
       });
       if (!current()) return;
-      if (!response?.memory?.memory_id) throw new Error("The saved memory response was incomplete.");
-      const ownsList = this._ownsRetainedMutation(owner);
-      if (ownsList && temporary) {
-        if (response.scope_id === owner.scope && owner.kind === "temporary") {
-          this._result = {...this._result, memories: [...(this._result.memories || []).filter(memory => memory.memory_id !== response.memory.memory_id), response.memory]};
+      const savedScope = response?.scope_id ?? (temporary && editing ? sourceScope : null);
+      requireMutationAcknowledgement(response?.memory?.memory_id && savedScope, "saving the memory");
+      this._editingMemory = {...response.memory};
+      this._memoryMutationScope = savedScope;
+      setDialogBaseline(this, "memory-dialog", values);
+      return await presentAcknowledgedMutation(this, submission, editing ? "Memory updated" : "Memory added", async () => {
+        const ownsList = this._ownsRetainedMutation(owner);
+        if (ownsList && temporary) {
+          if (savedScope === owner.scope && owner.kind === "temporary") {
+            this._result = {...this._result, memories: [...(this._result.memories || []).filter(memory => memory.memory_id !== response.memory.memory_id), response.memory]};
+          }
+          if (response.status === "created") this._patchScopeCount(savedScope, "temporary_memory_count", 1);
+        } else if (ownsList && owner.kind === "persistent" && !await getRouteFeature("data-memory/memories")?.applyPersistentMemoryMutation(this, response, {sourceScope: owner.scope})) throw new Error("The saved memory response was incomplete.");
+        if (!current()) return;
+        this._setSaving(button, false);
+        unlock();
+        if (same(this._memoryValues(), values)) dialog.close();
+        else {
+          this._editingMemory = {...response.memory};
+          this._memoryMutationScope = savedScope;
+          setDialogBaseline(this, "memory-dialog", values);
+          this.shadowRoot.querySelector("#memory-type").disabled = true;
+          this.shadowRoot.querySelector("#memory-delete").hidden = false;
+          this.shadowRoot.querySelector("#memory-dialog-title").textContent = "Edit memory";
         }
-        if (response.status === "created") this._patchScopeCount(response.scope_id, "temporary_memory_count", 1);
-      } else if (ownsList && owner.kind === "persistent" && !await getRouteFeature("data-memory/memories")?.applyPersistentMemoryMutation(this, response, {sourceScope: owner.scope})) throw new Error("The saved memory response was incomplete.");
-      if (!current()) return;
-      this._setSaving(button, false);
-      unlock();
-      if (same(this._memoryValues(), values)) dialog.close();
-      else {
-        this._editingMemory = {...response.memory};
-        this._memoryMutationScope = response.scope_id;
-        setDialogBaseline(this, "memory-dialog", values);
-        this.shadowRoot.querySelector("#memory-type").disabled = true;
-        this.shadowRoot.querySelector("#memory-delete").hidden = false;
-        this.shadowRoot.querySelector("#memory-dialog-title").textContent = "Edit memory";
-      }
-      if (ownsList && !temporary && response.status === "created") this._patchScopeCount(response.scope_id, "memory_count", 1);
-      else if (ownsList && editing && response.scope_id !== sourceScope) {
-        this._patchScopeCount(sourceScope, "memory_count", -1);
-        this._patchScopeCount(response.scope_id, "memory_count", 1);
-      }
-      if (ownsList) this._patchScopeCount(owner.scope, "memory_count", 0);
-      if (ownsList && !temporary && response.status === "created") this._selectedAgent().memory_count = Number(this._selectedAgent().memory_count || 0) + 1;
-      this._render();
-      this._toast(editing ? "Memory updated" : "Memory added");
-      if (!this.isConnected || !this._ownsRetainedMutation(owner)) this._revalidateAcknowledgedCollection(owner);
+        if (ownsList && !temporary && response.status === "created") this._patchScopeCount(savedScope, "memory_count", 1);
+        else if (ownsList && editing && savedScope !== sourceScope) {
+          this._patchScopeCount(sourceScope, "memory_count", -1);
+          this._patchScopeCount(savedScope, "memory_count", 1);
+        }
+        if (ownsList) this._patchScopeCount(owner.scope, "memory_count", 0);
+        if (ownsList && !temporary && response.status === "created") this._selectedAgent().memory_count = Number(this._selectedAgent().memory_count || 0) + 1;
+        this._render();
+        if (!this.isConnected || !this._ownsRetainedMutation(owner)) this._revalidateAcknowledgedCollection(owner);
+      }, response);
     } catch (err) {
       if (current()) this._setDialogError("memory", `Unable to save memory: ${err.message || String(err)}`);
-    } finally { if (current()) { unlock(); this._setSaving(button, false); if (this._editingMemory) this.shadowRoot.querySelector("#memory-type").disabled = true; } }
+    } finally { if (current()) { unlock(); this._setSaving(button, false); const type = this.shadowRoot.querySelector("#memory-type"); if (this._editingMemory && type) type.disabled = true; } }
   }
 
   async _deleteSource(sourceId, fromDialog = false, button = null) {
     if (!sourceId || !await this._confirm("Delete Knowledge source?", "This permanently removes the selected source from this agent's local Knowledge Library.", "Delete")) return;
     const owner = this._retainedMutationOwner();
+    const submission = captureConfigurationOwner(this);
     this._setSaving(button, true, "Deleting…");
     try {
       const response = await this._call("knowledge", "delete", { source_id: sourceId, confirm: true });
       if (!this._ownsRetainedMutation(owner)) return;
-      if (!getRouteFeature("data-memory/knowledge")?.applyKnowledgeMutation(this, response, sourceId)) throw new Error("The deleted source response was incomplete.");
-      if (fromDialog) this.shadowRoot.querySelector("#knowledge-dialog").close();
-      writeSectionCache(this, this._sectionCacheKey(), this._result);
-      const agent = this._selectedAgent();
-      if (agent && Number.isFinite(response?.feature_status?.source_count)) agent.knowledge_source_count = response.feature_status.source_count;
-      this._render();
-      this._toast("Knowledge source deleted");
+      requireMutationAcknowledgement([0, 1].includes(response?.deleted), "deleting the Knowledge source");
+      if (response.deleted === 0) throw new Error("No Knowledge source was deleted. Refresh this section before retrying.");
+      return await presentAcknowledgedMutation(this, submission, "Knowledge source deleted", async () => {
+        if (!getRouteFeature("data-memory/knowledge")?.applyKnowledgeMutation(this, response, sourceId)) throw new Error("The deleted source could not be removed from the display.");
+        if (fromDialog) this.shadowRoot.querySelector("#knowledge-dialog").close();
+        writeSectionCache(this, this._sectionCacheKey(), this._result);
+        const agent = this._selectedAgent();
+        if (agent && Number.isFinite(response?.feature_status?.source_count)) agent.knowledge_source_count = response.feature_status.source_count;
+        this._render();
+      }, response);
     } catch (err) { this._toast(`Unable to delete source: ${err.message || String(err)}`, true); }
     finally { this._setSaving(button, false); }
   }
@@ -2606,18 +2644,22 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       ? this._memoryMutationScope : this._scopeId;
     if (!memoryId || !await this._confirm("Delete memory?", "This memory will be permanently removed from the selected scope.", "Delete")) return;
     const owner = this._retainedMutationOwner();
+    const submission = captureConfigurationOwner(this);
     this._setSaving(button, true, "Deleting…");
     try {
       const response = await this._call("memories", "delete", { scope_id: sourceScope, memory_id: memoryId });
       if (!this._ownsRetainedMutation(owner)) return;
-      if (!await getRouteFeature("data-memory/memories")?.applyPersistentMemoryMutation(this, response, {deletedId: memoryId, sourceScope: owner.scope})) throw new Error("The deleted memory response was incomplete.");
-      if (!this._ownsRetainedMutation(owner)) return;
-      if (fromDialog) this.shadowRoot.querySelector("#memory-dialog").close();
-      this._patchScopeCount(sourceScope, "memory_count", -1);
-      this._selectedAgent().memory_count = Math.max(0, Number(this._selectedAgent().memory_count || 0) - 1);
-      getRouteFeature("data-memory/memories")?.reconcileMemories(this);
-      this._toast("Memory deleted");
-      this.shadowRoot.querySelector("#add-memory")?.focus({preventScroll: true});
+      requireMutationAcknowledgement([0, 1].includes(response?.deleted), "deleting the memory");
+      if (response.deleted === 0) throw new Error("No memory was deleted. Refresh this section before retrying.");
+      return await presentAcknowledgedMutation(this, submission, "Memory deleted", async () => {
+        if (!await getRouteFeature("data-memory/memories")?.applyPersistentMemoryMutation(this, response, {deletedId: memoryId, sourceScope: owner.scope})) throw new Error("The deleted memory could not be removed from the display.");
+        if (!this._ownsRetainedMutation(owner)) return;
+        if (fromDialog) this.shadowRoot.querySelector("#memory-dialog").close();
+        this._patchScopeCount(sourceScope, "memory_count", -1);
+        this._selectedAgent().memory_count = Math.max(0, Number(this._selectedAgent().memory_count || 0) - 1);
+        getRouteFeature("data-memory/memories")?.reconcileMemories(this);
+        this.shadowRoot.querySelector("#add-memory")?.focus({preventScroll: true});
+      }, response);
     } catch (err) { this._toast(`Unable to delete memory: ${err.message || String(err)}`, true); }
     finally { this._setSaving(button, false); }
   }
@@ -2634,6 +2676,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   async _deleteSession(sessionId, button = null) {
+    const submission = captureConfigurationOwner(this);
     const agentId = this._agentId;
     const scopeId = this._scopeId;
     const loadToken = this._loadToken;
@@ -2643,37 +2686,39 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._setSaving(button, true, "Deleting…");
     try {
       const response = await this._call("conversations", "delete", { scope_id: scopeId, session_id: sessionId });
-      if (response?.deleted_sessions && agentId === this._agentId && scopeId === this._scopeId
-          && loadToken === this._loadToken && this._viewKey() === "data-memory/conversations"
-          && this._contentData?.sessions) {
-        const current = this._contentData.sessions;
-        const sessions = (current.sessions || []).filter((item) => item.session_id !== sessionId);
-        const removed = (current.sessions || []).length - sessions.length;
-        const searching = this._eocHistoryMode === "search";
-        this._contentData = {
-          ...this._contentData,
-          // Search pages contain turns: the deleted conversation may also
-          // have matches before this page. Only a fresh search can rebase it.
-          sessions: searching ? {
-            sessions: [], results: [], offset: 0, returned: 0,
-            has_more: false, next_offset: null,
-          } : {
-            ...current,
-            sessions,
-            returned: Math.max(0, Number(current.returned ?? current.sessions?.length ?? 0) - removed),
-            next_offset: Math.max(0, Number(current.offset || 0) + sessions.length),
-            ...(Number.isFinite(Number(current.total))
-              ? {total: Math.max(0, Number(current.total) - removed)}
-              : {}),
-          },
-        };
-        if (removed) this._adjustConversationScopeCount(-1);
-        this._render();
-        if (searching) {
-          if (!await getRouteFeature("data-memory/conversations").loadConversationPage(this, 0)) return;
+      requireMutationAcknowledgement(Number.isInteger(response?.deleted_sessions) && response.deleted_sessions >= 0, "deleting the conversation");
+      return await presentAcknowledgedMutation(this, submission, "Conversation deleted", async () => {
+        if (response?.deleted_sessions && agentId === this._agentId && scopeId === this._scopeId
+            && loadToken === this._loadToken && this._viewKey() === "data-memory/conversations"
+            && this._contentData?.sessions) {
+          const current = this._contentData.sessions;
+          const sessions = (current.sessions || []).filter((item) => item.session_id !== sessionId);
+          const removed = (current.sessions || []).length - sessions.length;
+          const searching = this._eocHistoryMode === "search";
+          this._contentData = {
+            ...this._contentData,
+            // Search pages contain turns: the deleted conversation may also
+            // have matches before this page. Only a fresh search can rebase it.
+            sessions: searching ? {
+              sessions: [], results: [], offset: 0, returned: 0,
+              has_more: false, next_offset: null,
+            } : {
+              ...current,
+              sessions,
+              returned: Math.max(0, Number(current.returned ?? current.sessions?.length ?? 0) - removed),
+              next_offset: Math.max(0, Number(current.offset || 0) + sessions.length),
+              ...(Number.isFinite(Number(current.total))
+                ? {total: Math.max(0, Number(current.total) - removed)}
+                : {}),
+            },
+          };
+          if (removed) this._adjustConversationScopeCount(-1);
+          this._render();
+          if (searching) {
+            if (!await getRouteFeature("data-memory/conversations").loadConversationPage(this, 0)) throw new Error("Conversation history could not be refreshed.");
+          }
         }
-      }
-      this._toast("Conversation deleted");
+      }, response);
     } catch (err) {
       this._toast(`Unable to delete conversation: ${err.message || String(err)}`, true);
     } finally {
@@ -2689,14 +2734,17 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   async _saveReassign(button = null) {
+    const submission = captureConfigurationOwner(this);
     const target = this.shadowRoot.querySelector("#reassign-scope").value;
     if (!target) return;
     this._setSaving(button, true, "Assigning…");
     try {
       const result = await this._call("memories", "reassign_legacy", { scope_id: "__anonymous__", target_scope_id: target, memory_ids: [this._reassignMemoryId] });
-      this.shadowRoot.querySelector("#reassign-dialog").close();
-      await this._refreshAfterMutation();
-      this._toast(`Reassigned ${formatUsageNumber(result.reassigned)} memory record${result.reassigned === 1 ? "" : "s"}`);
+      requireMutationAcknowledgement(Number.isInteger(result?.reassigned) && result.reassigned >= 0, "reassigning the memory");
+      return await presentAcknowledgedMutation(this, submission, `Reassigned ${formatUsageNumber(result.reassigned)} memory record${result.reassigned === 1 ? "" : "s"}`, async () => {
+          this.shadowRoot.querySelector("#reassign-dialog").close();
+          await this._refreshAfterMutation();
+      }, result);
     } catch (err) { this._toast(`Unable to reassign memory: ${err.message || String(err)}`, true); }
     finally { this._setSaving(button, false); }
   }
@@ -2704,25 +2752,28 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   async _clearUsageDetails(button = null) {
     if (!await this._confirm("Clear recent usage details?", "Request and run details will be removed. Daily, monthly, and lifetime totals remain.", "Clear details")) return;
     const owner = this._retainedMutationOwner();
+    const submission = captureConfigurationOwner(this);
     this._setSaving(button, true, "Clearing…");
     try {
-      await this._call("usage", "clear_details", { confirm: true });
+      const response = await this._call("usage", "clear_details", { confirm: true });
       if (!this._ownsRetainedMutation(owner)) return;
-      this._usageDetailGeneration = (this._usageDetailGeneration || 0) + 1;
-      this._result = {...this._result, summary: {...this._result.summary, latest: null},
-        days: {...this._result.days, ...(this._result.days?.local_run_summary ? {
-          local_run_summary: {...this._result.days.local_run_summary, count: 0},
-        } : {})},
-        runs: {...this._result.runs, runs: [], total: 0},
-        loading: {...this._result.loading, runs: false}};
-      writeSectionCache(this, this._sectionCacheKey(), {
-        summary: this._result.summary,
-        days: this._result.days,
-      });
-      this.shadowRoot.querySelector("#usage-request-dialog")?.close();
-      this._render();
-      getRouteFeature("usage-maintenance/usage")?.reconcileUsageSecondary(this, "runs");
-      this._toast("Recent usage details cleared");
+      requireMutationAcknowledgement([response?.deleted_requests, response?.deleted_runs].every(value => Number.isInteger(value) && value >= 0), "clearing usage details");
+      return await presentAcknowledgedMutation(this, submission, "Recent usage details cleared", () => {
+        this._usageDetailGeneration = (this._usageDetailGeneration || 0) + 1;
+        this._result = {...this._result, summary: {...this._result.summary, latest: null},
+          days: {...this._result.days, ...(this._result.days?.local_run_summary ? {
+            local_run_summary: {...this._result.days.local_run_summary, count: 0},
+          } : {})},
+          runs: {...this._result.runs, runs: [], total: 0},
+          loading: {...this._result.loading, runs: false}};
+        writeSectionCache(this, this._sectionCacheKey(), {
+          summary: this._result.summary,
+          days: this._result.days,
+        });
+        this.shadowRoot.querySelector("#usage-request-dialog")?.close();
+        this._render();
+        getRouteFeature("usage-maintenance/usage")?.reconcileUsageSecondary(this, "runs");
+      }, response);
     }
     catch (err) { this._toast(`Unable to clear details: ${err.message || String(err)}`, true); }
     finally { this._setSaving(button, false); }

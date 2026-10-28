@@ -1,3 +1,4 @@
+import {captureConfigurationOwner, presentAcknowledgedMutation, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
 import {applyRulePackImportMutation, refreshRuleSharingGroups} from "./request-rules-ui-core.js";
 import {reviewSharingExport, SHARING_CONTRACT} from "./sharing-review.js";
 
@@ -67,11 +68,16 @@ export function bindRuleSharing(panel, host) {
     const button=event.target.closest("#rule-pack-confirm");
     if(!button||!reviewed)return;
     button.disabled=true;
+    const submission=captureConfigurationOwner(panel);
     try{
       const result=await panel._call("request_rules","rule_pack_import",{pack:reviewed.pack,revision:reviewed.revision,review_token:reviewed.review_token,confirm:true});
-      applyRulePackImportMutation(panel,result);
-      reviewed=null;q("#rule-pack-review").replaceChildren();
-      setMessage(`${result.rules.length} disabled rules imported after existing rules.`);
+      requireMutationAcknowledgement(Array.isArray(result?.rules) && Array.isArray(result?.groups) && result.revision != null, "importing Request Rules");
+      reviewed=null;
+      await presentAcknowledgedMutation(panel,submission,`${result.rules.length} disabled rules imported after existing rules.`,()=>{
+        applyRulePackImportMutation(panel,result);
+        q("#rule-pack-review").replaceChildren();
+        setMessage(`${result.rules.length} disabled rules imported after existing rules.`);
+      },result);
     }catch(err){setMessage(err.message||String(err));button.disabled=false;}
   });
 }

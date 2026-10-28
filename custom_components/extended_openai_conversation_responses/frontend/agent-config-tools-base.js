@@ -485,7 +485,7 @@ export function synchronizePersistedFunctions(panel, result, submission = captur
 
 function completeFunctionMutation(panel, result, submission, message, refresh = () => panel._render()) {
   return completeConfigurationAcknowledgement(panel, functionAcknowledgement(result), submission, {
-    fields:["functions", "function_groups"], metadata:["function_repair"], message,
+    fields:["functions", "function_groups"], metadata:["function_repair"], message, response:result,
     refresh:() => {
       if (!panel._viewKey || panel._viewKey() === "capabilities/functions") panel._result = panel._configData;
       return refresh();

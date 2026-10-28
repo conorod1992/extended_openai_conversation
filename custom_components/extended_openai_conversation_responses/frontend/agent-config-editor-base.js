@@ -1,4 +1,4 @@
-import {invalidateImportPreview, renderConfigurationActions, bindSavedConfigurationActions} from "./assistant-configuration-actions.js";
+import {invalidateImportPreview, renderConfigurationActions, bindSavedConfigurationActions, applyConfigurationImport} from "./assistant-configuration-actions.js";
 export {invalidateImportPreview, renderConfigurationActions} from "./assistant-configuration-actions.js";
 import {searchTokens, matchesFunctionSearchTokens, cachedFunctionSearchTokens} from "./function-search.js";
 export {matchesFunctionSearch} from "./function-search.js";
@@ -400,7 +400,7 @@ export function bindConfiguration(panel) {
       importApply.disabled = true;
     }
   });
-  bindOwnedEvent(root.querySelector("#import-apply"), "click", "assistant-actions", async () => { const mode=root.querySelector('input[name="import-mode"]:checked').value, source=importDocument.value, revision=panel._importRevision; if(!panel._importDocument||panel._importDocument!==source||panel._importMode!==mode||panel._importRevision!==panel._configData?.revision){invalidateImportPreview(panel,importApply,importSummary);return;} if(mode==="current"&&!await panel._confirm("Overwrite this agent?",`The saved configuration will be replaced.${panel._configDirty ? " Your unsaved shared draft will be discarded." : ""} Retained history and parent-entry credentials are not affected.`,"Overwrite"))return; if(panel._importDocument!==source||importDocument.value!==source||panel._configData?.revision!==revision){invalidateImportPreview(panel,importApply,importSummary);return;} try { await panel._call("configuration","import",{document:source,mode,confirm:mode==="current",...(mode==="current"?{revision}:{})}); root.querySelector("#import-dialog").close(); if(mode==="current")panel._clearConfigDraft(); await panel._loadAgents(panel._agentId); panel._toast(mode==="current"?"Configuration imported":"Agent created from import; your current draft is preserved"); } catch(err){panel._toast(`Unable to import: ${err.message||String(err)}`,true);} });
+  bindOwnedEvent(root.querySelector("#import-apply"), "click", "assistant-actions", () => applyConfigurationImport(panel, root));
   bindOwnedEvent(root.querySelector("#import-cancel"), "click", "assistant-actions",()=>{invalidateImportPreview(panel,importApply,importSummary);root.querySelector("#import-dialog").close();actionsMenu?.querySelector("summary")?.focus();});
   bindOwnedEvent(root.querySelector("#import-dialog"), "cancel", "assistant-actions",()=>{invalidateImportPreview(panel,importApply,importSummary);requestAnimationFrame(()=>actionsMenu?.querySelector("summary")?.focus());});
   if (panel._configRestoreFocus) { const selector=panel._configRestoreFocus; panel._configRestoreFocus=null; requestAnimationFrame(()=>root.querySelector(selector)?.focus({preventScroll:true})); }

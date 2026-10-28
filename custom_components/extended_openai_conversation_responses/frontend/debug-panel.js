@@ -1,3 +1,4 @@
+import {presentAcknowledgedMutation, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
 import {readOptionalStorage, writeOptionalStorage} from "./browser-storage.js";
 import {DEBUG_PROVIDER_PAGE_LIMIT, debugPageText, providerPageLabel, providerPageMeta, sessionLabel} from "./debug-management.js";
 
@@ -125,10 +126,8 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
     const operation = this._mutationTail.then(async () => {
       try {
         const result = await this._call(action, extra, agent);
-        if (current()) {
-          await this._fetchRuns(agent, revision);
-          if (current()) this._toast(action === "clear" ? "Debug captures cleared" : result.enabled ? "Request debugging enabled" : "Request debugging disabled");
-        }
+        requireMutationAcknowledgement(action === "clear" ? Number.isInteger(result?.deleted) && result.deleted >= 0 : typeof result?.enabled === "boolean", "updating debugging");
+        await presentAcknowledgedMutation(this, current, action === "clear" ? "Debug captures cleared" : result.enabled ? "Request debugging enabled" : "Request debugging disabled", () => this._fetchRuns(agent, revision), result);
       } catch (err) {
         if (current()) {
           await this._fetchRuns(agent, revision);

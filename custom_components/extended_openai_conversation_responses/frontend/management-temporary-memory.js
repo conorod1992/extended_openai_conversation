@@ -1,3 +1,4 @@
+import {captureConfigurationOwner, configurationSubmissionIsCurrent, presentAcknowledgedMutation, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
 import {memoryLocalDateTime, memoryExpiryISO} from "./memory-datetime.js";
 import {adoptKeyedElements, reconcileKeyedChildren, delegateCollectionActions, setText} from "./keyed-collection.js";
 import {ensureTemporaryScope, memoryCollectionIdentity} from "./management-data-state.js";
@@ -181,6 +182,7 @@ async function saveTemporaryMemory(panel) {
   const expiresAt = panel.shadowRoot.querySelector("#temporary-memory-expiry")?.value ?? "";
   const error = panel.shadowRoot.querySelector("#temporary-memory-error");
   const owner = panel._retainedMutationOwner();
+    const submission = captureConfigurationOwner(panel);
   if (!content.trim() || !category.trim() || !expiresAt.trim()) {
     error.textContent = "Memory, category, and expiry are required.";
     return;
@@ -198,14 +200,17 @@ async function saveTemporaryMemory(panel) {
       // timezone changed while this editor was open.
       expires_at: temporaryMemoryExpiryForSave(panel, expiresAt, draft),
     });
-    if (!panel._ownsRetainedMutation(owner)) return;
-    if (!response?.memory?.memory_id) throw new Error("The saved memory response was incomplete.");
-    panel._result = {...panel._result, memories: (panel._result.memories || []).map(item =>
-      item.memory_id === response.memory.memory_id ? response.memory : item)};
-    await closeTemporaryMemory(panel, true);
-    panel._patchScopeCount(owner.scope, "temporary_memory_count", 0);
-    panel._render();
-    panel._toast("Short-term memory updated");
+    if (!configurationSubmissionIsCurrent(panel, submission) || !panel._ownsRetainedMutation(owner)) return;
+    requireMutationAcknowledgement(response?.memory?.memory_id, "saving the temporary memory");
+    // Advance the saved editor state before rendering or closing the modal.
+    panel._temporaryMemoryDraft = {...draft, ...response.memory, content, category, expires_at:expiresAt, original_expiry:response.memory.expires_at};
+    return await presentAcknowledgedMutation(panel, submission, "Short-term memory updated", async () => {
+      panel._result = {...panel._result, memories: (panel._result.memories || []).map(item =>
+        item.memory_id === response.memory.memory_id ? response.memory : item)};
+      await closeTemporaryMemory(panel, true);
+      panel._patchScopeCount(owner.scope, "temporary_memory_count", 0);
+      panel._render();
+    }, response);
   } catch (err) {
     if (panel._ownsRetainedMutation(owner)) error.textContent = err.message || String(err);
   } finally { panel._temporaryMemorySaving = false; panel._setSaving(save, false); }
@@ -218,6 +223,7 @@ async function deleteTemporaryMemory(panel, memoryId, button = null) {
     "Delete",
   )) return false;
   const owner = panel._retainedMutationOwner();
+    const submission = captureConfigurationOwner(panel);
   panel._setSaving(button, true, "Deleting…");
   try {
     const response = await panel._call("memories", "temporary_delete", {
@@ -225,15 +231,16 @@ async function deleteTemporaryMemory(panel, memoryId, button = null) {
       memory_id: memoryId,
     });
     if (!panel._ownsRetainedMutation(owner)) return false;
-    if (response?.deleted !== 1) return false;
-    panel._result = {...panel._result, memories: (panel._result.memories || []).filter(item => item.memory_id !== memoryId)};
-    if (panel._temporaryMemoryDraft?.memory_id === memoryId) {
-      await closeTemporaryMemory(panel, true);
-    }
-    panel._patchScopeCount(owner.scope, "temporary_memory_count", -1);
-    panel._render();
-    panel._toast("Temporary memory deleted");
-    return true;
+    requireMutationAcknowledgement([0, 1].includes(response?.deleted), "deleting the temporary memory");
+    if (response.deleted === 0) return false;
+    return await presentAcknowledgedMutation(panel, submission, "Temporary memory deleted", async () => {
+      panel._result = {...panel._result, memories: (panel._result.memories || []).filter(item => item.memory_id !== memoryId)};
+      if (panel._temporaryMemoryDraft?.memory_id === memoryId) {
+        await closeTemporaryMemory(panel, true);
+      }
+      panel._patchScopeCount(owner.scope, "temporary_memory_count", -1);
+      panel._render();
+    }, response);
   } catch (err) {
     panel._toast(`Unable to delete temporary memory: ${err.message || String(err)}`, true);
     return false;
@@ -295,13 +302,15 @@ export async function clearTemporaryMemories(panel, button = null) {
   panel._setSaving(button, true, "Clearing…");
   try {
     const owner = panel._retainedMutationOwner();
+    const submission = captureConfigurationOwner(panel);
     const response = await panel._call("memories", "temporary_clear", {scope_id: scope, confirm: true});
-    if (!panel._ownsRetainedMutation(owner)) return;
-    if (!Number.isFinite(response?.deleted)) throw new Error("The clear response was incomplete.");
-    panel._result = {...panel._result, memories: []};
-    panel._patchScopeCount(scope, "temporary_memory_count", -response.deleted);
-    panel._render();
-    panel._toast("Short-term memories cleared");
+    if (!configurationSubmissionIsCurrent(panel, submission) || !panel._ownsRetainedMutation(owner)) return;
+    requireMutationAcknowledgement(Number.isInteger(response?.deleted) && response.deleted >= 0, "clearing temporary memories");
+    return await presentAcknowledgedMutation(panel, submission, "Short-term memories cleared", () => {
+      panel._result = {...panel._result, memories: []};
+      panel._patchScopeCount(scope, "temporary_memory_count", -response.deleted);
+      panel._render();
+    }, response);
   } catch (err) { panel._toast(`Unable to clear short-term memories: ${err.message || String(err)}`, true); }
   finally { panel._setSaving(button, false); }
 }
