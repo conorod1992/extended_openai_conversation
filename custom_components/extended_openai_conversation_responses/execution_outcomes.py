@@ -382,9 +382,8 @@ async def execute_backend(
     with execution_operation("backend", {"function": config, "arguments": arguments}):
         execute = function.execute
         execute_owner = getattr(execute, "__func__", execute)
-        owns_receipts = (
-            getattr(execute, _RECEIPT_OWNER_ATTRIBUTE, None) is execute_owner
-        )
+        receipt_owner = getattr(execute, _RECEIPT_OWNER_ATTRIBUTE, None)
+        owns_receipts = receipt_owner is not None and receipt_owner is execute_owner
         before = len(attempt.receipts) if (attempt := _ATTEMPT.get()) else 0
         receipt = None if owns_receipts else execution_started()
         try:

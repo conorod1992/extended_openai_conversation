@@ -90,7 +90,7 @@ def rest_config(state, *, scrape=False):
     return config
 
 
-async def opaque_override_witness(hass, *, failure, wrapped):
+async def opaque_backend_witness(hass, *, failure, wrapped=False, adapter=False):
     effects = []
 
     class OpaqueRest(web.RestFunction):
@@ -107,6 +107,15 @@ async def opaque_override_witness(hass, *, failure, wrapped):
 
     entity, log = SimpleNamespace(hass=hass), _chat_log(hass)
     backend, config = OpaqueRest(), {"type": "rest"}
+    if adapter:
+
+        class OpaqueAdapter:
+            __func__ = None
+
+            async def __call__(self, *args):
+                return await OpaqueRest().execute(*args)
+
+        backend, config = SimpleNamespace(execute=OpaqueAdapter()), {"type": "adapter"}
     error = (
         asyncio.CancelledError
         if failure == "cancel"
@@ -122,7 +131,7 @@ async def opaque_override_witness(hass, *, failure, wrapped):
         assert "not acknowledged" in str(err)
         blocked = True
     assert effects == ["effect"], (
-        "an opaque override must not repeat an uncertain effect"
+        "an opaque backend must not repeat an uncertain effect"
     )
     assert blocked
     clear_unacknowledged_calls(entity, log.conversation_id)
@@ -135,20 +144,29 @@ async def opaque_override_witness(hass, *, failure, wrapped):
 async def test_overridden_precise_backend_defaults_to_conservative_ownership(
     hass, failure, wrapped
 ):
-    await opaque_override_witness(hass, failure=failure, wrapped=wrapped)
+    await opaque_backend_witness(hass, failure=failure, wrapped=wrapped)
 
 
-async def test_copied_marker_sensitivity_detects_repeated_effects(hass, monkeypatch):
+@pytest.mark.parametrize("failure", ["error", "cancel"])
+async def test_unmarked_callable_adapter_keeps_conservative_ownership(hass, failure):
+    await opaque_backend_witness(hass, failure=failure, adapter=True)
+
+
+@pytest.mark.parametrize("mutation", ["copied_marker", "missing_marker"])
+async def test_marker_sensitivity_detects_repeated_effects(hass, monkeypatch, mutation):
     source = inspect.getsource(inspect.unwrap(execution_outcomes.execute_backend))
-    exact_owner = "getattr(execute, _RECEIPT_OWNER_ATTRIBUTE, None) is execute_owner"
+    exact_owner = "receipt_owner is not None and receipt_owner is execute_owner"
     assert source.count(exact_owner) == 1
+    replacement = (
+        "bool(receipt_owner)"
+        if mutation == "copied_marker"
+        else "receipt_owner is execute_owner"
+    )
     namespace = dict(vars(execution_outcomes))
     exec(
         compile(
-            source.replace(
-                exact_owner, "bool(getattr(execute, _RECEIPT_OWNER_ATTRIBUTE, None))"
-            ),
-            "<copied-receipt-owner-mutation>",
+            source.replace(exact_owner, replacement),
+            "<receipt-owner-mutation>",
             "exec",
         ),
         namespace,
@@ -156,8 +174,13 @@ async def test_copied_marker_sensitivity_detects_repeated_effects(hass, monkeypa
     monkeypatch.setattr(
         execution_outcomes, "execute_backend", namespace["execute_backend"]
     )
-    with pytest.raises(AssertionError, match="opaque override must not repeat"):
-        await opaque_override_witness(hass, failure="error", wrapped=True)
+    with pytest.raises(AssertionError, match="opaque backend must not repeat"):
+        await opaque_backend_witness(
+            hass,
+            failure="error",
+            wrapped=mutation == "copied_marker",
+            adapter=mutation == "missing_marker",
+        )
 
 
 def test_receipt_declaration_preserves_the_exact_callable_and_signature():
