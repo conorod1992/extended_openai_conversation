@@ -39,6 +39,30 @@ def tool(name="healthy"):
     }
 
 
+async def test_duplicate_group_service_rejects_ambiguous_identity_without_writing(
+    mutation_agent, monkeypatch
+):
+    hass, entry, subentry = mutation_agent
+    group = _group("ambiguous", ["healthy"], "always")
+    subentry.data = {
+        "functions": yaml.safe_dump([tool()]),
+        "function_groups": [deepcopy(group), deepcopy(group)],
+    }
+    before = deepcopy(subentry.data)
+    writes = []
+    monkeypatch.setattr(
+        hass.config_entries,
+        "async_update_subentry",
+        lambda *args, **kwargs: writes.append(kwargs),
+    )
+    with pytest.raises(HomeAssistantError, match="ambiguous"):
+        await services.async_set_function_groups_enabled(
+            hass, entry.entry_id, subentry.subentry_id, ["ambiguous"], False
+        )
+    assert subentry.data == before
+    assert writes == []
+
+
 @pytest.fixture
 async def mutation_agent(hass, monkeypatch):
     local_hass, entry, subentry = _hass_with_agent()

@@ -337,6 +337,22 @@ def _prepare_enabled(
         groups = validate_function_groups(raw.get(CONF_FUNCTION_GROUPS, []), configured)
     selected = groups if group else configured
     requested = list(dict.fromkeys(identifiers))
+    raw_groups = raw.get(CONF_FUNCTION_GROUPS)
+    if (
+        group
+        and isinstance(raw_groups, list)
+        and any(
+            sum(
+                isinstance(item, dict) and item.get("id") == identifier
+                for item in raw_groups
+            )
+            > 1
+            for identifier in requested
+        )
+    ):
+        raise HomeAssistantError(
+            "Function Group identifier is ambiguous; repair the saved collection first"
+        )
     available = {item["id"] if group else item["spec"]["name"] for item in selected}
     missing = [identifier for identifier in requested if identifier not in available]
     if missing:
