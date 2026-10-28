@@ -18,6 +18,7 @@ from .const import DOMAIN
 from .memory import validate_memory_privacy
 from .persistence_hardening import _async_settle_transactional_save
 from .scope import SHARED_HOUSEHOLD_SCOPE_ID
+from .storage_namespaces import TEMPORARY_MEMORY_PREFIX as STORAGE_KEY_PREFIX
 from .strict_store import PropagatingWriteStore, async_storage_lock
 
 _LOGGER = logging.getLogger(__name__)
@@ -26,7 +27,7 @@ _ACTIVE_OWNER_SCOPE_ID: ContextVar[str | None] = ContextVar(
 )
 
 STORAGE_VERSION = 1
-STORAGE_KEY_PREFIX = f"{DOMAIN}.temporary_memory"
+
 MAX_ACTIVE_RECORDS = 100
 MAX_CONTENT_LENGTH = 500
 MAX_CATEGORY_LENGTH = 64

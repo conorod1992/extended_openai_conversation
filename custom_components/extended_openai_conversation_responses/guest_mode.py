@@ -55,12 +55,13 @@ from .const import (
 from .functions.security import FunctionSecurity, classify_tool
 from .helpers import get_exposed_entities
 from .persistence_hardening import _async_settle_transactional_save
+from .storage_namespaces import GUEST_MODE_PREFIX as GUEST_MODE_STORAGE_PREFIX
 from .strict_store import PropagatingWriteStore
 
 _LOGGER = logging.getLogger(__name__)
 
 GUEST_MODE_STORAGE_VERSION = 1
-GUEST_MODE_STORAGE_PREFIX = f"{DOMAIN}.guest_mode"
+
 GUEST_MODE_UNAVAILABLE = "This capability is unavailable in Guest Mode."
 EXECUTION_FAILED = "The requested action could not be completed."
 GUEST_MODE_PROMPT = """

@@ -38,12 +38,13 @@ from .operational_errors import log_handled_failure
 from .persistence_hardening import _async_settle_transactional_save
 from .provider_errors import provider_failure_category, provider_log_remediation
 from .scope import LEGACY_ANONYMOUS_SCOPE_ID
+from .storage_namespaces import MEMORY_PREFIX as STORAGE_KEY_PREFIX
 from .strict_store import PropagatingWriteStore, async_storage_lock
 
 _LOGGER = logging.getLogger(__name__)
 
 STORAGE_VERSION = 2
-STORAGE_KEY_PREFIX = f"{DOMAIN}.memory"
+
 EMBEDDING_CACHE_VERSION = 1
 EMBEDDING_CACHE_BATCH_SIZE = 64
 ANONYMOUS_USER_ID = LEGACY_ANONYMOUS_SCOPE_ID

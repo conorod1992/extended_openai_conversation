@@ -30,6 +30,7 @@ from .const import (
 )
 from .debug import record_current_run_failure
 from .operational_errors import log_handled_failure
+from .storage_namespaces import USAGE_PREFIX as STORAGE_KEY_PREFIX
 from .strict_store import (
     PropagatingWriteStore,
     RecoveryGuardedStore,
@@ -38,7 +39,7 @@ from .strict_store import (
 )
 
 STORAGE_VERSION = 2
-STORAGE_KEY_PREFIX = f"{DOMAIN}.usage"
+
 _USAGE_MANAGERS = f"{DOMAIN}.usage_managers"
 _VOLATILE_USAGE_MANAGERS = f"{DOMAIN}.volatile_usage_managers"
 _USAGE_GETTER_LOCKS = f"{DOMAIN}.usage_getter_locks"

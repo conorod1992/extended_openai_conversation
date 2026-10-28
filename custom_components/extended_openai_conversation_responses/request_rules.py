@@ -90,13 +90,14 @@ from .script_structure import (
     rewrite_script_actions,
     script_selector_fields,
 )
+from .storage_namespaces import REQUEST_RULES_PREFIX as STORAGE_KEY_PREFIX
 from .strict_store import PropagatingWriteStore
 from .template_diagnostics import private_template_diagnostics
 
 _LOGGER = logging.getLogger(__name__)
 
 STORAGE_VERSION = 6
-STORAGE_KEY_PREFIX = "extended_openai_conversation_responses.request_rules"
+
 MAX_RULES = 500
 MAX_PHRASES = 25
 MAX_ACTIONS = 20

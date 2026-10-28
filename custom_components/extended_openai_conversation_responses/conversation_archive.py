@@ -27,11 +27,12 @@ from .const import DOMAIN
 from .persistence_hardening import _async_settle_transactional_save
 from .runtime_hardening import MAX_MODEL_TOOL_RESULT_CHARACTERS
 from .scope import ResolvedDataScope
+from .storage_namespaces import ARCHIVE_PREFIX as STORAGE_KEY_PREFIX
 from .strict_store import PropagatingWriteStore
 
 _LOGGER = logging.getLogger(__name__)
 STORAGE_VERSION = 1
-STORAGE_KEY_PREFIX = f"{DOMAIN}.archive"
+
 MAX_SEARCH_LIMIT = 50
 MAX_SEARCH_OFFSET = 10_000
 _SEARCH_CACHE_BYTES = 8 * 1024 * 1024

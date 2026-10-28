@@ -19,12 +19,13 @@ from homeassistant.util import dt as dt_util
 from .const import DOMAIN
 from .persistence_hardening import _async_settle_transactional_save
 from .runtime_hardening import MAX_MODEL_TOOL_RESULT_CHARACTERS
+from .storage_namespaces import KNOWLEDGE_PREFIX as STORAGE_KEY_PREFIX
 from .strict_store import PropagatingWriteStore, async_storage_lock
 
 _LOGGER = logging.getLogger(__name__)
 
 STORAGE_VERSION = 2
-STORAGE_KEY_PREFIX = f"{DOMAIN}.knowledge"
+
 MAX_SOURCES_PER_AGENT = 500
 MAX_TITLE_LENGTH = 120
 MAX_DESCRIPTION_LENGTH = 500

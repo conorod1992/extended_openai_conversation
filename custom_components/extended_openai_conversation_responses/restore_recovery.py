@@ -36,11 +36,12 @@ from .live_subentry_updates import (
 )
 from .operation_settlement import async_settle_owned_operation
 from .operational_errors import log_handled_failure
+from .storage_namespaces import RESTORE_JOURNAL_PREFIX as RESTORE_JOURNAL_PREFIX
 
 _LOGGER = logging.getLogger(__name__)
 
 RESTORE_JOURNAL_VERSION = 1
-RESTORE_JOURNAL_PREFIX = f"{DOMAIN}.restore_transaction"
+
 _PHASE_APPLYING = "applying"
 _PHASE_COMMITTED = "committed"
 _PHASES = {_PHASE_APPLYING, _PHASE_COMMITTED}

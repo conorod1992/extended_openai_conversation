@@ -17,22 +17,13 @@ from .agent_maintenance import (
     get_agent_maintenance_gate,
 )
 from .const import DOMAIN
+from .storage_namespaces import AGENT_STORAGE_PREFIXES
 from .strict_store import PropagatingWriteStore, async_remove_agent_stores
 
 KNOWN_AGENTS = f"{DOMAIN}.known_agents"
 _LOGGER = logging.getLogger(__name__)
 _LISTENER = f"{DOMAIN}.agent_deletion_listener"
 _RETRY = f"{DOMAIN}.agent_deletion_retry"
-_SECTIONS = (
-    "memory",
-    "temporary_memory",
-    "knowledge",
-    "archive",
-    "usage",
-    "guest_mode",
-    "request_rules",
-    "restore_transaction",
-)
 _MANAGER_KEYS = (
     "request_debug_managers",
     "memory_managers",
@@ -59,7 +50,7 @@ def _storage_names(
     directory = Path(hass.config.path(".storage"))
     if not directory.exists():
         return []
-    prefixes = tuple(f"{DOMAIN}.{section}.{entry_id}." for section in _SECTIONS)
+    prefixes = tuple(f"{prefix}.{entry_id}." for prefix in AGENT_STORAGE_PREFIXES)
     names = []
     for path in directory.iterdir():
         for prefix in prefixes:
@@ -82,7 +73,7 @@ def _stored_provider_ids(hass: Any) -> set[str]:
     if not directory.exists():
         return set()
     result = set()
-    prefixes = tuple(f"{DOMAIN}.{section}." for section in _SECTIONS)
+    prefixes = tuple(f"{prefix}." for prefix in AGENT_STORAGE_PREFIXES)
     for path in directory.iterdir():
         for prefix in prefixes:
             if path.name.startswith(prefix):
@@ -186,8 +177,8 @@ async def async_delete_removed_subentries(hass: Any, entry: Any) -> None:
     # disappears on restart. Discover exact owners from durable private stores.
     names = await hass.async_add_executor_job(_storage_names, hass, entry.entry_id)
     for name in names:
-        for section in _SECTIONS:
-            prefix = f"{DOMAIN}.{section}.{entry.entry_id}."
+        for namespace in AGENT_STORAGE_PREFIXES:
+            prefix = f"{namespace}.{entry.entry_id}."
             if name.startswith(prefix):
                 identity = name[len(prefix) :].split(".", 1)[0]
                 if identity:
@@ -230,8 +221,8 @@ async def async_delete_entry_data(hass: Any, entry: Any) -> None:
         entry.entry_id, set()
     )
     for name in names:
-        for section in _SECTIONS:
-            prefix = f"{DOMAIN}.{section}.{entry.entry_id}."
+        for namespace in AGENT_STORAGE_PREFIXES:
+            prefix = f"{namespace}.{entry.entry_id}."
             if name.startswith(prefix):
                 identities.add(name[len(prefix) :].split(".", 1)[0])
                 break
