@@ -12,7 +12,6 @@ from custom_components.extended_openai_conversation_responses.context_summary_pe
     async_apply_context_summary,
 )
 from custom_components.extended_openai_conversation_responses.context_usage_hardening import (
-    estimate_prepared_request,
     estimate_provider_input_tokens,
 )
 from custom_components.extended_openai_conversation_responses.entity import (
@@ -63,7 +62,6 @@ def test_encoded_attachment_size_does_not_destroy_history_budget(part):
     estimate = estimate_provider_input_tokens(large)
     assert estimate == estimate_provider_input_tokens(small)
     assert 2000 < estimate < 10000
-    assert estimate_prepared_request(large, None) == estimate
     assert large == original
 
 

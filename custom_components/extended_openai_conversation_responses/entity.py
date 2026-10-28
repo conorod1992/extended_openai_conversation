@@ -80,7 +80,6 @@ from .context_usage_hardening import (
     async_prepared_input_revision,
     async_recover_trailing_usage,
     async_validate_tool_call_ids_with_usage,
-    estimate_prepared_request,
     normalized_chat_stream,
     normalized_responses_stream,
 )
@@ -1148,11 +1147,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 )
 
                 request_usage = RequestTokenMeasurements(
-                    context_estimate=estimate_prepared_request(
-                        messages,
-                        tool_kwargs.get("tools"),
-                        input_tokens=round_estimate,
-                    )
+                    context_estimate=round_estimate
                 )
                 request_started = time.monotonic()
                 request_history_length = len(chat_log.content)

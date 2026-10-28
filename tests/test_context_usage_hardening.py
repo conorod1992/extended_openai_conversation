@@ -12,7 +12,6 @@ from custom_components.extended_openai_conversation_responses.context_usage_hard
     RequestTokenMeasurements,
     _capture_provider_usage,
     _serialized_characters,
-    estimate_prepared_request,
     estimate_provider_input_tokens,
     measure_provider_input,
 )
@@ -33,82 +32,6 @@ def test_ascii_serialization_skips_python_character_scan(monkeypatch) -> None:
 
     assert characters > 0
     assert non_ascii == 0
-
-
-def test_estimate_prepared_request_reuses_text_only_input_list(monkeypatch) -> None:
-    """The normal no-attachment path does not rebuild the provider input list."""
-    input_value = [
-        {"role": "system", "content": "System"},
-        {"role": "user", "content": "Hello"},
-    ]
-    seen = {}
-
-    def measure(measured, tools, *, tool_measurement=None):
-        seen["measured"] = measured
-        seen["tools"] = tools
-        seen["tool_measurement"] = tool_measurement
-        return (0, 0, 321)
-
-    monkeypatch.setattr(context_usage_hardening, "measure_provider_input", measure)
-
-    estimate = estimate_prepared_request(input_value, None)
-
-    assert seen["measured"] is input_value
-    assert seen["tools"] is None
-    assert seen["tool_measurement"] is None
-    assert estimate == 321
-
-
-def test_estimate_prepared_request_materializes_non_list_iterables(monkeypatch) -> None:
-    """A one-shot iterable is measured completely instead of being consumed by the scan."""
-    source = (
-        item
-        for item in [
-            {"role": "system", "content": "System"},
-            {"role": "user", "content": "Hello"},
-        ]
-    )
-    seen = {}
-
-    def measure(measured, tools, *, tool_measurement=None):
-        seen["measured"] = measured
-        return (0, 0, 111)
-
-    monkeypatch.setattr(context_usage_hardening, "measure_provider_input", measure)
-
-    estimate = estimate_prepared_request(source, None)
-
-    assert seen["measured"] == [
-        {"role": "system", "content": "System"},
-        {"role": "user", "content": "Hello"},
-    ]
-    assert estimate == 111
-
-
-def test_estimate_prepared_request_projects_multipart_user_content(monkeypatch) -> None:
-    """Attachment bytes remain excluded while text content stays exact."""
-    input_value = [
-        {"role": "system", "content": "System"},
-        {
-            "role": "user",
-            "content": [
-                {"type": "input_text", "text": "Describe this"},
-                {"type": "input_image", "image_url": "data:image/png;base64,AAAA"},
-            ],
-        },
-    ]
-    seen = {}
-
-    def measure(measured, tools, *, tool_measurement=None):
-        seen["measured"] = measured
-        return (0, 0, 222)
-
-    monkeypatch.setattr(context_usage_hardening, "measure_provider_input", measure)
-
-    estimate = estimate_prepared_request(input_value, None)
-
-    assert seen["measured"] is input_value
-    assert estimate == 222
 
 
 def test_shared_provider_measurement_matches_estimator() -> None:
@@ -377,27 +300,6 @@ def test_provider_snapshots_and_details_remain_independent() -> None:
     latest.details["output_reasoning_tokens"] = 8
     assert first.details == {"input_cached_tokens": 20}
     assert initial.details == other.reported.details == {}
-
-
-def test_precomputed_estimate_skips_input_and_tool_measurement(monkeypatch) -> None:
-    def fail_measurement(*args, **kwargs):
-        raise AssertionError("A prepared estimate must not be measured again")
-
-    class UnreadInput:
-        def __iter__(self):
-            raise AssertionError("A prepared estimate must not materialize input")
-
-    monkeypatch.setattr(
-        context_usage_hardening, "measure_provider_input", fail_measurement
-    )
-    monkeypatch.setattr(
-        context_usage_hardening, "formatted_tool_measurement", fail_measurement
-    )
-    monkeypatch.setattr(
-        context_usage_hardening, "_serialized_characters", fail_measurement
-    )
-
-    assert estimate_prepared_request(UnreadInput(), object(), input_tokens=321) == 321
 
 
 @pytest.mark.asyncio

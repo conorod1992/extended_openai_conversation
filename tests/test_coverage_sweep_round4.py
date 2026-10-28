@@ -71,27 +71,6 @@ def test_context_measurement_does_not_read_estimates_from_provider_details(value
     assert usage.input_tokens == usage.total_tokens == 0
 
 
-def test_context_usage_estimation_failure_is_best_effort(monkeypatch) -> None:
-    from custom_components.extended_openai_conversation_responses import (
-        context_usage_hardening as hardening,
-    )
-    log = Mock()
-    monkeypatch.setattr(
-        hardening,
-        "measure_provider_input",
-        Mock(side_effect=ValueError("measurement failed")),
-    )
-    monkeypatch.setattr(hardening, "log_handled_failure", log)
-
-    estimate = hardening.estimate_prepared_request(
-        [{"role": "user", "content": "hello"}],
-        None,
-    )
-
-    log.assert_called_once()
-    assert estimate is None
-
-
 @pytest.mark.asyncio
 async def test_detached_context_summary_clears_and_restores_usage_run() -> None:
     from custom_components.extended_openai_conversation_responses import (
@@ -570,21 +549,6 @@ async def test_parallel_outcome_cleanup_cancels_pending_task_on_gather_failure(
         )
 
     assert pending.cancelled()
-
-
-def test_request_static_cache_ignores_untracked_tool_measurement() -> None:
-    from custom_components.extended_openai_conversation_responses import (
-        request_static_cache,
-    )
-
-    token_keys = request_static_cache._FORMATTED_TOOL_RESULT_KEYS.set({})
-    token_measurements = request_static_cache._FORMATTED_TOOL_MEASUREMENTS.set({})
-    try:
-        request_static_cache.remember_formatted_tool_measurement([], (10, 2))
-        assert request_static_cache._FORMATTED_TOOL_MEASUREMENTS.get() == {}
-    finally:
-        request_static_cache._FORMATTED_TOOL_MEASUREMENTS.reset(token_measurements)
-        request_static_cache._FORMATTED_TOOL_RESULT_KEYS.reset(token_keys)
 
 
 

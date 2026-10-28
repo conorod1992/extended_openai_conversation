@@ -20,7 +20,7 @@ from custom_components.extended_openai_conversation_responses import (
     skill_runtime_availability,
 )
 from custom_components.extended_openai_conversation_responses.context_usage_hardening import (
-    estimate_prepared_request,
+    estimate_provider_input_tokens,
     measure_provider_input,
 )
 from custom_components.extended_openai_conversation_responses.conversation import (
@@ -305,7 +305,7 @@ def test_prepared_measurement_reuses_wire_artifacts_without_mutation(
     ]
     tools = format_function_tools([_tool("lookup")], "responses")
     original = deepcopy((payload, tools))
-    estimate = estimate_prepared_request(payload, tools)
+    estimate = estimate_provider_input_tokens(payload, tools)
     measured = [
         {"role": "system", "content": "system"},
         {"role": "user", "content": [{"type": text_type, "text": "hello"}]},
@@ -445,3 +445,68 @@ def test_owned_preparation_records_payload_latency_diagnostics(monkeypatch):
     assert result["prompt_metrics"]["sections"][0]["key"] == "base"
     assert result["system_prompt"] == "owned prompt"
     assert "system_prompt_render" in result["phases_ms"]
+
+
+@pytest.mark.parametrize("reported_input", [0, 41])
+async def test_provider_round_reuses_measured_input_without_billing_estimates(
+    hass, monkeypatch, reported_input
+):
+    from custom_components.extended_openai_conversation_responses import (
+        context_usage_hardening,
+    )
+    from tests.test_conversation_provider_loop_contracts import _UsageHarness
+
+    usage = _UsageHarness()
+    stream = _final_stream("done")
+    stream.events[-1].response.usage.input_tokens = reported_input
+    agent, client, _, _, invoke = _provider_fixture(
+        hass,
+        monkeypatch,
+        [stream],
+        tools=[_tool("lookup")],
+        options={"context_threshold": 1},
+        usage=usage,
+    )
+    wire = {}
+
+    async def respond(**kwargs):
+        wire.update(deepcopy(kwargs))
+        return stream
+
+    client.responses.create.side_effect = respond
+    truncate = AsyncMock()
+    agent._truncate_message_history = truncate
+    estimator = Mock(wraps=estimate_provider_input_tokens)
+    monkeypatch.setattr(
+        context_usage_hardening, "estimate_provider_input_tokens", estimator
+    )
+
+    result = await invoke()
+
+    assert result.response.speech["plain"]["speech"] == "done"
+    expected = estimate_provider_input_tokens(wire["input"], wire["tools"])
+    assert estimator.call_count == 1
+    # The real provider loop must retain the estimate for subsequent history
+    # management, while its persisted accounting receives only provider usage.
+    assert truncate.await_count == 1
+    assert truncate.call_args.kwargs["observed_input_tokens"] == (
+        reported_input or expected
+    )
+    recorded = usage.async_record_request.call_args.kwargs["usage"]
+    assert recorded.input_tokens == reported_input
+    assert recorded.output_tokens == 5
+
+
+async def test_provider_round_oracle_detects_lost_precomputed_measurement(
+    hass, monkeypatch
+):
+    original = entity_module.RequestTokenMeasurements
+    monkeypatch.setattr(
+        entity_module,
+        "RequestTokenMeasurements",
+        lambda **kwargs: original(context_estimate=None),
+    )
+    with pytest.raises(AssertionError):
+        await test_provider_round_reuses_measured_input_without_billing_estimates(
+            hass, monkeypatch, 0
+        )

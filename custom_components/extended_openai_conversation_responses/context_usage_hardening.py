@@ -11,11 +11,6 @@ import logging
 import math
 from typing import Any
 
-from .operational_errors import log_handled_failure
-from .request_static_cache import (
-    formatted_tool_measurement,
-    remember_formatted_tool_measurement,
-)
 from .usage import RequestUsage, extract_usage
 
 _LOGGER = logging.getLogger(__name__)
@@ -262,8 +257,6 @@ def _attachment_aware_input(input_value: Any) -> tuple[Any, int]:
 def measure_provider_input(
     input_value: Any,
     tools: Any = None,
-    *,
-    tool_measurement: tuple[int, int] | None = None,
 ) -> tuple[int, int, int]:
     """Return serialized input/tool characters and conservative context tokens."""
     measured, attachment_tokens = _attachment_aware_input(input_value)
@@ -271,9 +264,7 @@ def measure_provider_input(
     tool_characters = 0
     tool_non_ascii = 0
     if tools:
-        if tool_measurement is None:
-            tool_measurement = _serialized_characters(tools)
-        tool_characters, tool_non_ascii = tool_measurement
+        tool_characters, tool_non_ascii = _serialized_characters(tools)
 
     total_characters = input_characters + tool_characters
     non_ascii = input_non_ascii + tool_non_ascii
@@ -404,33 +395,3 @@ async def normalized_responses_stream(
     finally:
         if (close := getattr(iterator, "aclose", None)) is not None:
             await close()
-
-
-def estimate_prepared_request(
-    input_value: Any,
-    tools: Any,
-    *,
-    input_tokens: int | None = None,
-) -> int | None:
-    """Measure the already assembled provider round without rebuilding tools/history."""
-    if input_tokens is not None:
-        return input_tokens
-    # Materialize once; the shared measurement handles encoded attachments for
-    # both preflight pruning and request diagnostics.
-    measured = input_value if isinstance(input_value, list) else list(input_value)
-    tool_measurement = formatted_tool_measurement(tools) if tools else None
-    if tools and tool_measurement is None:
-        tool_measurement = _serialized_characters(tools)
-        remember_formatted_tool_measurement(tools, tool_measurement)
-    try:
-        estimate = measure_provider_input(
-            measured,
-            tools,
-            tool_measurement=tool_measurement,
-        )[2]
-    except Exception as err:
-        log_handled_failure(
-            _LOGGER, "Unable to estimate provider input size", err, level=logging.DEBUG
-        )
-        return None
-    return estimate
