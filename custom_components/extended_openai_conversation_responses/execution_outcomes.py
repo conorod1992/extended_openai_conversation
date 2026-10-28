@@ -361,10 +361,11 @@ def owns_execution_receipts[**P, ResultT](
 ) -> Callable[P, Coroutine[Any, Any, ResultT]]:
     """Declare that this implementation records every effect at its I/O boundary.
 
-    This marker does not wrap execution. An inherited method keeps its contract;
-    an override must explicitly declare ownership or use the conservative guard.
+    This marker does not wrap execution. Bind it to this exact implementation so
+    copying attributes with functools.wraps cannot grant an override ownership.
+    An inherited, unchanged method retains its contract.
     """
-    setattr(function, _RECEIPT_OWNER_ATTRIBUTE, True)
+    setattr(function, _RECEIPT_OWNER_ATTRIBUTE, function)
     return function
 
 
@@ -380,7 +381,10 @@ async def execute_backend(
     """Native effects/composite children own precise boundaries; opaque backends are conservative."""
     with execution_operation("backend", {"function": config, "arguments": arguments}):
         execute = function.execute
-        owns_receipts = getattr(execute, _RECEIPT_OWNER_ATTRIBUTE, False) is True
+        execute_owner = getattr(execute, "__func__", execute)
+        owns_receipts = (
+            getattr(execute, _RECEIPT_OWNER_ATTRIBUTE, None) is execute_owner
+        )
         before = len(attempt.receipts) if (attempt := _ATTEMPT.get()) else 0
         receipt = None if owns_receipts else execution_started()
         try:

@@ -1,6 +1,8 @@
 """Dispatch counts witness ownership at implementation and shared HTTP seams."""
 
 import asyncio
+from functools import wraps
+import inspect
 from types import SimpleNamespace
 
 import aiohttp
@@ -88,10 +90,7 @@ def rest_config(state, *, scrape=False):
     return config
 
 
-@pytest.mark.parametrize("failure", ["error", "cancel"])
-async def test_overridden_precise_backend_defaults_to_conservative_ownership(
-    hass, failure
-):
+async def opaque_override_witness(hass, *, failure, wrapped):
     effects = []
 
     class OpaqueRest(web.RestFunction):
@@ -102,6 +101,9 @@ async def test_overridden_precise_backend_defaults_to_conservative_ownership(
                     raise asyncio.CancelledError
                 raise TimeoutError("effect acknowledged too late")
             return "ok"
+
+    if wrapped:
+        OpaqueRest.execute = wraps(web.RestFunction.execute)(OpaqueRest.execute)
 
     entity, log = SimpleNamespace(hass=hass), _chat_log(hass)
     backend, config = OpaqueRest(), {"type": "rest"}
@@ -126,6 +128,47 @@ async def test_overridden_precise_backend_defaults_to_conservative_ownership(
     clear_unacknowledged_calls(entity, log.conversation_id)
     await dispatch(entity, log, backend, config, name="opaque", call_id="acknowledged")
     assert effects == ["effect", "effect"]
+
+
+@pytest.mark.parametrize("failure", ["error", "cancel"])
+@pytest.mark.parametrize("wrapped", [False, True], ids=["plain", "wraps"])
+async def test_overridden_precise_backend_defaults_to_conservative_ownership(
+    hass, failure, wrapped
+):
+    await opaque_override_witness(hass, failure=failure, wrapped=wrapped)
+
+
+async def test_copied_marker_sensitivity_detects_repeated_effects(hass, monkeypatch):
+    source = inspect.getsource(inspect.unwrap(execution_outcomes.execute_backend))
+    exact_owner = "getattr(execute, _RECEIPT_OWNER_ATTRIBUTE, None) is execute_owner"
+    assert source.count(exact_owner) == 1
+    namespace = dict(vars(execution_outcomes))
+    exec(
+        compile(
+            source.replace(
+                exact_owner, "bool(getattr(execute, _RECEIPT_OWNER_ATTRIBUTE, None))"
+            ),
+            "<copied-receipt-owner-mutation>",
+            "exec",
+        ),
+        namespace,
+    )
+    monkeypatch.setattr(
+        execution_outcomes, "execute_backend", namespace["execute_backend"]
+    )
+    with pytest.raises(AssertionError, match="opaque override must not repeat"):
+        await opaque_override_witness(hass, failure="error", wrapped=True)
+
+
+def test_receipt_declaration_preserves_the_exact_callable_and_signature():
+    async def execute(hass, config, arguments, context, exposed):
+        return arguments
+
+    signature = inspect.signature(execute)
+    assert execution_outcomes.owns_execution_receipts(execute) is execute
+    assert inspect.signature(execute) == signature
+    assert not hasattr(execute, "__wrapped__")
+    assert getattr(execute, "_eoai_owns_execution_receipts", None) is execute
 
 
 async def cross_wrapper_witness(hass, http_boundary):
@@ -270,9 +313,7 @@ async def test_real_rest_predispatch_failure_allows_corrected_request(
 async def test_callable_contract_sensitivity_detects_false_uncertainty(
     hass, http_boundary, monkeypatch
 ):
-    monkeypatch.setattr(
-        web.RestFunction.execute, "_eoai_owns_execution_receipts", False
-    )
+    monkeypatch.setattr(web.RestFunction.execute, "_eoai_owns_execution_receipts", None)
     with pytest.raises(AssertionError, match="predispatch failures must allow"):
         await predispatch_witness(hass, http_boundary)
     assert http_boundary.received == []
