@@ -1,3 +1,4 @@
+import {copyTextToClipboard} from "./clipboard.js";
 import {invalidateImportPreview, renderConfigurationActions, bindSavedConfigurationActions, applyConfigurationImport} from "./assistant-configuration-actions.js";
 export {invalidateImportPreview, renderConfigurationActions} from "./assistant-configuration-actions.js";
 import {searchTokens, matchesFunctionSearchTokens, cachedFunctionSearchTokens} from "./function-search.js";
@@ -85,33 +86,7 @@ export const toggle = (panel, key, label, value, description = "", disabled = fa
   return `<div class="config-toggle setting" data-field="${key}" data-setting data-search="${panel._e(settingSearch(label, description, key, helpKey))}"><span class="setting-copy">${labelRow(panel, label, key, helpKey, true, value, inactive)}${description ? `<small>${description}</small>` : ""}${state.note ? `<small class="capability-note">${panel._e(state.note)}</small>` : ""}</span><label class="switch-control" for="config-${key}"><input id="config-${key}" data-config="${key}" data-type="boolean" type="checkbox" role="switch" ${bool(value)} ${inactive ? "disabled" : ""}><span class="switch-track" aria-hidden="true"></span></label></div>`;
 };
 
-export async function copyTextToClipboard(text, clipboardNavigator = globalThis.navigator, clipboardDocument = globalThis.document) {
-  const writeText = clipboardNavigator?.clipboard?.writeText;
-  if (typeof writeText === "function") {
-    try {
-      await writeText.call(clipboardNavigator.clipboard, text);
-      return;
-    } catch (err) {
-      if (!clipboardDocument) throw err;
-    }
-  }
-  if (!clipboardDocument?.body || typeof clipboardDocument.createElement !== "function" || typeof clipboardDocument.execCommand !== "function") {
-    throw new Error("Clipboard access is unavailable in this browser context");
-  }
-  const textarea = clipboardDocument.createElement("textarea");
-  textarea.value = text;
-  textarea.setAttribute("readonly", "");
-  textarea.style.position = "fixed";
-  textarea.style.opacity = "0";
-  clipboardDocument.body.appendChild(textarea);
-  try {
-    textarea.select();
-    if (!clipboardDocument.execCommand("copy")) throw new Error("Browser copy command failed");
-  } finally {
-    textarea.remove();
-  }
-}
-
+export {copyTextToClipboard} from "./clipboard.js";
 
 export function section(panel, id, title, description, keywords, body, includeHeading = true) {
   if (panel._configSectionFilter && !panel._configSectionFilter.has(id)) return "";

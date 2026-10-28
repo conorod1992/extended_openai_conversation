@@ -1,3 +1,4 @@
+import {copyTextToClipboard} from "./clipboard.js";
 import {callMutation, presentAcknowledgedMutation, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
 import {readOptionalStorage, writeOptionalStorage} from "./browser-storage.js";
 import {DEBUG_PROVIDER_PAGE_LIMIT, debugPageText, providerPageLabel, providerPageMeta, sessionLabel} from "./debug-management.js";
@@ -247,26 +248,7 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
   }
 
   async _copyText(text) {
-    if (navigator.clipboard?.writeText) {
-      try {
-        await navigator.clipboard.writeText(text);
-        return;
-      } catch (_) {
-        // Fall back for browsers/contexts that deny clipboard API access.
-      }
-    }
-    const textarea = document.createElement("textarea");
-    textarea.value = text;
-    textarea.setAttribute("readonly", "");
-    textarea.style.position = "fixed";
-    textarea.style.opacity = "0";
-    document.body.appendChild(textarea);
-    try {
-      textarea.select();
-      if (!document.execCommand("copy")) throw new Error("Clipboard access failed");
-    } finally {
-      textarea.remove();
-    }
+    await copyTextToClipboard(text);
   }
 
   _formatDate(value) {

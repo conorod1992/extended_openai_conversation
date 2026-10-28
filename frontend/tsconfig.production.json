@@ -17,6 +17,7 @@
     "../custom_components/extended_openai_conversation_responses/frontend/operation-ownership.js",
     "../custom_components/extended_openai_conversation_responses/frontend/mutation-response.js",
     "contracts/production-contracts.ts",
+    "../custom_components/extended_openai_conversation_responses/frontend/clipboard.js",
     "../custom_components/extended_openai_conversation_responses/frontend/request-rule-acknowledgement.js"
   ]
 }
