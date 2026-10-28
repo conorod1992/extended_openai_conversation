@@ -31,6 +31,7 @@ from homeassistant.helpers import device_registry as dr, llm
 from homeassistant.helpers.entity import Entity
 from homeassistant.util import slugify
 
+from .assistant_response import classify_provider_output, provider_output_presentation
 from .const import (
     API_MODE_CHAT_COMPLETIONS,
     API_MODE_RESPONSES,
@@ -1510,6 +1511,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                         finalizer_content, conversation.AssistantContent
                                     )
                                     and finalizer_content.content
+                                    and not finalizer_content.tool_calls
+                                    and classify_provider_output(
+                                        finalizer_content.native
+                                    )
+                                    == "answer"
                                 ):
                                     chat_log.delta_listener(
                                         chat_log,
@@ -2087,18 +2093,22 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         terminal_event_seen = False
         completed_calls: list[llm.ToolInput] = []
         event_count = 0
-        async with aclosing(
-            ordered_output_events(
-                normalized_responses_stream(chat_log, result, request_usage),
-                recover_usage=lambda: async_recover_trailing_usage(
-                    result, request_usage
-                ),
-            )
-        ) as events:
+        async with (
+            provider_output_presentation(chat_log) as select_output,
+            aclosing(
+                ordered_output_events(
+                    normalized_responses_stream(chat_log, result, request_usage),
+                    recover_usage=lambda: async_recover_trailing_usage(
+                        result, request_usage
+                    ),
+                )
+            ) as events,
+        ):
             async for event in events:
                 event_count += 1
                 event_type = getattr(event, "type", "")
                 if event_type == "response.output_item.added":
+                    select_output(event.item)
                     item_type = getattr(event.item, "type", "")
                     if item_type in {
                         "message",
