@@ -1,42 +1,7 @@
 import {clone, same, mergeAcknowledgedDraft} from "./unsaved-state.js";
 
-// These errors belong to response processing, never to the server mutation.
-// Keep them out of the wire payload and retain them only as long as its owner.
-const responseProcessingErrors = new WeakMap();
-// HA backend rejections expose a string code. Websocket disconnects instead
-// reject with a numeric code or a nested error result, without a server ACK.
-export async function callMutation(send) {
-  try {
-    return await send();
-  } catch (error) {
-    if (typeof error?.code === "string" && error.code) throw error;
-    const message = error?.message || error?.error?.message || String(error);
-    const uncertain = new Error(`${message}. The mutation outcome is unknown; refresh before retrying.`, {cause:error});
-    uncertain.mutationOutcome = "uncertain";
-    throw uncertain;
-  }
-}
-
-export function processMutationResponse(result, process) {
-  const failed = error => {
-    if (result && typeof result === "object") responseProcessingErrors.set(result, error);
-    return result;
-  };
-  try {
-    const pending = process();
-    if (typeof pending?.then === "function") return pending.then(() => result, failed);
-  } catch (error) {
-    return failed(error);
-  }
-  return result;
-}
-
-export function requireMutationAcknowledgement(confirmed, operation) {
-  if (confirmed) return;
-  const error = new Error(`The server response did not confirm ${operation}. Refresh before retrying; the outcome is unknown.`);
-  error.mutationOutcome = "uncertain";
-  throw error;
-}
+import {callMutation, processMutationResponse, requireMutationAcknowledgement, mutationResponseError} from "./mutation-response.js";
+export {callMutation, processMutationResponse, requireMutationAcknowledgement};
 
 const field = (config, key) => Object.hasOwn(config, key) ? [config[key]] : [];
 
@@ -301,7 +266,7 @@ export async function completeConfigurationAcknowledgement(panel, saved, submiss
 export async function presentAcknowledgedMutation(panel, submission, message, refresh, result, {warning = false} = {}) {
   const current = typeof submission === "function" ? submission : () => configurationSubmissionIsCurrent(panel, submission);
   if (!current()) return false;
-  let processingError = responseProcessingErrors.get(result);
+  let processingError = mutationResponseError(result);
   try {
     await refresh?.();
   } catch (error) {

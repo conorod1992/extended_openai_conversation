@@ -486,13 +486,17 @@ test("sensitivity: a retired authentication confirmation cannot dispatch a delet
 });
 
 test("sensitivity: primitive reply processing cannot replace the uncertain mutation outcome", async () => {
-  const file = new URL("configuration-acknowledgement.js", frontend);
+  const file = new URL("mutation-response.js", frontend);
   const source = await readFile(file, "utf8");
   const guarded = 'if (result && typeof result === "object") responseProcessingErrors.set(result, error);';
   assert.equal(source.split(guarded).length, 2);
   const oldThrow = source.replace(guarded, 'if (!result || typeof result !== "object") throw error;\n    responseProcessingErrors.set(result, error);')
     .replace(/from "(\.\/[^\"]+)"/g, (_match, path) => `from "${new URL(path, file)}"`);
   const url = `data:text/javascript;base64,${Buffer.from(oldThrow).toString("base64")}`;
-  const mutant = await mutantModule("management-panel.js", 'from "./configuration-acknowledgement.js";', `from "${url}";`);
+  const acknowledgementSource = (await readFile(new URL("configuration-acknowledgement.js", frontend), "utf8"))
+    .replace('from "./mutation-response.js"', `from "${url}"`)
+    .replace(/from "(\.\/[^\"]+)"/g, (_match, path) => `from "${new URL(path, frontend)}"`);
+  const acknowledgementUrl = `data:text/javascript;base64,${Buffer.from(acknowledgementSource).toString("base64")}`;
+  const mutant = await mutantModule("management-panel.js", 'from "./configuration-acknowledgement.js";', `from "${acknowledgementUrl}";`);
   await assert.rejects(() => malformedReplyWitness(mutant.ExtendedOpenAIManagementPanel, null, true), /a malformed response must retain uncertainty/);
 });
