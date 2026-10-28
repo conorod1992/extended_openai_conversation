@@ -156,7 +156,7 @@ def test_settled_and_foreign_receipts_cannot_be_changed():
     assert entity._execution_tool_outcomes[id(second)] == "completed"
 
 
-async def test_validation_failure_cannot_reject_previous_unknown_child():
+async def test_opaque_failure_cannot_reject_previous_unknown_child():
     from custom_components.extended_openai_conversation_responses.public_errors import (
         SanitizedUnexpectedBackendError,
     )
@@ -175,8 +175,9 @@ async def test_validation_failure_cannot_reject_previous_unknown_child():
         assert unknown.outcome == "uncertain"
     assert [r.outcome for r in entity._execution_effect_receipts[id(call)]] == [
         "uncertain",
-        "rejected",
+        "uncertain",
     ]
+    function.execute.assert_awaited_once()
 
 
 async def test_real_native_batch_records_each_effect_and_prepared_target(

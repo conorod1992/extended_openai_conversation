@@ -30,6 +30,7 @@ import homeassistant.util.dt as dt_util
 
 from ..const import DOMAIN, EVENT_AUTOMATION_REGISTERED
 from ..exceptions import CallServiceError, NativeNotFound
+from ..execution_outcomes import owns_execution_receipts
 from ..function_execution import backend_failure
 from ..ha_actions import (
     _service_participants,
@@ -272,6 +273,7 @@ class NativeFunction(Function):
 
         super().__init__(vol.Schema({vol.Required("name"): implementation}))
 
+    @owns_execution_receipts
     async def execute(
         self,
         hass: HomeAssistant,

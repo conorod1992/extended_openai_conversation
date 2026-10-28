@@ -17,6 +17,7 @@ from .template_diagnostics import private_template_diagnostics
 
 _MAX_EFFECT_RECEIPTS = 4096
 _MAX_RETAINED_EFFECT_RECEIPTS = 4096
+_RECEIPT_OWNER_ATTRIBUTE = "_eoai_owns_execution_receipts"
 
 
 @dataclass(slots=True)
@@ -355,6 +356,18 @@ def execution_rejected(
         )
 
 
+def owns_execution_receipts[**P, ResultT](
+    function: Callable[P, Coroutine[Any, Any, ResultT]],
+) -> Callable[P, Coroutine[Any, Any, ResultT]]:
+    """Declare that this implementation records every effect at its I/O boundary.
+
+    This marker does not wrap execution. An inherited method keeps its contract;
+    an override must explicitly declare ownership or use the conservative guard.
+    """
+    setattr(function, _RECEIPT_OWNER_ATTRIBUTE, True)
+    return function
+
+
 @private_template_diagnostics
 async def execute_backend(
     function: Any,
@@ -366,18 +379,12 @@ async def execute_backend(
 ) -> Any:
     """Native effects/composite children own precise boundaries; opaque backends are conservative."""
     with execution_operation("backend", {"function": config, "arguments": arguments}):
-        owns_receipts = config.get("type") in {
-            "native",
-            "composite",
-            "bash",
-            "rest",
-            "edit_file",
-            "write_file",
-        }
+        execute = function.execute
+        owns_receipts = getattr(execute, _RECEIPT_OWNER_ATTRIBUTE, False) is True
         before = len(attempt.receipts) if (attempt := _ATTEMPT.get()) else 0
         receipt = None if owns_receipts else execution_started()
         try:
-            result = await function.execute(hass, config, arguments, context, exposed)
+            result = await execute(hass, config, arguments, context, exposed)
         except BaseException as error:
             if attempt is not None and (
                 len(attempt.receipts) == before

@@ -41,7 +41,11 @@ from homeassistant.util.json import JSON_DECODE_EXCEPTIONS, json_loads
 
 from ..const import CONF_PAYLOAD_TEMPLATE
 from ..exceptions import FunctionResponseParseError
-from ..execution_outcomes import execution_completed, execution_started
+from ..execution_outcomes import (
+    execution_completed,
+    execution_started,
+    owns_execution_receipts,
+)
 from ..public_errors import SanitizedRequestError
 from ..resource_limits import MAX_REMOTE_RESPONSE_BYTES
 from ..template_diagnostics import private_template_diagnostics
@@ -409,28 +413,26 @@ async def _private_rest_update(data: rest.data.RestData) -> None:
         raise HomeAssistantError("REST session is unavailable")
     # Match the operation HA will dispatch, rather than the model arguments that
     # produced it. Only the digest enters the continuation-recovery ledger.
-    receipt = None
-    if getattr(data, "_eoai_record_receipts", False) is True:
-        headers = CIMultiDict(kwargs.get("headers") or {})
-        if isinstance(kwargs.get("auth"), aiohttp.BasicAuth):
-            headers["Authorization"] = kwargs["auth"].encode()
-        normalized_headers: dict[str, list[str]] = {}
-        for name, value in headers.items():
-            normalized_headers.setdefault(name.casefold(), []).append(value)
-        receipt = execution_started(
-            kind="rest",
-            prepared={
-                "method": data._method.upper(),
-                "resource": str(
-                    URL(data._resource).extend_query(params or {}).with_fragment(None)
-                ),
-                "headers": sorted(normalized_headers.items()),
-                "payload": kwargs.get("data", ""),
-                # An opaque authentication middleware deliberately produces a
-                # conservative receipt, never an identity based on object repr().
-                "authentication": kwargs.get("middlewares"),
-            },
-        )
+    headers = CIMultiDict(kwargs.get("headers") or {})
+    if isinstance(kwargs.get("auth"), aiohttp.BasicAuth):
+        headers["Authorization"] = kwargs["auth"].encode()
+    normalized_headers: dict[str, list[str]] = {}
+    for name, value in headers.items():
+        normalized_headers.setdefault(name.casefold(), []).append(value)
+    receipt = execution_started(
+        kind="rest",
+        prepared={
+            "method": data._method.upper(),
+            "resource": str(
+                URL(data._resource).extend_query(params or {}).with_fragment(None)
+            ),
+            "headers": sorted(normalized_headers.items()),
+            "payload": kwargs.get("data", ""),
+            # An opaque authentication middleware deliberately produces a
+            # conservative receipt, never an identity based on object repr().
+            "authentication": kwargs.get("middlewares"),
+        },
+    )
     try:
         async with session.request(data._method, data._resource, **kwargs) as response:
             if not data._force_use_set_encoding and response.charset:
@@ -557,6 +559,7 @@ class RestFunction(Function):
             )
         )
 
+    @owns_execution_receipts
     async def execute(
         self,
         hass: HomeAssistant,
@@ -567,7 +570,6 @@ class RestFunction(Function):
     ) -> Any:
         """Execute REST API call."""
         rest_data = get_rest_data(hass, function_config, arguments)
-        cast(Any, rest_data)._eoai_record_receipts = True
 
         try:
             await rest_data.async_update(log_errors=False)
