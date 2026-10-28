@@ -1,12 +1,13 @@
+import {requestRuleMutationNeedsRecovery} from "./request-rule-acknowledgement.js";
 import {watchSelectorYaml, assertSelectorYamlReady, isSelectorValueEvent} from "./native-selector-drafts.js";
 import {setReasoningOptions, syncRequestRuleRoutingControls} from "./request-rule-routing-controls.js";
 import {beginOperation} from "./operation-ownership.js";
-import {presentAcknowledgedMutation, requireMutationAcknowledgement, captureConfigurationOwner, configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
+import {presentAcknowledgedMutation, captureConfigurationOwner, configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
 import {dialogState, setDialogBaseline} from "./management-dialogs.js";
 import {same} from "./unsaved-state.js";
 import {effectiveServicePayload, isFunctionServiceAction, setEffectiveServiceField} from "./script-payload.js";
 export {syncRequestRuleRoutingControls} from "./request-rule-routing-controls.js";
-import {applyRequestRuleMutation, fuzzyThresholdValue, matchingControls} from "./request-rules-ui-core.js";
+import {applyRequestRuleMutation, fuzzyThresholdValue, matchingControls, recoverRequestRuleMutation} from "./request-rules-ui-core.js";
 export {fuzzyThresholdValue, recoverRequestRuleMutation, reconcileRequestRules, renderRequestRules} from "./request-rules-ui-core.js";
 
 export function applySentencePatternHelper(value, selectionStart, selectionEnd, kind) {
@@ -417,6 +418,10 @@ export function bindRequestRuleEditor(panel) {
     const save=q("#rule-save");if(save.disabled)return;
     const ownsEditor=captureRuleEditorOwner(panel), current=()=>ownsEditor() && dialog.open;
     if(!current())return;
+    if (state.uncertain || requestRuleMutationNeedsRecovery(panel, state.owner)) {
+      await recoverRequestRuleMutation(panel, new Error("Close and reopen the editor against the refreshed collection before saving"), "Request Rule outcome is unknown", current);
+      return;
+    }
     panel._setSaving(save,true);
     try{
       const actionType=q("#rule-action-type").value;
@@ -445,7 +450,6 @@ export function bindRequestRuleEditor(panel) {
       const submitted=dialogState(dialog);
       const result=await panel._call("request_rules",action,{...(ruleId?{rule_id:ruleId}:{}),rule,revision});
       if(!current())return;
-      requireMutationAcknowledgement(result?.rule?.id && result.revision != null, "saving the Request Rule");
       // Identity belongs to the commit even if keyed rendering fails.
       panel._editingRuleId=result.rule.id;
       await presentAcknowledgedMutation(panel, state.owner, "Request Rule saved", () => {
@@ -469,6 +473,10 @@ export function bindRequestRuleEditor(panel) {
       }, result);
     }catch(err){
       if(!current())return;
+      if (err?.mutationOutcome === "uncertain") {
+        state.uncertain = true;
+        await recoverRequestRuleMutation(panel, err, "Request Rule outcome is unknown", current);
+      }
       const message = err.message || String(err);
       q("#rule-error").textContent = message;
       if (hasRuleConditions(state.conditionSelector.value)
@@ -484,6 +492,7 @@ export function bindRequestRuleEditor(panel) {
 export function openRequestRuleEditor(panel,id=null) {
   const dialog=bindRequestRuleEditor(panel), root=panel.shadowRoot, q=(selector)=>root.querySelector(selector), state=editorState(panel);
   state.owner=captureConfigurationOwner(panel);
+  state.uncertain=false;
   panel._setSaving(q("#rule-save"),false);
   // Native YAML children retain their own draft and mode. Each opening owns
   // fresh selectors, so Cancel cannot leak an unsaved child draft into saved data.

@@ -139,7 +139,7 @@ for (const fail of [false, true]) {
     let release;
     host._hass = {callWS:message => message.action === "list"
       ? new Promise(resolve => { release = resolve; })
-      : fail ? Promise.reject(new Error("write rejected")) : Promise.resolve({revision:"rules-2"})};
+      : fail ? Promise.reject(new Error("write rejected")) : Promise.resolve({revision:"rules-2", groups:[], rules:[]})};
     const reading = host._call("request_rules", "list");
     while (!release) await Promise.resolve();
     const writing = host._call("request_rules", "groups", {groups:[]});

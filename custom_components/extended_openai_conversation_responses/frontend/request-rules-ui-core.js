@@ -1,8 +1,9 @@
+import {requestRuleUncertainty, clearRequestRuleUncertainty, requestRuleMutationNeedsRecovery, requireRequestRuleAcknowledgement} from "./request-rule-acknowledgement.js";
 import {localRuleActionSummary} from "./request-rule-response-summary.js";
 import {formatWordingAlternatives} from "./wording-alternatives.js";
 import {adoptKeyedElements, elementFromMarkup, keyedElement, placeChildren, pruneKeys} from "./keyed-collection.js";
 import {requestRuleEmptyContent, updateRequestRuleEmptyState} from "./request-rule-empty-state.js";
-import {captureConfigurationOwner, configurationSubmissionIsCurrent, presentAcknowledgedMutation, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
+import {captureConfigurationOwner, configurationSubmissionIsCurrent, presentAcknowledgedMutation} from "./configuration-acknowledgement.js";
 import {beginOperation, invalidateOperation} from "./operation-ownership.js";
 
 const sharingGroupOptions = new WeakMap();
@@ -66,14 +67,16 @@ export async function recoverRequestRuleMutation(panel, error, label, isCurrent 
   const cacheKey = panel._sectionCacheKey?.();
   if (cacheKey) panel._sectionCache?.delete(cacheKey);
   let assetToken = panel._eocViewAssetToken;
-  const previousResult = panel._result;
+  const previousResult = panel._result, uncertainty = requestRuleUncertainty(panel, owner);
   try {
     const refresh = panel._loadSection(true);
     assetToken = panel._eocViewAssetToken;
     await refresh;
     if (configurationSubmissionIsCurrent(panel, owner) && panel.shadowRoot === root && panel._viewKey?.() === view
         && panel._result !== previousResult && Array.isArray(panel._result?.groups) && Array.isArray(panel._result?.rules)
-        && panel._result.revision != null) panel._eocUncertainRuleGroups = false;
+        && panel._result.revision != null) {
+      clearRequestRuleUncertainty(panel, owner, uncertainty);
+    }
   }
   catch (refreshError) {
     if (!configurationSubmissionIsCurrent(panel, owner) || panel.shadowRoot !== root || panel._viewKey?.() !== view
@@ -104,15 +107,12 @@ function captureRuleCollectionOperation(panel, control, {queued = false} = {}) {
 
 async function runRuleCollectionMutation(panel, operation, action, payload, accept, label, rollback) {
   if (!operation.isCurrent() || !operation.ownsControls()) return false;
-  if (panel._eocUncertainRuleGroups) {
-    await recoverRequestRuleMutation(panel, new Error("Refresh Groups before saving another replacement"), label, operation.isCurrent);
+  if (requestRuleMutationNeedsRecovery(panel, operation.owner)) {
+    await recoverRequestRuleMutation(panel, new Error("Refresh Request Rules before another mutation"), label, operation.isCurrent);
     return false;
   }
   try {
     const result = await panel._call("request_rules", action, payload);
-    if (action === "groups" && (result?.revision == null || !Array.isArray(result?.groups) || !Array.isArray(result?.rules))) panel._eocUncertainRuleGroups = true;
-    requireMutationAcknowledgement(result?.revision != null
-      && (action !== "groups" || (Array.isArray(result.groups) && Array.isArray(result.rules))), "saving Request Rules");
     if (!operation.accepts(result)) return false;
     return await presentAcknowledgedMutation(panel, operation.owner, null, () => accept(result), result);
   } catch (error) {
@@ -262,7 +262,7 @@ function finishMutation(panel,result,rules){
   if (!reconciled) panel._render();
 }
 export function applyRequestRuleMutation(panel, action, result, context={}) {
-  if (!result || result.revision == null) return false;
+  requireRequestRuleAcknowledgement(action, result, context.ruleId);
   let rules=[...(panel._result?.rules || [])];
   const presentedRule = result.rule
     ? {

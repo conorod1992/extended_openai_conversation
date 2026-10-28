@@ -1,3 +1,4 @@
+import {requestRuleUncertainty, requireRequestRuleAcknowledgement, markUncertainRuleMutation} from "./request-rule-acknowledgement.js";
 import {mutationEffects} from "./management-mutation-effects.js";
 import {observeCatalogGeneration} from "./model-catalog.js";
 import {invalidateUsageWindows} from "./usage-cache.js";
@@ -915,7 +916,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     syncAgentPicker(this);
     let result;
     try {
+      // Validate before revision adoption or releasing the serialized write lane.
+      // A queued mutation must not dispatch against an uncertain predecessor.
+      if (ruleMutation && requestRuleUncertainty(this, owner)) throw requestRuleUncertainty(this, owner);
       result = await this._callCore(section, action, extra, mutationTrace);
+      if (ruleMutation) requireRequestRuleAcknowledgement(action, result, extra.rule_id);
       processMutationResponse(result, () => this._applyToolRevision(section, action, result, owner));
       if (
         ruleMutation
@@ -930,6 +935,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       if (mutationTrace) mutationTrace.status = "fulfilled";
       return result;
     } catch (err) {
+      if (ruleMutation) markUncertainRuleMutation(this, owner, err);
       if (mutationTrace) {
         mutationTrace.status = "rejected";
         mutationTrace.error = err?.message || String(err);

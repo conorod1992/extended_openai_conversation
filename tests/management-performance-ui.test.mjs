@@ -132,7 +132,7 @@ function panelFor(page = "assistant", subsection = "basics") {
   const calls = [];
   panel._hass = {callWS: async (message) => {
     calls.push(message);
-    return {revision:message.action === "list" ? "fresh" : "saved", rules:[]};
+    return {revision:message.action === "list" ? "fresh" : "saved", rules:[], rule:{id:"created"}};
   }};
   await panel._call("request_rules", "list");
   await panel._call("request_rules", "create", {rule:{}});
@@ -171,7 +171,7 @@ for (const readDuringMutation of [false, true]) {
   const mutation = panel._call("request_rules", "create", {rule:{}});
   await new Promise((resolve) => setImmediate(resolve));
   const read = oldRead || panel._call("request_rules", "list");
-  releaseMutation({revision:"saved"});
+  releaseMutation({revision:"saved", rule:{id:"created"}});
   await mutation;
   releaseRead({revision:"pre-save"});
   await read;
@@ -756,7 +756,7 @@ const configResult = (projection, title = "A") => ({
   const panel = panelFor("capabilities", "request-rules");
   panel._sectionCache.set("agent-a|capabilities/request-rules", {rules:[{id:"one"}]});
   panel._sectionCache.set("agent-b|capabilities/request-rules", {rules:[{id:"two"}]});
-  panel._hass = {callWS: async () => ({rule:{id:"one"}})};
+  panel._hass = {callWS: async () => ({revision:"saved", rule:{id:"one"}})};
   await panel._call("request_rules", "update", {rule_id:"one", rule:{}});
   assert.equal(panel._sectionCache.has("agent-a|capabilities/request-rules"), false);
   assert.equal(panel._sectionCache.has("agent-b|capabilities/request-rules"), true);
