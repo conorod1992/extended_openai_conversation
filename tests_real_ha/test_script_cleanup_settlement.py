@@ -13,6 +13,9 @@ from custom_components.extended_openai_conversation_responses.const import (
 from custom_components.extended_openai_conversation_responses.functions import (
     script as script_module,
 )
+from custom_components.extended_openai_conversation_responses.tool_replay_guard import (
+    replay_safety,
+)
 from homeassistant.helpers import config_validation as cv, script as ha_script
 from tests_real_ha.test_cross_feature_acceptance import _agent, _say, _speech
 from tests_real_ha.test_provider_wire_e2e import (
@@ -219,8 +222,8 @@ async def test_public_repeated_cancellation_unloads_without_repeating_effect(
         assert len(scripts) == 1
         _assert_native_script_finished(hass, scripts[0])
         if route == "function":
-            assert agent._unacknowledged_tool_schemas
-            assert agent._unacknowledged_effects
+            assert replay_safety(agent).schemas
+            assert replay_safety(agent).effects
         assert _speech(await _say(hass, agent, "independent healthy turn")) == "Healthy"
         assert len(effects) == 1
     finally:

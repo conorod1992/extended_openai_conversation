@@ -11,6 +11,9 @@ from custom_components.extended_openai_conversation_responses import (
 from custom_components.extended_openai_conversation_responses.exceptions import (
     EffectReplayBlocked,
 )
+from custom_components.extended_openai_conversation_responses.tool_replay_guard import (
+    replay_safety,
+)
 from homeassistant.components import conversation
 from homeassistant.const import EVENT_CALL_SERVICE
 from homeassistant.exceptions import HomeAssistantError
@@ -135,7 +138,7 @@ async def test_acknowledged_turns_release_provenance_without_retirement(
         assert not entity._dispatched_tool_inputs
         assert not entity._execution_effect_receipts
     assert len(effects) == 5
-    assert not getattr(entity, "_retired_replay_conversations", ())
+    assert not replay_safety(entity).retired_conversations
 
 
 async def test_tombstone_capacity_remains_fail_closed(hass, monkeypatch):
@@ -154,7 +157,7 @@ async def test_tombstone_capacity_remains_fail_closed(hass, monkeypatch):
     guard.clear_unacknowledged_calls(entity, fresh.conversation_id)
     await exchange(_args(9), chat_log=fresh)
     assert effects == [(0, int), (1, int), (2, int), (9, int)]
-    assert len(entity._retired_replay_conversations) == 1
+    assert len(replay_safety(entity).retired_conversations) == 1
 
 
 async def test_independent_jobs_do_not_retire_conversation_history(hass, monkeypatch):
@@ -181,4 +184,4 @@ async def test_independent_jobs_do_not_retire_conversation_history(hass, monkeyp
             )
     await exchange(_args(9))
     assert len(effects) == 6
-    assert not getattr(entity, "_replay_history_incomplete", False)
+    assert not replay_safety(entity).history_incomplete

@@ -16,6 +16,9 @@ from custom_components.extended_openai_conversation_responses.intercom import (
     ANNOUNCE_FEATURE,
     async_get_intercom,
 )
+from custom_components.extended_openai_conversation_responses.tool_replay_guard import (
+    replay_safety,
+)
 from homeassistant.components import conversation
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
 from homeassistant.const import ATTR_SUPPORTED_FEATURES
@@ -444,7 +447,7 @@ async def test_broadcast_replay_identity_is_shared_across_routes(
         await hass.async_block_till_done()
         assert retry.response.error_code is not None
         assert announcements == ["Dinner is ready"]
-        assert agent._unacknowledged_effects
+        assert replay_safety(agent).effects
         # A different message remains executable before acknowledgement.
         _install_wire(
             monkeypatch,

@@ -253,7 +253,12 @@ from .temporary_memory import (
     async_get_temporary_memory,
     temporary_memory_as_dict,
 )
-from .tool_replay_guard import clear_unacknowledged_calls, remember_unacknowledged_calls
+from .tool_replay_guard import (
+    clear_unacknowledged_calls,
+    get_agent_replay_safety,
+    has_unacknowledged_calls,
+    remember_unacknowledged_calls,
+)
 from .usage import async_get_usage, extract_usage
 from .voice_identity_runtime import voice_identity_scope, voice_source_device_id
 
@@ -415,6 +420,9 @@ class ExtendedOpenAIAgentEntity(
                 if not owns_registration():
                     return
                 await super().async_added_to_hass()
+                self._replay_safety = get_agent_replay_safety(
+                    self.hass, self.entry.entry_id, self.subentry.subentry_id
+                )
                 if not owns_registration():
                     return
                 await self._async_initialize_agent_state()
@@ -1368,9 +1376,7 @@ class ExtendedOpenAIAgentEntity(
                     None
                     if requested_conversation_reset() is not None
                     else chat_log.conversation_id
-                    if getattr(self, "_unacknowledged_tool_schemas", {}).get(
-                        chat_log.conversation_id
-                    )
+                    if has_unacknowledged_calls(self, chat_log.conversation_id)
                     else user_input.conversation_id
                 ),
             )

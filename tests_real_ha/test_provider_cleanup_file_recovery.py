@@ -10,6 +10,9 @@ from custom_components.extended_openai_conversation_responses.ha_tool_result_com
     is_tool_result_content,
     tool_result_data,
 )
+from custom_components.extended_openai_conversation_responses.tool_replay_guard import (
+    replay_safety,
+)
 from homeassistant.components import conversation
 from tests_real_ha.chat_sessions import async_get_chat_session
 from tests_real_ha.test_cross_feature_acceptance import _agent, _say, _speech
@@ -214,7 +217,7 @@ async def test_repeated_output_cleanup_preserves_file_and_safe_followup(
         assert agent._execution_tool_outcomes[id(original)] == "completed"
         receipt = agent._execution_effect_receipts[id(original)][0]
         assert (receipt.kind, receipt.outcome) == ("file_write", "completed")
-        assert agent._unacknowledged_effects[failed.conversation_id]
+        assert replay_safety(agent).effects[failed.conversation_id]
         if mode == "responses":
             natives = [
                 getattr(item.native, "id", None)
@@ -322,7 +325,7 @@ async def test_finalizer_id_collision_follows_api_retained_history_contract(
         # Chat consumes the finalizer as ordinary text, so its reused ID never
         # enters retained call/result history and safely acknowledges the file.
         assert _speech(result) == "Done"
-        assert not getattr(agent, "_unacknowledged_effects", {}).get(
+        assert not replay_safety(agent).effects.get(
             result.conversation_id
         )
         assert not agent._execution_effect_receipts
@@ -330,7 +333,7 @@ async def test_finalizer_id_collision_follows_api_retained_history_contract(
         # Responses retains the native finalizer and its handling result. Its
         # ID collision must be rejected without losing the earlier file receipt.
         assert result.response.error_code is not None
-        assert agent._unacknowledged_effects[result.conversation_id]
+        assert replay_safety(agent).effects[result.conversation_id]
     with (
         async_get_chat_session(hass, result.conversation_id) as session,
         conversation.async_get_chat_log(hass, session) as log,
@@ -359,7 +362,7 @@ async def test_finalizer_id_collision_follows_api_retained_history_contract(
         )
         acknowledged = await _say(hass, agent, "acknowledge", result.conversation_id)
         assert _speech(acknowledged) == "Acknowledged"
-        assert not agent._unacknowledged_effects.get(result.conversation_id)
+        assert not replay_safety(agent).effects.get(result.conversation_id)
         assert not agent._execution_effect_receipts
     _install_wire(
         monkeypatch,
@@ -431,7 +434,7 @@ async def test_group_loader_cannot_reuse_a_retained_file_call_id(
     assert result.response.error_code is not None
     assert len(wire.requests) == 2
     assert (root / "loader.txt").read_text(encoding="utf-8") == "changed"
-    assert agent._unacknowledged_effects[result.conversation_id]
+    assert replay_safety(agent).effects[result.conversation_id]
     with (
         async_get_chat_session(hass, result.conversation_id) as session,
         conversation.async_get_chat_log(hass, session) as log,
@@ -539,4 +542,4 @@ async def test_consumed_chat_control_does_not_relax_same_round_id_validation(
     assert rejected.response.error_code is not None
     assert len(wire.requests) == 1
     assert not (root / "invalid-batch.txt").exists()
-    assert not getattr(agent, "_unacknowledged_effects", {})
+    assert not replay_safety(agent).effects

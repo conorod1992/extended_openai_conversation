@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable, Iterator, Mapping
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import wraps
 import hashlib
 import json
@@ -16,6 +16,7 @@ from homeassistant.components import conversation
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 
+from .const import DOMAIN
 from .exceptions import EffectReplayBlocked
 from .execution_arguments import execution_identity
 from .function_execution import (
@@ -39,35 +40,71 @@ _PRECISE_EFFECT_KINDS = {
 }
 
 
+@dataclass
+class ReplaySafetyState:
+    """Bounded unresolved evidence; no live calls or invocation ownership."""
+
+    effects: dict[str, set[str]] = field(default_factory=dict)
+    schemas: dict[str, dict[str, Any]] = field(default_factory=dict)
+    uncertain_tools: dict[str, set[str]] = field(default_factory=dict)
+    retired_conversations: set[bytes] = field(default_factory=set)
+    history_incomplete: bool = False
+    acknowledged_conversations: dict[bytes, None] = field(default_factory=dict)
+
+
+def get_agent_replay_safety(
+    hass: Any, entry_id: str, subentry_id: str
+) -> ReplaySafetyState:
+    """Retain safety across ordinary reload; deletion owns final disposal."""
+    owners: dict[tuple[str, str], ReplaySafetyState] = hass.data.setdefault(
+        f"{DOMAIN}.replay_safety_states", {}
+    )
+    key = (entry_id, subentry_id)
+    if key not in owners:
+        owners[key] = ReplaySafetyState()
+    return owners[key]
+
+
+def replay_safety(entity: Any) -> ReplaySafetyState:
+    """Use the bound agent owner, or local state for standalone/AI Task work."""
+    state = getattr(entity, "_replay_safety", None)
+    if not isinstance(state, ReplaySafetyState):
+        state = entity._replay_safety = ReplaySafetyState()
+    return state
+
+
+def has_unacknowledged_calls(entity: Any, conversation_id: str) -> bool:
+    return bool(replay_safety(entity).schemas.get(conversation_id))
+
+
 def _retire_replay_history(entity: Any, conversation_id: str | None) -> None:
     """Keep bounded conservative evidence when precise history is discarded."""
     if conversation_id == "":
         return  # Independent deferred jobs have no failed provider continuation.
-    retired = getattr(entity, "_retired_replay_conversations", None)
-    if not isinstance(retired, set):
-        retired = entity._retired_replay_conversations = set()
+    state = replay_safety(entity)
+    retired = state.retired_conversations
     digest = (
         hashlib.sha256(conversation_id.encode()).digest()
         if conversation_id is not None
         else None
     )
     if digest is not None:
-        getattr(entity, "_acknowledged_replay_conversations", {}).pop(digest, None)
+        state.acknowledged_conversations.pop(digest, None)
     if digest is None or (
         digest not in retired and len(retired) >= _MAX_RETIRED_CONVERSATIONS
     ):
-        entity._replay_history_incomplete = True
+        state.history_incomplete = True
         if conversation_id is None:
-            entity._acknowledged_replay_conversations = {}
+            state.acknowledged_conversations.clear()
     else:
         retired.add(digest)
 
 
 def _replay_history_incomplete(entity: Any, conversation_id: str) -> bool:
+    state = replay_safety(entity)
     digest = hashlib.sha256(conversation_id.encode()).digest()
-    return digest in getattr(entity, "_retired_replay_conversations", ()) or (
-        getattr(entity, "_replay_history_incomplete", False)
-        and digest not in getattr(entity, "_acknowledged_replay_conversations", ())
+    return digest in state.retired_conversations or (
+        state.history_incomplete and digest not in state.acknowledged_conversations
     )
 
 
@@ -209,9 +246,7 @@ def check_effect_replay(entity: Any, signature: str) -> None:
     scope = _effect_replay_scope.get()
     if scope is None or not scope.active or scope.entity is not entity:
         return
-    signatures = getattr(entity, "_unacknowledged_effects", {}).get(
-        scope.conversation_id, ()
-    )
+    signatures = replay_safety(entity).effects.get(scope.conversation_id, ())
     if (
         signature in signatures
         or (signature == "*" and bool(signatures))
@@ -405,9 +440,8 @@ def remember_unacknowledged_calls(
     ]
     if not records:
         return
-    effects = getattr(entity, "_unacknowledged_effects", None)
-    if not isinstance(effects, dict):
-        effects = entity._unacknowledged_effects = {}
+    state = replay_safety(entity)
+    effects = state.effects
     retained_effects = effects.setdefault(conversation_id, set())
     for content in new_content:
         if (
@@ -435,13 +469,9 @@ def remember_unacknowledged_calls(
     if len(retained_effects) > 4096:
         # Never evict an unresolved effect and silently permit its replay.
         effects[conversation_id] = {"*"}
-    schemas = getattr(entity, "_unacknowledged_tool_schemas", None)
-    if not isinstance(schemas, dict):
-        schemas = entity._unacknowledged_tool_schemas = {}
+    schemas = state.schemas
     schemas.setdefault(conversation_id, {}).update(dict(records))
-    uncertain = getattr(entity, "_unacknowledged_uncertain_tools", None)
-    if not isinstance(uncertain, dict):
-        uncertain = entity._unacknowledged_uncertain_tools = {}
+    uncertain = state.uncertain_tools
     uncertain.setdefault(conversation_id, set()).update(
         call.tool_name
         for content in new_content
@@ -468,13 +498,11 @@ def was_unacknowledged_equivalent(
         return False
     if _replay_history_incomplete(entity, conversation_id):
         return True
-    ledger = getattr(entity, "_unacknowledged_tool_schemas", None)
-    if not isinstance(ledger, dict):
-        return False
+    ledger = replay_safety(entity).schemas
     records = ledger.get(chat_log.conversation_id, {})
-    if tool_input.tool_name in getattr(
-        entity, "_unacknowledged_uncertain_tools", {}
-    ).get(chat_log.conversation_id, ()):
+    if tool_input.tool_name in replay_safety(entity).uncertain_tools.get(
+        chat_log.conversation_id, ()
+    ):
         return True
     if _signature(tool_input) in records:
         return True
@@ -486,18 +514,13 @@ def was_unacknowledged_equivalent(
 def clear_unacknowledged_calls(entity: Any, conversation_id: str | None) -> None:
     """A successful provider turn resolves ambiguity for this conversation."""
     if isinstance(conversation_id, str):
-        for name in (
-            "_unacknowledged_tool_schemas",
-            "_unacknowledged_effects",
-            "_unacknowledged_uncertain_tools",
-        ):
-            getattr(entity, name, {}).pop(conversation_id, None)
+        state = replay_safety(entity)
+        for ledger in (state.schemas, state.effects, state.uncertain_tools):
+            ledger.pop(conversation_id, None)
         digest = hashlib.sha256(conversation_id.encode()).digest()
-        getattr(entity, "_retired_replay_conversations", set()).discard(digest)
-        if getattr(entity, "_replay_history_incomplete", False):
-            acknowledged = getattr(entity, "_acknowledged_replay_conversations", None)
-            if not isinstance(acknowledged, dict):
-                acknowledged = entity._acknowledged_replay_conversations = {}
+        state.retired_conversations.discard(digest)
+        if state.history_incomplete:
+            acknowledged = state.acknowledged_conversations
             acknowledged[digest] = None
             while len(acknowledged) > _MAX_AMBIGUOUS_CONVERSATIONS:
                 acknowledged.pop(next(iter(acknowledged)))

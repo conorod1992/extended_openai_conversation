@@ -35,6 +35,9 @@ from custom_components.extended_openai_conversation_responses.ha_tool_result_com
 from custom_components.extended_openai_conversation_responses.tool_exchange import (
     async_execute_tool_exchange,
 )
+from custom_components.extended_openai_conversation_responses.tool_replay_guard import (
+    replay_safety,
+)
 from homeassistant.components import conversation
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
@@ -157,11 +160,13 @@ async def test_corrected_retry_can_execute_with_one_execution_slot(hass) -> None
 
 
 async def test_replay_rejection_retains_matching_error_result(hass) -> None:
-    from custom_components.extended_openai_conversation_responses.tool_replay_guard import _signature
+    from custom_components.extended_openai_conversation_responses.tool_replay_guard import (
+        _signature,
+    )
     entity = _entity(hass)
     chat_log = _chat_log(hass)
     call = _call("new-id", "action")
-    entity._unacknowledged_tool_schemas = {chat_log.conversation_id: {_signature(call): {}}}
+    replay_safety(entity).schemas = {chat_log.conversation_id: {_signature(call): {}}}
     _retain_calls(chat_log, [call])
     with pytest.raises(HomeAssistantError, match="not acknowledged"):
         await async_execute_tool_exchange(entity, chat_log, [call], [_tool("action")], FunctionCallBudget(1), None, [])

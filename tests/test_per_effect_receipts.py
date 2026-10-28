@@ -29,6 +29,7 @@ from custom_components.extended_openai_conversation_responses.tool_replay_guard 
     clear_unacknowledged_calls,
     effect_signature,
     remember_unacknowledged_calls,
+    replay_safety,
     was_unacknowledged_equivalent,
 )
 from homeassistant.exceptions import HomeAssistantError
@@ -583,7 +584,8 @@ def test_anonymous_scope_does_not_inherit_an_outer_conversation(missing_identity
         check_effect_replay,
     )
 
-    entity = SimpleNamespace(_unacknowledged_effects={"known": {"effect"}})
+    entity = SimpleNamespace()
+    replay_safety(entity).effects = {"known": {"effect"}}
     with bind_effect_replay_scope(entity, "known"):
         with bind_effect_replay_scope(entity, missing_identity):
             check_effect_replay(entity, "effect")
@@ -627,9 +629,8 @@ async def test_resolved_tool_copy_reuses_enclosing_invocation(hass, monkeypatch)
 
 async def test_background_task_does_not_retain_expired_replay_scope():
     prepared = {"target": "same"}
-    entity = SimpleNamespace(
-        _unacknowledged_effects={"request": {effect_signature("ha_service", prepared)}}
-    )
+    entity = SimpleNamespace()
+    replay_safety(entity).effects = {"request": {effect_signature("ha_service", prepared)}}
     release = asyncio.Event()
     call, effects = _call("background", "effect"), []
 

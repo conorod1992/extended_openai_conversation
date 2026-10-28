@@ -29,6 +29,9 @@ from custom_components.extended_openai_conversation_responses.function_execution
 from custom_components.extended_openai_conversation_responses.tool_exchange import (
     async_execute_tool_exchange,
 )
+from custom_components.extended_openai_conversation_responses.tool_replay_guard import (
+    replay_safety,
+)
 from homeassistant.components import ai_task, conversation
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -170,13 +173,13 @@ def _assert_acknowledged(entity):
     for name in _SIDECARS:
         assert not getattr(entity, name, {}), name
     for name in (
-        "_retired_replay_conversations",
-        "_unacknowledged_tool_schemas",
-        "_unacknowledged_effects",
-        "_unacknowledged_uncertain_tools",
+        "retired_conversations",
+        "schemas",
+        "effects",
+        "uncertain_tools",
     ):
-        assert not getattr(entity, name, {}), name
-    assert not getattr(entity, "_replay_history_incomplete", False)
+        assert not getattr(replay_safety(entity), name, {}), name
+    assert not replay_safety(entity).history_incomplete
 
 
 @pytest.mark.parametrize("reused_conversation", [False, True])
@@ -226,7 +229,7 @@ async def test_failed_ai_task_continuations_retain_effects_until_acknowledged(
     entity = task_driver.entity
     assert task_driver.hass.states.get("sensor.ai_task_effects").state == "1"
     assert set(entity._dispatched_tool_conversations.values()) == {log.conversation_id}
-    assert entity._unacknowledged_effects[log.conversation_id]
+    assert replay_safety(entity).effects[log.conversation_id]
     assert set(entity._execution_tool_outcomes.values()) == {
         "uncertain" if failure == "tool_error" else "completed"
     }
@@ -239,7 +242,7 @@ async def test_failed_ai_task_continuations_retain_effects_until_acknowledged(
     # A different task can succeed without settling the failed conversation.
     await task_driver.run(task_driver.log("independent-task"))
     assert task_driver.hass.states.get("sensor.ai_task_effects").state == "2"
-    assert entity._unacknowledged_effects[log.conversation_id]
+    assert replay_safety(entity).effects[log.conversation_id]
     with pytest.raises(HomeAssistantError, match="not acknowledged"):
         await task_driver.run(log)
     assert len(task_driver.tool.calls) == 2
@@ -268,9 +271,9 @@ async def test_rejected_ai_task_tools_do_not_retire_effect_history(
         ):
             await task_driver.run(log)
     assert task_driver.tool.calls == []
-    assert not getattr(task_driver.entity, "_unacknowledged_effects", {})
-    assert not getattr(task_driver.entity, "_retired_replay_conversations", ())
-    assert not getattr(task_driver.entity, "_replay_history_incomplete", False)
+    assert not replay_safety(task_driver.entity).effects
+    assert not replay_safety(task_driver.entity).retired_conversations
+    assert not replay_safety(task_driver.entity).history_incomplete
     task_driver.mode = "success"
     await task_driver.run(log)
     assert task_driver.hass.states.get("sensor.ai_task_effects").state == "1"

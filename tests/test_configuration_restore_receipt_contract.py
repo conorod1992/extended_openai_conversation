@@ -29,6 +29,7 @@ from custom_components.extended_openai_conversation_responses.management_functio
 from custom_components.extended_openai_conversation_responses.tool_replay_guard import (
     bind_effect_replay_scope,
     remember_unacknowledged_calls,
+    replay_safety,
 )
 from homeassistant.exceptions import HomeAssistantError
 from tests.test_backup import FakeStorage
@@ -244,7 +245,7 @@ async def test_cross_stage_receipt_oracle_detects_runtime_reset_mutation(
     def lose_failed_continuation(*args, **kwargs):
         reset(*args, **kwargs)
         entity = restore_recovery._active_agent(*args[:3])
-        entity._unacknowledged_effects.clear()
+        replay_safety(entity).effects.clear()
 
     monkeypatch.setattr(
         restore_recovery, "reset_restored_runtime", lose_failed_continuation
