@@ -52,7 +52,7 @@ const hass = {
     }
     if (message.type === credentialType) {
       if (!isAdmin || typeof message.entry_id !== "string" || !String(message.api_key || "").trim()) throw new Error("Invalid EOAI credential fixture request");
-      return {status: "updated", entry_id: message.entry_id};
+      return {status: "updated", entry_id: message.entry_id, updated:true, validation_performed:true, reload_requested:true};
     }
     if (message.type !== managementType) {
       if (message.type?.startsWith("extended_openai_conversation_responses/")) throw new Error(`Unsupported EOAI fixture WebSocket type: ${JSON.stringify(message)}`);

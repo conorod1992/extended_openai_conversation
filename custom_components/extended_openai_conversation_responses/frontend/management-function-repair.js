@@ -253,11 +253,12 @@ async function saveInvalidTool(panel, button) {
     if (!configurationSubmissionIsCurrent(panel, submission)) return true;
     const previous = {revision:panel._configData?.revision, config:panel._configData?.config};
     await refreshAfterRepair(panel, "Function Tool repaired", saved, submission, {reload:false, refresh:() => {
-      if (operation.isUnchanged()) {
-        panel._repairToolIndex = null;
-        operation.dialog.close();
-      }
+      const closeAfterAcknowledgement = operation.isUnchanged();
       finishingOperation = acknowledgeToolEditor(panel, operation, saved, previous);
+      if (closeAfterAcknowledgement) {
+        operation.dialog.close();
+        panel._repairToolIndex = null;
+      }
     }});
   } catch (err) {
     if (operation.isUnchanged()) panel._toast(`Unable to repair Function Tool: ${err.message || String(err)}`, true);

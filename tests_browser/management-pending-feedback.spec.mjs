@@ -176,7 +176,7 @@ test("failed destructive action restores its control after showing pending feedb
           && !window.browserHarness.failedPendingFeedback.started) {
         window.browserHarness.failedPendingFeedback.started = true;
         await gate;
-        throw new Error("Injected delete failure");
+        throw {code:"invalid_request", message:"Injected delete failure"};
       }
       return original(message);
     };

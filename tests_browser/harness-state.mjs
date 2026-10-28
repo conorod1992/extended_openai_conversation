@@ -260,7 +260,7 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
       if (!message.config || typeof message.config !== "object" || Array.isArray(message.config) || typeof message.revision !== "string") {
         throw new Error(`Malformed EOAI management ${key}: config object and revision are required`);
       }
-      if (failConfigurationOnce && !state.failedConfigurationOnce) { state.failedConfigurationOnce = true; save(); throw new Error("Fixture rejected configuration save once"); }
+      if (failConfigurationOnce && !state.failedConfigurationOnce) { state.failedConfigurationOnce = true; save(); throw {code:"invalid_request", message:"Fixture rejected configuration save once"}; }
       if (message.revision && message.revision !== state.configuration.revision) throw new Error("Saved data changed; reload before saving.");
       const updates = clone(message.config);
       for (const field of ["usage_request_retention_days", "usage_run_retention_days"]) if (field in updates) updates[field] = Number(updates[field]);
@@ -421,7 +421,7 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
       const remaining = active.filter((item) => item.key !== message.continuity_key);
       if (remaining.length === active.length) throw new Error(`Unknown EOAI fixture active conversation: ${message.continuity_key}`);
       state.conversations.active = remaining; save();
-      return {ended: true};
+      return {ended: 1};
     }
     if (seedUsageBoundary && key === "usage/daily") {
       const date = "2026-03-30";
@@ -449,8 +449,9 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
     }
     if (message.action === "clear") {
       if (message.confirm !== true) throw new Error("Request-debug clear requires confirmation");
+      const deleted = state.requestDebug.count;
       state.requestDebug.count = 0; state.requestDebug.runs = []; save();
-      return {cleared: true};
+      return {deleted, ...clone(state.requestDebug), allowed_limits: [5, 10, 25, 50]};
     }
     throw new Error(`Unsupported EOAI request-debug fixture action: ${JSON.stringify(message)}`);
   }

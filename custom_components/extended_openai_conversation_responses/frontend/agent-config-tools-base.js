@@ -698,18 +698,19 @@ async function saveFunctionGroup(panel) {
     }
     const previous = {revision:panel._configData?.revision, config:panel._configData?.config};
     await completeFunctionMutation(panel, result, submission, "Function group saved", () => {
-      if (unchanged()) dialog.close();
-      else if (ownsEditor()) {
-        // Dirty tracking follows the acknowledged submission independently of
-        // whether it is safe to advance the editor's authoring revision.
+      const closeAfterAcknowledgement = unchanged();
+      if (ownsEditor()) {
+        // Identity and dirty tracking belong to the commit. A failed modal close
+        // must leave the next command updating this group at its saved revision.
         setDialogBaseline(panel, "group-dialog", authored);
         if (previous.config === baselineConfig && [revision, result.revision].includes(previous.revision)) {
           panel._groupOriginalId = id;
           panel._groupRevision = result.revision;
           panel._groupRepair = false;
-          error.textContent = "Submitted version saved. Your newer changes are still unsaved.";
-        } else error.textContent = "Submitted version saved. Reload the latest settings before saving these edits.";
+          if (!closeAfterAcknowledgement) error.textContent = "Submitted version saved. Your newer changes are still unsaved.";
+        } else if (!closeAfterAcknowledgement) error.textContent = "Submitted version saved. Reload the latest settings before saving these edits.";
       }
+      if (closeAfterAcknowledgement) dialog.close();
       panel._render();
     });
   } catch(err) { if (ownsEditor()) { delete error.dataset.field; error.textContent=err.message||String(err); } }
@@ -826,8 +827,9 @@ export function bindTools(panel) {
       }
       const previous = {revision:panel._configData?.revision, config:panel._configData?.config};
       await completeFunctionMutation(panel, result, submission, "Changes saved", () => {
-        if (operation.isUnchanged()) operation.dialog.close();
-        else finishingOperation = acknowledgeToolEditor(panel, operation, result, previous);
+        const closeAfterAcknowledgement = operation.isUnchanged();
+        finishingOperation = acknowledgeToolEditor(panel, operation, result, previous);
+        if (closeAfterAcknowledgement) operation.dialog.close();
         panel._render();
       });
     } catch (err) {

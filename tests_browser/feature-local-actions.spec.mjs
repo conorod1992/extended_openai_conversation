@@ -29,7 +29,7 @@ for (const bundled of [false, true]) {
       browserHarness.hass.callWS = message => {
         if (message.action === "temporary_update") {
           browserHarness.hass.callWS = original;
-          return Promise.reject(new Error("Temporary save unavailable"));
+          return Promise.reject({code:"invalid_request", message:"Temporary save unavailable"});
         }
         return original(message);
       };

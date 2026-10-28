@@ -81,7 +81,7 @@ test("a failed configuration save does not poison the next mutation", async ({pa
     hass.callWS = async (message) => {
       if (message.section === "configuration" && message.action === "save") {
         window.browserHarness.failedLivenessSaveCalls += 1;
-        if (window.browserHarness.failedLivenessSaveCalls === 1) throw new Error("Injected save failure");
+        if (window.browserHarness.failedLivenessSaveCalls === 1) throw {code:"invalid_request", message:"Injected save failure"};
       }
       return original(message);
     };
@@ -342,7 +342,7 @@ test("a failed Request Rule update leaves a different rule action usable", async
     browserHarness.hass.callWS = async (message) => {
       if (message.section === "request_rules" && message.action === "update") {
         window.browserHarness.failedRuleUpdateCalls += 1;
-        if (window.browserHarness.failedRuleUpdateCalls === 1) throw new Error("Injected Request Rule update failure");
+        if (window.browserHarness.failedRuleUpdateCalls === 1) throw {code:"invalid_request", message:"Injected Request Rule update failure"};
       }
       return original(message);
     };

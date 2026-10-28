@@ -127,6 +127,8 @@ for (const failure of ["incomplete", "lost", "rejected"]) {
     assert.equal(backend.calls.length, failure === "rejected" ? 0 : 1, "no automatic retry");
     assert.equal(panel.toasts.length, 0);
     assert.match(panel.errors[0], failure === "rejected" ? /Rejected before write/ : /outcome is unknown/);
+    assert.equal(panel._eocRequestDiagnostics.at(-1).status,
+      failure === "lost" ? "uncertain" : failure === "rejected" ? "rejected" : "fulfilled");
   });
 }
 

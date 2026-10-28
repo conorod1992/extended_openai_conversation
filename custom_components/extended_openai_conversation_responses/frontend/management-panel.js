@@ -806,7 +806,6 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       result = nonAdminOverviewKnowledgeSnapshot(this);
     } else {
       result = await this._callWithMutationSafety(section, action, extra);
-      processMutationResponse(result, () => this._applyToolRevision(section, action, result, owner));
     }
 
     const publish = () => {
@@ -1022,6 +1021,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       }
       if (mutationEffects(section, action) && !err?.code) {
         const uncertain = new Error(`${err?.message || String(err)}. The mutation outcome is unknown; refresh before retrying.`, {cause:err});
+        requestTrace.status = "uncertain";
         uncertain.mutationOutcome = "uncertain";
         throw uncertain;
       }
