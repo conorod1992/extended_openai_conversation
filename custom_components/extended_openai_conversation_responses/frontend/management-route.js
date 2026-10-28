@@ -571,6 +571,7 @@ function storedConfigurationDiscardReason(panel, prefetch, selected) {
   if (!selected || selected.subentry_id !== prefetch.subentryId || selected.entry_id !== prefetch.entryId) return "stored-agent-mismatch";
   if (panel._viewKey?.() !== prefetch.view) return "route-changed";
   if (panel._cacheGeneration !== prefetch.cacheGeneration) return "cache-generation-changed";
+  if (panel._eocRestoredConfiguration) return "restore-draft-retirement";
   if (panel._configDirty) return "dirty-configuration";
   return null;
 }

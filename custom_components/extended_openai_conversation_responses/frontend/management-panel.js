@@ -523,6 +523,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._eocModelIntent = null;
     this._eocReasoningChoiceRevision = 0;
     this._eocAcknowledgedConfiguration = null;
+    this._eocRestoredConfiguration = null;
     this._setConfigDirty(false);
     this._configData = null;
     this._configDataStale = false;
@@ -1664,7 +1665,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   async _loadConfigDraft({preserveResult = false, full = false} = {}) {
     // A global acknowledgement retains an authoring baseline until a complete
     // read resolves it, including when the current route is Retention.
-    full ||= Boolean(this._eocAcknowledgedConfiguration);
+    full ||= Boolean(this._eocAcknowledgedConfiguration || this._eocRestoredConfiguration);
     const previousConfig = this._configData, previousResult = this._result;
     const readOwner = captureConfigurationOwner(this);
     // Validate shared model data before reusing an active baseline, clean cache
@@ -1772,7 +1773,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         {savedConfig:configData.projection === "retention" ? undefined : configData.config});
       this._draft = nextDraft;
       this._draftTitle = merged.title;
-      if (configData.projection !== "retention") this._eocAcknowledgedConfiguration = null;
+      if (configData.projection !== "retention") {
+        this._eocAcknowledgedConfiguration = null;
+        this._eocRestoredConfiguration = null;
+      }
       this._draftAgentId = agentId;
       this._setConfigDirty(false);
       if (retainedDraft) this._syncConfigDirty();

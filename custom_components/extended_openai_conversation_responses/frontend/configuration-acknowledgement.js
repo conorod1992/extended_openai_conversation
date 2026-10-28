@@ -112,7 +112,10 @@ export function discardConfigurationDraft(panel) {
 }
 
 export function mergeConfigurationRead(panel, current, baseline, saved) {
-  const comparison = configurationDraftBaseline(panel, baseline);
+  const restored = panel._eocRestoredConfiguration;
+  // Restore replaces the submitted draft. Only subsequently authored edits survive.
+  const comparison = restored && configurationSubmissionIsCurrent(panel, restored)
+    ? {config:restored.draft, title:restored.title} : configurationDraftBaseline(panel, baseline);
   const pending = panel._eocConfigurationSubmission;
   const protectedFields = pending && !pending.acknowledged && configurationSubmissionIsCurrent(panel, pending) ? pending.fields : [];
   panel._eocModelIntent?.acceptReasoningRead?.(panel, saved.config, {comparisonConfig:comparison.config, protectedFields});

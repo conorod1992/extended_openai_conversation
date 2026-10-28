@@ -76,7 +76,7 @@ export async function saveConfigurationAcrossRestart(panel, payload, submitted, 
 
 async function saveConfiguration(panel, button) {
   if (!panel._draft || !panel._selectedAgent?.() || panel._configurationSaving) return;
-  if (panel._eocAcknowledgedConfiguration && panel._configDataStale) {
+  if ((panel._eocAcknowledgedConfiguration || panel._eocRestoredConfiguration) && panel._configDataStale) {
     const owner = captureConfigurationOwner(panel), visit = panel._loadToken;
     try { await panel._loadConfigDraft({preserveResult:true}); }
     catch (error) {
