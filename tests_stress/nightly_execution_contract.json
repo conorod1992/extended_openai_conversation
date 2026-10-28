@@ -3032,7 +3032,9 @@
     "tests_real_ha/test_replay_reload_ownership.py::test_failed_effect_cannot_replay_after_genuine_reload[chat_completions]",
     "tests_real_ha/test_replay_reload_ownership.py::test_failed_effect_cannot_replay_after_genuine_reload[responses]",
     "tests_real_ha/test_replay_reload_ownership.py::test_reload_oracle_detects_entity_owned_state[chat_completions]",
-    "tests_real_ha/test_replay_reload_ownership.py::test_reload_oracle_detects_entity_owned_state[responses]"
+    "tests_real_ha/test_replay_reload_ownership.py::test_reload_oracle_detects_entity_owned_state[responses]",
+    "tests_real_ha/test_replay_reload_ownership.py::test_budget_failure_preserves_effect_through_retry_and_reload[chat_completions]",
+    "tests_real_ha/test_replay_reload_ownership.py::test_budget_failure_preserves_effect_through_retry_and_reload[responses]"
   ],
   "browser": {
     "browser": [

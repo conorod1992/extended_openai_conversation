@@ -18,7 +18,7 @@ from tests_real_ha.test_provider_wire_e2e import (
 
 @pytest.mark.parametrize("mode", ["chat_completions", "responses"])
 async def test_failed_effect_cannot_replay_after_genuine_reload(
-    hass, monkeypatch, mode
+    hass, monkeypatch, mode, failure_kind="lost_ack"
 ):
     agent = await _agent(hass, mode)
     entry = agent.entry
@@ -50,22 +50,41 @@ async def test_failed_effect_cannot_replay_after_genuine_reload(
         )
 
     final = _responses_sse_text if mode == "responses" else _chat_sse_text
-    _install_wire(
-        monkeypatch,
-        agent,
-        [
-            tool("first-effect"),
-            (
-                400,
-                {
-                    "error": {
-                        "message": "continuation failed",
-                        "type": "invalid_request_error",
-                    }
-                },
-            ),
-        ],
-    )
+    if failure_kind == "output_budget":
+        from custom_components.extended_openai_conversation_responses import (
+            conversation as owner,
+            provider_output_budget as limits,
+        )
+        from custom_components.extended_openai_conversation_responses.provider_errors import (
+            ProviderStreamError,
+        )
+
+        failures = []
+        render_error = owner._conversation_error_result
+
+        def observe_error(*args, **kwargs):
+            failures.append(args[3])
+            return render_error(*args, **kwargs)
+
+        monkeypatch.setattr(owner, "_conversation_error_result", observe_error)
+        monkeypatch.setattr(limits, "MAX_ARGUMENT_CHARACTERS", 256)
+        oversized = {"padding": "x" * 1024}
+        continuation = (
+            _responses_sse_tool_call(call_id="oversized", tool_arguments=oversized)
+            if mode == "responses"
+            else _chat_sse_tool_call(call_id="oversized", arguments=oversized)
+        )
+    else:
+        continuation = (
+            400,
+            {
+                "error": {
+                    "message": "continuation failed",
+                    "type": "invalid_request_error",
+                }
+            },
+        )
+    _install_wire(monkeypatch, agent, [tool("first-effect"), continuation])
 
     async def say(conversation_id=None):
         return await conversation.async_converse(
@@ -79,6 +98,10 @@ async def test_failed_effect_cannot_replay_after_genuine_reload(
 
     failed = await say()
     assert failed.response.error_code is not None
+    if failure_kind == "output_budget":
+        assert len(failures) == 1
+        assert isinstance(failures[0], ProviderStreamError)
+        assert failures[0].type == "output_limit_exceeded"
     assert failed.conversation_id
     assert len(effects) == 1
     assert hass.states.get(entity_id).state == "off"
@@ -129,3 +152,12 @@ async def test_reload_oracle_detects_entity_owned_state(hass, monkeypatch, mode)
         await test_failed_effect_cannot_replay_after_genuine_reload(
             hass, monkeypatch, mode
         )
+
+
+@pytest.mark.parametrize("mode", ["chat_completions", "responses"])
+async def test_budget_failure_preserves_effect_through_retry_and_reload(
+    hass, monkeypatch, mode
+):
+    await test_failed_effect_cannot_replay_after_genuine_reload(
+        hass, monkeypatch, mode, failure_kind="output_budget"
+    )

@@ -129,6 +129,7 @@ from .provider_errors import (
     provider_transport_error,
 )
 from .provider_loop import MAX_PROVIDER_REQUESTS, assert_provider_loop_completed
+from .provider_output_budget import ProviderOutputBudget
 from .request import (
     CONTINUE_CONVERSATION_TOOL,
     CONTINUE_CONVERSATION_TOOL_NAME,
@@ -1902,6 +1903,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         """Transform OpenAI stream to Home Assistant format."""
         request_usage = request_usage or RequestTokenMeasurements()
         recovery_state = current_tool_recovery_state()
+        budget = ProviderOutputBudget()
         current_tool_calls: dict[int, dict[str, Any]] = {}
         first_chunk = True
         refusal_seen = False
@@ -1911,6 +1913,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
         async for chunk in normalized_chat_stream(chat_log, result, request_usage):
             event_count += 1
+            budget.event()
             # Signal new assistant message on first chunk
             if first_chunk:
                 yield {"role": "assistant"}
@@ -1931,6 +1934,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             choice = chunk.choices[0]
             delta = choice.delta
             finish_reason = choice.finish_reason
+            budget.chat_delta(delta)
 
             if delta.content:
                 content_value = answer_text(delta.content)
