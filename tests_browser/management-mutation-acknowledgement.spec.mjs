@@ -62,6 +62,30 @@ for (const bundled of [false, true]) for (const kind of ["knowledge", "persisten
   });
 }
 
+for (const bundled of [false, true]) test(`malformed Knowledge reply stays uncertain through cache failure (${bundled ? "bundle" : "source"})`, async ({page}) => {
+  const errors = trackPageErrors(page);
+  const panel = await openDataCollection(page, "knowledge", 1, bundled);
+  await panel.evaluate(host => {
+    const send = host.hass.callWS.bind(host.hass);
+    host.hass.callWS = async request => {
+      const result = await send(request);
+      return request.section === "knowledge" && request.action === "create" ? null : result;
+    };
+    host._invalidateAfterMutation = () => { throw Error("cache publication failed"); };
+  });
+  await panel.locator("#add-source").click();
+  await panel.locator("#knowledge-title").fill("Uncertain committed source");
+  await panel.locator("#knowledge-content").fill("Committed despite a malformed reply");
+  await panel.locator("#knowledge-save").click();
+  await expect(panel.locator("#knowledge-error")).toContainText("outcome is unknown");
+  const actual = await page.evaluate(() => ({records:dataCollectionBackend.state.sources, writes:dataCollectionBackend.calls.filter(call => call.action === "create")}));
+  expect(actual.records).toHaveLength(2);
+  expect(actual.records.some(source => source.content === "Committed despite a malformed reply")).toBe(true);
+  expect(actual.writes).toHaveLength(1);
+  expect(await panel.evaluate(host => host._editingSource?.source_id)).toBeUndefined();
+  await expectHarnessClean(page, errors);
+});
+
 for (const bundled of [false, true]) for (const failure of ["cache", "lost"]) {
   test(`duplicate acknowledgement survives request ${failure} failure (${bundled ? "bundle" : "source"})`, async ({page}) => {
     const errors = trackPageErrors(page);

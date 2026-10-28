@@ -19,8 +19,7 @@ export async function callMutation(send) {
 
 export function processMutationResponse(result, process) {
   const failed = error => {
-    if (!result || typeof result !== "object") throw error;
-    responseProcessingErrors.set(result, error);
+    if (result && typeof result === "object") responseProcessingErrors.set(result, error);
     return result;
   };
   try {

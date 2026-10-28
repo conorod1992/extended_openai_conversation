@@ -146,6 +146,26 @@ for (const failure of ["incomplete", "lost", "lost-nested", "lost-bare", "reject
   });
 }
 
+async function malformedReplyWitness(PanelType, reply, cacheFailure) {
+  const {panel, backend} = host("knowledge", PanelType);
+  panel._hass.callWS = async request => { await backend.call(request); return reply; };
+  if (cacheFailure) panel._invalidateAfterMutation = () => { throw Error("cache publication failed"); };
+  await panel._saveKnowledge();
+  assert.equal(backend.state.sources.length, 1);
+  assert.equal(backend.calls.length, 1, "a malformed response cannot trigger another write");
+  assert.match(panel.errors[0], /outcome is unknown/, "a malformed response must retain uncertainty when presentation also fails");
+  assert.equal(panel._eocRequestDiagnostics.at(-1).status, "fulfilled");
+  assert.equal(panel._knowledgeMode, "create", "an invalid acknowledgement cannot adopt the committed identity");
+  assert.equal(panel._editingSource, undefined);
+  assert.deepEqual(panel.toasts, []);
+}
+
+for (const reply of [null, false]) for (const cacheFailure of [false, true]) {
+  test(`Knowledge malformed ${reply} response remains uncertain with cache failure=${cacheFailure}`, async () => {
+    await malformedReplyWitness(Panel, reply, cacheFailure);
+  });
+}
+
 test("an acknowledgement for a retired owner cannot edit or notify its replacement", async () => {
   const {panel, backend} = host();
   panel._hass.callWS = async request => {
@@ -441,4 +461,16 @@ test("sensitivity: a retired authentication confirmation cannot dispatch a delet
   }
   await witness(Panel);
   await assert.rejects(() => witness(mutant.ExtendedOpenAIManagementPanel), /retired authentication confirmation must not delete/);
+});
+
+test("sensitivity: primitive reply processing cannot replace the uncertain mutation outcome", async () => {
+  const file = new URL("configuration-acknowledgement.js", frontend);
+  const source = await readFile(file, "utf8");
+  const guarded = 'if (result && typeof result === "object") responseProcessingErrors.set(result, error);';
+  assert.equal(source.split(guarded).length, 2);
+  const oldThrow = source.replace(guarded, 'if (!result || typeof result !== "object") throw error;\n    responseProcessingErrors.set(result, error);')
+    .replace(/from "(\.\/[^\"]+)"/g, (_match, path) => `from "${new URL(path, file)}"`);
+  const url = `data:text/javascript;base64,${Buffer.from(oldThrow).toString("base64")}`;
+  const mutant = await mutantModule("management-panel.js", 'from "./configuration-acknowledgement.js";', `from "${url}";`);
+  await assert.rejects(() => malformedReplyWitness(mutant.ExtendedOpenAIManagementPanel, null, true), /a malformed response must retain uncertainty/);
 });
