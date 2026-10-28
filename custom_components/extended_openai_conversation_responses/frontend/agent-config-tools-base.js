@@ -15,7 +15,7 @@ function ensureRouteStyle(panel) {
 }
 
 import {adoptKeyedElements, elementFromMarkup, keyedElement, placeChildren, pruneKeys, setAttribute, setText} from "./keyed-collection.js";
-import {captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, reconcileConfigurationAcknowledgement, completeConfigurationAcknowledgement} from "./configuration-acknowledgement.js";
+import {captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, reconcileConfigurationAcknowledgement, completeConfigurationAcknowledgement, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
 import {same} from "./unsaved-state.js";
 import { haToolName, isHALlmTool, renderHAToolCard, toolDescription } from "./ha-llm-tools-list.js";
 import { bindHelp, helpButton, helpPopover } from "./agent-config-help.js";
@@ -474,7 +474,7 @@ function bindToolCollection(panel) {
 }
 
 function functionAcknowledgement(result) {
-  return {...result, function_repair: result.function_repair ?? null, config:{functions:result.functions || [], function_groups:result.function_groups || []}};
+  return {...result, function_repair: result.function_repair ?? null, config:{functions:result.functions, function_groups:result.function_groups}};
 }
 
 export function synchronizePersistedFunctions(panel, result, submission = captureConfigurationSubmission(panel)) {
@@ -484,6 +484,8 @@ export function synchronizePersistedFunctions(panel, result, submission = captur
 }
 
 function completeFunctionMutation(panel, result, submission, message, refresh = () => panel._render()) {
+  requireMutationAcknowledgement(typeof result?.revision === "string" && result.revision.length > 0
+    && Array.isArray(result.functions) && Array.isArray(result.function_groups), "saving Function configuration");
   return completeConfigurationAcknowledgement(panel, functionAcknowledgement(result), submission, {
     fields:["functions", "function_groups"], metadata:["function_repair"], message, response:result,
     refresh:() => {

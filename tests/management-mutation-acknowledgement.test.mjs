@@ -362,6 +362,26 @@ for (const shape of ["nested", "bare"]) {
   }
 }
 
+for (const newer of [false,true]) test(`Broadcast consumes only its submitted draft across assistant changes (newer: ${newer})`, async()=>{
+  const {panel,control}=host();
+  panel._viewKey=()=>"overview"; panel._broadcastMessage="Dinner";panel._broadcastWholeHome=true;
+  panel._e=String;panel._titleCase=String;
+  control("#broadcast-card");const button=control("#broadcast-send");control("#broadcast-enabled");
+  const state={enabled:true,can_manage:true,catalog:{satellites:[{id:"satellite.kitchen",name:"Kitchen"}]},history:[],pending:[]};
+  const sent=[];
+  panel._hass.callWS=async request=>{
+    if(request.action==="snapshot")return state;
+    sent.push(request.message); panel._agentId="another-agent";
+    if(newer){panel._broadcastMessage="New message";panel._broadcastDraftRevision=(panel._broadcastDraftRevision||0)+1;}
+    return {status:"queued"};
+  };
+  await bindBroadcast(panel,Promise.resolve(state));
+  await button.click({currentTarget:button});
+  assert.equal(panel._broadcastMessage,newer?"New message":"");
+  await button.click({currentTarget:button});
+  assert.deepEqual(sent,newer?["Dinner","New message"]:["Dinner"]);
+});
+
 test("transport adaptation preserves an authoritative server rejection unchanged", async () => {
   const rejection = {code:"invalid_request", message:"Rejected before dispatch"};
   await assert.rejects(() => acknowledgement.callMutation(async () => { throw rejection; }), error => error === rejection);

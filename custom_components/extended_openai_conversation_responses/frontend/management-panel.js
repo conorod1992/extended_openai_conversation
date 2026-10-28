@@ -869,7 +869,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         let payload = effects.revision === "tools"
           && extra.revision === undefined
           && typeof this._configData?.revision === "string"
-          ? {revision: this._configData.revision, ...extra}
+          ? {...extra, revision: this._configData.revision}
           : extra;
         if (
           effects.revision === "request_rules"
@@ -879,7 +879,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
           const revision = trackedRevision?.agentId === this._agentId
             ? trackedRevision.value
             : this._result?.revision;
-          if (revision !== undefined && revision !== null) payload = {revision, ...extra};
+          if (revision !== undefined && revision !== null) payload = {...extra, revision};
         }
         return this._runAgentMutation(section, action, payload, mutationTrace);
       },

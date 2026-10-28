@@ -158,8 +158,10 @@ function bindBroadcastControls(panel, snapshot) {
         entity_ids: wholeHome ? [] : selected,
       }));
       requireMutationAcknowledgement(typeof result?.status === "string", "queuing Broadcast");
+      const current = captureConfigurationOwner(panel);
+      if (current.userId === submission.userId && current.authenticationGeneration === submission.authenticationGeneration
+          && (panel._broadcastDraftRevision || 0) === draftRevision) panel._broadcastMessage = "";
       await presentAcknowledgedMutation(panel, submission, "Broadcast queued", async () => {
-        if ((panel._broadcastDraftRevision || 0) === draftRevision) panel._broadcastMessage = "";
         if (!await loadBroadcast(panel)) throw Error("Broadcast history could not be refreshed.");
       }, result);
     } catch (err) {
