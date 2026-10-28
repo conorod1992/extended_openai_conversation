@@ -5,8 +5,10 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+
 from custom_components.extended_openai_conversation_responses import completion_events
 from custom_components.extended_openai_conversation_responses.completion_events import (
+    CompletionMetadata,
     completion_event_scope,
     queue_completion_event,
 )
@@ -24,7 +26,7 @@ async def test_task_cancel_during_flush_observes_all_deliveries(
     original = completion_events._async_emit
 
     async def blocked_emit(hass, payload):
-        if payload["index"] == blocked_index:
+        if int(payload["conversation_id"]) == blocked_index:
             entered.set()
             await release.wait()
         await original(hass, payload)
@@ -34,7 +36,12 @@ async def test_task_cancel_during_flush_observes_all_deliveries(
     async def request():
         async with completion_event_scope():
             for index in range(count):
-                queue_completion_event(hass, {"index": index})
+                queue_completion_event(
+                    hass,
+                    CompletionMetadata(
+                        agent_id="agent", conversation_id=str(index), status="success"
+                    ),
+                )
 
     task = asyncio.create_task(request())
     try:
@@ -49,7 +56,8 @@ async def test_task_cancel_during_flush_observes_all_deliveries(
         with pytest.raises(asyncio.CancelledError):
             await task
         assert [
-            call.args[1]["index"] for call in hass.bus.async_fire.call_args_list
+            int(call.args[1]["conversation_id"])
+            for call in hass.bus.async_fire.call_args_list
         ] == list(range(count))
     finally:
         release.set()

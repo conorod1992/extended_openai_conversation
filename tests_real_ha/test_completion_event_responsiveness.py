@@ -217,3 +217,31 @@ async def test_completion_event_recording_contains_metadata_only(
         "status",
     }
     assert events[0].data["status"] == "success"
+
+
+@pytest.mark.parametrize("queued", [False, True])
+async def test_actual_bus_receives_only_detached_completion_metadata(hass, queued):
+    from contextlib import nullcontext
+
+    from custom_components.extended_openai_conversation_responses.completion_events import (
+        CompletionMetadata,
+        completion_event_scope,
+        queue_completion_event,
+    )
+
+    received = []
+    hass.bus.async_listen(EVENT_CONVERSATION_FINISHED, received.append)
+    metadata = CompletionMetadata("agent", "success", "original")
+    async with completion_event_scope() if queued else nullcontext():
+        queue_completion_event(hass, metadata)
+        object.__setattr__(metadata, "conversation_id", "PRIVATE TRANSCRIPT")
+        queue_completion_event(hass, {"response": "PRIVATE TRANSCRIPT"})
+    await hass.async_block_till_done()
+    assert [event.data for event in received] == [
+        {
+            "schema_version": 2,
+            "agent_id": "agent",
+            "conversation_id": "original",
+            "status": "success",
+        }
+    ]
