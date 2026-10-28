@@ -275,6 +275,18 @@ async def test_change_config_service_rejects_concurrent_stale_update(
     await hass.async_block_till_done()
 
 
+def _broadcast_queue(hass, monkeypatch, targets):
+    """Keep real admission/permissions; replace only discovery and delivery."""
+    from custom_components.extended_openai_conversation_responses import intercom
+
+    manager = intercom.IntercomManager(hass)
+    manager._enabled = True
+    manager.resolve_targets = MagicMock(return_value=targets)
+    monkeypatch.setattr(manager, "_schedule_drain", lambda _: None)
+    monkeypatch.setattr(intercom, "async_call_later", lambda *_: lambda: None)
+    return manager
+
+
 @pytest.mark.asyncio
 async def test_broadcast_service_routes_context_and_rejects_invalid_targets(
     hass: HomeAssistant,
@@ -285,10 +297,7 @@ async def test_broadcast_service_routes_context_and_rejects_invalid_targets(
     entry = _entry()
     await _setup_entry(hass, entry)
 
-    manager = SimpleNamespace(
-        resolve_targets=MagicMock(return_value=["assist_satellite.kitchen"]),
-        async_send=AsyncMock(return_value={"id": "broadcast-acceptance"}),
-    )
+    manager = _broadcast_queue(hass, monkeypatch, ["assist_satellite.kitchen"])
     monkeypatch.setattr(
         intercom_services,
         "async_get_intercom",
@@ -307,31 +316,14 @@ async def test_broadcast_service_routes_context_and_rejects_invalid_targets(
         user_id=hass_admin_user.id,
         context=broadcast_context,
     )
-    assert response == {"id": "broadcast-acceptance"}
-    manager.resolve_targets.assert_called_once_with(
-        whole_home=False,
-        entity_ids=["assist_satellite.kitchen"],
-        device_ids=[],
-        area_ids=[],
-        floor_ids=[],
-        label_ids=[],
-        origin_entity_id=None,
-        origin_device_id=None,
-    )
-    manager.async_send.assert_awaited_once_with(
-        "Dinner is ready",
-        entity_ids=["assist_satellite.kitchen"],
-        origin_entity_id=None,
-        origin_device_id=None,
-        source="service",
-        ttl_seconds=30,
-        context=broadcast_context,
-    )
-    assert manager.async_send.await_args.kwargs["context"] is broadcast_context
+    assert response["targets"] == ["assist_satellite.kitchen"]
+    assert [item["id"] for item in manager.history()] == [response["id"]]
+    assert manager._history[0].context is broadcast_context
+    assert manager.history()[0]["message"] == "Dinner is ready"
+    assert len(manager._queues["assist_satellite.kitchen"]) == 1
 
-    manager.resolve_targets.reset_mock(return_value=True)
+    before = manager.history()
     manager.resolve_targets.return_value = []
-    manager.async_send.reset_mock()
     with pytest.raises(HomeAssistantError, match="No matching announcement-capable"):
         await _response_service_call(
             hass,
@@ -342,7 +334,8 @@ async def test_broadcast_service_routes_context_and_rejects_invalid_targets(
             },
             user_id=hass_admin_user.id,
         )
-    manager.async_send.assert_not_awaited()
+    assert manager.history() == before
+    assert len(manager._queues["assist_satellite.kitchen"]) == 1
 
 
 @pytest.mark.asyncio
@@ -355,10 +348,7 @@ async def test_broadcast_service_denies_caller_without_control_permission(
     entry = _entry()
     await _setup_entry(hass, entry)
 
-    manager = SimpleNamespace(
-        resolve_targets=MagicMock(return_value=["assist_satellite.kitchen"]),
-        async_send=AsyncMock(return_value={"id": "must-not-send"}),
-    )
+    manager = _broadcast_queue(hass, monkeypatch, ["assist_satellite.kitchen"])
     monkeypatch.setattr(
         intercom_services,
         "async_get_intercom",
@@ -375,7 +365,9 @@ async def test_broadcast_service_denies_caller_without_control_permission(
             },
             user_id=hass_read_only_user.id,
         )
-    manager.async_send.assert_not_awaited()
+    assert manager.history() == []
+    assert manager._queues == {}
+    assert manager._expiry_by_message == {}
 
 
 @pytest.mark.asyncio
