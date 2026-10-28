@@ -80,7 +80,7 @@ async def test_authorized_targets_reject_empty_resolution_before_permission_chec
 
 
 @pytest.mark.asyncio
-async def test_websocket_broadcast_queues_only_authorized_targets(
+async def test_websocket_broadcast_delegates_selectors_and_caller_context(
     hass, monkeypatch
 ) -> None:
     manager = SimpleNamespace(async_send=AsyncMock(return_value={"id": "broadcast-1"}))
@@ -88,12 +88,6 @@ async def test_websocket_broadcast_queues_only_authorized_targets(
         intercom_panel,
         "async_get_intercom",
         AsyncMock(return_value=manager),
-    )
-    authorized = AsyncMock(return_value=["assist_satellite.kitchen"])
-    monkeypatch.setattr(
-        intercom_panel,
-        "async_authorized_broadcast_targets",
-        authorized,
     )
     context = Context(user_id="normal-user")
     connection = SimpleNamespace(
@@ -112,15 +106,9 @@ async def test_websocket_broadcast_queues_only_authorized_targets(
 
     await intercom_panel.websocket_broadcast.__wrapped__(hass, connection, message)
 
-    authorized.assert_awaited_once_with(
-        hass,
-        manager,
-        context=context,
-        whole_home=False,
-        entity_ids=["assist_satellite.kitchen"],
-    )
     manager.async_send.assert_awaited_once_with(
         "Dinner is ready",
+        whole_home=False,
         entity_ids=["assist_satellite.kitchen"],
         source="frontend",
         context=context,
@@ -145,12 +133,6 @@ async def test_broadcast_service_preserves_caller_context_for_authorization(
         "async_get_intercom",
         AsyncMock(return_value=manager),
     )
-    authorized = AsyncMock(return_value=["assist_satellite.kitchen"])
-    monkeypatch.setattr(
-        intercom_services,
-        "async_authorized_broadcast_targets",
-        authorized,
-    )
 
     await intercom_services.async_setup_intercom_services(hass)
     handler = hass.services.async_register.call_args.args[2]
@@ -168,22 +150,14 @@ async def test_broadcast_service_preserves_caller_context_for_authorization(
     result = await handler(call)
 
     assert result == {"id": "broadcast-2"}
-    authorized.assert_awaited_once_with(
-        hass,
-        manager,
-        context=context,
+    manager.async_send.assert_awaited_once_with(
+        "Dinner is ready",
         whole_home=False,
         entity_ids=["assist_satellite.kitchen"],
         device_ids=None,
         area_ids=None,
         floor_ids=None,
         label_ids=None,
-        origin_entity_id=None,
-        origin_device_id=None,
-    )
-    manager.async_send.assert_awaited_once_with(
-        "Dinner is ready",
-        entity_ids=["assist_satellite.kitchen"],
         origin_entity_id=None,
         origin_device_id=None,
         source="service",
@@ -199,8 +173,7 @@ async def test_local_targeted_broadcast_uses_authenticated_permission_boundary(
 
     manager = SimpleNamespace(
         enabled=True,
-        resolve_targets=MagicMock(return_value=["assist_satellite.denied"]),
-        async_send=AsyncMock(),
+        async_send=AsyncMock(side_effect=HomeAssistantError("Permission denied")),
     )
     monkeypatch.setattr(
         local_intents, "async_get_intercom", AsyncMock(return_value=manager)
@@ -210,15 +183,17 @@ async def test_local_targeted_broadcast_uses_authenticated_permission_boundary(
         "parse_targeted_broadcast",
         lambda *_: ({"entity_ids": ["assist_satellite.denied"]}, "Hello"),
     )
-    require = AsyncMock(side_effect=HomeAssistantError("Permission denied"))
-    monkeypatch.setattr(
-        intercom_permissions, "async_require_control_permission", require
-    )
     context = Context(user_id="restricted")
     with pytest.raises(HomeAssistantError, match="Permission denied"):
         await local_intents._async_try_targeted_broadcast(
             hass,
             SimpleNamespace(text="Broadcast to kitchen that hello", context=context),
         )
-    require.assert_awaited_once_with(hass, ["assist_satellite.denied"], context=context)
-    manager.async_send.assert_not_awaited()
+    manager.async_send.assert_awaited_once_with(
+        "Hello",
+        entity_ids=["assist_satellite.denied"],
+        origin_entity_id=None,
+        origin_device_id=None,
+        source="local_voice",
+        context=context,
+    )

@@ -64,16 +64,22 @@ async def test_delayed_broadcast_origin_survives_queue_reload(
     monkeypatch.setattr(
         delayed, "latest_function_tool_for_execution", lambda _agent, current: current
     )
-    intercom = SimpleNamespace(
-        resolve_targets=lambda **kw: (
-            ["assist_satellite.hall"]
-            if kw.get("origin_entity_id") == "assist_satellite.kitchen"
-            else ["assist_satellite.hall", "assist_satellite.kitchen"]
-        ),
-        async_send=AsyncMock(
-            return_value={"id": "message", "targets": [], "deliveries": {}}
-        ),
+    from custom_components.extended_openai_conversation_responses.intercom import (
+        IntercomManager,
     )
+
+    intercom = IntercomManager(hass)
+    intercom._enabled = True
+
+    def resolve(**kw):
+        candidates = kw.get("entity_ids") or [
+            "assist_satellite.hall",
+            "assist_satellite.kitchen",
+        ]
+        return [entity for entity in candidates if entity != kw.get("origin_entity_id")]
+
+    monkeypatch.setattr(intercom, "resolve_targets", resolve)
+    monkeypatch.setattr(intercom, "_schedule_drain", lambda _: None)
     monkeypatch.setattr(native, "async_get_intercom", AsyncMock(return_value=intercom))
 
     async def execute(_tool, call, context, exposed):
@@ -90,9 +96,9 @@ async def test_delayed_broadcast_origin_survives_queue_reload(
     with bind_request_satellite("assist_satellite.unrelated"):
         assert not await manager._async_execute_due(record.call_id)
         assert get_request_satellite() == "assist_satellite.unrelated"
-    sent = intercom.async_send.call_args.kwargs
+    sent = intercom.history()[0]
     assert sent["origin_entity_id"] == (None if legacy else "assist_satellite.kitchen")
-    assert sent["entity_ids"] == (
+    assert sent["targets"] == (
         ["assist_satellite.hall", "assist_satellite.kitchen"]
         if legacy
         else ["assist_satellite.hall"]

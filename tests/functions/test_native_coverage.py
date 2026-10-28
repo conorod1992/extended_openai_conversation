@@ -130,10 +130,6 @@ async def test_broadcast_resolves_destination_and_passes_origin(
     monkeypatch.setattr(
         native_module, "async_get_intercom", AsyncMock(return_value=manager)
     )
-    authorized_targets = AsyncMock(return_value=["assist_satellite.kitchen"])
-    monkeypatch.setattr(
-        native_module, "async_authorized_broadcast_targets", authorized_targets
-    )
 
     context = Context(parent_id="broadcast-origin")
     monkeypatch.setattr(native_module, "get_active_ha_context", lambda: None)
@@ -151,17 +147,9 @@ async def test_broadcast_resolves_destination_and_passes_origin(
         "targets": ["kitchen"],
         "deliveries": 1,
     }
-    authorized_targets.assert_awaited_once_with(
-        hass,
-        manager,
-        context=context,
-        origin_entity_id=None,
-        origin_device_id="origin-device",
-        whole_home=False,
-        entity_ids=["assist_satellite.kitchen"],
-    )
     manager.async_send.assert_awaited_once_with(
         "Dinner is ready",
+        whole_home=False,
         entity_ids=["assist_satellite.kitchen"],
         origin_entity_id=None,
         origin_device_id="origin-device",
@@ -180,8 +168,6 @@ async def test_broadcast_whole_home_without_context(hass, monkeypatch) -> None:
     monkeypatch.setattr(
         native_module, "async_get_intercom", AsyncMock(return_value=manager)
     )
-    authorize = AsyncMock(return_value=["assist_satellite.one", "assist_satellite.two"])
-    monkeypatch.setattr(native_module, "async_authorized_broadcast_targets", authorize)
 
     result = await NativeFunction().send_broadcast(
         hass, {}, {"whole_home": True, "message": "Good night"}, None, []
@@ -193,13 +179,13 @@ async def test_broadcast_whole_home_without_context(hass, monkeypatch) -> None:
         "targets": ["all"],
         "deliveries": 2,
     }
-    authorize.assert_awaited_once_with(
-        hass,
-        manager,
+    manager.async_send.assert_awaited_once_with(
+        "Good night",
         context=ANY,
         origin_entity_id=None,
         origin_device_id=None,
         whole_home=True,
+        source="llm_tool",
     )
 
 
@@ -208,7 +194,7 @@ async def test_broadcast_named_area_target_keeps_indirect_selection(
 ) -> None:
     manager = SimpleNamespace(
         resolve_named_target=Mock(
-            return_value={"name": "Upstairs", "area_id": "upstairs"}
+            return_value={"name": "Upstairs", "area_ids": ["upstairs"]}
         ),
         async_send=AsyncMock(
             return_value={"id": "message-3", "targets": ["upstairs"], "deliveries": 3}
@@ -217,21 +203,19 @@ async def test_broadcast_named_area_target_keeps_indirect_selection(
     monkeypatch.setattr(
         native_module, "async_get_intercom", AsyncMock(return_value=manager)
     )
-    authorize = AsyncMock(return_value=["assist_satellite.bedroom"])
-    monkeypatch.setattr(native_module, "async_authorized_broadcast_targets", authorize)
 
     await NativeFunction().send_broadcast(
         hass, {}, {"destination": "Upstairs", "message": "Lights out"}, None, []
     )
 
-    authorize.assert_awaited_once_with(
-        hass,
-        manager,
+    manager.async_send.assert_awaited_once_with(
+        "Lights out",
         context=ANY,
         origin_entity_id=None,
         origin_device_id=None,
         whole_home=False,
-        area_id="upstairs",
+        area_ids=["upstairs"],
+        source="llm_tool",
     )
 
 

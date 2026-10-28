@@ -39,7 +39,6 @@ from ..ha_actions import (
 )
 from ..ha_permissions import entity_access_error, get_active_ha_context
 from ..intercom import async_get_intercom
-from ..intercom_permissions import async_authorized_broadcast_targets
 from ..operational_errors import log_handled_failure
 from ..recorder_budget import bounded_history, bounded_statistics
 from ..request_origin import get_request_satellite
@@ -362,17 +361,9 @@ class NativeFunction(Function):
         # authenticated HA user retain the existing trusted behavior.
         origin_entity_id = get_request_satellite()
         context = get_active_ha_context() or getattr(llm_context, "context", None)
-        targets = await async_authorized_broadcast_targets(
-            hass,
-            manager,
-            context=context,
-            origin_entity_id=origin_entity_id,
-            origin_device_id=origin_device_id,
-            **target,
-        )
         result = await manager.async_send(
             str(arguments.get("message", "")),
-            entity_ids=targets,
+            **target,
             origin_entity_id=origin_entity_id,
             origin_device_id=origin_device_id,
             source="llm_tool",

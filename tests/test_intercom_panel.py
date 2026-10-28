@@ -157,21 +157,15 @@ async def test_websocket_broadcast_rejects_invalid_send_requests(
     hass, monkeypatch, message, error
 ) -> None:
     """Reject invalid send payloads before resolving or queueing targets."""
-    manager = SimpleNamespace()
+    manager = SimpleNamespace(async_send=AsyncMock())
     monkeypatch.setattr(
         intercom_panel, "async_get_intercom", AsyncMock(return_value=manager)
-    )
-    authorized_targets = AsyncMock()
-    monkeypatch.setattr(
-        intercom_panel,
-        "async_authorized_broadcast_targets",
-        authorized_targets,
     )
     connection = _connection()
 
     await _call_handler(hass, connection, message)
 
-    authorized_targets.assert_not_awaited()
+    manager.async_send.assert_not_awaited()
     connection.send_error.assert_called_once_with(
         message["id"], "invalid_request", error
     )
@@ -185,12 +179,6 @@ async def test_websocket_broadcast_sends_to_whole_home_targets(
     manager = SimpleNamespace(async_send=AsyncMock(return_value={"id": "broadcast-1"}))
     monkeypatch.setattr(
         intercom_panel, "async_get_intercom", AsyncMock(return_value=manager)
-    )
-    authorized_targets = AsyncMock(return_value=["assist_satellite.kitchen"])
-    monkeypatch.setattr(
-        intercom_panel,
-        "async_authorized_broadcast_targets",
-        authorized_targets,
     )
     connection = _connection()
 
@@ -213,16 +201,10 @@ async def test_websocket_broadcast_sends_to_whole_home_targets(
             "whole_home": True,
         }
     )
-    authorized_targets.assert_awaited_once_with(
-        hass,
-        manager,
-        context="context",
-        whole_home=True,
-        entity_ids=[],
-    )
     manager.async_send.assert_awaited_once_with(
         "Dinner is ready",
-        entity_ids=["assist_satellite.kitchen"],
+        whole_home=True,
+        entity_ids=[],
         source="frontend",
         context="context",
     )
