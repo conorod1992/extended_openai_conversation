@@ -1,4 +1,4 @@
-import {captureConfigurationOwner, presentAcknowledgedMutation, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
+import {callMutation, captureConfigurationOwner, presentAcknowledgedMutation, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
 import {watchLiveStatus, stopLiveStatus} from "./management-live-status.js";
 const ROUTE_STYLE = `/* Overview Broadcast */
 #broadcast-card{background:color-mix(in srgb,var(--secondary-background-color) 20%,var(--card-background-color));border-color:color-mix(in srgb,var(--divider-color) 72%,var(--secondary-text-color))}
@@ -111,7 +111,7 @@ function bindBroadcastControls(panel, snapshot) {
     event.target.disabled = true;
     const submission = captureConfigurationOwner(panel);
     try {
-      const result = await panel._hass.callWS({type: WS_BROADCAST, action: "set_enabled", enabled});
+      const result = await callMutation(() => panel._hass.callWS({type: WS_BROADCAST, action: "set_enabled", enabled}));
       requireMutationAcknowledgement(typeof result?.enabled === "boolean", "changing Broadcast");
       await presentAcknowledgedMutation(panel, submission, `Broadcast ${result.enabled ? "enabled" : "disabled"}`, async () => {
         if (!await loadBroadcast(panel)) throw Error("Broadcast status could not be refreshed.");
@@ -150,13 +150,13 @@ function bindBroadcastControls(panel, snapshot) {
     panel._broadcastSending = true;
     button.disabled = true;
     try {
-      const result = await panel._hass.callWS({
+      const result = await callMutation(() => panel._hass.callWS({
         type: WS_BROADCAST,
         action: "send",
         message,
         whole_home: wholeHome,
         entity_ids: wholeHome ? [] : selected,
-      });
+      }));
       requireMutationAcknowledgement(typeof result?.status === "string", "queuing Broadcast");
       await presentAcknowledgedMutation(panel, submission, "Broadcast queued", async () => {
         if ((panel._broadcastDraftRevision || 0) === draftRevision) panel._broadcastMessage = "";

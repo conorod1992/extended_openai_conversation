@@ -3,8 +3,9 @@ import test from "node:test";
 import {bindBackupTransfer, cancelBackupImport, openBackupPicker, refreshImportPreview} from "../custom_components/extended_openai_conversation_responses/frontend/backup-transfer-ui.js";
 import {cleanupStateSafety, confirmStateSafeNavigation} from "../custom_components/extended_openai_conversation_responses/frontend/management-state-safety.js";
 import {deferred} from "./frontend-test-helpers.mjs";
+import {readFile} from "node:fs/promises";
 
-function harness() {
+function harness(bind = bindBackupTransfer) {
   let agent = {entry_id:"entry-A", subentry_id:"agent-A"};
   const calls = [], nodes = new Map();
   const section = {value:"persistent_memory", checked:true, addEventListener(){}};
@@ -29,15 +30,115 @@ function harness() {
       if (message.action === "import_inspect" && message.data.inspect_only) return {valid:true, title:message.subentry_id, available_sections:["persistent_memory"], preview_token:null};
       if (message.action === "import_inspect") return {preview:{selected_sections:["persistent_memory"]}, preview_token:"validated"};
       if (message.action === "import_cancel") return {cancelled:true};
-      if (message.action === "import_restore") return {restored:true};
+      if (message.action === "import_restore") return {status:"restored"};
       throw new Error(`Unexpected ${message.action}`);
     }},
   };
-  bindBackupTransfer(panel);
+  bind(panel);
   return {panel, calls, nodes, switchAgent() { agent = {entry_id:"entry-B", subentry_id:"agent-B"}; },
     upload:() => nodes.get("#backup-file-transfer").handlers.change({target:{files:[new Blob(["x"])]}}),
   };
 }
+
+async function restoreAcknowledgementWitness(fault, bind = bindBackupTransfer) {
+  const h = harness(bind), messages = [], warnings = [];
+  await h.upload();
+  h.panel._eocBackupTransferCleanup();
+  h.panel._backupTransferSession = Object.freeze({session_id:"agent-A", owner:Object.freeze({entry_id:"entry-A", subentry_id:"agent-A"})});
+  h.panel._backupTransferPreviewToken = "validated";
+  h.nodes.get("#restore-transfer-apply").disabled = false;
+  const section = h.nodes.get("#restore-transfer-sections").querySelectorAll()[0];
+  section.value = "configuration";
+  const persisted = {model:"original"};
+  let writes = 0;
+  const original = h.panel._hass.callWS;
+  h.panel._hass.callWS = async message => {
+    if (message.action !== "import_restore") return original(message);
+    writes += 1;
+    persisted.model = "restored";
+    return {status:"restored", provider_connection_message:"Provider credentials were preserved"};
+  };
+  h.panel._draft = {model:"old local draft"};
+  h.panel._clearConfigDraft = () => { h.panel._draft = null; };
+  const fail = label => { throw new Error(`${label} failed after commit`); };
+  h.panel._toast = (message, warning) => { messages.push(message); warnings.push(warning); if (fault === "toast") fail("toast"); };
+  h.panel._invalidateAfterMutation = () => { if (fault === "cache") fail("cache"); };
+  h.panel._invalidateCleanConfiguration = () => { if (fault === "configuration cache") fail("configuration cache"); };
+  h.panel._loadAgents = async () => { if (fault === "refresh") fail("refresh"); };
+  h.panel._setSaving = (_button, saving) => { if (!saving && fault === "saving cleanup") fail("saving cleanup"); };
+  if (fault === "modal close") h.nodes.get("#restore-dialog").close = () => fail("modal close");
+
+  await h.nodes.get("#restore-transfer-apply").handlers.click();
+  assert.equal(persisted.model, "restored");
+  assert.equal(writes, 1);
+  assert.equal(h.panel._backupTransferSession, null, "a committed restore must consume its session before presentation");
+  assert.equal(h.panel._backupTransferPreviewToken, null, "a committed restore must retire its preview before presentation");
+  assert.equal(h.panel._draft, null, "a replaced configuration must retire its old local draft before presentation");
+  assert.equal(messages.some(message => message.includes("Unable to restore")), false, "presentation must not reject a committed restore");
+  assert.ok(messages.some(message => message.includes("restored")));
+  assert.ok(warnings.every(Boolean), "provider-connection and presentation warnings retain warning severity");
+  await h.nodes.get("#restore-transfer-apply").handlers.click();
+  assert.equal(writes, 1, "presentation failure must not replay a committed restore");
+}
+
+for (const failure of [new Error("offline"), {type:"result", success:false, error:{code:3, message:"Connection lost"}}, 3, {code:"invalid_request", message:"Preview rejected"}]) {
+  test(`restore transport distinguishes unknown outcomes from server rejection: ${JSON.stringify(failure)}`, async () => {
+    const h = harness(), messages = [];
+    await h.upload(); h.panel._eocBackupTransferCleanup();
+    h.panel._backupTransferSession = {session_id:"agent-A", owner:{entry_id:"entry-A", subentry_id:"agent-A"}};
+    h.panel._backupTransferPreviewToken = "validated";
+    h.nodes.get("#restore-transfer-apply").disabled = false;
+    h.panel._toast = message => messages.push(message);
+    let writes = 0;
+    h.panel._hass.callWS = async message => {
+      if (message.action === "import_restore") {
+        if (!failure?.code) writes += 1;
+        throw failure;
+      }
+      return {cancelled:true};
+    };
+    await h.nodes.get("#restore-transfer-apply").handlers.click();
+    assert.equal(messages.some(message => message.includes("Selected sections restored")), false);
+    assert.equal(messages.some(message => message.includes("unknown") && message.includes("Refresh")), !failure?.code);
+    assert.equal(writes, failure?.code ? 0 : 1);
+    assert.equal(h.panel._backupTransferSession, null);
+    assert.equal(h.nodes.get("#restore-transfer-apply").disabled, true);
+    await h.nodes.get("#restore-transfer-apply").handlers.click();
+    assert.equal(writes, failure?.code ? 0 : 1);
+  });
+}
+
+for (const fault of ["cache", "configuration cache", "modal close", "refresh", "toast", "saving cleanup"]) {
+  test(`restore acknowledgement survives ${fault} failure without a second write`, () => restoreAcknowledgementWitness(fault));
+}
+
+for (const response of [null, {}, {status:"pending"}, {restored:true}]) {
+  test(`unconfirmed restore response remains uncertain: ${JSON.stringify(response)}`, async () => {
+    const h = harness(), messages = [];
+    await h.upload(); h.panel._eocBackupTransferCleanup();
+    h.panel._backupTransferSession = {session_id:"agent-A", owner:{entry_id:"entry-A", subentry_id:"agent-A"}};
+    h.panel._backupTransferPreviewToken = "validated";
+    h.nodes.get("#restore-transfer-apply").disabled = false;
+    h.panel._toast = message => messages.push(message);
+    h.panel._hass.callWS = async message => message.action === "import_restore" ? response : {cancelled:true};
+    await h.nodes.get("#restore-transfer-apply").handlers.click();
+    assert.equal(messages.some(message => message.includes("Selected sections restored")), false);
+    assert.ok(messages.some(message => message.includes("unknown") && message.includes("Refresh")));
+    assert.equal(h.panel._backupTransferSession, null);
+    assert.equal(h.nodes.get("#restore-transfer-apply").disabled, true);
+  });
+}
+
+test("restore acknowledgement sensitivity detects cache errors escaping the transport boundary", async () => {
+  const url = new URL("../custom_components/extended_openai_conversation_responses/frontend/backup-transfer-ui.js", import.meta.url);
+  const source = await readFile(url, "utf8");
+  const guarded = 'processMutationResponse(result, () => panel._invalidateAfterMutation?.(agent.subentry_id, "backup", "restore"))';
+  assert.equal(source.split(guarded).length, 2);
+  const mutant = source.replace(guarded, 'panel._invalidateAfterMutation?.(agent.subentry_id, "backup", "restore")')
+    .replace(/(from\s+["'])(\.[^"']+)(["'])/g, (_match, before, path, after) => before + new URL(path, url).href + after);
+  const {bindBackupTransfer: bind} = await import(`data:text/javascript;base64,${Buffer.from(mutant).toString("base64")}`);
+  await assert.rejects(() => restoreAcknowledgementWitness("cache", bind), /consume its session|retire its preview|presentation must not reject/);
+});
 
 for (const cleanup of ["cancel", "picker", "preview", "navigation", "disconnect", "escape", "close"]) {
   test(`prepared imports retain ownership during ${cleanup} after switching agents`, async () => {
@@ -110,7 +211,7 @@ for (const switchAgent of [false, true]) test(`late restore completion cannot cl
   await h.upload();
   const next = h.panel._backupTransferSession;
   h.panel._loadAgents = async () => assert.fail("a newer Backup dialog must retain its own presentation");
-  restore.resolve({restored:true}); await applying;
+  restore.resolve({status:"restored"}); await applying;
   assert.equal(h.panel._backupTransferSession, next);
   assert.equal(h.panel._backupTransferInspection.title, switchAgent ? "agent-B" : "agent-A");
   h.panel._eocBackupTransferCleanup();
@@ -143,7 +244,7 @@ for (const dismissal of ["escape", "cancel"]) {
     }
     assert.equal(h.panel._backupTransferSession, session);
     assert.equal(h.calls.some(call => call.action === "import_cancel"), false);
-    restore.resolve({restored:true}); await applying;
+    restore.resolve({status:"restored"}); await applying;
     assert.equal(h.panel._backupTransferSession, null);
     assert.equal(reloads.length, 1);
     assert.ok(toasts.some(message => message.includes("restored")));
@@ -166,7 +267,7 @@ test("a departed restore reports its outcome and invalidates its owner's cache",
   const applying = h.nodes.get("#restore-transfer-apply").handlers.click(); await started.promise;
   await confirmStateSafeNavigation(h.panel, null); h.switchAgent(); await h.upload();
   const next = h.panel._backupTransferSession;
-  restore.resolve({restored:true}); await applying;
+  restore.resolve({status:"restored"}); await applying;
   assert.equal(h.panel._backupTransferSession, next);
   assert.deepEqual(invalidated, ["agent-A"]);
   assert.ok(toasts.some(message => message.includes("restored") && message.includes("agent-A")));
@@ -192,7 +293,7 @@ for (const refreshFails of [false, true]) {
     };
     const applying = h.nodes.get("#restore-transfer-apply").handlers.click(); await started.promise;
     await confirmStateSafeNavigation(h.panel, "assistant/basics"); view = "assistant/basics";
-    restore.resolve({restored:true}); await applying;
+    restore.resolve({status:"restored"}); await applying;
     assert.deepEqual(reloads, [{id:"agent-A", owner:{agentId:"agent-A", entryId:"entry-A"}}]);
     assert.equal(h.calls.some(call => call.action === "import_cancel"), false);
     assert.equal(toasts.some(message => message.includes("Unable to restore")), false);

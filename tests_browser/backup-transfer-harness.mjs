@@ -152,7 +152,7 @@ export function createBackupTransferBackend(backend) {
       if (!data.preview_token || data.preview_token !== session.previewToken) throw new Error("Stale browser fixture preview");
       await restore(importDocument(session), data.sections);
       imports.delete(data.session_id);
-      return {restored: true};
+      return {status: "restored"};
     }
     if (action === "import_cancel") {
       imports.delete(data.session_id);

@@ -18,7 +18,7 @@ import {readSectionCache, writeSectionCache, pruneCacheTimes, SCOPE_CACHE_TTL_MS
 import {bindPanelDialogs, knowledgeSourceAvailabilityControl, updateDialogs, setDialogBaseline} from "./management-dialogs.js";
 import {ASSISTANT_INTRO_MARKUP, renderManagement, showPendingDestination, reconcileScopePicker, reconcileHistoryConfiguration} from "./management-renderer.js";
 import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, syncAgentPicker} from "./management-actions.js";
-import {captureConfigurationOwner, configurationSubmissionIsCurrent, configurationReadOvertookSubmission, mergeConfigurationRead, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
+import {callMutation, captureConfigurationOwner, configurationSubmissionIsCurrent, configurationReadOvertookSubmission, mergeConfigurationRead, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
 import {captureCatalogLoad, catalogFailureIsCurrent} from "./management-catalog-ownership.js";
 import {capturePageRead, acceptPageRead} from "./page-save-acknowledgement.js";
 import {loadAgentsWithOverviewPrefetch, loadRoute, bindRequestRuleSearch, applyRequestRuleSearch, warmRouteAsset, prefetchIntentRead, consumeIntentRead, consumeStoredConfigurationPrefetch, discardStoredConfigurationPrefetch, markConfigurationRead, measureConfigurationRead} from "./management-route.js";
@@ -985,13 +985,14 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     };
     if (mutationTrace) mutationTrace.wsSentAt = requestTrace.sentAt;
     try {
-      const result = await this._hass.callWS({
+      const send = () => this._hass.callWS({
         type: WS_TYPE,
         section,
         action,
         ...(agent ? { entry_id: agent.entry_id, subentry_id: agent.subentry_id } : {}),
         ...extra,
       });
+      const result = await (mutationEffects(section, action) ? callMutation(send) : send());
       requestTrace.responseAt = performanceNow();
       requestTrace.durationMs = requestTrace.responseAt - requestTrace.sentAt;
       requestTrace.status = "fulfilled";
@@ -1019,12 +1020,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         mutationTrace.wsResponseAt = requestTrace.responseAt;
         mutationTrace.wsDurationMs = requestTrace.durationMs;
       }
-      if (mutationEffects(section, action) && !err?.code) {
-        const uncertain = new Error(`${err?.message || String(err)}. The mutation outcome is unknown; refresh before retrying.`, {cause:err});
-        requestTrace.status = "uncertain";
-        uncertain.mutationOutcome = "uncertain";
-        throw uncertain;
-      }
+      if (err?.mutationOutcome === "uncertain") requestTrace.status = "uncertain";
       throw err;
     } finally {
       this._eocRequestDiagnostics ||= [];
@@ -2162,9 +2158,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   _disableGuestMode() {
     return this._runGuestOperation(async () => {
-      if (!await this._confirm("End Guest Mode?", "This immediately ends an active interval or cancels a future schedule.", "End Guest Mode")) return;
       const agentId = this._agentId;
+      const owner = this._retainedMutationOwner();
       const submission = captureConfigurationOwner(this);
+      if (!await this._confirm("End Guest Mode?", "This immediately ends an active interval or cancels a future schedule.", "End Guest Mode")) return;
+      if (!configurationSubmissionIsCurrent(this, submission) || !this._ownsRetainedMutation(owner)) return;
       try {
         const result = await this._call("guest_mode", "disable");
         requireMutationAcknowledgement(result?.status && typeof result.status === "object", "the Guest Mode change");
@@ -2618,9 +2616,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   async _deleteSource(sourceId, fromDialog = false, button = null) {
-    if (!sourceId || !await this._confirm("Delete Knowledge source?", "This permanently removes the selected source from this agent's local Knowledge Library.", "Delete")) return;
     const owner = this._retainedMutationOwner();
     const submission = captureConfigurationOwner(this);
+    if (!sourceId || !await this._confirm("Delete Knowledge source?", "This permanently removes the selected source from this agent's local Knowledge Library.", "Delete")) return;
+    if (!configurationSubmissionIsCurrent(this, submission) || !this._ownsRetainedMutation(owner)) return;
     this._setSaving(button, true, "Deleting…");
     try {
       const response = await this._call("knowledge", "delete", { source_id: sourceId, confirm: true });
@@ -2642,9 +2641,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   async _deleteMemory(memoryId, fromDialog = false, button = null) {
     const sourceScope = fromDialog && this._editingMemory?.memory_id === memoryId
       ? this._memoryMutationScope : this._scopeId;
-    if (!memoryId || !await this._confirm("Delete memory?", "This memory will be permanently removed from the selected scope.", "Delete")) return;
     const owner = this._retainedMutationOwner();
     const submission = captureConfigurationOwner(this);
+    if (!memoryId || !await this._confirm("Delete memory?", "This memory will be permanently removed from the selected scope.", "Delete")) return;
+    if (!configurationSubmissionIsCurrent(this, submission) || !this._ownsRetainedMutation(owner)) return;
     this._setSaving(button, true, "Deleting…");
     try {
       const response = await this._call("memories", "delete", { scope_id: sourceScope, memory_id: memoryId });
@@ -2750,9 +2750,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   async _clearUsageDetails(button = null) {
-    if (!await this._confirm("Clear recent usage details?", "Request and run details will be removed. Daily, monthly, and lifetime totals remain.", "Clear details")) return;
     const owner = this._retainedMutationOwner();
     const submission = captureConfigurationOwner(this);
+    if (!await this._confirm("Clear recent usage details?", "Request and run details will be removed. Daily, monthly, and lifetime totals remain.", "Clear details")) return;
+    if (!configurationSubmissionIsCurrent(this, submission) || !this._ownsRetainedMutation(owner)) return;
     this._setSaving(button, true, "Clearing…");
     try {
       const response = await this._call("usage", "clear_details", { confirm: true });

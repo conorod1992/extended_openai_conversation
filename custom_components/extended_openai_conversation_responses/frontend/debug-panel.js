@@ -1,4 +1,4 @@
-import {presentAcknowledgedMutation, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
+import {callMutation, presentAcknowledgedMutation, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
 import {readOptionalStorage, writeOptionalStorage} from "./browser-storage.js";
 import {DEBUG_PROVIDER_PAGE_LIMIT, debugPageText, providerPageLabel, providerPageMeta, sessionLabel} from "./debug-management.js";
 
@@ -39,7 +39,7 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
   }
 
   async _call(action, extra = {}, agent = this._agent) {
-    return await this._hass.callWS({
+    const send = () => this._hass.callWS({
       type: WS_TYPE,
       action,
       ...(agent ? {
@@ -48,6 +48,7 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
       } : {}),
       ...extra,
     });
+    return await (["configure", "clear"].includes(action) ? callMutation(send) : send());
   }
 
   disconnectedCallback() {

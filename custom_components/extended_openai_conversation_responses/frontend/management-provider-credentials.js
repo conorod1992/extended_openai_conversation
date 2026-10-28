@@ -1,4 +1,4 @@
-import {captureConfigurationOwner, presentAcknowledgedMutation, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
+import {callMutation, captureConfigurationOwner, presentAcknowledgedMutation, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
 const CREDENTIAL_COMMAND = "extended_openai_conversation_responses/management/update_api_key";
 
 export function providerCredentialScope(agent = {}) {
@@ -32,11 +32,11 @@ export async function updateProviderApiKey(panel, agent, apiKey) {
   const connection = panel?._hass;
   if (!connection?.callWS) throw new Error("Home Assistant connection is unavailable.");
   if (!agent?.entry_id) throw new Error("Provider connection is unavailable.");
-  return connection.callWS({
+  return callMutation(() => connection.callWS({
     type: CREDENTIAL_COMMAND,
     entry_id: agent.entry_id,
     api_key: apiKey,
-  });
+  }));
 }
 
 function ensureStyles(panel) {

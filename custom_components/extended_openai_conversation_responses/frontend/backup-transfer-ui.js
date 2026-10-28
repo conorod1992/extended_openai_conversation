@@ -2,6 +2,7 @@ import {restoreScopeMarkup} from "./management-decision-guidance.js";
 import {TRANSFER_SECTIONS} from "./backup-transfer-shell.js";
 import {backupSummaryLines} from "./backup-summary.js";
 import {reviewSharingExport} from "./sharing-review.js";
+import {callMutation, captureConfigurationOwner, configurationSubmissionIsCurrent, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
 export {backupSummaryLines};
 export {TRANSFER_SECTIONS, renderBackupTransferPanel} from "./backup-transfer-shell.js";
 export const WS_BACKUP_TRANSFER = "extended_openai_conversation_responses/management/backup_transfer";
@@ -38,15 +39,17 @@ function ownsTransfer(panel, session) {
 export async function callBackupTransfer(panel, action, data = {}, owner = selectedAgent(panel)) {
   if (!panel?._hass?.callWS) throw new Error("Home Assistant connection is unavailable");
   const agent = owner;
-  const result = await panel._hass.callWS({
+  const send = () => panel._hass.callWS({
     type: WS_BACKUP_TRANSFER,
     action,
     entry_id: agent.entry_id,
     subentry_id: agent.subentry_id,
     data,
   });
+  const result = action === "import_restore" ? await callMutation(send) : await send();
   if (action === "import_restore") {
-    panel._invalidateAfterMutation?.(agent.subentry_id, "backup", "restore");
+    requireMutationAcknowledgement(result?.status === "restored", "restoring selected sections");
+    processMutationResponse(result, () => panel._invalidateAfterMutation?.(agent.subentry_id, "backup", "restore"));
   }
   return result;
 }
@@ -583,9 +586,18 @@ export function bindBackupTransfer(panel) {
     const session = panel._backupTransferSession;
     if (!session || panel._backupRestoreOperations?.has(session)) return;
     if (!ownsTransfer(panel, session)) { void cancelBackupImport(panel, session); return; }
+    const owner = captureConfigurationOwner(panel);
+    // Configuration restoration deliberately retires the draft. Authentication
+    // still owns confirmation and presentation throughout that transition.
+    delete owner.draftGeneration;
+    const ownsAuthentication = () => {
+      const current = captureConfigurationOwner(panel);
+      return current.userId === owner.userId && current.authenticationGeneration === owner.authenticationGeneration;
+    };
     const generation = panel._backupImportGeneration || 0;
     const ownerView = panel._viewKey?.();
     const ownsUI = () => ownsTransfer(panel, session)
+      && configurationSubmissionIsCurrent(panel, owner)
       && (panel._backupImportGeneration || 0) === generation && panel._viewKey?.() === ownerView;
     const sections = selectedValues(root, ".transfer-restore-section");
     if (!sections.length) return;
@@ -613,55 +625,66 @@ export function bindBackupTransfer(panel) {
     if (status) status.textContent = "Restoring selected sections… Please wait for the result.";
     let mustReselectFile = false;
     let restoreCommitted = false;
+    let outcome;
     let providerNotice = "";
     const refreshOwner = {agentId: session.owner.subentry_id, entryId: session.owner.entry_id};
     panel._setSaving(button, true);
     try {
-      const outcome = await callBackupTransfer(panel, "import_restore", {session_id: session.session_id, sections, preview_token: serverPreviewToken, ...(restoreProvider ? {restore_provider_connection: true} : {})}, session.owner);
+      outcome = await callBackupTransfer(panel, "import_restore", {session_id: session.session_id, sections, preview_token: serverPreviewToken, ...(restoreProvider ? {restore_provider_connection: true} : {})}, session.owner);
       providerNotice = outcome?.provider_connection_message || "";
       restoreCommitted = true;
-      panel._invalidateCleanConfiguration?.(session.owner.subentry_id);
-      if (panel._backupTransferSession !== session || !ownsUI()) {
-        panel._toast(`Selected sections restored for agent ${session.owner.subentry_id}`);
-        // Navigation retires the preview, not the selected agent's need for
-        // fresh data. Reload its current view without discarding newer edits.
-        // A newer Backup dialog owns its own session and must stay intact.
-        if (ownsTransfer(panel, session) && panel._viewKey?.() !== "usage-maintenance/backup-restore") {
-          await panel._loadAgents(session.owner.subentry_id, refreshOwner);
+      const ownedDialog = panel._backupTransferSession === session && ownsUI();
+      // Retire this acknowledged session before cache, modal or refresh work.
+      // A newer dialog retains its own session and preview.
+      if (panel._backupTransferSession === session) {
+        panel._backupTransferSession = null;
+        panel._backupTransferInspection = null;
+        panel._backupTransferPreview = null;
+        panel._backupTransferPreviewToken = null;
+      }
+      await processMutationResponse(outcome, async () => {
+        if (ownedDialog && sections.includes("configuration")) panel._clearConfigDraft();
+        panel._invalidateCleanConfiguration?.(session.owner.subentry_id);
+        if (!ownedDialog) {
+          // Navigation retires the preview, not its owner's refresh obligation.
+          if (configurationSubmissionIsCurrent(panel, owner) && ownsTransfer(panel, session) && panel._viewKey?.() !== "usage-maintenance/backup-restore") {
+            await panel._loadAgents(session.owner.subentry_id, refreshOwner);
+          }
+          return;
         }
-        return;
-      }
-      panel._backupTransferSession = null;
-      panel._backupTransferInspection = null;
-      panel._backupTransferPreview = null;
-      panel._backupTransferPreviewToken = null;
-      root.querySelector("#restore-dialog").close();
-      if (sections.includes("configuration")) panel._clearConfigDraft();
-      await panel._loadAgents(session.owner.subentry_id, refreshOwner);
-      panel._toast((ownsUI() ? "Selected sections restored" : `Selected sections restored for agent ${session.owner.subentry_id}`) + (providerNotice ? `. ${providerNotice}` : ""), Boolean(providerNotice));
+        root.querySelector("#restore-dialog").close();
+        await panel._loadAgents(session.owner.subentry_id, refreshOwner);
+      });
+      // A provider-connection warning is still an acknowledged agent restore.
+      return await presentAcknowledgedMutation(panel, ownsAuthentication,
+        (ownsUI() ? "Selected sections restored" : `Selected sections restored for agent ${session.owner.subentry_id}`) + (providerNotice ? `. ${providerNotice}` : ""),
+        null, outcome, {warning:Boolean(providerNotice)});
     } catch (err) {
-      if (restoreCommitted) {
-        panel._toast(`Selected sections restored for agent ${session.owner.subentry_id}, but displayed information could not be refreshed: ${err.message || String(err)}`, true);
-        return;
-      }
+      const unknown = err?.mutationOutcome === "uncertain";
       if (panel._backupTransferSession !== session || !ownsUI()) {
-        panel._toast(`Unable to restore agent ${session.owner.subentry_id}: ${err.message || String(err)}`, true);
+        panel._toast(`${unknown ? "Restore outcome is unknown" : "Unable to restore"} for agent ${session.owner.subentry_id}: ${err.message || String(err)}`, true);
         return;
       }
       void cancelBackupImportSession(panel, session);
       panel._backupTransferSession = null;
       mustReselectFile = true;
       button.disabled = true;
-      panel._toast(`Unable to restore: ${err.message || String(err)} Re-select the transfer file to retry.`, true);
+      panel._toast(unknown
+        ? `Restore outcome is unknown: ${err.message || String(err)} Refresh the agent's state before preparing another restore.`
+        : `Unable to restore: ${err.message || String(err)} Re-select the transfer file to retry.`, true);
     } finally {
-      panel._backupRestoreOperations.delete(session);
-      if (ownsUI() && cancel) cancel.disabled = false;
-      if (ownsUI() && mustReselectFile) {
-        button.disabled = true;
-        button.textContent = button.dataset.label || "Restore selected sections";
-      } else if (ownsUI()) {
-        panel._setSaving(button, false);
-      }
+      const finish = () => {
+        panel._backupRestoreOperations.delete(session);
+        if (ownsUI() && cancel) cancel.disabled = false;
+        if (ownsUI() && mustReselectFile) {
+          button.disabled = true;
+          button.textContent = button.dataset.label || "Restore selected sections";
+        } else if (ownsUI()) {
+          panel._setSaving(button, false);
+        }
+      };
+      if (restoreCommitted) processMutationResponse(outcome, finish);
+      else finish();
     }
   });
 }

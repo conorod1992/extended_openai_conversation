@@ -26,7 +26,7 @@ let total=100;
 panel._hass={callWS:async message=>{
   calls.push(message.action);
   if(message.action==='daily') return {days:[{date:'2026-10-09',total_tokens:total}]};
-  if(message.action==='import_restore'){total=200;return {restored:true};}
+  if(message.action==='import_restore'){total=200;return {status:'restored'};}
   if(message.action==='agents') return {agents,scopes:[],is_admin:true};
   throw Error('Unexpected '+message.action);
 }};

@@ -3,7 +3,7 @@ import test from "node:test";
 
 // This reviewed inventory describes observable effects independently of production metadata.
 const commands = {
-  backup:["restore"], quiet_hours:["update"], configuration:["update", "save", "import"],
+  backup:["restore"], quiet_hours:["update"], configuration:["update", "save", "import", "duplicate"],
   function_repair:["save", "save_one", "delete_one", "configuration_save"],
   conversations:["delete", "end_active"], guest_mode:["save_policy", "update", "disable"],
   knowledge:["create", "update", "delete", "set_enabled"],
@@ -42,9 +42,9 @@ for (const [section, actions] of Object.entries(commands)) for (const action of 
   test(`${section}.${action} preserves mutation protection and exact projection effects`, () => {
     const host = panel();
     const restore = section === "backup";
-    const config = ["backup", "configuration", "function_repair", "tools", "settings"].includes(section)
+    const config = (["backup", "configuration", "function_repair", "tools", "settings"].includes(section) && action !== "duplicate")
       || section === "knowledge" && action === "set_enabled" || section === "guest_mode" && action === "save_policy";
-    const rules = ["configuration", "function_repair", "tools", "request_rules"].includes(section);
+    const rules = ["configuration", "function_repair", "tools", "request_rules"].includes(section) && !(section === "configuration" && action === "duplicate");
     const collection = ["request_rules", "knowledge", "memories"].includes(section);
     const usage = section === "usage";
     assert.equal(isAgentMutation(section, action), true);

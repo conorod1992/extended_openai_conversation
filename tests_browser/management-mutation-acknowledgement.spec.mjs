@@ -1,6 +1,6 @@
 import {expect, test} from "@playwright/test";
 import {openDataCollection} from "./data-collection-helpers.mjs";
-import {trackPageErrors, expectHarnessClean} from "./browser-helpers.mjs";
+import {trackPageErrors, expectHarnessClean, fixtureUrl} from "./browser-helpers.mjs";
 
 for (const bundled of [false, true]) for (const kind of ["knowledge", "persistent"]) {
   for (const failure of ["close", "cache", "render"]) {
@@ -58,6 +58,71 @@ for (const bundled of [false, true]) for (const kind of ["knowledge", "persisten
     await expect(panel.locator(`#${editor}-error`)).toContainText("outcome is unknown");
     expect(await page.evaluate(kind => (kind === "knowledge" ? dataCollectionBackend.state.sources : dataCollectionBackend.state.memories).length, kind)).toBe(2);
     expect(await page.evaluate(() => dataCollectionBackend.calls.filter(call => ["create", "add"].includes(call.action)).length)).toBe(1);
+    await expectHarnessClean(page, errors);
+  });
+}
+
+for (const bundled of [false, true]) for (const failure of ["cache", "lost"]) {
+  test(`duplicate acknowledgement survives request ${failure} failure (${bundled ? "bundle" : "source"})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    await page.goto(fixtureUrl("assistant/basics", bundled ? "&bundle=1" : ""));
+    const panel = page.locator("extended-openai-management-panel");
+    await expect(panel.locator('[data-config="max_tokens"]')).toBeVisible();
+    await panel.evaluate((host, failure) => {
+      const callWS = host.hass.callWS.bind(host.hass);
+      window.createdAgents = [];
+      window.duplicateSource = host._configData;
+      host.hass.callWS = async request => {
+        if (request.section !== "configuration" || request.action !== "duplicate") return callWS(request);
+        const created = {subentry_id:`copy-${createdAgents.length + 1}`, title:"Committed copy"};
+        createdAgents.push(created);
+        if (failure === "lost") throw Error("connection lost after create");
+        return created;
+      };
+      if (failure === "cache") host._invalidateAfterMutation = () => { throw Error("post-commit cache failure"); };
+      host._loadAgents = async () => {};
+    }, failure);
+    await panel.locator(".agent-actions-menu > summary").click();
+    await panel.locator("#duplicate-agent").click();
+    await expect(panel.locator("#toast")).toContainText(failure === "cache"
+      ? /Created Committed copy, but .*post-commit cache failure/
+      : /Unable to duplicate agent: .*outcome is unknown/);
+    expect(await page.evaluate(() => createdAgents.length)).toBe(1);
+    expect(await panel.evaluate(host => host._configData === duplicateSource)).toBe(true);
+    expect(await panel.evaluate(host => host._eocRequestDiagnostics.at(-1).status)).toBe(failure === "lost" ? "uncertain" : "fulfilled");
+    await expect(panel.locator("#duplicate-agent")).toBeEnabled();
+    await expectHarnessClean(page, errors);
+  });
+}
+
+for (const bundled of [false, true]) for (const action of ["delete", "clear"]) for (const transition of ["none", "agent", "authentication round trip"]) {
+  test(`temporary ${action} confirmation retains its owner: ${transition} (${bundled ? "bundle" : "source"})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    const panel = await openDataCollection(page, "temporary", 1, bundled);
+    await panel.evaluate((host, transition) => {
+      window.confirmationCompleted = false;
+      host._confirm = async () => {
+        if (transition === "agent") {
+          host._data.agents.push({entry_id:"another-entry", subentry_id:"another-agent"});
+          host._agentId = "another-agent";
+        } else if (transition === "authentication round trip") {
+          const original = host.hass;
+          host.hass = {...original, user:{...original.user, id:"intervening-user"}};
+          host.hass = original;
+        }
+        confirmationCompleted = true;
+        return true;
+      };
+    }, transition);
+    await panel.locator(action === "delete" ? ".delete-temporary" : "#clear-temporary").first().click();
+    await expect.poll(() => page.evaluate(() => confirmationCompleted)).toBe(true);
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const outcome = await page.evaluate(action => ({
+      writes:dataCollectionBackend.calls.filter(call => call.action === `temporary_${action}`),
+      remaining:dataCollectionBackend.state.temporary.length,
+    }), action);
+    expect(outcome.writes).toHaveLength(transition === "none" ? 1 : 0);
+    expect(outcome.remaining).toBe(transition === "none" ? action === "delete" ? 11 : 0 : 12);
     await expectHarnessClean(page, errors);
   });
 }

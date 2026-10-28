@@ -3,6 +3,20 @@ import {clone, same, mergeAcknowledgedDraft} from "./unsaved-state.js";
 // These errors belong to response processing, never to the server mutation.
 // Keep them out of the wire payload and retain them only as long as its owner.
 const responseProcessingErrors = new WeakMap();
+// HA backend rejections expose a string code. Websocket disconnects instead
+// reject with a numeric code or a nested error result, without a server ACK.
+export async function callMutation(send) {
+  try {
+    return await send();
+  } catch (error) {
+    if (typeof error?.code === "string" && error.code) throw error;
+    const message = error?.message || error?.error?.message || String(error);
+    const uncertain = new Error(`${message}. The mutation outcome is unknown; refresh before retrying.`, {cause:error});
+    uncertain.mutationOutcome = "uncertain";
+    throw uncertain;
+  }
+}
+
 export function processMutationResponse(result, process) {
   const failed = error => {
     if (!result || typeof result !== "object") throw error;
@@ -282,7 +296,7 @@ export async function completeConfigurationAcknowledgement(panel, saved, submiss
   }, response);
 }
 
-export async function presentAcknowledgedMutation(panel, submission, message, refresh, result) {
+export async function presentAcknowledgedMutation(panel, submission, message, refresh, result, {warning = false} = {}) {
   const current = typeof submission === "function" ? submission : () => configurationSubmissionIsCurrent(panel, submission);
   if (!current()) return false;
   let processingError = responseProcessingErrors.get(result);
@@ -296,7 +310,7 @@ export async function presentAcknowledgedMutation(panel, submission, message, re
   try {
     if (current()) {
       if (processingError) panel._toast(`${message || "Changes saved"}, but some displayed information could not be refreshed: ${processingError.message || String(processingError)}`, true);
-      else if (message) panel._toast(message);
+      else if (message) panel._toast(message, warning);
     }
   } catch {
     // A detached or failed renderer may have no usable notification surface.

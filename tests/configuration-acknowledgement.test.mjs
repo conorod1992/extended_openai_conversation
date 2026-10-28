@@ -288,7 +288,7 @@ for (const full of [false, true]) {
     read.resolve();
     await pending;
     assert.equal(host._result, otherPage);
-    assert.deepEqual(host.toasts, [["Saved"]]);
+    assert.deepEqual(host.toasts.map(([message, warning = false]) => [message, warning]), [["Saved", false]]);
   });
 }
 

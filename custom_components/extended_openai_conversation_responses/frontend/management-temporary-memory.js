@@ -217,13 +217,14 @@ async function saveTemporaryMemory(panel) {
 }
 
 async function deleteTemporaryMemory(panel, memoryId, button = null) {
+  const owner = panel._retainedMutationOwner();
+  const submission = captureConfigurationOwner(panel);
   if (!memoryId || !await panel._confirm(
     "Delete temporary memory?",
     "This short-lived fact will no longer be included in later requests.",
     "Delete",
   )) return false;
-  const owner = panel._retainedMutationOwner();
-    const submission = captureConfigurationOwner(panel);
+  if (!configurationSubmissionIsCurrent(panel, submission) || !panel._ownsRetainedMutation(owner)) return false;
   panel._setSaving(button, true, "Deleting…");
   try {
     const response = await panel._call("memories", "temporary_delete", {
@@ -296,13 +297,13 @@ export {
 };
 
 export async function clearTemporaryMemories(panel, button = null) {
-  const scope = panel._scopeId, agent = panel._agentId;
+  const scope = panel._scopeId;
+  const owner = panel._retainedMutationOwner();
+  const submission = captureConfigurationOwner(panel);
   if (!await panel._confirm("Clear short-term memories?", `All short-term memories belonging to ${ownerLabel(panel, scope)} for the selected agent will be permanently removed. Search does not limit this action. Long-term memories are unchanged.`, "Clear memories")) return;
-  if (scope !== panel._scopeId || agent !== panel._agentId || panel._memoryKind !== "temporary") return;
+  if (!configurationSubmissionIsCurrent(panel, submission) || !panel._ownsRetainedMutation(owner) || panel._memoryKind !== "temporary") return;
   panel._setSaving(button, true, "Clearing…");
   try {
-    const owner = panel._retainedMutationOwner();
-    const submission = captureConfigurationOwner(panel);
     const response = await panel._call("memories", "temporary_clear", {scope_id: scope, confirm: true});
     if (!configurationSubmissionIsCurrent(panel, submission) || !panel._ownsRetainedMutation(owner)) return;
     requireMutationAcknowledgement(Number.isInteger(response?.deleted) && response.deleted >= 0, "clearing temporary memories");

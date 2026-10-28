@@ -14,6 +14,9 @@ const {ExtendedOpenAIManagementPanel:Panel} = await import(new URL("management-p
 const {routeAssetPromise} = await import(new URL("management-route.js", frontend));
 const acknowledgement = await import(new URL("configuration-acknowledgement.js", frontend));
 const {applyConfigurationImport, bindSavedConfigurationActions} = await import(new URL("assistant-configuration-actions.js", frontend));
+const {updateProviderApiKey} = await import(new URL("management-provider-credentials.js", frontend));
+const {ExtendedOpenAIDebugPanel:DebugPanel} = await import(new URL("debug-panel.js", frontend));
+const {bindBroadcast} = await import(new URL("overview-broadcast.js", frontend));
 await Promise.all([routeAssetPromise("data-memory/knowledge"), routeAssetPromise("data-memory/memories")]);
 
 function host(kind = "knowledge", PanelType = Panel) {
@@ -51,6 +54,15 @@ function host(kind = "knowledge", PanelType = Panel) {
   panel.errors = [];
   panel._toast = (...args) => panel.toasts.push(args);
   return {panel, backend, control, dialog};
+}
+
+function authenticationRoundTrip(panel) {
+  const original = panel.hass;
+  panel.style ||= {};
+  panel.hass = {...original, user:{id:"intervening-user"}};
+  panel.hass = original;
+  assert.equal(panel.hass.user.id, "test-user");
+  assert.equal(panel._eocAuthenticationGeneration, 2);
 }
 
 async function createdIdentityWitness(PanelType = Panel, kind = "knowledge") {
@@ -111,13 +123,15 @@ test("rendering a confirmed deletion fails without restoring or replaying it", a
   assert.match(panel.toasts.at(-1)[0], /Knowledge source deleted, but/);
 });
 
-for (const failure of ["incomplete", "lost", "rejected"]) {
+for (const failure of ["incomplete", "lost", "lost-nested", "lost-bare", "rejected"]) {
   test(`${failure} reply cannot advance the creation identity`, async () => {
     const {panel, backend} = host();
     panel._hass.callWS = async request => {
       if (failure === "rejected") throw {code:"invalid_request", message:"Rejected before write"};
       const result = await backend.call(request);
       if (failure === "lost") throw Error("connection lost");
+      if (failure === "lost-nested") throw {type:"result", success:false, error:{code:3, message:"Connection lost"}};
+      if (failure === "lost-bare") throw 3;
       return {...result, source:null};
     };
     await panel._saveKnowledge();
@@ -128,7 +142,7 @@ for (const failure of ["incomplete", "lost", "rejected"]) {
     assert.equal(panel.toasts.length, 0);
     assert.match(panel.errors[0], failure === "rejected" ? /Rejected before write/ : /outcome is unknown/);
     assert.equal(panel._eocRequestDiagnostics.at(-1).status,
-      failure === "lost" ? "uncertain" : failure === "rejected" ? "rejected" : "fulfilled");
+      failure.startsWith("lost") ? "uncertain" : failure === "rejected" ? "rejected" : "fulfilled");
   });
 }
 
@@ -145,11 +159,38 @@ test("an acknowledgement for a retired owner cannot edit or notify its replaceme
   assert.deepEqual(panel.toasts, []);
 });
 
+for (const operation of ["_deleteSource", "_deleteMemory", "_disableGuestMode", "_clearUsageDetails"]) {
+  for (const transition of ["none", "agent", "authentication round trip"]) {
+    test(`${operation}: delayed confirmation preserves its original owner (${transition})`, async () => {
+      const {panel} = host(operation === "_deleteMemory" ? "memory" : "knowledge");
+      panel._data.agents.push({entry_id:"entry-2", subentry_id:"replacement"});
+      const records = {"agent-1":["shared-restored-id"], replacement:["shared-restored-id"]};
+      const writes = [];
+      panel._confirm = async () => {
+        if (transition === "agent") panel._agentId = "replacement";
+        if (transition === "authentication round trip") authenticationRoundTrip(panel);
+        return true;
+      };
+      panel._hass.callWS = async request => {
+        writes.push(request.subentry_id);
+        records[request.subentry_id] = [];
+        return operation === "_disableGuestMode" ? {status:{active:false}}
+          : operation === "_clearUsageDetails" ? {deleted_requests:1, deleted_runs:1} : {deleted:1};
+      };
+      panel._refreshGuestModeMutation = async () => {};
+      await panel[operation](["_deleteSource", "_deleteMemory"].includes(operation) ? "shared-restored-id" : undefined);
+      assert.deepEqual(writes, transition === "none" ? ["agent-1"] : [], "a confirmation must not authorize another ownership session");
+      assert.deepEqual(records.replacement, ["shared-restored-id"], "a matching restored ID in another agent must remain untouched");
+      assert.deepEqual(records["agent-1"], transition === "none" ? [] : ["shared-restored-id"]);
+    });
+  }
+}
+
 test("a same-user authentication round trip cannot reclaim a pending editor", async () => {
   const {panel, backend} = host();
   panel._hass.callWS = async request => {
     const result = await backend.call(request);
-    panel._eocAuthenticationGeneration = 2;
+    authenticationRoundTrip(panel);
     return result;
   };
   await panel._saveKnowledge();
@@ -198,6 +239,112 @@ test("duplication acknowledges the created agent even if catalogue navigation fa
   await button.click({currentTarget:button});
   assert.equal(created, 1);
   assert.match(panel.toasts.at(-1)[0], /Created Copy, but .*catalogue unavailable/);
+});
+
+async function duplicateRequestWitness(PanelType = Panel) {
+  const {panel, control} = host("knowledge", PanelType);
+  const button = control("#duplicate-agent"), created = [];
+  const source = {revision:"source-r1", config:{chat_model:"source-model"}};
+  panel._configData = source;
+  panel._draft = source.config;
+  panel._hass.callWS = async request => {
+    assert.equal(request.action, "duplicate");
+    created.push({subentry_id:`copy-${created.length + 1}`, title:"Copy"});
+    return created.at(-1);
+  };
+  panel._invalidateAfterMutation = () => { throw Error("post-commit cache failure"); };
+  panel._loadAgents = async () => {};
+  bindSavedConfigurationActions(panel, panel.shadowRoot);
+  await button.click({currentTarget:button});
+  assert.equal(created.length, 1);
+  assert.match(panel.toasts.at(-1)[0], /Created Copy, but .*post-commit cache failure/, "a created agent must remain acknowledged across request processing failure");
+  assert.equal(panel._configData, source, "duplicating does not replace the source configuration");
+  assert.equal(panel._draft, source.config);
+  assert.equal(panel._eocRequestDiagnostics.at(-1).status, "fulfilled");
+}
+
+test("duplicate's production request path retains acknowledgement after invalidation failure", async () => {
+  await duplicateRequestWitness();
+});
+
+test("duplicate's lost response remains uncertain without an automatic second creation", async () => {
+  const {panel, control} = host();
+  const button = control("#duplicate-agent");
+  let created = 0;
+  panel._hass.callWS = async () => { created++; throw Error("connection lost after create"); };
+  panel._loadAgents = async () => assert.fail("an uncertain reply cannot select a created agent");
+  bindSavedConfigurationActions(panel, panel.shadowRoot);
+  await button.click({currentTarget:button});
+  assert.equal(created, 1);
+  assert.match(panel.toasts.at(-1)[0], /Unable to duplicate agent: .*outcome is unknown/);
+  assert.equal(panel._eocRequestDiagnostics.at(-1).status, "uncertain");
+  assert.equal(button.disabled, false);
+});
+
+for (const shape of ["nested", "bare"]) {
+  const lost = () => shape === "nested" ? {type:"result", success:false, error:{code:3, message:"Connection lost"}} : 3;
+  test(`credentials: ${shape} HA disconnect keeps one applied update uncertain`, async () => {
+    const {panel} = host();
+    let stored, writes = 0;
+    panel._hass.callWS = async message => { writes++; stored = message.api_key; throw lost(); };
+    await assert.rejects(() => updateProviderApiKey(panel, {entry_id:"entry-1"}, "replacement"), error => {
+      assert.equal(error.mutationOutcome, "uncertain");
+      assert.match(error.message, /outcome is unknown/);
+      if (shape === "nested") assert.match(error.message, /Connection lost/);
+      return true;
+    });
+    assert.equal(stored, "replacement");
+    assert.equal(writes, 1);
+  });
+
+  test(`debugging: ${shape} HA disconnect cannot certify an applied configuration`, async () => {
+    const panel = new DebugPanel();
+    panel._agent = {entry_id:"entry-1", subentry_id:"agent-1"};
+    let enabled = true, writes = 0;
+    panel._hass = {callWS:async message => { writes++; enabled = message.enabled; throw lost(); }};
+    panel._fetchRuns = async () => {};
+    const notifications = [];
+    panel._toast = message => notifications.push(message);
+    await panel._configure({enabled:false});
+    assert.equal(enabled, false);
+    assert.equal(writes, 1);
+    assert.match(notifications.at(-1), /outcome is unknown/);
+  });
+
+  for (const action of ["send", "set_enabled"]) {
+    test(`Broadcast ${action}: ${shape} HA disconnect retains one uncertain effect`, async () => {
+      const {panel, control} = host();
+      panel._viewKey = () => "overview";
+      panel._broadcastMessage = "Dinner is ready";
+      panel._broadcastWholeHome = true;
+      panel._e = String;
+      panel._titleCase = String;
+      control("#broadcast-card");
+      control("#broadcast-send");
+      control("#broadcast-enabled");
+      let writes = 0;
+      const state = {enabled:true, can_manage:true, catalog:{satellites:[{id:"satellite.kitchen", name:"Kitchen"}]}, history:[], pending:[]};
+      panel._hass.callWS = async request => {
+        if (request.action === "snapshot") return state;
+        writes++;
+        if (action === "set_enabled") state.enabled = request.enabled;
+        throw lost();
+      };
+      await bindBroadcast(panel, Promise.resolve(state));
+      if (action === "send") {
+        const button = control("#broadcast-send");
+        await button.click({currentTarget:button});
+        assert.equal(panel._broadcastMessage, "Dinner is ready", "uncertainty must not acknowledge the message draft");
+      } else await control("#broadcast-enabled").change({target:{checked:false}});
+      assert.equal(writes, 1);
+      assert.match(panel.toasts.at(-1)[0], /outcome is unknown/);
+    });
+  }
+}
+
+test("transport adaptation preserves an authoritative server rejection unchanged", async () => {
+  const rejection = {code:"invalid_request", message:"Rejected before dispatch"};
+  await assert.rejects(() => acknowledgement.callMutation(async () => { throw rejection; }), error => error === rejection);
 });
 
 for (const mode of ["current", "new"]) {
@@ -272,4 +419,26 @@ test("sensitivity: the presentation witness detects rejection after acknowledgem
   await presentationWitness(acknowledgement.presentAcknowledgedMutation);
   const mutant = await mutantModule("configuration-acknowledgement.js", "    processingError = error;", "    throw error;");
   await assert.rejects(() => presentationWitness(mutant.presentAcknowledgedMutation), /render failure/);
+});
+
+test("sensitivity: duplicate witness detects a bypassed request acknowledgement boundary", async () => {
+  const mutant = await mutantModule("management-panel.js",
+    "if (mutationEffects(section, action)) processMutationResponse(result, process);",
+    "if (mutationEffects(section, action) && action !== 'duplicate') processMutationResponse(result, process);");
+  await assert.rejects(() => duplicateRequestWitness(mutant.ExtendedOpenAIManagementPanel), /a created agent must remain acknowledged/);
+});
+
+test("sensitivity: a retired authentication confirmation cannot dispatch a deletion", async () => {
+  const guarded = 'if (!sourceId || !await this._confirm("Delete Knowledge source?", "This permanently removes the selected source from this agent\'s local Knowledge Library.", "Delete")) return;\n    if (!configurationSubmissionIsCurrent(this, submission) || !this._ownsRetainedMutation(owner)) return;';
+  const mutant = await mutantModule("management-panel.js", guarded, guarded.slice(0, guarded.indexOf("\n")));
+  async function witness(PanelType) {
+    const {panel} = host("knowledge", PanelType);
+    let deleted = 0;
+    panel._confirm = async () => { authenticationRoundTrip(panel); return true; };
+    panel._hass.callWS = async () => { deleted++; return {deleted:1}; };
+    await panel._deleteSource("retained-source");
+    assert.equal(deleted, 0, "retired authentication confirmation must not delete a source");
+  }
+  await witness(Panel);
+  await assert.rejects(() => witness(mutant.ExtendedOpenAIManagementPanel), /retired authentication confirmation must not delete/);
 });

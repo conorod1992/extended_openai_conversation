@@ -15,6 +15,9 @@ introduce a second operation queue, ownership registry or server protocol.
   uncertain. The client tells the user to refresh before retrying and never
   automatically repeats the command. This is not an exactly-once guarantee for
   requests whose responses were lost.
+- `callMutation` classifies rejection at the transport boundary. Coded server
+  errors retain their failure path; HA's nested connection-loss result and bare
+  numeric transport failures remain uncertain, including direct feature requests.
 - Once confirmed, record identity, revision and submitted editor baseline survive
   subsequent presentation failure. Knowledge and Memory creates become updates;
   successful imports consume their preview before modal/catalogue processing.
@@ -30,6 +33,8 @@ introduce a second operation queue, ownership registry or server protocol.
   reclaiming a pending editor. Deliberate import draft retirement and selection of
   a newly duplicated agent retain their acknowledgement without adopting another
   user's operation.
+- Confirmation belongs to the owner captured before the dialog opens. A later
+  agent, authentication session, collection scope or visit cannot inherit it.
 
 ## Operation audit
 
@@ -46,7 +51,7 @@ introduce a second operation queue, ownership registry or server protocol.
 | Agent duplication/configuration import | Validate created/updated identity; preserve success through catalogue navigation and consume successful import previews. |
 | Provider credentials and embedded Debug | Acknowledge returned status before modal, diagnostic or capture-list processing. Submitted credentials are cleared after acknowledgement. |
 | Overview Broadcast | Queue/status acknowledgement is independent of the subsequent snapshot read; a failed snapshot produces a refresh warning. |
-| Backup transfer/restore | Existing transfer-session/restore-completion ownership is retained. No journal, rollback or restore coordinator change. |
+| Backup transfer/restore | Validate `status: restored`, consume the acknowledged session/preview and replaced draft before cache/modal work, and retain provider-connection warnings. Missing or lost acknowledgements remain uncertain. No journal, rollback or restore coordinator change. |
 
 Read-only previews, searches, validation, exports and diagnostics are not promoted
 to mutations. Live request testing keeps the backend's execution/result contract;
@@ -66,3 +71,10 @@ rebuilt production assets with real browser dialogs, controls and authoritative
 backend state. It injects cache, rendering and modal failures and checks that a
 subsequent edit updates the committed record rather than duplicating it. It also
 proves that an incomplete reply after an actual write remains uncertain.
+
+`tests/backup-transfer-ownership.test.mjs` and
+`tests_browser/restore-acknowledgement.spec.mjs` exercise acknowledgement loss,
+cache/modal/notification/cleanup failures and consumed restore sessions. Browser
+assertions read restored backend state and count actual restore requests. The
+standalone sensitivity case removes the response-processing guard and detects
+the resulting false failure with the same witness.
