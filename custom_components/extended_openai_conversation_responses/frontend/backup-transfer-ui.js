@@ -661,6 +661,7 @@ export function bindBackupTransfer(panel) {
         null, outcome, {warning:Boolean(providerNotice)});
     } catch (err) {
       const unknown = err?.mutationOutcome === "uncertain";
+      if (!ownsAuthentication()) return;
       if (panel._backupTransferSession !== session || !ownsUI()) {
         panel._toast(`${unknown ? "Restore outcome is unknown" : "Unable to restore"} for agent ${session.owner.subentry_id}: ${err.message || String(err)}`, true);
         return;

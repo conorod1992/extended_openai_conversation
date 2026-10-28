@@ -62,7 +62,7 @@ for (const bundle of [false, true]) for (const fault of ["cache", "modal", "lost
   });
 }
 
-for (const bundle of [false, true]) test(`restore confirmation cannot cross an authentication round trip (${bundle ? "bundle" : "source"})`, async ({page}) => {
+for (const bundle of [false, true]) for (const outcome of ["acknowledged", "lost"]) test(`restore confirmation and ${outcome} completion retain their authentication (${bundle ? "bundle" : "source"})`, async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("usage-maintenance/backup-restore", bundle ? "&bundle=1" : ""));
   const panel = page.locator("extended-openai-management-panel");
@@ -72,15 +72,22 @@ for (const bundle of [false, true]) test(`restore confirmation cannot cross an a
   const path = await (await downloading).path();
   await panel.locator("#backup-file-transfer").setInputFiles(path);
   await expect(panel.locator("#restore-transfer-apply")).toBeEnabled();
-  await page.evaluate(() => {
+  await panel.evaluate((host, outcome) => {
     window.restoreWrites = 0;
+    window.restoreNotices = [];
+    const toast = host._toast.bind(host);
+    host._toast = (message, warning) => { restoreNotices.push({message, warning}); toast(message, warning); };
     const send = browserHarness.hass.callWS.bind(browserHarness.hass);
     browserHarness.hass.callWS = async message => {
       const result = await send(message);
-      if (message.action === "import_restore") restoreWrites += 1;
+      if (message.action === "import_restore") {
+        restoreWrites += 1;
+        await new Promise(resolve => { window.releaseRestoreReply = resolve; });
+        if (outcome === "lost") throw {type:"result", success:false, error:{code:3, message:"Connection lost"}};
+      }
       return result;
     };
-  });
+  }, outcome);
   await panel.locator("#restore-transfer-apply").click();
   await expect(panel.locator("#confirm-dialog")).toHaveJSProperty("open", true);
   await panel.evaluate(host => {
@@ -95,5 +102,13 @@ for (const bundle of [false, true]) test(`restore confirmation cannot cross an a
   await panel.locator("#restore-transfer-apply").click();
   await acceptConfirmation(panel);
   await expect.poll(() => page.evaluate(() => restoreWrites)).toBe(1);
+  await panel.evaluate(host => {
+    const hass = host.hass;
+    host.hass = {...hass, user:{...hass.user, id:"another-authentication"}};
+    host.hass = hass;
+  });
+  await page.evaluate(() => releaseRestoreReply());
+  await expect.poll(() => panel.evaluate(host => host._backupRestoreOperations.size)).toBe(0);
+  expect(await page.evaluate(() => restoreNotices)).toEqual([]);
   await expectHarnessClean(page, errors);
 });
