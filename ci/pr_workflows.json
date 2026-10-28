@@ -347,6 +347,10 @@
     "paths": [
       "custom_components/extended_openai_conversation_responses/manifest.json",
       "custom_components/extended_openai_conversation_responses/openai_compat.py",
+      "custom_components/extended_openai_conversation_responses/assistant_response.py",
+      "custom_components/extended_openai_conversation_responses/entity.py",
+      "custom_components/extended_openai_conversation_responses/completion_events.py",
+      "tests/test_provider_output_classification.py",
       "tests/test_openai*",
       "ci/release_certification.py",
       "ci/install_ha_dependencies.py",
