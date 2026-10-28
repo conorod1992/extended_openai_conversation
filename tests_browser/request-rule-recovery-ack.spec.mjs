@@ -107,9 +107,10 @@ test("queued Rule mutations stop at an uncertain predecessor without replay", as
     window.queuedWrites = 0;
     const send = host.hass.callWS.bind(host.hass);
     host.hass.callWS = async message => {
+      const duplicate = message.section === "request_rules" && message.action === "duplicate";
+      if (duplicate) queuedWrites++; // Count dispatches, including rejected requests.
       const result = await send(message);
-      if (message.section === "request_rules" && message.action === "duplicate") {
-        queuedWrites++;
+      if (duplicate) {
         if (queuedWrites === 1) {
           await new Promise(resolve => {window.releaseQueuedReply = resolve;});
           return {revision:result.revision};
@@ -122,6 +123,7 @@ test("queued Rule mutations stop at an uncertain predecessor without replay", as
   await panel.locator(".rule-duplicate").first().click();
   await expect.poll(() => page.evaluate(() => queuedWrites)).toBe(1);
   await panel.locator(".rule-duplicate").nth(1).click();
+  await expect.poll(() => panel.evaluate(host => host._pendingMutations.size)).toBe(2);
   await page.evaluate(() => releaseQueuedReply());
   await panel.evaluate(async host => {await host._eocRequestRuleMutationTail?.catch(() => {});});
   await expect.poll(() => panel.evaluate(host => host._eocAgentMutations)).toBe(0);
