@@ -15,7 +15,7 @@ const recoveryConfigurationCopies = new WeakMap();
 const ownScopes = panel => [...pageCoordinator(panel).scopes.entries()]
   .filter(([id]) => id !== "retained-drafts").map(([, scope]) => scope);
 const hasOwnChanges = panel => ownScopes(panel).some(scope => scope.dirty());
-const hasOwnPendingWork = panel => Boolean(panel._configurationSaving || panel._eocAgentMutations
+const hasOwnPendingWork = panel => Boolean(panel._configurationSaving || panel._eocAgentMutations || panel._backupRestoreOperations?.size
   || ownScopes(panel).some(scope => scope.pending));
 const hasRetainedWork = panel => hasOwnChanges(panel) || hasOwnPendingWork(panel)
   || Boolean(panel._eocAcknowledgedCollection || panel._eocAcknowledgedConfiguration) || hasPageSaveAcknowledgement(panel);

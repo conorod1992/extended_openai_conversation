@@ -2,10 +2,11 @@ import {expect, test} from "@playwright/test";
 import {acceptConfirmation, fixtureUrl, expectHarnessClean, trackPageErrors} from "./browser-helpers.mjs";
 
 for (const bundle of [false, true]) test.describe(bundle ? "bundle" : "source", () => {
-for (const variant of ["unchanged", "newer edits", "baseline reversion", "failed refresh", "assistant", "authentication", "lost", "rejected"]) test(`background restore draft retirement: ${variant}`, async ({page}) => {
+for (const variant of ["unchanged", "newer edits", "baseline reversion", "failed refresh", "assistant", "authentication", "replacement", "replacement newer edits", "lost", "rejected"]) test(`background restore draft retirement: ${variant}`, async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("usage-maintenance/backup-restore", `&agents=2${bundle ? "&bundle=1" : ""}`));
   const panel = page.locator("extended-openai-management-panel");
+  if (variant.startsWith("replacement")) await panel.evaluate(host => {host.hass = {...host.hass, user:{id:"restore-owner", is_admin:true}};});
   await panel.locator("#transfer-export-mode").selectOption("full");
   const downloading = page.waitForEvent("download");
   await panel.locator("#create-backup-transfer").click();
@@ -61,32 +62,48 @@ for (const variant of ["unchanged", "newer edits", "baseline reversion", "failed
     host.hass = {...hass, user:{id:"intervening-user"}};
     host.hass = hass;
   });
+  if (variant.startsWith("replacement")) {
+    await panel.evaluate(host => {
+      window.replacedRestoreSource = host;
+      const parent = host.parentElement, hass = host.hass;
+      host.remove();
+      const next = document.createElement("extended-openai-management-panel");
+      parent.append(next);
+      next.hass = hass;
+    });
+    await expect(panel.locator('[data-config="__title"]')).toBeVisible();
+    await panel.evaluate(host => host._loadSection(true));
+    if (variant === "replacement newer edits") {
+      await panel.locator('[data-config="__title"]').fill("New destination draft");
+      await panel.locator('[data-config="max_tokens"]').fill("888");
+    }
+  }
   if (variant === "failed refresh") await page.evaluate(() => {window.failRestoreRead = true;});
   await page.evaluate(() => releaseRestoreReply());
-  await expect.poll(() => panel.evaluate(host => host._backupRestoreOperations.size)).toBe(0);
+  await expect.poll(() => page.evaluate(() => (window.replacedRestoreSource || document.querySelector("extended-openai-management-panel"))._backupRestoreOperations.size)).toBe(0);
   if (variant === "failed refresh") {
     await expect(panel.getByRole("button", {name:"Retry", exact:true})).toBeVisible();
     expect(await page.evaluate(() => browserHarness.calls.filter(c => c.section === "configuration" && c.action === "save").length)).toBe(1);
     await page.evaluate(() => {window.failRestoreRead = false;});
     await panel.getByRole("button", {name:"Retry", exact:true}).click();
   }
-  const expectedTitle = variant === "baseline reversion" ? "Persisted after backup" : variant === "assistant" ? "Other assistant draft" : ["authentication", "lost", "rejected"].includes(variant) ? "Pre-restore stale title" : "Jarvis";
+  const expectedTitle = variant === "replacement newer edits" ? "New destination draft" : variant === "baseline reversion" ? "Persisted after backup" : variant === "assistant" ? "Other assistant draft" : ["authentication", "lost", "rejected"].includes(variant) ? "Pre-restore stale title" : "Jarvis";
   await expect(panel.locator('[data-config="__title"]')).toHaveValue(expectedTitle);
   if (["newer edits", "failed refresh"].includes(variant)) await expect(panel.locator('[data-config="max_tokens"]')).toHaveValue("888");
   if (variant === "baseline reversion") {
     await panel.locator("#save-config").click();
     await expect.poll(() => page.evaluate(() => browserHarness.getState().configuration.title)).toBe("Persisted after backup");
   }
-  if (variant === "unchanged") {
+  if (["unchanged", "replacement"].includes(variant)) {
     await panel.locator('[data-config="__title"]').fill("Deliberate next save");
     await panel.locator("#save-config").click();
     await expect.poll(() => page.evaluate(() => browserHarness.getState().configuration.title)).toBe("Deliberate next save");
     expect(await page.evaluate(() => browserHarness.getState().configuration.config.max_tokens)).not.toBe(777);
   }
-  if (["newer edits", "failed refresh"].includes(variant)) {
+  if (["newer edits", "failed refresh", "replacement newer edits"].includes(variant)) {
     await panel.locator("#save-config").click();
     await expect.poll(() => page.evaluate(() => browserHarness.getState().configuration.config.max_tokens)).toBe(888);
-    expect(await page.evaluate(() => browserHarness.getState().configuration.title)).toBe("Jarvis");
+    expect(await page.evaluate(() => browserHarness.getState().configuration.title)).toBe(variant === "replacement newer edits" ? "New destination draft" : "Jarvis");
   }
   expect(await page.evaluate(() => restoreWrites)).toBe(variant === "rejected" ? 0 : 1);
   await expectHarnessClean(page, errors);
