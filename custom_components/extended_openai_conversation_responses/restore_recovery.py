@@ -22,7 +22,14 @@ from .agent_maintenance import (
     _async_run_exclusive_operation,
     get_agent_maintenance_gate,
 )
-from .const import DOMAIN, SUBSYSTEM_STATUS_KEY
+from .const import (
+    CONF_USAGE_REQUEST_RETENTION_DAYS,
+    CONF_USAGE_RUN_RETENTION_DAYS,
+    DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
+    DEFAULT_USAGE_RUN_RETENTION_DAYS,
+    DOMAIN,
+    SUBSYSTEM_STATUS_KEY,
+)
 from .live_subentry_updates import (
     configuration_supports_live_update,
     update_live_subentry,
@@ -231,7 +238,7 @@ async def _async_write_journal_verified(
 
 async def _durable_managers(
     hass: HomeAssistant, entry_id: str, subentry_id: str
-) -> tuple[Any, ...]:
+) -> backup.AgentDataParticipants:
     """Load the actual durable managers; restore must never target Usage fallback RAM."""
     from .conversation_archive import async_get_archive
     from .guest_mode import async_get_guest_mode
@@ -241,62 +248,53 @@ async def _durable_managers(
     from .temporary_memory import async_get_temporary_memory
     from .usage import async_get_durable_usage
 
-    return (
-        await async_get_memory(hass, entry_id, subentry_id),
-        await async_get_temporary_memory(hass, entry_id, subentry_id),
-        await async_get_knowledge(hass, entry_id, subentry_id),
-        await async_get_archive(hass, entry_id, subentry_id),
-        await async_get_durable_usage(hass, entry_id, subentry_id),
-        await async_get_guest_mode(hass, entry_id, subentry_id),
-        await async_get_request_rules(hass, entry_id, subentry_id),
+    return backup.AgentDataParticipants(
+        memory=await async_get_memory(hass, entry_id, subentry_id),
+        temporary=await async_get_temporary_memory(hass, entry_id, subentry_id),
+        knowledge=await async_get_knowledge(hass, entry_id, subentry_id),
+        archive=await async_get_archive(hass, entry_id, subentry_id),
+        usage=await async_get_durable_usage(hass, entry_id, subentry_id),
+        guest_mode=await async_get_guest_mode(hass, entry_id, subentry_id),
+        request_rules=await async_get_request_rules(hass, entry_id, subentry_id),
     )
 
 
 async def _apply_prepared(
-    managers: tuple[Any, ...], prepared: backup.PreparedRestore
+    managers: backup.AgentDataParticipants, prepared: backup.PreparedRestore
 ) -> None:
     """Apply validated durable categories in a deterministic, idempotent order."""
-    (
-        memory,
-        temporary,
-        knowledge,
-        archive,
-        usage,
-        guest_mode,
-        request_rules,
-    ) = managers
-    usage.request_retention_days = int(
+    managers.usage.request_retention_days = int(
         prepared.config.get(
-            backup.CONF_USAGE_REQUEST_RETENTION_DAYS,
-            backup.DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
+            CONF_USAGE_REQUEST_RETENTION_DAYS,
+            DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
         )
     )
-    usage.run_retention_days = int(
+    managers.usage.run_retention_days = int(
         prepared.config.get(
-            backup.CONF_USAGE_RUN_RETENTION_DAYS,
-            backup.DEFAULT_USAGE_RUN_RETENTION_DAYS,
+            CONF_USAGE_RUN_RETENTION_DAYS,
+            DEFAULT_USAGE_RUN_RETENTION_DAYS,
         )
     )
 
-    await memory.async_replace_backup(prepared.memories)
-    await temporary.async_replace_backup(prepared.temporary_memories)
-    await knowledge.async_replace_backup(prepared.knowledge)
+    await managers.memory.async_replace_backup(prepared.memories)
+    await managers.temporary.async_replace_backup(prepared.temporary_memories)
+    await managers.knowledge.async_replace_backup(prepared.knowledge)
     archive_kwargs = (
         {"active": prepared.archive_active}
         if prepared.archive_active is not None
         else {}
     )
-    await archive.async_replace_backup(
+    await managers.archive.async_replace_backup(
         prepared.archive_sessions, prepared.archive_turns, **archive_kwargs
     )
-    await usage.async_replace_backup(
+    await managers.usage.async_replace_backup(
         prepared.usage_totals,
         prepared.usage_daily,
         prepared.usage_requests,
         prepared.usage_runs,
     )
-    await guest_mode.async_replace_backup(prepared.guest_mode_schedule)
-    await request_rules.async_replace_backup(prepared.request_rules)
+    await managers.guest_mode.async_replace_backup(prepared.guest_mode_schedule)
+    await managers.request_rules.async_replace_backup(prepared.request_rules)
 
 
 def _active_agent(hass: HomeAssistant, entry_id: str, subentry_id: str) -> Any | None:
@@ -332,7 +330,7 @@ def reset_restored_runtime(
     hass: HomeAssistant,
     entry_id: str,
     subentry_id: str,
-    managers: tuple[Any, ...] | None = None,
+    managers: backup.AgentDataParticipants | None = None,
 ) -> None:
     """Reset transient state without splitting live agents from manager registries."""
     from . import continuity, function_groups, request_rules, usage
@@ -342,7 +340,7 @@ def reset_restored_runtime(
 
     # Only same-agent Archive recovery retains active bindings. Portable Archive
     # replacement clears them, so it cannot inherit an old continuity identity.
-    archive = managers[3] if managers is not None else None
+    archive = managers.archive if managers is not None else None
     private_bindings = (
         archive.private_continuity_bindings()
         if isinstance(archive, backup.ConversationArchive)
@@ -389,7 +387,7 @@ def reset_restored_runtime(
     # durable manager rather than merely deleting the fallback registry entry.
     fallback = hass.data.get(usage._VOLATILE_USAGE_MANAGERS, {}).pop(key, None)
     if fallback is not None and managers is not None:
-        durable_usage = managers[4]
+        durable_usage = managers.usage
         if agent is not None and getattr(agent, "_usage", None) is fallback:
             agent._usage = durable_usage
         from .sensor import rebind_usage_sensors
@@ -502,7 +500,7 @@ async def _rollback_transaction(
     hass: HomeAssistant,
     entry: Any,
     subentry: Any,
-    managers: tuple[Any, ...],
+    managers: backup.AgentDataParticipants,
     store: Store[dict[str, Any]],
     rollback: backup.PreparedRestore,
 ) -> None:
@@ -517,7 +515,7 @@ async def _recover_failed_apply(
     hass: HomeAssistant,
     entry: Any,
     subentry: Any,
-    managers: tuple[Any, ...],
+    managers: backup.AgentDataParticipants,
     store: Store[dict[str, Any]],
     rollback: backup.PreparedRestore,
     original_error: Exception,

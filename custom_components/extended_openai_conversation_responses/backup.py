@@ -36,15 +36,7 @@ from .bounded_json import (
     check_utf8_budget,
     iter_bounded_json,
 )
-from .const import (
-    CONF_FUNCTION_GROUPS,
-    CONF_FUNCTION_TOOLS,
-    CONF_USAGE_REQUEST_RETENTION_DAYS,
-    CONF_USAGE_RUN_RETENTION_DAYS,
-    DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
-    DEFAULT_USAGE_RUN_RETENTION_DAYS,
-    DOMAIN,
-)
+from .const import CONF_FUNCTION_GROUPS, CONF_FUNCTION_TOOLS, DOMAIN
 from .conversation_archive import (
     ArchiveSession,
     ArchiveTurn,
@@ -88,6 +80,23 @@ _LOGGER = logging.getLogger(__name__)
 
 class BackupError(HomeAssistantError):
     """A safe, user-facing backup validation or restore error."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AgentDataParticipants:
+    """Named agent data sources or targets, selected by their acquisition path.
+
+    Ordinary backups may read volatile Usage state. Restore's separate durable
+    factory must supply the durable Usage manager; this record does not choose it.
+    """
+
+    memory: PersistentMemory
+    temporary: TemporaryMemory
+    knowledge: KnowledgeLibrary
+    archive: ConversationArchive
+    usage: UsageManager
+    guest_mode: GuestModeManager
+    request_rules: RequestRules
 
 
 @dataclass(slots=True)
@@ -224,15 +233,7 @@ async def async_collect_backup_snapshot(
         hass, entry.entry_id, subentry.subentry_id
     ).require_available()
 
-    (
-        memory,
-        temporary,
-        knowledge,
-        archive,
-        usage,
-        guest_mode,
-        request_rules,
-    ) = await _managers(hass, entry.entry_id, subentry.subentry_id)
+    participants = await _managers(hass, entry.entry_id, subentry.subentry_id)
     config_snapshot = deepcopy(dict(subentry.data))
     return DecodedPrivateDocument(
         {
@@ -247,13 +248,13 @@ async def async_collect_backup_snapshot(
                 "source_subentry_id": subentry.subentry_id,
                 "config": config_snapshot,
             },
-            "memories": await memory.async_backup_data(),
-            "temporary_memories": await temporary.async_backup_data(),
-            "knowledge": await knowledge.async_backup_data(),
-            "archive": await archive.async_backup_data(),
-            "usage": await usage.async_backup_data(),
-            "guest_mode": await guest_mode.async_backup_data(),
-            "request_rules": await request_rules.async_backup_data(),
+            "memories": await participants.memory.async_backup_data(),
+            "temporary_memories": await participants.temporary.async_backup_data(),
+            "knowledge": await participants.knowledge.async_backup_data(),
+            "archive": await participants.archive.async_backup_data(),
+            "usage": await participants.usage.async_backup_data(),
+            "guest_mode": await participants.guest_mode.async_backup_data(),
+            "request_rules": await participants.request_rules.async_backup_data(),
         }
     )
 
@@ -612,36 +613,30 @@ async def async_restore_backup(
     return result
 
 
-async def _managers(hass: HomeAssistant, entry_id: str, subentry_id: str):
-    return (
-        await async_get_memory(hass, entry_id, subentry_id),
-        await async_get_temporary_memory(hass, entry_id, subentry_id),
-        await async_get_knowledge(hass, entry_id, subentry_id),
-        await async_get_archive(hass, entry_id, subentry_id),
-        await async_get_usage(hass, entry_id, subentry_id),
-        await async_get_guest_mode(hass, entry_id, subentry_id),
-        await async_get_request_rules(hass, entry_id, subentry_id),
+async def _managers(
+    hass: HomeAssistant, entry_id: str, subentry_id: str
+) -> AgentDataParticipants:
+    """Read ordinary backup sources, including best-available Usage state."""
+    return AgentDataParticipants(
+        memory=await async_get_memory(hass, entry_id, subentry_id),
+        temporary=await async_get_temporary_memory(hass, entry_id, subentry_id),
+        knowledge=await async_get_knowledge(hass, entry_id, subentry_id),
+        archive=await async_get_archive(hass, entry_id, subentry_id),
+        usage=await async_get_usage(hass, entry_id, subentry_id),
+        guest_mode=await async_get_guest_mode(hass, entry_id, subentry_id),
+        request_rules=await async_get_request_rules(hass, entry_id, subentry_id),
     )
 
 
 async def _snapshot_for_restore(
-    managers: tuple[Any, ...], subentry: Any
+    participants: AgentDataParticipants, subentry: Any
 ) -> PreparedRestore:
-    (
-        memory,
-        temporary,
-        knowledge,
-        archive,
-        usage,
-        guest_mode,
-        request_rules,
-    ) = managers
     raw_categories = {
-        "archive": await archive.async_recovery_data(),
-        "usage": await usage.async_backup_data(),
-        "memories": await memory.async_backup_data(),
-        "temporary_memories": await temporary.async_backup_data(),
-        "knowledge": await knowledge.async_backup_data(),
+        "archive": await participants.archive.async_recovery_data(),
+        "usage": await participants.usage.async_backup_data(),
+        "memories": await participants.memory.async_backup_data(),
+        "temporary_memories": await participants.temporary.async_backup_data(),
+        "knowledge": await participants.knowledge.async_backup_data(),
     }
     categories = await asyncio.to_thread(
         _validate_data_categories,
@@ -652,10 +647,10 @@ async def _snapshot_for_restore(
     archive_sessions, archive_turns, archive_active = categories["archive"]
     usage_totals, usage_daily, usage_requests, usage_runs = categories["usage"]
     guest_mode_schedule = GuestModeManager.validate_backup_data(
-        await guest_mode.async_backup_data()
+        await participants.guest_mode.async_backup_data()
     )
     request_rule_backup = RequestRules.validate_backup_data(
-        await request_rules.async_backup_data()
+        await participants.request_rules.async_backup_data()
     )
     private_configuration_snapshot(subentry.data)
     return PreparedRestore(
@@ -679,44 +674,3 @@ async def _snapshot_for_restore(
         archive_active=archive_active,
         authoritative_config=True,
     )
-
-
-async def _apply_restore(managers: tuple[Any, ...], prepared: PreparedRestore) -> None:
-    (
-        memory,
-        temporary,
-        knowledge,
-        archive,
-        usage,
-        guest_mode,
-        request_rules,
-    ) = managers
-    usage.request_retention_days = int(
-        prepared.config.get(
-            CONF_USAGE_REQUEST_RETENTION_DAYS, DEFAULT_USAGE_REQUEST_RETENTION_DAYS
-        )
-    )
-    usage.run_retention_days = int(
-        prepared.config.get(
-            CONF_USAGE_RUN_RETENTION_DAYS, DEFAULT_USAGE_RUN_RETENTION_DAYS
-        )
-    )
-    await memory.async_replace_backup(prepared.memories)
-    await temporary.async_replace_backup(prepared.temporary_memories)
-    await knowledge.async_replace_backup(prepared.knowledge)
-    archive_kwargs = (
-        {"active": prepared.archive_active}
-        if prepared.archive_active is not None
-        else {}
-    )
-    await archive.async_replace_backup(
-        prepared.archive_sessions, prepared.archive_turns, **archive_kwargs
-    )
-    await usage.async_replace_backup(
-        prepared.usage_totals,
-        prepared.usage_daily,
-        prepared.usage_requests,
-        prepared.usage_runs,
-    )
-    await guest_mode.async_replace_backup(prepared.guest_mode_schedule)
-    await request_rules.async_replace_backup(prepared.request_rules)

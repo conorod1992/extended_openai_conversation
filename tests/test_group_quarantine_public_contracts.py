@@ -17,8 +17,11 @@ from custom_components.extended_openai_conversation_responses.management_functio
     persisted_config_projection,
     repair_state_for_projection,
 )
+from custom_components.extended_openai_conversation_responses.private_backup import (
+    decode_document,
+)
+from tests.restore_participants import participants
 from tests.test_save_validation_reuse import _hass_with_agent
-from custom_components.extended_openai_conversation_responses.private_backup import decode_document
 
 
 @pytest.fixture(params=["missing-name", "object-member", "list-member"])
@@ -111,17 +114,20 @@ async def test_group_only_backup_export_preserves_raw_definition(
     grouped_agent, monkeypatch
 ):
     hass, entry, subentry, original = grouped_agent
-    payloads = (
-        {"memories": []},
-        {"records": []},
-        {"sources": []},
-        {"sessions": [], "turns": []},
-        {"totals": {}, "daily": {}, "requests": [], "runs": []},
-        {"schedule": None},
-        {"storage_version": 1, "defaults": {}, "rules": []},
-    )
-    managers = tuple(
-        SimpleNamespace(async_backup_data=AsyncMock(return_value=p)) for p in payloads
+    payloads = {
+        "memory": {"memories": []},
+        "temporary": {"records": []},
+        "knowledge": {"sources": []},
+        "archive": {"sessions": [], "turns": []},
+        "usage": {"totals": {}, "daily": {}, "requests": [], "runs": []},
+        "guest_mode": {"schedule": None},
+        "request_rules": {"storage_version": 1, "defaults": {}, "rules": []},
+    }
+    managers = participants(
+        **{
+            name: SimpleNamespace(async_backup_data=AsyncMock(return_value=payload))
+            for name, payload in payloads.items()
+        }
     )
     monkeypatch.setattr(backup, "_managers", AsyncMock(return_value=managers))
     document = await ui.async_management_command(

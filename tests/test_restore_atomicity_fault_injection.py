@@ -8,11 +8,12 @@ from custom_components.extended_openai_conversation_responses import (
     backup,
     restore_recovery,
 )
+from tests.restore_participants import participant_values, participants
 from tests.test_restore_recovery import FakeHass, MemoryJournalStore, _identity, _states
 
 _BOUNDARIES = (
     "memory",
-    "temporary_memory",
+    "temporary",
     "knowledge",
     "archive",
     "usage",
@@ -21,22 +22,22 @@ _BOUNDARIES = (
 )
 
 
-def _prepared_args(prepared: backup.PreparedRestore) -> tuple[tuple[object, ...], ...]:
-    """Return the exact argument tuples passed to each durable manager."""
-    return (
-        (prepared.memories,),
-        (prepared.temporary_memories,),
-        (prepared.knowledge,),
-        (prepared.archive_sessions, prepared.archive_turns),
-        (
+def _prepared_args(prepared: backup.PreparedRestore) -> dict[str, tuple[object, ...]]:
+    """Return the exact arguments passed to each named durable manager."""
+    return {
+        "memory": (prepared.memories,),
+        "temporary": (prepared.temporary_memories,),
+        "knowledge": (prepared.knowledge,),
+        "archive": (prepared.archive_sessions, prepared.archive_turns),
+        "usage": (
             prepared.usage_totals,
             prepared.usage_daily,
             prepared.usage_requests,
             prepared.usage_runs,
         ),
-        (prepared.guest_mode_schedule,),
-        (prepared.request_rules,),
-    )
+        "guest_mode": (prepared.guest_mode_schedule,),
+        "request_rules": (prepared.request_rules,),
+    }
 
 
 class _FaultInjectingManager:
@@ -101,13 +102,15 @@ async def test_restore_failure_at_each_manager_boundary_rolls_back_and_retry_suc
 
     target_args = _prepared_args(target)
     rollback_args = _prepared_args(rollback)
-    managers = tuple(
-        _FaultInjectingManager(
-            target_args[index],
-            rollback_args[index],
-            fail_target_once=index == failure_index,
-        )
-        for index in range(len(_BOUNDARIES))
+    managers = participants(
+        **{
+            name: _FaultInjectingManager(
+                target_args[name],
+                rollback_args[name],
+                fail_target_once=index == failure_index,
+            )
+            for index, name in enumerate(_BOUNDARIES)
+        }
     )
     persist_config = AsyncMock()
     reset_runtime = MagicMock()
@@ -136,7 +139,7 @@ async def test_restore_failure_at_each_manager_boundary_rolls_back_and_retry_suc
             hass, entry, subentry, target
         )
 
-    assert managers[failure_index].failed is True
+    assert participant_values(managers)[failure_index].failed is True
     assert store.data is None
     assert store.removed == 1
     assert subentry.title == rollback.title
@@ -144,7 +147,7 @@ async def test_restore_failure_at_each_manager_boundary_rolls_back_and_retry_suc
     assert persist_config.await_count == 1
     assert reset_runtime.call_count == 1
 
-    for index, manager in enumerate(managers):
+    for index, manager in enumerate(participant_values(managers)):
         # Categories reached before the fault see target then rollback. Categories
         # after it are touched only by rollback. Either way, no partial target state
         # may remain externally visible after the failed transaction returns.
@@ -163,7 +166,7 @@ async def test_restore_failure_at_each_manager_boundary_rolls_back_and_retry_suc
     assert persist_config.await_count == 2
     assert reset_runtime.call_count == 2
 
-    for manager in managers:
+    for manager in participant_values(managers):
         # All non-equivalent categories converge on target during the clean retry;
         # Guest Mode may be semantically identical (None) in both snapshots.
         assert manager.state in {"target", "equivalent"}

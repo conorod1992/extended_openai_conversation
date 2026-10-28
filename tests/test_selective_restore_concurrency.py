@@ -14,6 +14,7 @@ from custom_components.extended_openai_conversation_responses import (
     restore_recovery,
     transfer,
 )
+from tests.restore_participants import participants
 from tests.test_restore_recovery import FakeHass, MemoryJournalStore, _identity, _states
 
 
@@ -64,14 +65,16 @@ class RestoreHarness:
 
             return SimpleNamespace(async_replace_backup=replace_data)
 
-        self.managers = (
-            manager("memories"),
-            manager("temporary_memories"),
-            manager("knowledge"),
-            manager("archive_sessions", "archive_turns"),
-            manager("usage_totals", "usage_daily", "usage_requests", "usage_runs"),
-            manager("guest_mode_schedule"),
-            manager("request_rules"),
+        self.managers = participants(
+            memory=manager("memories"),
+            temporary=manager("temporary_memories"),
+            knowledge=manager("knowledge"),
+            archive=manager("archive_sessions", "archive_turns"),
+            usage=manager(
+                "usage_totals", "usage_daily", "usage_requests", "usage_runs"
+            ),
+            guest_mode=manager("guest_mode_schedule"),
+            request_rules=manager("request_rules"),
         )
 
         async def snapshot(*_args):
@@ -345,18 +348,18 @@ async def test_private_active_conversation_survives_selective_restore_and_rollba
     document = restore_recovery._prepared_document(
         harness.state, harness.entry.entry_id, harness.subentry.subentry_id
     )
-    for index, section in (
-        (0, "memories"),
-        (1, "temporary_memories"),
-        (2, "knowledge"),
-        (4, "usage"),
-        (5, "guest_mode"),
-        (6, "request_rules"),
+    for name, section in (
+        ("memory", "memories"),
+        ("temporary", "temporary_memories"),
+        ("knowledge", "knowledge"),
+        ("usage", "usage"),
+        ("guest_mode", "guest_mode"),
+        ("request_rules", "request_rules"),
     ):
-        harness.managers[index].async_backup_data = AsyncMock(
+        getattr(harness.managers, name).async_backup_data = AsyncMock(
             return_value=document[section]
         )
-    harness.managers = (*harness.managers[:3], archive, *harness.managers[4:])
+    harness.managers = replace(harness.managers, archive=archive)
     monkeypatch.setattr(
         restore_recovery, "_durable_managers", AsyncMock(return_value=harness.managers)
     )

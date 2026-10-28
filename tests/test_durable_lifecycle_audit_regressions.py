@@ -1,4 +1,5 @@
 """Unloaded deletion and readable restore-journal regressions."""
+
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,6 +18,7 @@ from custom_components.extended_openai_conversation_responses.knowledge import (
     KnowledgeSource,
 )
 from homeassistant.helpers.storage import Store
+from tests.restore_participants import participants
 from tests.test_restore_recovery import (
     FakeHass,
     MemoryJournalStore,
@@ -83,7 +85,9 @@ async def test_oversized_rollback_is_rejected_before_journal_or_mutation(monkeyp
     hass, store = FakeHass(), MemoryJournalStore()
     entry, subentry = _identity()
     monkeypatch.setattr(restore_recovery, "_journal_store", lambda *_: store)
-    monkeypatch.setattr(restore_recovery, "_durable_managers", AsyncMock(return_value=(object(),) * 7))
+    monkeypatch.setattr(
+        restore_recovery, "_durable_managers", AsyncMock(return_value=participants())
+    )
     monkeypatch.setattr(backup, "_snapshot_for_restore", AsyncMock(return_value=rollback))
     apply = AsyncMock()
     monkeypatch.setattr(restore_recovery, "_apply_prepared", apply)

@@ -5,15 +5,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from custom_components.extended_openai_conversation_responses import backup
-from custom_components.extended_openai_conversation_responses import restore_recovery
-from tests.test_backup import _document
-from tests.test_restore_recovery import (
-    FakeHass,
-    MemoryJournalStore,
-    _identity,
-    _states,
+from custom_components.extended_openai_conversation_responses import (
+    backup,
+    restore_recovery,
 )
+from tests.restore_participants import participants
+from tests.test_backup import _document
+from tests.test_restore_recovery import FakeHass, MemoryJournalStore, _identity, _states
 
 
 async def _prepare_live_restore(monkeypatch):
@@ -22,7 +20,7 @@ async def _prepare_live_restore(monkeypatch):
     entry, subentry = _identity()
     _target, rollback = _states()
     store = MemoryJournalStore()
-    managers = (object(),) * 7
+    managers = participants()
 
     monkeypatch.setattr(restore_recovery, "_journal_store", lambda *_args: store)
     monkeypatch.setattr(

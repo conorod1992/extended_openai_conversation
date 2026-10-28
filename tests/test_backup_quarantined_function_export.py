@@ -25,6 +25,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     SERVICE_CALL_FUNCTION,
 )
 from homeassistant.exceptions import HomeAssistantError
+from tests.restore_participants import participants
 
 
 def _broken_config() -> dict:
@@ -79,18 +80,20 @@ async def test_full_backup_collection_succeeds_with_quarantined_function(
     entry = SimpleNamespace(entry_id="entry-1")
     subentry = SimpleNamespace(subentry_id="agent-1", title="Jarvis", data=config)
 
-    payloads = (
-        {"memories": []},
-        {"records": []},
-        {"sources": []},
-        {"sessions": [], "turns": []},
-        {"totals": {}, "daily": {}, "requests": [], "runs": []},
-        {"schedule": None},
-        {"storage_version": 1, "defaults": {}, "rules": []},
-    )
-    managers = tuple(
-        SimpleNamespace(async_backup_data=AsyncMock(return_value=payload))
-        for payload in payloads
+    payloads = {
+        "memory": {"memories": []},
+        "temporary": {"records": []},
+        "knowledge": {"sources": []},
+        "archive": {"sessions": [], "turns": []},
+        "usage": {"totals": {}, "daily": {}, "requests": [], "runs": []},
+        "guest_mode": {"schedule": None},
+        "request_rules": {"storage_version": 1, "defaults": {}, "rules": []},
+    }
+    managers = participants(
+        **{
+            name: SimpleNamespace(async_backup_data=AsyncMock(return_value=payload))
+            for name, payload in payloads.items()
+        }
     )
     monkeypatch.setattr(backup, "_managers", AsyncMock(return_value=managers))
 

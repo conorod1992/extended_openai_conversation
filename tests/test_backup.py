@@ -45,6 +45,7 @@ from custom_components.extended_openai_conversation_responses.usage import (
     UsageTotals,
 )
 from homeassistant.util import dt as dt_util
+from tests.restore_participants import participants
 
 
 class FakeStorage:
@@ -512,7 +513,13 @@ async def test_restore_failure_rolls_back_before_reporting(monkeypatch, hass) ->
     subentry = SimpleNamespace(
         subentry_id="agent-new", title="Current", data=agent_config_defaults()
     )
-    managers = (object(), object(), object(), object(), object())
+    managers = participants(
+        memory=object(),
+        temporary=object(),
+        knowledge=object(),
+        archive=object(),
+        usage=object(),
+    )
     apply = AsyncMock(side_effect=[RuntimeError("write failed"), None])
     monkeypatch.setattr(
         "custom_components.extended_openai_conversation_responses.restore_recovery._durable_managers",
@@ -793,7 +800,7 @@ async def test_restore_rollback_failure_escalates(monkeypatch, hass) -> None:
     rollback = _prepared()
     monkeypatch.setattr(backup, "inspect_backup", lambda _value, _agent, **_kwargs: prepared)
     monkeypatch.setattr(
-        restore_recovery, "_durable_managers", AsyncMock(return_value=(object(),))
+        restore_recovery, "_durable_managers", AsyncMock(return_value=participants())
     )
     monkeypatch.setattr(
         backup, "_snapshot_for_restore", AsyncMock(return_value=rollback)
@@ -814,24 +821,24 @@ async def test_restore_rollback_failure_escalates(monkeypatch, hass) -> None:
 
 
 @pytest.mark.asyncio
-async def test_managers_collect_every_durable_manager(monkeypatch) -> None:
-    expected = []
-    for name in (
-        "async_get_memory",
-        "async_get_temporary_memory",
-        "async_get_knowledge",
-        "async_get_archive",
-        "async_get_usage",
-        "async_get_guest_mode",
-        "async_get_request_rules",
-    ):
+async def test_managers_collect_ordinary_backup_sources(monkeypatch) -> None:
+    expected = {}
+    for field, name in {
+        "memory": "async_get_memory",
+        "temporary": "async_get_temporary_memory",
+        "knowledge": "async_get_knowledge",
+        "archive": "async_get_archive",
+        "usage": "async_get_usage",
+        "guest_mode": "async_get_guest_mode",
+        "request_rules": "async_get_request_rules",
+    }.items():
         marker = object()
-        expected.append(marker)
+        expected[field] = marker
         monkeypatch.setattr(backup, name, AsyncMock(return_value=marker))
 
     result = await backup._managers(SimpleNamespace(), "entry", "agent")
 
-    assert result == tuple(expected)
+    assert result == participants(**expected)
 
 
 @pytest.mark.asyncio
@@ -842,22 +849,16 @@ async def test_snapshot_for_restore_validates_live_manager_backups(monkeypatch) 
         "knowledge": {"sources": []},
         "archive": {"sessions": [], "turns": []},
         "usage": {"totals": {}},
-        "guest": {"schedule": None},
-        "rules": {"storage_version": 1, "defaults": {}, "rules": []},
+        "guest_mode": {"schedule": None},
+        "request_rules": {"storage_version": 1, "defaults": {}, "rules": []},
     }
-    managers = tuple(
-        SimpleNamespace(async_backup_data=AsyncMock(return_value=payloads[key]))
-        for key in (
-            "memory",
-            "temporary",
-            "knowledge",
-            "archive",
-            "usage",
-            "guest",
-            "rules",
-        )
+    managers = participants(
+        **{
+            name: SimpleNamespace(async_backup_data=AsyncMock(return_value=payload))
+            for name, payload in payloads.items()
+        }
     )
-    managers[3].async_recovery_data = AsyncMock(return_value={**payloads["archive"], "active": {}})
+    managers.archive.async_recovery_data = AsyncMock(return_value={**payloads["archive"], "active": {}})
     monkeypatch.setattr(backup.ConversationArchive, "validate_recovery_bindings", staticmethod(lambda active, sessions: dict(active)))
     monkeypatch.setattr(
         backup.ConversationArchive,
@@ -908,42 +909,5 @@ async def test_snapshot_for_restore_validates_live_manager_backups(monkeypatch) 
     assert prepared.knowledge == [payloads["knowledge"]]
     assert prepared.archive_sessions == [(payloads["archive"], "agent")]
     assert prepared.usage_daily == {"agent": payloads["usage"]}
-    assert prepared.guest_mode_schedule == payloads["guest"]
-    assert prepared.request_rules == payloads["rules"]
-
-
-@pytest.mark.asyncio
-async def test_apply_restore_updates_retention_and_all_managers() -> None:
-    names = ("memory", "temporary", "knowledge", "archive", "usage", "guest", "rules")
-    managers = []
-    for name in names:
-        manager = SimpleNamespace(async_replace_backup=AsyncMock())
-        if name == "usage":
-            manager.request_retention_days = 0
-            manager.run_retention_days = 0
-        managers.append(manager)
-
-    config = agent_config_defaults()
-    config[backup.CONF_USAGE_REQUEST_RETENTION_DAYS] = 11
-    config[backup.CONF_USAGE_RUN_RETENTION_DAYS] = 22
-    prepared = _prepared(config=config)
-
-    await backup._apply_restore(tuple(managers), prepared)
-
-    memory, temporary, knowledge, archive, usage, guest, rules = managers
-    assert usage.request_retention_days == 11
-    assert usage.run_retention_days == 22
-    memory.async_replace_backup.assert_awaited_once_with(prepared.memories)
-    temporary.async_replace_backup.assert_awaited_once_with(prepared.temporary_memories)
-    knowledge.async_replace_backup.assert_awaited_once_with(prepared.knowledge)
-    archive.async_replace_backup.assert_awaited_once_with(
-        prepared.archive_sessions, prepared.archive_turns
-    )
-    usage.async_replace_backup.assert_awaited_once_with(
-        prepared.usage_totals,
-        prepared.usage_daily,
-        prepared.usage_requests,
-        prepared.usage_runs,
-    )
-    guest.async_replace_backup.assert_awaited_once_with(prepared.guest_mode_schedule)
-    rules.async_replace_backup.assert_awaited_once_with(prepared.request_rules)
+    assert prepared.guest_mode_schedule == payloads["guest_mode"]
+    assert prepared.request_rules == payloads["request_rules"]
