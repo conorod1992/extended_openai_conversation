@@ -159,9 +159,8 @@ test("failed Rule recovery blocks writes until an authoritative read", async ({p
   await page.evaluate(() => {window.recoveryUnavailable = false;});
   await panel.getByRole("button", {name:"Retry", exact:true}).click();
   await expect(panel.locator(".rule-duplicate")).toHaveCount(2);
-  // This click recovers the uncertain write; it must not repeat the duplicate.
-  await panel.locator(".rule-duplicate").first().click();
-  await expect(panel.locator(".rule-duplicate").first()).toBeEnabled();
+  // The accepted Retry read recovers the owner without another mutation.
+  // The next deliberate action can update the committed identity directly.
   expect(await page.evaluate(() => failedRecoveryWrites)).toBe(1);
   await panel.locator(".rule-enabled").last().uncheck();
   await expect.poll(() => page.evaluate(() => browserHarness.getState().requestRules.rules.at(-1).enabled)).toBe(false);

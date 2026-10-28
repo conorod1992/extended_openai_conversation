@@ -1,4 +1,4 @@
-import {requestRuleUncertainty, requireRequestRuleAcknowledgement, markUncertainRuleMutation} from "./request-rule-acknowledgement.js";
+import {clearRequestRuleUncertainty, requestRuleUncertainty, requireRequestRuleAcknowledgement, markUncertainRuleMutation} from "./request-rule-acknowledgement.js";
 import {mutationEffects} from "./management-mutation-effects.js";
 import {observeCatalogGeneration} from "./model-catalog.js";
 import {invalidateUsageWindows} from "./usage-cache.js";
@@ -790,6 +790,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     // or a newer read/mutation made that response obsolete while it was in flight.
     const ruleRead = section === "request_rules" && action === "list" ? {
       agentId: this._agentId,
+      uncertainty: requestRuleUncertainty(this, owner),
       generation: this._cacheGeneration,
       mutationEpoch: this._eocRequestRuleMutationEpoch || 0,
       sequence: this._eocRequestRuleReadSequence = (this._eocRequestRuleReadSequence || 0) + 1,
@@ -822,6 +823,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         && result?.revision !== null
       ) {
         this._eocRequestRuleRevision = {agentId: ruleRead.agentId, value: result.revision};
+        // Only an admitted, complete authoritative read can settle uncertainty.
+        // Epoch/sequence/owner checks above reject reads crossing a mutation;
+        // the captured marker also prevents clearing a newer uncertain write.
+        if (Array.isArray(result.rules) && Array.isArray(result.groups)
+            && result.defaults && Array.isArray(result.wording_groups)) {
+          clearRequestRuleUncertainty(this, owner, ruleRead.uncertainty);
+        }
       }
       if (
         guidanceCall

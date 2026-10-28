@@ -1,4 +1,4 @@
-import {requestRuleUncertainty, clearRequestRuleUncertainty, requestRuleMutationNeedsRecovery, requireRequestRuleAcknowledgement} from "./request-rule-acknowledgement.js";
+import {requestRuleMutationNeedsRecovery, requireRequestRuleAcknowledgement} from "./request-rule-acknowledgement.js";
 import {localRuleActionSummary} from "./request-rule-response-summary.js";
 import {formatWordingAlternatives} from "./wording-alternatives.js";
 import {adoptKeyedElements, elementFromMarkup, keyedElement, placeChildren, pruneKeys} from "./keyed-collection.js";
@@ -67,16 +67,11 @@ export async function recoverRequestRuleMutation(panel, error, label, isCurrent 
   const cacheKey = panel._sectionCacheKey?.();
   if (cacheKey) panel._sectionCache?.delete(cacheKey);
   let assetToken = panel._eocViewAssetToken;
-  const previousResult = panel._result, uncertainty = requestRuleUncertainty(panel, owner);
   try {
     const refresh = panel._loadSection(true);
     assetToken = panel._eocViewAssetToken;
     await refresh;
-    if (configurationSubmissionIsCurrent(panel, owner) && panel.shadowRoot === root && panel._viewKey?.() === view
-        && panel._result !== previousResult && Array.isArray(panel._result?.groups) && Array.isArray(panel._result?.rules)
-        && panel._result.revision != null) {
-      clearRequestRuleUncertainty(panel, owner, uncertainty);
-    }
+
   }
   catch (refreshError) {
     if (!configurationSubmissionIsCurrent(panel, owner) || panel.shadowRoot !== root || panel._viewKey?.() !== view
