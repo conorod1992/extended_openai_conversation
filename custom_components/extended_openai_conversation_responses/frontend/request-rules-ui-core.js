@@ -60,6 +60,9 @@ export function requestRuleSummary(rule = {}, defaults = {}) {
 }
 
 export async function recoverRequestRuleMutation(panel, error, label, isCurrent = () => true) {
+  // Recover after queued mutations have settled, so an earlier read cannot
+  // release uncertainty ahead of an already queued write or re-marking error.
+  await panel._eocRequestRuleMutationTail?.catch(() => {});
   if (!isCurrent()) return;
   const owner = captureConfigurationOwner(panel), root = panel.shadowRoot, view = panel._viewKey?.();
   const message = error?.message || String(error || "Unknown error");

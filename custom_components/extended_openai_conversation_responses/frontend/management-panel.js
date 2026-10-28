@@ -826,7 +826,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         // Only an admitted, complete authoritative read can settle uncertainty.
         // Epoch/sequence/owner checks above reject reads crossing a mutation;
         // the captured marker also prevents clearing a newer uncertain write.
-        if (Array.isArray(result.rules) && Array.isArray(result.groups)
+        if (!this._eocRequestRuleMutationTail && Array.isArray(result.rules) && Array.isArray(result.groups)
             && result.defaults && Array.isArray(result.wording_groups)) {
           clearRequestRuleUncertainty(this, owner, ruleRead.uncertainty);
         }
