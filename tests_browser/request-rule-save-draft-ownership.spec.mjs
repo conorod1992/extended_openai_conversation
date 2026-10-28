@@ -28,12 +28,12 @@ async function prepare(page, bundled, existing = false) {
         const record = {request:structuredClone(request), commit:async () => {
           if (record.result) return record.result;
           if (request.revision !== browserHarness.getState().requestRules.revision) {
-            throw new Error("Request Rules changed in another tab. Reload the latest rules before saving.");
+            throw {code:"conflict", message:"Request Rules changed in another tab. Reload the latest rules before saving."};
           }
           return record.result = await original(request);
         }, finish:async (mode = "success") => {
           try {
-            if (mode === "failure") throw new Error("Held Rule save failed");
+            if (mode === "failure") throw {code:"invalid_request", message:"Held Rule save failed"};
             const result = structuredClone(await record.commit());
             if (mode === "missing-id") delete result.rule.id;
             if (mode === "missing-revision") delete result.revision;
@@ -268,17 +268,25 @@ for (const bundled of [false, true]) {
       await expectRetained(panel);
       await expect(panel.locator("#rule-name")).toHaveValue("Incomplete ACK Rule");
       expect(await panel.evaluate(host => host._editingRuleId)).toBe(null);
-      expect(await panel.evaluate(host => host._result)).toEqual(before);
-      await expect(panel.locator("#rule-error")).not.toHaveText("");
       const committed = await page.evaluate(() => browserHarness.getState().requestRules);
-      await submit(page, panel, 2);
-      expect(await page.evaluate(() => ruleSaveDraft.writes[1].request.revision)).toBe(before.revision);
-      await release(page, 1);
-      await expect(panel.locator("#rule-error")).toContainText("changed in another tab");
+      expect(await panel.evaluate(host => host._result)).toEqual(committed);
+      expect(committed.revision).not.toBe(before.revision);
+      await expect(panel.locator("#rule-error")).not.toHaveText("");
+      await panel.locator("#rule-save").click();
+      await expect(panel.locator("#rule-save")).toBeEnabled();
+      expect(await page.evaluate(() => ruleSaveDraft.writes.length)).toBe(1);
       await expectRetained(panel);
-      // The server may have committed despite an incomplete response. Retrying
-      // the old authoring revision must fail instead of creating a duplicate.
       expect(await page.evaluate(() => browserHarness.getState().requestRules)).toEqual(committed);
+      // Explicitly reopen the committed identity; the next save is an update,
+      // rather than repeating the create with either an old or refreshed guard.
+      await panel.locator(".rule-close").last().click();
+      await panel.locator(`[data-rule-key="${committed.rules.at(-1).id}"] .rule-edit`).click();
+      await panel.locator("#rule-name").fill("Reviewed recovered Rule");
+      await submit(page, panel, 2);
+      expect(await page.evaluate(() => ruleSaveDraft.writes[1].request.action)).toBe("update");
+      await release(page, 1);
+      expect(await page.evaluate(() => browserHarness.getState().requestRules.rules.length)).toBe(committed.rules.length);
+      expect(await page.evaluate(() => browserHarness.getState().requestRules.rules.at(-1).name)).toBe("Reviewed recovered Rule");
       await expectHarnessClean(page, errors);
     });
   }

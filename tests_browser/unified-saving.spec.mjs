@@ -8,7 +8,7 @@ async function rejectOnce(page, section, action) {
     const hass = window.browserHarness.hass, original = hass.callWS.bind(hass);
     let rejected = false;
     hass.callWS = async (request) => {
-      if (!rejected && request.section === section && request.action === action) { rejected = true; throw Error("Save rejected for regression test"); }
+      if (!rejected && request.section === section && request.action === action) { rejected = true; throw {code:"invalid_request", message:"Save rejected for regression test"}; }
       return original(request);
     };
   }, {section, action});
