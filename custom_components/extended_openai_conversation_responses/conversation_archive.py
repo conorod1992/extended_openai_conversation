@@ -23,6 +23,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
+from .agent_maintenance import get_agent_maintenance_gate
 from .const import DOMAIN
 from .persistence_hardening import _async_settle_transactional_save
 from .runtime_hardening import MAX_MODEL_TOOL_RESULT_CHARACTERS
@@ -1247,16 +1248,19 @@ async def async_get_archive(
     hass: HomeAssistant, entry_id: str, subentry_id: str
 ) -> ConversationArchive:
     """Return one shared archive manager per conversation agent."""
-    managers: dict[tuple[str, str], ConversationArchive] = hass.data.setdefault(
-        _ARCHIVE_MANAGERS, {}
-    )
-    key = (entry_id, subentry_id)
-    if key not in managers:
-        managers[key] = ConversationArchive(
-            HomeAssistantArchiveStorage(hass, entry_id, subentry_id), subentry_id
+    async with get_agent_maintenance_gate(hass, entry_id, subentry_id).shared(
+        maintenance=True
+    ):
+        managers: dict[tuple[str, str], ConversationArchive] = hass.data.setdefault(
+            _ARCHIVE_MANAGERS, {}
         )
-    await managers[key].async_initialize()
-    return managers[key]
+        key = (entry_id, subentry_id)
+        if key not in managers:
+            managers[key] = ConversationArchive(
+                HomeAssistantArchiveStorage(hass, entry_id, subentry_id), subentry_id
+            )
+        await managers[key].async_initialize()
+        return managers[key]
 
 
 def archive_tools() -> list[dict[str, Any]]:

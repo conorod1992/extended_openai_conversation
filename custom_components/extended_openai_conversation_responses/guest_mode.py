@@ -19,6 +19,7 @@ from homeassistant.helpers import (
 from homeassistant.util import dt as dt_util
 
 from .agent_config import CONF_GUEST_WEB_SEARCH, DEFAULT_GUEST_WEB_SEARCH
+from .agent_maintenance import get_agent_maintenance_gate
 from .const import (
     CONF_FUNCTION_GROUPS,
     CONF_GUEST_ALLOWED_FUNCTION_NAMES,
@@ -509,15 +510,18 @@ class GuestModeManager:
 async def async_get_guest_mode(
     hass: HomeAssistant, entry_id: str, subentry_id: str
 ) -> GuestModeManager:
-    managers: dict[tuple[str, str], GuestModeManager] = hass.data.setdefault(
-        _MANAGERS, {}
-    )
-    key = (entry_id, subentry_id)
-    if key not in managers:
-        managers[key] = GuestModeManager(hass, entry_id, subentry_id)
-    manager = managers[key]
-    await manager.async_initialize()
-    return manager
+    async with get_agent_maintenance_gate(hass, entry_id, subentry_id).shared(
+        maintenance=True
+    ):
+        managers: dict[tuple[str, str], GuestModeManager] = hass.data.setdefault(
+            _MANAGERS, {}
+        )
+        key = (entry_id, subentry_id)
+        if key not in managers:
+            managers[key] = GuestModeManager(hass, entry_id, subentry_id)
+        manager = managers[key]
+        await manager.async_initialize()
+        return manager
 
 
 def get_loaded_guest_mode(

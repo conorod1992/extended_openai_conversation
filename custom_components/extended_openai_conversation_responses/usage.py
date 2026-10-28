@@ -21,6 +21,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
+from .agent_maintenance import get_agent_maintenance_gate
 from .const import (
     CONF_USAGE_REQUEST_RETENTION_DAYS,
     CONF_USAGE_RUN_RETENTION_DAYS,
@@ -1356,87 +1357,93 @@ async def async_get_durable_usage(
     hass: HomeAssistant, entry_id: str, subentry_id: str
 ) -> UsageManager:
     """Return the persistent Usage manager, propagating storage failures."""
-    managers: dict[tuple[str, str], UsageManager] = hass.data.setdefault(
-        _USAGE_MANAGERS, {}
-    )
-    key = (entry_id, subentry_id)
-    manager = managers.get(key)
-    if manager is None:
-        prefix = f"{STORAGE_KEY_PREFIX}.{entry_id}.{subentry_id}"
-        manager = UsageManager(
-            _UsageStore(hass, 1, prefix, atomic_writes=True).bind_agent(
-                entry_id, subentry_id
-            ),
-            _UsageStore(
-                hass,
-                STORAGE_VERSION,
-                f"{prefix}.daily",
-                atomic_writes=True,
-            ).bind_agent(entry_id, subentry_id),
-            _UsageStore(
-                hass,
-                STORAGE_VERSION,
-                f"{prefix}.details",
-                private=True,
-                atomic_writes=True,
-                serialize_in_event_loop=False,
-            ).bind_agent(entry_id, subentry_id),
-            agent_subentry_id=subentry_id,
-            **_saved_retention(hass, entry_id, subentry_id),
+    async with get_agent_maintenance_gate(hass, entry_id, subentry_id).shared(
+        maintenance=True
+    ):
+        managers: dict[tuple[str, str], UsageManager] = hass.data.setdefault(
+            _USAGE_MANAGERS, {}
         )
-        # Publish before the first await so every concurrent caller initializes and
-        # retains the same authoritative manager instance.
-        managers[key] = manager
-    await manager.async_initialize()
-    _register_usage_maintenance(hass, manager)
-    return manager
+        key = (entry_id, subentry_id)
+        manager = managers.get(key)
+        if manager is None:
+            prefix = f"{STORAGE_KEY_PREFIX}.{entry_id}.{subentry_id}"
+            manager = UsageManager(
+                _UsageStore(hass, 1, prefix, atomic_writes=True).bind_agent(
+                    entry_id, subentry_id
+                ),
+                _UsageStore(
+                    hass,
+                    STORAGE_VERSION,
+                    f"{prefix}.daily",
+                    atomic_writes=True,
+                ).bind_agent(entry_id, subentry_id),
+                _UsageStore(
+                    hass,
+                    STORAGE_VERSION,
+                    f"{prefix}.details",
+                    private=True,
+                    atomic_writes=True,
+                    serialize_in_event_loop=False,
+                ).bind_agent(entry_id, subentry_id),
+                agent_subentry_id=subentry_id,
+                **_saved_retention(hass, entry_id, subentry_id),
+            )
+            # Publish before the first await so every concurrent caller initializes and
+            # retains the same authoritative manager instance.
+            managers[key] = manager
+        await manager.async_initialize()
+        _register_usage_maintenance(hass, manager)
+        return manager
 
 
 async def async_get_usage(
     hass: HomeAssistant, entry_id: str, subentry_id: str
 ) -> UsageManager:
     """Return the effective Usage manager without making telemetry startup fatal."""
-    key = (entry_id, subentry_id)
-    locks: dict[tuple[str, str], asyncio.Lock] = hass.data.setdefault(
-        _USAGE_GETTER_LOCKS, {}
-    )
-    lock = locks.setdefault(key, asyncio.Lock())
-
-    async with lock:
-        fallbacks: dict[tuple[str, str], UsageManager] = hass.data.setdefault(
-            _VOLATILE_USAGE_MANAGERS, {}
+    async with get_agent_maintenance_gate(hass, entry_id, subentry_id).shared(
+        maintenance=True
+    ):
+        key = (entry_id, subentry_id)
+        locks: dict[tuple[str, str], asyncio.Lock] = hass.data.setdefault(
+            _USAGE_GETTER_LOCKS, {}
         )
-        if fallback := fallbacks.get(key):
-            return fallback
+        lock = locks.setdefault(key, asyncio.Lock())
 
-        try:
-            return await async_get_durable_usage(hass, entry_id, subentry_id)
-        except Exception as err:
-            # The durable getter publishes before initialization so concurrent callers
-            # converge on one manager. Discard a failed published instance before
-            # installing the shared volatile fallback for this Home Assistant runtime.
-            persistent_managers = hass.data.get(_USAGE_MANAGERS)
-            if isinstance(persistent_managers, dict):
-                persistent_managers.pop(key, None)
+        async with lock:
+            fallbacks: dict[tuple[str, str], UsageManager] = hass.data.setdefault(
+                _VOLATILE_USAGE_MANAGERS, {}
+            )
+            if fallback := fallbacks.get(key):
+                return fallback
 
-            log_handled_failure(
-                _LOGGER,
-                f"Unable to initialize Usage storage entry={entry_id} assistant={subentry_id}; "
-                "continuing with volatile accounting in memory. Usage totals/history recorded "
-                "in this mode will be lost on Home Assistant restart; conversation remains available",
-                err,
-            )
-            manager = UsageManager(
-                _VolatileUsageStorage(),
-                _VolatileUsageStorage(),
-                _VolatileUsageStorage(),
-                agent_subentry_id=subentry_id,
-                **_saved_retention(hass, entry_id, subentry_id),
-            )
-            await manager.async_initialize()
-            fallbacks[key] = manager
-            _register_usage_maintenance(hass, manager)
-            return manager
+            try:
+                return await async_get_durable_usage(hass, entry_id, subentry_id)
+            except Exception as err:
+                # The durable getter publishes before initialization so concurrent callers
+                # converge on one manager. Discard a failed published instance before
+                # installing the shared volatile fallback for this Home Assistant runtime.
+                persistent_managers = hass.data.get(_USAGE_MANAGERS)
+                if isinstance(persistent_managers, dict):
+                    persistent_managers.pop(key, None)
+
+                log_handled_failure(
+                    _LOGGER,
+                    f"Unable to initialize Usage storage entry={entry_id} assistant={subentry_id}; "
+                    "continuing with volatile accounting in memory. Usage totals/history recorded "
+                    "in this mode will be lost on Home Assistant restart; conversation remains available",
+                    err,
+                )
+                manager = UsageManager(
+                    _VolatileUsageStorage(),
+                    _VolatileUsageStorage(),
+                    _VolatileUsageStorage(),
+                    agent_subentry_id=subentry_id,
+                    **_saved_retention(hass, entry_id, subentry_id),
+                )
+                await manager.async_initialize()
+                fallbacks[key] = manager
+                _register_usage_maintenance(hass, manager)
+                return manager
 
 
 def _serialize_usage_details(
