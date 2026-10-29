@@ -122,6 +122,9 @@ class PreparedRestore:
     archive_active: dict[str, str] | None = None
     # Internal provenance, never accepted as an import-document switch.
     authoritative_config: bool = False
+    # Live Knowledge-only commits may retain untouched conversation state.
+    # Deliberately absent from journal/portable documents: recovery resets safely.
+    preserve_unmodified_continuity: bool = False
 
     def summary(self) -> dict[str, Any]:
         return {

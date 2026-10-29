@@ -1547,6 +1547,9 @@ async def async_materialize_restore(
             "target_title": target.title,
         }
     )
+    target.preserve_unmodified_continuity = (
+        selected == {SECTION_KNOWLEDGE} and provider_connection is None
+    )
     return target, preview
 
 

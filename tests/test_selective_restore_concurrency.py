@@ -406,3 +406,30 @@ async def test_private_active_conversation_survives_selective_restore_and_rollba
         assert "PRIVATE FOLLOWUP" not in str(await archive.async_backup_data())
     finally:
         await continuity.async_release(resolution.key, resolution.claim_token)
+
+
+@pytest.mark.parametrize("full_restore", [False, True])
+async def test_knowledge_only_restore_preserves_retained_user_continuity(monkeypatch, full_restore):
+    from custom_components.extended_openai_conversation_responses.continuity import ConversationContinuity
+    from custom_components.extended_openai_conversation_responses.const import CONVERSATION_CONTINUITY_USER
+    from custom_components.extended_openai_conversation_responses.scope import user_scope
+    reset = restore_recovery.reset_restored_runtime
+    tx = RestoreHarness(monkeypatch)
+    manager = ConversationContinuity(tx.subentry.subentry_id)
+    scope = user_scope("alice", source="authenticated_user")
+    before = await manager.async_resolve(CONVERSATION_CONTINUITY_USER, scope, None, None, 30)
+    await manager.async_release(before.key, before.claim_token)
+    monkeypatch.setattr(restore_recovery, "_active_agent", lambda *_: SimpleNamespace(_continuity=manager))
+    monkeypatch.setattr(restore_recovery, "reset_restored_runtime", reset)
+    if full_restore:
+        await restore_recovery.async_restore_backup_recoverably(tx.hass, tx.entry, tx.subentry, tx.state)
+    else:
+        await tx.restore()
+    after = await manager.async_resolve(CONVERSATION_CONTINUITY_USER, scope, None, before.conversation_id, 30)
+    try:
+        assert (after.conversation_id == before.conversation_id) is not full_restore
+        if not full_restore:
+            assert tx.state.knowledge == []
+        assert tx.journal.data is None
+    finally:
+        await manager.async_release(after.key, after.claim_token)

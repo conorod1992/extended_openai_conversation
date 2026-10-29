@@ -332,6 +332,7 @@ def reset_restored_runtime(
     entry_id: str,
     subentry_id: str,
     managers: backup.AgentDataParticipants | None = None,
+    preserve_continuity: bool = False,
 ) -> None:
     """Reset transient state without splitting live agents from manager registries."""
     from . import continuity, function_groups, request_rules, usage
@@ -355,7 +356,8 @@ def reset_restored_runtime(
         for item in (continuity_manager, agent_continuity)
         if item is not None
     }.values():
-        current.reset_all(private_bindings=private_bindings)
+        if not preserve_continuity:
+            current.reset_all(private_bindings=private_bindings)
     if agent_continuity is not None:
         continuity_managers[key] = agent_continuity
 
@@ -636,7 +638,13 @@ async def _async_restore_backup_recoverably(
             )
 
         try:
-            reset_restored_runtime(hass, entry_id, subentry_id, managers)
+            reset_restored_runtime(
+                hass,
+                entry_id,
+                subentry_id,
+                managers,
+                prepared.preserve_unmodified_continuity,
+            )
             await _update_configuration(hass, entry, subentry, prepared)
             await store.async_remove()
         except Exception as err:
