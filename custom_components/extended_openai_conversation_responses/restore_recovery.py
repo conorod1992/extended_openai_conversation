@@ -356,7 +356,12 @@ def reset_restored_runtime(
         for item in (continuity_manager, agent_continuity)
         if item is not None
     }.values():
-        if not preserve_continuity:
+        if preserve_continuity and isinstance(archive, backup.ConversationArchive):
+            current.reset_all(
+                private_bindings=private_bindings,
+                retained_bindings=archive.retained_continuity_bindings(),
+            )
+        else:
             current.reset_all(private_bindings=private_bindings)
     if agent_continuity is not None:
         continuity_managers[key] = agent_continuity
@@ -643,7 +648,7 @@ async def _async_restore_backup_recoverably(
                 entry_id,
                 subentry_id,
                 managers,
-                prepared.preserve_unmodified_continuity,
+                prepared.preserve_retained_continuity,
             )
             await _update_configuration(hass, entry, subentry, prepared)
             await store.async_remove()

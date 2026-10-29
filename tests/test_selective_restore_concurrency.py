@@ -420,6 +420,16 @@ async def test_knowledge_only_restore_preserves_retained_user_continuity(monkeyp
     manager = ConversationContinuity(tx.subentry.subentry_id)
     scope = user_scope("alice", source="authenticated_user")
     before = await manager.async_resolve(CONVERSATION_CONTINUITY_USER, scope, None, None, 30)
+    from custom_components.extended_openai_conversation_responses.conversation_archive import ConversationArchive
+    from tests.test_conversation_archive import FakeArchiveStorage
+    archive = ConversationArchive(FakeArchiveStorage(), tx.subentry.subentry_id)
+    await archive.async_initialize()
+    await archive.async_begin_session(f"continuity:{before.key}", scope, before.conversation_id,
+        archive_enabled=True, shared_archive_enabled=False, inactivity_minutes=30)
+    tx.state.archive_sessions = list(archive._sessions.values())
+    tx.state.archive_active = dict(archive._active)
+    tx.managers = replace(tx.managers, archive=archive)
+    monkeypatch.setattr(restore_recovery, "_durable_managers", AsyncMock(return_value=tx.managers))
     history = [conversation.SystemContent(content="Retained context witness")]
     await manager.async_record_success(before.key, before.claim_token, history)
     monkeypatch.setattr(restore_recovery, "_active_agent", lambda *_: SimpleNamespace(_continuity=manager))

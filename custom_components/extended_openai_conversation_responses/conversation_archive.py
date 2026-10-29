@@ -179,12 +179,19 @@ class ConversationArchive:
 
     def private_continuity_bindings(self) -> dict[str, str]:
         """Return content-free identities under the caller's exclusive restore lease."""
+        return self._continuity_bindings("private")
+
+    def retained_continuity_bindings(self) -> dict[str, str]:
+        """Identify unchanged retained conversations under exclusive maintenance."""
+        return self._continuity_bindings("retained")
+
+    def _continuity_bindings(self, retention_state: str) -> dict[str, str]:
         return {
             key.removeprefix("continuity:"): session.home_assistant_conversation_id
             for key, session_id in self._active.items()
             if key.startswith("continuity:")
             and (session := self._sessions.get(session_id)) is not None
-            and session.retention_state == "private"
+            and session.retention_state == retention_state
             and session.home_assistant_conversation_id is not None
         }
 

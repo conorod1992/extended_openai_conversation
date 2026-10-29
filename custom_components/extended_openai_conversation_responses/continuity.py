@@ -145,12 +145,24 @@ class ConversationContinuity:
         self.resume_count = 0
         self.new_session_count = 0
 
-    def reset_all(self, *, private_bindings: dict[str, str] | None = None) -> None:
+    def reset_all(
+        self,
+        *,
+        private_bindings: dict[str, str] | None = None,
+        retained_bindings: dict[str, str] | None = None,
+    ) -> None:
         """Discard transient context under the caller's exclusive restore lease.
 
         Retain diagnostics and HA-default lock ownership, as restoration did
         before this operation became part of the continuity API.
         """
+        retained = {
+            key: active
+            for key, active in self._sessions.items()
+            if retained_bindings is not None
+            and retained_bindings.get(key) == active.conversation_id
+            and key not in self._pending_ends
+        }
         self._sessions = {
             key: replace(
                 active,
@@ -165,6 +177,7 @@ class ConversationContinuity:
             and private_bindings.get(key) == active.conversation_id
             and key not in self._pending_ends
         }
+        self._sessions.update(retained)
         self._memory_bundles.clear()
         self._pending_ends.clear()
         self._ignored_conversation_ids.clear()

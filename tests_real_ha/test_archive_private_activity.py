@@ -480,16 +480,19 @@ async def test_private_followup_after_knowledge_restore(
         hass, **{CONF_ARCHIVE_ENABLED: True, CONF_CONVERSATION_CONTINUITY: mode}
     )
     sent = _provider(
-        monkeypatch, agent, ["Before restore reply", "Private after restore reply"]
+        monkeypatch, agent, ["Before restore reply", "Retained before reply", "Private after restore reply", "Retained after reply"]
     )
 
-    async def say(text, conversation_id=None):
+    retained_user = MockUser(id="restore-retained-owner")
+    retained_user.add_to_hass(hass)
+
+    async def say(text, conversation_id=None, who=None):
         return await conversation.async_converse(
             hass=hass,
             text=text,
             conversation_id=conversation_id,
-            context=Context(user_id=user.id),
-            device_id="restore-device",
+            context=Context(user_id=(who or user).id),
+            device_id="retained-device" if who else "restore-device",
             language="en",
             agent_id=agent.entry.entry_id,
         )
@@ -498,6 +501,8 @@ async def test_private_followup_after_knowledge_restore(
     assert first.response.error_code is None
     session = next(iter(agent._archive._sessions.values()))
     await agent._archive.async_make_private(session.session_id)
+    retained_before = await say("Retained history witness", who=retained_user)
+    assert retained_before.response.error_code is None
     document = transfer._new_transfer_document(agent.entry, agent.subentry, "custom")
     document["sections"][transfer.SECTION_KNOWLEDGE] = {"sources": []}
     if rollback:
@@ -534,3 +539,12 @@ async def test_private_followup_after_knowledge_restore(
         # Reusing a privacy identity must not resurrect provider context in Core's log.
         assert "Before restore content" not in json.dumps(sent[-1])
         assert "Before restore reply" not in json.dumps(sent[-1])
+
+    retained_after = await say("Retained followup", retained_before.conversation_id, retained_user)
+    assert retained_after.response.error_code is None
+    preserves = not rollback or mode == CONVERSATION_CONTINUITY_HA_DEFAULT
+    assert (retained_after.conversation_id == retained_before.conversation_id) == preserves
+    assert ("Retained history witness" in json.dumps(sent[-1])) == preserves
+    assert "Before restore content" not in json.dumps(sent[-1])
+    assert len(sent) == 4
+    assert (await agent._knowledge.async_backup_data())["sources"] == []
