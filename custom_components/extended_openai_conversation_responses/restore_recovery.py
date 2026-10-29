@@ -371,6 +371,7 @@ async def _recovery_managers(
     try:
         return await _durable_managers(hass, entry_id, subentry_id)
     except ValueError as initial_error:
+        from .conversation_archive import HomeAssistantArchiveStorage, async_get_archive
         from .knowledge import HomeAssistantKnowledgeStorage, async_get_knowledge
         from .temporary_memory import (
             _temporary_memory_store,
@@ -404,6 +405,17 @@ async def _recovery_managers(
                 payload = await asyncio.to_thread(serialize)
                 await storage_factory(hass, entry_id, subentry_id).async_save(payload)
                 repaired = True
+        try:
+            await async_get_archive(hass, entry_id, subentry_id)
+        except ValueError:
+            await HomeAssistantArchiveStorage(
+                hass, entry_id, subentry_id
+            ).async_stage_journal_recovery(
+                selected.archive_sessions,
+                selected.archive_turns,
+                selected.archive_active,
+            )
+            repaired = True
         if not repaired:
             raise initial_error
         return await _durable_managers(hass, entry_id, subentry_id)

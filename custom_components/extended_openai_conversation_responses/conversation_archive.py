@@ -165,6 +165,67 @@ class HomeAssistantArchiveStorage:
         """Remove an obsolete monthly transcript store."""
         await self._partition_store(partition).async_remove()
 
+    async def async_stage_journal_recovery(
+        self,
+        sessions: list[ArchiveSession],
+        turns: list[ArchiveTurn],
+        active: dict[str, str] | None,
+    ) -> None:
+        """Stage validated full-agent recovery without replaying damaged local intent."""
+        gate = get_agent_maintenance_gate(self._hass, *self._agent_identity)
+        if not gate.owns_exclusive() or not gate.recovery_required:
+            raise RuntimeError(
+                "Archive recovery requires exclusive quarantined maintenance"
+            )
+        gate.require_available()
+
+        def prepare() -> tuple[
+            dict[str, ArchiveSession], dict[str, list[ArchiveTurn]], dict[str, str]
+        ]:
+            checked_sessions, checked_turns = ConversationArchive.validate_backup_data(
+                _archive_payload(sessions, turns),
+                self._agent_identity[1],
+                local_recovery=active is not None,
+            )
+            bindings = ConversationArchive.validate_recovery_bindings(
+                active or {}, checked_sessions
+            )
+            turn_map: dict[str, list[ArchiveTurn]] = defaultdict(list)
+            for turn in checked_turns:
+                turn_map[turn.session_id].append(turn)
+            return (
+                {session.session_id: session for session in checked_sessions},
+                turn_map,
+                bindings,
+            )
+
+        session_map, turn_map, bindings = await asyncio.to_thread(prepare)
+        old = await self.async_load_metadata()
+        old_names: list[Any] = []
+        if isinstance(old, dict):
+            if isinstance(old.get("partitions"), list):
+                old_names.extend(old["partitions"])
+            if isinstance(old.get("pending_partitions"), dict):
+                old_names.extend(old["pending_partitions"])
+        partitions = ConversationArchive._partitions_for_turns(turn_map)
+        changed = partitions | {
+            name
+            for name in old_names
+            if isinstance(name, str) and re.fullmatch(r"\d{4}-(?:0[1-9]|1[0-2])", name)
+        }
+        pending = {
+            name: ConversationArchive._partition_payload_for_state(name, turn_map)
+            for name in sorted(changed)
+        }
+        # Old indexed months receive empty payloads if absent from the selected
+        # snapshot. Failed writes leave the authoritative full-agent journal for
+        # retry; normal Archive initialization validates and replays this intent.
+        await self.async_save_metadata(
+            ConversationArchive._metadata_payload_for_state(
+                session_map, bindings, partitions, pending
+            )
+        )
+
 
 class ConversationArchive:
     """Concurrency-safe scoped archive with deterministic session privacy."""
