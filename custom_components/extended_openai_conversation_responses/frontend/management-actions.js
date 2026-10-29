@@ -148,6 +148,7 @@ export function bindSingleRequestSave(panel) {
       event.preventDefault();
       event.stopImmediatePropagation();
       if (panel._configurationSaving || !panel._configData?.config) return;
+      if (root.__eocConfigurationInputs) root.__eocConfigurationInputs.pendingCapabilityControl = null;
       discardConfigurationDraft(panel);
       // Save acknowledgements can insert this bar after a feature bound its
       // original controls. Delegation also covers those newly created buttons.
@@ -155,10 +156,20 @@ export function bindSingleRequestSave(panel) {
       panel._render();
       return;
     }
-    const button = event.target?.closest?.("#save-config");
+    let button = event.target?.closest?.("#save-config");
     if (!button) return;
     event.preventDefault();
     event.stopImmediatePropagation();
+    if (panel._configurationSaving) return;
+    const inputs = root.__eocConfigurationInputs;
+    const control = inputs?.pendingCapabilityControl;
+    if (inputs) inputs.pendingCapabilityControl = null;
+    // The click is admitted now. Refresh deferred capability presentation before
+    // saving, including when validation later rejects the submitted draft.
+    if (control?.isConnected && root.contains(control)) {
+      inputs.capabilityChanged?.(control);
+      button = root.querySelector("#save-config") || button;
+    }
     const scope = panel._unsavedState?.scopes.get("configuration");
     void (scope ? scope.save() : saveConfiguration(panel, button));
   }, true);

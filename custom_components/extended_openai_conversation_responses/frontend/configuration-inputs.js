@@ -86,7 +86,10 @@ export function bindConfigurationInputs(panel, handlers = {}) {
     // A pressed Save/Discard owns the next redraw. Blur commits the input
     // normally, but must not remove that command before its click arrives.
     const command = root.querySelector("#save-config:active, #revert-config:active");
-    if (!command && ["api_mode", "web_search", "max_function_calls_per_conversation", "continue_conversation"].includes(result.key)) root.__eocConfigurationInputs.capabilityChanged?.(control);
+    if (["api_mode", "web_search", "max_function_calls_per_conversation", "continue_conversation"].includes(result.key)) {
+      if (command) root.__eocConfigurationInputs.pendingCapabilityControl = control;
+      else root.__eocConfigurationInputs.capabilityChanged?.(control);
+    }
   };
   root.addEventListener("input", handle);
   root.addEventListener("change", handle);
