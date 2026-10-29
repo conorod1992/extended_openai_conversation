@@ -2541,6 +2541,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       // A reconnect read can refresh the same editor's list without changing
       // its operation, dialog or owner. Its save still needs acknowledgement.
       && this._ownsRetainedMutation(owner, {allowRefresh:true});
+    let uncertain = false;
     this._setSaving(button, true);
     try {
       const response = await this._call("knowledge", editing ? "update" : "create", { ...(editing ? { source_id: this._editingSource.source_id, expected_revision: this._editingSource.updated_at } : {}), ...values });
@@ -2574,8 +2575,16 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         if (!this.isConnected || !this._ownsRetainedMutation(owner)) this._revalidateAcknowledgedCollection(owner);
       }, response);
     } catch (err) {
+      uncertain = err?.mutationOutcome === "uncertain";
       if (current()) this._setDialogError("knowledge", `Unable to save source: ${err.message || String(err)}`);
-    } finally { if (current()) this._setSaving(button, false); }
+    } finally {
+      if (current()) {
+        this._setSaving(button, false);
+        // This editor cannot identify a possibly committed create or certify an
+        // update's revision. Reopen against authoritative state before retrying.
+        if (uncertain) button.disabled = true;
+      }
+    }
   }
 
   async _saveMemory() {

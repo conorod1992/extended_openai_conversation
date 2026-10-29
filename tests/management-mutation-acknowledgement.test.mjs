@@ -500,3 +500,9 @@ test("sensitivity: primitive reply processing cannot replace the uncertain mutat
   const mutant = await mutantModule("management-panel.js", 'from "./configuration-acknowledgement.js";', `from "${acknowledgementUrl}";`);
   await assert.rejects(() => malformedReplyWitness(mutant.ExtendedOpenAIManagementPanel, null, true), /a malformed response must retain uncertainty/);
 });
+
+for (const code of ["unknown_error", ""]) test(`generic mutation failure remains uncertain: ${code}`, async () => {
+  const error = {code, message:"Unknown error"};
+  await assert.rejects(() => acknowledgement.callMutation(async () => {throw error;}), failure =>
+    failure.mutationOutcome === "uncertain" && failure.cause === error && /refresh before retrying/.test(failure.message));
+});

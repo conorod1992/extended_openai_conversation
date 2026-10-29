@@ -13,7 +13,7 @@ function errorMessage(value) {
 export async function callMutation(send) {
   try { return await send(); }
   catch (error) {
-    if (error && typeof error === "object" && "code" in error && typeof error.code === "string" && error.code) throw error;
+    if (error && typeof error === "object" && "code" in error && typeof error.code === "string" && error.code && error.code !== "unknown_error") throw error;
     throw Object.assign(new Error(`${errorMessage(error)}. The mutation outcome is unknown; refresh before retrying.`, {cause:error}), {mutationOutcome:"uncertain"});
   }
 }

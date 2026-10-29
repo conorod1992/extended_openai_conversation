@@ -1,6 +1,6 @@
 import {test, expect} from "@playwright/test";
 import {fixtureUrl, trackPageErrors, expectHarnessClean} from "./browser-helpers.mjs";
-for (const bundle of [false,true]) for (const fault of ["lost", "missing revision", "missing defaults", "missing wording groups"]) test(`settings recover after ${fault} (${bundle ? "bundle" : "source"})`, async ({page}) => {
+for (const bundle of [false,true]) for (const fault of ["lost", "unknown_error", "missing revision", "missing defaults", "missing wording groups"]) test(`settings recover after ${fault} (${bundle ? "bundle" : "source"})`, async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/request-rules", bundle ? "&bundle=1" : ""));
   const panel = page.locator("extended-openai-management-panel");
@@ -18,6 +18,7 @@ for (const bundle of [false,true]) for (const fault of ["lost", "missing revisio
       }
       if (message.section==="request_rules" && message.action==="settings") {
         if (settingsWrites===1) {
+          if (fault==="unknown_error") throw {code:"unknown_error",message:"Unknown error"};
           if (fault==="lost") throw {error:{code:3,message:"Reply lost"}};
           if (fault==="missing defaults") {delete result.defaults; return result;}
           if (fault==="missing wording groups") {delete result.wording_groups; return result;}

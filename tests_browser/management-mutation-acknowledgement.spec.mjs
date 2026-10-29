@@ -150,3 +150,35 @@ for (const bundled of [false, true]) for (const action of ["delete", "clear"]) f
     await expectHarnessClean(page, errors);
   });
 }
+
+for (const bundled of [false, true]) test(`generic Knowledge error blocks the next create until authoritative reopening (${bundled ? "bundle" : "source"})`, async ({page}) => {
+  const panel = await openDataCollection(page, "knowledge", 1, bundled);
+  await panel.evaluate(host => {
+    const send = host.hass.callWS.bind(host.hass);
+    host.hass.callWS = async request => {
+      const result = await send(request);
+      if (request.section === "knowledge" && request.action === "create") throw {code:"unknown_error", message:"Unknown error"};
+      return result;
+    };
+  });
+  await panel.locator("#add-source").click();
+  await panel.locator("#knowledge-title").fill("Ambiguous committed source");
+  await panel.locator("#knowledge-content").fill("Already stored");
+  await panel.locator("#knowledge-save").click();
+  await expect(panel.locator("#knowledge-error")).toContainText("outcome is unknown");
+  await panel.evaluate(host => host._saveKnowledge());
+  expect(await page.evaluate(() => dataCollectionBackend.calls.filter(call => call.action === "create").length)).toBe(1);
+  await expect(panel.locator("#knowledge-save")).toBeDisabled();
+  const sources = await page.evaluate(() => dataCollectionBackend.state.sources);
+  expect(sources.filter(source => source.title === "Ambiguous committed source")).toHaveLength(1);
+  const saved = sources.find(source => source.title === "Ambiguous committed source");
+  await panel.evaluate(async (host, id) => {
+    host.shadowRoot.querySelector("#knowledge-dialog").close();
+    await host._openKnowledge(id);
+  }, saved.source_id);
+  await expect(panel.locator("#knowledge-save")).toBeEnabled();
+  await panel.locator("#knowledge-content").fill("Deliberate update after recovery");
+  await panel.locator("#knowledge-save").click();
+  expect(await page.evaluate(() => dataCollectionBackend.state.sources.filter(source => source.title === "Ambiguous committed source").length)).toBe(1);
+  expect(await page.evaluate(() => dataCollectionBackend.state.sources.find(source => source.title === "Ambiguous committed source").content)).toBe("Deliberate update after recovery");
+});
