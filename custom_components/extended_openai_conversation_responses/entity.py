@@ -1913,7 +1913,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
         async for chunk in normalized_chat_stream(chat_log, result, request_usage):
             event_count += 1
-            budget.event()
+            try:
+                budget.event()
+            except ProviderStreamError:
+                await async_recover_trailing_usage(result, request_usage)
+                raise
             # Signal new assistant message on first chunk
             if first_chunk:
                 yield {"role": "assistant"}
@@ -1934,7 +1938,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             choice = chunk.choices[0]
             delta = choice.delta
             finish_reason = choice.finish_reason
-            budget.chat_delta(delta)
+            try:
+                budget.chat_delta(delta)
+            except ProviderStreamError:
+                await async_recover_trailing_usage(result, request_usage)
+                raise
 
             if delta.content:
                 content_value = answer_text(delta.content)

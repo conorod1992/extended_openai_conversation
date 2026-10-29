@@ -168,7 +168,14 @@ async def ordered_output_events(
                     # Identities/completions were checked in original wire order.
                     yield event
                 else:
-                    weight = budget.buffer(event)
+                    try:
+                        weight = budget.buffer(event)
+                    except ProviderStreamError:
+                        # Backlog admission is outside wire validation, but still
+                        # owns the normalized/raw stream until accounting settles.
+                        if recover_usage is not None:
+                            await recover_usage()
+                        raise
                     pending.setdefault(index, []).append(event)
                     pending_weights[index] = pending_weights.get(index, 0) + weight
                 continue
