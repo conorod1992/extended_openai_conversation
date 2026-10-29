@@ -559,7 +559,8 @@ export async function openTool(panel, index = null, initialTool = null) {
       populateToolPresetPicker(panel, catalog);
     }
     if (!isCurrent()) return;
-    editor.setYaml(response.yaml);
+    await editor.setYaml(response.yaml);
+    if (!isCurrent()) return;
     panel._toolInitialYaml = response.yaml;
     panel._toolReplaceableYaml = response.yaml;
     root.querySelector("#tool-dialog-meta").textContent = index === null ? "New tool / YAML" : `${tool.spec?.name || "Unnamed"} / ${tool.function?.type || "unknown"}`;

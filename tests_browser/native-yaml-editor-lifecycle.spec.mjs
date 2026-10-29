@@ -13,6 +13,17 @@ async function installFakeHaYamlEditor(page) {
       setValue(value) {
         this.values.push(structuredClone(value));
         this.lastSetValue = structuredClone(value);
+        this._yaml = JSON.stringify(value);
+        const yaml = this._yaml;
+        const code = {updateComplete:Promise.resolve(true), codemirror:{state:{doc:{toString:() => yaml}}}};
+        // These suites drive native value-changed directly; the dedicated
+        // readiness suite supplies real shadow DOM and delayed Lit updates.
+        this.updateComplete = Promise.resolve(true);
+        if (!this.shadowRoot) this.attachShadow({mode:"open"});
+        let child = this.shadowRoot.querySelector("ha-code-editor");
+        if (!child) { child = document.createElement("ha-code-editor"); this.shadowRoot.append(child); }
+        child.updateComplete = code.updateComplete;
+        child.codemirror = code.codemirror;
       }
 
       get yaml() {
@@ -46,6 +57,7 @@ const toolCalls = (page, action) => page.evaluate((wantedAction) => window.brows
 ), action);
 
 const waitForTool = async (editor, name) => {
+  await expect(editor).toBeVisible();
   await expect.poll(() => editor.evaluate((element) => element.lastSetValue?.spec?.name)).toBe(name);
 };
 

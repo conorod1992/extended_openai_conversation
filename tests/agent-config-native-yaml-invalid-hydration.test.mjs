@@ -1,3 +1,4 @@
+import {completeNativeDocument} from "./frontend-test-helpers.mjs";
 import assert from "node:assert/strict";
 import {TestEventTarget} from "./frontend-test-helpers.mjs";
 
@@ -19,7 +20,7 @@ class FakeEditor extends TestEventTarget {
     this.isConnected = true;
     this.values = [];
   }
-  setValue(value) { this.values.push(structuredClone(value)); }
+  setValue(value) { this.values.push(structuredClone(value)); completeNativeDocument(this, value); }
 }
 
 const originalDocument = globalThis.document;
@@ -35,8 +36,10 @@ function makeHarness(rawYaml, originalName, validationResult) {
   const textarea = new FakeTextArea(rawYaml);
   const editor = new FakeEditor();
   let style = null;
+  const dialog = {open:true};
   const root = {
     querySelector(selector) {
+      if (selector === "#tool-dialog") return dialog;
       if (selector === "#tool-yaml") return textarea;
       if (selector === "#tool-yaml-native") return editor;
       if (selector === "style[data-native-tool-yaml]") return style;

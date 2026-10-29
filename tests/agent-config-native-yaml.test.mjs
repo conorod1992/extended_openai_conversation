@@ -1,3 +1,4 @@
+import {completeNativeDocument} from "./frontend-test-helpers.mjs";
 import assert from "node:assert/strict";
 
 class FakeTextAreaElement {
@@ -53,6 +54,7 @@ class FakeNativeEditor {
 
   setValue(value) {
     this.values.push(value);
+    completeNativeDocument(this, value);
   }
 
   focus() {
@@ -241,7 +243,8 @@ try {
   {
     const harness = makeHarness({
       initialYaml: "",
-      call: async () => ({valid: false, error: "bad yaml"}),
+      call: async (_section, _action, {yaml}) => yaml.includes("[broken")
+        ? {valid:false, error:"bad yaml"} : {valid:true, config:{name:"valid"}},
     });
     bindNativeToolYaml(harness.panel);
     await flush();
@@ -252,6 +255,8 @@ try {
     assert.equal(harness.textarea.value, invalidYaml, "invalid raw YAML must remain available to the authoritative backend validator");
     assert.deepEqual(harness.calls.at(-1), {section: "tools", action: "validate_yaml", payload: {yaml: invalidYaml}});
     assert.deepEqual(harness.editor.values.at(-1), {}, "invalid backend YAML must not replace the native editor value with a partial config");
+
+    await harness.panel._toolYamlEditorAdapter.setYaml("name: valid\n");
 
     const nativeInvalidYaml = "name: still [broken\n";
     harness.editor.yaml = nativeInvalidYaml;

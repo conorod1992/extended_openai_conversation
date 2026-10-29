@@ -1,4 +1,5 @@
 import {
+  captureToolEditorOwner,
   getToolYamlEditor,
   installToolYamlEditor,
   toolYamlChangeHandler,
@@ -158,6 +159,8 @@ export function bindNativeToolYaml(panel) {
   let nativeReady = false;
   let destroyed = false;
   let syncGeneration = 0;
+  let yamlOwner = captureToolEditorOwner(panel);
+  let fallbackClaimed = false;
 
   // Labels on a custom-element host do not name CodeMirror's nested textbox.
   // Observe only this adapter's editor, including late native hydration and
@@ -203,7 +206,7 @@ export function bindNativeToolYaml(panel) {
     textarea.hidden = false;
   };
 
-  const setNativeValue = (value) => {
+  const setNativeValue = async (value, ownsSync) => {
     // HA's native editor dumps a JSON object back to YAML. Typed transport tags
     // would become literal variables; the existing raw editor preserves source.
     if (hasTypedYamlWireValue(value)) {
@@ -212,19 +215,54 @@ export function bindNativeToolYaml(panel) {
     }
     try {
       nativeEditor.setValue(value);
+      const yaml = nativeEditor.yaml;
+      let timeout;
+      try {
+        // HA propagates setValue through two Lit elements. Its outer YAML value
+        // can be ready while CodeMirror still contains the previous document.
+        // A deadline selects the usable raw editor; it never declares native
+        // readiness merely because time has passed.
+        const hydrated = await Promise.race([
+          (async () => {
+            await nativeEditor.updateComplete;
+            const code = nativeEditor.shadowRoot?.querySelector("ha-code-editor");
+            await code?.updateComplete;
+            return typeof yaml === "string"
+              && code?.codemirror?.state.doc.toString() === yaml
+              && nativeEditor.yaml === yaml;
+          })(),
+          new Promise(resolve => { timeout = setTimeout(() => resolve(false), 5000); }),
+        ]);
+        if (!ownsSync()) return false;
+        if (!hydrated) { showFallback(); return false; }
+      } finally {
+        clearTimeout(timeout);
+      }
+      const transferFocus = root.activeElement === textarea;
+      nativeReady = true;
+      textarea.hidden = true;
+      nativeEditor.hidden = false;
       constrainNativeCodeEditor(nativeEditor);
+      if (transferFocus) nativeEditor.focus?.();
       return true;
     } catch (_err) {
-      showFallback();
+      if (ownsSync()) showFallback();
       return false;
     }
   };
 
   const syncNativeFromYaml = async (yaml) => {
-    if (!nativeReady || typeof nativeEditor.setValue !== "function") return;
+    showFallback();
     const generation = ++syncGeneration;
+    if (typeof nativeEditor.setValue !== "function") return;
+    const owner = yamlOwner;
+    const ownsSync = () => isCurrent() && !fallbackClaimed
+      && generation === syncGeneration && owner.isCurrent();
+    if (!ownsSync()) return;
+    try { nativeEditor.inDialog = true; }
+    catch (_err) { return; }
     if (!String(yaml || "").trim()) {
-      if (isCurrent() && generation === syncGeneration && setNativeValue({})) {
+      if (ownsSync() && await setNativeValue({}, ownsSync)) {
         nativeEditor.isValid = true;
       }
       return;
@@ -233,32 +271,39 @@ export function bindNativeToolYaml(panel) {
     const repairConfig = String(yaml ?? "") === String(panel._toolInitialYaml ?? "")
       ? repairToolConfig(panel) : null;
     if (repairConfig) {
-      if (isCurrent() && generation === syncGeneration) setNativeValue(repairConfig);
+      if (ownsSync()) await setNativeValue(repairConfig, ownsSync);
       return;
     }
 
     try {
       const result = await panel._call("tools", "validate_yaml", {yaml});
-      if (!isCurrent() || generation !== syncGeneration) return;
+      if (!ownsSync()) return;
       if (result?.valid) {
-        setNativeValue(result.config);
+        await setNativeValue(result.config, ownsSync);
         return;
       }
       const starter = nativeStarterConfig(yaml, panel._toolOriginalName ?? null);
-      if (starter) setNativeValue(starter);
+      if (starter) await setNativeValue(starter, ownsSync);
       else showFallback();
     } catch (_err) {
-      if (isCurrent() && generation === syncGeneration) showFallback();
+      if (ownsSync()) showFallback();
     }
   };
 
   const onTextareaInput = () => {
-    ++syncGeneration;
+    claimFallback();
     rawYaml = String(textarea.value ?? "");
     toolYamlChangeHandler(panel, rawYaml);
   };
 
+  // Selection/caret placement owns the fallback before input arrives. Initial
+  // programmatic focus alone still permits a late optional native activation.
+  const claimFallback = () => { fallbackClaimed = true; ++syncGeneration; };
+
   const onNativeChange = (event) => {
+    // Programmatic CodeMirror hydration also emits value-changed. Only the
+    // exposed document owns user edits; hidden, superseded updates own nothing.
+    if (!nativeReady) return;
     ++syncGeneration;
     rawYaml = String(nativeEditor.yaml ?? "");
     textarea.value = rawYaml;
@@ -272,6 +317,8 @@ export function bindNativeToolYaml(panel) {
   };
 
   textarea.addEventListener?.("input", onTextareaInput);
+  textarea.addEventListener?.("pointerdown", claimFallback);
+  textarea.addEventListener?.("keydown", claimFallback);
   nativeEditor.addEventListener("value-changed", onNativeChange);
   nativeEditor.addEventListener("editor-save", onNativeSave);
 
@@ -288,7 +335,9 @@ export function bindNativeToolYaml(panel) {
       rawYaml = String(value ?? "");
       textarea.value = rawYaml;
       ++syncGeneration;
-      if (nativeReady) void syncNativeFromYaml(rawYaml);
+      fallbackClaimed = false;
+      yamlOwner = captureToolEditorOwner(panel);
+      return syncNativeFromYaml(rawYaml);
     },
     focus() {
       if (nativeReady && typeof nativeEditor.focus === "function") nativeEditor.focus();
@@ -301,6 +350,8 @@ export function bindNativeToolYaml(panel) {
       observedRoots.clear();
       ++syncGeneration;
       textarea.removeEventListener?.("input", onTextareaInput);
+      textarea.removeEventListener?.("pointerdown", claimFallback);
+      textarea.removeEventListener?.("keydown", claimFallback);
       nativeEditor.removeEventListener?.("value-changed", onNativeChange);
       nativeEditor.removeEventListener?.("editor-save", onNativeSave);
     },
@@ -310,16 +361,7 @@ export function bindNativeToolYaml(panel) {
 
   const activate = () => {
     if (!isCurrent() || typeof nativeEditor.setValue !== "function") return;
-    try {
-      nativeReady = true;
-      textarea.hidden = true;
-      nativeEditor.hidden = false;
-      nativeEditor.inDialog = true;
-      constrainNativeCodeEditor(nativeEditor);
-      void syncNativeFromYaml(rawYaml);
-    } catch (_err) {
-      showFallback();
-    }
+    void syncNativeFromYaml(rawYaml);
   };
 
   if (customElements.get(NATIVE_EDITOR_TAG)) activate();
