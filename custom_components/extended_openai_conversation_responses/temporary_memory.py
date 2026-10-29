@@ -16,7 +16,10 @@ from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
 from .memory import validate_memory_privacy
-from .persistence_hardening import _async_settle_transactional_save
+from .persistence_hardening import (
+    StorageRepairRequired,
+    _async_settle_transactional_save,
+)
 from .scope import SHARED_HOUSEHOLD_SCOPE_ID
 from .storage_namespaces import TEMPORARY_MEMORY_PREFIX as STORAGE_KEY_PREFIX
 from .strict_store import PropagatingWriteStore, async_storage_lock
@@ -55,6 +58,10 @@ class TemporaryMemoryRecord:
     created_at: str
     updated_at: str
     owner_scope_id: str | None = None
+
+
+class _InvalidStoredMetadata(ValueError):
+    """Invalid metadata must not trigger lossy startup cleanup."""
 
 
 class TemporaryMemoryStore(PropagatingWriteStore):
@@ -122,6 +129,8 @@ class TemporaryMemory:
                         self._records[record.memory_id] = record
                     else:
                         self.expired_pruned += 1
+                except _InvalidStoredMetadata as err:
+                    raise StorageRepairRequired("Temporary Memory") from err
                 except TypeError, ValueError:
                     self._normalization_pending = True
                     continue
@@ -425,44 +434,18 @@ class TemporaryMemory:
                 record = _record_from_storage(raw)
             except TypeError as err:
                 raise ValueError("temporary memory record is invalid") from err
-            if not all(
-                isinstance(value, str)
-                for value in (
-                    record.memory_id,
-                    record.scope_id,
-                    record.content,
-                    record.category,
-                    record.source,
-                    record.expires_at,
-                    record.created_at,
-                    record.updated_at,
-                )
-            ):
-                raise ValueError("temporary memory fields must be strings")
             if record.owner_scope_id is not None and not isinstance(
                 record.owner_scope_id, str
             ):
                 raise ValueError("temporary memory owner must be a string")
-            if (
-                not record.memory_id
-                or len(record.memory_id) > 128
-                or record.memory_id in seen
-                or not record.scope_id
-                or (
-                    record.owner_scope_id is not None
-                    and (not record.owner_scope_id or len(record.owner_scope_id) > 128)
-                )
-                or record.source not in {"automatic", "manual"}
+            if record.memory_id in seen or (
+                record.owner_scope_id is not None
+                and (not record.owner_scope_id or len(record.owner_scope_id) > 128)
             ):
                 raise ValueError("temporary memory metadata is invalid")
             _clean(record.content, MAX_CONTENT_LENGTH, "content")
             _clean(record.category, MAX_CATEGORY_LENGTH, "category")
             expiry = _parse_expiry(record.expires_at)
-            if (
-                dt_util.parse_datetime(record.created_at) is None
-                or dt_util.parse_datetime(record.updated_at) is None
-            ):
-                raise ValueError("temporary memory timestamp is invalid")
             seen.add(record.memory_id)
             if (
                 expiry > now
@@ -530,6 +513,8 @@ class TemporaryMemory:
                 record = _record_from_storage(raw)
                 _parse_expiry(record.expires_at)
                 normalized = _normalize_record_owner(record)
+            except _InvalidStoredMetadata as err:
+                raise StorageRepairRequired("Temporary Memory") from err
             except TypeError, ValueError:
                 continue
             if normalized is None:
@@ -740,8 +725,32 @@ def _record_from_storage(raw: Mapping[str, Any]) -> TemporaryMemoryRecord:
         )
     record = TemporaryMemoryRecord(**values)
     _validate_record_scope_id(record.scope_id)
-    if not isinstance(record.content, str):
-        raise ValueError("temporary memory fields must be strings")
+    if not all(
+        isinstance(value, str)
+        for value in (
+            record.memory_id,
+            record.scope_id,
+            record.content,
+            record.category,
+            record.source,
+            record.expires_at,
+            record.created_at,
+            record.updated_at,
+        )
+    ):
+        raise _InvalidStoredMetadata("temporary memory fields must be strings")
+    if (
+        not record.memory_id
+        or len(record.memory_id) > 128
+        or record.source not in {"automatic", "manual"}
+    ):
+        raise _InvalidStoredMetadata("temporary memory metadata is invalid")
+    _parse_expiry(record.expires_at)
+    if (
+        dt_util.parse_datetime(record.created_at) is None
+        or dt_util.parse_datetime(record.updated_at) is None
+    ):
+        raise _InvalidStoredMetadata("temporary memory timestamp is invalid")
     validate_memory_privacy(record.content, automatic=record.source == "automatic")
     validate_memory_privacy(record.category, automatic=record.source == "automatic")
     return replace(
