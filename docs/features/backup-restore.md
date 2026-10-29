@@ -49,6 +49,8 @@ Before replaying its local partition journal, Archive validates the complete can
 
 Full-agent journal verification reads the actual file rather than a pending HA save or shared load cache. An explicit journal save during shutdown finishes its write before verification; deferred RAM data cannot serve as commit evidence.
 
+On POSIX, retiring a full-agent journal also syncs its containing directory. Absence checks repeat that sync before releasing recovery quarantine, so a persistent sync failure cannot be mistaken for durable deletion. A later successful absence check can release quarantine without replaying a completed transaction. Windows retains its existing deletion guarantees; this directory-fsync path is POSIX-specific.
+
 An existing validated full-agent journal can now recover Temporary Memory and Knowledge when malformed destination data prevents normal initialization. Recovery uses the journal's durable decision (rollback while applying, target after commit), replaces only a collection whose normal getter rejects its data, then retries the production loaders and the normal full apply. Failed writes retain the journal and quarantine for retry. This path requires exclusive recovery ownership and does not allow a new restore to skip its rollback snapshot. Other initialization blockers, including corrupted Archive transaction intent and I/O failures, still fail closed.
 
 ## Interrupted transfer files

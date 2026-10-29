@@ -8,6 +8,7 @@ from copy import deepcopy
 from dataclasses import asdict
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
@@ -53,18 +54,60 @@ class _JournalVerificationUnavailable(Exception):
     """The durable outcome of one journal write could not be determined."""
 
 
+def _sync_journal_directory(path: str) -> None:
+    """Make journal removal/absence durable on the supported POSIX filesystems.
+
+    Windows does not expose directory fsync through this API. Writes retain
+    HA's atomic writer guarantees there, but deletion has no added guarantee.
+    """
+    if os.name != "posix":
+        return
+    parent = Path(path).parent
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    try:
+        descriptor = os.open(parent, flags)
+    except FileNotFoundError:
+        # Before the first Store write, .storage itself may not yet exist.
+        # Its absence is a directory entry in the existing HA config directory.
+        descriptor = os.open(parent.parent, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 class _RestoreJournalStore(PropagatingWriteStore):
     """Propagate write failures and preserve strict on-disk recovery evidence."""
 
     async def async_load(self) -> dict[str, Any] | None:
         """Read the file, never HA's pending-save or shared load cache."""
-        return await self._async_load_data()
+        result = await self._async_load_data()
+        if result is None:
+            try:
+                await self.hass.async_add_executor_job(
+                    _sync_journal_directory, self.path
+                )
+            except OSError as err:
+                raise backup.BackupError(
+                    "Restore journal absence could not be durably verified"
+                ) from err
+        return result
 
     async def async_save(self, data: dict[str, Any]) -> None:
         """An explicit journal receipt cannot defer its write until shutdown."""
         await super().async_save(data)
         if self.hass.state is CoreState.stopping:
             await self._async_handle_write_data()
+
+    async def async_remove(self) -> None:
+        """Retire recovery evidence only after the directory entry is synced."""
+        await super().async_remove()
+        try:
+            await self.hass.async_add_executor_job(_sync_journal_directory, self.path)
+        except OSError as err:
+            raise backup.BackupError(
+                "Restore journal retirement could not be durably verified"
+            ) from err
 
     async def _async_load_data(self) -> dict[str, Any] | None:
         def read() -> dict[str, Any] | None:

@@ -48,6 +48,7 @@ async def real_ha_prerequisites(
             _RestoreJournalStore, "_async_load_data", Store._async_load_data
         )
         monkeypatch.setattr(_RestoreJournalStore, "async_load", Store.async_load)
+        monkeypatch.setattr(_RestoreJournalStore, "async_remove", Store.async_remove)
 
     # Core tests explicitly set up the Home Assistant integration before tests that
     # rely on exposed-entity preferences.  The lightweight test ``hass`` fixture does
