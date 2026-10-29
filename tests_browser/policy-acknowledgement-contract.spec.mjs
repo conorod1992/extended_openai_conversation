@@ -87,12 +87,12 @@ for (const bundled of [false, true]) for (const missingRevision of [false, true]
   await expect(panel.locator("#qh-start")).toHaveValue("23:15");
 });
 
-for (const bundled of [false, true]) for (const guest of [true, false]) test(`${guest ? "Guest" : "Quiet"} malformed read cannot erase an observed revision (${bundled ? "bundle" : "source"})`, async ({page}) => {
+for (const bundled of [false, true]) for (const guest of [true, false]) for (const field of (guest ? [false] : [false, true])) test(`${guest ? "Guest" : "Quiet"} malformed read cannot erase an observed ${field ? "field" : "revision"} (${bundled ? "bundle" : "source"})`, async ({page}) => {
   const route = guest ? "capabilities/guest-mode" : "capabilities/quiet-hours";
   await page.goto(fixtureUrl(route, bundled ? "&bundle=1" : ""));
   const panel = page.locator("extended-openai-management-panel");
   await expect(panel.locator(guest ? "#guest-web-search" : "#qh-enabled")).toBeAttached();
-  await panel.evaluate(async (host, guest) => {
+  await panel.evaluate(async (host, {guest, field}) => {
     const send = host.hass.callWS.bind(host.hass), section = guest ? "guest_mode" : "quiet_hours", action = guest ? "save_policy" : "update";
     let quietRevision = "read-quiet-1";
     window.policyReadWrites = [];
@@ -111,21 +111,25 @@ for (const bundled of [false, true]) for (const guest of [true, false]) test(`${
       const result = await send(request);
       if (result.config) {
         if (!guest) result.revision = quietRevision;
-        if (breakPolicyRead) delete result.revision;
+        if (breakPolicyRead) {if (field) delete result.config.start; else delete result.revision;}
       }
       return result;
     };
     // Establish a revisioned Quiet server before testing a dropped revision.
     host._sectionCache.clear(); await host._loadSection(true);
+    const concurrentChange = async () => {
+      const saved = browserHarness.getState()[guest ? "guest" : "quiet"];
+      await send({type:"extended_openai_conversation_responses/management", section, action,
+        entry_id:host._selectedAgent().entry_id, subentry_id:host._agentId,
+        ...(guest ? {revision:saved.revision} : {}),
+        config:{...saved.config, ...(guest ? {guest_mode_enabled:true} : {start:"23:15"})}});
+      if (!guest) quietRevision += "x";
+    };
+    if (field) await concurrentChange();
     window.breakPolicyRead = true;
     host._sectionCache.clear(); await host._loadSection(true);
-    const saved = browserHarness.getState()[guest ? "guest" : "quiet"];
-    await send({type:"extended_openai_conversation_responses/management", section, action,
-      entry_id:host._selectedAgent().entry_id, subentry_id:host._agentId,
-      ...(guest ? {revision:saved.revision} : {}),
-      config:{...saved.config, ...(guest ? {guest_mode_enabled:true} : {start:"23:15"})}});
-    if (!guest) quietRevision += "x";
-  }, guest);
+    if (!field) await concurrentChange();
+  }, {guest, field});
   const control = panel.locator(guest ? "#guest-web-search" : "#qh-enabled");
   if (await control.count()) {
     await control.evaluate(input => {for (let p=input.parentElement;p;p=p.parentElement) if(p.tagName === "DETAILS") p.open=true;});
