@@ -137,7 +137,7 @@ for (const [kind, view, open, field, section, action] of [
         if (request.section === section && request.action === action) {
           window.editorSaveCalls++;
           await new Promise((resolve) => { window.releaseEditorSave = resolve; });
-          throw Error("Editor save rejected");
+          throw {code:"invalid_request", message:"Editor save rejected"};
         }
         return original(request);
       };
