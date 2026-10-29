@@ -49,6 +49,8 @@ Before replaying its local partition journal, Archive validates the complete can
 
 Full-agent journal verification reads the actual file rather than a pending HA save or shared load cache. An explicit journal save during shutdown finishes its write before verification; deferred RAM data cannot serve as commit evidence.
 
+An existing validated full-agent journal can now recover Temporary Memory and Knowledge when malformed destination data prevents normal initialization. Recovery uses the journal's durable decision (rollback while applying, target after commit), replaces only a collection whose normal getter rejects its data, then retries the production loaders and the normal full apply. Failed writes retain the journal and quarantine for retry. This path requires exclusive recovery ownership and does not allow a new restore to skip its rollback snapshot. Other initialization blockers, including corrupted Archive transaction intent and I/O failures, still fail closed.
+
 ## Interrupted transfer files
 
 Transfers are not resumable across Home Assistant process restarts. New upload and export payloads live in an EOAI-private staging directory under `.storage`. Native owner locks protect active processes; startup removes abandoned owners after their locks have been released. Recovery neither recreates transfer sessions nor applies an abandoned import. Normal cancellation, expiry and shutdown still remove payloads.

@@ -310,6 +310,62 @@ async def _apply_prepared(
     await managers.request_rules.async_replace_backup(prepared.request_rules)
 
 
+async def _recovery_managers(
+    hass: HomeAssistant,
+    entry_id: str,
+    subentry_id: str,
+    selected: backup.PreparedRestore,
+) -> backup.AgentDataParticipants:
+    """Recover known initialization blockers from an already validated journal.
+
+    Ordinary restores still require an intact rollback snapshot. Only existing
+    journal recovery has authority to replace a rejected destination generation.
+    Reuse normal getters afterward so indexes, ownership and expiry are rebuilt
+    by production loaders, without inventing an initialized manager generation.
+    """
+    if not get_agent_maintenance_gate(hass, entry_id, subentry_id).owns_exclusive():
+        raise RuntimeError("Recovery participants require exclusive maintenance")
+    try:
+        return await _durable_managers(hass, entry_id, subentry_id)
+    except ValueError as initial_error:
+        from .knowledge import HomeAssistantKnowledgeStorage, async_get_knowledge
+        from .temporary_memory import (
+            _temporary_memory_store,
+            async_get_temporary_memory,
+        )
+
+        repaired = False
+        for getter, storage_factory, field, records in (
+            (
+                async_get_temporary_memory,
+                _temporary_memory_store,
+                "records",
+                selected.temporary_memories,
+            ),
+            (
+                async_get_knowledge,
+                HomeAssistantKnowledgeStorage,
+                "sources",
+                selected.knowledge,
+            ),
+        ):
+            try:
+                await getter(hass, entry_id, subentry_id)
+            except ValueError:
+
+                def serialize(
+                    field: str = field, records: list[Any] = records
+                ) -> dict[str, Any]:
+                    return {field: [asdict(record) for record in records]}
+
+                payload = await asyncio.to_thread(serialize)
+                await storage_factory(hass, entry_id, subentry_id).async_save(payload)
+                repaired = True
+        if not repaired:
+            raise initial_error
+        return await _durable_managers(hass, entry_id, subentry_id)
+
+
 def _active_agent(hass: HomeAssistant, entry_id: str, subentry_id: str) -> Any | None:
     """Return the loaded conversation entity for one exact agent subentry."""
     from homeassistant.components import conversation
@@ -708,10 +764,10 @@ async def _async_recover_pending_restore(
         journal, target, rollback = await _async_load_journal(
             raw, entry_id, subentry_id
         )
-        managers = await _durable_managers(hass, entry_id, subentry_id)
         selected = target if journal["phase"] == _PHASE_COMMITTED else rollback
 
         try:
+            managers = await _recovery_managers(hass, entry_id, subentry_id, selected)
             await _apply_prepared(managers, selected)
             reset_restored_runtime(hass, entry_id, subentry_id, managers)
             await _update_configuration(hass, entry, subentry, selected)
