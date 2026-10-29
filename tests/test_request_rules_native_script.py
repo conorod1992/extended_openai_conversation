@@ -428,7 +428,10 @@ async def test_live_authorization_after_permission_lookup_cannot_be_ignored(
     dispatch.assert_not_called()
 
 
-async def test_real_service_registry_rechecks_revoked_guest_control(tmp_path):
+@pytest.mark.parametrize("effect_kind", ["service", "event"])
+async def test_real_service_registry_rechecks_revoked_guest_control(
+    tmp_path, effect_kind
+):
     from homeassistant.core import HomeAssistant
     from custom_components.extended_openai_conversation_responses.guest_mode import (
         GuestCapabilityPolicy,
@@ -451,22 +454,29 @@ async def test_real_service_registry_rechecks_revoked_guest_control(tmp_path):
     real.services.async_register("test", "pause", pause)
     real.services.async_register("light", "turn_on", effect)
     real.states.async_set("light.kitchen", "off")
+    real.bus.async_listen("denied_probe", lambda event: calls.append(event.data))
+    effect_action = (
+        {"action": "light.turn_on", "target": {"entity_id": "light.kitchen"}}
+        if effect_kind == "service"
+        else {"event": "denied_probe"}
+    )
     with bind_active_ha_context(None):
         result = await evaluate(
             real,
             [
                 {"action": "test.pause"},
                 {
-                    "repeat": {
-                        "while": "{{ repeat.index <= 1 }}",
-                        "sequence": [
-                            {
-                                "action": "light.turn_on",
-                                "target": {"entity_id": "light.kitchen"},
+                    "sequence": [
+                        {
+                            "repeat": {
+                                "while": "{{ repeat.index <= 1 }}",
+                                "sequence": [effect_action],
                             }
-                        ],
-                    }
+                        }
+                    ],
+                    "continue_on_error": True,
                 },
+                {"set_conversation_response": "must not reach"},
             ],
             live_guest_policy=lambda: policy,
         )
