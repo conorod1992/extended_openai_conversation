@@ -459,7 +459,7 @@ class NativeFunction(Function):
             hass, service_data, exposed_entities, domain=domain, service=service
         )
 
-        from ..execution_outcomes import execution_operation, execution_rejected
+        from ..execution_outcomes import execution_operation, execution_refused
 
         with execution_operation("ha_service", service_argument) as operation:
             try:
@@ -477,7 +477,7 @@ class NativeFunction(Function):
                 return result
             except HomeAssistantError as e:
                 if operation.receipt is None:
-                    execution_rejected(before_dispatch=True)
+                    execution_refused()
                 log_handled_failure(
                     _LOGGER, f"Native Function Tool action={domain}.{service} failed", e
                 )

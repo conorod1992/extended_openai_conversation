@@ -133,7 +133,7 @@ async def async_dispatch_ha_service(
     request_response = bool(kwargs.get("return_response", False))
     from .execution_outcomes import (
         execution_completed,
-        execution_rejected,
+        execution_refused,
         execution_started,
     )
 
@@ -142,7 +142,7 @@ async def async_dispatch_ha_service(
             hass, domain, service, kwargs
         )
     except _SERVICE_SCHEMA_ERRORS as err:
-        execution_rejected(before_dispatch=True)
+        execution_refused()
         raise HomeAssistantError(str(err)) from err
 
     recovery_alias = check_alias = ""

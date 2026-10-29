@@ -448,7 +448,7 @@ def test_receipt_ceiling_refuses_effects_and_bounds_rejection_markers(monkeypatc
                     kind="probe", prepared={"index": index}
                 )
             except HomeAssistantError:
-                receipts.execution_rejected(before_dispatch=True)
+                receipts.execution_refused()
             else:
                 dispatched.append(index)
                 receipts.execution_completed(handle)
@@ -696,7 +696,6 @@ async def test_admitted_delayed_work_detaches_even_while_parent_is_active(
     admitted = _call("admitted-job", "effect", RAW)
 
     async def due_worker(call_id):
-        assert receipts.current_execution_receipt() is None
         assert call_id == admitted.id
         await ExtendedOpenAIBaseLLMEntity._execute_function_tool(
             entity, tool, admitted, None, []

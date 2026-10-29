@@ -223,12 +223,6 @@ def execution_prepared(
         attempt.dispatch_recorded = False
 
 
-def current_execution_receipt() -> EffectReceipt | None:
-    if (attempt := _ATTEMPT.get()) and attempt.active and attempt.receipts:
-        return attempt.receipts[-1]
-    return None
-
-
 def execution_started(
     *,
     kind: str | None = None,
@@ -308,8 +302,7 @@ def execution_started(
     return None
 
 
-def execution_completed(receipt: EffectReceipt | None = None) -> None:
-    receipt = receipt or current_execution_receipt()
+def execution_completed(receipt: EffectReceipt | None) -> None:
     if (
         (attempt := _ATTEMPT.get())
         and attempt.active
@@ -320,25 +313,21 @@ def execution_completed(receipt: EffectReceipt | None = None) -> None:
         receipt.outcome = "completed"
 
 
-def execution_rejected(
-    receipt: EffectReceipt | None = None, *, before_dispatch: bool = False
-) -> None:
-    """Authoritative pre-execution rejection does not imply an effect."""
+def execution_rejected(receipt: EffectReceipt | None) -> None:
+    """Settle only the explicitly supplied uncertain receipt."""
+    if (
+        receipt is not None
+        and (attempt := _ATTEMPT.get())
+        and attempt.active
+        and receipt.invocation_id == attempt.invocation_id
+        and receipt.outcome == "uncertain"
+    ):
+        receipt.outcome = "rejected"
+
+
+def execution_refused() -> None:
+    """Record an authoritative refusal before dispatch without settling an effect."""
     if (attempt := _ATTEMPT.get()) and attempt.active:
-        explicit = receipt is not None
-        receipt = None if before_dispatch else receipt or current_execution_receipt()
-        if explicit and (
-            receipt is None
-            or receipt.invocation_id != attempt.invocation_id
-            or receipt.outcome != "uncertain"
-        ):
-            return
-        if receipt is not None and receipt.invocation_id == attempt.invocation_id:
-            if receipt.outcome == "uncertain":
-                receipt.outcome = "rejected"
-                return
-            if receipt.outcome == "rejected":
-                return
         operation = _OPERATION.get()
         # Reserve one terminal rejection beyond the dispatch budget so reaching
         # the ceiling remains partial, without growing on every later refusal.
@@ -395,7 +384,7 @@ async def execute_backend(
                     item.outcome == "completed" for item in attempt.receipts[before:]
                 )
             ):
-                execution_rejected(before_dispatch=True)
+                execution_refused()
             from .public_errors import sanitize_backend_error
 
             public_error = sanitize_backend_error(error)
