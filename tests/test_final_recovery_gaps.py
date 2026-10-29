@@ -162,9 +162,11 @@ async def test_temporary_memory_failed_ack_readback_salvages_valid_records(malfo
             valid["expires_at"],
             owner_scope_id="user:alice",
         )
-    assert memory.initialized
-    assert set(memory._records) == {valid["memory_id"]}
-    assert memory._records[valid["memory_id"]].content == valid["content"]
+    assert not memory.initialized
+    assert not memory._records
+    assert storage.data == durable
+    with pytest.raises(ValueError, match="needs repair"):
+        await memory.async_initialize()
 
 
 async def test_memory_owned_update_rejects_invalid_source_before_mutation():
