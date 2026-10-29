@@ -27,7 +27,7 @@ class MemoryStore:
         pass
 
 
-async def evaluate(hass, actions, *, handoff=False):
+async def evaluate(hass, actions, *, handoff=False, live_guest_policy=None):
     rule = {
         "id": "native",
         "name": "Native",
@@ -47,7 +47,14 @@ async def evaluate(hass, actions, *, handoff=False):
     }
     rules = RequestRules(MemoryStore(rule))
     await rules.async_initialize()
-    return await async_evaluate_rule(hass, rules, RequestRuleRuntime(), "run", "native")
+    return await async_evaluate_rule(
+        hass,
+        rules,
+        RequestRuleRuntime(),
+        "run",
+        "native",
+        live_guest_policy=live_guest_policy,
+    )
 
 
 @pytest.mark.parametrize(
@@ -312,3 +319,79 @@ def test_stop_probe_shares_one_native_enabled_decision_and_keeps_source():
         key: value for key, value in original.items() if key != "enabled"
     }
     assert stop == original
+
+
+@pytest.mark.parametrize("live", [False, True])
+@pytest.mark.parametrize("kind", ["data", "alias", "metadata", "event"])
+async def test_live_guard_preserves_native_template_boundaries(hass, live, kind):
+    from custom_components.extended_openai_conversation_responses.guest_mode import (
+        GuestCapabilityPolicy,
+    )
+
+    hass.loop = asyncio.get_running_loop()
+    hass.async_create_task_internal.side_effect = lambda coro, **kw: (
+        asyncio.create_task(coro)
+    )
+    action = {"action": "light.turn_on", "continue_on_error": True}
+    if kind == "data":
+        action["data"] = {"brightness": "{{ 1 / 0 }}"}
+    elif kind == "event":
+        action = {"event": "test_event", "event_data": {"value": "{{ 1 / 0 }}"}}
+    else:
+        action[kind] = "{{ 1 / 0 }}" if kind == "alias" else {"note": "{{ 1 / 0 }}"}
+    outcome = await evaluate(
+        hass,
+        [action, {"set_conversation_response": "reached"}],
+        live_guest_policy=GuestCapabilityPolicy.unrestricted if live else None,
+    )
+    assert outcome.successful and outcome.response == "reached"
+    if kind == "data":
+        assert not hass.services.async_call.called
+    elif kind != "event":
+        assert any(
+            (
+                call.args[:2] == ("light", "turn_on")
+                or (call.kwargs.get("domain"), call.kwargs.get("service"))
+                == ("light", "turn_on")
+            )
+            for call in hass.services.async_call.call_args_list
+        ), hass.services.async_call.call_args_list
+
+
+async def test_live_authorization_after_permission_lookup_cannot_be_ignored(
+    hass, monkeypatch
+):
+    from unittest.mock import AsyncMock
+    from custom_components.extended_openai_conversation_responses import ha_actions
+    from custom_components.extended_openai_conversation_responses.guest_mode import (
+        GuestCapabilityPolicy,
+    )
+
+    hass.loop = asyncio.get_running_loop()
+    hass.async_create_task_internal.side_effect = lambda coro, **kw: (
+        asyncio.create_task(coro)
+    )
+    policy = GuestCapabilityPolicy.unrestricted()
+
+    async def lookup(*args, **kwargs):
+        nonlocal policy
+        policy = GuestCapabilityPolicy(guest_active=True)
+        return set()
+
+    dispatch = AsyncMock()
+    monkeypatch.setattr(ha_actions, "async_authorize_ha_action", lookup)
+    monkeypatch.setattr(ha_actions, "async_dispatch_ha_service", dispatch)
+    outcome = await evaluate(
+        hass,
+        [
+            {
+                "action": "light.turn_on",
+                "target": {"entity_id": "light.kitchen"},
+                "continue_on_error": True,
+            },
+            {"set_conversation_response": "must not reach"},
+        ],
+        live_guest_policy=lambda: policy,
+    )
+    assert not outcome.successful and outcome.response == "Failed"
+    dispatch.assert_not_called()

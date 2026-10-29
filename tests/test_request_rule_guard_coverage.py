@@ -30,8 +30,8 @@ def test_guard_native_actions_instruments_nested_effects_and_preserves_enabled()
                     "conditions": [],
                     "sequence": [
                         {
-                            "action": "light.turn_on",
-                            "target": {"entity_id": "light.kitchen"},
+                            "event": "example",
+                            "event_data": {"literal": "{{ 1 / 0 }}"},
                             "enabled": False,
                         }
                     ],
@@ -47,14 +47,12 @@ def test_guard_native_actions_instruments_nested_effects_and_preserves_enabled()
     nested = guarded[0]["choose"][0]["sequence"]
     assert nested[0] == {
         "action": f"{DOMAIN}.{request_rules._GUARD_SERVICE}",
-        "data": {"pending_action": actions[0]["choose"][0]["sequence"][0]},
+        "data": {"pending_action": {"event": True}},
         "enabled": False,
     }
     assert nested[1] == actions[0]["choose"][0]["sequence"][0]
     default = guarded[0]["default"]
-    assert default[0]["action"] == f"{DOMAIN}.{request_rules._GUARD_SERVICE}"
-    assert default[0]["data"]["pending_action"] == {"scene": "scene.evening"}
-    assert default[1] == {"scene": "scene.evening"}
+    assert default == [{"scene": "scene.evening"}]
     assert guarded[1] == {"variables": {"unchanged": True}}
 
 

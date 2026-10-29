@@ -3195,20 +3195,18 @@ def _guard_native_actions(actions: Sequence[Mapping[str, Any]]) -> list[dict[str
         descend: Callable[[], dict[str, Any]],
     ) -> list[dict[str, Any]]:
         guarded = []
-        if any(
-            name in action
-            for name in (
-                "action",
-                "service",
-                "device_id",
-                "event",
-                "event_type",
-                "scene",
-            )
-        ):
+        if any(name in action for name in ("device_id", "event", "event_type")):
             guard = {
                 "action": f"{DOMAIN}.{_GUARD_SERVICE}",
-                "data": {"pending_action": dict(action)},
+                # These actions bypass the service boundary. Guest policy denies
+                # their category; never render their payload or literal metadata.
+                "data": {
+                    "pending_action": {
+                        key: True
+                        for key in ("device_id", "event", "event_type")
+                        if key in action
+                    }
+                },
             }
             if "enabled" in action:
                 guard["enabled"] = action["enabled"]
@@ -3632,25 +3630,6 @@ async def _async_evaluate_matched_rule(
             # they must never invite a retry of an already executed action.
             if commit_execution_snapshot is not None:
                 commit_execution_snapshot()
-            script = Script(
-                cast(
-                    HomeAssistant,
-                    _AuthorizedScriptHass(
-                        hass,
-                        None,
-                        [],
-                        frozenset(
-                            {(DOMAIN, _GUARD_SERVICE), (DOMAIN, SERVICE_CALL_FUNCTION)}
-                        ),
-                    ),
-                )
-                if context is not None and context.user_id
-                else hass,
-                validated_actions,
-                f"Request Rule {rule['id']}",
-                DOMAIN,
-                log_exceptions=False,
-            )
 
             def authorize_pending(pending: Mapping[str, Any]) -> None:
                 nonlocal policy
@@ -3666,6 +3645,38 @@ async def _async_evaluate_matched_rule(
                     }
                 if not _guest_script_allowed(hass, [pending], policy):
                     raise GuestModeDenied()
+
+            def authorize_prepared(pending: Mapping[str, Any]) -> None:
+                if pending.get("action") == f"{DOMAIN}.{_GUARD_SERVICE}":
+                    return  # The internal guard authorizes non-service effects.
+                try:
+                    authorize_pending(pending)
+                except GuestModeDenied as err:
+                    # Authorization is not an authored recoverable HA failure.
+                    # Native continue_on_error must never continue past denial.
+                    raise ValueError(GUEST_MODE_UNAVAILABLE) from err
+
+            script = Script(
+                cast(
+                    HomeAssistant,
+                    _AuthorizedScriptHass(
+                        hass,
+                        None,
+                        [],
+                        frozenset(
+                            {(DOMAIN, _GUARD_SERVICE), (DOMAIN, SERVICE_CALL_FUNCTION)}
+                        ),
+                        authorize_prepared if live_guest_policy is not None else None,
+                    ),
+                )
+                if live_guest_policy is not None
+                or (context is not None and context.user_id)
+                else hass,
+                validated_actions,
+                f"Request Rule {rule['id']}",
+                DOMAIN,
+                log_exceptions=False,
+            )
 
             action_token = _ACTIVE_RULE_ACTION.set(
                 RuleActionExecution(function_executor, authorize_pending, result_values)

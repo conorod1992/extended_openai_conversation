@@ -89,9 +89,9 @@ def test_stop_expansion_keeps_native_scope_metadata_and_payload(
 @pytest.mark.parametrize("wrap, path", CONTAINERS)
 def test_live_guards_stay_adjacent_to_original_effect_and_retain_enabled(wrap, path):
     leaf = {
-        "action": "light.turn_on",
+        "event": "native_event",
         "enabled": "{{ enabled }}",
-        "data": {"sequence": [{"stop": "payload"}], "action": "payload"},
+        "event_data": {"sequence": [{"stop": "payload"}]},
     }
     raw = [wrap(leaf)]
     original = deepcopy(raw)
@@ -99,12 +99,12 @@ def test_live_guards_stay_adjacent_to_original_effect_and_retain_enabled(wrap, p
     assert children == [
         {
             "action": f"{rr.DOMAIN}.{rr._GUARD_SERVICE}",
-            "data": {"pending_action": leaf},
+            "data": {"pending_action": {"event": True}},
             "enabled": leaf["enabled"],
         },
         leaf,
     ]
-    assert children[0]["data"]["pending_action"]["data"] is leaf["data"]
+    assert "event_data" not in children[0]["data"]["pending_action"]
     assert raw == original
 
 
@@ -189,9 +189,9 @@ def test_nested_payloads_and_non_list_structural_values_remain_opaque():
         {"sequence": ["literal", {"delay": 0}]},
     ]
     guarded = rr._guard_native_actions(raw)
-    assert guarded[1]["data"] is payload
-    assert guarded[1]["repeat"]["sequence"] is None
-    assert guarded[2]["sequence"][0] == "literal"
+    assert guarded[0]["data"] is payload
+    assert guarded[0]["repeat"]["sequence"] is None
+    assert guarded[1]["sequence"][0] == "literal"
     probes, _, _ = rr._outcome_probes(raw)
     assert probes[1]["data"] is payload
     assert probes[1]["repeat"]["sequence"] is None

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable, Mapping
 from contextlib import ExitStack
 from copy import deepcopy
 import logging
@@ -47,11 +48,13 @@ class _AuthorizedScriptServices:
         function: Function | None,
         exposed_entities: list[dict[str, Any]],
         internal_services: frozenset[tuple[str, str]] = frozenset(),
+        authorize_action: Callable[[Mapping[str, Any]], None] | None = None,
     ) -> None:
         self._hass = hass
         self._function = function
         self._exposed_entities = exposed_entities
         self._internal_services = internal_services
+        self._authorize_action = authorize_action
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._hass.services, name)
@@ -86,6 +89,16 @@ class _AuthorizedScriptServices:
                     domain, service
                 ),
             )
+        if self._authorize_action is not None:
+            # HA has already rendered the native action. Authorize those exact
+            # execution inputs after permission lookup, immediately before dispatch.
+            self._authorize_action(
+                {
+                    "action": f"{domain}.{service}",
+                    "data": service_data or {},
+                    "target": target or {},
+                }
+            )
         # Preserve HA's response variables, blocking and cancellation semantics.
         kwargs = {
             "service_data": service_data or {},
@@ -111,10 +124,11 @@ class _AuthorizedScriptHass:
         function: Function | None,
         exposed_entities: list[dict[str, Any]],
         internal_services: frozenset[tuple[str, str]] = frozenset(),
+        authorize_action: Callable[[Mapping[str, Any]], None] | None = None,
     ) -> None:
         self._hass = hass
         self.services = _AuthorizedScriptServices(
-            hass, function, exposed_entities, internal_services
+            hass, function, exposed_entities, internal_services, authorize_action
         )
 
     def __getattr__(self, name: str) -> Any:
