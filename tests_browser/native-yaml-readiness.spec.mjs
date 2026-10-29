@@ -133,7 +133,7 @@ for (const mutation of ["early dialog gate", "outer update only"]) {
     const target = mutation === "early dialog gate" ? "agent-config-tools-base.js" : "agent-config-native-yaml.js";
     await page.route(`**/${target}`, async route => {
       const response = await route.fetch();
-      const source = await response.text();
+      const source = (await response.text()).replace(/\r\n/g, "\n");
       const original = mutation === "early dialog gate" ? "await editor.setYaml(response.yaml);"
         : 'await code?.updateComplete;\n            return typeof yaml === "string"\n              && code?.codemirror?.state.doc.toString() === yaml';
       expect(source).toContain(original);
