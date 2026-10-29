@@ -37,6 +37,7 @@ from .live_subentry_updates import (
 from .operation_settlement import async_settle_owned_operation
 from .operational_errors import log_handled_failure
 from .storage_namespaces import RESTORE_JOURNAL_PREFIX as RESTORE_JOURNAL_PREFIX
+from .strict_store import PropagatingWriteStore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -51,8 +52,8 @@ class _JournalVerificationUnavailable(Exception):
     """The durable outcome of one journal write could not be determined."""
 
 
-class _RestoreJournalStore(Store[dict[str, Any]]):
-    """Read recovery evidence directly without HA's corrupt-file removal policy."""
+class _RestoreJournalStore(PropagatingWriteStore):
+    """Propagate write failures and preserve strict on-disk recovery evidence."""
 
     async def _async_load_data(self) -> dict[str, Any] | None:
         def read() -> dict[str, Any] | None:
@@ -228,7 +229,7 @@ async def _async_load_journal(
 async def _async_write_journal_verified(
     store: Store[dict[str, Any]], journal: dict[str, Any]
 ) -> bool:
-    """Write and read back a journal state because HA Store logs some write failures."""
+    """Require both writer success and matching on-disk journal content."""
     try:
         await store.async_save(await asyncio.to_thread(deepcopy, journal))
         persisted = await store.async_load()

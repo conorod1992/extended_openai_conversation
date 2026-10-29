@@ -1,7 +1,7 @@
 """Make critical HA Store write failures visible to EOAI transactions.
 
-HA Store logs and swallows WriteError from its file writer. EOAI's rollback
-managers must instead receive that failure before publishing the mutation.
+HA Store logs and swallows serialization and file-writer failures. EOAI's
+transactions must receive those failures before publishing the mutation.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from typing import Any, Self
 
 from homeassistant.helpers.storage import Store
 from homeassistant.util.file import WriteError
+from homeassistant.util.json import SerializationError
 
 from .agent_maintenance import AgentMaintenanceGate, get_agent_maintenance_gate
 from .operation_settlement import async_settle_owned_operation as _async_settle_store_io
@@ -79,11 +80,19 @@ class RecoveryGuardedStore(Store[dict[str, Any]]):
 
 
 class PropagatingWriteStore(RecoveryGuardedStore):
-    """Preserve HA's atomic writer, but surface its OS failure to the caller."""
+    """Preserve HA's writer, but propagate sanitized failures before acknowledgement."""
 
     async def _async_write_data(self, data: dict[str, Any]) -> None:
         try:
             await super()._async_write_data(data)
+        except SerializationError:
+            # HA's outer handler would log the offending private value and return
+            # normally. Use a different exception type so transactions reconcile
+            # instead of publishing an unpersisted candidate as committed.
+            raise OSError(
+                "Private storage serialization failed; "
+                "the EOAI state change could not be persisted"
+            ) from None
         except WriteError as error:
             cause = error.__cause__
             number = cause.errno if isinstance(cause, OSError) else None
