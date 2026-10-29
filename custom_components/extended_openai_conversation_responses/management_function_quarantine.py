@@ -36,6 +36,7 @@ from .management_function_repair import (
     persisted_config_projection,
     repair_revision,
     repair_state_for_projection,
+    saved_agent_config_revision,
 )
 
 
@@ -173,11 +174,12 @@ def _tolerant_persist_function_configuration(
         }
     )
     update_live_subentry(hass, entry, subentry, data=prepared.persisted)
+    revision = saved_agent_config_revision(subentry, prepared.persisted, subentry.title)
     return {
         "function_repair": metadata,
         "functions": prepared.tools,
         "function_groups": prepared.groups,
-        "revision": repair_revision(subentry),
+        "revision": revision,
     }
 
 

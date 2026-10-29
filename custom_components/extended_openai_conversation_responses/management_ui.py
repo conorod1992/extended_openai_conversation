@@ -183,6 +183,7 @@ from .secret_redaction import is_redacted_secret, redact_secrets
 from .temporary_memory import async_get_temporary_memory, temporary_memory_as_dict
 from .usage import async_get_usage
 
+_LOGGER = logging.getLogger(__name__)
 _PERFORMANCE_LOGGER = logging.getLogger(f"{__name__}.performance")
 _MANAGEMENT_SERVER_EPOCH = uuid4().hex
 
@@ -1402,14 +1403,6 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
         subentry.data, persisted, updates
     )
     timings["persistence_preparation_ms"] = _elapsed_ms(phase)
-    phase = perf_counter()
-    title_update = {"title": saved_title} if isinstance(title, str) else {}
-    live_update = update_configuration_subentry(
-        hass, entry, subentry, data=persisted, **title_update
-    )
-    timings["subentry_update_ms"] = _elapsed_ms(phase)
-    timings["live_runtime_update"] = live_update
-
     # merge_agent_config validated both fields before persistence. Decode the
     # normalized YAML for the editor without repeating schema validation.
     phase = perf_counter()
@@ -1424,9 +1417,6 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
     snapshot = _snapshot_normalized_configuration(response_data, validated=True)
     timings["response_snapshot_ms"] = _elapsed_ms(phase)
     phase = perf_counter()
-    revision = saved_agent_config_revision(subentry, persisted, saved_title)
-    timings["revision_calculation_ms"] = _elapsed_ms(phase)
-    phase = perf_counter()
     capability_hits = _cached_model_capabilities.cache_info().hits
     capabilities = _configuration_model_capabilities(
         str(snapshot.get("azure_model") or snapshot[CONF_CHAT_MODEL])
@@ -1438,7 +1428,7 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
     saved = {
         "title": saved_title,
         "config": snapshot,
-        "revision": revision,
+        "revision": None,
         "model_capabilities": capabilities,
     }
     if repair_state is not None:
@@ -1452,9 +1442,6 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
             "tools_valid": not repair_state.invalid
             and repair_state.field_updates_allowed,
         }
-    phase = perf_counter()
-    seed_persisted_config_projection(entry, subentry, snapshot, revision)
-    timings["projection_seed_ms"] = _elapsed_ms(phase)
     phase = perf_counter()
     if refresh_local_handling:
         saved["local_handling"] = local_handling_snapshot(
@@ -1476,6 +1463,24 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
         "_performance": timings,
     }
     timings["response_assembly_ms"] = _elapsed_ms(phase)
+    phase = perf_counter()
+    title_update = {"title": saved_title} if isinstance(title, str) else {}
+    live_update = update_configuration_subentry(
+        hass, entry, subentry, data=persisted, **title_update
+    )
+    timings["subentry_update_ms"] = _elapsed_ms(phase)
+    timings["live_runtime_update"] = live_update
+    phase = perf_counter()
+    revision = saved_agent_config_revision(subentry, persisted, saved_title)
+    result["revision"] = revision
+    timings["revision_calculation_ms"] = _elapsed_ms(phase)
+
+    phase = perf_counter()
+    try:
+        seed_persisted_config_projection(entry, subentry, snapshot, revision)
+    except Exception:
+        _LOGGER.warning("Committed configuration could not seed its optional cache")
+    timings["projection_seed_ms"] = _elapsed_ms(phase)
     timings["total_ms"] = _elapsed_ms(started)
     return result
 
@@ -2838,21 +2843,17 @@ async def async_memories_command(request: _ManagementRequest) -> dict[str, Any]:
                     raise HomeAssistantError("Shared household memory is disabled")
         if action == "add":
             await _require_existing_user_destination(hass, target)
-            added = await memory.async_add(
+            status, record = await memory.async_add_record(
                 _memory_scope(target),
                 str(message.get("content", "")),
                 str(message.get("category", "general")),
                 "explicit",
                 **metadata,
             )
-            records = await memory.async_get_many(
-                [(_memory_scope(target), added["memory"]["memory_id"])],
-                [_memory_scope(target)],
-            )
             return {
-                "status": added["status"],
+                "status": status,
                 "scope_id": target,
-                "memory": management_memory_dict(records[0], include_scope=is_admin),
+                "memory": management_memory_dict(record, include_scope=is_admin),
             }
         record = await memory.async_update(
             owner,
@@ -2896,6 +2897,33 @@ async def async_memories_command(request: _ManagementRequest) -> dict[str, Any]:
     return _unknown_management_action(request)
 
 
+def _knowledge_mutation_result(
+    request: _ManagementRequest,
+    library: Any,
+    result: dict[str, Any],
+    source: Any = None,
+) -> dict[str, Any]:
+    from .feature_status import management_feature_status
+    from .knowledge import source_summary
+
+    if source is not None:
+        result["source"] = knowledge_source_as_dict(source)
+    enrichments = {
+        "stats": library.stats,
+        "feature_status": lambda: management_feature_status(
+            request.subentry.data, knowledge_source_count=library.total_source_count
+        )["knowledge"],
+    }
+    if source is not None:
+        enrichments["summary"] = lambda: source_summary(source)
+    for name, build in enrichments.items():
+        try:
+            result[name] = build()
+        except Exception:
+            _LOGGER.warning("Committed Knowledge mutation omitted optional %s", name)
+    return result
+
+
 async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]:
     """Handle the knowledge Management section."""
     hass = request.hass
@@ -2932,28 +2960,35 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
             request.subentry, {CONF_KNOWLEDGE_ENABLED: enabled}
         )
         persisted = normalized
-        update_live_subentry(
-            request.hass, request.entry, request.subentry, data=persisted
-        )
-        revision = saved_agent_config_revision(
-            request.subentry, persisted, request.subentry.title
-        )
         from .management_loading_performance import _snapshot_normalized_configuration
 
         response_data = dict(persisted)
         response_data[CONF_FUNCTION_TOOLS] = snapshot[CONF_FUNCTION_TOOLS]
         response_data[CONF_FUNCTION_GROUPS] = snapshot[CONF_FUNCTION_GROUPS]
         snapshot = _snapshot_normalized_configuration(response_data, validated=True)
-        seed_persisted_config_projection(
-            request.entry, request.subentry, snapshot, revision
-        )
-        return {
-            "revision": revision,
+        result: dict[str, Any] = {
+            "revision": None,
             "knowledge_enabled": bool(persisted.get(CONF_KNOWLEDGE_ENABLED, False)),
             "feature_status": management_feature_status(
                 persisted, knowledge_source_count=library.total_source_count
             )["knowledge"],
         }
+        update_live_subentry(
+            request.hass, request.entry, request.subentry, data=persisted
+        )
+        revision = saved_agent_config_revision(
+            request.subentry, persisted, request.subentry.title
+        )
+        result["revision"] = revision
+        try:
+            seed_persisted_config_projection(
+                request.entry, request.subentry, snapshot, revision
+            )
+        except Exception:
+            _LOGGER.warning(
+                "Committed Knowledge setting could not seed its optional cache"
+            )
+        return result
     if action == "get":
         return {
             "source": knowledge_source_as_dict(
@@ -2961,28 +2996,16 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
             )
         }
     if action == "create":
-        from .feature_status import management_feature_status
-        from .knowledge import source_summary
-
         knowledge_source = await library.async_create(
             message.get("title", ""),
             message.get("description", ""),
             message.get("content", ""),
             message.get("enabled", True),
         )
-        return {
-            "status": "created",
-            "source": knowledge_source_as_dict(knowledge_source),
-            "summary": source_summary(knowledge_source),
-            "stats": library.stats(),
-            "feature_status": management_feature_status(
-                request.subentry.data, knowledge_source_count=library.total_source_count
-            )["knowledge"],
-        }
+        return _knowledge_mutation_result(
+            request, library, {"status": "created"}, knowledge_source
+        )
     if action == "update":
-        from .feature_status import management_feature_status
-        from .knowledge import source_summary
-
         knowledge_source = await library.async_update(
             str(message.get("source_id", "")),
             message.get("title"),
@@ -2991,28 +3014,14 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
             message.get("enabled"),
             expected_revision=message.get("expected_revision"),
         )
-        return {
-            "status": "updated",
-            "source": knowledge_source_as_dict(knowledge_source),
-            "summary": source_summary(knowledge_source),
-            "stats": library.stats(),
-            "feature_status": management_feature_status(
-                request.subentry.data, knowledge_source_count=library.total_source_count
-            )["knowledge"],
-        }
+        return _knowledge_mutation_result(
+            request, library, {"status": "updated"}, knowledge_source
+        )
     if action == "delete":
-        from .feature_status import management_feature_status
-
         if message.get("confirm") is not True:
             raise HomeAssistantError("Explicit confirmation is required")
         deleted = int(await library.async_delete(str(message.get("source_id", ""))))
-        return {
-            "deleted": deleted,
-            "stats": library.stats(),
-            "feature_status": management_feature_status(
-                request.subentry.data, knowledge_source_count=library.total_source_count
-            )["knowledge"],
-        }
+        return _knowledge_mutation_result(request, library, {"deleted": deleted})
 
     return _unknown_management_action(request)
 
@@ -3224,37 +3233,48 @@ async def _async_management_request(
     result = await handler(request)
     handler_ms = _elapsed_ms(handler_started) if handler_started is not None else None
 
-    if isinstance(result.get("config"), dict):
-        # Effective defaults and capabilities depend on installation-wide data,
-        # independently of the persisted assistant's configuration revision.
-        result["catalog_generation"] = catalog_generation()
-        result["catalog_version"] = active_catalog_version()
+    committed_result = result
+    try:
+        result = dict(result)
+        if isinstance(result.get("config"), dict):
+            # Effective defaults and capabilities depend on installation-wide data,
+            # independently of the persisted assistant's configuration revision.
+            result["catalog_generation"] = catalog_generation()
+            result["catalog_version"] = active_catalog_version()
 
-    if configuration_action is not None:
-        decoration_started = perf_counter()
-        result = decorate_configuration_result(
-            hass,
-            getattr(entry, "data", {}),
-            result,
-            action=configuration_action,
-        )
-        decoration_ms = _elapsed_ms(decoration_started)
-        assert handler_started is not None
-        request_total_ms = _elapsed_ms(handler_started)
-        performance = result.get("_performance")
-        if isinstance(performance, dict):
-            performance["decoration_ms"] = decoration_ms
-            performance["request_total_ms"] = request_total_ms
-            if is_configuration_timing_operation(section, action):
+        if configuration_action is not None:
+            decoration_started = perf_counter()
+            result = decorate_configuration_result(
+                hass,
+                getattr(entry, "data", {}),
+                result,
+                action=configuration_action,
+            )
+            decoration_ms = _elapsed_ms(decoration_started)
+            assert handler_started is not None
+            request_total_ms = _elapsed_ms(handler_started)
+            performance = result.get("_performance")
+            if isinstance(performance, dict):
+                performance["decoration_ms"] = decoration_ms
+                performance["request_total_ms"] = request_total_ms
+                if is_configuration_timing_operation(section, action):
+                    performance["dispatch_ms"] = dispatch_ms
+                    performance["agent_resolution_ms"] = resolution_ms
+                    performance["handler_ms"] = handler_ms
+        elif trace_tool_mutation:
+            performance = result.get("_performance")
+            if isinstance(performance, dict):
                 performance["dispatch_ms"] = dispatch_ms
                 performance["agent_resolution_ms"] = resolution_ms
                 performance["handler_ms"] = handler_ms
-    elif trace_tool_mutation:
-        performance = result.get("_performance")
-        if isinstance(performance, dict):
-            performance["dispatch_ms"] = dispatch_ms
-            performance["agent_resolution_ms"] = resolution_ms
-            performance["handler_ms"] = handler_ms
+    except Exception:
+        if (
+            configuration_action not in {"save", "update"}
+            or committed_result.get("valid") is not True
+        ):
+            raise
+        _LOGGER.warning("Committed configuration omitted optional response decoration")
+        result = committed_result
     return result
 
 

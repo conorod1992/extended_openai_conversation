@@ -8,6 +8,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from functools import lru_cache
 from hashlib import sha256
+import logging
 from time import perf_counter
 from typing import Any
 from weakref import ReferenceType, ref
@@ -53,6 +54,8 @@ from .live_subentry_updates import update_configuration_subentry, update_live_su
 from .model_catalog import catalog_generation
 from .request import canonical_json
 from .yaml_serialization import dump_yaml
+
+_LOGGER = logging.getLogger(__name__)
 
 _STALE_CONFIGURATION_ERROR = (
     "Agent configuration changed in another tab; reload before saving"
@@ -469,21 +472,32 @@ def persist_valid_function_configuration(
 
     _validated_model_request(normalized, entry.data)
     phase = perf_counter()
-    update_live_subentry(hass, entry, subentry, data=normalized)
-    subentry_update_ms = (perf_counter() - phase) * 1000
-    phase = perf_counter()
     from .management_loading_performance import _snapshot_normalized_configuration
 
     response_data = dict(normalized)
     response_data[CONF_FUNCTION_TOOLS] = prepared.tools
     response_data[CONF_FUNCTION_GROUPS] = prepared.groups
     snapshot = _snapshot_normalized_configuration(response_data, validated=True)
-    revision = saved_agent_config_revision(subentry, normalized, subentry.title)
-    seed_persisted_config_projection(entry, subentry, snapshot, revision)
+    response_tools, response_groups = (
+        snapshot[CONF_FUNCTION_TOOLS],
+        snapshot[CONF_FUNCTION_GROUPS],
+    )
     projection_ms = (perf_counter() - phase) * 1000
+    phase = perf_counter()
+    update_live_subentry(hass, entry, subentry, data=normalized)
+    subentry_update_ms = (perf_counter() - phase) * 1000
+    phase = perf_counter()
+    revision = saved_agent_config_revision(subentry, normalized, subentry.title)
+    try:
+        seed_persisted_config_projection(entry, subentry, snapshot, revision)
+    except Exception:
+        _LOGGER.warning(
+            "Committed Function configuration could not seed its optional cache"
+        )
+    projection_ms += (perf_counter() - phase) * 1000
     return {
-        "functions": snapshot[CONF_FUNCTION_TOOLS],
-        "function_groups": snapshot[CONF_FUNCTION_GROUPS],
+        "functions": response_tools,
+        "function_groups": response_groups,
         "revision": revision,
         "_performance": {
             "revision_check_ms": round(revision_check_ms, 3),

@@ -383,6 +383,22 @@ class PersistentMemory:
         valid_from: str | None = None,
     ) -> dict[str, Any]:
         """Add a memory, or return a likely duplicate for an unkeyed fact."""
+        status, record = await self.async_add_record(
+            user_id, content, category, source, subject, key, valid_from
+        )
+        return {"status": status, "memory": memory_as_dict(record)}
+
+    async def async_add_record(
+        self,
+        user_id: str,
+        content: str,
+        category: str,
+        source: str,
+        subject: str | None = None,
+        key: str | None = None,
+        valid_from: str | None = None,
+    ) -> tuple[str, MemoryRecord]:
+        """Return the committed immutable record without requiring a second read."""
         content = _clean_content(content)
         category = _clean_category(category)
         subject = _clean_optional(subject, "subject", MAX_SUBJECT_LENGTH)
@@ -412,11 +428,8 @@ class PersistentMemory:
                         _set_updated_at_if_substantive(duplicate, changes, timestamp)
                         duplicate = self._replace_record(duplicate, **changes)
                         await self._async_save_locked()
-                        return {
-                            "status": "updated",
-                            "memory": memory_as_dict(duplicate),
-                        }
-                    return {"status": "duplicate", "memory": memory_as_dict(duplicate)}
+                        return "updated", duplicate
+                    return "duplicate", duplicate
             if len(self._memories) >= MAX_MEMORIES_PER_AGENT:
                 raise ValueError(
                     "memory limit reached; delete memories before adding more"
@@ -439,7 +452,7 @@ class PersistentMemory:
             self._memories[memory.memory_id] = memory
             self._index(memory)
             await self._async_save_locked()
-            return {"status": "created", "memory": memory_as_dict(memory)}
+            return "created", memory
 
     async def async_upsert(
         self,

@@ -1439,8 +1439,7 @@ async def test_conversation_memory_and_knowledge_dispatch(monkeypatch) -> None:
     memory = SimpleNamespace(
         _memories={record.memory_id: record},
         async_list_page=AsyncMock(return_value=([record], False)),
-        async_add=AsyncMock(return_value={"status": "created", "memory": {"memory_id": "memory-1"}}),
-        async_get_many=AsyncMock(return_value=[record]),
+        async_add_record=AsyncMock(return_value=("created", record)),
         async_update=AsyncMock(return_value=record),
         async_delete=AsyncMock(return_value=1),
         async_clear=AsyncMock(return_value=2),
