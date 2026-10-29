@@ -47,6 +47,7 @@ async def real_ha_prerequisites(
         monkeypatch.setattr(
             _RestoreJournalStore, "_async_load_data", Store._async_load_data
         )
+        monkeypatch.setattr(_RestoreJournalStore, "async_load", Store.async_load)
 
     # Core tests explicitly set up the Home Assistant integration before tests that
     # rely on exposed-entity preferences.  The lightweight test ``hass`` fixture does
@@ -60,4 +61,12 @@ async def real_ha_prerequisites(
     if recorder_helper.DATA_RECORDER not in hass.data:
         recorder_helper.async_initialize_recorder(hass)
 
-    yield
+    # Direct backend acceptance probes deliberately execute as the system actor.
+    # Conversation/service entry points replace this with their actual Context;
+    # missing-authority probes must explicitly use a fresh, unbound task context.
+    from custom_components.extended_openai_conversation_responses.ha_permissions import (
+        bind_active_ha_context,
+    )
+
+    with bind_active_ha_context(None):
+        yield

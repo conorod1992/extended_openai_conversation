@@ -797,7 +797,7 @@ async def test_nested_provider_exchange_overrides_independent_ownership(
     from custom_components.extended_openai_conversation_responses.entity import (
         ExtendedOpenAIBaseLLMEntity,
     )
-    from homeassistant.core import HomeAssistant
+    from homeassistant.core import Context, HomeAssistant
     from homeassistant.helpers import device_registry as dr, entity_registry as er
 
     hass = HomeAssistant(str(tmp_path))
@@ -836,7 +836,7 @@ async def test_nested_provider_exchange_overrides_independent_ownership(
     async def nested_exchange(*_args):
         try:
             await async_execute_tool_exchange(
-                provider, log, [first], [tool], FunctionCallBudget(10), None, exposed
+                provider, log, [first], [tool], FunctionCallBudget(10), SimpleNamespace(context=Context()), exposed
             )
         except HomeAssistantError as err:
             # The nested conversation owns the error, as its request boundary
