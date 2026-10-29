@@ -2404,6 +2404,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       try {
         const response = await this._call("knowledge", "get", { source_id: sourceId });
         if (this._knowledgeLoadToken !== loadToken || !dialog.open) return;
+        this._requireKnowledgeSource(response?.source, sourceId);
         this._editingSource = response.source;
         if (availability) availability.checked = response.source.enabled !== false;
         this._knowledgeMode = "edit";
@@ -2463,6 +2464,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     ["#knowledge-title", "#knowledge-description", "#knowledge-content", "#knowledge-save"].forEach((selector) => {
       root.querySelector(selector).disabled = disabled;
     });
+  }
+
+  _requireKnowledgeSource(source, expectedId = null) {
+    requireMutationAcknowledgement(typeof source?.source_id === "string" && source.source_id.length > 0
+      && (expectedId === null || source.source_id === expectedId)
+      && typeof source.updated_at === "string" && source.updated_at.length > 0,
+      "receiving the Knowledge source and its revision");
   }
 
   _knowledgeValues() {
@@ -2555,7 +2563,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         return;
       }
       const ownsList = this._ownsRetainedMutation(owner);
-      requireMutationAcknowledgement(response?.source?.source_id, "saving the Knowledge source");
+      this._requireKnowledgeSource(response?.source, editing ? this._editingSource.source_id : null);
       // Retain the committed identity before touching the collection or DOM. A
       // failed patch/close must never turn the next save into another create.
       this._editingSource = response.source;

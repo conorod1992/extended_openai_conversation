@@ -209,3 +209,36 @@ for (const bundled of [false, true]) for (const replacement of [false, true, "pe
   expect(await page.evaluate(() => dataCollectionBackend.state.sources.filter(source => source.title === "Ambiguous committed source").length)).toBe(1);
   expect(await page.evaluate(() => dataCollectionBackend.state.sources.find(source => source.title === "Ambiguous committed source").content)).toBe("Deliberate update after recovery");
 });
+
+for (const bundled of [false, true]) test(`Knowledge partial acknowledgement cannot authorize an unguarded update (${bundled ? "bundle" : "source"})`, async ({page}) => {
+  const panel = await openDataCollection(page, "knowledge", 1, bundled);
+  await panel.evaluate(host => {
+    const send = host.hass.callWS.bind(host.hass);
+    host.hass.callWS = async request => {
+      const result = await send(request);
+      if (request.section === "knowledge" && request.action === "create") {
+        await new Promise(resolve => {window.releasePartialSource = resolve;});
+        delete result.source.updated_at;
+      }
+      return result;
+    };
+  });
+  await panel.locator("#add-source").click();
+  await panel.locator("#knowledge-title").fill("Partial source");
+  await panel.locator("#knowledge-content").fill("Submitted content");
+  await panel.locator("#knowledge-save").click();
+  await expect.poll(() => page.evaluate(() => typeof releasePartialSource)).toBe("function");
+  await panel.locator("#knowledge-content").fill("Later draft");
+  await page.evaluate(() => {
+    const source = dataCollectionBackend.state.sources.find(source => source.title === "Partial source");
+    source.content = "Concurrent committed content";
+    source.updated_at = "2026-10-29T20:00:00Z";
+    releasePartialSource();
+  });
+  await expect.poll(() => panel.evaluate(host => host._eocAgentMutations)).toBe(0);
+  // The next user action must not combine a known identity with no revision.
+  await panel.evaluate(host => host._saveKnowledge());
+  expect(await page.evaluate(() => dataCollectionBackend.state.sources.find(source => source.title === "Partial source").content)).toBe("Concurrent committed content");
+  expect(await page.evaluate(() => dataCollectionBackend.calls.filter(call => call.action === "update").length)).toBe(0);
+  await expect(panel.locator("#knowledge-error")).toContainText("outcome is unknown");
+});
