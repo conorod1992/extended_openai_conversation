@@ -662,16 +662,25 @@ export function bindBackupTransfer(panel) {
         null, outcome, {warning:Boolean(providerNotice)});
     } catch (err) {
       const unknown = err?.mutationOutcome === "uncertain";
+      const committed = err?.mutationOutcome === "committed";
+      const pending = err?.recoveryPending === true;
+      const label = committed ? "Restore committed" : pending ? "Restore recovery is pending" : unknown ? "Restore outcome is unknown" : "Unable to restore";
       if (!ownsAuthentication()) return;
+      if (committed) await processMutationResponse(err, () => {
+        if (sections.includes("configuration")) retireReplacedConfigurationDraft(panel, restoredDraft);
+        panel._invalidateCleanConfiguration?.(session.owner.subentry_id);
+      });
       if (panel._backupTransferSession !== session || !ownsUI()) {
-        panel._toast(`${unknown ? "Restore outcome is unknown" : "Unable to restore"} for agent ${session.owner.subentry_id}: ${err.message || String(err)}`, true);
+        panel._toast(`${label} for agent ${session.owner.subentry_id}: ${err.message || String(err)}`, true);
         return;
       }
       void cancelBackupImportSession(panel, session);
       panel._backupTransferSession = null;
       mustReselectFile = true;
       button.disabled = true;
-      panel._toast(unknown
+      panel._toast(committed || pending
+        ? `${label}: ${err.message || String(err)} Complete recovery before preparing another restore.`
+        : unknown
         ? `Restore outcome is unknown: ${err.message || String(err)} Refresh the agent's state before preparing another restore.`
         : `Unable to restore: ${err.message || String(err)} Re-select the transfer file to retry.`, true);
     } finally {

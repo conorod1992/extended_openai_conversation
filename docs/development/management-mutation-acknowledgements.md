@@ -38,6 +38,32 @@ introduce a second operation queue, ownership registry or server protocol.
 
 ## Operation audit
 
+### Transaction failure evidence
+
+Transaction owners can annotate the original exception with immutable
+`MutationFailure` evidence without changing its type or cancellation semantics.
+Both Management and backup-transfer WebSockets carry this evidence in HA's
+existing error-code field: `eoai_mutation_rejected`,
+`eoai_mutation_uncertain`, or `eoai_mutation_committed`, optionally suffixed
+with `_recovery_pending`. Successful response payloads are unchanged.
+
+Failed transactional saves remain uncertain even when reconciliation loads a
+usable generation: readback alone does not certify the write's durability.
+Restore reports rejection after a completed rollback, uncertainty when its
+commit decision cannot be verified, and commitment after a verified commit
+decision followed by a completion failure. Recovery pending is independently
+determined by the journal's authoritative absence. Reload failures after a
+completed restore retain committed evidence too.
+
+The frontend preserves this evidence, retires a failed restore's preview, and
+reports a committed restore or pending recovery without offering an immediate
+retry. A known committed replacement also retires the submitted configuration
+draft through the existing owner checks. Uncertain ordinary mutations retain
+their existing refresh/reconciliation barriers. Older coded errors retain their
+legacy handling; no certainty is derived from exception wording. This contract
+does not turn ordinary HA configuration acceptance into a disk-durability claim
+or guarantee exactly-once execution after a lost response.
+
 | Operation family | Acknowledgement and subsequent processing |
 | --- | --- |
 | Configuration saves and independent Knowledge availability | Existing configuration reconciliation; form error rendering also follows acknowledgement. |

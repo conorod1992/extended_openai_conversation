@@ -34,6 +34,7 @@ from .live_subentry_updates import (
     configuration_supports_live_update,
     update_live_subentry,
 )
+from .mutation_outcomes import mark_mutation_failure, mutation_failure
 from .operation_settlement import async_settle_owned_operation
 from .operational_errors import log_handled_failure
 from .storage_namespaces import RESTORE_JOURNAL_PREFIX as RESTORE_JOURNAL_PREFIX
@@ -534,17 +535,22 @@ async def _recover_failed_apply(
         await _rollback_transaction(hass, entry, subentry, managers, store, rollback)
     except Exception:
         _LOGGER.exception("Agent backup restore rollback remains pending")
-        raise backup.BackupError(
-            "Restore failed and recovery is still pending; restart Home Assistant "
-            "to retry the saved rollback"
+        raise mark_mutation_failure(
+            backup.BackupError(
+                "Restore failed and recovery is still pending; restart Home Assistant "
+                "to retry the saved rollback"
+            ),
+            "uncertain",
+            recovery_pending=True,
         ) from original_error
     log_handled_failure(
         _LOGGER,
         f"Agent restore failed entry={entry.entry_id} assistant={subentry.subentry_id}; rollback=recovered",
         original_error,
     )
-    raise backup.BackupError(
-        "Restore failed; the previous agent state was recovered"
+    raise mark_mutation_failure(
+        backup.BackupError("Restore failed; the previous agent state was recovered"),
+        "rejected",
     ) from original_error
 
 
@@ -604,14 +610,20 @@ async def _async_restore_backup_recoverably(
         try:
             journal_saved = await _async_write_journal_verified(store, journal)
         except _JournalVerificationUnavailable as err:
-            raise backup.BackupError(
-                "Restore could not start because its recovery journal could not be "
-                "durably verified"
+            raise mark_mutation_failure(
+                backup.BackupError(
+                    "Restore could not start because its recovery journal could not be "
+                    "durably verified"
+                ),
+                "rejected",
             ) from err
         if not journal_saved:
-            raise backup.BackupError(
-                "Restore could not start because its recovery journal could not be "
-                "durably verified"
+            raise mark_mutation_failure(
+                backup.BackupError(
+                    "Restore could not start because its recovery journal could not be "
+                    "durably verified"
+                ),
+                "rejected",
             )
 
         try:
@@ -628,9 +640,13 @@ async def _async_restore_backup_recoverably(
         try:
             committed = await _async_write_journal_verified(store, committed_journal)
         except _JournalVerificationUnavailable as err:
-            raise backup.BackupError(
-                "Restore data was written, but its commit decision could not be "
-                "verified; restart Home Assistant to finish recovery"
+            raise mark_mutation_failure(
+                backup.BackupError(
+                    "Restore data was written, but its commit decision could not be "
+                    "verified; restart Home Assistant to finish recovery"
+                ),
+                "uncertain",
+                recovery_pending=True,
             ) from err
         if not committed:
             await _recover_failed_apply(
@@ -655,9 +671,13 @@ async def _async_restore_backup_recoverably(
             await store.async_remove()
         except Exception as err:
             _LOGGER.exception("Agent restore committed but completion remains pending")
-            raise backup.BackupError(
-                "Restore committed successfully, but completion is pending; restart "
-                "Home Assistant to finish recovery"
+            raise mark_mutation_failure(
+                backup.BackupError(
+                    "Restore committed successfully, but completion is pending; restart "
+                    "Home Assistant to finish recovery"
+                ),
+                "committed",
+                recovery_pending=True,
             ) from err
 
     return {"status": "restored", "summary": prepared.summary()}
@@ -713,8 +733,12 @@ async def _async_recovery_operation[T](
         if quarantine_on_entry:
             gate.recovery_required = True
         with gate.recovery_work():
+            failure: Exception | None = None
             try:
                 return await operation()
+            except Exception as err:
+                failure = err
+                raise
             finally:
                 try:
                     absent = (
@@ -726,6 +750,14 @@ async def _async_recovery_operation[T](
                 except Exception:
                     absent = False
                 gate.recovery_required = not absent
+                if failure is not None:
+                    evidence = mutation_failure(failure)
+                    if evidence is not None or not absent:
+                        mark_mutation_failure(
+                            failure,
+                            evidence.outcome if evidence is not None else "uncertain",
+                            recovery_pending=not absent,
+                        )
                 statuses = hass.data.setdefault(SUBSYSTEM_STATUS_KEY, {})
                 if not absent:
                     statuses.setdefault((entry.entry_id, subentry.subentry_id), {})[
@@ -810,8 +842,12 @@ async def async_finish_restore_reload(
 
     # This transition spans removal of the old entry's runtime. HA must own and
     # track the task; binding it to the unloading entry would cancel the reload.
-    await async_settle_owned_operation(
-        hass.async_create_task(
-            reload_and_reconcile(), name="EOAI restore reload and reconciliation"
+    try:
+        await async_settle_owned_operation(
+            hass.async_create_task(
+                reload_and_reconcile(), name="EOAI restore reload and reconciliation"
+            )
         )
-    )
+    except Exception as err:
+        mark_mutation_failure(err, "committed")
+        raise

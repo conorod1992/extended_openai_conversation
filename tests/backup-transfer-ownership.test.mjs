@@ -4,6 +4,48 @@ import {bindBackupTransfer, cancelBackupImport, openBackupPicker, refreshImportP
 import {cleanupStateSafety, confirmStateSafeNavigation} from "../custom_components/extended_openai_conversation_responses/frontend/management-state-safety.js";
 import {deferred} from "./frontend-test-helpers.mjs";
 import {readFile} from "node:fs/promises";
+import {callMutation} from "../custom_components/extended_openai_conversation_responses/frontend/mutation-response.js";
+
+for (const outcome of ["rejected", "committed", "uncertain"]) {
+  for (const pending of [false, true]) {
+    test(`backend outcome ${outcome}, recovery pending ${pending} survives transport`, async () => {
+      const error = {code:`eoai_mutation_${outcome}${pending ? "_recovery_pending" : ""}`, message:"transaction evidence"};
+      await assert.rejects(callMutation(async () => { throw error; }), result =>
+        result.mutationOutcome === outcome && result.recoveryPending === pending && result.cause === error);
+    });
+  }
+}
+
+for (const outcome of ["committed", "uncertain", "rejected"]) {
+  test(`pending restore ${outcome} retires preview and cannot replay`, async () => {
+    const h = harness(), messages = [];
+    await h.upload(); h.panel._eocBackupTransferCleanup();
+    h.panel._backupTransferSession = {session_id:"agent-A", owner:{entry_id:"entry-A", subentry_id:"agent-A"}};
+    h.panel._backupTransferPreviewToken = "validated";
+    h.nodes.get("#restore-transfer-sections").querySelectorAll()[0].value = "configuration";
+    h.panel._draft = {model:"submitted draft"};
+    h.panel._clearConfigDraft = () => { h.panel._draft = null; };
+    h.nodes.get("#restore-transfer-apply").disabled = false;
+    h.panel._toast = message => messages.push(message);
+    let effects = 0;
+    h.panel._hass.callWS = async message => {
+      if (message.action === "import_restore") {
+        effects += outcome === "rejected" ? 0 : 1;
+        throw {code:`eoai_mutation_${outcome}_recovery_pending`, message:"Restart Home Assistant to finish recovery"};
+      }
+      return {cancelled:true};
+    };
+    await h.nodes.get("#restore-transfer-apply").handlers.click();
+    assert.equal(h.panel._backupTransferSession, null);
+    assert.equal(h.nodes.get("#restore-transfer-apply").disabled, true);
+    assert.deepEqual(h.panel._draft, outcome === "committed" ? null : {model:"submitted draft"});
+    assert.ok(messages.some(message => message.includes("Complete recovery")));
+    assert.ok(messages.every(message => !message.includes("Re-select the transfer file to retry")));
+    if (outcome === "committed") assert.ok(messages.some(message => message.startsWith("Restore committed")));
+    await h.nodes.get("#restore-transfer-apply").handlers.click();
+    assert.equal(effects, outcome === "rejected" ? 0 : 1);
+  });
+}
 
 function harness(bind = bindBackupTransfer) {
   let agent = {entry_id:"entry-A", subentry_id:"agent-A"};

@@ -1443,10 +1443,14 @@ async def websocket_backup_transfer(
     msg: dict[str, Any],
 ) -> None:
     """Transfer bounded authenticated export/import files."""
+    from .mutation_outcomes import mutation_error_code, mutation_failure
+
     try:
         result = await async_backup_transfer_command(hass, msg)
-    except (HomeAssistantError, RuntimeError, ValueError) as err:
-        connection.send_error(msg["id"], "invalid_request", str(err))
+    except (HomeAssistantError, RuntimeError, ValueError, OSError) as err:
+        if isinstance(err, OSError) and mutation_failure(err) is None:
+            raise
+        connection.send_error(msg["id"], mutation_error_code(err), str(err))
         return
     connection.send_result(msg["id"], result)
 

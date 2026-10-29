@@ -3373,13 +3373,17 @@ def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
 async def websocket_management(
     hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
 ) -> None:
+    from .mutation_outcomes import mutation_error_code, mutation_failure
+
     started = perf_counter()
     try:
         result = await async_management_command(
             hass, connection.user.id, connection.user.is_admin, msg
         )
-    except (HomeAssistantError, RuntimeError, ValueError) as err:
-        connection.send_error(msg["id"], "invalid_request", str(err))
+    except (HomeAssistantError, RuntimeError, ValueError, OSError) as err:
+        if isinstance(err, OSError) and mutation_failure(err) is None:
+            raise
+        connection.send_error(msg["id"], mutation_error_code(err), str(err))
         return
     trace_request = is_configuration_timing_operation(
         msg.get("section"), msg.get("action")

@@ -11,6 +11,8 @@ from typing import Any
 
 from homeassistant.helpers.storage import Store
 
+from .mutation_outcomes import mark_mutation_failure
+
 _PRIVATE_STORE_MODE = 0o600
 
 
@@ -91,6 +93,10 @@ async def _async_settle_transactional_save(
                 invalidate_state()
         if cancellation is not None:
             raise cancellation from err
+        if isinstance(err, Exception):
+            # Reconciliation restores a usable generation, but does not certify
+            # this write's durability or establish whether its candidate committed.
+            mark_mutation_failure(err, "uncertain")
         raise
 
     remember_committed_state()
