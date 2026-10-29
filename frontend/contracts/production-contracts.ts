@@ -16,3 +16,6 @@ import {requireRequestRuleAcknowledgement} from "../../custom_components/extende
 requireRequestRuleAcknowledgement("update", {revision:2, rule:{id:"rule-1"}}, "rule-1");
 // @ts-expect-error Rule identity must not be confused with the numeric revision.
 requireRequestRuleAcknowledgement("update", {revision:2, rule:{id:2}}, "rule-1");
+requireRequestRuleAcknowledgement("settings", {revision:2, defaults:{word_forms:true}, wording_groups:[]}, undefined);
+// @ts-expect-error Matching defaults are an object, not a collection.
+requireRequestRuleAcknowledgement("settings", {revision:2, defaults:[], wording_groups:[]}, undefined);

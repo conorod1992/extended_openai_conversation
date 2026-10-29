@@ -1,6 +1,6 @@
 // @ts-check
 /** @typedef {{entryId?: string, agentId?: string, userId?: string, authenticationGeneration?: number}} RuleOwner */
-/** @typedef {{revision?: string | number, rule?: {id?: string}, groups?: unknown[], rules?: unknown[]}} RuleAcknowledgement */
+/** @typedef {{revision?: string | number, rule?: {id?: string}, groups?: unknown[], rules?: unknown[], defaults?: Record<string, unknown>, wording_groups?: unknown[]}} RuleAcknowledgement */
 import {captureConfigurationOwner, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
 
 // Uncertain commits belong to an assistant and authentication session, not a view.
@@ -26,10 +26,13 @@ export function markUncertainRuleMutation(panel, owner, error) {
 /** @param {string} action @param {RuleAcknowledgement | null | undefined} result @param {string | undefined} ruleId */
 export function requireRequestRuleAcknowledgement(action, result, ruleId) {
   const identity = result?.rule?.id;
+  const hasDefaults = !!result?.defaults && typeof result.defaults === "object" && !Array.isArray(result.defaults);
   requireMutationAcknowledgement(result?.revision != null
     && (!["create", "duplicate", "update"].includes(action)
       || (typeof identity === "string" && identity.length > 0 && (action !== "update" || identity === ruleId) && (action !== "duplicate" || identity !== ruleId)))
-    && (action !== "groups" || (Array.isArray(result.groups) && Array.isArray(result.rules))), "saving Request Rules");
+    && (!["groups", "rule_pack_import"].includes(action) || (Array.isArray(result.groups) && Array.isArray(result.rules)))
+    && (!["settings", "defaults"].includes(action) || hasDefaults)
+    && (!["settings", "wording_groups"].includes(action) || Array.isArray(result.wording_groups)), "saving Request Rules");
 }
 
 /** @param {object} panel @param {RuleOwner} owner @param {unknown} expected */
