@@ -47,6 +47,8 @@ Archive and Usage retain usable records for reads when malformed containers, rec
 
 Before replaying its local partition journal, Archive validates the complete candidate, including unchanged partitions, unique turn IDs, session associations, turn counts and active bindings. Invalid intent or an unreadable unchanged partition leaves the journal and destination files untouched. A partition fully supplied by valid journal intent can be replaced even when its existing file is unreadable. This does not yet provide initialization-independent recovery for the full-agent restore journal.
 
+Full-agent journal verification reads the actual file rather than a pending HA save or shared load cache. An explicit journal save during shutdown finishes its write before verification; deferred RAM data cannot serve as commit evidence.
+
 ## Interrupted transfer files
 
 Transfers are not resumable across Home Assistant process restarts. New upload and export payloads live in an EOAI-private staging directory under `.storage`. Native owner locks protect active processes; startup removes abandoned owners after their locks have been released. Recovery neither recreates transfer sessions nor applies an abandoned import. Normal cancellation, expiry and shutdown still remove payloads.

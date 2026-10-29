@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
@@ -55,6 +55,16 @@ class _JournalVerificationUnavailable(Exception):
 
 class _RestoreJournalStore(PropagatingWriteStore):
     """Propagate write failures and preserve strict on-disk recovery evidence."""
+
+    async def async_load(self) -> dict[str, Any] | None:
+        """Read the file, never HA's pending-save or shared load cache."""
+        return await self._async_load_data()
+
+    async def async_save(self, data: dict[str, Any]) -> None:
+        """An explicit journal receipt cannot defer its write until shutdown."""
+        await super().async_save(data)
+        if self.hass.state is CoreState.stopping:
+            await self._async_handle_write_data()
 
     async def _async_load_data(self) -> dict[str, Any] | None:
         def read() -> dict[str, Any] | None:
