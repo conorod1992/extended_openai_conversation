@@ -2385,6 +2385,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (availability) availability.checked = true;
     const root = this.shadowRoot;
     const dialog = root.querySelector("#knowledge-dialog");
+    delete dialog.__eocUncertainMutation;
     const loadToken = (this._knowledgeLoadToken || 0) + 1;
     this._knowledgeLoadToken = loadToken;
     this._editingSource = null;
@@ -2529,15 +2530,17 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   async _saveKnowledge() {
     const button = this.shadowRoot.querySelector("#knowledge-save");
-    if (button.disabled || !["create", "edit"].includes(this._knowledgeMode)) return;
+    if (button.disabled || this.shadowRoot.querySelector("#knowledge-dialog").__eocUncertainMutation
+        || !["create", "edit"].includes(this._knowledgeMode)) return;
     const values = this._knowledgeValues();
     const editing = this._knowledgeMode === "edit";
     const owner = this._retainedMutationOwner();
     const submission = captureConfigurationOwner(this);
     const dialog = this.shadowRoot.querySelector("#knowledge-dialog");
     const ownsOperation = beginOperation(this, "knowledge-editor");
-    const current = () => ownsOperation() && configurationSubmissionIsCurrent(this, submission) && dialog.open
-      && this.shadowRoot.querySelector("#knowledge-dialog") === dialog
+    const ownsEditor = () => ownsOperation() && dialog.open
+      && this.shadowRoot.querySelector("#knowledge-dialog") === dialog;
+    const current = () => ownsEditor() && configurationSubmissionIsCurrent(this, submission)
       // A reconnect read can refresh the same editor's list without changing
       // its operation, dialog or owner. Its save still needs acknowledgement.
       && this._ownsRetainedMutation(owner, {allowRefresh:true});
@@ -2545,7 +2548,12 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._setSaving(button, true);
     try {
       const response = await this._call("knowledge", editing ? "update" : "create", { ...(editing ? { source_id: this._editingSource.source_id, expected_revision: this._editingSource.updated_at } : {}), ...values });
-      if (!current()) return;
+      if (!current()) {
+        // Retired authentication cannot adopt this reply, but the original
+        // draft must not become a fresh create when it is recovered later.
+        if (ownsEditor()) requireMutationAcknowledgement(false, "reconciling the Knowledge save after its owner changed");
+        return;
+      }
       const ownsList = this._ownsRetainedMutation(owner);
       requireMutationAcknowledgement(response?.source?.source_id, "saving the Knowledge source");
       // Retain the committed identity before touching the collection or DOM. A
@@ -2576,9 +2584,14 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       }, response);
     } catch (err) {
       uncertain = err?.mutationOutcome === "uncertain";
-      if (current()) this._setDialogError("knowledge", `Unable to save source: ${err.message || String(err)}`);
-    } finally {
+      // Retain safety evidence on its original editor even if authentication
+      // retired publication. It must accompany that same draft on recovery.
+      if (ownsEditor() && uncertain) dialog.__eocUncertainMutation = err;
       if (current()) {
+        this._setDialogError("knowledge", `Unable to save source: ${err.message || String(err)}`);
+      }
+    } finally {
+      if (ownsEditor()) {
         this._setSaving(button, false);
         // This editor cannot identify a possibly committed create or certify an
         // update's revision. Reopen against authoritative state before retrying.

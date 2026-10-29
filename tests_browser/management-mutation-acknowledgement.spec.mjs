@@ -151,24 +151,51 @@ for (const bundled of [false, true]) for (const action of ["delete", "clear"]) f
   });
 }
 
-for (const bundled of [false, true]) test(`generic Knowledge error blocks the next create until authoritative reopening (${bundled ? "bundle" : "source"})`, async ({page}) => {
+for (const bundled of [false, true]) for (const replacement of [false, true, "pending", "authentication", "authentication acknowledged"]) test(`generic Knowledge error replacement=${replacement} blocks the next create until authoritative reopening (${bundled ? "bundle" : "source"})`, async ({page}) => {
   const panel = await openDataCollection(page, "knowledge", 1, bundled);
-  await panel.evaluate(host => {
+  await panel.evaluate((host, replacement) => {
+    host.hass = {...host.hass, user:{...host.hass.user, id:"knowledge-owner"}};
     const send = host.hass.callWS.bind(host.hass);
     host.hass.callWS = async request => {
       const result = await send(request);
-      if (request.section === "knowledge" && request.action === "create") throw {code:"unknown_error", message:"Unknown error"};
+      if (request.section === "knowledge" && request.action === "create") {
+        if (["pending", "authentication", "authentication acknowledged"].includes(replacement) && !window.releaseUnknownKnowledge) await new Promise(resolve => {window.releaseUnknownKnowledge = resolve;});
+        if (replacement === "authentication acknowledged") return result;
+        throw {code:"unknown_error", message:"Unknown error"};
+      }
       return result;
     };
-  });
+  }, replacement);
   await panel.locator("#add-source").click();
   await panel.locator("#knowledge-title").fill("Ambiguous committed source");
   await panel.locator("#knowledge-content").fill("Already stored");
   await panel.locator("#knowledge-save").click();
-  await expect(panel.locator("#knowledge-error")).toContainText("outcome is unknown");
+  if (["pending", "authentication", "authentication acknowledged"].includes(replacement)) await expect.poll(() => page.evaluate(() => typeof window.releaseUnknownKnowledge)).toBe("function");
+  else await expect(panel.locator("#knowledge-error")).toContainText("outcome is unknown");
+  if (replacement) {
+    if (String(replacement).startsWith("authentication")) await panel.evaluate(host => {
+      const original = host.hass;
+      host.hass = {...original, user:{...original.user, id:"intervening-owner"}};
+      host.hass = original;
+    });
+    await panel.evaluate(host => {
+      const parent = host.parentElement, hass = host.hass;
+      host.remove();
+      const next = document.createElement("extended-openai-management-panel");
+      parent.append(next); next.hass = hass;
+    });
+    if (["pending", "authentication", "authentication acknowledged"].includes(replacement)) await page.evaluate(() => releaseUnknownKnowledge());
+    await expect(panel.locator("#knowledge-content")).toHaveValue("Already stored");
+  }
   await panel.evaluate(host => host._saveKnowledge());
   expect(await page.evaluate(() => dataCollectionBackend.calls.filter(call => call.action === "create").length)).toBe(1);
   await expect(panel.locator("#knowledge-save")).toBeDisabled();
+  // A presentation reset cannot confer authority to repeat this editor intent.
+  await panel.evaluate(host => {
+    host.shadowRoot.querySelector("#knowledge-save").disabled = false;
+    return host._saveKnowledge();
+  });
+  expect(await page.evaluate(() => dataCollectionBackend.calls.filter(call => call.action === "create").length)).toBe(1);
   const sources = await page.evaluate(() => dataCollectionBackend.state.sources);
   expect(sources.filter(source => source.title === "Ambiguous committed source")).toHaveLength(1);
   const saved = sources.find(source => source.title === "Ambiguous committed source");
