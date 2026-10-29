@@ -146,7 +146,7 @@ for (const bundled of [false, true]) test(`navigation Discard preserves current 
   await expectHarnessClean(page, errors);
 });
 
-for (const bundled of [false, true]) test(`numeric capability discard restores controls and subsequent saved state (${bundled ? "bundle" : "source"})`, async ({page}) => {
+for (const bundled of [false, true]) for (const numericLast of [false, true]) for (const command of ["revert", "save"]) test(`numeric capability ${command} restores controls and subsequent saved state (${bundled ? "bundle" : "source"}, numeric last=${numericLast})`, async ({page}) => {
   await page.goto(fixtureUrl("assistant/basics", bundled ? "&bundle=1" : ""));
   const panel=page.locator("extended-openai-management-panel");
   await expect(panel.locator('[data-config="max_tokens"]')).toBeVisible();
@@ -157,13 +157,17 @@ for (const bundled of [false, true]) test(`numeric capability discard restores c
   await panel.locator(".general-advanced summary").click();
   const limit=panel.locator('[data-config="max_function_calls_per_conversation"]');
   const before=await limit.inputValue();
-  await limit.fill("11"); await limit.blur();
-  await panel.locator('[data-config="max_tokens"]').fill("1301");
-  await panel.locator("#revert-config").click();
-  await expect(limit).toHaveValue(before);
-  expect(await panel.evaluate(host=>host._draft.max_function_calls_per_conversation)).toBe(Number(before));
+  const other=panel.locator('[data-config="max_tokens"]');
+  if (numericLast) await other.fill("1301");
+  await limit.fill("11");
+  if (!numericLast) await other.fill("1301");
+  await panel.locator(command === "revert" ? "#revert-config" : "#save-config").click();
+  const expected=command === "revert" ? before : "11";
+  await expect(panel.locator("#save-config")).toHaveCount(0);
+  await expect(limit).toHaveValue(expected);
+  expect(await panel.evaluate(host=>host._draft.max_function_calls_per_conversation)).toBe(Number(expected));
   await panel.locator('[data-config="max_tokens"]').fill("1401");
   await panel.locator("#save-config").click();
   await expect(panel.locator("#save-config")).toHaveCount(0);
-  expect(await page.evaluate(()=>browserHarness.getState().configuration.config.max_function_calls_per_conversation)).toBe(Number(before));
+  expect(await page.evaluate(()=>browserHarness.getState().configuration.config.max_function_calls_per_conversation)).toBe(Number(expected));
 });

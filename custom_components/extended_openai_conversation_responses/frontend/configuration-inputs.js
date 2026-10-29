@@ -83,7 +83,10 @@ export function bindConfigurationInputs(panel, handlers = {}) {
     }
     // Recompute dependent choices on commit, including after an input event
     // already updated the draft. Numeric keystrokes must not rebuild the form.
-    if (["api_mode", "web_search", "max_function_calls_per_conversation", "continue_conversation"].includes(result.key)) root.__eocConfigurationInputs.capabilityChanged?.(control);
+    // A pressed Save/Discard owns the next redraw. Blur commits the input
+    // normally, but must not remove that command before its click arrives.
+    const command = root.querySelector("#save-config:active, #revert-config:active");
+    if (!command && ["api_mode", "web_search", "max_function_calls_per_conversation", "continue_conversation"].includes(result.key)) root.__eocConfigurationInputs.capabilityChanged?.(control);
   };
   root.addEventListener("input", handle);
   root.addEventListener("change", handle);

@@ -1173,3 +1173,32 @@ test("real HA Local Handling shows live intents and persists selected routing", 
   await expect(reloaded).toBeVisible();
   await expect(reloaded).toBeChecked();
 });
+
+
+test("focused numeric capability Revert preserves the next persisted configuration save", async ({context, page}) => {
+  await authenticate(context);
+  const panel=await openAssistantFromOverview(page);
+  await panel.evaluate(async host => {
+    await host._navigate("assistant", "basics");
+    await host._call("configuration", "save", {config:{max_function_calls_per_conversation:10}, revision:host._configData.revision});
+    await host._loadSection(true);
+  });
+  await panel.locator(".general-advanced summary").click();
+  const tokens=panel.locator('[data-config="max_tokens"]');
+  const original=await tokens.inputValue();
+  await tokens.fill(String(Number(original)+1));
+  const limit=panel.locator('[data-config="max_function_calls_per_conversation"]');
+  await limit.fill("11");
+  await panel.locator("#revert-config").click();
+  await expect(limit).toHaveValue("10");
+  await expect(tokens).toHaveValue(original);
+  await tokens.fill(String(Number(original)+2));
+  await panel.locator("#save-config").click();
+  await expect(panel.locator("#save-config")).toHaveCount(0);
+  const saved=await panel.evaluate(host=>host._call("configuration", "get"));
+  expect(saved.config.max_function_calls_per_conversation).toBe(10);
+  expect(saved.config.max_tokens).toBe(Number(original)+2);
+  await panel.evaluate(async (host, original) => {
+    await host._call("configuration", "save", {config:{max_tokens:Number(original)}, revision:host._configData.revision});
+  }, original);
+});
