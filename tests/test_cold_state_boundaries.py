@@ -135,7 +135,7 @@ async def test_memory_cold_preparation_uses_worker(monkeypatch, count):
     assert len(manager._memories) == count
     assert len(manager._key_index) == count
     assert len(manager._embedding_cache) == count
-    assert len(storage.data["memories"]) == count
+    assert len(storage.data["memories"]) == count + 2
     assert calls and main not in calls
     assert vectors and main not in vectors
     await manager.async_initialize()
@@ -215,7 +215,9 @@ async def test_current_startup_migration_decodes_in_worker(hass, monkeypatch):
 
 
 async def test_memory_failed_self_heal_does_not_publish_partial_state():
-    storage = FakeStorage({"memories": [*records(2), {"bad": True}]})
+    legacy = records(2)
+    legacy[0]["importance"] = "normal"
+    storage = FakeStorage({"memories": legacy})
     manager = memory.PersistentMemory(storage)
     save = storage.async_save
 

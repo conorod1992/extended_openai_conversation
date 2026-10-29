@@ -59,6 +59,7 @@ from .helpers import get_model_config, get_reasoning_effort_options
 from .model_catalog import all_reasoning_efforts
 from .operational_errors import log_handled_failure
 from .persistence_hardening import (
+    StorageRepairRequired,
     _async_repair_private_store_mode,
     _async_settle_transactional_save,
 )
@@ -348,8 +349,8 @@ class RequestRuleStore(PropagatingWriteStore):
         """Migrate additive Request Rule storage changes."""
         if old_major_version == 1:
             return {
-                **old_data,
                 "wording_groups": _copy_wording_groups(DEFAULT_WORDING_GROUPS),
+                **old_data,
             }
         if old_major_version in {2, 3, 4, 5}:
             return old_data
@@ -451,6 +452,7 @@ class RequestRules:
         self._diagnostics: dict[str, str] = {}
         self._lock = asyncio.Lock()
         self._initialized = False
+        self._repair_required = False
         self._committed_state: dict[str, Any] | None = None
         self._generation = 0
         self._revision_generation = 0
@@ -478,20 +480,23 @@ class RequestRules:
                 await _async_repair_private_store_mode(self._store)
                 stored = await self._store.async_load()
                 migrated = False
+                self._repair_required = False
                 raw_rules: Sequence[Any] = ()
                 if stored is None:
                     pass
                 elif not isinstance(stored, Mapping):
                     _LOGGER.warning(
-                        "Resetting malformed stored Request Rules container"
+                        "Reading malformed Request Rules as empty; original store preserved"
                     )
                     migrated = True
+                    self._repair_required = True
                 else:
                     generation = stored.get("revision_generation", 0)
                     if type(generation) is int and generation >= 0:
                         self._revision_generation = generation
                     else:
                         migrated = True
+                        self._repair_required = True
                     self._opaque_fields = {
                         key: deepcopy(value)
                         for key, value in stored.items()
@@ -509,6 +514,7 @@ class RequestRules:
                     except ValueError:
                         _LOGGER.warning("Ignoring invalid stored Request Rule groups")
                         migrated = True
+                        self._repair_required = True
                     try:
                         self._defaults = validate_matching_settings(
                             stored.get("defaults", DEFAULT_MATCHING)
@@ -516,6 +522,7 @@ class RequestRules:
                     except ValueError:
                         _LOGGER.warning("Ignoring invalid stored Request Rule defaults")
                         migrated = True
+                        self._repair_required = True
                     try:
                         self._wording_groups = validate_wording_groups(
                             stored.get("wording_groups", DEFAULT_WORDING_GROUPS)
@@ -525,12 +532,16 @@ class RequestRules:
                             "Ignoring invalid stored Request Rule wording groups"
                         )
                         migrated = True
+                        self._repair_required = True
                     stored_rules = stored.get("rules", [])
                     if not isinstance(stored_rules, Sequence) or isinstance(
                         stored_rules, (str, bytes)
                     ):
-                        _LOGGER.warning("Resetting malformed stored Request Rules list")
+                        _LOGGER.warning(
+                            "Reading malformed Request Rules list as empty; original store preserved"
+                        )
                         migrated = True
+                        self._repair_required = True
                     else:
                         if len(stored_rules) > MAX_RULES:
                             _LOGGER.warning(
@@ -539,9 +550,11 @@ class RequestRules:
                                 MAX_RULES,
                             )
                             migrated = True
+                            self._repair_required = True
                         raw_rules = stored_rules[:MAX_RULES]
 
                 seen_ids: set[str] = set()
+                known_group_ids = {group["id"] for group in self._groups}
                 for raw in raw_rules:
                     try:
                         candidate, scope_migrated = (
@@ -568,15 +581,22 @@ class RequestRules:
                                 validated["id"],
                             )
                             migrated = True
+                            self._repair_required = True
                             continue
                         seen_ids.add(validated["id"])
+                        if (
+                            validated.get("group_id") is not None
+                            and validated["group_id"] not in known_group_ids
+                        ):
+                            self._repair_required = True
                         self._rules.append(validated)
                         migrated = migrated or validated != raw
                     except ValueError as err:
                         _LOGGER.warning("Ignoring invalid stored Request Rule: %s", err)
                         migrated = True
+                        self._repair_required = True
                 migrated = self._sort_and_compile() or migrated
-                if migrated:
+                if migrated and not self._repair_required:
                     await self._async_save_locked(reconcile_failure=False)
                 self._remember_committed_state()
                 self._initialized = True
@@ -613,6 +633,8 @@ class RequestRules:
 
     def _require_revision_locked(self, expected_revision: str | None) -> None:
         """Reject a stale management writer while the mutation lock is held."""
+        if self._repair_required:
+            raise StorageRepairRequired("Request Rules")
         if expected_revision is None:
             return
         if not isinstance(expected_revision, str):
@@ -632,6 +654,7 @@ class RequestRules:
             "groups": deepcopy(self._groups),
             "rules": [dict(rule) for rule in self._rules],
             "diagnostics": dict(self._diagnostics),
+            **({"storage_repair_required": True} if self._repair_required else {}),
         }
 
     def rule_snapshot(self, rule_id: str) -> dict[str, Any]:
@@ -658,6 +681,8 @@ class RequestRules:
 
     async def async_backup_data(self) -> dict[str, Any]:
         """Return durable Request Rule state without management-only fields."""
+        if self._repair_required:
+            raise StorageRepairRequired("Request Rules")
         snapshot = self.snapshot()
         snapshot.pop("revision", None)
         snapshot.pop("diagnostics", None)
@@ -730,7 +755,7 @@ class RequestRules:
             self._discard_condition_checkers()
             self._sort_and_compile()
             self._initialized = True
-            await self._async_save_locked()
+            await self._async_save_locked(replacing=True)
 
     async def async_set_defaults(
         self, value: Any, *, expected_revision: str | None = None
@@ -1320,8 +1345,13 @@ class RequestRules:
         self._diagnostics = diagnostics
         return order_changed
 
-    async def _async_save_locked(self, *, reconcile_failure: bool = True) -> None:
+    async def _async_save_locked(
+        self, *, reconcile_failure: bool = True, replacing: bool = False
+    ) -> None:
         """Settle each Store write before propagating failure or cancellation."""
+        if self._repair_required and not replacing:
+            self._restore_committed_state()
+            raise StorageRepairRequired("Request Rules")
         # The counter belongs to the persisted transaction, so a manager reload
         # keeps its revision and committed A -> B -> A changes remain detectable.
         self._revision_generation += 1
@@ -1341,6 +1371,8 @@ class RequestRules:
             self._async_reconcile_failed_save if reconcile_failure else None,
             self._invalidate_after_unreadable_store,
         )
+        if replacing:
+            self._repair_required = False
         if self._on_change is not None:
             self._on_change()
 
@@ -1348,6 +1380,7 @@ class RequestRules:
         """Adopt the validated Store state when a failed acknowledgement followed rename."""
         disk_state = RequestRules(self._store)
         await disk_state.async_initialize()
+        self._repair_required = disk_state._repair_required
         if not disk_state._initialized:
             raise RuntimeError("persisted Request Rules could not be initialized")
         disk_snapshot = {

@@ -347,7 +347,7 @@ def test_compiled_and_legacy_normalization_short_circuits() -> None:
     )
 
 
-async def test_initialize_truncates_oversized_stored_rules(monkeypatch) -> None:
+async def test_initialize_bounds_rules_without_truncating_original_store(monkeypatch) -> None:
     monkeypatch.setattr(rr, "MAX_RULES", 1)
     manager, store = await residual_initialized_manager(
         {
@@ -358,7 +358,8 @@ async def test_initialize_truncates_oversized_stored_rules(monkeypatch) -> None:
         }
     )
     assert [rule["id"] for rule in manager.snapshot()["rules"]] == ["first"]
-    assert store.saves == 1
+    assert store.saves == 0
+    assert len(store.data["rules"]) == 2
 
 
 async def test_function_references_and_rename_cover_noop_and_save() -> None:

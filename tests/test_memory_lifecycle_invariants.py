@@ -83,7 +83,7 @@ async def _archive() -> tuple[ConversationArchive, ArchiveStorage]:
     return archive, storage
 
 
-async def test_memory_corrupt_store_keeps_valid_record_and_self_heals() -> None:
+async def test_memory_corrupt_store_keeps_valid_record_without_lossy_rewrite() -> None:
     """One malformed persisted record does not discard unrelated valid memory."""
     storage = MemoryStorage()
     memory = PersistentMemory(storage)
@@ -101,7 +101,7 @@ async def test_memory_corrupt_store_keeps_valid_record_and_self_heals() -> None:
     assert [record.memory_id for record in await restarted.async_list("user-1")] == [
         valid_id
     ]
-    assert [record["memory_id"] for record in storage.data["memories"]] == [valid_id]
+    assert [record["memory_id"] for record in storage.data["memories"]] == [valid_id, "broken"]
 
 
 async def test_temporary_memory_expiry_boundary_removes_only_expired_records(

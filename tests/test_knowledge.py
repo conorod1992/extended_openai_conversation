@@ -127,7 +127,7 @@ async def test_malformed_stored_records_are_ignored() -> None:
     assert [item["source_id"] for item in await library.async_list()] == ["valid"]
 
 
-async def test_malformed_stored_record_does_not_poison_siblings_or_future_writes(
+async def test_malformed_stored_record_preserves_sibling_reads_and_blocks_lossy_writes(
     caplog,
 ) -> None:
     valid_a = {
@@ -179,26 +179,22 @@ async def test_malformed_stored_record_does_not_poison_siblings_or_future_writes
 
     assert storage.data == original_payload
 
-    created = await library.async_create(
-        "Bathroom storage",
-        "Bathroom supplies",
-        "Spare towels are in the airing cupboard.",
-    )
-    saved_ids = {item["source_id"] for item in storage.data["sources"]}
-    assert saved_ids == {"valid-a", "valid-c", created.source_id}
-    assert "corrupt-b" not in saved_ids
+    with pytest.raises(ValueError, match="needs repair"):
+        await library.async_create(
+            "Bathroom storage", "Bathroom supplies",
+            "Spare towels are in the airing cupboard.",
+        )
+    assert storage.data == original_payload
 
     caplog.clear()
     reloaded = await _library(storage)
     reloaded_ids = {item["source_id"] for item in await reloaded.async_list()}
-    assert reloaded_ids == {"valid-a", "valid-c", created.source_id}
+    assert reloaded_ids == {"valid-a", "valid-c"}
     assert {
         result.source_id for result in await reloaded.async_search("drawer beside oven")
     } == {"valid-a"}
-    assert {
-        result.source_id for result in await reloaded.async_search("airing cupboard")
-    } == {created.source_id}
-    assert warning not in [record.getMessage() for record in caplog.records]
+    assert await reloaded.async_search("airing cupboard") == []
+    assert warning in [record.getMessage() for record in caplog.records]
 
 
 @pytest.mark.parametrize(
@@ -988,8 +984,10 @@ def test_migrated_storage_payload_handles_mapping_invalid_and_non_mapping_inputs
     mapped = knowledge._migrated_storage_payload(
         {"sources": [{"source_id": "one"}, "preserve-malformed"]}
     )
-    invalid_sources = knowledge._migrated_storage_payload({"sources": "bad"})
-    unrelated = knowledge._migrated_storage_payload(object())
+    with pytest.raises(ValueError, match="needs repair"):
+        knowledge._migrated_storage_payload({"sources": "bad"})
+    with pytest.raises(ValueError, match="needs repair"):
+        knowledge._migrated_storage_payload(object())
 
     assert mapped == {
         "sources": [
@@ -997,8 +995,6 @@ def test_migrated_storage_payload_handles_mapping_invalid_and_non_mapping_inputs
             "preserve-malformed",
         ]
     }
-    assert invalid_sources == {"sources": []}
-    assert unrelated == {"sources": []}
 
 
 @pytest.mark.parametrize(

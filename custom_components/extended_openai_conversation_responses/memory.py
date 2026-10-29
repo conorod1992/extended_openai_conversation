@@ -35,7 +35,10 @@ from .const import (
 )
 from .operation_settlement import async_settle_owned_operation
 from .operational_errors import log_handled_failure
-from .persistence_hardening import _async_settle_transactional_save
+from .persistence_hardening import (
+    StorageRepairRequired,
+    _async_settle_transactional_save,
+)
 from .provider_errors import provider_failure_category, provider_log_remediation
 from .scope import LEGACY_ANONYMOUS_SCOPE_ID
 from .storage_namespaces import MEMORY_PREFIX as STORAGE_KEY_PREFIX
@@ -216,19 +219,12 @@ class MemoryStore(PropagatingWriteStore):
         self, old_major_version: int, old_minor_version: int, old_data: Any
     ) -> dict[str, Any]:
         """Migrate older memory payloads."""
-        if old_major_version == 0:
-            if isinstance(old_data, list):
-                old_data = {"memories": old_data}
-            if isinstance(old_data, dict):
-                old_data = {"memories": old_data.get("memories", [])}
+        if old_major_version == 0 and isinstance(old_data, list):
+            old_data = {"memories": old_data}
         if old_major_version in {0, 1} and isinstance(old_data, dict):
-            return {
-                "memories": [
-                    _migrate_raw_record(raw)
-                    for raw in old_data.get("memories", [])
-                    if isinstance(raw, Mapping)
-                ]
-            }
+            # The shared record decoder already accepts legacy fields. Defer
+            # lossy cleanup until the manager has validated the whole generation.
+            return dict(old_data)
         raise NotImplementedError
 
 
@@ -311,6 +307,7 @@ class PersistentMemory:
         }
         self._lock = asyncio.Lock()
         self._initialized = False
+        self._repair_required = False
         self._committed_state: _MemoryMutationSnapshot | None = None
 
     @property
@@ -319,15 +316,16 @@ class PersistentMemory:
         return self._initialized
 
     async def async_initialize(self) -> None:
-        """Load, validate, and self-heal memory data once."""
+        """Load usable facts; normalize legacy data without discarding damage."""
         async with async_storage_lock(self._storage, self._lock):
             if self._initialized:
                 return
             try:
                 data = await self._storage.async_load()
-                memories, key_index, payload = await asyncio.to_thread(
+                memories, key_index, payload, repair_required = await asyncio.to_thread(
                     _prepare_stored_memories, data
                 )
+                self._repair_required = repair_required
                 if payload is not None:
                     await self._storage.async_save(payload)
                 self._memories = memories
@@ -408,7 +406,7 @@ class PersistentMemory:
             raise ValueError("source must be explicit or implicit")
         _validate_privacy_fields(source, content, category, subject, key)
         async with async_storage_lock(self._storage, self._lock):
-            self._ensure_initialized()
+            self._require_writable()
             if key and (user_id, key) in self._key_index:
                 raise ValueError("canonical key already exists in this memory scope")
             if key is None:
@@ -484,7 +482,7 @@ class PersistentMemory:
             source, content, category, cleaned_subject, cleaned_key
         )
         async with async_storage_lock(self._storage, self._lock):
-            self._ensure_initialized()
+            self._require_writable()
             timestamp = dt_util.utcnow().isoformat()
             keyed_identity = isinstance(cleaned_key, str)
             if isinstance(cleaned_key, str) and (
@@ -834,7 +832,7 @@ class PersistentMemory:
             raise ValueError("a metadata field cannot be updated and cleared together")
 
         async with async_storage_lock(self._storage, self._lock):
-            self._ensure_initialized()
+            self._require_writable()
             current = self._owned_memory(user_id, memory_id)
             if (
                 expected_revision is not None
@@ -903,7 +901,7 @@ class PersistentMemory:
         if not memory_ids or len(memory_ids) > MAX_SEARCH_LIMIT:
             raise ValueError(f"memory_ids must contain 1 to {MAX_SEARCH_LIMIT} IDs")
         async with async_storage_lock(self._storage, self._lock):
-            self._ensure_initialized()
+            self._require_writable()
             deleted = 0
             for memory_id in set(memory_ids):
                 memory = self._memories.get(memory_id)
@@ -921,7 +919,7 @@ class PersistentMemory:
         """Clear a user's memories, optionally within one category."""
         category_filter = _clean_category(category) if category else None
         async with async_storage_lock(self._storage, self._lock):
-            self._ensure_initialized()
+            self._require_writable()
             targets = [
                 memory
                 for memory in self._memories.values()
@@ -949,7 +947,7 @@ class PersistentMemory:
         if not memory_ids or len(memory_ids) > MAX_LIST_LIMIT:
             raise ValueError(f"memory_ids must contain 1 to {MAX_LIST_LIMIT} IDs")
         async with async_storage_lock(self._storage, self._lock):
-            self._ensure_initialized()
+            self._require_writable()
             requested = len(set(memory_ids))
             moved = 0
             for memory_id in set(memory_ids):
@@ -979,6 +977,7 @@ class PersistentMemory:
         return {
             "backend": "home_assistant_store",
             "storage_version": STORAGE_VERSION,
+            "memory_storage_repair_required": self._repair_required,
             "memory_count": len(memories),
             "user_scope_count": len({m.user_id for m in memories.values()}),
             "hybrid_retrieval": self.hybrid_status(),
@@ -1001,7 +1000,7 @@ class PersistentMemory:
     async def async_backup_data(self) -> dict[str, Any]:
         """Return the stable durable representation used by full backups."""
         async with async_storage_lock(self._storage, self._lock):
-            self._ensure_initialized()
+            self._require_writable()
             return {
                 "memories": [
                     _record_as_storage_dict(memory)
@@ -1057,7 +1056,7 @@ class PersistentMemory:
             self._key_index.clear()
             for record in records:
                 self._index(record)
-            await self._async_save_locked()
+            await self._async_save_locked(replacing=True)
 
     def _find_duplicate(
         self, user_id: str, content: str, subject: str | None = None
@@ -1225,8 +1224,11 @@ class PersistentMemory:
                     return False
         return True
 
-    async def _async_save_locked(self) -> None:
+    async def _async_save_locked(self, *, replacing: bool = False) -> None:
         """Settle writes and rebuild memory indexes from authoritative storage."""
+        if self._repair_required and not replacing:
+            self._restore_committed_state()
+            raise StorageRepairRequired("Persistent Memory")
         await _async_settle_transactional_save(
             self._async_persist_locked(),
             self._restore_committed_state,
@@ -1234,11 +1236,14 @@ class PersistentMemory:
             self._async_reconcile_failed_save,
             self._invalidate_after_unreadable_store,
         )
+        if replacing:
+            self._repair_required = False
 
     async def _async_reconcile_failed_save(self) -> None:
         """Reload validated facts and rebuild indexes after an ambiguous write."""
         disk_state = PersistentMemory(self._storage, self._embedding_cache_storage)
         await disk_state.async_initialize()
+        self._repair_required = disk_state._repair_required
         self._restore_mutation_state(disk_state._snapshot_mutation_state())
         self._initialized = True
         self._committed_state = self._snapshot_mutation_state()
@@ -1361,6 +1366,11 @@ class PersistentMemory:
             **({"reason": reason} if reason is not None else {}),
             **({"error_type": error_type} if error_type is not None else {}),
         }
+
+    def _require_writable(self) -> None:
+        self._ensure_initialized()
+        if self._repair_required:
+            raise StorageRepairRequired("Persistent Memory")
 
     def _ensure_initialized(self) -> None:
         store = getattr(self._storage, "_store", None)
@@ -1899,31 +1909,38 @@ def _clean_embedding(value: Any) -> list[float]:
 
 def _prepare_stored_memories(
     data: Any,
-) -> tuple[dict[str, MemoryRecord], dict[tuple[str, str], str], dict[str, Any] | None]:
+) -> tuple[
+    dict[str, MemoryRecord], dict[tuple[str, str], str], dict[str, Any] | None, bool
+]:
     """Validate detached stored facts and build indices without touching live state."""
     memories: dict[str, MemoryRecord] = {}
     key_index: dict[tuple[str, str], str] = {}
     needs_save = False
+    repair_required = False
     if data is None:
         raw_memories: list[Any] = []
     elif not isinstance(data, Mapping) or "memories" not in data:
         raw_memories = []
         needs_save = True
+        repair_required = True
     else:
         candidate = data.get("memories")
         if not isinstance(candidate, list):
             raw_memories = []
             needs_save = True
+            repair_required = True
         else:
             raw_memories = candidate
             if len(raw_memories) > MAX_MEMORIES_PER_AGENT:
                 raw_memories = raw_memories[:MAX_MEMORIES_PER_AGENT]
                 needs_save = True
+                repair_required = True
 
     legacy_embeddings_found = False
+    privacy_rejected: set[int] = set()
     seen_ids: set[str] = set()
     seen_keys: set[tuple[str, str]] = set()
-    for raw in raw_memories:
+    for index, raw in enumerate(raw_memories):
         needs_save |= isinstance(raw, Mapping) and bool(
             {"importance", "last_confirmed_at"} & raw.keys()
         )
@@ -1937,8 +1954,14 @@ def _prepare_stored_memories(
                 if key_pair in seen_keys:
                     raise ValueError("duplicate canonical key in memory scope")
                 seen_keys.add(key_pair)
+        except _MemoryPrivacyRejected:
+            needs_save = True
+            privacy_rejected.add(index)
+            _LOGGER.warning("Removing persistent memory rejected by privacy policy")
+            continue
         except TypeError, ValueError:
             needs_save = True
+            repair_required = True
             _LOGGER.warning("Ignoring malformed persistent memory record")
             continue
         seen_ids.add(memory.memory_id)
@@ -1950,7 +1973,22 @@ def _prepare_stored_memories(
         if legacy_embeddings_found or needs_save
         else None
     )
-    return memories, key_index, payload
+    if repair_required:
+        # Keep corruption in place, including overflow records and opaque fields.
+        # A simultaneous privacy purge must remove only policy-rejected records.
+        payload = (
+            {
+                **data,
+                "memories": [
+                    raw
+                    for index, raw in enumerate(data["memories"])
+                    if index not in privacy_rejected
+                ],
+            }
+            if privacy_rejected
+            else None
+        )
+    return memories, key_index, payload, repair_required
 
 
 def _prepare_stored_embedding_cache(data: Any) -> dict[str, EmbeddingCacheEntry]:
@@ -2081,7 +2119,9 @@ def _clean_category(value: str) -> str:
     # Check bounded authored text, keeping camelCase clues until validation ends.
     _validate_privacy(value, "explicit")
     if _CATEGORY_SECRET_PATTERN.search(value):
-        raise ValueError("memory rejected because it appears to contain a secret")
+        raise _MemoryPrivacyRejected(
+            "memory rejected because it appears to contain a secret"
+        )
     return normalized
 
 
@@ -2147,15 +2187,23 @@ def _validate_privacy_fields(source: str, *values: object) -> None:
             _validate_privacy(value, source)
 
 
+class _MemoryPrivacyRejected(ValueError):
+    """A deliberate privacy purge, distinct from recoverable record damage."""
+
+
 def _validate_privacy(content: str, source: str) -> None:
     if _SECRET_PATTERN.search(content):
-        raise ValueError("memory rejected because it appears to contain a secret")
+        raise _MemoryPrivacyRejected(
+            "memory rejected because it appears to contain a secret"
+        )
     if _contains_financial_credential(content):
-        raise ValueError(
+        raise _MemoryPrivacyRejected(
             "memory rejected because it appears to contain a financial credential"
         )
     if source == "implicit" and _SENSITIVE_IMPLICIT_PATTERN.search(content):
-        raise ValueError("sensitive memories require an explicit user request")
+        raise _MemoryPrivacyRejected(
+            "sensitive memories require an explicit user request"
+        )
 
 
 def _contains_financial_credential(content: str) -> bool:

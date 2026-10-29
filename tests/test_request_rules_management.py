@@ -65,7 +65,7 @@ def routing_rule(*, rule_id: str = "route"):
     }
 
 
-async def test_initialize_repairs_malformed_container_and_persists_defaults() -> None:
+async def test_initialize_projects_defaults_without_overwriting_malformed_container() -> None:
     store = MemoryStore(["not", "an", "object"])
     rules = rr.RequestRules(store)
 
@@ -75,10 +75,11 @@ async def test_initialize_repairs_malformed_container_and_persists_defaults() ->
     assert snapshot["rules"] == []
     assert snapshot["defaults"] == rr.DEFAULT_MATCHING
     assert snapshot["wording_groups"] == list(rr.DEFAULT_WORDING_GROUPS)
-    assert store.saves == 1
+    assert store.saves == 0
+    assert store.data == ["not", "an", "object"]
 
 
-async def test_initialize_repairs_invalid_sections_and_duplicate_rule_ids() -> None:
+async def test_initialize_preserves_invalid_sections_and_duplicate_rule_ids() -> None:
     first = local_rule()
     duplicate = local_rule(name="Duplicate name")
     store = MemoryStore(
@@ -96,7 +97,8 @@ async def test_initialize_repairs_invalid_sections_and_duplicate_rule_ids() -> N
     assert snapshot["defaults"] == rr.DEFAULT_MATCHING
     assert snapshot["wording_groups"] == list(rr.DEFAULT_WORDING_GROUPS)
     assert [rule["id"] for rule in snapshot["rules"]] == ["good-night"]
-    assert store.saves == 1
+    assert store.saves == 0
+    assert store.data["rules"] == [first, duplicate]
 
 
 async def test_initialize_migrates_complete_legacy_request_route_once() -> None:
@@ -558,14 +560,14 @@ async def determinism_manager(*rules):
         {"rules": 123},
     ],
 )
-async def test_malformed_store_container_self_heals(stored) -> None:
+async def test_malformed_store_container_is_preserved_for_repair(stored) -> None:
     store = DeterminismMemoryStore(stored)
     rules = RequestRules(store)
     await rules.async_initialize()
 
     assert rules.snapshot()["rules"] == []
-    assert store.saves == 1
-    assert store.data["rules"] == []
+    assert store.saves == 0
+    assert store.data == stored
 
 
 async def test_duplicate_orders_are_reindexed_after_mutations() -> None:

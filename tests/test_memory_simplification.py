@@ -46,12 +46,16 @@ def legacy_record(memory_id="a"):
 
 
 @pytest.mark.parametrize("version", [0, 1])
-async def test_old_store_migrations_drop_removed_fields(version):
+async def test_old_store_cleanup_waits_for_manager_validation(version):
     data = await MemoryStore.__new__(MemoryStore)._async_migrate_func(
         version, 0, {"memories": [legacy_record()]}
     )
-    assert "importance" not in data["memories"][0]
-    assert "last_confirmed_at" not in data["memories"][0]
+    assert data == {"memories": [legacy_record()]}
+    storage = Storage(data)
+    manager = PersistentMemory(storage)
+    await manager.async_initialize()
+    assert "importance" not in storage.data["memories"][0]
+    assert "last_confirmed_at" not in storage.data["memories"][0]
 
 
 async def test_current_store_and_backup_ignore_any_legacy_values():
