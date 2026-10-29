@@ -48,6 +48,23 @@ export function configurationReadOvertookSubmission(panel, submission) {
   return (panel._eocConfigurationReadEpoch || 0) !== (submission.readEpoch || 0);
 }
 
+// A committed replacement consumes the draft it displaced, not later edits.
+// Keep its comparison baseline until an authoritative read can merge that delta.
+export function retireReplacedConfigurationDraft(panel, submission) {
+  if (!configurationSubmissionIsCurrent(panel, submission)) return;
+  if (same(panel._draft || {}, submission.draft) && panel._draftTitle === submission.title
+      && (panel._eocModelIntent || null) === submission.modelIntent) panel._clearConfigDraft();
+  else {
+    panel._eocRestoredConfiguration = submission;
+    panel._configDataStale = true;
+  }
+  if (panel._eocModelIntent === submission.modelIntent) {
+    panel._eocModelChangeToken = (panel._eocModelChangeToken || 0) + 1;
+    panel._eocPendingModelPreparation = null;
+    panel._eocModelIntent = null;
+  }
+}
+
 function preservesModelPreparation(panel, submission, fields) {
   const ownsModel = !fields || fields.some(key => ["chat_model", "azure_model", "reasoning_effort"].includes(key));
   return !ownsModel || (panel._eocModelIntent || null) !== (submission.modelIntent || null);

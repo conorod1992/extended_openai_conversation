@@ -1,4 +1,4 @@
-import {captureConfigurationOwner, configurationSubmissionIsCurrent, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
+import {captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement, retireReplacedConfigurationDraft} from "./configuration-acknowledgement.js";
 import {downloadConfigurationSharing} from "./sharing-review.js";
 import {invalidateOperation} from "./operation-ownership.js";
 import {bindOwnedEvent} from "./management-owned-events.js";
@@ -64,6 +64,7 @@ export async function applyConfigurationImport(panel, root) {
   }
   if (mode === "current" && !await panel._confirm("Overwrite this agent?", `The saved configuration will be replaced.${panel._configDirty ? " Your unsaved shared draft will be discarded." : ""} Retained history and parent-entry credentials are not affected.`, "Overwrite")) return;
   if (!matches()) return;
+  const submittedDraft = captureConfigurationSubmission(panel);
   panel._eocImportPending = true;
   button.disabled = true;
   try {
@@ -76,7 +77,7 @@ export async function applyConfigurationImport(panel, root) {
     await presentAcknowledgedMutation(panel, () => configurationSubmissionIsCurrent(panel, acknowledgementOwner), mode === "current" ? "Configuration imported" : "Agent created from import; your current draft is preserved", async () => {
       let loadIntent = intent;
       if (mode === "current") {
-        panel._clearConfigDraft();
+        retireReplacedConfigurationDraft(panel, submittedDraft);
         acknowledgementOwner = captureConfigurationOwner(panel);
         loadIntent = captureCatalogSelectionIntent(panel);
       }

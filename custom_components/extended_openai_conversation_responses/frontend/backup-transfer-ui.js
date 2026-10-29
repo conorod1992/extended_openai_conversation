@@ -1,9 +1,8 @@
-import {same} from "./unsaved-state.js";
 import {restoreScopeMarkup} from "./management-decision-guidance.js";
 import {TRANSFER_SECTIONS} from "./backup-transfer-shell.js";
 import {backupSummaryLines} from "./backup-summary.js";
 import {reviewSharingExport} from "./sharing-review.js";
-import {callMutation, captureConfigurationSubmission, captureConfigurationOwner, configurationSubmissionIsCurrent, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
+import {callMutation, captureConfigurationSubmission, captureConfigurationOwner, configurationSubmissionIsCurrent, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement, retireReplacedConfigurationDraft} from "./configuration-acknowledgement.js";
 export {backupSummaryLines};
 export {TRANSFER_SECTIONS, renderBackupTransferPanel} from "./backup-transfer-shell.js";
 export const WS_BACKUP_TRANSFER = "extended_openai_conversation_responses/management/backup_transfer";
@@ -645,20 +644,7 @@ export function bindBackupTransfer(panel) {
         panel._backupTransferPreviewToken = null;
       }
       await processMutationResponse(outcome, async () => {
-        if (sections.includes("configuration") && configurationSubmissionIsCurrent(panel, restoredDraft)) {
-          // Keep this obligation across navigation and failed authoritative reads.
-          if (same(panel._draft || {}, restoredDraft.draft) && panel._draftTitle === restoredDraft.title
-              && (panel._eocModelIntent || null) === restoredDraft.modelIntent) panel._clearConfigDraft();
-          else {
-            panel._eocRestoredConfiguration = restoredDraft;
-            panel._configDataStale = true;
-          }
-          if (panel._eocModelIntent === restoredDraft.modelIntent) {
-            panel._eocModelChangeToken = (panel._eocModelChangeToken || 0) + 1;
-            panel._eocPendingModelPreparation = null;
-            panel._eocModelIntent = null;
-          }
-        }
+        if (sections.includes("configuration")) retireReplacedConfigurationDraft(panel, restoredDraft);
         panel._invalidateCleanConfiguration?.(session.owner.subentry_id);
         if (!ownedDialog) {
           // Navigation retires the preview, not its owner's refresh obligation.
