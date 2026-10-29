@@ -2383,6 +2383,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this._setSaving(this.shadowRoot.querySelector("#knowledge-save"), false);
     const availability = this.shadowRoot?.querySelector("#knowledge-source-enabled");
     if (availability) availability.checked = true;
+    const owner = captureConfigurationOwner(this);
     const root = this.shadowRoot;
     const dialog = root.querySelector("#knowledge-dialog");
     delete dialog.__eocUncertainMutation;
@@ -2403,7 +2404,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (sourceId) {
       try {
         const response = await this._call("knowledge", "get", { source_id: sourceId });
-        if (this._knowledgeLoadToken !== loadToken || !dialog.open) return;
+        if (this._knowledgeLoadToken !== loadToken || !dialog.open || !configurationSubmissionIsCurrent(this, owner)) return;
         this._requireKnowledgeSource(response?.source, sourceId);
         this._editingSource = response.source;
         if (availability) availability.checked = response.source.enabled !== false;
@@ -2415,7 +2416,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         root.querySelector("#knowledge-dialog-title").textContent = "Edit Knowledge source";
         this._setKnowledgeEditorDisabled(false);
       } catch (err) {
-        if (this._knowledgeLoadToken !== loadToken || !dialog.open) return;
+        if (this._knowledgeLoadToken !== loadToken || !dialog.open || !configurationSubmissionIsCurrent(this, owner)) return;
         this._knowledgeMode = "edit-error";
         this._setDialogError("knowledge", `Unable to load source: ${err.message || String(err)}`);
         root.querySelector("#knowledge-dialog-title").textContent = "Unable to load source";

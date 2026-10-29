@@ -242,3 +242,51 @@ for (const bundled of [false, true]) test(`Knowledge partial acknowledgement can
   expect(await page.evaluate(() => dataCollectionBackend.calls.filter(call => call.action === "update").length)).toBe(0);
   await expect(panel.locator("#knowledge-error")).toContainText("outcome is unknown");
 });
+
+for (const bundled of [false, true]) test(`Knowledge reads retire with their authentication lifetime (${bundled ? "bundle" : "source"})`, async ({page}) => {
+  const panel = await openDataCollection(page, "knowledge", 1, bundled);
+  await panel.evaluate(host => {
+    host.hass = {...host.hass, user:{...host.hass.user, id:"original-reader"}};
+    const send = host.hass.callWS.bind(host.hass);
+    let first = true;
+    window.knowledgeUpdateDispatches = 0;
+    host.hass.callWS = async request => {
+      if (request.section === "knowledge" && request.action === "update") knowledgeUpdateDispatches++;
+      if (request.section === "knowledge" && request.action === "update"
+          && request.expected_revision !== dataCollectionBackend.state.sources[0].updated_at) {
+        throw {code:"invalid_request", message:"Source changed before save"};
+      }
+      const result = await send(request);
+      if (first && request.section === "knowledge" && request.action === "get") {
+        first = false;
+        await new Promise(resolve => {window.releaseKnowledgeRead = resolve;});
+      }
+      if (request.action === "get") window.knowledgeReadReturned = true;
+      return result;
+    };
+  });
+  await panel.locator(".source-edit-button").first().click();
+  await expect.poll(() => page.evaluate(() => typeof releaseKnowledgeRead)).toBe("function");
+  await panel.evaluate(host => {
+    const original = host.hass;
+    host.hass = {...original, user:{...original.user, id:"intervening-reader"}};
+    host.hass = original;
+    dataCollectionBackend.state.sources[0].content = "New authoritative content";
+    dataCollectionBackend.state.sources[0].updated_at = "2026-10-29T22:00:00Z";
+    releaseKnowledgeRead();
+  });
+  await expect.poll(() => page.evaluate(() => window.knowledgeReadReturned)).toBe(true);
+  await panel.evaluate(host => host._saveKnowledge());
+  expect(await page.evaluate(() => knowledgeUpdateDispatches)).toBe(0);
+  expect(await page.evaluate(() => dataCollectionBackend.state.sources[0].content)).toBe("New authoritative content");
+  await expect(panel.locator("#knowledge-content")).not.toHaveValue("Reference text 0");
+  await expect(panel.locator("#knowledge-save")).toBeDisabled();
+  await panel.evaluate(async host => {
+    host.shadowRoot.querySelector("#knowledge-dialog").close();
+    await host._openKnowledge("source-0");
+  });
+  await expect(panel.locator("#knowledge-content")).toHaveValue("New authoritative content");
+  await panel.locator("#knowledge-content").fill("Deliberate edit after fresh read");
+  await panel.locator("#knowledge-save").click();
+  expect(await page.evaluate(() => dataCollectionBackend.state.sources[0].content)).toBe("Deliberate edit after fresh read");
+});
