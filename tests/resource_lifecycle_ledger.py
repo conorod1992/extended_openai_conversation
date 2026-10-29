@@ -3,13 +3,28 @@
 Avoid global task-count assertions: HA legitimately schedules unrelated work.
 Only resources carrying the removed assistant's entry/subentry identity count.
 """
-from dataclasses import dataclass
 
-import pytest
-from homeassistant.exceptions import HomeAssistantError
+import asyncio
+from dataclasses import dataclass
 from pathlib import Path
 
+import pytest
+
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
+from homeassistant.exceptions import HomeAssistantError
+
+
+class CallbackRetirement:
+    """Observe the actual unsubscribe call, even after its registry disappears."""
+
+    def __init__(self, callback):
+        self.callback = callback
+        self.retired = False
+
+    def __call__(self, *args, **kwargs):
+        result = self.callback(*args, **kwargs)
+        self.retired = True
+        return result
 
 
 @dataclass(frozen=True)
@@ -18,6 +33,7 @@ class ResourceLedger:
     retained_paths: frozenset[Path]
     callbacks: tuple[object, ...]
     retirement_fences: tuple[object, ...] = ()
+    tasks: tuple[asyncio.Future, ...] = ()
 
 
 def _owned_storage_name(name: str, entry_id: str, subentry_id: str) -> bool:
@@ -35,6 +51,7 @@ def capture_owned(hass, entry_id: str, subentry_id: str):
     managers = {}
     callbacks = []
     retirement_fences = []
+    tasks = []
     for name, value in hass.data.items():
         if not str(name).startswith(DOMAIN + ".") or not isinstance(value, dict):
             continue
@@ -45,22 +62,56 @@ def capture_owned(hass, entry_id: str, subentry_id: str):
                 retirement_fences.append(manager)
                 continue
             managers[str(name)] = manager
-            for attr in ("_cancel_retention", "_cancel_stop", "_unsub", "_unsubscriber"):
+            for attr in (
+                "_cancel_retention",
+                "_cancel_stop",
+                "_unsub",
+                "_unsubscriber",
+                "_unsubscribe_stop",
+            ):
                 handle = getattr(manager, attr, None)
                 if callable(handle):
+                    # Instrument only owned unsubscribe handles in this test
+                    # helper. Clearing the attribute cannot satisfy retirement.
+                    if not isinstance(handle, CallbackRetirement):
+                        handle = CallbackRetirement(handle)
+                        setattr(manager, attr, handle)
                     callbacks.append(handle)
+            for attr in ("_prune_task", "_prune_save_task"):
+                task = getattr(manager, attr, None)
+                if isinstance(task, asyncio.Future):
+                    tasks.append(task)
     config = Path(hass.config.path(".storage"))
     paths = (
-        frozenset(p for p in config.iterdir() if _owned_storage_name(p.name, entry_id, subentry_id))
-        if config.is_dir() else frozenset()
+        frozenset(
+            p
+            for p in config.iterdir()
+            if _owned_storage_name(p.name, entry_id, subentry_id)
+        )
+        if config.is_dir()
+        else frozenset()
     )
-    return ResourceLedger(frozenset((k, subentry_id) for k in managers), paths, tuple(callbacks), tuple(retirement_fences))
+    return ResourceLedger(
+        frozenset((k, subentry_id) for k in managers),
+        paths,
+        tuple(callbacks),
+        tuple(retirement_fences),
+        tuple(tasks),
+    )
 
 
 def assert_owned_removed(before: ResourceLedger, after: ResourceLedger):
     assert not after.manager_keys, f"Stale assistant manager keys: {after.manager_keys}"
-    assert not after.retained_paths, f"Stale assistant store paths: {after.retained_paths}"
+    assert not after.retained_paths, (
+        f"Stale assistant store paths: {after.retained_paths}"
+    )
     assert not after.callbacks, "Stale assistant-owned maintenance subscriptions"
+    assert all(handle.retired for handle in before.callbacks), (
+        "Owned unsubscribe was never called"
+    )
+    assert all(task.done() for task in before.tasks), (
+        "Owned task survived registry removal"
+    )
 
     for fence in after.retirement_fences:
         assert fence.deleted and not fence._writer_active
