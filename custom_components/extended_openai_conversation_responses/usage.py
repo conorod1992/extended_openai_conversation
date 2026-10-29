@@ -328,13 +328,22 @@ class UsageManager:
                 staged_totals = _totals_from_storage(await self._storage.async_load())
 
             days = daily_data.get("days")
-            staged_daily = {
-                str(key): deepcopy(value)
-                for key, value in (days if isinstance(days, dict) else {}).items()
-                if isinstance(value, dict)
-            }
+            staged_daily = {}
+            for key, value in (days if isinstance(days, dict) else {}).items():
+                if not isinstance(value, dict):
+                    continue
+                try:
+                    # Older stores omit newer counters. Migrate omissions only;
+                    # malformed supplied values must not become valid zeros.
+                    staged_daily[key] = _validate_usage_day(
+                        key, {**_empty_day(key), **value}
+                    )
+                except TypeError, ValueError:
+                    continue
             staged_requests: list[UsageRequest] = []
             staged_runs: list[UsageRun] = []
+            request_ids: set[str] = set()
+            run_ids: set[str] = set()
             if self._detail_storage is not None:
                 detail_data = await self._detail_storage.async_load() or {}
                 if not isinstance(detail_data, dict):
@@ -342,13 +351,19 @@ class UsageManager:
                 requests = detail_data.get("requests")
                 for raw in requests if isinstance(requests, list) else []:
                     try:
-                        staged_requests.append(UsageRequest(**raw))
+                        record = _usage_request_from_record(raw)
+                        if record.request_id not in request_ids:
+                            staged_requests.append(record)
+                            request_ids.add(record.request_id)
                     except TypeError, ValueError:
                         continue
                 runs = detail_data.get("runs")
                 for raw in runs if isinstance(runs, list) else []:
                     try:
-                        staged_runs.append(UsageRun(**raw))
+                        record_run = _usage_run_from_record(raw)
+                        if record_run.run_id not in run_ids:
+                            staged_runs.append(record_run)
+                            run_ids.add(record_run.run_id)
                     except TypeError, ValueError:
                         continue
 
@@ -884,12 +899,6 @@ class UsageManager:
             raise ValueError("daily usage data is invalid")
         daily: dict[str, dict[str, Any]] = {}
         for date, day in daily_raw.items():
-            if not isinstance(date, str) or len(date) != 10:
-                raise ValueError("daily usage date is invalid")
-            try:
-                datetime.fromisoformat(date)
-            except ValueError as err:
-                raise ValueError("daily usage date is invalid") from err
             daily[date] = _validate_usage_day(date, day)
 
         if not isinstance(data["requests"], list) or not isinstance(data["runs"], list):
@@ -1079,6 +1088,12 @@ def _validate_breakdown(value: Any, label: str) -> dict[str, int]:
 
 
 def _validate_usage_day(date: str, value: Any) -> dict[str, Any]:
+    if not isinstance(date, str) or len(date) != 10:
+        raise ValueError("daily usage date is invalid")
+    try:
+        datetime.fromisoformat(date)
+    except ValueError as err:
+        raise ValueError("daily usage date is invalid") from err
     expected = _empty_day(date)
     if not isinstance(value, dict) or set(value) != set(expected):
         raise ValueError("daily usage record is invalid")
@@ -1108,10 +1123,16 @@ def _validate_usage_day(date: str, value: Any) -> dict[str, Any]:
 
 
 def _usage_request_from_backup(raw: Any, target_agent_id: str) -> UsageRequest:
+    return _usage_request_from_record(
+        {**raw, "agent_subentry_id": target_agent_id} if isinstance(raw, dict) else raw
+    )
+
+
+def _usage_request_from_record(raw: Any) -> UsageRequest:
     if not isinstance(raw, dict):
         raise ValueError("usage request must be an object")
     try:
-        request = UsageRequest(**{**raw, "agent_subentry_id": target_agent_id})
+        request = UsageRequest(**raw)
     except TypeError as err:
         raise ValueError("usage request is invalid") from err
     string_values = (
@@ -1150,10 +1171,16 @@ def _usage_request_from_backup(raw: Any, target_agent_id: str) -> UsageRequest:
 
 
 def _usage_run_from_backup(raw: Any, target_agent_id: str) -> UsageRun:
+    return _usage_run_from_record(
+        {**raw, "agent_subentry_id": target_agent_id} if isinstance(raw, dict) else raw
+    )
+
+
+def _usage_run_from_record(raw: Any) -> UsageRun:
     if not isinstance(raw, dict):
         raise ValueError("usage run must be an object")
     try:
-        run = UsageRun(**{**raw, "agent_subentry_id": target_agent_id})
+        run = UsageRun(**raw)
     except TypeError as err:
         raise ValueError("usage run is invalid") from err
     counter_keys = {
