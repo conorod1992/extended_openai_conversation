@@ -219,12 +219,13 @@ class ConversationArchive:
                 # cross-store write before exposing archive state after restart.
                 if not isinstance(pending, dict) or any(
                     not isinstance(partition, str)
-                    or re.fullmatch(r"\d{4}-\d{2}", partition) is None
+                    or re.fullmatch(r"\d{4}-(?:0[1-9]|1[0-2])", partition) is None
                     or not isinstance(payload, dict)
                     or not isinstance(payload.get("turns"), list)
                     for partition, payload in pending.items()
                 ):
                     raise ValueError("conversation archive transaction is corrupted")
+                await self._async_validate_pending_transaction(data, pending)
                 for partition, payload in sorted(pending.items()):
                     await self._storage.async_save_partition(partition, payload)
                 data = {
@@ -386,6 +387,59 @@ class ConversationArchive:
             self._partitions = staged_partitions
             self._pending_partitions.clear()
             self._initialized = True
+
+    async def _async_validate_pending_transaction(
+        self, data: dict[str, Any], pending: dict[str, Any]
+    ) -> None:
+        """Validate the complete candidate before the first replay write.
+
+        Pending payloads override their destinations; those destinations need not
+        load successfully. Unchanged partitions must still validate because the
+        journal does not contain replacement evidence for them.
+        """
+        names = data.get("partitions", [])
+        if (
+            not isinstance(names, list)
+            or any(
+                not isinstance(name, str)
+                or re.fullmatch(r"\d{4}-(?:0[1-9]|1[0-2])", name) is None
+                for name in names
+            )
+            or len(set(names)) != len(names)
+        ):
+            raise ValueError("conversation archive transaction is corrupted")
+        payloads = dict(pending)
+        for name in names:
+            if name not in payloads:
+                payloads[name] = await self._storage.async_load_partition(name)
+
+        def validate() -> None:
+            for raw in data.get("sessions", []):
+                _validated_session(raw)
+            turns: list[Any] = []
+            for name, payload in payloads.items():
+                if not isinstance(payload, dict) or not isinstance(
+                    payload.get("turns"), list
+                ):
+                    raise ValueError("archive partition is invalid")
+                if name not in names and payload["turns"]:
+                    raise ValueError("removed archive partitions must be empty")
+                for raw in payload["turns"]:
+                    turn = _validated_turn(raw)
+                    if turn.timestamp[:7] != name:
+                        raise ValueError("archive turn partition is invalid")
+                    turns.append(raw)
+            sessions, _ = self.validate_backup_data(
+                {"sessions": data.get("sessions", []), "turns": turns},
+                self._agent_subentry_id,
+                local_recovery=True,
+            )
+            self.validate_recovery_bindings(data.get("active", {}), sessions)
+
+        try:
+            await asyncio.to_thread(validate)
+        except (TypeError, ValueError) as err:
+            raise ValueError("conversation archive transaction is corrupted") from err
 
     async def async_begin_session(
         self,
