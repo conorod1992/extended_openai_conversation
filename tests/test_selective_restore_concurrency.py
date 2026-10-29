@@ -409,7 +409,8 @@ async def test_private_active_conversation_survives_selective_restore_and_rollba
 
 
 @pytest.mark.parametrize("full_restore", [False, True])
-async def test_knowledge_only_restore_preserves_retained_user_continuity(monkeypatch, full_restore):
+@pytest.mark.parametrize("retention", ["private", "retained"])
+async def test_knowledge_only_restore_preserves_retained_user_continuity(monkeypatch, full_restore, retention):
     from custom_components.extended_openai_conversation_responses.continuity import ConversationContinuity
     from custom_components.extended_openai_conversation_responses.const import CONVERSATION_CONTINUITY_USER
     from custom_components.extended_openai_conversation_responses.scope import user_scope
@@ -426,6 +427,8 @@ async def test_knowledge_only_restore_preserves_retained_user_continuity(monkeyp
     await archive.async_initialize()
     await archive.async_begin_session(f"continuity:{before.key}", scope, before.conversation_id,
         archive_enabled=True, shared_archive_enabled=False, inactivity_minutes=30)
+    if retention == "private":
+        await archive.async_make_private(next(iter(archive._sessions)))
     tx.state.archive_sessions = list(archive._sessions.values())
     tx.state.archive_active = dict(archive._active)
     tx.managers = replace(tx.managers, archive=archive)
@@ -440,8 +443,8 @@ async def test_knowledge_only_restore_preserves_retained_user_continuity(monkeyp
         await tx.restore()
     after = await manager.async_resolve(CONVERSATION_CONTINUITY_USER, scope, None, before.conversation_id, 30)
     try:
-        assert (after.conversation_id == before.conversation_id) is not full_restore
-        assert after.history == ([] if full_restore else history)
+        assert (after.conversation_id == before.conversation_id) == (not full_restore or retention == "private")
+        assert after.history == (history if not full_restore and retention == "retained" else [])
         other = await manager.async_resolve(
             CONVERSATION_CONTINUITY_USER, user_scope("bob", source="authenticated_user"),
             None, before.conversation_id, 30,
