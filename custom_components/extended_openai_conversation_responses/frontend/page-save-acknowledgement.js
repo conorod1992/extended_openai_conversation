@@ -1,4 +1,4 @@
-import {captureConfigurationDraftOwner, captureConfigurationOwner, configurationOwnerIsCurrent, configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
+import {captureConfigurationDraftOwner, captureConfigurationOwner, configurationOwnerIsCurrent, configurationSubmissionIsCurrent, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
 
 const VIEWS = new Set(["capabilities/guest-mode", "capabilities/quiet-hours", "capabilities/request-rules"]);
 const acceptedReads = new WeakMap();
@@ -20,18 +20,29 @@ function currentRead(panel, read) {
 }
 
 const object = value => value && typeof value === "object" && !Array.isArray(value);
-function pageProjection(result, view) {
+// Older Quiet Hours servers may omit revisions. Once a revision belongs to a
+// policy scope, neither an acknowledgement nor a read may silently drop it.
+export function completePolicyResponse(result, revisionRequired = false) {
+  return object(result?.config) && (result.revision == null && !revisionRequired
+    || typeof result.revision === "string" && result.revision.length > 0);
+}
+function pageProjection(result, view, revisionRequired = false) {
   return view === "capabilities/request-rules"
     ? object(result?.defaults) && Array.isArray(result?.wording_groups)
       ? [result.defaults, result.wording_groups, result.revision] : null
-    : object(result?.config) ? [result.config, result.revision] : null;
+    : completePolicyResponse(result, view === "capabilities/guest-mode" || revisionRequired) ? [result.config, result.revision] : null;
 }
 
 // Called only at accepted publication boundaries, never merely because a load
 // promise resolved. Metadata can change without replacing the policy projection.
 export function acceptPageRead(panel, result, read) {
-  const projection = pageProjection(result, read?.view);
-  if (!currentRead(panel, read) || panel._result !== result || !projection) return false;
+  if (!currentRead(panel, read) || panel._result !== result) return false;
+  const scope = panel._unsavedState?.scopes.get(read.view);
+  const projection = pageProjection(result, read.view, Boolean(scope?.isCurrent?.() && scope.revision != null));
+  // Validate within the loader's error boundary, before a read can certify a
+  // replacement baseline or be used by the rendering/draft initializer.
+  if (read.view !== "capabilities/request-rules") requireMutationAcknowledgement(Boolean(projection), "loading the saved policy");
+  if (!projection) return false;
   acceptedReads.set(panel, {...read, projection, sequence:(acceptedReads.get(panel)?.sequence || 0) + 1});
   const obligations = readObligations.get(panel);
   for (const entry of obligations || []) {

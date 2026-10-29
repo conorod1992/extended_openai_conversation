@@ -176,7 +176,7 @@ const guestPanel = {
   _agentId: "agent-a",
   _guestDraft: {guest_mode_enabled: false, guest_excluded_entities: []},
   _viewKey: () => "capabilities/guest-mode",
-  _result: {config: {guest_mode_enabled: false, guest_excluded_entities: []}},
+  _result: {revision:"guest-1", config: {guest_mode_enabled: false, guest_excluded_entities: []}},
 };
 (await import(frontend("management-page-drafts.js"))).initializePageDraft(guestPanel);
 assert.equal(stateSafety.syncGuestDirty(guestPanel), false);

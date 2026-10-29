@@ -2,7 +2,7 @@ import {saveConfiguration, synchronizePersistedConfigurationFields} from "./mana
 import {processMutationResponse, requireMutationAcknowledgement, captureConfigurationDraftOwner, captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, presentAcknowledgedMutation, discardConfigurationDraft} from "./configuration-acknowledgement.js";
 import {formatWordingAlternatives, parseWordingAlternatives} from "./wording-alternatives.js";
 import {enhancementChanged} from "./management-enhancement-state.js";
-import {retainPageSaveAcknowledgement, hasPendingPageSaveRead, PAGE_SAVE_READ_EVENT, PAGE_SAVE_READ_MESSAGE} from "./page-save-acknowledgement.js";
+import {completePolicyResponse, retainPageSaveAcknowledgement, hasPendingPageSaveRead, PAGE_SAVE_READ_EVENT, PAGE_SAVE_READ_MESSAGE} from "./page-save-acknowledgement.js";
 import {UnsavedState, clone, same, draftScope, saveBarMarkup} from "./unsaved-state.js";
 import {NAVIGATION} from "./frontend-navigation.js";
 
@@ -41,6 +41,8 @@ export function initializePageDraft(panel) {
   const state = pageCoordinator(panel), view = panel._viewKey?.(), result = panel._result;
   if (![GUEST, QUIET, RULES].includes(view) || !result || panel._busy || panel._error) return;
   const existing = state.scopes.get(view);
+  if (view !== RULES && !completePolicyResponse(result,
+    view === GUEST || Boolean(existing?.isCurrent?.() && existing.revision != null))) return;
   if (view === GUEST && !existing?.isCurrent?.()) {
     // Reviewing a legacy policy is an explicit choice for this assistant.
     // Same-owner refreshes retain it; a newly owned scope must review its own.
@@ -87,13 +89,14 @@ export function initializePageDraft(panel) {
         // panel has already observed with an older whole-policy draft.
         throw new Error("The saved Quiet Hours policy changed. Your edits are retained. Discard to load the current policy before applying them again.");
       }
+      requireMutationAcknowledgement(completePolicyResponse({config:submitted, revision:current.revision}, view === GUEST), "loading the policy revision before saving");
       // Guest also acknowledges agent configuration fields. Quiet Hours owns
       // only this policy scope and needs no unrelated configuration snapshot.
       const submission = view === GUEST ? captureConfigurationSubmission(panel) : captureConfigurationOwner(panel);
       const saved = await panel._call(view === GUEST ? "guest_mode" : "quiet_hours", view === GUEST ? "save_policy" : "update", {
         config: submitted, ...(current.revision ? {revision: current.revision} : {}),
       });
-      requireMutationAcknowledgement(saved?.config && typeof saved.config === "object" && !Array.isArray(saved.config), "saving the policy");
+      requireMutationAcknowledgement(completePolicyResponse(saved, view === GUEST || current.revision != null), "saving the policy");
       current.acknowledgedResponse = saved;
       current.revision = saved.revision;
       retainPageSaveAcknowledgement(panel, current, submission, view);
