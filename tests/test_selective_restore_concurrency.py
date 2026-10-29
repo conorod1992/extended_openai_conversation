@@ -413,12 +413,15 @@ async def test_knowledge_only_restore_preserves_retained_user_continuity(monkeyp
     from custom_components.extended_openai_conversation_responses.continuity import ConversationContinuity
     from custom_components.extended_openai_conversation_responses.const import CONVERSATION_CONTINUITY_USER
     from custom_components.extended_openai_conversation_responses.scope import user_scope
+    from homeassistant.components import conversation
+
     reset = restore_recovery.reset_restored_runtime
     tx = RestoreHarness(monkeypatch)
     manager = ConversationContinuity(tx.subentry.subentry_id)
     scope = user_scope("alice", source="authenticated_user")
     before = await manager.async_resolve(CONVERSATION_CONTINUITY_USER, scope, None, None, 30)
-    await manager.async_release(before.key, before.claim_token)
+    history = [conversation.SystemContent(content="Retained context witness")]
+    await manager.async_record_success(before.key, before.claim_token, history)
     monkeypatch.setattr(restore_recovery, "_active_agent", lambda *_: SimpleNamespace(_continuity=manager))
     monkeypatch.setattr(restore_recovery, "reset_restored_runtime", reset)
     if full_restore:
@@ -428,6 +431,14 @@ async def test_knowledge_only_restore_preserves_retained_user_continuity(monkeyp
     after = await manager.async_resolve(CONVERSATION_CONTINUITY_USER, scope, None, before.conversation_id, 30)
     try:
         assert (after.conversation_id == before.conversation_id) is not full_restore
+        assert after.history == ([] if full_restore else history)
+        other = await manager.async_resolve(
+            CONVERSATION_CONTINUITY_USER, user_scope("bob", source="authenticated_user"),
+            None, before.conversation_id, 30,
+        )
+        assert other.conversation_id != before.conversation_id
+        assert other.history == []
+        await manager.async_release(other.key, other.claim_token)
         if not full_restore:
             assert tx.state.knowledge == []
         assert tx.journal.data is None

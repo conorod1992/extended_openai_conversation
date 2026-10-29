@@ -150,6 +150,10 @@ for (const bundled of [false, true]) test(`numeric capability discard restores c
   await page.goto(fixtureUrl("assistant/basics", bundled ? "&bundle=1" : ""));
   const panel=page.locator("extended-openai-management-panel");
   await expect(panel.locator('[data-config="max_tokens"]')).toBeVisible();
+  await panel.evaluate(async host => {
+    await host._call("configuration", "save", {config:{max_function_calls_per_conversation:10}, revision:host._configData.revision});
+    await host._loadSection(true);
+  });
   await panel.locator(".general-advanced summary").click();
   const limit=panel.locator('[data-config="max_function_calls_per_conversation"]');
   const before=await limit.inputValue();
