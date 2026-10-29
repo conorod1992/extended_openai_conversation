@@ -347,3 +347,111 @@ async def test_owned_fields_sensitivity_detects_materialized_omitted_default(
     with pytest.raises(AssertionError, match="unowned settings and omitted defaults"):
         await tool_settings_witness(mutation_agent, {}, "yaml")
     assert hass.config_entries.updates == 1
+
+
+@pytest.mark.parametrize("group", [False, True])
+@pytest.mark.parametrize("management", [False, True])
+async def test_quarantine_cannot_break_working_selected_skill(
+    mutation_agent, group, management
+):
+    from custom_components.extended_openai_conversation_responses.agent_config import (
+        agent_config_defaults,
+    )
+    from custom_components.extended_openai_conversation_responses.skill_availability import (
+        skill_loader_status,
+    )
+    from custom_components.extended_openai_conversation_responses.function_configuration_repair import (
+        function_configuration_repair_state,
+    )
+
+    hass, entry, subentry = mutation_agent
+    loader = next(
+        t
+        for t in yaml.safe_load(agent_config_defaults()["functions"])
+        if t["spec"]["name"] == "load_skill"
+    )
+    damaged = tool("damaged")
+    damaged["function"]["name"] = "nonexistent_legacy_function"
+    subentry.data.update(
+        {
+            "functions": yaml.safe_dump([loader, damaged]),
+            "skills": ["selected"],
+            "function_groups": [_group("loader", ["load_skill"], "always")],
+        }
+    )
+    original = deepcopy(subentry.data)
+    state = function_configuration_repair_state(subentry.data)
+    assert skill_loader_status(["selected"], state.valid, state.groups).available
+    with pytest.raises(HomeAssistantError, match="disabled"):
+        if management:
+            if group:
+                edited = {**state.groups[0], "enabled": False}
+                await management_ui.async_tools_command(
+                    request(
+                        mutation_agent,
+                        "save_group",
+                        group=edited,
+                        original_id="loader",
+                        revision=repair_revision(subentry),
+                    )
+                )
+            else:
+                edited = {**state.valid[0], "enabled": False}
+                await management_ui.async_tools_command(
+                    request(
+                        mutation_agent,
+                        "save",
+                        tool=edited,
+                        original_name="load_skill",
+                        revision=repair_revision(subentry),
+                    )
+                )
+        elif group:
+            await services.async_set_function_groups_enabled(
+                hass, entry.entry_id, subentry.subentry_id, ["loader"], False
+            )
+        else:
+            await services.async_set_function_tools_enabled(
+                hass, entry.entry_id, subentry.subentry_id, ["load_skill"], False
+            )
+    assert hass.config_entries.updates == 0 and subentry.data == original
+    state = function_configuration_repair_state(subentry.data)
+    assert skill_loader_status(["selected"], state.valid, state.groups).available
+
+
+async def test_quarantine_preserves_existing_skill_problem_and_allows_repair(
+    mutation_agent,
+):
+    from custom_components.extended_openai_conversation_responses.agent_config import (
+        agent_config_defaults,
+    )
+
+    hass, entry, subentry = mutation_agent
+    loader = next(
+        t
+        for t in yaml.safe_load(agent_config_defaults()["functions"])
+        if t["spec"]["name"] == "load_skill"
+    )
+    loader["enabled"] = False
+    damaged = tool("damaged")
+    damaged["function"]["name"] = "nonexistent_legacy_function"
+    subentry.data.update(
+        {
+            "functions": yaml.safe_dump([loader, tool(), damaged]),
+            "skills": ["selected"],
+            "function_groups": [],
+        }
+    )
+    await services.async_set_function_tools_enabled(
+        hass, entry.entry_id, subentry.subentry_id, ["healthy"], False
+    )
+    await services.async_set_function_tools_enabled(
+        hass, entry.entry_id, subentry.subentry_id, ["load_skill"], True
+    )
+    saved = yaml.safe_load(subentry.data["functions"])
+    assert next(t for t in saved if t["spec"]["name"] == "healthy")["enabled"] is False
+    assert (
+        next(t for t in saved if t["spec"]["name"] == "load_skill")["enabled"] is True
+    )
+    assert saved[-1] == damaged and subentry.data["skills"] == ["selected"]
+    assert hass.config_entries.updates == 2

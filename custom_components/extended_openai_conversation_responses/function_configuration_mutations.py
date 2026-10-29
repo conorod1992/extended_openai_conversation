@@ -24,14 +24,18 @@ from .agent_config import (
 from .const import (
     CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
+    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+    CONF_SKILLS,
     DEFAULT_CONF_FUNCTION_TOOLS,
     DEFAULT_FUNCTION_GROUPS,
+    DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
 )
 from .function_configuration_repair import (
     FunctionConfigurationRepairState,
     editable_function_tools,
     function_configuration_repair_state,
 )
+from .skill_availability import skill_loader_status
 from .yaml_serialization import dump_yaml
 
 
@@ -313,6 +317,28 @@ def prepare_quarantined_function_configuration(
         if next_state is not None
         else validate_function_groups(persisted[CONF_FUNCTION_GROUPS], tools)
     )
+    # Repair may retain an existing dependency problem, but must not break a
+    # usable loader or introduce a different obstacle while repairing siblings.
+    before = skill_loader_status(
+        raw.get(CONF_SKILLS, []) or [],
+        state.valid,
+        state.groups,
+        max_function_calls=raw.get(
+            CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+            DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+        ),
+    )
+    after = skill_loader_status(
+        persisted.get(CONF_SKILLS, []) or [],
+        tools,
+        response_groups,
+        max_function_calls=persisted.get(
+            CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+            DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+        ),
+    )
+    if not after.available and (before.available or before.reason != after.reason):
+        raise HomeAssistantError(after.reason or "selected Skills are not loadable")
     return PreparedFunctionConfiguration(
         persisted, deepcopy(tools), deepcopy(response_groups), next_state
     )
