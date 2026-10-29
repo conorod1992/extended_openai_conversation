@@ -172,7 +172,7 @@ for (const surface of ["functions", "request-rules"]) {
       hass.callWS = message => {
         if (!failed && message.section === (isTools ? "tools" : "request_rules") && message.action === (isTools ? "set_enabled" : "update")) {
           failed = true;
-          return Promise.reject(new Error("stale revision"));
+          return Promise.reject(Object.assign(new Error("stale revision"), {code:"invalid_request"}));
         }
         return original(message);
       };
