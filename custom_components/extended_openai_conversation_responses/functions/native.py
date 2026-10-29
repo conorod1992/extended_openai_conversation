@@ -469,6 +469,7 @@ class NativeFunction(Function):
                     service,
                     data=service_data,
                     blocking=True,
+                    context=getattr(llm_context, "context", None),
                     include_response=True,
                 )
                 result: dict[str, Any] = {"success": True}

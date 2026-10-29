@@ -7,6 +7,8 @@ from inspect import unwrap
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from homeassistant.core import Context
+
 import pytest
 
 from custom_components.extended_openai_conversation_responses import (
@@ -209,7 +211,7 @@ async def test_announcement_failure_cleans_queue_and_marks_delivery_failed(
     monkeypatch.setattr(intercom.asyncio, "sleep", AsyncMock(return_value=None))
 
     result = await manager.async_send(
-        "Dinner is ready", entity_ids=["assist_satellite.kitchen"]
+        "Dinner is ready", entity_ids=["assist_satellite.kitchen"], context=Context()
     )
     await manager._async_drain("assist_satellite.kitchen")
 
@@ -253,8 +255,8 @@ async def test_same_target_announcements_are_serialized_in_queue_order(
 
     hass.services.async_call = AsyncMock(side_effect=announce)
 
-    await manager.async_send("First", entity_ids=["assist_satellite.kitchen"])
-    await manager.async_send("Second", entity_ids=["assist_satellite.kitchen"])
+    await manager.async_send("First", entity_ids=["assist_satellite.kitchen"], context=Context())
+    await manager.async_send("Second", entity_ids=["assist_satellite.kitchen"], context=Context())
 
     drain = asyncio.create_task(manager._async_drain("assist_satellite.kitchen"))
     await first_started.wait()
@@ -294,8 +296,8 @@ async def test_stalled_announcement_times_out_and_releases_target_queue(
             await asyncio.Event().wait()
 
     hass.services.async_call = AsyncMock(side_effect=announce)
-    await manager.async_send("Stalled", entity_ids=["assist_satellite.kitchen"])
-    await manager.async_send("Next", entity_ids=["assist_satellite.kitchen"])
+    await manager.async_send("Stalled", entity_ids=["assist_satellite.kitchen"], context=Context())
+    await manager.async_send("Next", entity_ids=["assist_satellite.kitchen"], context=Context())
 
     await asyncio.wait_for(manager._async_drain("assist_satellite.kitchen"), timeout=1)
 

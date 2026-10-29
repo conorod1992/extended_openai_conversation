@@ -300,11 +300,11 @@ async def test_pending_broadcast_survives_history_eviction_and_expiry(
     )
     try:
         old = await manager.async_send(
-            "Still pending", entity_ids=["assist_satellite.kitchen"]
+            "Still pending", entity_ids=["assist_satellite.kitchen"], context=Context()
         )
         for i in range(intercom.HISTORY_LIMIT):
             await manager.async_send(
-                f"Finished {i}", entity_ids=["assist_satellite.hall"]
+                f"Finished {i}", entity_ids=["assist_satellite.hall"], context=Context()
             )
             await hass.async_block_till_done()
         assert len(manager.history()) == intercom.HISTORY_LIMIT

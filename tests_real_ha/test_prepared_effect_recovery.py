@@ -220,7 +220,7 @@ async def test_broadcast_admission_refusal(hass, refusal):
     await manager.async_set_enabled(refusal != "disabled")
     if refusal == "capacity":
         for index in range(16):
-            await manager.async_send(f"occupant {index}", whole_home=True)
+            await manager.async_send(f"occupant {index}", whole_home=True, context=Context())
     before = sum(map(len, manager._queues.values()))
     entity, log, exchange = exchange_owner(
         hass, {"type": "native", "name": "send_broadcast"}

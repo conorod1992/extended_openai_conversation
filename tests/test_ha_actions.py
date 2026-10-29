@@ -228,7 +228,7 @@ async def test_multiple_entities_are_captured_before_execution(monkeypatch) -> N
     )
 
     result = await async_call_ha_action(
-        hass, "light", "turn_on", target={"area_id": "kitchen"}
+        hass, "light", "turn_on", target={"area_id": "kitchen"}, context=Context()
     )
 
     assert result == {
@@ -265,7 +265,7 @@ async def test_non_reversible_actions_do_not_read_state(
 
     assert (
         await async_call_ha_action(
-            hass, domain, service, target={"entity_id": entity_id}
+            hass, domain, service, target={"entity_id": entity_id}, context=Context()
         )
         == {}
     )
@@ -293,6 +293,7 @@ async def test_capture_happens_immediately_before_call(
         "lock",
         "unlock",
         target={"entity_id": "lock.front_door"},
+        context=Context(),
     )
 
     assert result == {"lock.front_door": {"state": "locked"}}

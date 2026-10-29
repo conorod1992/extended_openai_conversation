@@ -9,6 +9,8 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock
 
+from homeassistant.core import Context
+
 import pytest
 
 from custom_components.extended_openai_conversation_responses import intercom
@@ -562,7 +564,7 @@ async def test_async_send_expiry_callback_expires_message(
         lambda _hass, delay, callback: scheduled.append((delay, callback)),
     )
 
-    result = await manager.async_send("Hello", ttl_seconds=ttl_seconds)
+    result = await manager.async_send("Hello", ttl_seconds=ttl_seconds, context=Context())
 
     assert scheduled[0][0] == expected_ttl
     scheduled[0][1](datetime.now(UTC))

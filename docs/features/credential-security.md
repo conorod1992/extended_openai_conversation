@@ -77,6 +77,10 @@ The same scoped protection covers HA's Scrape coordinator, including DEBUG loggi
 EOAI-owned exception log records have a namespace-wide creation boundary, including future descendant loggers. Exception arguments and traceback attachments become immutable source-free diagnostics: error class, fixed category, bounded YAML/JSON line and column, storage remediation and causal code locations. Operation labels, log levels and call sites remain useful. Skill discovery uses the same diagnostic representation for malformed frontmatter, metadata validation and read failures; skipped Skills do not copy ignored private metadata into logs. Authorised editor validation remains detailed and separate from operational logging. The boundary chains existing record factories and leaves other integrations' records unchanged; HA-owned Template/Script/Scrape records retain their scoped protection. Developers must pass exception objects or structured diagnostics rather than interpolating private error prose before logging; architecture tests enforce this convention and inventory parser/export boundaries.
 
 
+## Caller authorization context
+
+Home Assistant action authorization distinguishes an unbound caller from explicitly bound userless voice/system execution. Actions must receive a caller Context or inherit one from an explicit request binding; missing authority is rejected before dispatch. Native service tools forward their supplied LLM caller Context to this shared boundary. Read-only context lookup does not itself establish mutation authority.
+
 ## Completion notifications and Recorder
 
 The `extended_openai_conversation_responses.conversation.finished` event contains only completion metadata: `schema_version: 2`, `agent_id`, `conversation_id`, `status`, and, when applicable, `handled_locally` and `error_type`. Home Assistant Recorder can persist these events unless excluded in its configuration. EOAI does not put user requests, system prompts, transcripts, tool arguments/results, attachments, or request Context objects in them, including when archiving is disabled or a conversation is private.

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from enum import Enum
 from typing import Any
 
 from homeassistant.auth import (
@@ -20,8 +21,13 @@ from homeassistant.exceptions import HomeAssistantError
 from .const import DOMAIN
 from .exceptions import EntityNotExposed
 
-_ACTIVE_HA_CONTEXT: ContextVar[Context | None] = ContextVar(
-    "extended_openai_active_ha_context", default=None
+
+class _AuthorityState(Enum):
+    UNBOUND = "unbound"
+
+
+_ACTIVE_HA_CONTEXT: ContextVar[Context | _AuthorityState | None] = ContextVar(
+    "extended_openai_active_ha_context", default=_AuthorityState.UNBOUND
 )
 _USER_CACHE_KEY = f"{DOMAIN}.permission_users"
 _SETUP_KEY = f"{DOMAIN}.permission_users_setup"
@@ -59,8 +65,19 @@ def bind_active_ha_context(context: Context | None) -> Iterator[None]:
 
 
 def get_active_ha_context() -> Context | None:
-    """Return the real Home Assistant caller context for the current task."""
-    return _ACTIVE_HA_CONTEXT.get()
+    """Return caller information for reads; this does not establish authority."""
+    context = _ACTIVE_HA_CONTEXT.get()
+    return None if isinstance(context, _AuthorityState) else context
+
+
+def require_active_ha_context() -> Context | None:
+    """Distinguish an absent caller from deliberately bound voice/system use."""
+    context = _ACTIVE_HA_CONTEXT.get()
+    if isinstance(context, _AuthorityState):
+        raise HomeAssistantError(
+            "Home Assistant caller authorization context is missing"
+        )
+    return context
 
 
 async def async_local_entity_reads_allowed(
@@ -186,7 +203,7 @@ async def async_require_control_permission(
     context: Context | None = None,
 ) -> Context | None:
     """Require CONTROL permission for every resolved target of an HA action."""
-    context = context or get_active_ha_context()
+    context = context if context is not None else require_active_ha_context()
     user_id = context.user_id if context is not None else None
     if not user_id:
         return context

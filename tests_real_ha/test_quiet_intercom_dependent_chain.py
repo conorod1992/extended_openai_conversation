@@ -16,6 +16,7 @@ from custom_components.extended_openai_conversation_responses.quiet_hours import
     async_get_quiet_hours,
 )
 from homeassistant.const import ATTR_SUPPORTED_FEATURES
+from homeassistant.core import Context
 from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
 from tests_real_ha.test_quiet_hours_scheduling import (
     _install_control_services,
@@ -79,6 +80,7 @@ async def test_quiet_hours_queue_and_restore_share_real_satellite_state(
             entity_ids=[satellite],
             ttl_seconds=120,
             source="linked-acceptance",
+            context=Context(),
         )
         await hass.async_block_till_done()
         assert deliveries == []
