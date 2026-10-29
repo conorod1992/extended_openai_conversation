@@ -1264,14 +1264,14 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
         updates[CONF_GUEST_POLICY_VERSION] = GUEST_POLICY_VERSION
         normalized, snapshot = merge_unchanged_function_configuration(subentry, updates)
         configured_tools = snapshot[CONF_FUNCTION_TOOLS]
-        policy = guest_policy_editor_snapshot(hass, normalized, configured_tools)
+        policy_config = guest_policy_editor_snapshot(hass, normalized, configured_tools)
         update_live_subentry(hass, entry, subentry, data=normalized)
         revision = saved_agent_config_revision(subentry, normalized, subentry.title)
         try:
             seed_persisted_config_projection(entry, subentry, snapshot, revision)
         except Exception:
             _LOGGER.warning("Committed Guest policy could not seed its optional cache")
-        return {"revision": revision, "config": policy}
+        return {"revision": revision, "config": policy_config}
     if action == "update":
         return {
             "status": await guest_manager.async_update_trusted(
