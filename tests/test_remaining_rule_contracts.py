@@ -35,6 +35,7 @@ def local_script(monkeypatch):
             variables=marker, conversation_response=UNDEFINED
         )
         script.actions = actions
+        script.hass = _hass
         return script
 
     monkeypatch.setattr(rr, "Script", build)
@@ -106,16 +107,21 @@ async def test_captured_results_with_live_policy_remain_guarded(hass, local_scri
             "data": {"function": "read", "arguments": {}, "result_alias": "reading"},
         }
     ]
+    live_policy = Mock(side_effect=GuestCapabilityPolicy.unrestricted)
     result = await _evaluate(
         hass,
         rr.validate_rule(rule),
-        live_guest_policy=GuestCapabilityPolicy.unrestricted,
+        live_guest_policy=live_policy,
     )
     assert result.successful
-    assert any(
-        step.get("action") == f"{rr.DOMAIN}.{rr._GUARD_SERVICE}"
-        for step in local_script.actions
+    before = live_policy.call_count
+    await local_script.hass.services.async_call(
+        rr.DOMAIN,
+        "call_function",
+        {"function": "read", "arguments": {}},
     )
+    assert live_policy.call_count == before + 1
+    hass.services.async_call.assert_awaited_once()
     assert any(
         step.get("response_variable") == "__eoai_result_reading"
         for step in local_script.actions

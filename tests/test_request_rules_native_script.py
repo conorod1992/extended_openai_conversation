@@ -372,9 +372,11 @@ async def test_live_authorization_after_permission_lookup_cannot_be_ignored(
         asyncio.create_task(coro)
     )
     policy = GuestCapabilityPolicy.unrestricted()
+    lookups = []
 
     async def lookup(*args, **kwargs):
         nonlocal policy
+        lookups.append(True)
         policy = GuestCapabilityPolicy(guest_active=True)
         return set()
 
@@ -386,12 +388,12 @@ async def test_live_authorization_after_permission_lookup_cannot_be_ignored(
         [
             {
                 "action": "light.turn_on",
-                "target": {"entity_id": "light.kitchen"},
                 "continue_on_error": True,
             },
             {"set_conversation_response": "must not reach"},
         ],
         live_guest_policy=lambda: policy,
     )
+    assert lookups == [True], "The native action must reach permission lookup"
     assert not outcome.successful and outcome.response == "Failed"
     dispatch.assert_not_called()
