@@ -14,6 +14,35 @@ from homeassistant.util import dt as dt_util
 from tests.test_temporary_memory import Storage, _record
 
 
+@pytest.mark.parametrize("conflict", ["content", "owner", "expired"])
+async def test_duplicate_ids_preserve_native_evidence_at_every_load(hass, conflict):
+    store = TemporaryMemoryStore(
+        hass, 1, "temporary.duplicates", private=True, atomic_writes=True
+    )
+    first = _record("duplicate")
+    second = {**first, "content": "Different fact"}
+    if conflict == "owner":
+        second["owner_scope_id"] = "user:bob"
+    elif conflict == "expired":
+        first["expires_at"] = (dt_util.utcnow() - timedelta(days=1)).isoformat()
+    payload = {"records": [first, second]}
+    with pytest.raises(ValueError, match="metadata is invalid"):
+        TemporaryMemory.validate_backup_data(payload)
+    await store.async_save(payload)
+    evidence = Path(store.path).read_bytes()
+    for _ in range(2):
+        manager = TemporaryMemory(store)
+        with pytest.raises(ValueError, match="needs repair"):
+            await manager.async_initialize()
+        assert not manager.initialized
+        with pytest.raises(ValueError, match="needs repair"):
+            await manager.async_backup_data()
+        assert Path(store.path).read_bytes() == evidence
+    with pytest.raises(ValueError, match="needs repair"):
+        await manager._async_reconcile_failed_save()
+    assert Path(store.path).read_bytes() == evidence
+
+
 @pytest.mark.parametrize(
     "field,value",
     [

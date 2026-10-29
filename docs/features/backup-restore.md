@@ -39,7 +39,7 @@ Persistent Memory, Knowledge and Request Rules preserve malformed, duplicate and
 
 The error reports that storage needs repair. Keep the original store private; an administrator can repair it with Home Assistant stopped, or restore a validated backup into a clean assistant. Ordinary restore into a damaged destination can also be blocked because it cannot capture a complete rollback snapshot. An existing validated restore journal can still replace a readable damaged collection; its write must succeed before that collection accepts ordinary edits again. Recovery when normal initialization fails is not yet supported by this safeguard.
 
-Temporary Memory uses the same record metadata checks for loading, failed-write readback and backup validation. Invalid IDs, source markers or creation/update timestamps block loading before cleanup can overwrite the damaged generation. Valid expiry and owner cleanup still apply normally.
+Temporary Memory uses the same record metadata checks for loading, failed-write readback and backup validation. Invalid IDs, duplicate IDs, source markers or creation/update timestamps block loading before cleanup can overwrite the damaged generation. Duplicate IDs are rejected even when the records have different owners or one has expired. Valid expiry and owner cleanup still apply normally.
 
 ## Interrupted transfer files
 

@@ -120,9 +120,13 @@ class TemporaryMemory:
             ):
                 raise ValueError("Temporary Memory records have invalid structure")
             raw_records = data.get("records", []) if isinstance(data, Mapping) else []
+            seen_ids: set[str] = set()
             for raw in raw_records:
                 try:
                     record = _record_from_storage(raw)
+                    if record.memory_id in seen_ids:
+                        raise _InvalidStoredMetadata("duplicate temporary memory ID")
+                    seen_ids.add(record.memory_id)
                     if asdict(record) != raw:
                         self._normalization_pending = True
                     if _parse_expiry(record.expires_at) > dt_util.utcnow():
@@ -508,9 +512,13 @@ class TemporaryMemory:
         records: list[TemporaryMemoryRecord] = []
         invalid_owners = 0
         normalized_owners = 0
+        seen_ids: set[str] = set()
         for raw in raw_records:
             try:
                 record = _record_from_storage(raw)
+                if record.memory_id in seen_ids:
+                    raise _InvalidStoredMetadata("duplicate temporary memory ID")
+                seen_ids.add(record.memory_id)
                 _parse_expiry(record.expires_at)
                 normalized = _normalize_record_owner(record)
             except _InvalidStoredMetadata as err:
