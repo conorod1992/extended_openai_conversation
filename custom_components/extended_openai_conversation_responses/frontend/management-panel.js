@@ -2403,9 +2403,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     dialog.showModal();
     if (sourceId) {
       try {
+        const summary = this._result?.sources?.find(source => source.source_id === sourceId);
         const response = await this._call("knowledge", "get", { source_id: sourceId });
         if (this._knowledgeLoadToken !== loadToken || !dialog.open || !configurationSubmissionIsCurrent(this, owner)) return;
-        this._requireKnowledgeSource(response?.source, sourceId);
+        this._requireKnowledgeSourceRead(response?.source, sourceId, summary);
         this._editingSource = response.source;
         if (availability) availability.checked = response.source.enabled !== false;
         this._knowledgeMode = "edit";
@@ -2472,6 +2473,15 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       && (expectedId === null || source.source_id === expectedId)
       && typeof source.updated_at === "string" && source.updated_at.length > 0,
       "receiving the Knowledge source and its revision");
+  }
+
+  _requireKnowledgeSourceRead(source, expectedId, summary) {
+    this._requireKnowledgeSource(source, expectedId);
+    // A read supplies the entire editable baseline. Missing metadata must not
+    // become an authored empty value on the next whole-source update.
+    requireMutationAcknowledgement(["title", "description", "content"].every(key => typeof source[key] === "string")
+      && (Object.hasOwn(source, "enabled") ? typeof source.enabled === "boolean" : typeof summary?.enabled !== "boolean"),
+      "loading the complete Knowledge source");
   }
 
   _knowledgeValues() {
