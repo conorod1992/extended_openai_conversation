@@ -339,7 +339,7 @@ try {
 
   // An unavailable/stalled native document has a bounded fallback, rather than
   // leaving the dialog disabled forever or calling an empty document ready.
-  {
+  for (const stalled of ["document", "validation"]) {
     const harness = makeRoot({textarea:new GuardTextArea("fallback YAML")});
     const originalTimeout = globalThis.setTimeout;
     let expire;
@@ -354,7 +354,8 @@ try {
         this.updateComplete = new Promise(() => {});
       };
       globalThis.customElements = {get:() => GuardEditor};
-      const panel = {shadowRoot:harness.root, _call:async () => ({valid:true, config:{name:"fallback"}})};
+      const panel = {shadowRoot:harness.root, _call:async () => stalled === "validation"
+        ? new Promise(() => {}) : {valid:true, config:{name:"fallback"}}};
       bindNativeToolYaml(panel);
       await flush();
       expire();

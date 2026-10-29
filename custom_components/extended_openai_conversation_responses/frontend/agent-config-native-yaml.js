@@ -216,27 +216,16 @@ export function bindNativeToolYaml(panel) {
     try {
       nativeEditor.setValue(value);
       const yaml = nativeEditor.yaml;
-      let timeout;
-      try {
-        // HA propagates setValue through two Lit elements. Its outer YAML value
-        // can be ready while CodeMirror still contains the previous document.
-        // A deadline selects the usable raw editor; it never declares native
-        // readiness merely because time has passed.
-        const hydrated = await Promise.race([
-          (async () => {
-            await nativeEditor.updateComplete;
-            const code = nativeEditor.shadowRoot?.querySelector("ha-code-editor");
-            await code?.updateComplete;
-            return typeof yaml === "string"
-              && code?.codemirror?.state.doc.toString() === yaml
-              && nativeEditor.yaml === yaml;
-          })(),
-          new Promise(resolve => { timeout = setTimeout(() => resolve(false), 5000); }),
-        ]);
-        if (!ownsSync()) return false;
-        if (!hydrated) { showFallback(); return false; }
-      } finally {
-        clearTimeout(timeout);
+      // setValue propagates through two Lit elements before CodeMirror owns
+      // the new document. The outer YAML value alone is not readiness.
+      await nativeEditor.updateComplete;
+      const code = nativeEditor.shadowRoot?.querySelector("ha-code-editor");
+      await code?.updateComplete;
+      if (!ownsSync()) return false;
+      if (typeof yaml !== "string" || code?.codemirror?.state.doc.toString() !== yaml
+          || nativeEditor.yaml !== yaml) {
+        showFallback();
+        return false;
       }
       const transferFocus = root.activeElement === textarea;
       nativeReady = true;
@@ -261,32 +250,49 @@ export function bindNativeToolYaml(panel) {
     if (!ownsSync()) return;
     try { nativeEditor.inDialog = true; }
     catch (_err) { return; }
-    if (!String(yaml || "").trim()) {
-      if (ownsSync() && await setNativeValue({}, ownsSync)) {
-        nativeEditor.isValid = true;
-      }
-      return;
-    }
-
-    const repairConfig = String(yaml ?? "") === String(panel._toolInitialYaml ?? "")
-      ? repairToolConfig(panel) : null;
-    if (repairConfig) {
-      if (ownsSync()) await setNativeValue(repairConfig, ownsSync);
-      return;
-    }
-
-    try {
-      const result = await panel._call("tools", "validate_yaml", {yaml});
-      if (!ownsSync()) return;
-      if (result?.valid) {
-        await setNativeValue(result.config, ownsSync);
+    const hydrate = async () => {
+      if (!String(yaml || "").trim()) {
+        if (ownsSync() && await setNativeValue({}, ownsSync)) {
+          nativeEditor.isValid = true;
+        }
         return;
       }
-      const starter = nativeStarterConfig(yaml, panel._toolOriginalName ?? null);
-      if (starter) await setNativeValue(starter, ownsSync);
-      else showFallback();
-    } catch (_err) {
-      if (ownsSync()) showFallback();
+
+      const repairConfig = String(yaml ?? "") === String(panel._toolInitialYaml ?? "")
+        ? repairToolConfig(panel) : null;
+      if (repairConfig) {
+        if (ownsSync()) await setNativeValue(repairConfig, ownsSync);
+        return;
+      }
+
+      try {
+        const result = await panel._call("tools", "validate_yaml", {yaml});
+        if (!ownsSync()) return;
+        if (result?.valid) {
+          await setNativeValue(result.config, ownsSync);
+          return;
+        }
+        const starter = nativeStarterConfig(yaml, panel._toolOriginalName ?? null);
+        if (starter) await setNativeValue(starter, ownsSync);
+        else showFallback();
+      } catch (_err) {
+        if (ownsSync()) showFallback();
+      }
+    };
+    let timeout;
+    try {
+      // The optional validation read and both native updates share one deadline.
+      // Expiry selects the exact raw draft and revokes the late attempt's owner;
+      // elapsed time never declares a native document ready.
+      await Promise.race([
+        hydrate(),
+        new Promise(resolve => { timeout = setTimeout(() => {
+          if (ownsSync()) { ++syncGeneration; showFallback(); }
+          resolve();
+        }, 5000); }),
+      ]);
+    } finally {
+      clearTimeout(timeout);
     }
   };
 

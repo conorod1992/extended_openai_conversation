@@ -107,17 +107,31 @@ for (const action of ["add", "edit"]) {
   });
 }
 
-test("stalled native hydration falls back and its late events cannot overwrite the saved draft", async ({page}) => {
+for (const stalled of ["native document", "validation reply"]) {
+test(`stalled ${stalled} falls back and its late events cannot overwrite the saved draft`, async ({page}) => {
   const errors = trackPageErrors(page);
   await installDelayedEditor(page);
   await page.goto(fixtureUrl("capabilities/functions"));
   const panel = page.locator("extended-openai-management-panel");
+  if (stalled === "validation reply") await panel.evaluate(host => {
+    const call = host._call.bind(host);
+    host._call = async (section, action, args) => {
+      const result = await call(section, action, args);
+      if (section === "tools" && action === "validate_yaml") {
+        window.validationHeld = true;
+        await new Promise(resolve => { window.releaseValidation = resolve; });
+      }
+      return result;
+    };
+  });
   await panel.locator("#function-add").click();
   await panel.locator("#add-tool").click();
-  await expect.poll(() => page.evaluate(() => window.nativeHydrations.some(item => item.yaml.includes("spec:")))).toBe(true);
+  await expect.poll(() => page.evaluate(stalled => stalled === "validation reply" ? window.validationHeld === true
+    : window.nativeHydrations.some(item => item.yaml.includes("spec:")), stalled)).toBe(true);
   await expect(panel.locator("#tool-save")).toBeEnabled({timeout:10000});
   const yaml = browserToolYaml("Fallback after stalled native document");
   await panel.locator("#tool-yaml").fill(yaml);
+  await page.evaluate(() => window.releaseValidation?.());
   await releaseHydration(page);
   await expect(panel.locator("#tool-yaml-native")).toBeHidden();
   await expect(panel.locator("#tool-yaml")).toHaveValue(yaml);
@@ -126,6 +140,7 @@ test("stalled native hydration falls back and its late events cannot overwrite t
   expect(await page.evaluate(() => window.browserHarness.getState().toolYamls.browser_tool)).toBe(yaml);
   await expectHarnessClean(page, errors);
 });
+}
 
 for (const mutation of ["early dialog gate", "outer update only"]) {
   test(`readiness oracle detects ${mutation}`, async ({page}) => {
@@ -135,10 +150,15 @@ for (const mutation of ["early dialog gate", "outer update only"]) {
       const response = await route.fetch();
       const source = (await response.text()).replace(/\r\n/g, "\n");
       const original = mutation === "early dialog gate" ? "await editor.setYaml(response.yaml);"
-        : 'await code?.updateComplete;\n            return typeof yaml === "string"\n              && code?.codemirror?.state.doc.toString() === yaml';
+        : "await code?.updateComplete;";
       expect(source).toContain(original);
-      await route.fulfill({response, body:source.replace(original,
-        mutation === "early dialog gate" ? "editor.setYaml(response.yaml);" : 'return typeof yaml === "string"')});
+      let body = source.replace(original, mutation === "early dialog gate" ? "editor.setYaml(response.yaml);" : "");
+      if (mutation === "outer update only") {
+        const check = "code?.codemirror?.state.doc.toString() !== yaml";
+        expect(body).toContain(check);
+        body = body.replace(check, "false");
+      }
+      await route.fulfill({response, body});
     });
     await installDelayedEditor(page);
     await page.goto(fixtureUrl("capabilities/functions"));
