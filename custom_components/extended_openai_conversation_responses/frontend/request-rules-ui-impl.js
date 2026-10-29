@@ -313,12 +313,17 @@ function editorState(panel) {
   return panel._eocRuleEditorState;
 }
 
-function captureRuleEditorOwner(panel) {
+function captureRuleEditorIntent(panel) {
   const state=editorState(panel), owner=state.owner, root=panel.shadowRoot;
   const dialog=state.dialog, actionSelector=state.actionSelector, conditionSelector=state.conditionSelector;
-  return ()=>owner && configurationSubmissionIsCurrent(panel,owner)
+  return ()=>owner && state.owner===owner
     && panel.shadowRoot===root && root.querySelector("#rule-dialog")===dialog
     && state.actionSelector===actionSelector && state.conditionSelector===conditionSelector;
+}
+
+function captureRuleEditorOwner(panel) {
+  const owner=editorState(panel).owner, ownsIntent=captureRuleEditorIntent(panel);
+  return ()=>ownsIntent() && configurationSubmissionIsCurrent(panel,owner);
 }
 
 function refreshEditor(panel) {
@@ -416,9 +421,9 @@ export function bindRequestRuleEditor(panel) {
   q("#rule-form")?.addEventListener("submit",async(event)=>{
     event.preventDefault();
     const save=q("#rule-save");if(save.disabled)return;
-    const ownsEditor=captureRuleEditorOwner(panel), current=()=>ownsEditor() && dialog.open;
+    const ownsIntent=captureRuleEditorIntent(panel), ownsEditor=captureRuleEditorOwner(panel), current=()=>ownsEditor() && dialog.open;
     if(!current())return;
-    if (state.uncertain || requestRuleMutationNeedsRecovery(panel, state.owner)) {
+    if (dialog.__eocUncertainMutation || requestRuleMutationNeedsRecovery(panel, state.owner)) {
       await recoverRequestRuleMutation(panel, new Error("Close and reopen the editor against the refreshed collection before saving"), "Request Rule outcome is unknown", current);
       return;
     }
@@ -449,7 +454,12 @@ export function bindRequestRuleEditor(panel) {
       const ruleId=panel._editingRuleId, revision=state.revision, baseline=panel._result;
       const submitted=dialogState(dialog);
       const result=await panel._call("request_rules",action,{...(ruleId?{rule_id:ruleId}:{}),rule,revision});
-      if(!current())return;
+      if(!current()) {
+        // Retired publication cannot turn this original intent into a fresh
+        // create when its authored values are recovered by another panel.
+        if(ownsIntent() && dialog.open) dialog.__eocUncertainMutation = new Error("This Request Rule save completed for its previous editor owner. Reopen the saved rule before saving again.");
+        return;
+      }
       // Identity belongs to the commit even if keyed rendering fails.
       panel._editingRuleId=result.rule.id;
       await presentAcknowledgedMutation(panel, state.owner, "Request Rule saved", () => {
@@ -472,9 +482,11 @@ export function bindRequestRuleEditor(panel) {
         }
       }, result);
     }catch(err){
+      // Safety evidence belongs to the exact intent even when authentication
+      // retires its authority to publish collection data or feedback.
+      if(ownsIntent() && dialog.open && err?.mutationOutcome === "uncertain") dialog.__eocUncertainMutation=err;
       if(!current())return;
       if (err?.mutationOutcome === "uncertain") {
-        state.uncertain = true;
         await recoverRequestRuleMutation(panel, err, "Request Rule outcome is unknown", current);
       }
       const message = err.message || String(err);
@@ -484,7 +496,7 @@ export function bindRequestRuleEditor(panel) {
         showRuleConditions(panel);
       }
     }
-    finally{if(ownsEditor())panel._setSaving(save,false);}
+    finally{if(ownsIntent())panel._setSaving(save,false);}
   });
   return dialog;
 }
@@ -492,7 +504,7 @@ export function bindRequestRuleEditor(panel) {
 export function openRequestRuleEditor(panel,id=null) {
   const dialog=bindRequestRuleEditor(panel), root=panel.shadowRoot, q=(selector)=>root.querySelector(selector), state=editorState(panel);
   state.owner=captureConfigurationOwner(panel);
-  state.uncertain=false;
+  delete dialog.__eocUncertainMutation;
   panel._setSaving(q("#rule-save"),false);
   // Native YAML children retain their own draft and mode. Each opening owns
   // fresh selectors, so Cancel cannot leak an unsaved child draft into saved data.
