@@ -12,6 +12,9 @@ from custom_components.extended_openai_conversation_responses.request_rules impo
     _outcome_probes,
     async_evaluate_rule,
 )
+from custom_components.extended_openai_conversation_responses.guest_mode import (
+    GUEST_MODE_UNAVAILABLE,
+)
 from homeassistant.core import SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
 
@@ -424,7 +427,7 @@ async def test_live_authorization_after_permission_lookup_cannot_be_ignored(
         live_guest_policy=lambda: policy,
     )
     assert lookups == [True], "The native action must reach permission lookup"
-    assert not outcome.successful and outcome.response == "Failed"
+    assert not outcome.successful and outcome.response == GUEST_MODE_UNAVAILABLE
     dispatch.assert_not_called()
 
 

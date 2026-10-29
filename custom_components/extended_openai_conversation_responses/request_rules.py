@@ -151,7 +151,7 @@ RequestRuleFunctionExecutor = Callable[[str, dict[str, Any]], Awaitable[Any]]
 _GUARD_SERVICE = "request_rule_guard"
 
 
-class _NativeActionDenied(TemplateError):
+class _NativeActionDenied(GuestModeDenied, TemplateError):
     """Fatal authorization failure, never recoverable service/condition failure.
 
     HA exempts preparation errors from continue_on_error. Unlike ConditionError,
@@ -3687,7 +3687,9 @@ async def _async_evaluate_matched_rule(
             )
 
             action_token = _ACTIVE_RULE_ACTION.set(
-                RuleActionExecution(function_executor, authorize_prepared, result_values)
+                RuleActionExecution(
+                    function_executor, authorize_prepared, result_values
+                )
             )
             execution = StopReason()
             execution_token = script_execution_cv.set(execution)
