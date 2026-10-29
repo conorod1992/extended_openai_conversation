@@ -2434,6 +2434,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   async _openMemory(memoryId = null) {
     this._ensureOwnedDialog("memory-dialog");
     beginOperation(this, "memory-editor");
+    delete this.shadowRoot.querySelector("#memory-dialog").__eocUncertainMutation;
     this._setSaving(this.shadowRoot.querySelector("#memory-save"), false);
     const root = this.shadowRoot;
     root.querySelectorAll("#memory-dialog input,#memory-dialog textarea,#memory-dialog select").forEach(control => {control.disabled = false;});
@@ -2621,7 +2622,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
 
   async _saveMemory() {
     const button = this.shadowRoot.querySelector("#memory-save");
-    if (button.disabled) return;
+    if (button.disabled || this.shadowRoot.querySelector("#memory-dialog").__eocUncertainMutation) return;
     const values = this._memoryValues();
     const editing = Boolean(this._editingMemory);
     const temporary = values.type === "temporary";
@@ -2630,8 +2631,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const submission = captureConfigurationOwner(this);
     const dialog = this.shadowRoot.querySelector("#memory-dialog");
     const ownsOperation = beginOperation(this, "memory-editor");
-    const current = () => ownsOperation() && configurationSubmissionIsCurrent(this, submission) && dialog.open
-      && this.shadowRoot.querySelector("#memory-dialog") === dialog
+    const ownsEditor = () => ownsOperation() && dialog.open && this.shadowRoot.querySelector("#memory-dialog") === dialog;
+    const current = () => ownsEditor() && configurationSubmissionIsCurrent(this, submission)
       && this._ownsRetainedMutation(owner, {allowRefresh:true});
     // Temporary creation has no movable-record editor in this form. Keep its
     // fields stable until acknowledgement rather than risk a duplicate add.
@@ -2651,7 +2652,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         ...feature.memoryMutationValues(values, this._editingMemory),
         ...(temporary ? {expires_at: feature.memoryExpiryISO(this, values.expires_at)} : {}),
       });
-      if (!current()) return;
+      if (!current()) {
+        if (ownsEditor()) requireMutationAcknowledgement(false, "reconciling the Memory save after its owner changed");
+        return;
+      }
       const savedScope = response?.scope_id ?? (temporary && editing ? sourceScope : null);
       requireMutationAcknowledgement(response?.memory?.memory_id && savedScope, "saving the memory");
       this._editingMemory = {...response.memory};
@@ -2688,8 +2692,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         if (!this.isConnected || !this._ownsRetainedMutation(owner)) this._revalidateAcknowledgedCollection(owner);
       }, response);
     } catch (err) {
+      if (ownsEditor() && err?.mutationOutcome === "uncertain") dialog.__eocUncertainMutation = err;
       if (current()) this._setDialogError("memory", `Unable to save memory: ${err.message || String(err)}`);
-    } finally { if (current()) { unlock(); this._setSaving(button, false); const type = this.shadowRoot.querySelector("#memory-type"); if (this._editingMemory && type) type.disabled = true; } }
+    } finally { if (ownsEditor()) { unlock(); this._setSaving(button, false); if (dialog.__eocUncertainMutation) button.disabled = true; const type = this.shadowRoot.querySelector("#memory-type"); if (this._editingMemory && type) type.disabled = true; } }
   }
 
   async _deleteSource(sourceId, fromDialog = false, button = null) {

@@ -348,13 +348,14 @@ export async function recoverDisconnectedEditor(panel, source, retry = () => rec
       showRecoveredEditorValues(panel, old, values, ownsContext);
       return;
     }
-    if (["knowledge-dialog", "rule-dialog"].includes(old.id) && old.__eocUncertainMutation) {
+    if (["knowledge-dialog", "memory-dialog", "rule-dialog"].includes(old.id) && old.__eocUncertainMutation) {
       // Automatic draft recovery is not a new intent or acknowledgement. Keep
       // the outcome guard even though opening recreated the Save control.
       dialog.__eocUncertainMutation = old.__eocUncertainMutation;
-      if (old.id === "knowledge-dialog") {
-        panel.shadowRoot.querySelector("#knowledge-save").disabled = true;
-        panel._setDialogError("knowledge", old.__eocUncertainMutation.message);
+      if (old.id !== "rule-dialog") {
+        const kind = old.id === "memory-dialog" ? "memory" : "knowledge";
+        panel.shadowRoot.querySelector(`#${kind}-save`).disabled = true;
+        panel._setDialogError(kind, old.__eocUncertainMutation.message);
       } else panel.shadowRoot.querySelector("#rule-error").textContent = old.__eocUncertainMutation.message;
     }
     old.close();
