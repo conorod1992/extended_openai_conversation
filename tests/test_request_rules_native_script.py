@@ -358,14 +358,36 @@ async def test_live_guard_preserves_native_template_boundaries(hass, live, kind)
         ), hass.services.async_call.call_args_list
 
 
+@pytest.mark.parametrize("wrap_service_errors", [False, True])
 async def test_live_authorization_after_permission_lookup_cannot_be_ignored(
-    hass, monkeypatch
+    hass, monkeypatch, wrap_service_errors
 ):
     from unittest.mock import AsyncMock
     from custom_components.extended_openai_conversation_responses import ha_actions
     from custom_components.extended_openai_conversation_responses.guest_mode import (
         GuestCapabilityPolicy,
     )
+
+    if wrap_service_errors:
+        # HA 2026.10 wraps non-HA service errors when continue_on_error is set.
+        # Exercise that compatibility boundary even on the older local engine.
+        from homeassistant.helpers import script as native_script
+
+        original_step = native_script._ScriptRun._async_step_call_service
+
+        async def current_ha_step(run):
+            try:
+                return await original_step(run)
+            except HomeAssistantError:
+                raise
+            except Exception as err:
+                if run._action.get("continue_on_error", False):
+                    raise HomeAssistantError(err) from err
+                raise
+
+        monkeypatch.setattr(
+            native_script._ScriptRun, "_async_step_call_service", current_ha_step
+        )
 
     hass.loop = asyncio.get_running_loop()
     hass.async_create_task_internal.side_effect = lambda coro, **kw: (

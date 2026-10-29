@@ -30,7 +30,7 @@ from uuid import uuid4
 
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import Context, Event, HomeAssistant, ServiceCall, callback
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import ConditionErrorMessage, HomeAssistantError
 from homeassistant.helpers import condition as ha_condition, config_validation as cv
 from homeassistant.helpers.script import Script, async_validate_actions_config
 from homeassistant.helpers.script_variables import ScriptVariables
@@ -3654,7 +3654,9 @@ async def _async_evaluate_matched_rule(
                 except GuestModeDenied as err:
                     # Authorization is not an authored recoverable HA failure.
                     # Native continue_on_error must never continue past denial.
-                    raise ValueError(GUEST_MODE_UNAVAILABLE) from err
+                    raise ConditionErrorMessage(
+                        "authorization", GUEST_MODE_UNAVAILABLE
+                    ) from err
 
             script = Script(
                 cast(
