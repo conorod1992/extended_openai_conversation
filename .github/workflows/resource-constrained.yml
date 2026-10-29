@@ -43,11 +43,14 @@ jobs:
             tests_stress/test_responses_scale_fairness.py::test_active_native_contention_preserves_assist_management_and_ha_progress \
             -v -s --asyncio-mode=auto --timeout=300 --tb=short
       - name: Measure worker admission tradeoffs without imposing policy
+        env:
+          EOAI_BENCHMARK_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           ulimit -v 1572864
           CPU="$(python -c 'import os; print(min(os.sched_getaffinity(0)))')"
           taskset -c "$CPU" python ci/benchmark_work_admission.py \
+            --repeats 3 \
             --output "$RUNNER_TEMP/work-admission.json"
       - name: Preserve worker admission measurements
         if: always()

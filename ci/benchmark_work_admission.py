@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import gc
+import hashlib
+from importlib.metadata import version
 import json
 import os
 from pathlib import Path
@@ -22,6 +24,7 @@ def arguments():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--concurrency", default="1,2,4")
     parser.add_argument("--jobs", type=int, default=64)
+    parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--sources", type=int, default=16)
     parser.add_argument("--characters", type=int, default=32768)
     parser.add_argument("--output", type=Path)
@@ -36,6 +39,7 @@ def arguments():
         or len(set(levels)) != len(levels)
         or any(not 1 <= level <= 16 for level in levels)
         or not 1 <= args.jobs <= 64
+        or not 1 <= args.repeats <= 5
         or not 1 <= args.sources <= 500
         or not 1024 <= args.characters <= 100000
         or any(
@@ -45,7 +49,7 @@ def arguments():
         or (args.child is not None and not 1 <= args.child <= 16)
     ):
         parser.error(
-            "invalid benchmark dimensions (jobs <=64, concurrency <=16, sources <=500, characters 1024..100000)"
+            "invalid benchmark dimensions (jobs <=64, repeats 1..5, concurrency <=16, sources <=500, characters 1024..100000)"
         )
     return args, levels
 
@@ -201,7 +205,7 @@ def main():
     except ImportError:
         address_space_limit = None
     report = {
-        "schema_version": 1,
+        "schema_version": 2,
         "git_revision": subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
         ).strip(),
@@ -210,6 +214,18 @@ def main():
                 ["git", "status", "--porcelain"], cwd=ROOT, text=True
             ).strip()
         ),
+        "pr_head_sha": os.environ.get("EOAI_BENCHMARK_HEAD_SHA"),
+        "worker_source_sha256": {
+            name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
+            for name in (
+                "ci/benchmark_work_admission.py",
+                "custom_components/extended_openai_conversation_responses/knowledge.py",
+                "custom_components/extended_openai_conversation_responses/backup.py",
+                "custom_components/extended_openai_conversation_responses/bounded_json.py",
+            )
+        },
+        "homeassistant_version": version("homeassistant"),
+        "psutil_version": version("psutil"),
         "address_space_limit_bytes": address_space_limit,
         "python": sys.version,
         "platform": platform.platform(),
@@ -218,12 +234,19 @@ def main():
         if hasattr(os, "sched_getaffinity")
         else None,
         "jobs": args.jobs,
+        "repeats": args.repeats,
         "sources": args.sources,
         "characters_per_source": args.characters,
         "workload": "production JSON decode, canonical Knowledge load/index, bounded JSON export; synthetic data",
         "cases": [],
     }
-    for level in levels:
+    # Rotate order across repeats to reduce systematic first/last-case bias.
+    experiments = [
+        (repeat + 1, level)
+        for repeat in range(args.repeats)
+        for level in levels[repeat % len(levels) :] + levels[: repeat % len(levels)]
+    ]
+    for repeat, level in experiments:
         command = [
             sys.executable,
             str(Path(__file__).resolve()),
@@ -248,7 +271,7 @@ def main():
         except subprocess.CalledProcessError as error:
             sys.stderr.write(error.stderr)
             raise
-        report["cases"].append(json.loads(child.stdout))
+        report["cases"].append({**json.loads(child.stdout), "repeat": repeat})
     encoded = json.dumps(report, indent=2) + "\n"
     if args.output is not None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
