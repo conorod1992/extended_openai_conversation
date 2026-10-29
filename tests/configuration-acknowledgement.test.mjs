@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {captureConfigurationSubmission, reconcileConfigurationAcknowledgement, completeConfigurationAcknowledgement, configurationDraftBaseline, mergeConfigurationRead, discardConfigurationDraft} from "../custom_components/extended_openai_conversation_responses/frontend/configuration-acknowledgement.js";
+import {captureConfigurationSubmission, reconcileConfigurationAcknowledgement, completeConfigurationAcknowledgement, configurationDraftBaseline, mergeConfigurationRead, discardConfigurationDraft, retireReplacedConfigurationDraft} from "../custom_components/extended_openai_conversation_responses/frontend/configuration-acknowledgement.js";
 import {saveConfiguration} from "../custom_components/extended_openai_conversation_responses/frontend/management-actions.js";
 import {bindKnowledgeAvailability} from "../custom_components/extended_openai_conversation_responses/frontend/management-knowledge-feature.js";
 import {initializePageDraft, currentPageScope} from "../custom_components/extended_openai_conversation_responses/frontend/management-page-drafts.js";
@@ -469,4 +469,27 @@ test("discard cannot clear a configuration draft while its write is pending", ()
   assert.equal(discardConfigurationDraft(host), false);
   assert.equal(host._draft, draft);
   assert.equal(host._draft.prompt, "Submitted prompt");
+});
+
+for (const editsDuringRead of [false, true]) test(`discard after a replacement retains the read obligation, newer edits=${editsDuringRead}`, () => {
+  const host = panel();
+  host._setConfigDirty = value => {host._configDirty = value;};
+  const submitted = captureConfigurationSubmission(host);
+  host._draft.prompt = "Newer pre-discard draft";
+  retireReplacedConfigurationDraft(host, submitted);
+  assert.equal(host._configDataStale, true);
+  discardConfigurationDraft(host);
+  assert.equal(host._configDirty, false);
+  assert.equal(host._configDataStale, true, "discard cannot certify the old baseline after a replacement");
+  assert.equal(submitted.draft.prompt, "Submitted prompt", "do not mutate the operation's captured submission");
+  if (editsDuringRead) {
+    host._draft.prompt = "Authored after Discard";
+    host._draftTitle = "Newer title";
+  }
+  const saved = {revision:"replacement", title:"Imported title", config:{prompt:"Imported prompt", max_tokens:900}};
+  const merged = mergeConfigurationRead(host, {draft:host._draft, title:host._draftTitle}, host._configData, saved);
+  assert.deepEqual(merged, {
+    draft:{...saved.config, ...(editsDuringRead ? {prompt:"Authored after Discard"} : {})},
+    title:editsDuringRead ? "Newer title" : saved.title,
+  }, "only edits after Discard may survive the authoritative read, including field omission");
 });

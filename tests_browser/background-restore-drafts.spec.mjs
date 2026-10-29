@@ -2,7 +2,7 @@ import {expect, test} from "@playwright/test";
 import {acceptConfirmation, fixtureUrl, expectHarnessClean, trackPageErrors} from "./browser-helpers.mjs";
 
 for (const bundle of [false, true]) test.describe(bundle ? "bundle" : "source", () => {
-for (const variant of ["unchanged", "newer edits", "baseline reversion", "failed refresh", "assistant", "authentication", "replacement", "replacement newer edits", "lost", "rejected"]) test(`background restore draft retirement: ${variant}`, async ({page}) => {
+for (const variant of ["unchanged", "newer edits", "baseline reversion", "failed refresh", "discard before refresh", "assistant", "authentication", "replacement", "replacement newer edits", "lost", "rejected"]) test(`background restore draft retirement: ${variant}`, async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("usage-maintenance/backup-restore", `&agents=2${bundle ? "&bundle=1" : ""}`));
   const panel = page.locator("extended-openai-management-panel");
@@ -43,7 +43,7 @@ for (const variant of ["unchanged", "newer edits", "baseline reversion", "failed
   await expect.poll(() => page.evaluate(() => typeof releaseRestoreReply)).toBe("function");
   await panel.evaluate(host => host._navigate("assistant", "basics"));
   await expect(panel.locator('[data-config="__title"]')).toHaveValue("Pre-restore stale title");
-  if (["newer edits", "failed refresh"].includes(variant)) {
+  if (["newer edits", "failed refresh", "discard before refresh"].includes(variant)) {
     // Reverting to the original baseline is still a newer authored edit.
     await panel.locator('[data-config="__title"]').fill("Jarvis");
     await panel.locator('[data-config="max_tokens"]').fill("888");
@@ -78,9 +78,31 @@ for (const variant of ["unchanged", "newer edits", "baseline reversion", "failed
       await panel.locator('[data-config="max_tokens"]').fill("888");
     }
   }
+  if (variant === "discard before refresh") await panel.evaluate(host => {
+    // The restore commits while its originating page is in the background.
+    host._loadAgents = async () => {throw new Error("Restore presentation unavailable");};
+  });
   if (variant === "failed refresh") await page.evaluate(() => {window.failRestoreRead = true;});
   await page.evaluate(() => releaseRestoreReply());
   await expect.poll(() => page.evaluate(() => (window.replacedRestoreSource || document.querySelector("extended-openai-management-panel"))._backupRestoreOperations.size)).toBe(0);
+  if (variant === "discard before refresh") {
+    await expect(panel.locator('[data-config="max_tokens"]')).toHaveValue("888");
+    await panel.locator("#revert-config").click();
+    await panel.locator('[data-config="max_tokens"]').fill("1400");
+    await panel.locator("#save-config").click();
+    await expect.poll(() => panel.evaluate(host => host._configDataStale)).toBe(false);
+    // This click recovers; only the pre-restore settings save has dispatched.
+    expect(await page.evaluate(() => browserHarness.calls.filter(c => c.section === "configuration" && c.action === "save").length)).toBe(1);
+    await panel.locator("#save-config").click();
+    await expect.poll(() => page.evaluate(() => browserHarness.getState().configuration.config.max_tokens)).toBe(1400);
+    expect(await page.evaluate(() => browserHarness.getState().configuration.title)).toBe("Jarvis");
+    expect(await page.evaluate(() => restoreWrites)).toBe(1);
+    await page.goto(fixtureUrl("assistant/basics", bundle ? "&bundle=1" : ""));
+    await expect(panel.locator('[data-config="__title"]')).toHaveValue("Jarvis");
+    await expect(panel.locator('[data-config="max_tokens"]')).toHaveValue("1400");
+    await expectHarnessClean(page, errors);
+    return;
+  }
   if (variant === "failed refresh") {
     await expect(panel.getByRole("button", {name:"Retry", exact:true})).toBeVisible();
     expect(await page.evaluate(() => browserHarness.calls.filter(c => c.section === "configuration" && c.action === "save").length)).toBe(1);

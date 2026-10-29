@@ -83,7 +83,13 @@ export function discardConfigurationDraft(panel) {
   if (!baseline?.config) return false;
   panel._draft = clone(baseline.config);
   panel._draftTitle = baseline.title;
-  if (panel._eocAcknowledgedConfiguration) {
+  const replacement = panel._eocRestoredConfiguration;
+  if (replacement && configurationSubmissionIsCurrent(panel, replacement)) {
+    // The replacement's saved values are still unknown. Reset its comparison
+    // to the discarded display so a fresh read cannot resurrect the old delta.
+    panel._eocRestoredConfiguration = {...replacement, draft:clone(panel._draft), title:panel._draftTitle};
+  }
+  if (panel._eocAcknowledgedConfiguration || replacement) {
     // Discard the authored delta, not the completed write's refresh obligation.
     // An older read cannot certify the next write or become a recovered edit.
     panel._invalidateCleanConfiguration?.(panel._agentId);
