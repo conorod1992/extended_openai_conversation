@@ -1,3 +1,4 @@
+import {functionUncertainty, requireFunctionAcknowledgement, markFunctionUncertainty, settleFunctionRead} from "./function-acknowledgement.js";
 import {clearRequestRuleUncertainty, requestRuleUncertainty, requireRequestRuleAcknowledgement, markUncertainRuleMutation} from "./request-rule-acknowledgement.js";
 import {mutationEffects} from "./management-mutation-effects.js";
 import {observeCatalogGeneration} from "./model-catalog.js";
@@ -915,6 +916,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   async _runAgentMutation(section, action, extra, mutationTrace = null) {
+    const toolMutation = mutationEffects(section, action)?.revision === "tools";
     const ruleMutation = mutationEffects(section, action)?.revision === "request_rules";
     const agentId = this._agentId;
     const previousRuleRevision = ruleMutation ? (this._eocRequestRuleRevision?.agentId === agentId
@@ -923,13 +925,16 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (ruleMutation) this._eocRequestRuleMutationEpoch = (this._eocRequestRuleMutationEpoch || 0) + 1;
     this._eocAgentMutations = Number(this._eocAgentMutations || 0) + 1;
     syncAgentPicker(this);
+    if (toolMutation) this._eocFunctionMutationEpoch = (this._eocFunctionMutationEpoch || 0) + 1;
     let result;
     try {
+      if (toolMutation && functionUncertainty(this, owner)) throw functionUncertainty(this, owner);
       // Validate before revision adoption or releasing the serialized write lane.
       // A queued mutation must not dispatch against an uncertain predecessor.
       if (ruleMutation && requestRuleUncertainty(this, owner)) throw requestRuleUncertainty(this, owner);
       result = await this._callCore(section, action, extra, mutationTrace);
       if (ruleMutation) requireRequestRuleAcknowledgement(action, result, extra.rule_id);
+      if (toolMutation) requireFunctionAcknowledgement(result);
       processMutationResponse(result, () => this._applyToolRevision(section, action, result, owner));
       if (
         ruleMutation
@@ -945,6 +950,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       return result;
     } catch (err) {
       if (ruleMutation) markUncertainRuleMutation(this, owner, err);
+      if (toolMutation) markFunctionUncertainty(this, owner, err);
       if (mutationTrace) {
         mutationTrace.status = "rejected";
         mutationTrace.error = err?.message || String(err);
@@ -953,6 +959,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     } finally {
       // Reads begun during the mutation must not overwrite its acknowledgement.
       if (ruleMutation) this._eocRequestRuleMutationEpoch += 1;
+      if (toolMutation) this._eocFunctionMutationEpoch += 1;
       this._eocAgentMutations = Math.max(0, Number(this._eocAgentMutations || 1) - 1);
       if (result) processMutationResponse(result, () => syncAgentPicker(this));
       else syncAgentPicker(this);
@@ -964,6 +971,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       mutationEffects(section, action)?.revision === "tools"
       && configurationSubmissionIsCurrent(this, owner)
       && !configurationReadOvertookSubmission(this, owner)
+      && result?.valid !== false
       && typeof result?.revision === "string"
       && this._configData
     ) {
@@ -1676,6 +1684,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     full ||= Boolean(this._eocAcknowledgedConfiguration || this._eocRestoredConfiguration);
     const previousConfig = this._configData, previousResult = this._result;
     const readOwner = captureConfigurationOwner(this);
+    const uncertainFunction = functionUncertainty(this, readOwner);
+    const functionEpoch = this._eocFunctionMutationEpoch || 0;
+    if (uncertainFunction) {
+      full = true; this._configDataStale = true;
+      this._invalidateCleanConfiguration?.(this._agentId);
+      discardStoredConfigurationPrefetch(this, "function-recovery");
+    }
     // Validate shared model data before reusing an active baseline, clean cache
     // or prefetched configuration on any route or assistant.
     if (this._hasConfigurationCatalogGeneration() && !await this._validateConfigurationCatalog()) return;
@@ -1767,6 +1782,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       if (this._configDirty && this._draftAgentId === agentId && !retainedDraft) return;
       const prior = key ? this._cleanConfigSnapshots.get(key)?.result : null;
       if (prior && prior.revision !== configData.revision) this._invalidateCleanConfiguration(agentId);
+      if (uncertainFunction) requireFunctionAcknowledgement({revision:configData.revision,
+        functions:configData.config.functions, function_groups:configData.config.function_groups});
       observeCatalogGeneration(this, configData);
       this._observeConfigurationRead(configData, {previousTitle:healthReadTitle, fresh:certifiesHealth
         && this._selectedAgent() === healthReadOwner && healthReadOwner?.configuration_issue === healthReadIssue});
@@ -1781,6 +1798,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         {savedConfig:configData.projection === "retention" ? undefined : configData.config});
       this._draft = nextDraft;
       this._draftTitle = merged.title;
+      settleFunctionRead(this, readOwner, uncertainFunction, functionEpoch, configData);
       if (configData.projection !== "retention") {
         this._eocAcknowledgedConfiguration = null;
         this._eocRestoredConfiguration = null;

@@ -65,7 +65,7 @@ test("a queued write cannot resolve its implicit destination after the assistant
   const host = panel();
   let release, calls = 0;
   host._eocFunctionMutationTail = new Promise(resolve => { release = resolve; });
-  host._callCore = async () => { calls++; return {revision:"a2"}; };
+  host._callCore = async () => { calls++; return {revision:"a2", functions:[], function_groups:[]}; };
   const pending = host._call("tools", "delete", {name:"a_tool"});
   host._agentId = "b";
   host._configData = {revision:"b1", config:{functions:[]}};
@@ -86,7 +86,7 @@ for (const change of ["agent", "entry"]) {
     if (change === "agent") host._agentId = "b";
     else host._data.agents[0].entry_id = "replacement-entry";
     host._configData = {revision:"replacement", config:{functions:[]}};
-    release({revision:"a2", functions:[]});
+    release({revision:"a2", functions:[], function_groups:[]});
     assert.equal((await pending).revision, "a2", "keep the acknowledgement available to its original caller");
     assert.equal(host._configData.revision, "replacement");
     assert.equal(host._eocAgentMutations, 0);
@@ -114,3 +114,60 @@ for (const fail of [false, true]) {
     assert.equal(host._error, null);
   });
 }
+
+test("a delayed malformed Function reply cannot block another assistant or authentication owner", async () => {
+  const host = panel();
+  let reply, calls = 0;
+  host._callCore = async () => {
+    calls++;
+    if (calls === 1) return new Promise(resolve => { reply = resolve; });
+    return {revision:"next", functions:[], function_groups:[]};
+  };
+  const pending = host._call("tools", "delete", {name:"old"});
+  while (!reply) await Promise.resolve();
+  host._agentId = "b";
+  reply({revision:"a2"});
+  await assert.rejects(pending);
+  await host._call("tools", "delete", {name:"b_tool"});
+  host._agentId = "a";
+  await assert.rejects(host._call("tools", "delete", {name:"old"}));
+  assert.equal(calls, 2, "the original owner remains blocked before dispatch");
+  host._eocAuthentication = {generation:1};
+  await host._call("tools", "delete", {name:"new_session"});
+  assert.equal(calls, 3);
+});
+
+test("only a current authoritative Function read releases dependent writes, retaining dirty settings", async () => {
+  const host = panel();
+  host._viewKey = () => "capabilities/functions";
+  host._draftAgentId = "a";
+  host._configData = {revision:"a1", title:"Agent", config:{prompt:"saved", functions:[], function_groups:[]}};
+  host._draft = {...structuredClone(host._configData.config), prompt:"authored"};
+  host._draftTitle = "Agent";
+  host._configDataStale = true;
+  let read, writes = 0;
+  host._callCore = async (section) => {
+    if (section === "configuration") return new Promise(resolve => { read = resolve; });
+    writes++;
+    return {revision:"a2"};
+  };
+  const preMutationRead = host._loadConfigDraft({full:true});
+  while (!read) await Promise.resolve();
+  await assert.rejects(host._call("tools", "save_group", {group:{id:"g"}}));
+  const authoritative = {revision:"a2", title:"Agent", config:{prompt:"saved", functions:[], function_groups:[{id:"g", enabled:false}]}};
+  read(structuredClone(authoritative));
+  await preMutationRead;
+  await assert.rejects(host._call("tools", "save_group", {group:{id:"g"}}));
+  assert.equal(writes, 1, "a read begun before the uncertain write cannot unblock it");
+  host._callCore = async (section) => {
+    if (section === "configuration") return structuredClone(authoritative);
+    writes++;
+    return {revision:"a3", functions:[], function_groups:authoritative.config.function_groups};
+  };
+  await host._loadConfigDraft({full:true});
+  assert.equal(host._draft.prompt, "authored");
+  assert.equal(host._configDirty, true);
+  assert.equal(host._draft.function_groups[0].enabled, false);
+  await host._call("tools", "save_group", {group:host._draft.function_groups[0]});
+  assert.equal(writes, 2);
+});

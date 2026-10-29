@@ -42,7 +42,7 @@ panel._request = async (section, action, extra = {}) => {
   calls.push({section, action, extra});
   return action === "validate_current"
     ? {valid: true}
-    : {revision: `revision-${calls.length + 1}`};
+    : {revision: `revision-${calls.length + 1}`, functions:[], function_groups:[]};
 };
 
 const first = await panel._call("tools", "save", {tool: {spec: {name: "one"}}});

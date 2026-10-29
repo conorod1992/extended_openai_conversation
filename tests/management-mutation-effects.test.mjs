@@ -112,7 +112,7 @@ for (const family of ["tools", "request_rules"]) for (const explicit of [false, 
     host._callCore = async (section, action, extra) => {
       calls.push({section, action, extra});
       if (calls.length === 1) return new Promise(resolve => { release = resolve; });
-      return {revision:"ack-3"};
+      return {revision:"ack-3", functions:[], function_groups:[]};
     };
     const action = family === "tools" ? "set_enabled" : "rule_pack_import";
     const first = host._call(family, action, {marker:"first"});
@@ -122,7 +122,7 @@ for (const family of ["tools", "request_rules"]) for (const explicit of [false, 
     assert.equal(calls.length, 1);
     assert.equal(host._eocAgentMutations, 1);
     assert.equal(calls[0].extra.revision, family === "tools" ? "config-1" : "rules-1");
-    release({revision:"ack-2"});
+    release({revision:"ack-2", functions:[], function_groups:[]});
     await Promise.all([first, second]);
     assert.equal(calls[1].extra.revision, explicit ? "caller-guard" : "ack-2");
     assert.equal(host._pendingMutations.size, 0);
