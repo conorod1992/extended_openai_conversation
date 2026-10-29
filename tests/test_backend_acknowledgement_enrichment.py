@@ -228,3 +228,109 @@ async def test_function_replacement_acknowledgement_prepares_before_write(
         await management_ui.async_management_command(hass, "admin", True, message)
         assert subentry.data["function_groups"][0]["enabled"] is False
         assert len(writes) == 2
+
+
+@pytest.mark.parametrize("fault", ["snapshot", "cache"])
+@pytest.mark.parametrize("error_type", [ValueError, RuntimeError])
+async def test_guest_policy_response_preparation_preserves_write_outcome(
+    monkeypatch, fault, error_type
+):
+    from copy import deepcopy
+    from inspect import unwrap
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    entry, subentry = _entry_pair()
+    subentry.data.update(functions="[]", guest_mode_enabled=False)
+    hass = _hass(entry)
+    writes = []
+
+    def persist(_entry, saved_subentry, **changes):
+        writes.append(deepcopy(changes["data"]))
+        saved_subentry.data = deepcopy(changes["data"])
+        return True
+
+    # Exercise the production live-update owner and WebSocket error conversion;
+    # this API double is the independent saved config-entry state.
+    hass.config_entries.async_update_subentry.side_effect = persist
+    monkeypatch.setattr(
+        management_ui, "async_get_guest_mode", AsyncMock(return_value=object())
+    )
+
+    def fail(*args, **kwargs):
+        raise error_type("Guest policy projection witness")
+
+    target = (
+        "guest_policy_editor_snapshot"
+        if fault == "snapshot"
+        else "seed_persisted_config_projection"
+    )
+    original = getattr(management_ui, target)
+    monkeypatch.setattr(management_ui, target, fail)
+    revision = management_ui._agent_config_revision(subentry.data, subentry.title)
+    handler = unwrap(management_ui.websocket_management)
+
+    async def send(config, expected_revision):
+        connection = SimpleNamespace(
+            user=SimpleNamespace(id="admin", is_admin=True),
+            send_error=Mock(),
+            send_result=Mock(),
+        )
+        await handler(
+            hass,
+            connection,
+            {
+                "id": 1,
+                **_message(
+                    "guest_mode",
+                    "save_policy",
+                    config=config,
+                    revision=expected_revision,
+                ),
+            },
+        )
+        return connection
+
+    first = await send({"guest_mode_enabled": True}, revision)
+    if fault == "snapshot":
+        first.send_error.assert_called_once_with(
+            1, "invalid_request", "Guest policy projection witness"
+        )
+        first.send_result.assert_not_called()
+        assert writes == []
+        assert subentry.data["guest_mode_enabled"] is False
+        assert (
+            management_ui.persisted_config_projection(subentry).revision == revision
+        )
+        # A rejected preparation neither writes nor consumes the revision. The
+        # next deliberate request can still save that originally submitted edit.
+        monkeypatch.setattr(management_ui, target, original)
+        next_reply = await send({"guest_mode_enabled": True}, revision)
+        expected_enabled, expected_writes = True, 1
+    else:
+        first.send_error.assert_not_called()
+        saved = first.send_result.call_args.args[1]
+        assert saved["config"]["guest_mode_enabled"] is True
+        assert writes[0]["guest_mode_enabled"] is True
+        assert subentry.data["guest_mode_enabled"] is True
+        assert saved["revision"] == management_ui.persisted_config_projection(subentry).revision
+        assert saved["revision"] != revision
+        stale = await send({"guest_mode_enabled": False}, revision)
+        assert stale.send_error.call_args.args[1] == "invalid_request"
+        assert "changed in another tab" in stale.send_error.call_args.args[2]
+        stale.send_result.assert_not_called()
+        assert len(writes) == 1
+        assert subentry.data["guest_mode_enabled"] is True
+        # The first usable ACK owns the next request's guard even while the
+        # optional cache continues failing on both writes.
+        next_reply = await send({"guest_mode_enabled": False}, saved["revision"])
+        expected_enabled, expected_writes = False, 2
+
+    next_reply.send_error.assert_not_called()
+    result = next_reply.send_result.call_args.args[1]
+    assert len(writes) == expected_writes
+    assert writes[-1]["guest_mode_enabled"] is expected_enabled
+    assert subentry.data["guest_mode_enabled"] is expected_enabled
+    assert result["config"]["guest_mode_enabled"] is expected_enabled
+    assert dict(subentry.data) == writes[-1]
+    assert result["revision"] == management_ui.persisted_config_projection(subentry).revision
