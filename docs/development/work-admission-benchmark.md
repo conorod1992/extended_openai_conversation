@@ -23,3 +23,19 @@ An admission limit is justified only if repeated results show a useful reduction
 There is no measured throughput advantage from higher concurrency in this run. More concurrent work increased transient memory and scheduling delay. This supports investigating a narrow CPU-worker scheduling policy on constrained hosts. It does not demonstrate exhaustion, establish an optimal limit for multi-core hosts, or measure user-visible queueing and cancellation behavior. It also covers a small fraction of the maximum accepted payload sizes and reuses input text across jobs.
 
 **Recommendation: do not introduce a global admission gate on this evidence.** Keep existing per-operation bounds and per-manager serialization. First confirm that a narrowly scoped CPU-work limit improves real mixed HA workloads after accounting for waiting time, fairness, cancellation and retained queued inputs. Avoid changing HA's shared executor capacity, which would affect other integrations. The measured scheduling effect is an enhancement opportunity; this probe alone does not establish a P1/P2 production defect.
+
+## Assessment after repeated Linux measurements
+
+[CI run 40957830013](https://github.com/conorod1992/extended_openai_conversation/actions/runs/40957830013) completed the constrained mixed-workload acceptance and all nine probe cases successfully. Artifact `work-admission-benchmark-1` contains three independent processes per concurrency level, with rotated ordering and 576 completed jobs in total. The environment was one CPU, a 1.5 GiB address-space ceiling, Python 3.14.9, Home Assistant 2026.10.4 and psutil 7.2.2. The report identifies PR head `f70aedf566cfe30e10758faa6a8c886816ebe3e5` and merge checkout `30635b697567a0844eeca39b625dee896be2f502`. All four recorded source hashes match the PR's committed files despite the overall dirty-worktree flag.
+
+Values below are medians across three processes. Parentheses show the minimum and maximum of that per-run statistic; the heartbeat column is the median of per-run p95 values, not a pooled percentile.
+
+| Workers | Jobs/second | Peak sampled RSS above baseline | Heartbeat p95, ms |
+| --- | ---: | ---: | ---: |
+| 1 | 16.62 (16.28-16.69) | 14.0 MiB | 6.06 (5.84-6.12) |
+| 2 | 15.84 (15.52-16.09) | 27.4 MiB | 21.09 (20.98-21.74) |
+| 4 | 15.69 (15.68-15.74) | 38.5 MiB | 78.29 (68.03-82.34) |
+
+The single-CPU effect is repeatable: extra workers provide no throughput gain and increase transient memory and loop delay. This strengthens the case for investigating narrowly scoped CPU scheduling as performance work. It does not show that EOAI currently needs an aggregate concurrency limit for robustness. Existing Knowledge mutations already serialize per assistant; a new shared limit would primarily govern work across assistants and subsystems. The real constrained mixed-workload tests passed, and this probe does not measure their user-visible queueing tradeoffs or maximum admitted inputs.
+
+**Decision: do not implement a production admission limit in this PR.** A blanket semaphore would add policy and lifecycle complexity without a demonstrated end-to-end robustness benefit. In particular, it would not bound memory already retained by queued inputs. Cancelling an await on a thread also does not stop the thread, so releasing a permit on caller cancellation would create a false concurrency bound. A future targeted implementation must settle actual worker lifetime, preserve maintenance ownership and test fairness and cancellation through real mixed workflows. These are requirements for an optional performance experiment, not outstanding confirmed P1/P2 defects. Provider response materialization remains a separate boundary not evaluated by this benchmark.
