@@ -43,6 +43,8 @@ Temporary Memory uses the same record metadata checks for loading, failed-write 
 
 Other malformed Temporary Memory records also block initialization and failed-write readback. If a separate record is rejected by the privacy policy, startup removes only that record and leaves the remaining raw generation intact for repair. The store remains unavailable until repaired; a failed privacy-purge write is reported as a failure.
 
+Archive and Usage retain usable records for reads when malformed containers, records or duplicate identifiers are detected, but block ordinary persistence and complete backups that would omit the damaged material. Archive preserves the original metadata and partitions, while still removing content bound to validated private sessions. Usage reports that storage needs repair and that new accounting does not survive restart; routine telemetry continues in memory without scheduling writes to the damaged stores. Explicit detail clearing and retention writes are rejected, and shutdown still retires resources without flushing over the evidence. Validated complete replacements can clear these barriers after persistence succeeds. Missing legacy Usage counters still receive their normal defaults; malformed supplied counters require repair.
+
 ## Interrupted transfer files
 
 Transfers are not resumable across Home Assistant process restarts. New upload and export payloads live in an EOAI-private staging directory under `.storage`. Native owner locks protect active processes; startup removes abandoned owners after their locks have been released. Recovery neither recreates transfer sessions nor applies an abandoned import. Normal cancellation, expiry and shutdown still remove payloads.

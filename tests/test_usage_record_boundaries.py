@@ -13,7 +13,7 @@ from homeassistant.util import dt as dt_util
         ("timestamp", "not a date"),
     ],
 )
-async def test_load_export_import_agree_without_losing_usable_siblings(field, value):
+async def test_damaged_usage_stays_readable_but_export_requires_repaired_storage(field, value):
     totals, daily, details = FakeStorage(), FakeStorage(), FakeStorage()
     good = _coverage_request()
     good["request_id"] = "good"
@@ -36,11 +36,22 @@ async def test_load_export_import_agree_without_losing_usable_siblings(field, va
         totals, daily, details, request_retention_days=10000, run_retention_days=10000
     )
     await manager.async_initialize()
+    with pytest.raises(ValueError, match="needs repair"):
+        await manager.async_backup_data()
+    assert [row.request_id for row in manager.requests] == ["good"]
+    assert [row.run_id for row in manager.runs] == [run["run_id"]]
+    assert details.data == original
+    # Explicit offline repair followed by a fresh manager restores valid exports.
+    details.data = {"requests": [good], "runs": [run]}
+    daily.data = {"days": {day: {"date": day, "api_request_count": 1}}}
+    repaired = deepcopy(details.data)
+    manager = usage.UsageManager(totals, daily, details, request_retention_days=10000, run_retention_days=10000)
+    await manager.async_initialize()
     exported = await manager.async_backup_data()
     assert [row["request_id"] for row in exported["requests"]] == ["good"]
     assert [row["run_id"] for row in exported["runs"]] == [run["run_id"]]
     assert set(exported["daily"]) == {day}
-    assert details.data == original, "Tolerant loading must not start a cleanup write"
+    assert details.data == repaired, "Loading must not start a cleanup write"
     restored = usage.UsageManager(
         FakeStorage(),
         FakeStorage(),

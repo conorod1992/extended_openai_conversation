@@ -31,6 +31,7 @@ from .const import (
 )
 from .debug import record_current_run_failure
 from .operational_errors import log_handled_failure
+from .persistence_hardening import StorageRepairRequired
 from .storage_namespaces import USAGE_PREFIX as STORAGE_KEY_PREFIX
 from .strict_store import (
     PropagatingWriteStore,
@@ -221,6 +222,25 @@ def _totals_from_storage(stored: dict[str, Any] | None) -> UsageTotals:
     return UsageTotals(**values)
 
 
+def _stored_totals_need_repair(stored: Any) -> bool:
+    """Omitted legacy counters are defaults; malformed supplied data is evidence."""
+    if stored is None:
+        return False
+    if not isinstance(stored, dict):
+        return True
+    source = stored.get("totals", stored)
+    if not isinstance(source, dict):
+        return True
+    try:
+        keys = {item.name for item in fields(UsageTotals)} - {"details"}
+        _validate_counter_mapping(source, keys & source.keys())
+        if "details" in source:
+            _validate_breakdown(source["details"], "usage details")
+    except ValueError:
+        return True
+    return False
+
+
 def extract_usage(usage: Any) -> RequestUsage:
     """Normalize Chat Completions or Responses token metadata."""
     if usage is None:
@@ -291,6 +311,7 @@ class UsageManager:
         self._lock = asyncio.Lock()
         self._initialize_lock = asyncio.Lock()
         self._initialized = False
+        self._repair_required = False
         self._detail_retention_dirty = False
         self._current_run: ContextVar[UsageRun | None] = ContextVar(
             f"usage_run_{id(self)}", default=None
@@ -316,21 +337,30 @@ class UsageManager:
             if self._initialized:
                 return
 
+            repair_required = False
+            totals_data: dict[str, Any] | None
             daily_data: dict[str, Any] = {}
             if self._daily_storage is not None:
-                daily_data = await self._daily_storage.async_load() or {}
+                loaded_daily = await self._daily_storage.async_load()
+                daily_data = loaded_daily if loaded_daily is not None else {}
                 if not isinstance(daily_data, dict):
+                    repair_required = True
                     daily_data = {}
 
             if "totals" in daily_data:
-                staged_totals = _totals_from_storage({"totals": daily_data["totals"]})
+                totals_data = {"totals": daily_data["totals"]}
+                staged_totals = _totals_from_storage(totals_data)
             else:
-                staged_totals = _totals_from_storage(await self._storage.async_load())
+                totals_data = await self._storage.async_load()
+                staged_totals = _totals_from_storage(totals_data)
+            repair_required |= _stored_totals_need_repair(totals_data)
 
             days = daily_data.get("days")
+            repair_required |= "days" in daily_data and not isinstance(days, dict)
             staged_daily = {}
             for key, value in (days if isinstance(days, dict) else {}).items():
                 if not isinstance(value, dict):
+                    repair_required = True
                     continue
                 try:
                     # Older stores omit newer counters. Migrate omissions only;
@@ -339,32 +369,45 @@ class UsageManager:
                         key, {**_empty_day(key), **value}
                     )
                 except TypeError, ValueError:
+                    repair_required = True
                     continue
             staged_requests: list[UsageRequest] = []
             staged_runs: list[UsageRun] = []
             request_ids: set[str] = set()
             run_ids: set[str] = set()
             if self._detail_storage is not None:
-                detail_data = await self._detail_storage.async_load() or {}
+                loaded_details = await self._detail_storage.async_load()
+                detail_data = loaded_details if loaded_details is not None else {}
                 if not isinstance(detail_data, dict):
+                    repair_required = True
                     detail_data = {}
                 requests = detail_data.get("requests")
+                repair_required |= "requests" in detail_data and not isinstance(
+                    requests, list
+                )
                 for raw in requests if isinstance(requests, list) else []:
                     try:
                         record = _usage_request_from_record(raw)
                         if record.request_id not in request_ids:
                             staged_requests.append(record)
                             request_ids.add(record.request_id)
+                        else:
+                            repair_required = True
                     except TypeError, ValueError:
+                        repair_required = True
                         continue
                 runs = detail_data.get("runs")
+                repair_required |= "runs" in detail_data and not isinstance(runs, list)
                 for raw in runs if isinstance(runs, list) else []:
                     try:
                         record_run = _usage_run_from_record(raw)
                         if record_run.run_id not in run_ids:
                             staged_runs.append(record_run)
                             run_ids.add(record_run.run_id)
+                        else:
+                            repair_required = True
                     except TypeError, ValueError:
+                        repair_required = True
                         continue
 
             now = dt_util.utcnow()
@@ -391,11 +434,17 @@ class UsageManager:
             self._detail_retention_dirty = loaded_detail_count != (
                 len(staged_requests) + len(staged_runs)
             )
+            self._repair_required = repair_required
+            if repair_required:
+                _LOGGER.warning(
+                    "Usage storage needs repair; original stores preserved and persistence disabled"
+                )
             self._initialized = True
 
     async def async_record_conversation(self) -> None:
         """Compatibility API; new conversation code uses ``async_run``."""
         async with async_storage_lock(self._storage, self._lock):
+            self._require_writable()
             self.totals.conversation_count += 1
             await self._async_save_aggregates()
 
@@ -487,6 +536,8 @@ class UsageManager:
                     _LOGGER.info(
                         "Usage flush deferred while assistant restore recovery is pending"
                     )
+                    return
+                if self._repair_required:
                     return
                 await self._async_save_aggregates()
                 await self._async_save_details()
@@ -662,6 +713,7 @@ class UsageManager:
         self, requests: list[UsageRequest], runs: list[UsageRun]
     ) -> None:
         """Persist one candidate detail state before publishing it in memory."""
+        self._require_writable()
         if self._detail_storage is None:
             return
         details = await asyncio.to_thread(_serialize_usage_details, requests, runs)
@@ -670,6 +722,7 @@ class UsageManager:
     async def async_prune_details(self, *, save: bool = True) -> dict[str, int]:
         """Apply retention transactionally, persisting survivors before publication."""
         async with async_storage_lock(self._storage, self._lock):
+            self._require_writable()
             requests, runs, result = self._pruned_detail_state()
             if save and (
                 self._detail_retention_dirty
@@ -690,6 +743,7 @@ class UsageManager:
         if not confirm:
             raise ValueError("Explicit confirmation is required")
         async with async_storage_lock(self._storage, self._lock):
+            self._require_writable()
             result = {
                 "deleted_requests": len(self.requests),
                 "deleted_runs": len(self.runs),
@@ -702,7 +756,7 @@ class UsageManager:
 
     async def _async_prune_usage_if_due(self) -> None:
         """Schedule bounded daily retention maintenance outside the response path."""
-        if self._stopping:
+        if self._stopping or self._repair_required:
             return
         today = dt_util.utcnow().date().isoformat()
         if self._last_prune_date == today:
@@ -853,8 +907,13 @@ class UsageManager:
         volatile = isinstance(self._storage, _VolatileUsageStorage)
         return {
             "mode": "volatile" if volatile else "durable",
-            "survives_restart": not volatile,
+            "survives_restart": not volatile and not self._repair_required,
+            **({"storage_repair_required": True} if self._repair_required else {}),
         }
+
+    def _require_writable(self) -> None:
+        if self._repair_required:
+            raise StorageRepairRequired("Usage")
 
     async def async_backup_data(self) -> dict[str, Any]:
         """Return all persisted usage categories without in-flight run state."""
@@ -865,6 +924,7 @@ class UsageManager:
         async with async_storage_lock(self._storage, self._lock):
             if not self._initialized:
                 raise RuntimeError("usage statistics have not been initialized")
+            self._require_writable()
             # Completed records are immutable after publication. Capture their
             # membership under the manager lock; serialize only local references.
             requests, runs = list(self.requests), list(self.runs)
@@ -926,9 +986,10 @@ class UsageManager:
             self.daily = deepcopy(daily)
             self.requests = list(requests)
             self.runs = list(runs)
-            await self._async_save_aggregates()
+            await self._async_save_aggregates(replacing=True)
             if self._detail_storage is not None:
-                await self._async_save_details()
+                await self._async_save_details(replacing=True)
+            self._repair_required = False
         await self.async_prune_details()
 
     @staticmethod
@@ -942,30 +1003,36 @@ class UsageManager:
             for key, value in usage.details.items():
                 target.details[key] = target.details.get(key, 0) + value
 
-    async def _async_save_totals(self) -> None:
+    async def _async_save_totals(self, *, replacing: bool = False) -> None:
+        if not replacing:
+            self._require_writable()
         if not self._initialized:
             raise RuntimeError("usage statistics have not been initialized")
         await self._storage.async_save(self.as_dict())
 
-    async def _async_save_aggregates(self) -> None:
+    async def _async_save_aggregates(self, *, replacing: bool = False) -> None:
         """Persist lifetime and daily aggregates in one authoritative snapshot."""
+        if not replacing:
+            self._require_writable()
         if not self._initialized:
             raise RuntimeError("usage statistics have not been initialized")
         if self._daily_storage is None:
-            await self._async_save_totals()
+            await self._async_save_totals(replacing=replacing)
             return
         await self._daily_storage.async_save(
             {"totals": self.as_dict(), "days": self.daily}
         )
         try:
-            await self._async_save_totals()
+            await self._async_save_totals(replacing=replacing)
         except Exception:
             _LOGGER.exception(
                 "Unable to update legacy usage totals mirror; aggregate snapshot "
                 "remains current"
             )
 
-    async def _async_save_details(self) -> None:
+    async def _async_save_details(self, *, replacing: bool = False) -> None:
+        if not replacing:
+            self._require_writable()
         if self._detail_storage is not None:
             details = await asyncio.to_thread(
                 _serialize_usage_details, list(self.requests), list(self.runs)
@@ -1019,7 +1086,10 @@ class UsageManager:
 
     async def _async_save_safely(self, label: str, save: Callable[[], Any]) -> None:
         """Coalesce routine telemetry writes without changing request outcomes."""
+        if self._repair_required:
+            return
         try:
+            self._require_writable()
             if self._stopping:
                 await save()
                 return

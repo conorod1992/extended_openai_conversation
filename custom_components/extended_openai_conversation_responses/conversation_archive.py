@@ -25,7 +25,10 @@ from homeassistant.util import dt as dt_util
 
 from .agent_maintenance import get_agent_maintenance_gate
 from .const import DOMAIN
-from .persistence_hardening import _async_settle_transactional_save
+from .persistence_hardening import (
+    StorageRepairRequired,
+    _async_settle_transactional_save,
+)
 from .runtime_hardening import MAX_MODEL_TOOL_RESULT_CHARACTERS
 from .scope import ResolvedDataScope
 from .storage_namespaces import ARCHIVE_PREFIX as STORAGE_KEY_PREFIX
@@ -176,6 +179,7 @@ class ConversationArchive:
         self._pending_partitions: set[str] = set()
         self._lock = asyncio.Lock()
         self._initialized = False
+        self._repair_required = False
 
     def private_continuity_bindings(self) -> dict[str, str]:
         """Return content-free identities under the caller's exclusive restore lease."""
@@ -204,8 +208,10 @@ class ConversationArchive:
         async with self._lock:
             if self._initialized:
                 return
-            data = await self._storage.async_load_metadata() or {}
-            if not isinstance(data, dict):
+            loaded = await self._storage.async_load_metadata()
+            data = loaded if loaded is not None else {}
+            repair_required = not isinstance(data, dict)
+            if repair_required:
                 data = {}
             pending = data.get("pending_partitions")
             if pending is not None:
@@ -233,12 +239,14 @@ class ConversationArchive:
             normalized_records = False
             seen_turn_ids: set[str] = set()
             sessions = data.get("sessions")
+            repair_required |= "sessions" in data and not isinstance(sessions, list)
             for raw in sessions if isinstance(sessions, list) else []:
                 try:
                     session = _validated_session(raw)
                     if session.session_id in staged_sessions:
                         raise ValueError("duplicate session identifier")
                 except TypeError, ValueError:
+                    repair_required = True
                     _LOGGER.warning("Ignoring malformed conversation archive session")
                     normalized_records = True
                     continue
@@ -254,6 +262,9 @@ class ConversationArchive:
                 and isinstance(value, str)
                 and value in staged_sessions
             }
+            repair_required |= "active" in data and (
+                not isinstance(active, dict) or len(staged_active) != len(active)
+            )
             partitions = data.get("partitions")
             staged_partitions = {
                 value
@@ -261,12 +272,26 @@ class ConversationArchive:
                 if isinstance(value, str)
                 and re.fullmatch(r"\d{4}-(?:0[1-9]|1[0-2])", value)
             }
+            repair_required |= "partitions" in data and (
+                not isinstance(partitions, list)
+                or len(staged_partitions) != len(partitions)
+            )
+            raw_payloads: dict[str, Any] = {}
             for partition in sorted(staged_partitions):
-                payload = await self._storage.async_load_partition(partition) or {}
+                payload = await self._storage.async_load_partition(partition)
+                raw_payloads[partition] = payload
                 turns = payload.get("turns") if isinstance(payload, dict) else None
+                repair_required |= not isinstance(turns, list)
                 for raw in turns if isinstance(turns, list) else []:
                     try:
                         turn = _validated_turn(raw)
+                        if (
+                            turn.session_id in staged_sessions
+                            and staged_sessions[turn.session_id].retention_state
+                            == "private"
+                        ):
+                            normalized_records = True
+                            continue
                         if (
                             turn.turn_id in seen_turn_ids
                             or turn.timestamp[:7] != partition
@@ -276,6 +301,7 @@ class ConversationArchive:
                         ):
                             raise ValueError("archive turn association is invalid")
                     except TypeError, ValueError:
+                        repair_required = True
                         _LOGGER.warning("Ignoring malformed conversation archive turn")
                         normalized_records = True
                         continue
@@ -289,7 +315,47 @@ class ConversationArchive:
                     normalized_records = True
             # Retry/cancellation must never expose a partially loaded generation.
             # Persist legacy private-title cleanup before publishing normalized state.
-            if normalized_records:
+            self._repair_required = repair_required
+            if repair_required:
+                # Privacy purges are independent of repair: remove only content
+                # bound to validated private sessions, retaining all other raw data.
+                private_ids = {
+                    key
+                    for key, session in staged_sessions.items()
+                    if session.retention_state == "private"
+                }
+                if private_titles:
+                    await self._storage.async_save_metadata(
+                        {
+                            **data,
+                            "sessions": [
+                                {**raw, "title": ""}
+                                if isinstance(raw, dict)
+                                and isinstance(raw.get("session_id"), str)
+                                and raw["session_id"] in private_ids
+                                else raw
+                                for raw in (sessions or [])
+                            ],
+                        }
+                    )
+                for partition, payload in raw_payloads.items():
+                    if isinstance(payload, dict) and isinstance(
+                        payload.get("turns"), list
+                    ):
+                        kept = [
+                            raw
+                            for raw in payload["turns"]
+                            if not (
+                                isinstance(raw, dict)
+                                and isinstance(raw.get("session_id"), str)
+                                and raw["session_id"] in private_ids
+                            )
+                        ]
+                        if len(kept) != len(payload["turns"]):
+                            await self._storage.async_save_partition(
+                                partition, {**payload, "turns": kept}
+                            )
+            if normalized_records and not repair_required:
                 # Commit repair through the same metadata journal boundary before
                 # exposing it. Failed repair is retried from durable intent.
                 repaired_partitions = {
@@ -308,7 +374,7 @@ class ConversationArchive:
                 )
                 for partition, payload in repaired_partitions.items():
                     await self._storage.async_save_partition(partition, payload)
-            if private_titles or normalized_records:
+            if (private_titles or normalized_records) and not repair_required:
                 await self._storage.async_save_metadata(
                     self._metadata_payload_for_state(
                         staged_sessions, staged_active, staged_partitions
@@ -863,6 +929,7 @@ class ConversationArchive:
             "session_count": len(self._sessions),
             "turn_count": sum(len(turns) for turns in self._turns.values()),
             "partition_count": len(self._partitions),
+            **({"storage_repair_required": True} if self._repair_required else {}),
         }
 
     def scope_counts(self) -> dict[str, int]:
@@ -877,7 +944,7 @@ class ConversationArchive:
     async def async_backup_data(self) -> dict[str, Any]:
         """Return retained archive content without active-session runtime state."""
         async with self._lock:
-            self._ensure_initialized()
+            self._require_writable()
             sessions = [
                 session
                 for session in self._sessions.values()
@@ -895,7 +962,7 @@ class ConversationArchive:
     async def async_recovery_data(self) -> dict[str, Any]:
         """Capture same-agent recovery state; portable exports omit active bindings."""
         async with self._lock:
-            self._ensure_initialized()
+            self._require_writable()
             # Records are immutable; the lock protects selection and serialization.
             sessions = list(self._sessions.values())
             turns = [turn for items in self._turns.values() for turn in items]
@@ -1017,6 +1084,7 @@ class ConversationArchive:
                 turns=dict(turn_map),
                 active=bindings,
                 changed_partitions=set(self._partitions) | new_partitions,
+                replacing=True,
             )
 
     def _require_session(self, session_id: str) -> ArchiveSession:
@@ -1035,7 +1103,7 @@ class ConversationArchive:
         self, session_key: str | None, session: ArchiveSession
     ) -> None:
         """Publish session metadata and an optional active binding."""
-        self._ensure_initialized()
+        self._require_writable()
         if session.retention_state == "unretained" and not self._pending_partitions:
             self._sessions[session.session_id] = session
             if session_key is not None:
@@ -1143,6 +1211,7 @@ class ConversationArchive:
         turns: dict[str, list[ArchiveTurn]],
         active: dict[str, str],
         changed_partitions: set[str],
+        replacing: bool = False,
     ) -> None:
         """Journal candidate Archive state before publishing it in memory.
 
@@ -1152,6 +1221,8 @@ class ConversationArchive:
         Partition/final-metadata failures preserve the published durable intent.
         """
         self._ensure_initialized()
+        if not replacing:
+            self._require_writable()
         partitions = self._partitions_for_turns(turns)
         removed_partitions = set(self._partitions) - partitions
         pending_names = (
@@ -1217,6 +1288,8 @@ class ConversationArchive:
             self._metadata_payload_for_state(sessions, active, partitions)
         )
         self._pending_partitions.clear()
+        if replacing:
+            self._repair_required = False
 
     def _metadata_payload_locked(
         self,
@@ -1243,6 +1316,11 @@ class ConversationArchive:
         self._partitions.clear()
         self._pending_partitions.clear()
         self._initialized = False
+
+    def _require_writable(self) -> None:
+        self._ensure_initialized()
+        if self._repair_required:
+            raise StorageRepairRequired("Conversation Archive")
 
     def _ensure_initialized(self) -> None:
         if isinstance(self._storage, HomeAssistantArchiveStorage):
