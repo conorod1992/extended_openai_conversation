@@ -400,13 +400,15 @@ def _model_record(
     return TemporaryMemoryRecord(**raw)
 
 
-async def test_initialize_skips_malformed_records_and_keeps_valid_data() -> None:
+async def test_initialize_preserves_malformed_generation_for_repair() -> None:
     storage = ValidationStorage({"records": [None, {"memory_id": "broken"}, _record()]})
     manager = TemporaryMemory(storage)  # type: ignore[arg-type]
 
-    await manager.async_initialize()
-
-    assert [item.memory_id for item in manager._records.values()] == ["memory-1"]
+    original = deepcopy(storage.data)
+    with pytest.raises(ValueError, match="needs repair"):
+        await manager.async_initialize()
+    assert not manager.initialized
+    assert storage.data == original
 
 
 async def test_automatic_duplicate_does_not_overwrite_manual_record() -> None:

@@ -41,6 +41,8 @@ The error reports that storage needs repair. Keep the original store private; an
 
 Temporary Memory uses the same record metadata checks for loading, failed-write readback and backup validation. Invalid IDs, duplicate IDs, source markers or creation/update timestamps block loading before cleanup can overwrite the damaged generation. Duplicate IDs are rejected even when the records have different owners or one has expired. Valid expiry and owner cleanup still apply normally.
 
+Other malformed Temporary Memory records also block initialization and failed-write readback. If a separate record is rejected by the privacy policy, startup removes only that record and leaves the remaining raw generation intact for repair. The store remains unavailable until repaired; a failed privacy-purge write is reported as a failure.
+
 ## Interrupted transfer files
 
 Transfers are not resumable across Home Assistant process restarts. New upload and export payloads live in an EOAI-private staging directory under `.storage`. Native owner locks protect active processes; startup removes abandoned owners after their locks have been released. Recovery neither recreates transfer sessions nor applies an abandoned import. Normal cancellation, expiry and shutdown still remove payloads.

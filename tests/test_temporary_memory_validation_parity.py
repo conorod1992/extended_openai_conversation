@@ -2,7 +2,9 @@
 
 from copy import deepcopy
 from datetime import timedelta
+import json
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -12,6 +14,62 @@ from custom_components.extended_openai_conversation_responses.temporary_memory i
 )
 from homeassistant.util import dt as dt_util
 from tests.test_temporary_memory import Storage, _record
+
+
+async def test_failed_privacy_purge_cannot_acknowledge_repaired_storage(
+    hass, monkeypatch
+):
+    store = TemporaryMemoryStore(
+        hass, 1, "temporary.purge-fault", private=True, atomic_writes=True
+    )
+    payload = {
+        "records": [None, {**_record(), "content": "password: synthetic-private-value"}]
+    }
+    await store.async_save(payload)
+    original = Path(store.path).read_bytes()
+    manager = TemporaryMemory(store)
+    with monkeypatch.context() as fault:
+        fault.setattr(
+            store, "async_save", AsyncMock(side_effect=OSError("write failed"))
+        )
+        with pytest.raises(OSError, match="write failed"):
+            await manager.async_initialize()
+    assert not manager.initialized
+    assert Path(store.path).read_bytes() == original
+    with pytest.raises(ValueError, match="needs repair"):
+        await manager.async_initialize()
+    assert not manager.initialized
+    assert json.loads(Path(store.path).read_text())["data"] == {"records": [None]}
+
+
+@pytest.mark.parametrize(
+    "damaged", [None, {"recoverable": "fact"}, {**_record(), "expires_at": "invalid"}]
+)
+@pytest.mark.parametrize("privacy_sibling", [False, True])
+async def test_malformed_generation_preserves_evidence_and_purges_only_privacy_rejections(
+    hass, damaged, privacy_sibling
+):
+    store = TemporaryMemoryStore(
+        hass, 1, "temporary.malformed", private=True, atomic_writes=True
+    )
+    records = [_record("valid"), damaged]
+    if privacy_sibling:
+        records.append(
+            {**_record("private"), "content": "password: synthetic-private-value"}
+        )
+    await store.async_save({"records": records, "opaque": "preserve"})
+    evidence = Path(store.path).read_bytes()
+    for _ in range(2):
+        manager = TemporaryMemory(store)
+        with pytest.raises(ValueError, match="needs repair"):
+            await manager.async_initialize()
+        assert not manager.initialized
+        persisted = json.loads(Path(store.path).read_text())["data"]
+        assert persisted == {"records": records[:2], "opaque": "preserve"}
+        if not privacy_sibling:
+            assert Path(store.path).read_bytes() == evidence
+        with pytest.raises(ValueError, match="needs repair"):
+            await manager._async_reconcile_failed_save()
 
 
 @pytest.mark.parametrize("conflict", ["content", "owner", "expired"])

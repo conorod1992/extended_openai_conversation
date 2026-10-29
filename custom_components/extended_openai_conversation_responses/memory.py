@@ -1954,7 +1954,7 @@ def _prepare_stored_memories(
                 if key_pair in seen_keys:
                     raise ValueError("duplicate canonical key in memory scope")
                 seen_keys.add(key_pair)
-        except _MemoryPrivacyRejected:
+        except MemoryPrivacyRejected:
             needs_save = True
             privacy_rejected.add(index)
             _LOGGER.warning("Removing persistent memory rejected by privacy policy")
@@ -2119,7 +2119,7 @@ def _clean_category(value: str) -> str:
     # Check bounded authored text, keeping camelCase clues until validation ends.
     _validate_privacy(value, "explicit")
     if _CATEGORY_SECRET_PATTERN.search(value):
-        raise _MemoryPrivacyRejected(
+        raise MemoryPrivacyRejected(
             "memory rejected because it appears to contain a secret"
         )
     return normalized
@@ -2187,21 +2187,21 @@ def _validate_privacy_fields(source: str, *values: object) -> None:
             _validate_privacy(value, source)
 
 
-class _MemoryPrivacyRejected(ValueError):
+class MemoryPrivacyRejected(ValueError):
     """A deliberate privacy purge, distinct from recoverable record damage."""
 
 
 def _validate_privacy(content: str, source: str) -> None:
     if _SECRET_PATTERN.search(content):
-        raise _MemoryPrivacyRejected(
+        raise MemoryPrivacyRejected(
             "memory rejected because it appears to contain a secret"
         )
     if _contains_financial_credential(content):
-        raise _MemoryPrivacyRejected(
+        raise MemoryPrivacyRejected(
             "memory rejected because it appears to contain a financial credential"
         )
     if source == "implicit" and _SENSITIVE_IMPLICIT_PATTERN.search(content):
-        raise _MemoryPrivacyRejected(
+        raise MemoryPrivacyRejected(
             "sensitive memories require an explicit user request"
         )
 

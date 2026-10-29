@@ -15,7 +15,7 @@ from uuid import uuid4
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
-from .memory import validate_memory_privacy
+from .memory import MemoryPrivacyRejected, validate_memory_privacy
 from .persistence_hardening import (
     StorageRepairRequired,
     _async_settle_transactional_save,
@@ -121,7 +121,9 @@ class TemporaryMemory:
                 raise ValueError("Temporary Memory records have invalid structure")
             raw_records = data.get("records", []) if isinstance(data, Mapping) else []
             seen_ids: set[str] = set()
-            for raw in raw_records:
+            privacy_rejected: set[int] = set()
+            damaged = False
+            for index, raw in enumerate(raw_records):
                 try:
                     record = _record_from_storage(raw)
                     if record.memory_id in seen_ids:
@@ -133,11 +135,26 @@ class TemporaryMemory:
                         self._records[record.memory_id] = record
                     else:
                         self.expired_pruned += 1
-                except _InvalidStoredMetadata as err:
-                    raise StorageRepairRequired("Temporary Memory") from err
-                except TypeError, ValueError:
+                except MemoryPrivacyRejected:
+                    privacy_rejected.add(index)
                     self._normalization_pending = True
-                    continue
+                except TypeError, ValueError:
+                    damaged = True
+            if damaged:
+                if privacy_rejected:
+                    # Purge only policy-rejected records. Keep every other raw
+                    # sibling and opaque field as repair evidence.
+                    await self._store.async_save(
+                        {
+                            **(data or {}),
+                            "records": [
+                                raw
+                                for index, raw in enumerate(raw_records)
+                                if index not in privacy_rejected
+                            ],
+                        }
+                    )
+                raise StorageRepairRequired("Temporary Memory")
             self._initialized = True
             if self.expired_pruned:
                 await self._async_save_locked(reconcile_failure=False)
@@ -146,6 +163,7 @@ class TemporaryMemory:
             self.expired_pruned = 0
             self._initialized = False
             self._committed_state = None
+            self._normalization_pending = False
             raise
         self._remember_committed_state()
         await self._async_normalize_loaded_records_locked()
@@ -521,10 +539,10 @@ class TemporaryMemory:
                 seen_ids.add(record.memory_id)
                 _parse_expiry(record.expires_at)
                 normalized = _normalize_record_owner(record)
-            except _InvalidStoredMetadata as err:
-                raise StorageRepairRequired("Temporary Memory") from err
-            except TypeError, ValueError:
+            except MemoryPrivacyRejected:
                 continue
+            except (TypeError, ValueError) as err:
+                raise StorageRepairRequired("Temporary Memory") from err
             if normalized is None:
                 invalid_owners += 1
                 continue
