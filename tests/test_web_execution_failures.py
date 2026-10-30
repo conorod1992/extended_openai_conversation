@@ -410,3 +410,42 @@ async def test_bodyless_action_headers_preserve_completion_and_composite(
             with pytest.raises(HomeAssistantError):
                 await CompositeFunction().execute(hass, composite, {}, None, [])
             assert effects == ["remote action"]
+
+
+async def test_reused_rest_data_retires_no_content_state_before_xml(
+    hass, aiohttp_server, socket_enabled, monkeypatch
+):
+    effects = []
+
+    async def action(request):
+        effects.append("applied")
+        if len(effects) == 1:
+            return http_web.Response(
+                status=204,
+                headers={"Content-Encoding": "gzip", "Content-Type": "application/xml"},
+            )
+        return http_web.Response(
+            status=200, body=b"<root>ready</root>", content_type="application/xml"
+        )
+
+    app = http_web.Application()
+    app.router.add_post("/action", action)
+    server = await aiohttp_server(app)
+    async with aiohttp.ClientSession() as session:
+        monkeypatch.setattr(web, "async_get_clientsession", lambda *_a, **_kw: session)
+        data = web.get_rest_data(
+            hass,
+            {
+                **_rest_config(),
+                "method": "POST",
+                "resource": str(server.make_url("/action")),
+            },
+            {},
+        )
+        await data.async_update()
+        assert data.data_without_xml() == ""
+        await data.async_update()
+        import json
+
+        assert json.loads(data.data_without_xml()) == {"root": "ready"}
+        assert effects == ["applied", "applied"]

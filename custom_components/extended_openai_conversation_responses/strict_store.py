@@ -107,7 +107,8 @@ class PropagatingWriteStore(RecoveryGuardedStore):
 
     _corruption_unavailable = False
 
-    async def _async_load_data(self) -> dict[str, Any] | None:
+    async def _async_load_data(self) -> Any:
+        """Retain HA's raw payload contract; managers validate record shapes."""
         result = await super()._async_load_data()
         if self._load_empty:
             return result  # Preserve HA's explicit read-only emergency mode.

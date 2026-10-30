@@ -16,19 +16,27 @@ async def test_guest_listeners_cannot_reject_commits_or_starve_other_listeners(
     manager = GuestModeManager(hass, "entry", "agent")
     await manager.async_initialize()
     observed = []
+    deliveries = 0
 
-    def fail():
-        raise ValueError("PRIVATE-LISTENER-SENTINEL")
+    def observer():
+        nonlocal deliveries
+        deliveries += 1
+        if deliveries % 3 == 1:
+            raise ValueError("PRIVATE-LISTENER-SENTINEL")
+        observed.append(manager.is_active())
 
-    manager.async_add_listener(fail)
-    manager.async_add_listener(lambda: observed.append(manager.is_active()))
+    # Whichever listener the set visits first fails. Both later listeners must
+    # still observe the committed generation, independently of iteration order.
+    for _ in range(3):
+        manager.async_add_listener(lambda: observer())
     assert (await manager.async_update_trusted(indefinite=True))["currently_active"]
-    assert observed == [True]
+    assert observed == [True, True]
     fresh = GuestModeManager(hass, "entry", "agent")
     await fresh.async_initialize()
     assert fresh.is_active()
     assert not (await manager.async_disable_trusted())["currently_active"]
-    assert observed == [True, False]
+    assert observed == [True, True, False, False]
+    assert deliveries == 6
     assert "PRIVATE-LISTENER-SENTINEL" not in caplog.text
 
 
