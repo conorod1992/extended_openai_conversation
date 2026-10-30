@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextvars
 import json
 from typing import Any
 
@@ -113,19 +115,34 @@ async def _restricted_ws_client(
     return await hass_ws_client(hass, access_token)
 
 
+async def _from_unbound(operation):
+    from custom_components.extended_openai_conversation_responses import ha_permissions
+
+    async def run():
+        assert (
+            ha_permissions._ACTIVE_HA_CONTEXT.get()
+            is ha_permissions._AuthorityState.UNBOUND
+        )
+        return await operation
+
+    return await contextvars.Context().run(asyncio.create_task, run())
+
+
 async def _say_as_user(
     hass: HomeAssistant,
     agent: Any,
     user: MockUser,
     text: str,
 ) -> conversation.ConversationResult:
-    return await conversation.async_converse(
-        hass=hass,
-        text=text,
-        conversation_id=None,
-        context=Context(user_id=user.id),
-        language="en",
-        agent_id=agent.entry.entry_id,
+    return await _from_unbound(
+        conversation.async_converse(
+            hass=hass,
+            text=text,
+            conversation_id=None,
+            context=Context(user_id=user.id),
+            language="en",
+            agent_id=agent.entry.entry_id,
+        )
     )
 
 
@@ -225,6 +242,32 @@ async def test_restricted_user_cannot_bypass_ha_entity_or_management_permissions
 
     assert response["success"] is False
     assert "Administrator permission is required" in str(response)
+    from copy import deepcopy
+    import pytest
+    from homeassistant.exceptions import HomeAssistantError
+    from custom_components.extended_openai_conversation_responses.const import (
+        DOMAIN,
+        SERVICE_DISABLE_FUNCTION_TOOLS,
+    )
+
+    before = deepcopy(dict(subentry.data))
+    with pytest.raises(HomeAssistantError):
+        await _from_unbound(
+            hass.services.async_call(
+                DOMAIN,
+                SERVICE_DISABLE_FUNCTION_TOOLS,
+                {
+                    "config_entry": entry.entry_id,
+                    "agent_id": subentry.subentry_id,
+                    "functions": ["execute_services"],
+                },
+                blocking=True,
+                context=Context(user_id=user.id),
+            )
+        )
+    assert dict(subentry.data) == before
+
+
 
 async def test_script_function_enforces_control_in_nested_rendered_actions(hass):
     """The real Script runner applies caller permission before every nested call."""
