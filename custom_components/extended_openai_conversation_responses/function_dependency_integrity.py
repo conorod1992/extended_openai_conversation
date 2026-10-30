@@ -244,6 +244,23 @@ async def async_finish_function_rename(
             raise mark_mutation_failure(
                 HomeAssistantError(message), "uncertain"
             ) from err
+        # Another Rule writer can acknowledge a new consumer after the Tool
+        # commit, then make our Rule revision stale. Rolling back the Tool would
+        # remove that consumer's validated dependency even if config is unchanged.
+        if (
+            rules.revision() != expected_rules_revision
+            and rules.function_references(new_name)
+        ):
+            if isinstance(err, asyncio.CancelledError):
+                raise
+            raise mark_mutation_failure(
+                HomeAssistantError(
+                    "Request Rules changed and now reference the saved Function Tool "
+                    "rename. The rename was retained; reload to review Rule references "
+                    "before retrying."
+                ),
+                "uncertain",
+            ) from err
         try:
             rollback_configuration()
         except HomeAssistantError as rollback_err:

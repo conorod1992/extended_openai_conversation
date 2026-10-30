@@ -185,3 +185,94 @@ async def test_retained_rename_is_uncertain_through_websocket_and_next_action(
     if route == "repair":
         assert yaml.safe_load(subentry.data["functions"])[1] == sibling
     assert Path(store.path).exists()
+
+
+@pytest.mark.parametrize("route", ["normal", "repair"])
+@pytest.mark.parametrize("dependent", [False, True])
+async def test_concurrent_rule_consumer_prevents_rename_rollback(
+    function_agent,
+    monkeypatch,
+    route,
+    dependent,
+):
+    hass, entry, subentry, rules, store = function_agent
+    tool = yaml.safe_load(subentry.data["functions"])[0]
+    tool["spec"]["name"] = "renamed_probe"
+    if route == "repair":
+        damaged = yaml.safe_load(subentry.data["functions"])
+        damaged[0]["function"]["name"] = "missing_legacy_implementation"
+        subentry.data = {**subentry.data, "functions": yaml.safe_dump(damaged)}
+    rename = rules.async_rename_function_reference
+    consumer = local_rule("Concurrent consumer")
+    if dependent:
+        consumer["action"]["actions"] = [
+            {
+                "action": "extended_openai_conversation_responses.call_function",
+                "data": {"function": "renamed_probe", "arguments": {}},
+            }
+        ]
+    created = None
+
+    async def concurrent_create(*args, **kwargs):
+        nonlocal created
+        created = await ui.async_management_command(
+            hass,
+            "admin",
+            True,
+            {
+                "section": "request_rules",
+                "action": "create",
+                "entry_id": entry.entry_id,
+                "subentry_id": subentry.subentry_id,
+                "revision": rules.revision(),
+                "rule": consumer,
+            },
+        )
+        return await rename(*args, **kwargs)
+
+    monkeypatch.setattr(rules, "async_rename_function_reference", concurrent_create)
+    response = (
+        await send(
+            function_agent, "save_one", section="function_repair", index=0, tool=tool
+        )
+        if route == "repair"
+        else await send(function_agent, "save", original_name="native_probe", tool=tool)
+    )
+    assert created["rule"]["id"] == consumer["id"]
+    assert response.send_error.call_args.args[1] == (
+        "eoai_mutation_uncertain" if dependent else "invalid_request"
+    )
+    assert yaml.safe_load(subentry.data["functions"])[0]["spec"]["name"] == (
+        "renamed_probe" if dependent else "native_probe"
+    )
+    assert hass.config_entries.async_update_subentry.call_count == (
+        1 if dependent else 2
+    )
+    fresh = RequestRules(RequestRuleStore(hass, STORAGE_VERSION, store.key))
+    await fresh.async_initialize()
+    assert fresh.function_references("renamed_probe") == (
+        [{"id": consumer["id"], "name": consumer["name"]}] if dependent else []
+    )
+    monkeypatch.setattr(ui, "async_get_request_rules", AsyncMock(return_value=fresh))
+    # The newly acknowledged Rule must remain editable against the Tool it was
+    # validated with, even while the original Rule still needs explicit repair.
+    edited = await ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        {
+            "section": "request_rules",
+            "action": "update",
+            "entry_id": entry.entry_id,
+            "subentry_id": subentry.subentry_id,
+            "revision": fresh.revision(),
+            "rule_id": consumer["id"],
+            "rule": {**consumer, "name": "Edited concurrent consumer"},
+        },
+    )
+    assert edited["rule"]["name"] == "Edited concurrent consumer"
+    reloaded = RequestRules(RequestRuleStore(hass, STORAGE_VERSION, store.key))
+    await reloaded.async_initialize()
+    assert (
+        reloaded.rule_snapshot(consumer["id"])["name"] == "Edited concurrent consumer"
+    )
