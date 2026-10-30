@@ -238,33 +238,51 @@ class GuestModeManager:
                 return
             # Storage I/O failures are not malformed state. Propagate them so a
             # later getter/setup can retry instead of silently disabling Guest Mode.
-            data = await self._store.async_load()
-            if self._persistence_unavailable:
-                # An ambiguous write cannot recover by ignoring malformed data.
-                self._schedule = self.validate_backup_data(
-                    {"schedule": None} if data is None else data
-                )
-                self._persistence_unavailable = False
-                self._initialized = True
-                self._notify()
-                return
-            raw = data.get("schedule") if isinstance(data, Mapping) else None
-            schedule = None
-            if isinstance(raw, Mapping):
-                try:
-                    candidate = GuestModeSchedule(**dict(raw))
-                    _parse_timestamp(self.hass, candidate.active_from, "active_from")
-                    if candidate.active_until is not None:
-                        _parse_timestamp(
-                            self.hass, candidate.active_until, "active_until"
-                        )
-                    schedule = candidate
-                except TypeError, ValueError:
-                    _LOGGER.warning(
-                        "Ignoring malformed Guest Mode state", exc_info=True
+            try:
+                data = await self._store.async_load()
+            except Exception:
+                self._persistence_unavailable = True
+                raise
+            recovering = self._persistence_unavailable
+            try:
+                if data is None or data == {}:
+                    schedule = None
+                elif not isinstance(data, Mapping) or "schedule" not in data:
+                    raise ValueError("Guest Mode storage is invalid")
+                elif data["schedule"] is None:
+                    schedule = None
+                else:
+                    raw = data["schedule"]
+                    if not isinstance(raw, Mapping):
+                        raise ValueError("Guest Mode schedule is invalid")
+                    # Retain the legacy dataclass defaults and HA-local timestamps.
+                    schedule = GuestModeSchedule(**dict(raw))
+                    start = _parse_timestamp(
+                        self.hass, schedule.active_from, "active_from"
                     )
+                    end = (
+                        _parse_timestamp(
+                            self.hass, schedule.active_until, "active_until"
+                        )
+                        if schedule.active_until is not None
+                        else None
+                    )
+                    if end is not None and end <= start:
+                        raise ValueError("Guest Mode interval is invalid")
+                    if not isinstance(schedule.source, str) or not schedule.source:
+                        raise ValueError("Guest Mode source is invalid")
+                    if schedule.updated_at is not None:
+                        _parse_timestamp(self.hass, schedule.updated_at, "updated_at")
+            except TypeError, ValueError:
+                self._persistence_unavailable = True
+                from .persistence_hardening import StorageRepairRequired
+
+                raise StorageRepairRequired("Guest Mode") from None
             self._schedule = schedule
+            self._persistence_unavailable = False
             self._initialized = True
+            if recovering:
+                self._notify()
 
     @property
     def schedule(self) -> GuestModeSchedule | None:
@@ -435,6 +453,14 @@ class GuestModeManager:
                 raise ValueError(f"Guest Mode {field} is invalid")
         if not isinstance(schedule.source, str) or not schedule.source:
             raise ValueError("Guest Mode source is invalid")
+        start = dt_util.parse_datetime(schedule.active_from)
+        end = (
+            dt_util.parse_datetime(schedule.active_until)
+            if schedule.active_until is not None
+            else None
+        )
+        if start is not None and end is not None and end <= start:
+            raise ValueError("Guest Mode interval is invalid")
         return schedule
 
     async def async_replace_backup(self, schedule: GuestModeSchedule | None) -> None:
