@@ -18,7 +18,7 @@ test("Knowledge CRUD failures, retry, filtering and availability reconcile again
     backend.call = async message => {
       if (message.section === "knowledge" && message.action === "create") {
         window.knowledgeCreateAttempts++;
-        if (fail) { fail = false; throw new Error("temporary create failure"); }
+        if (fail) { fail = false; throw Object.assign(new Error("temporary create failure"), {code:"invalid_request"}); }
       }
       return original(message);
     };
@@ -91,7 +91,7 @@ test("Memory date metadata survives backend failure, retry and fresh section loa
     const backend = dataCollectionBackend, original = backend.call.bind(backend);
     let fail = true;
     backend.call = async message => {
-      if (message.section === "memories" && message.action === "update" && fail) { fail = false; throw new Error("invalid valid_from date-time"); }
+      if (message.section === "memories" && message.action === "update" && fail) { fail = false; throw Object.assign(new Error("invalid valid_from date-time"), {code:"invalid_request"}); }
       return original(message);
     };
   });

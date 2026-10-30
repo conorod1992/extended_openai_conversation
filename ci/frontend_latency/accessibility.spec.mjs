@@ -246,7 +246,7 @@ test("scan genuine HA route and editor accessibility semantics", async ({browser
               host.hass.callWS = message => {
                 if (!failed && message.section === "tools" && message.action === "delete") {
                   failed = true;
-                  return Promise.reject(new Error("Accessibility destructive transport error"));
+                  return Promise.reject(Object.assign(new Error("Accessibility destructive transport error"), {code:"invalid_request"}));
                 }
                 return original(message);
               };

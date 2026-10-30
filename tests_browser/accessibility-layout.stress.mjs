@@ -130,7 +130,7 @@ test("390px save bars and validation dialogs complete critical writes without pa
     harness.hass.callWS = message => {
       if (message.section === "knowledge" && message.action === "create" && fail) {
         fail = false;
-        return Promise.reject(new Error("Validation recovery: ".repeat(15)));
+        return Promise.reject(Object.assign(new Error("Validation recovery: ".repeat(15)), {code:"invalid_request"}));
       }
       return original(message);
     };

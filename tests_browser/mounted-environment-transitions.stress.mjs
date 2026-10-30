@@ -161,6 +161,14 @@ test("Function Tool editor falls back when native YAML initialization fails and 
       setValue(value) {
         if (window.__eocNativeYamlUnavailable) throw new Error("Native YAML editor unavailable");
         this.lastSetValue = structuredClone(value);
+        this._yaml = JSON.stringify(value);
+        const yaml = this._yaml;
+        this.updateComplete = Promise.resolve(true);
+        if (!this.shadowRoot) this.attachShadow({mode:"open"});
+        let child = this.shadowRoot.querySelector("ha-code-editor");
+        if (!child) { child = document.createElement("ha-code-editor"); this.shadowRoot.append(child); }
+        child.updateComplete = Promise.resolve(true);
+        child.codemirror = {state:{doc:{toString:() => yaml}}};
       }
       get yaml() {
         return this._yaml;

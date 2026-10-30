@@ -64,7 +64,7 @@ test("Restore rejects corrupt input, supports cancel and requires file reselecti
     const original = browserHarness.hass.callWS;
     window.restoreFailureCalls = 0;
     browserHarness.hass.callWS = message => {
-      if (message.type === "extended_openai_conversation_responses/management/backup_transfer" && message.action === "import_restore" && window.restoreFailureCalls++ === 0) return Promise.reject(new Error("injected restore failure"));
+      if (message.type === "extended_openai_conversation_responses/management/backup_transfer" && message.action === "import_restore" && window.restoreFailureCalls++ === 0) return Promise.reject(Object.assign(new Error("injected restore failure"), {code:"invalid_request"}));
       return original(message);
     };
   });
