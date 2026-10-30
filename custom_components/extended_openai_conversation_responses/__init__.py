@@ -313,23 +313,47 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # only this successfully unloaded generation, using its captured owners.
     for platform in platforms:
         platform.async_unsub_polling()
-    hass_data = getattr(hass, "data", None)
-    subentries = getattr(entry, "subentries", None)
-    if isinstance(hass_data, dict) and subentries is not None:
-        from .management_function_repair import discard_persisted_config_projection
 
-        runtimes = hass_data.get(_REQUEST_RULE_RUNTIMES, {})
-        managers = hass_data.get(_REQUEST_RULE_MANAGERS, {})
-        for subentry in subentries.values():
-            key = (entry.entry_id, subentry.subentry_id)
-            runtimes.pop(key, None)
-            # Durable managers belong to one loaded entry generation. Reload must
-            # hydrate them from HA Store instead of retaining cached rule state.
-            manager = managers.pop(key, None)
-            if manager is not None:
-                manager.async_unload()
-            discard_persisted_config_projection(subentry)
-    await async_unload_templates(hass, entry.entry_id)
+    async def retire_runtime_owners() -> None:
+        from .agent_maintenance import get_agent_maintenance_gate
+
+        hass_data = getattr(hass, "data", None)
+        subentries = getattr(entry, "subentries", None)
+        if isinstance(hass_data, dict) and subentries is not None:
+            from .management_function_repair import discard_persisted_config_projection
+
+            runtimes = hass_data.get(_REQUEST_RULE_RUNTIMES, {})
+            managers = hass_data.get(_REQUEST_RULE_MANAGERS, {})
+            owners = [
+                (
+                    key := (entry.entry_id, subentry.subentry_id),
+                    managers.get(key),
+                    runtimes.get(key),
+                    subentry,
+                )
+                for subentry in subentries.values()
+            ]
+            for key, manager, runtime, subentry in owners:
+                # Existing restore/rollback owns its participant until the
+                # exclusive lease settles. This does not upgrade a caller's
+                # ordinary shared lease, as a native reload action may hold one.
+                await get_agent_maintenance_gate(hass, *key).async_wait_idle()
+                if manager is not None:
+                    try:
+                        # Fence delayed validation and drain physical writes before
+                        # a replacement Store/manager can publish the next generation.
+                        await manager.async_retire()
+                    finally:
+                        if managers.get(key) is manager:
+                            managers.pop(key)
+                if runtime is not None and runtimes.get(key) is runtime:
+                    runtimes.pop(key)
+                discard_persisted_config_projection(subentry)
+        await async_unload_templates(hass, entry.entry_id)
+
+    # Platforms have unloaded. Cancellation must not abandon a retired manager
+    # in the cache or allow its pending write to race a replacement generation.
+    await async_settle_owned_operation(retire_runtime_owners())
     return True
 
 

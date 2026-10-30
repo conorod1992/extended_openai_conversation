@@ -464,6 +464,7 @@ class RequestRules:
         self._diagnostics: dict[str, str] = {}
         self._lock = asyncio.Lock()
         self._initialized = False
+        self._retired = False
         self._repair_required = False
         self._committed_state: dict[str, Any] | None = None
         self._generation = 0
@@ -483,14 +484,30 @@ class RequestRules:
             self._unsubscribe_stop()
             self._unsubscribe_stop = None
 
+    def _require_current_owner(self) -> None:
+        if self._retired:
+            raise HomeAssistantError(
+                "Request Rules were reloaded; retry with the current assistant"
+            )
+
+    async def async_retire(self) -> None:
+        """Fence detached users, then drain writes before replacement is possible."""
+        self._retired = True
+        self._initialized = False
+        self._generation += 1
+        async with self._lock:
+            self.async_unload()
+
     async def async_initialize(self) -> None:
         """Load stored rules while preserving newly unsupported patterns for repair."""
         async with self._lock:
+            self._require_current_owner()
             if self._initialized:
                 return
             try:
                 await _async_repair_private_store_mode(self._store)
                 stored = await self._store.async_load()
+                self._require_current_owner()
                 migrated = False
                 self._repair_required = False
                 raw_rules: Sequence[Any] = ()
@@ -610,6 +627,7 @@ class RequestRules:
                 migrated = self._sort_and_compile() or migrated
                 if migrated and not self._repair_required:
                     await self._async_save_locked(reconcile_failure=False)
+                self._require_current_owner()
                 self._remember_committed_state()
                 self._initialized = True
             except BaseException:
@@ -636,6 +654,7 @@ class RequestRules:
         """Return a revision that also detects a committed A -> B -> A cycle."""
         payload = json.dumps(
             {
+                **({"retired": True} if self._retired else {}),
                 "generation": self._revision_generation,
                 "defaults": self._defaults,
                 "wording_groups": self._wording_groups,
@@ -650,6 +669,7 @@ class RequestRules:
 
     def _require_revision_locked(self, expected_revision: str | None) -> None:
         """Reject a stale management writer while the mutation lock is held."""
+        self._require_current_owner()
         if self._repair_required:
             raise StorageRepairRequired("Request Rules")
         if expected_revision is None:
@@ -698,6 +718,7 @@ class RequestRules:
 
     async def async_backup_data(self) -> dict[str, Any]:
         """Return durable Request Rule state without management-only fields."""
+        self._require_current_owner()
         if self._repair_required:
             raise StorageRepairRequired("Request Rules")
         snapshot = self.snapshot()
@@ -758,6 +779,7 @@ class RequestRules:
         """Replace all durable state from a fully validated backup."""
         prepared = self.validate_backup_data(value)
         async with self._lock:
+            self._require_current_owner()
             self._defaults = prepared["defaults"]
             self._wording_groups = prepared["wording_groups"]
             self._groups = prepared["groups"]
@@ -1131,6 +1153,9 @@ class RequestRules:
             if cached is None or cached.config != conditions:
                 self._discard_condition_checkers(match.rule["id"])
                 cached = await _NativeConditions.async_create(hass, conditions)
+                if self._retired:
+                    cached.async_unload()
+                    self._require_current_owner()
                 self._condition_checkers[match.rule["id"]] = cached
             return cached.check(
                 hass, {"request": {"slots": match.slots}, **match.slots}
@@ -1375,6 +1400,7 @@ class RequestRules:
         self, *, reconcile_failure: bool = True, replacing: bool = False
     ) -> None:
         """Settle each Store write before propagating failure or cancellation."""
+        self._require_current_owner()
         if self._repair_required and not replacing:
             self._restore_committed_state()
             raise StorageRepairRequired("Request Rules")
