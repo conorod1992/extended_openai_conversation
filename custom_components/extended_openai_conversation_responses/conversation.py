@@ -227,6 +227,7 @@ from .request_diagnostics import (
 )
 from .request_origin import bind_request_satellite
 from .request_rules import (
+    REQUEST_RULES_UNAVAILABLE,
     RequestRuleRuntime,
     RequestRules,
     async_evaluate_rule,
@@ -1023,6 +1024,22 @@ class ExtendedOpenAIAgentEntity(
                     else nullcontext(None)
                 ) as run:
                     try:
+                        if (
+                            isinstance(self._request_rules, RequestRules)
+                            and not self._request_rules.initialized
+                        ):
+                            try:
+                                self._request_rules = await async_get_request_rules(
+                                    self.hass,
+                                    self.entry.entry_id,
+                                    self.subentry.subentry_id,
+                                )
+                            except Exception:
+                                # Preserve the unavailable manager and reject this
+                                # turn through the existing local failure boundary.
+                                raise HomeAssistantError(
+                                    REQUEST_RULES_UNAVAILABLE
+                                ) from None
                         evaluation = (
                             await async_evaluate_rule(
                                 self.hass,

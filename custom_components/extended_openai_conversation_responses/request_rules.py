@@ -99,6 +99,9 @@ from .template_diagnostics import private_template_diagnostics
 _LOGGER = logging.getLogger(__name__)
 
 STORAGE_VERSION = 6
+REQUEST_RULES_UNAVAILABLE = (
+    "Request Rules persistence is unavailable; retry after storage recovery"
+)
 
 MAX_RULES = 500
 MAX_PHRASES = 25
@@ -623,6 +626,11 @@ class RequestRules:
                 self._revision_generation = 0
                 self._committed_revision_generation = 0
                 raise
+
+    @property
+    def initialized(self) -> bool:
+        """Whether the retained manager owns an admitted storage generation."""
+        return self._initialized
 
     def revision(self) -> str:
         """Return a revision that also detects a committed A -> B -> A cycle."""
@@ -3393,6 +3401,8 @@ async def async_evaluate_rule(
     entry_data: Mapping[str, Any] | None = None,
 ) -> RuleEvaluation | None:
     """Apply each eligible rule once, stopping on handoff or failure."""
+    if isinstance(rules, RequestRules) and not rules.initialized:
+        raise HomeAssistantError(REQUEST_RULES_UNAVAILABLE)
     matching_generation = rules._generation if isinstance(rules, RequestRules) else None
     matching_snapshot = (
         rules._committed_matching_snapshot if isinstance(rules, RequestRules) else None
