@@ -509,6 +509,27 @@ def persist_valid_function_configuration(
     }
 
 
+def _saved_agent_metadata(
+    hass: HomeAssistant,
+    entry: Any,
+    subentry: Any,
+    *,
+    config: dict[str, Any],
+    title: str | None = None,
+) -> dict[str, Any]:
+    """Optional catalogue status cannot reject an already committed repair."""
+    from .management_loading_performance import _agent_snapshot
+
+    try:
+        return {"agent": _agent_snapshot(hass, entry, subentry, config=config, title=title)}
+    except Exception as err:
+        _LOGGER.warning(
+            "Committed Function repair omitted optional agent metadata (%s)",
+            type(err).__name__,
+        )
+        return {}
+
+
 def _safe_configuration_payload(
     hass: HomeAssistant,
     management_ui: Any,
@@ -802,7 +823,7 @@ async def async_function_repair(
                     subentry, persisted, saved_title
                 ),
                 "config": snapshot,
-                "agent": management_loading_performance._agent_snapshot(
+                **_saved_agent_metadata(
                     hass, entry, subentry, config=persisted, title=saved_title
                 ),
             }
@@ -935,8 +956,8 @@ async def async_function_repair(
         payload = _safe_configuration_payload(
             hass, management_ui, management_loading_performance, entry, subentry
         )
-        payload["agent"] = management_loading_performance._agent_snapshot(
-            hass, entry, subentry, config=persisted
+        payload.update(
+            _saved_agent_metadata(hass, entry, subentry, config=persisted)
         )
         return payload
 
@@ -970,7 +991,7 @@ async def async_function_repair(
         {
             "valid": True,
             "tools": deepcopy(validated_tools),
-            "agent": management_loading_performance._agent_snapshot(
+            **_saved_agent_metadata(
                 hass, entry, subentry, config=persisted
             ),
         }
