@@ -80,7 +80,6 @@ from .exposed_attributes import exposed_attribute_catalog
 from .frontend_assets import async_register_frontend_assets, frontend_entry_url
 from .function_configuration_repair import has_unavailable_native_tool
 from .function_dependency_integrity import (
-    _is_template_string,
     _rule_script_actions,
     async_finish_function_rename,
     async_validate_request_rule_functions,
@@ -587,54 +586,6 @@ def _request_rule_function_tools(
     return validate_function_tools(selected)
 
 
-def _validate_request_rule_functions(
-    rule: Mapping[str, Any], configured_tools: list[dict[str, Any]]
-) -> None:
-    """Validate configured Function references in canonical persisted actions."""
-    calls: list[Mapping[str, Any]] = []
-    for action in rule.get("action", {}).get("actions", []):
-        if not isinstance(action, Mapping):
-            continue
-        if not is_function_service_action(action):
-            continue
-        data = effective_service_payload(action)
-        if not isinstance(data, Mapping) or not isinstance(data.get("function"), str):
-            raise HomeAssistantError("Configured Function action is invalid")
-        arguments = data.get("arguments", {})
-        if not isinstance(arguments, Mapping) and not _is_template_string(arguments):
-            raise HomeAssistantError("Configured Function arguments must be an object")
-        calls.append(data)
-
-    available = {
-        tool["spec"]["name"] for tool in configured_tools if function_tool_enabled(tool)
-    }
-    missing = {
-        str(call["function"]) for call in calls if call["function"] not in available
-    }
-    if missing and rule.get("enabled", True):
-        raise HomeAssistantError(
-            "Function Tool is unavailable or disabled: " + ", ".join(sorted(missing))
-        )
-    by_name = {tool["spec"]["name"]: tool for tool in configured_tools}
-    for call in calls:
-        function_name = str(call["function"])
-        if function_name not in by_name:
-            continue
-        parameters = by_name[function_name]["spec"].get("parameters", {})
-        required = (
-            parameters.get("required", []) if isinstance(parameters, dict) else []
-        )
-        arguments = call.get("arguments", {})
-        missing_inputs = (
-            set(required) - set(arguments) if isinstance(arguments, Mapping) else set()
-        )
-        if missing_inputs:
-            raise HomeAssistantError(
-                f"Function Tool `{function_name}` needs input: "
-                + ", ".join(sorted(missing_inputs))
-            )
-
-
 async def _validate_request_rule_conditions(
     hass: HomeAssistant,
     rule: Mapping[str, Any],
@@ -869,6 +820,30 @@ def _unknown_management_action(request: _ManagementRequest) -> dict[str, Any]:
     )
 
 
+async def _async_validate_request_rule_mutation(
+    hass: HomeAssistant,
+    rule: Mapping[str, Any],
+    entry: Any,
+    subentry: Any,
+) -> None:
+    """Validate the full action tree against one current configuration generation."""
+    await _validate_request_rule_conditions(hass, rule)
+    source = subentry.data
+    await async_validate_request_rule_functions(
+        hass, rule, _request_rule_function_tools(rule, source)
+    )
+    # HA replaces the immutable data mapping for each changed configuration.
+    # Static argument validation can await HA; its source must still be current.
+    if subentry.data is not source:
+        raise HomeAssistantError(
+            "Configuration changed while validating the Request Rule. "
+            "Reload the latest settings before saving."
+        )
+    from .request_rules import validate_rule_model_request
+
+    validate_rule_model_request(rule, source, getattr(entry, "data", {}))
+
+
 async def async_request_rules_command(request: _ManagementRequest) -> dict[str, Any]:
     """Handle the request rules Management section."""
     hass = request.hass
@@ -902,10 +877,6 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
             return dict(result or {})
         rules = await async_get_request_rules(hass, entry_id, subentry_id)
         return await async_request_rule_match_preview(hass, rules, text)
-    if action in {"create", "update"}:
-        # Static validation can await Home Assistant schemas. Keep the legacy
-        # second read so the final rule validator sees current Function Tools.
-        _entry, subentry = entry_and_agent(hass, entry_id, subentry_id)
     rules = await async_get_request_rules(hass, entry_id, subentry_id)
     if action == "rule_pack_export":
         return export_rule_pack(
@@ -998,17 +969,8 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
         )
     if action == "create":
         candidate = _prepare_request_rule(message.get("rule"))
-        await _validate_request_rule_conditions(hass, candidate)
-        _validate_request_rule_functions(
-            candidate,
-            _request_rule_function_tools(candidate, subentry.data)
-            if hasattr(subentry, "data")
-            else [],
-        )
-        from .request_rules import validate_rule_model_request
-
-        validate_rule_model_request(
-            candidate, subentry.data, getattr(request.entry, "data", {})
+        await _async_validate_request_rule_mutation(
+            hass, candidate, request.entry, subentry
         )
         rule = await rules.async_create(
             candidate, expected_revision=message.get("revision")
@@ -1032,17 +994,8 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
         if field_only and update_revision is None:
             update_revision = rules.revision()
         candidate = _prepare_request_rule(message.get("rule"), rule_id, rules)
-        await _validate_request_rule_conditions(hass, candidate)
-        _validate_request_rule_functions(
-            candidate,
-            _request_rule_function_tools(candidate, subentry.data)
-            if hasattr(subentry, "data")
-            else [],
-        )
-        from .request_rules import validate_rule_model_request
-
-        validate_rule_model_request(
-            candidate, subentry.data, getattr(request.entry, "data", {})
+        await _async_validate_request_rule_mutation(
+            hass, candidate, request.entry, subentry
         )
         rule = await rules.async_update(
             rule_id, candidate, expected_revision=update_revision
@@ -3181,25 +3134,7 @@ async def _async_management_request(
     handler = _MANAGEMENT_SECTION_HANDLERS.get(section)
     if handler is None:
         return _unknown_management_action(request)
-    # These safety checks were outside the former quarantine/permission wrappers.
-    # Non-admin requests reach their section's authorization error, never schema
-    # or revision diagnostics. Rule mutations retain strict dependency validation.
-    if is_admin and section == "request_rules" and action in {"create", "update"}:
-        rule_id = message.get("rule_id") if action == "update" else None
-        existing_rules = (
-            await async_get_request_rules(hass, entry_id, subentry_id)
-            if action == "update"
-            else None
-        )
-        candidate = _prepare_request_rule(
-            message.get("rule"),
-            rule_id if isinstance(rule_id, str) else None,
-            existing_rules,
-        )
-        await async_validate_request_rule_functions(
-            hass, candidate, _request_rule_function_tools(candidate, subentry.data)
-        )
-    elif is_admin and is_tool_mutation(section, action):
+    if is_admin and is_tool_mutation(section, action):
         _require_agent_config_revision(subentry, message.get("revision"))
 
     configuration_action = _configuration_action(message)

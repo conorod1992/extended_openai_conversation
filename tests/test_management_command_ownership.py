@@ -350,45 +350,47 @@ async def test_invalid_configuration_validation_has_no_projection_or_write(
     hass.config_entries.async_update_subentry.assert_not_called()
 
 
-async def test_strict_rule_preflight_precedes_explicit_inspection(
+async def test_rule_mutation_owner_retains_strict_dependency_validation(
     hass, management_message, monkeypatch
 ):
-    """Dependency validation and dispatched work cannot inherit tolerant parsing."""
+    """The actual Rule handler cannot inherit tolerant Function inspection."""
+    from custom_components.extended_openai_conversation_responses.request_rules import (
+        RequestRules,
+    )
+    from tests.test_request_rules import MemoryStore
+
     seen = []
     candidate = {"name": "Rule", "action": {"actions": []}}
     damaged = {"functions": "not a collection"}
+    store = MemoryStore()
+    rules = RequestRules(store)
+    await rules.async_initialize()
     monkeypatch.setattr(ui, "_prepare_request_rule", lambda *_: candidate)
+    monkeypatch.setattr(ui, "async_get_request_rules", AsyncMock(return_value=rules))
+    monkeypatch.setattr(ui, "_validate_request_rule_conditions", AsyncMock())
 
     def strict(rule, _data):
         assert rule is candidate
+        assert quarantine.inspect_function_tools(damaged) == []
         with pytest.raises(HomeAssistantError):
             agent_config.configured_function_tools_from_data(damaged)
         seen.append("strict")
         return []
 
     async def validate(_hass, value, tools):
-        with pytest.raises(HomeAssistantError):
-            agent_config.configured_function_tools_from_data(damaged)
-        assert value is candidate
-        assert tools == []
+        assert value is candidate and tools == []
         seen.append("validate")
-
-    async def handler(request):
-        assert quarantine.inspect_function_tools(damaged) == []
-        with pytest.raises(HomeAssistantError):
-            agent_config.configured_function_tools_from_data(damaged)
-        seen.append("route")
-        return {"ok": True}
+        raise HomeAssistantError("Strict validation rejected before persistence")
 
     monkeypatch.setattr(ui, "_request_rule_function_tools", strict)
     monkeypatch.setattr(ui, "async_validate_request_rule_functions", validate)
-    monkeypatch.setattr(ui, "_MANAGEMENT_SECTION_HANDLERS", {"request_rules": handler})
-    assert await ui.async_management_command(
-        hass, "admin", True, management_message("request_rules", "create", rule={})
-    ) == {"ok": True}
-    assert seen == ["strict", "validate", "route"]
-    with pytest.raises(HomeAssistantError):
-        agent_config.configured_function_tools_from_data(damaged)
+    with pytest.raises(HomeAssistantError, match="before persistence"):
+        await ui.async_management_command(
+            hass, "admin", True, management_message("request_rules", "create", rule={})
+        )
+    assert seen == ["strict", "validate"]
+    assert store.saves == 0
+    hass.config_entries.async_update_subentry.assert_not_called()
 
 
 @pytest.mark.parametrize(

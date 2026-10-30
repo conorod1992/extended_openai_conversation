@@ -51,7 +51,6 @@ async def test_disabled_dependency_can_be_saved_and_repaired(hass):
     rule["action"]["actions"] = [_call()]
     rule["enabled"] = False
     await async_validate_request_rule_functions(hass, rule, [])
-    management_ui._validate_request_rule_functions(rule, [])
     disabled = {**_tool(), "enabled": False}
     await async_validate_request_rule_functions(hass, rule, [disabled])
     rule["enabled"] = True
