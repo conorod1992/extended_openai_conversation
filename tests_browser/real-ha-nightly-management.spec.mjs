@@ -168,7 +168,7 @@ test("combined Request Rules settings remain current across warm and expired nav
   await panel.evaluate(host => {
     const original=host._hass.callWS.bind(host._hass); let reject=true;
     host._hass.callWS=async message => {
-      if (reject && message.section==="request_rules" && message.action==="settings") { reject=false; throw Error("Rejected settings before commit"); }
+      if (reject && message.section==="request_rules" && message.action==="settings") { reject=false; throw Object.assign(Error("Rejected settings before commit"), {code:"invalid_request"}); }
       return original(message);
     };
   });
