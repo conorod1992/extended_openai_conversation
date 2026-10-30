@@ -159,6 +159,7 @@ from .management_request_preview import (
 )
 from .memory import ANONYMOUS_USER_ID, async_get_memory
 from .model_catalog import active_catalog_version, catalog_generation
+from .mutation_outcomes import mark_mutation_failure
 from .regex_execution import async_process_speech_text
 from .request_rule_match_preview import async_request_rule_match_preview
 from .request_rule_packs import (
@@ -2251,17 +2252,23 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             if rule_rename_saved is None:
                 if isinstance(err, asyncio.CancelledError):
                     raise
-                raise HomeAssistantError(
-                    "Request Rule storage cannot be verified. The saved Function Tool "
-                    "rename was retained; restore storage access and reload to review "
-                    "Rule references."
+                raise mark_mutation_failure(
+                    HomeAssistantError(
+                        "Request Rule storage cannot be verified. The saved Function Tool "
+                        "rename was retained; restore storage access and reload to review "
+                        "Rule references."
+                    ),
+                    "uncertain",
                 ) from err
             if rule_rename_saved:
                 if isinstance(err, asyncio.CancelledError):
                     raise
-                raise HomeAssistantError(
-                    "Function Tool and Request Rule rename were saved, but the save "
-                    "acknowledgement failed. Reload the latest saved settings."
+                raise mark_mutation_failure(
+                    HomeAssistantError(
+                        "Function Tool and Request Rule rename were saved, but the save "
+                        "acknowledgement failed. Reload the latest saved settings."
+                    ),
+                    "uncertain",
                 ) from err
             try:
                 _require_agent_config_revision(subentry, result["revision"])
@@ -2271,10 +2278,13 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             except HomeAssistantError as rollback_err:
                 if isinstance(err, asyncio.CancelledError):
                     raise err from rollback_err
-                raise HomeAssistantError(
-                    "Function Tool configuration changed while a related Request Rule "
-                    "rename failed. The newer configuration was preserved; reload "
-                    "before retrying."
+                raise mark_mutation_failure(
+                    HomeAssistantError(
+                        "Function Tool configuration changed while a related Request Rule "
+                        "rename failed. The newer configuration was preserved; reload "
+                        "before retrying."
+                    ),
+                    "uncertain",
                 ) from rollback_err
             raise err
         result["renamed_references"] = {
@@ -2290,6 +2300,14 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
         tool = next((item for item in tools if item["spec"]["name"] == name), None)
         if tool is None:
             raise HomeAssistantError("The Function Tool no longer exists")
+        operation_revision = persisted_config_projection(subentry).revision
+        # Reference projection can fail independently of the write. Prepare it
+        # before persistence so a rejected response never hides a saved toggle.
+        references = None
+        if not enabled:
+            _rules, references = await _function_reference_state(
+                hass, entry_id, subentry_id, subentry.data, name
+            )
         tool["enabled"] = enabled
         result = await _persist_function_configuration(
             hass,
@@ -2297,12 +2315,9 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             subentry,
             tools,
             groups,
-            expected_revision=message.get("revision"),
+            expected_revision=operation_revision,
         )
         if not enabled:
-            _rules, references = await _function_reference_state(
-                hass, entry_id, subentry_id, subentry.data, name
-            )
             result["references"] = references
         return result
     if action == "delete":

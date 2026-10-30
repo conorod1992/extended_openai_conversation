@@ -1,7 +1,7 @@
 import {expect,test} from "@playwright/test";
 import {fixtureUrl} from "./browser-helpers.mjs";
 for (const bundled of [false, true])
-for (const fault of ["missing", "lost", "rejected"]) test(`Function queue ${fault} acknowledgement protects subsequent persisted replacement (${bundled ? "bundle" : "source"})`, async ({page})=>{
+for (const fault of ["missing", "lost", "coded-uncertain", "rejected"]) test(`Function queue ${fault} acknowledgement protects subsequent persisted replacement (${bundled ? "bundle" : "source"})`, async ({page})=>{
  await page.goto(fixtureUrl("capabilities/functions", bundled ? "&bundle=1" : ""));
  const panel=page.locator("extended-openai-management-panel");
  await expect(panel.locator("#function-add")).toBeVisible();
@@ -14,6 +14,7 @@ for (const fault of ["missing", "lost", "rejected"]) test(`Function queue ${faul
    const saved=await call(request);
    if(writes===1&&fault==="missing"){delete saved.functions;return saved;}
    if(writes===1&&fault==="lost")throw new Error("lost reply");
+   if(writes===1&&fault==="coded-uncertain")throw {code:"eoai_mutation_uncertain",message:"Retained rename needs authoritative recovery"};
    return saved;
   };
   const group=structuredClone(host._draft.function_groups[0]);
