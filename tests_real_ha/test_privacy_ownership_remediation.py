@@ -17,6 +17,7 @@ from custom_components.extended_openai_conversation_responses.scope import (
 from homeassistant.components import conversation
 from homeassistant.core import Context
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import chat_session
 from tests_real_ha.test_conversation_runtime_lifecycle import _tool
 from tests_real_ha.test_cross_feature_acceptance import _agent, _provider, _say
 from tests_real_ha.test_provider_wire_e2e import (
@@ -114,7 +115,17 @@ async def test_guest_context_does_not_cross_authenticated_users(
         language="en",
         agent_id=agent.entry.entry_id,
     )
-    assert first.response.error_code is None and second.response.error_code is None
+    assert first.response.error_code is None
+    if "user_id" in chat_session.ChatSession.__dataclass_fields__:
+        # Upcoming HA rejects another user's session before invoking the agent.
+        # Verify no provider dispatch, then continue Bob in his own fresh session.
+        assert second.response.error_code is not None, second.response.as_dict()
+        assert len(wire.requests) == 1
+        second = await conversation.async_converse(
+            hass=hass, text="What did the last caller say?", conversation_id=None,
+            context=Context(user_id=bob.id), language="en", agent_id=agent.entry.entry_id,
+        )
+    assert second.response.error_code is None, second.response.as_dict()
     assert "audit-alice-copper" not in json.dumps(wire.requests[1]["body"]), (
         "Another authenticated user inherited Alice guest history"
     )
@@ -251,7 +262,12 @@ async def test_authenticated_scope_survives_guest_continuity(
         "What did the previous caller say?",
         first.conversation_id if reuse_id else None,
     )
-    assert first.response.error_code is None and second.response.error_code is None
+    assert first.response.error_code is None
+    if reuse_id and "user_id" in chat_session.ChatSession.__dataclass_fields__:
+        assert second.response.error_code is not None, second.response.as_dict()
+        assert len(wire.requests) == 1
+        second = await say(bob, "What did the previous caller say?", None)
+    assert second.response.error_code is None, second.response.as_dict()
     assert "audit-alice-turquoise" not in json.dumps(wire.requests[1]["body"]), (
         mode,
         guest_active,
