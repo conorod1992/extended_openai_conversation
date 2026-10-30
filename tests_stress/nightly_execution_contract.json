@@ -2472,7 +2472,7 @@
     "tests_stress/test_cross_subsystem_state_machine.py::test_seeded_cross_subsystem_management_state_machine",
     "tests_stress/test_dirty_legacy_state_corpus.py::test_dirty_knowledge_corpus_ignores_bad_and_duplicate_siblings",
     "tests_stress/test_dirty_legacy_state_corpus.py::test_dirty_memory_corpus_preserves_valid_and_orphaned_records",
-    "tests_stress/test_dirty_legacy_state_corpus.py::test_dirty_request_rule_corpus_self_heals_without_losing_opaque_fields",
+    "tests_stress/test_dirty_legacy_state_corpus.py::test_dirty_request_rule_corpus_requires_explicit_repair_without_losing_opaque_fields",
     "tests_stress/test_environment_edge_contracts.py::test_sqlite_lock_deadline_then_recovery",
     "tests_stress/test_environment_edge_contracts.py::test_unicode_filename_atomic_roundtrip_and_path_identity",
     "tests/test_conversation_archive.py::test_enabling_household_retention_starts_future_boundary[False]",
