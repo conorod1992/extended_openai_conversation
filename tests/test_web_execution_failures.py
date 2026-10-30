@@ -356,3 +356,57 @@ async def test_rest_parse_boundary_preserves_unexpected_errors(
     monkeypatch.setattr(web, "get_rest_data", lambda *_args: data)
     with pytest.raises(type(error)):
         await web.RestFunction().execute(hass, {}, {}, None, [])
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Content-Encoding": "gzip"},
+        {"Content-Type": "application/xml"},
+        {"Content-Encoding": "gzip", "Content-Type": "application/xml"},
+    ],
+)
+@pytest.mark.parametrize("status", [200, 204])
+async def test_bodyless_action_headers_preserve_completion_and_composite(
+    hass, aiohttp_server, socket_enabled, monkeypatch, headers, status
+):
+    effects = []
+
+    async def action(request):
+        effects.append("remote action")
+        return http_web.Response(status=status, body=b"", headers=headers)
+
+    app = http_web.Application()
+    app.router.add_post("/action", action)
+    server = await aiohttp_server(app)
+    async with aiohttp.ClientSession() as session:
+        monkeypatch.setattr(web, "async_get_clientsession", lambda *_a, **_kw: session)
+        function = web.RestFunction()
+        config = function.validate_schema(
+            {
+                "type": "rest",
+                "resource": str(server.make_url("/action")),
+                "method": "POST",
+                "value_template": "{{ 'empty accepted' if value == '' else 'unexpected' }}",
+            }
+        )
+        composite = {
+            "type": "composite",
+            "sequence": [
+                config,
+                {"type": "template", "value_template": "{{ 'following step ran' }}"},
+            ],
+        }
+        if status == 204:
+            assert (
+                await CompositeFunction().execute(hass, composite, {}, None, [])
+                == "following step ran"
+            )
+            assert (
+                await function.execute(hass, config, {}, None, []) == "empty accepted"
+            )
+            assert effects == ["remote action", "remote action"]
+        else:
+            with pytest.raises(HomeAssistantError):
+                await CompositeFunction().execute(hass, composite, {}, None, [])
+            assert effects == ["remote action"]

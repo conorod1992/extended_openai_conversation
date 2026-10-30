@@ -258,6 +258,9 @@ class _BoundedResponse:
             # Raising here keeps the underlying request's __aexit__ in charge
             # of cleanup, including when HA catches a transport exception.
             raise SanitizedRequestError(status)
+        if self._response.status == 204:
+            self._body = b""
+            return self._body
         if self._body is not None:
             return self._body
 
@@ -295,6 +298,8 @@ class _BoundedResponse:
     async def text(self, encoding: str | None = None, errors: str = "strict") -> str:
         """Decode the same bounded body that aiohttp would expose as text."""
         body = await self.read()
+        if self._response.status == 204:
+            return ""
         selected_encoding = encoding or self._response.charset or "utf-8"
         try:
             return body.decode(selected_encoding, errors=errors)
@@ -408,6 +413,7 @@ async def _private_rest_update(data: rest.data.RestData) -> None:
     if data._request_data:
         kwargs["data"] = data._request_data
     data.last_exception = None
+    cast(Any, data)._eoai_no_content = False
     session = data._session
     if session is None:
         raise HomeAssistantError("REST session is unavailable")
@@ -435,6 +441,7 @@ async def _private_rest_update(data: rest.data.RestData) -> None:
     )
     try:
         async with session.request(data._method, data._resource, **kwargs) as response:
+            cast(Any, data)._eoai_no_content = response.status == 204
             if not data._force_use_set_encoding and response.charset:
                 try:
                     data.data = await response.text()
@@ -520,6 +527,8 @@ def get_rest_data(
             content_type = (
                 rest_data.headers.get("Content-Type", "") if rest_data.headers else ""
             )
+            if getattr(rest_data, "_eoai_no_content", False):
+                return value
             if value is not None and content_type.startswith(rest.const.XML_MIME_TYPES):
                 return json_dumps(xmltodict.parse(value))
             return value
