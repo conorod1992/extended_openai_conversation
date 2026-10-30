@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, Self
 
 from homeassistant.helpers.storage import Store
@@ -18,6 +19,24 @@ from homeassistant.util.json import SerializationError
 from .agent_maintenance import AgentMaintenanceGate, get_agent_maintenance_gate
 from .operation_settlement import async_settle_owned_operation as _async_settle_store_io
 from .operational_errors import storage_failure_reason
+from .persistence_hardening import StorageRepairRequired
+
+
+def _missing_store_has_corruption_evidence(path: str) -> bool:
+    """Recognize HA's preserved JSON evidence without replacing its loader."""
+    file = Path(path)
+    try:
+        file.stat()
+        return False
+    except FileNotFoundError:
+        pass
+    try:
+        return any(
+            item.name.startswith(file.name + ".corrupt.")
+            for item in file.parent.iterdir()
+        )
+    except FileNotFoundError:
+        return False
 
 
 class RecoveryGuardedStore(Store[dict[str, Any]]):
@@ -49,10 +68,14 @@ class RecoveryGuardedStore(Store[dict[str, Any]]):
 
     async def async_save(self, data: dict[str, Any]) -> None:
         if self._recovery_gate is None:
-            await super().async_save(data)
+            await self._async_save_owned(data)
             return
         async with self._recovery_gate.shared(maintenance=True):
-            await _async_settle_store_io(super().async_save(data))
+            await _async_settle_store_io(self._async_save_owned(data))
+
+    async def _async_save_owned(self, data: dict[str, Any]) -> None:
+        """Save inside the same maintenance admission as any required flush."""
+        await super().async_save(data)
 
     async def _async_handle_write_data(self) -> None:
         # Delayed Store callbacks enter here before HA takes its native writer
@@ -81,6 +104,32 @@ class RecoveryGuardedStore(Store[dict[str, Any]]):
 
 class PropagatingWriteStore(RecoveryGuardedStore):
     """Preserve HA's writer, but propagate sanitized failures before acknowledgement."""
+
+    _corruption_unavailable = False
+
+    async def _async_load_data(self) -> dict[str, Any] | None:
+        result = await super()._async_load_data()
+        if self._load_empty:
+            return result  # Preserve HA's explicit read-only emergency mode.
+        if result is not None:
+            self._corruption_unavailable = False
+        elif await self.hass.async_add_executor_job(
+            _missing_store_has_corruption_evidence, self.path
+        ):
+            self._corruption_unavailable = True
+        if self._corruption_unavailable:
+            raise StorageRepairRequired("EOAI")
+        return result
+
+    async def _async_save_owned(self, data: dict[str, Any]) -> None:
+        if self._corruption_unavailable:
+            raise StorageRepairRequired("EOAI")
+        await super()._async_save_owned(data)
+        # Store.async_save otherwise only queues this generation while stopping.
+        # A critical acknowledgement requires the writer to finish, including its
+        # listener cleanup, before maintenance ownership and manager locks release.
+        if self._data is not None:
+            await self._async_handle_write_data()
 
     async def _async_write_data(self, data: dict[str, Any]) -> None:
         try:

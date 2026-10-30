@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
-from homeassistant.core import CoreState, HomeAssistant
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
@@ -92,12 +92,6 @@ class _RestoreJournalStore(PropagatingWriteStore):
                     "Restore journal absence could not be durably verified"
                 ) from err
         return result
-
-    async def async_save(self, data: dict[str, Any]) -> None:
-        """An explicit journal receipt cannot defer its write until shutdown."""
-        await super().async_save(data)
-        if self.hass.state is CoreState.stopping:
-            await self._async_handle_write_data()
 
     async def async_remove(self) -> None:
         """Retire recovery evidence only after the directory entry is synced."""
