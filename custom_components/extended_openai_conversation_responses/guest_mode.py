@@ -289,6 +289,11 @@ class GuestModeManager:
                 self._notify()
 
     @property
+    def initialized(self) -> bool:
+        """Expose invalidated required state to the live request reconciler."""
+        return self._initialized
+
+    @property
     def schedule(self) -> GuestModeSchedule | None:
         return self._schedule
 
