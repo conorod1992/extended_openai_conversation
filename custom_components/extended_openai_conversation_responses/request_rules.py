@@ -1382,7 +1382,12 @@ class RequestRules:
         if replacing:
             self._repair_required = False
         if self._on_change is not None:
-            self._on_change()
+            try:
+                self._on_change()
+            except Exception as err:
+                _LOGGER.warning(
+                    "Request Rule change notification failed (%s)", type(err).__name__
+                )
 
     async def _async_reconcile_failed_save(self) -> None:
         """Adopt the validated Store state when a failed acknowledgement followed rename."""

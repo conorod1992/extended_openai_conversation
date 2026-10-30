@@ -489,33 +489,38 @@ class GuestModeManager:
         """Persist one schedule before publishing it to live Guest Mode readers."""
         payload = {"schedule": asdict(schedule) if schedule is not None else None}
 
+        committed = False
+
         def publish() -> None:
+            nonlocal committed
             self._schedule = schedule
             self._persistence_unavailable = False
-            self._notify()
+            committed = True
 
         async def reconcile() -> None:
             data = await self._store.async_load()
             durable = self.validate_backup_data(
                 {"schedule": None} if data is None else data
             )
-            changed = durable != self._schedule
             self._schedule = durable
             self._persistence_unavailable = False
-            if changed:
-                self._notify()
 
         def invalidate() -> None:
             self._persistence_unavailable = True
             self._initialized = False
 
-        await _async_settle_transactional_save(
-            self._store.async_save(payload),
-            lambda: None,
-            publish,
-            reconcile,
-            invalidate,
-        )
+        previous = self._schedule
+        try:
+            await _async_settle_transactional_save(
+                self._store.async_save(payload),
+                lambda: None,
+                publish,
+                reconcile,
+                invalidate,
+            )
+        finally:
+            if committed or self._schedule != previous:
+                self._notify()
 
     def _live_or_future_schedule(self, now: Any) -> GuestModeSchedule | None:
         if self._persistence_unavailable:
@@ -530,7 +535,10 @@ class GuestModeManager:
 
     def _notify(self) -> None:
         for listener in tuple(self._listeners):
-            listener()
+            try:
+                listener()
+            except Exception as err:
+                _LOGGER.warning("Guest Mode listener failed (%s)", type(err).__name__)
 
 
 async def async_get_guest_mode(
