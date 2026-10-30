@@ -813,13 +813,19 @@ class RequestRules:
         }
 
     async def async_create(
-        self, value: Any, *, expected_revision: str | None = None
+        self,
+        value: Any,
+        *,
+        expected_revision: str | None = None,
+        check_configuration: Callable[[], None] | None = None,
     ) -> dict[str, Any]:
-        """Create one rule."""
+        """Create a Rule, checking its prepared configuration under the write lock."""
         if not isinstance(value, Mapping):
             raise ValueError("rule must be an object")
         async with self._lock:
             self._require_revision_locked(expected_revision)
+            if check_configuration is not None:
+                check_configuration()
             if len(self._rules) >= MAX_RULES:
                 raise ValueError("Request Rule limit reached")
             raw = dict(value)
@@ -874,12 +880,15 @@ class RequestRules:
         value: Any,
         *,
         expected_revision: str | None = None,
+        check_configuration: Callable[[], None] | None = None,
     ) -> dict[str, Any]:
-        """Replace one rule while preserving its id."""
+        """Replace a Rule, checking its prepared configuration under the write lock."""
         if not isinstance(value, Mapping):
             raise ValueError("rule must be an object")
         async with self._lock:
             self._require_revision_locked(expected_revision)
+            if check_configuration is not None:
+                check_configuration()
             index = self._index(rule_id)
             raw = dict(value)
             raw["id"] = rule_id

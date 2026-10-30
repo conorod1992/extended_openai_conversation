@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import suppress
 from copy import deepcopy
 from dataclasses import dataclass
@@ -825,23 +825,28 @@ async def _async_validate_request_rule_mutation(
     rule: Mapping[str, Any],
     entry: Any,
     subentry: Any,
-) -> None:
-    """Validate the full action tree against one current configuration generation."""
+) -> Callable[[], None]:
+    """Validate dependencies and retain their configuration owner for admission."""
     await _validate_request_rule_conditions(hass, rule)
     source = subentry.data
     await async_validate_request_rule_functions(
         hass, rule, _request_rule_function_tools(rule, source)
     )
-    # HA replaces the immutable data mapping for each changed configuration.
-    # Static argument validation can await HA; its source must still be current.
-    if subentry.data is not source:
-        raise HomeAssistantError(
-            "Configuration changed while validating the Request Rule. "
-            "Reload the latest settings before saving."
-        )
+
+    def check_configuration() -> None:
+        # HA replaces this immutable mapping on each configuration change. Check
+        # both after awaited validation and after waiting for the Rule write lock.
+        if subentry.data is not source:
+            raise HomeAssistantError(
+                "Configuration changed while validating the Request Rule. "
+                "Reload the latest settings before saving."
+            )
+
+    check_configuration()
     from .request_rules import validate_rule_model_request
 
     validate_rule_model_request(rule, source, getattr(entry, "data", {}))
+    return check_configuration
 
 
 async def async_request_rules_command(request: _ManagementRequest) -> dict[str, Any]:
@@ -969,11 +974,13 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
         )
     if action == "create":
         candidate = _prepare_request_rule(message.get("rule"))
-        await _async_validate_request_rule_mutation(
+        check_configuration = await _async_validate_request_rule_mutation(
             hass, candidate, request.entry, subentry
         )
         rule = await rules.async_create(
-            candidate, expected_revision=message.get("revision")
+            candidate,
+            expected_revision=message.get("revision"),
+            check_configuration=check_configuration,
         )
         return {
             "rule": rule,
@@ -994,11 +1001,14 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
         if field_only and update_revision is None:
             update_revision = rules.revision()
         candidate = _prepare_request_rule(message.get("rule"), rule_id, rules)
-        await _async_validate_request_rule_mutation(
+        check_configuration = await _async_validate_request_rule_mutation(
             hass, candidate, request.entry, subentry
         )
         rule = await rules.async_update(
-            rule_id, candidate, expected_revision=update_revision
+            rule_id,
+            candidate,
+            expected_revision=update_revision,
+            check_configuration=check_configuration,
         )
         return {
             "rule": rule,
