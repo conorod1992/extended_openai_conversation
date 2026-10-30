@@ -803,7 +803,7 @@ def test_targeted_broadcast_parser_resolves_alias_and_strips_display_name() -> N
 
 
 @pytest.mark.asyncio
-async def test_guest_mode_initialize_ignores_malformed_schedule(hass) -> None:
+async def test_guest_mode_initialize_blocks_malformed_schedule(hass) -> None:
     from custom_components.extended_openai_conversation_responses import guest_mode
 
     manager = guest_mode.GuestModeManager(hass, "entry", "agent")
@@ -811,10 +811,13 @@ async def test_guest_mode_initialize_ignores_malformed_schedule(hass) -> None:
         async_load=AsyncMock(return_value={"schedule": {"invalid": True}})
     )
 
-    await manager.async_initialize()
-
-    assert manager._initialized is True
-    assert manager.schedule is None
+    from custom_components.extended_openai_conversation_responses.persistence_hardening import StorageRepairRequired
+    from homeassistant.exceptions import HomeAssistantError
+    with pytest.raises(StorageRepairRequired):
+        await manager.async_initialize()
+    assert manager._initialized is False
+    with pytest.raises(HomeAssistantError):
+        manager.is_active()
 
 
 @pytest.mark.asyncio
