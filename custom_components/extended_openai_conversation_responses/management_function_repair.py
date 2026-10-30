@@ -51,6 +51,7 @@ from .function_configuration_repair import (
 )
 from .live_subentry_updates import update_configuration_subentry, update_live_subentry
 from .model_catalog import catalog_generation
+from .mutation_outcomes import mark_mutation_failure
 from .request import canonical_json
 from .yaml_serialization import dump_yaml
 
@@ -538,9 +539,12 @@ def _safe_configuration_payload(
     management_loading_performance: Any,
     entry: Any,
     subentry: Any,
+    *,
+    data: dict[str, Any] | None = None,
+    title: str | None = None,
 ) -> dict[str, Any]:
     """Return normal management data plus quarantined Function Tool metadata."""
-    persisted = dict(subentry.data)
+    persisted = dict(subentry.data if data is None else data)
     safe, invalid, group_issues, raw_groups, issue = effective_function_configuration(
         persisted
     )
@@ -549,7 +553,7 @@ def _safe_configuration_payload(
         agent_config_defaults()
     )
     return {
-        "title": subentry.title,
+        "title": subentry.title if title is None else title,
         "revision": repair_revision(subentry),
         "config": config,
         "defaults": defaults,
@@ -569,6 +573,27 @@ def _safe_configuration_payload(
             "tools": editable_function_tools(persisted) if not invalid else None,
         },
     }
+
+
+def adopt_saved_configuration_revision(
+    subentry: Any, persisted: dict[str, Any], response: dict[str, Any]
+) -> None:
+    """Stamp a prepared baseline, preserving commit evidence if adoption fails."""
+    try:
+        response["revision"] = saved_agent_config_revision(
+            subentry, persisted, response["title"]
+        )
+    except Exception as err:
+        # Function queues require a complete baseline before dependent writes.
+        # Keep their existing uncertainty/read-recovery protocol rather than
+        # presenting this known write as a definite rejection.
+        raise mark_mutation_failure(
+            HomeAssistantError(
+                "Configuration was saved, but its revision could not be confirmed. "
+                "Reload the latest saved settings before continuing."
+            ),
+            "uncertain",
+        ) from err
 
 
 def safe_configuration_payload(
@@ -642,15 +667,14 @@ def _function_fields_unchanged(
     return True
 
 
-def _persist_raw_tools(
-    hass: HomeAssistant,
+def _prepare_raw_tools(
     entry: Any,
     subentry: Any,
     tools: list[Any],
     groups: Any,
     extra_updates: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Persist a partially invalid collection without normalizing untouched siblings."""
+    """Validate raw replacement data without normalizing untouched siblings."""
     persisted = dict(subentry.data)
     persisted[CONF_FUNCTION_TOOLS] = dump_yaml(tools, sort_keys=False)
     persisted[CONF_FUNCTION_GROUPS] = deepcopy(groups)
@@ -664,7 +688,6 @@ def _persist_raw_tools(
         # new collection conflicts that hide every usable Tool in the fallback.
         raise AgentConfigError(CONF_FUNCTION_TOOLS, candidate_state.issue)
     _validated_model_request(safe_function_configuration(persisted), entry.data)
-    update_live_subentry(hass, entry, subentry, data=persisted)
     return persisted
 
 
@@ -802,6 +825,21 @@ async def async_function_repair(
             if isinstance(requested_title, str)
             else subentry.title
         )
+        response = _safe_configuration_payload(
+            hass,
+            management_ui,
+            management_loading_performance,
+            entry,
+            subentry,
+            data=persisted,
+            title=saved_title,
+        )
+        response.update(
+            {
+                "valid": True,
+                "errors": {},
+            }
+        )
         update_configuration_subentry(
             hass,
             entry,
@@ -809,26 +847,11 @@ async def async_function_repair(
             data=persisted,
             **({"title": saved_title} if isinstance(requested_title, str) else {}),
         )
-        safe_after = safe_function_configuration(persisted)
-        snapshot = management_loading_performance._snapshot_normalized_configuration(
-            safe_after
-        )
-        response = _safe_configuration_payload(
-            hass, management_ui, management_loading_performance, entry, subentry
-        )
+        adopt_saved_configuration_revision(subentry, persisted, response)
         response.update(
-            {
-                "valid": True,
-                "errors": {},
-                "title": saved_title,
-                "revision": saved_agent_config_revision(
-                    subentry, persisted, saved_title
-                ),
-                "config": snapshot,
-                **_saved_agent_metadata(
-                    hass, entry, subentry, config=persisted, title=saved_title
-                ),
-            }
+            _saved_agent_metadata(
+                hass, entry, subentry, config=persisted, title=saved_title
+            )
         )
         return response
 
@@ -879,13 +902,22 @@ async def async_function_repair(
                     )
             editable.pop(index)
             require_repair_revision(subentry, operation_revision)
-            persisted = _persist_raw_tools(
-                hass,
+            persisted = _prepare_raw_tools(
                 entry,
                 subentry,
                 editable,
                 _remove_group_function_name(groups, old_name),
             )
+            payload = _safe_configuration_payload(
+                hass,
+                management_ui,
+                management_loading_performance,
+                entry,
+                subentry,
+                data=persisted,
+            )
+            update_live_subentry(hass, entry, subentry, data=persisted)
+            adopt_saved_configuration_revision(subentry, persisted, payload)
         else:
             candidate = message.get("tool")
             if not isinstance(candidate, dict):
@@ -927,17 +959,24 @@ async def async_function_repair(
                 rules_manager=rules,
             )
             require_repair_revision(subentry, operation_revision)
-            persisted = _persist_raw_tools(
-                hass,
+            persisted = _prepare_raw_tools(
                 entry,
                 subentry,
                 editable,
                 _replace_group_function_name(groups, old_name, new_name),
                 extra_updates,
             )
-            persisted_revision = saved_agent_config_revision(
-                subentry, persisted, subentry.title
+            payload = _safe_configuration_payload(
+                hass,
+                management_ui,
+                management_loading_performance,
+                entry,
+                subentry,
+                data=persisted,
             )
+            update_live_subentry(hass, entry, subentry, data=persisted)
+            adopt_saved_configuration_revision(subentry, persisted, payload)
+            persisted_revision = payload["revision"]
             if rules is not None:
                 assert old_name is not None
                 from .function_dependency_integrity import async_finish_function_rename
@@ -955,10 +994,11 @@ async def async_function_repair(
                     rollback_configuration=rollback_configuration,
                 )
 
-        payload = _safe_configuration_payload(
-            hass, management_ui, management_loading_performance, entry, subentry
+        payload.update(
+            _saved_agent_metadata(
+                hass, entry, subentry, config=persisted, title=payload["title"]
+            )
         )
-        payload.update(_saved_agent_metadata(hass, entry, subentry, config=persisted))
         return payload
 
     if action != "save":
@@ -983,15 +1023,25 @@ async def async_function_repair(
         hass, entry, subentry, persisted
     )
     require_repair_revision(subentry, operation_revision)
-    update_live_subentry(hass, entry, subentry, data=persisted)
     payload = _safe_configuration_payload(
-        hass, management_ui, management_loading_performance, entry, subentry
+        hass,
+        management_ui,
+        management_loading_performance,
+        entry,
+        subentry,
+        data=persisted,
     )
     payload.update(
         {
             "valid": True,
             "tools": deepcopy(validated_tools),
-            **_saved_agent_metadata(hass, entry, subentry, config=persisted),
         }
+    )
+    update_live_subentry(hass, entry, subentry, data=persisted)
+    adopt_saved_configuration_revision(subentry, persisted, payload)
+    payload.update(
+        _saved_agent_metadata(
+            hass, entry, subentry, config=persisted, title=payload["title"]
+        )
     )
     return payload

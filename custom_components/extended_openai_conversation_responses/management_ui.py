@@ -125,6 +125,7 @@ from .management_function_quarantine import (
     merge_unchanged_function_configuration,
 )
 from .management_function_repair import (
+    adopt_saved_configuration_revision,
     agent_config_revision as _agent_config_revision,  # noqa: F401
     async_prepare_persisted_function_tools,
     normalized_persisted_config_snapshot,
@@ -1690,29 +1691,38 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         refresh_local_handling = _local_handling_config_changed(
             subentry.data, normalized, updates
         )
-        update_configuration_subentry(
-            hass, entry, subentry, data=normalized, title=saved_title
-        )
         from .management_loading_performance import _snapshot_normalized_configuration
 
         snapshot = _snapshot_normalized_configuration(
             response_candidate, validated=True
         )
         result = {
+            "valid": True,
+            "errors": {},
             "title": saved_title,
-            "revision": saved_agent_config_revision(subentry, normalized, saved_title),
             "config": snapshot,
             "model_capabilities": model_capabilities(
                 str(snapshot.get("azure_model") or snapshot[CONF_CHAT_MODEL])
             ),
         }
-        seed_persisted_config_projection(entry, subentry, snapshot, result["revision"])
         if refresh_local_handling:
             result["local_handling"] = local_handling_snapshot(
                 hass,
                 entry_id,
                 subentry_id,
                 snapshot.get(CONF_LOCAL_INTENT_EXCLUSIONS, []),
+            )
+        update_configuration_subentry(
+            hass, entry, subentry, data=normalized, title=saved_title
+        )
+        adopt_saved_configuration_revision(subentry, normalized, result)
+        try:
+            seed_persisted_config_projection(
+                entry, subentry, snapshot, result["revision"]
+            )
+        except Exception:
+            _LOGGER.warning(
+                "Committed configuration update could not seed its optional cache"
             )
         return result
     if action == "duplicate":
