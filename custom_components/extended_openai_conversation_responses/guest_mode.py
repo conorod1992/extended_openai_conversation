@@ -229,11 +229,15 @@ class GuestModeManager:
         self._mutation_lock = asyncio.Lock()
         self._initialized = False
         self._persistence_unavailable = False
-        self._initialization_lock = asyncio.Lock()
 
     async def async_initialize(self) -> None:
         """Publish validated state once, leaving Store failures retryable."""
-        async with self._initialization_lock:
+        if self._initialized:
+            return
+        # Recovery and queued mutations publish the same schedule generation.
+        # A separate initialization lock could install an older read after a
+        # later write has committed and acknowledged its restriction.
+        async with self._mutation_lock:
             if self._initialized:
                 return
             # Storage I/O failures are not malformed state. Propagate them so a
