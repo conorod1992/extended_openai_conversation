@@ -3441,6 +3441,7 @@ async def async_evaluate_rule(
         try:
             match = await rules.async_match(hass, text)
         except SentenceMatchLimitError as err:
+            require_matching_revision()
             _LOGGER.warning(
                 "Skipping Request Rules for bounded matching failure: %s", err
             )
@@ -3538,6 +3539,7 @@ async def async_evaluate_rule(
                 return last
     except SentenceMatchLimitError as err:
         if last is None:
+            require_matching_revision()
             _LOGGER.warning(
                 "Skipping Request Rules for bounded matching failure: %s", err
             )

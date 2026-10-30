@@ -36,7 +36,9 @@ async def real_hass(tmp_path):
 
 @pytest.mark.parametrize("after_write", [False, True], ids=["not_written", "written"])
 @pytest.mark.parametrize("invalidation_point", ["before_turn", "before_matching"])
-@pytest.mark.parametrize("cancel_recovery", [False, True], ids=["ordinary", "cancelled"])
+@pytest.mark.parametrize(
+    "cancel_recovery", [False, True], ids=["ordinary", "cancelled"]
+)
 async def test_running_conversation_recovers_rules_without_ai_fallthrough(
     real_hass, monkeypatch, caplog, after_write, invalidation_point, cancel_recovery
 ):
@@ -162,3 +164,101 @@ async def test_running_conversation_recovers_rules_without_ai_fallthrough(
     )
     assert effects == ["old", expected, expected, expected] and provider_requests == []
     assert "PRIVATE-RULE" not in caplog.text
+
+
+@pytest.mark.parametrize("continuation", [False, True])
+@pytest.mark.parametrize("outcome", ["stable", "committed", "not_written", "written"])
+async def test_matching_budget_fallback_requires_current_rule_generation(
+    real_hass, monkeypatch, continuation, outcome
+):
+    hass = real_hass
+    entity, invoke, _logs, provider_calls = _assist_fixture(monkeypatch)
+    entity.hass = hass
+    entity.subentry.data = {**_disabled_runtime_config(), "functions": "[]"}
+    entity._extended_openai_runtime_config_data = entity.subentry.data
+    effects = []
+
+    async def record(call):
+        effects.append(call.data["version"])
+
+    hass.services.async_register("budget_probe", "record", record)
+    rules = await rr.async_get_request_rules(hass, "entry", "agent")
+    entity._request_rules = rules
+    entity._request_rule_runtime = rr.get_request_rule_runtime(hass, "entry", "agent")
+    rule = local_rule("Retained", ["good {time}"], match_type="sentence_pattern")
+    rule["continue_matching"] = continuation
+    rule["action"]["actions"] = [
+        {"action": "budget_probe.record", "data": {"version": "old"}}
+    ]
+    created = await rules.async_create(rule)
+    budget = rr.MatchBudget
+    monkeypatch.setattr(rr, "MatchBudget", lambda: budget(maximum=0))
+    started, release = asyncio.Event(), asyncio.Event()
+    executor = hass.async_add_executor_job
+
+    async def controlled_executor(func, *args):
+        if isinstance(getattr(func, "__self__", None), rr._MatchCursor):
+            started.set()
+            await release.wait()
+        return await executor(func, *args)
+
+    monkeypatch.setattr(hass, "async_add_executor_job", controlled_executor)
+    request = asyncio.create_task(invoke("good night", direct=True))
+    try:
+        await started.wait()
+        if outcome != "stable":
+            updated = deepcopy(created)
+            updated["action"]["actions"][0]["data"]["version"] = "new"
+            if outcome == "committed":
+                await rules.async_update(
+                    created["id"], updated, expected_revision=rules.revision()
+                )
+            else:
+                write, load = rules._store._write_prepared_data, rules._store.async_load
+
+                def fail(*args):
+                    if outcome == "written":
+                        write(*args)
+                    raise OSError("write failed")
+
+                monkeypatch.setattr(rules._store, "_write_prepared_data", fail)
+                monkeypatch.setattr(
+                    rules._store,
+                    "async_load",
+                    AsyncMock(side_effect=OSError("read failed")),
+                )
+                with pytest.raises(OSError):
+                    await rules.async_update(
+                        created["id"], updated, expected_revision=rules.revision()
+                    )
+                monkeypatch.setattr(rules._store, "_write_prepared_data", write)
+                monkeypatch.setattr(rules._store, "async_load", load)
+        release.set()
+        result, _ = await request
+        if outcome == "stable":
+            assert len(provider_calls) == 1
+        else:
+            assert provider_calls == []
+            assert (
+                "changed during matching" in result.response.speech["plain"]["speech"]
+            )
+        assert effects == []
+        fresh = rr.RequestRules(
+            rr.RequestRuleStore(hass, rr.STORAGE_VERSION, rules._store.key)
+        )
+        await fresh.async_initialize()
+        expected = "new" if outcome in {"written", "committed"} else "old"
+        assert (
+            fresh.rule_snapshot(created["id"])["action"]["actions"][0]["data"][
+                "version"
+            ]
+            == expected
+        )
+        monkeypatch.setattr(rr, "MatchBudget", budget)
+        following, _ = await invoke("good night", direct=True)
+        assert effects == [expected]
+        assert following.response.speech["plain"]["speech"] == "Done"
+        assert len(provider_calls) == (1 if outcome == "stable" else 0)
+    finally:
+        release.set()
+        await asyncio.gather(request, return_exceptions=True)
