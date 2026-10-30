@@ -39,6 +39,7 @@ from homeassistant.helpers.trace import StopReason, script_execution_cv
 from homeassistant.helpers.typing import UNDEFINED
 from homeassistant.util.async_ import create_eager_task
 
+from .agent_maintenance import get_agent_maintenance_gate
 from .const import (
     CONF_CHAT_MODEL,
     CONF_REASONING_EFFORT,
@@ -4118,42 +4119,45 @@ async def async_get_request_rules(
     The manager is shared across platforms while its entry is loaded and evicted
     when that entry unloads, so a later load always validates the persisted Store.
     """
-    managers = hass.data.setdefault(_MANAGERS, {})
-    key = (entry_id, subentry_id)
+    async with get_agent_maintenance_gate(hass, entry_id, subentry_id).shared(
+        maintenance=True
+    ):
+        managers = hass.data.setdefault(_MANAGERS, {})
+        key = (entry_id, subentry_id)
 
-    def reconcile_lifecycle() -> None:
-        from .model_lifecycle import sync_entry_model_lifecycle
+        def reconcile_lifecycle() -> None:
+            from .model_lifecycle import sync_entry_model_lifecycle
 
-        entry = hass.config_entries.async_get_entry(entry_id)
-        if entry is not None:
-            sync_entry_model_lifecycle(hass, entry)
+            entry = hass.config_entries.async_get_entry(entry_id)
+            if entry is not None:
+                sync_entry_model_lifecycle(hass, entry)
 
-    if key not in managers:
-        managers[key] = RequestRules(
-            RequestRuleStore(
-                hass,
-                STORAGE_VERSION,
-                f"{STORAGE_KEY_PREFIX}.{entry_id}.{subentry_id}",
-            ).bind_agent(entry_id, subentry_id),
-            on_change=reconcile_lifecycle,
-        )
-    manager = cast(RequestRules, managers[key])
-    if manager._unsubscribe_stop is None:
+        if key not in managers:
+            managers[key] = RequestRules(
+                RequestRuleStore(
+                    hass,
+                    STORAGE_VERSION,
+                    f"{STORAGE_KEY_PREFIX}.{entry_id}.{subentry_id}",
+                ).bind_agent(entry_id, subentry_id),
+                on_change=reconcile_lifecycle,
+            )
+        manager = cast(RequestRules, managers[key])
+        if manager._unsubscribe_stop is None:
 
-        @callback
-        def unload_conditions(_event: Event) -> None:
-            # HA removes a one-shot listener before invoking it. Cleanup must
-            # stay on the event loop and must not unsubscribe that listener again.
-            manager._unsubscribe_stop = None
-            manager.async_unload()
+            @callback
+            def unload_conditions(_event: Event) -> None:
+                # HA removes a one-shot listener before invoking it. Cleanup must
+                # stay on the event loop and must not unsubscribe that listener again.
+                manager._unsubscribe_stop = None
+                manager.async_unload()
 
-        manager._unsubscribe_stop = hass.bus.async_listen_once(
-            EVENT_HOMEASSISTANT_STOP, unload_conditions
-        )
-    await manager.async_initialize()
-    if manager._initialized:
-        reconcile_lifecycle()
-    return manager
+            manager._unsubscribe_stop = hass.bus.async_listen_once(
+                EVENT_HOMEASSISTANT_STOP, unload_conditions
+            )
+        await manager.async_initialize()
+        if manager._initialized:
+            reconcile_lifecycle()
+        return manager
 
 
 def get_request_rule_runtime(
