@@ -247,9 +247,8 @@ async def async_finish_function_rename(
         # Another Rule writer can acknowledge a new consumer after the Tool
         # commit, then make our Rule revision stale. Rolling back the Tool would
         # remove that consumer's validated dependency even if config is unchanged.
-        if (
-            rules.revision() != expected_rules_revision
-            and rules.function_references(new_name)
+        if rules.revision() != expected_rules_revision and rules.function_references(
+            new_name
         ):
             if isinstance(err, asyncio.CancelledError):
                 raise

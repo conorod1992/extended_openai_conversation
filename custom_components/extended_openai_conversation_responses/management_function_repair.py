@@ -521,7 +521,9 @@ def _saved_agent_metadata(
     from .management_loading_performance import _agent_snapshot
 
     try:
-        return {"agent": _agent_snapshot(hass, entry, subentry, config=config, title=title)}
+        return {
+            "agent": _agent_snapshot(hass, entry, subentry, config=config, title=title)
+        }
     except Exception as err:
         _LOGGER.warning(
             "Committed Function repair omitted optional agent metadata (%s)",
@@ -956,9 +958,7 @@ async def async_function_repair(
         payload = _safe_configuration_payload(
             hass, management_ui, management_loading_performance, entry, subentry
         )
-        payload.update(
-            _saved_agent_metadata(hass, entry, subentry, config=persisted)
-        )
+        payload.update(_saved_agent_metadata(hass, entry, subentry, config=persisted))
         return payload
 
     if action != "save":
@@ -991,9 +991,7 @@ async def async_function_repair(
         {
             "valid": True,
             "tools": deepcopy(validated_tools),
-            **_saved_agent_metadata(
-                hass, entry, subentry, config=persisted
-            ),
+            **_saved_agent_metadata(hass, entry, subentry, config=persisted),
         }
     )
     return payload
