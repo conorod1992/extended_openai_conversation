@@ -16,6 +16,9 @@ from custom_components.extended_openai_conversation_responses.execution_outcomes
 from custom_components.extended_openai_conversation_responses.ha_actions import (
     _async_call_ha_action_unchecked,
 )
+from custom_components.extended_openai_conversation_responses.tool_replay_guard import (
+    replay_safety,
+)
 from homeassistant.const import EVENT_CALL_SERVICE, EVENT_SERVICE_REGISTERED
 from homeassistant.core import Context, SupportsResponse, callback
 from homeassistant.exceptions import HomeAssistantError
@@ -268,7 +271,7 @@ async def test_local_request_rule_functions_do_not_retire_provider_replay_histor
     for _ in range(6):
         await agent._async_execute_request_rule_function("effect", _arguments(), None)
     assert hass.states.get("counter.receipt").state == "6"
-    assert not getattr(agent, "_replay_history_incomplete", False)
+    assert not replay_safety(agent).history_incomplete
     for name in (
         "_execution_effect_receipts",
         "_execution_tool_outcomes",
@@ -437,7 +440,7 @@ async def test_unknown_execution_ownership_still_retires_fail_closed(hass, monke
             await _async_call_ha_action_unchecked(
                 hass, "probe", "apply", data={"amount": value}, blocking=True
             )
-    assert owner._replay_history_incomplete
+    assert replay_safety(owner).history_incomplete
     with (
         guard.bind_effect_replay_scope(owner, "fresh-provider"),
         execution_attempt(

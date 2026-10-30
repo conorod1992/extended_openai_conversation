@@ -395,7 +395,7 @@ async def test_in_flight_match_keeps_its_original_configuration(monkeypatch) -> 
 
 async def test_persistence_reset_clears_matching_and_diagnostics(monkeypatch) -> None:
     store = MemoryStore(
-        {"rules": [_rule(0, "hello"), _rule(1, "(on; downstairs)"), {}]}
+        {"rules": [_rule(3, "hello"), _rule(5, "(on; downstairs)")]}
     )
     manager = RequestRules(store)
 

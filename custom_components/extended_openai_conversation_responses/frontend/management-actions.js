@@ -1,6 +1,6 @@
 import {same} from "./unsaved-state.js";
 import {reconcileSavedConfiguration} from "./configuration-save-dom.js";
-import {captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, completeConfigurationAcknowledgement, reconcileConfigurationAcknowledgement, discardConfigurationDraft} from "./configuration-acknowledgement.js";
+import {requireMutationAcknowledgement, captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, completeConfigurationAcknowledgement, reconcileConfigurationAcknowledgement, discardConfigurationDraft} from "./configuration-acknowledgement.js";
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
 function fieldErrorKey(key) {
@@ -76,7 +76,7 @@ export async function saveConfigurationAcrossRestart(panel, payload, submitted, 
 
 async function saveConfiguration(panel, button) {
   if (!panel._draft || !panel._selectedAgent?.() || panel._configurationSaving) return;
-  if (panel._eocAcknowledgedConfiguration && panel._configDataStale) {
+  if ((panel._eocAcknowledgedConfiguration || panel._eocRestoredConfiguration) && panel._configDataStale) {
     const owner = captureConfigurationOwner(panel), visit = panel._loadToken;
     try { await panel._loadConfigDraft({preserveResult:true}); }
     catch (error) {
@@ -111,15 +111,17 @@ async function saveConfiguration(panel, button) {
       revision: submission.revision,
     }, submitted, submittedTitle);
     if (!configurationSubmissionIsCurrent(panel, submission)) return;
-    showErrors(panel, result.errors || {});
-    if (!result.valid) {
+    if (result?.valid === false) {
+      showErrors(panel, result?.errors || {});
       panel._toast("Fix the highlighted configuration errors", true);
       return;
     }
 
+    requireMutationAcknowledgement(result?.valid === true && result?.config && typeof result.config === "object", "saving configuration");
     await completeConfigurationAcknowledgement(panel, result, submission, {
       message:"Changes saved",
       refresh:() => {
+        showErrors(panel, result.errors || {});
         if (panel._viewKey?.() === submission.view) panel._result = panel._configData;
         reconcileSavedConfiguration(panel, owner);
         panel._render();
@@ -146,6 +148,7 @@ export function bindSingleRequestSave(panel) {
       event.preventDefault();
       event.stopImmediatePropagation();
       if (panel._configurationSaving || !panel._configData?.config) return;
+      if (root.__eocConfigurationInputs) root.__eocConfigurationInputs.pendingCapabilityControl = null;
       discardConfigurationDraft(panel);
       // Save acknowledgements can insert this bar after a feature bound its
       // original controls. Delegation also covers those newly created buttons.
@@ -153,10 +156,20 @@ export function bindSingleRequestSave(panel) {
       panel._render();
       return;
     }
-    const button = event.target?.closest?.("#save-config");
+    let button = event.target?.closest?.("#save-config");
     if (!button) return;
     event.preventDefault();
     event.stopImmediatePropagation();
+    if (panel._configurationSaving) return;
+    const inputs = root.__eocConfigurationInputs;
+    const control = inputs?.pendingCapabilityControl;
+    if (inputs) inputs.pendingCapabilityControl = null;
+    // The click is admitted now. Refresh deferred capability presentation before
+    // saving, including when validation later rejects the submitted draft.
+    if (control?.isConnected && root.contains(control)) {
+      inputs.capabilityChanged?.(control);
+      button = root.querySelector("#save-config") || button;
+    }
     const scope = panel._unsavedState?.scopes.get("configuration");
     void (scope ? scope.save() : saveConfiguration(panel, button));
   }, true);

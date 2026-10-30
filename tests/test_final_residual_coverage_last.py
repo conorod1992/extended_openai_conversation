@@ -45,7 +45,7 @@ async def test_repair_configuration_save_preserves_absent_function_fields(
     monkeypatch.setattr(
         repair,
         "_safe_configuration_payload",
-        Mock(return_value={"config": {}}),
+        Mock(return_value={"title": subentry.title, "config": {}}),
     )
     monkeypatch.setattr(repair, "_function_fields_unchanged", Mock(return_value=True))
     monkeypatch.setattr(repair, "safe_function_configuration", Mock(return_value={}))
@@ -63,7 +63,7 @@ async def test_repair_configuration_save_preserves_absent_function_fields(
         lambda value, validated=False: dict(value),
     )
 
-    await repair.async_function_repair(
+    response = await repair.async_function_repair(
         hass,
         "user",
         True,
@@ -80,6 +80,8 @@ async def test_repair_configuration_save_preserves_absent_function_fields(
     persisted = update.call_args.kwargs["data"]
     assert repair.CONF_FUNCTION_TOOLS not in persisted
     assert repair.CONF_FUNCTION_GROUPS not in persisted
+    assert response["revision"] == "rev"
+    assert response["title"] == subentry.title
 
 
 @pytest.mark.asyncio

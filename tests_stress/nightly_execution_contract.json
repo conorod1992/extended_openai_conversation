@@ -2444,15 +2444,15 @@
     "tests/test_conversation_archive.py::test_complete_invalid_session_does_not_poison_healthy_records[title-value1]",
     "tests/test_conversation_archive.py::test_complete_invalid_session_does_not_poison_healthy_records[turn_count-1]",
     "tests/test_conversation_archive.py::test_complete_invalid_session_does_not_poison_healthy_records[turn_count-True]",
-    "tests/test_conversation_archive.py::test_invalid_turns_counts_and_duplicates_are_repaired_durably[assistant_text-value3]",
-    "tests/test_conversation_archive.py::test_invalid_turns_counts_and_duplicates_are_repaired_durably[run_id-value5]",
-    "tests/test_conversation_archive.py::test_invalid_turns_counts_and_duplicates_are_repaired_durably[session_id-unknown]",
-    "tests/test_conversation_archive.py::test_invalid_turns_counts_and_duplicates_are_repaired_durably[session_id-value1]",
-    "tests/test_conversation_archive.py::test_invalid_turns_counts_and_duplicates_are_repaired_durably[successful-yes]",
-    "tests/test_conversation_archive.py::test_invalid_turns_counts_and_duplicates_are_repaired_durably[timestamp-2026-08-01T00:00:00+00:00]",
-    "tests/test_conversation_archive.py::test_invalid_turns_counts_and_duplicates_are_repaired_durably[timestamp-None]",
-    "tests/test_conversation_archive.py::test_invalid_turns_counts_and_duplicates_are_repaired_durably[turn_id-value0]",
-    "tests/test_conversation_archive.py::test_invalid_turns_counts_and_duplicates_are_repaired_durably[user_text-42]",
+    "tests/test_conversation_archive.py::test_invalid_turns_counts_and_duplicates_preserve_original_generation[assistant_text-value3]",
+    "tests/test_conversation_archive.py::test_invalid_turns_counts_and_duplicates_preserve_original_generation[run_id-value5]",
+    "tests/test_conversation_archive.py::test_invalid_turns_counts_and_duplicates_preserve_original_generation[session_id-unknown]",
+    "tests/test_conversation_archive.py::test_invalid_turns_counts_and_duplicates_preserve_original_generation[session_id-value1]",
+    "tests/test_conversation_archive.py::test_invalid_turns_counts_and_duplicates_preserve_original_generation[successful-yes]",
+    "tests/test_conversation_archive.py::test_invalid_turns_counts_and_duplicates_preserve_original_generation[timestamp-2026-08-01T00:00:00+00:00]",
+    "tests/test_conversation_archive.py::test_invalid_turns_counts_and_duplicates_preserve_original_generation[timestamp-None]",
+    "tests/test_conversation_archive.py::test_invalid_turns_counts_and_duplicates_preserve_original_generation[turn_id-value0]",
+    "tests/test_conversation_archive.py::test_invalid_turns_counts_and_duplicates_preserve_original_generation[user_text-42]",
     "tests/test_conversation_archive.py::test_loaded_private_session_cannot_retain_or_back_up_inconsistent_turns",
     "tests/test_conversation_archive.py::test_record_repair_partition_failure_replays_durable_journal_without_partial_publication",
     "tests_real_ha/test_adversarial_metamorphic_coexistence.py::test_disabled_unrelated_rule_is_behaviorally_inert",
@@ -2472,7 +2472,7 @@
     "tests_stress/test_cross_subsystem_state_machine.py::test_seeded_cross_subsystem_management_state_machine",
     "tests_stress/test_dirty_legacy_state_corpus.py::test_dirty_knowledge_corpus_ignores_bad_and_duplicate_siblings",
     "tests_stress/test_dirty_legacy_state_corpus.py::test_dirty_memory_corpus_preserves_valid_and_orphaned_records",
-    "tests_stress/test_dirty_legacy_state_corpus.py::test_dirty_request_rule_corpus_self_heals_without_losing_opaque_fields",
+    "tests_stress/test_dirty_legacy_state_corpus.py::test_dirty_request_rule_corpus_requires_explicit_repair_without_losing_opaque_fields",
     "tests_stress/test_environment_edge_contracts.py::test_sqlite_lock_deadline_then_recovery",
     "tests_stress/test_environment_edge_contracts.py::test_unicode_filename_atomic_roundtrip_and_path_identity",
     "tests/test_conversation_archive.py::test_enabling_household_retention_starts_future_boundary[False]",
@@ -3028,7 +3028,13 @@
     "tests_real_ha/test_script_cleanup_settlement.py::test_public_repeated_cancellation_unloads_without_repeating_effect[10-function-chat_completions]",
     "tests_real_ha/test_script_cleanup_settlement.py::test_public_repeated_cancellation_unloads_without_repeating_effect[10-function-responses]",
     "tests_real_ha/test_script_cleanup_settlement.py::test_public_repeated_cancellation_unloads_without_repeating_effect[10-local_rule-chat_completions]",
-    "tests_real_ha/test_script_cleanup_settlement.py::test_public_repeated_cancellation_unloads_without_repeating_effect[10-local_rule-responses]"
+    "tests_real_ha/test_script_cleanup_settlement.py::test_public_repeated_cancellation_unloads_without_repeating_effect[10-local_rule-responses]",
+    "tests_real_ha/test_replay_reload_ownership.py::test_failed_effect_cannot_replay_after_genuine_reload[chat_completions]",
+    "tests_real_ha/test_replay_reload_ownership.py::test_failed_effect_cannot_replay_after_genuine_reload[responses]",
+    "tests_real_ha/test_replay_reload_ownership.py::test_reload_oracle_detects_entity_owned_state[chat_completions]",
+    "tests_real_ha/test_replay_reload_ownership.py::test_reload_oracle_detects_entity_owned_state[responses]",
+    "tests_real_ha/test_replay_reload_ownership.py::test_budget_failure_preserves_effect_through_retry_and_reload[chat_completions]",
+    "tests_real_ha/test_replay_reload_ownership.py::test_budget_failure_preserves_effect_through_retry_and_reload[responses]"
   ],
   "browser": {
     "browser": [
@@ -4126,7 +4132,8 @@
       "tests_real_ha/test_execution_result_lifecycle_contracts.py",
       "tests_real_ha/test_receipt_resources_and_unordered_identity.py",
       "tests_real_ha/test_service_receipt_compatibility.py",
-      "tests/test_review_replay_execution.py"
+      "tests/test_review_replay_execution.py",
+      "tests_real_ha/test_replay_reload_ownership.py"
     ],
     "guest-security": [
       "tests_real_ha/test_management_authorization_matrix.py",

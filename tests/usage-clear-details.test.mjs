@@ -17,7 +17,7 @@ const p=new ExtendedOpenAIManagementPanel();
 p._page='usage-maintenance';p._subsection='usage';p._agentId='one';p._scopeId='user:alice';p._usageHistoryWindow='30';
 p._data={is_admin:true,agents:[{entry_id:'entry',subentry_id:'one'}],scopes:[]};
 p._hass={user:{id:'alice'},config:{time_zone:'UTC'},callWS:async message=>{
- if(message.action==='clear_details'){count=0;return {deleted_runs:46}}
+ if(message.action==='clear_details'){count=0;return {deleted_runs:46,deleted_requests:0}}
  if(message.action==='daily')return {days:[],local_run_summary:{count,start_date:message.start_date,end_date:message.end_date,retention_days:30}};
  return {};
 }};

@@ -17,6 +17,7 @@ from .template_diagnostics import private_template_diagnostics
 
 _MAX_EFFECT_RECEIPTS = 4096
 _MAX_RETAINED_EFFECT_RECEIPTS = 4096
+_RECEIPT_OWNER_ATTRIBUTE = "_eoai_owns_execution_receipts"
 
 
 @dataclass(slots=True)
@@ -222,12 +223,6 @@ def execution_prepared(
         attempt.dispatch_recorded = False
 
 
-def current_execution_receipt() -> EffectReceipt | None:
-    if (attempt := _ATTEMPT.get()) and attempt.active and attempt.receipts:
-        return attempt.receipts[-1]
-    return None
-
-
 def execution_started(
     *,
     kind: str | None = None,
@@ -307,8 +302,7 @@ def execution_started(
     return None
 
 
-def execution_completed(receipt: EffectReceipt | None = None) -> None:
-    receipt = receipt or current_execution_receipt()
+def execution_completed(receipt: EffectReceipt | None) -> None:
     if (
         (attempt := _ATTEMPT.get())
         and attempt.active
@@ -319,25 +313,21 @@ def execution_completed(receipt: EffectReceipt | None = None) -> None:
         receipt.outcome = "completed"
 
 
-def execution_rejected(
-    receipt: EffectReceipt | None = None, *, before_dispatch: bool = False
-) -> None:
-    """Authoritative pre-execution rejection does not imply an effect."""
+def execution_rejected(receipt: EffectReceipt | None) -> None:
+    """Settle only the explicitly supplied uncertain receipt."""
+    if (
+        receipt is not None
+        and (attempt := _ATTEMPT.get())
+        and attempt.active
+        and receipt.invocation_id == attempt.invocation_id
+        and receipt.outcome == "uncertain"
+    ):
+        receipt.outcome = "rejected"
+
+
+def execution_refused() -> None:
+    """Record an authoritative refusal before dispatch without settling an effect."""
     if (attempt := _ATTEMPT.get()) and attempt.active:
-        explicit = receipt is not None
-        receipt = None if before_dispatch else receipt or current_execution_receipt()
-        if explicit and (
-            receipt is None
-            or receipt.invocation_id != attempt.invocation_id
-            or receipt.outcome != "uncertain"
-        ):
-            return
-        if receipt is not None and receipt.invocation_id == attempt.invocation_id:
-            if receipt.outcome == "uncertain":
-                receipt.outcome = "rejected"
-                return
-            if receipt.outcome == "rejected":
-                return
         operation = _OPERATION.get()
         # Reserve one terminal rejection beyond the dispatch budget so reaching
         # the ceiling remains partial, without growing on every later refusal.
@@ -355,6 +345,19 @@ def execution_rejected(
         )
 
 
+def owns_execution_receipts[**P, ResultT](
+    function: Callable[P, Coroutine[Any, Any, ResultT]],
+) -> Callable[P, Coroutine[Any, Any, ResultT]]:
+    """Declare that this implementation records every effect at its I/O boundary.
+
+    This marker does not wrap execution. Bind it to this exact implementation so
+    copying attributes with functools.wraps cannot grant an override ownership.
+    An inherited, unchanged method retains its contract.
+    """
+    setattr(function, _RECEIPT_OWNER_ATTRIBUTE, function)
+    return function
+
+
 @private_template_diagnostics
 async def execute_backend(
     function: Any,
@@ -366,18 +369,14 @@ async def execute_backend(
 ) -> Any:
     """Native effects/composite children own precise boundaries; opaque backends are conservative."""
     with execution_operation("backend", {"function": config, "arguments": arguments}):
-        owns_receipts = config.get("type") in {
-            "native",
-            "composite",
-            "bash",
-            "rest",
-            "edit_file",
-            "write_file",
-        }
+        execute = function.execute
+        execute_owner = getattr(execute, "__func__", execute)
+        receipt_owner = getattr(execute, _RECEIPT_OWNER_ATTRIBUTE, None)
+        owns_receipts = receipt_owner is not None and receipt_owner is execute_owner
         before = len(attempt.receipts) if (attempt := _ATTEMPT.get()) else 0
         receipt = None if owns_receipts else execution_started()
         try:
-            result = await function.execute(hass, config, arguments, context, exposed)
+            result = await execute(hass, config, arguments, context, exposed)
         except BaseException as error:
             if attempt is not None and (
                 len(attempt.receipts) == before
@@ -385,7 +384,7 @@ async def execute_backend(
                     item.outcome == "completed" for item in attempt.receipts[before:]
                 )
             ):
-                execution_rejected(before_dispatch=True)
+                execution_refused()
             from .public_errors import sanitize_backend_error
 
             public_error = sanitize_backend_error(error)

@@ -826,6 +826,71 @@ test("genuine HA native YAML editor saves with Ctrl+S and survives a fresh panel
   await expect(panel.locator(".tool-card").filter({hasText: "real_shell_native_tool"})).toHaveCount(0);
 });
 
+test("native Function Tool readiness waits for slow CodeMirror hydration before immediate user input", async ({context, page}) => {
+  test.setTimeout(120000);
+  await authenticate(context);
+  const panel = await openFunctionsFromOverview(page);
+  // Warm only the optional component registration, then exercise both fresh
+  // and reused documents through the actual HA/Lit scheduling boundary.
+  await panel.locator("#function-add").click();
+  await panel.locator("#add-tool").click();
+  await expect(panel.locator("#tool-yaml-native")).toBeVisible({timeout:30000});
+  await panel.locator("#tool-cancel").click();
+  await page.evaluate(() => {
+    const prototype = customElements.get("ha-code-editor").prototype;
+    const schedule = prototype.scheduleUpdate;
+    window.armNativeReadiness = () => {
+      window.nativeReadinessPending = false;
+      window.nativeReadinessGate = new Promise(resolve => { window.releaseNativeReadiness = resolve; });
+    };
+    prototype.scheduleUpdate = async function() {
+      if (this.getRootNode().host?.id === "tool-yaml-native" && window.nativeReadinessGate) {
+        window.nativeReadinessPending = true;
+        await window.nativeReadinessGate;
+      }
+      return schedule.call(this);
+    };
+  });
+  const name = "real_shell_readiness_tool";
+  for (const action of ["add", "edit"]) {
+    await page.evaluate(() => window.armNativeReadiness());
+    if (action === "add") {
+      await panel.locator("#function-add").click();
+      await panel.locator("#add-tool").click();
+    } else await panel.locator(`[data-tool-key="${name}"] .edit-tool`).click();
+    await expect.poll(() => page.evaluate(() => window.nativeReadinessPending)).toBe(true);
+    await expect(panel.locator("#tool-save")).toBeDisabled();
+    await expect(panel.locator("#tool-dialog")).toHaveAttribute("aria-busy", "true");
+    await page.evaluate(() => { window.releaseNativeReadiness(); window.nativeReadinessGate = null; });
+    await expect(panel.locator("#tool-dialog")).toHaveAttribute("aria-busy", "false");
+    const native = panel.locator("#tool-yaml-native");
+    const initial = await native.evaluate(element => ({
+      yaml:element.yaml,
+      document:element.shadowRoot.querySelector("ha-code-editor").codemirror.state.doc.toString(),
+    }));
+    expect(initial.yaml.length).toBeGreaterThan(0);
+    expect(initial.document).toBe(initial.yaml);
+    const authored = JSON.stringify({spec:{name, description:`Immediate ${action} from hydrated native editor`,
+      parameters:{type:"object", properties:{}}}, function:{type:"template", value_template:"ready"}}, null, 2);
+    // No document polling or hydration sleep between the public ready signal
+    // and the user's select-all/replace operation.
+    const surface = native.locator(".cm-content");
+    await surface.click();
+    await surface.press("ControlOrMeta+A");
+    await page.keyboard.insertText(authored);
+    await expect(panel.locator("#tool-yaml")).toHaveValue(authored);
+    await panel.locator("#tool-save").click();
+    await expect(panel.locator("#tool-dialog")).not.toHaveJSProperty("open", true);
+    const saved = await panel.evaluate(host => host._call("configuration", "get"));
+    expect(saved.config.functions.find(tool => tool.spec?.name === name)).toEqual(JSON.parse(authored));
+  }
+  await page.reload();
+  await expect(panel.locator(`[data-tool-key="${name}"]`)).toContainText("Immediate edit from hydrated native editor");
+  await panel.locator(`[data-tool-key="${name}"] .delete-tool`).click();
+  await panel.locator("#confirm-accept").click();
+  await expect(panel.locator(`[data-tool-key="${name}"]`)).toHaveCount(0);
+});
+
 test("long native Function YAML scrolls inside the editor while dialog actions stay visible", async ({context, page}) => {
   await authenticate(context);
   const panel = await openFunctionsFromOverview(page);
@@ -1107,4 +1172,33 @@ test("real HA Local Handling shows live intents and persists selected routing", 
   const reloaded = panel.locator('[data-local-intent-exclusion][value="HassGetCurrentTime"]');
   await expect(reloaded).toBeVisible();
   await expect(reloaded).toBeChecked();
+});
+
+
+test("focused numeric capability Revert preserves the next persisted configuration save", async ({context, page}) => {
+  await authenticate(context);
+  const panel=await openAssistantFromOverview(page);
+  await panel.evaluate(async host => {
+    await host._navigate("assistant", "basics");
+    await host._call("configuration", "save", {config:{max_function_calls_per_conversation:10}, revision:host._configData.revision});
+    await host._loadSection(true);
+  });
+  await panel.locator(".general-advanced summary").click();
+  const tokens=panel.locator('[data-config="max_tokens"]');
+  const original=await tokens.inputValue();
+  await tokens.fill(String(Number(original)+1));
+  const limit=panel.locator('[data-config="max_function_calls_per_conversation"]');
+  await limit.fill("11");
+  await panel.locator("#revert-config").click();
+  await expect(limit).toHaveValue("10");
+  await expect(tokens).toHaveValue(original);
+  await tokens.fill(String(Number(original)+2));
+  await panel.locator("#save-config").click();
+  await expect(panel.locator("#save-config")).toHaveCount(0);
+  const saved=await panel.evaluate(host=>host._call("configuration", "get"));
+  expect(saved.config.max_function_calls_per_conversation).toBe(10);
+  expect(saved.config.max_tokens).toBe(Number(original)+2);
+  await panel.evaluate(async (host, original) => {
+    await host._call("configuration", "save", {config:{max_tokens:Number(original)}, revision:host._configData.revision});
+  }, original);
 });

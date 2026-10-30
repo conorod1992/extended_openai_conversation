@@ -14,6 +14,17 @@ async function installFakeHaYamlEditor(page) {
 
       setValue(value) {
         this.lastSetValue = structuredClone(value);
+        this._yaml = JSON.stringify(value);
+        const yaml = this._yaml;
+        const code = {updateComplete:Promise.resolve(true), codemirror:{state:{doc:{toString:() => yaml}}}};
+        // These suites drive native value-changed directly; the dedicated
+        // readiness suite supplies real shadow DOM and delayed Lit updates.
+        this.updateComplete = Promise.resolve(true);
+        if (!this.shadowRoot) this.attachShadow({mode:"open"});
+        let child = this.shadowRoot.querySelector("ha-code-editor");
+        if (!child) { child = document.createElement("ha-code-editor"); this.shadowRoot.append(child); }
+        child.updateComplete = code.updateComplete;
+        child.codemirror = code.codemirror;
       }
 
       get yaml() {
@@ -43,6 +54,7 @@ const nativeName = (editor) => editor.evaluate((element) => element.lastSetValue
 const nativeDescription = (editor) => editor.evaluate((element) => element.lastSetValue?.spec?.description);
 
 async function waitForNativeTool(editor, name) {
+  await expect(editor).toBeVisible();
   await expect.poll(() => nativeName(editor)).toBe(name);
 }
 

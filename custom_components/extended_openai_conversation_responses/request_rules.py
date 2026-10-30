@@ -30,7 +30,7 @@ from uuid import uuid4
 
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import Context, Event, HomeAssistant, ServiceCall, callback
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, TemplateError
 from homeassistant.helpers import condition as ha_condition, config_validation as cv
 from homeassistant.helpers.script import Script, async_validate_actions_config
 from homeassistant.helpers.script_variables import ScriptVariables
@@ -39,6 +39,7 @@ from homeassistant.helpers.trace import StopReason, script_execution_cv
 from homeassistant.helpers.typing import UNDEFINED
 from homeassistant.util.async_ import create_eager_task
 
+from .agent_maintenance import get_agent_maintenance_gate
 from .const import (
     CONF_CHAT_MODEL,
     CONF_REASONING_EFFORT,
@@ -59,6 +60,7 @@ from .helpers import get_model_config, get_reasoning_effort_options
 from .model_catalog import all_reasoning_efforts
 from .operational_errors import log_handled_failure
 from .persistence_hardening import (
+    StorageRepairRequired,
     _async_repair_private_store_mode,
     _async_settle_transactional_save,
 )
@@ -90,13 +92,17 @@ from .script_structure import (
     rewrite_script_actions,
     script_selector_fields,
 )
+from .storage_namespaces import REQUEST_RULES_PREFIX as STORAGE_KEY_PREFIX
 from .strict_store import PropagatingWriteStore
 from .template_diagnostics import private_template_diagnostics
 
 _LOGGER = logging.getLogger(__name__)
 
 STORAGE_VERSION = 6
-STORAGE_KEY_PREFIX = "extended_openai_conversation_responses.request_rules"
+REQUEST_RULES_UNAVAILABLE = (
+    "Request Rules persistence is unavailable; retry after storage recovery"
+)
+
 MAX_RULES = 500
 MAX_PHRASES = 25
 MAX_ACTIONS = 20
@@ -147,6 +153,14 @@ DEFAULT_WORDING_GROUPS: tuple[dict[str, Any], ...] = (
 SENSITIVE_DOMAINS = {"lock", "alarm_control_panel"}
 RequestRuleFunctionExecutor = Callable[[str, dict[str, Any]], Awaitable[Any]]
 _GUARD_SERVICE = "request_rule_guard"
+
+
+class _NativeActionDenied(GuestModeDenied, TemplateError):
+    """Fatal authorization failure, never recoverable service/condition failure.
+
+    HA exempts preparation errors from continue_on_error. Unlike ConditionError,
+    this category also propagates out of native choose/if condition handlers.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -347,8 +361,8 @@ class RequestRuleStore(PropagatingWriteStore):
         """Migrate additive Request Rule storage changes."""
         if old_major_version == 1:
             return {
-                **old_data,
                 "wording_groups": _copy_wording_groups(DEFAULT_WORDING_GROUPS),
+                **old_data,
             }
         if old_major_version in {2, 3, 4, 5}:
             return old_data
@@ -450,6 +464,8 @@ class RequestRules:
         self._diagnostics: dict[str, str] = {}
         self._lock = asyncio.Lock()
         self._initialized = False
+        self._retired = False
+        self._repair_required = False
         self._committed_state: dict[str, Any] | None = None
         self._generation = 0
         self._revision_generation = 0
@@ -468,29 +484,48 @@ class RequestRules:
             self._unsubscribe_stop()
             self._unsubscribe_stop = None
 
+    def _require_current_owner(self) -> None:
+        if self._retired:
+            raise HomeAssistantError(
+                "Request Rules were reloaded; retry with the current assistant"
+            )
+
+    async def async_retire(self) -> None:
+        """Fence detached users, then drain writes before replacement is possible."""
+        self._retired = True
+        self._initialized = False
+        self._generation += 1
+        async with self._lock:
+            self.async_unload()
+
     async def async_initialize(self) -> None:
         """Load stored rules while preserving newly unsupported patterns for repair."""
         async with self._lock:
+            self._require_current_owner()
             if self._initialized:
                 return
             try:
                 await _async_repair_private_store_mode(self._store)
                 stored = await self._store.async_load()
+                self._require_current_owner()
                 migrated = False
+                self._repair_required = False
                 raw_rules: Sequence[Any] = ()
                 if stored is None:
                     pass
                 elif not isinstance(stored, Mapping):
                     _LOGGER.warning(
-                        "Resetting malformed stored Request Rules container"
+                        "Reading malformed Request Rules as empty; original store preserved"
                     )
                     migrated = True
+                    self._repair_required = True
                 else:
                     generation = stored.get("revision_generation", 0)
                     if type(generation) is int and generation >= 0:
                         self._revision_generation = generation
                     else:
                         migrated = True
+                        self._repair_required = True
                     self._opaque_fields = {
                         key: deepcopy(value)
                         for key, value in stored.items()
@@ -508,6 +543,7 @@ class RequestRules:
                     except ValueError:
                         _LOGGER.warning("Ignoring invalid stored Request Rule groups")
                         migrated = True
+                        self._repair_required = True
                     try:
                         self._defaults = validate_matching_settings(
                             stored.get("defaults", DEFAULT_MATCHING)
@@ -515,6 +551,7 @@ class RequestRules:
                     except ValueError:
                         _LOGGER.warning("Ignoring invalid stored Request Rule defaults")
                         migrated = True
+                        self._repair_required = True
                     try:
                         self._wording_groups = validate_wording_groups(
                             stored.get("wording_groups", DEFAULT_WORDING_GROUPS)
@@ -524,12 +561,16 @@ class RequestRules:
                             "Ignoring invalid stored Request Rule wording groups"
                         )
                         migrated = True
+                        self._repair_required = True
                     stored_rules = stored.get("rules", [])
                     if not isinstance(stored_rules, Sequence) or isinstance(
                         stored_rules, (str, bytes)
                     ):
-                        _LOGGER.warning("Resetting malformed stored Request Rules list")
+                        _LOGGER.warning(
+                            "Reading malformed Request Rules list as empty; original store preserved"
+                        )
                         migrated = True
+                        self._repair_required = True
                     else:
                         if len(stored_rules) > MAX_RULES:
                             _LOGGER.warning(
@@ -538,9 +579,11 @@ class RequestRules:
                                 MAX_RULES,
                             )
                             migrated = True
+                            self._repair_required = True
                         raw_rules = stored_rules[:MAX_RULES]
 
                 seen_ids: set[str] = set()
+                known_group_ids = {group["id"] for group in self._groups}
                 for raw in raw_rules:
                     try:
                         candidate, scope_migrated = (
@@ -567,16 +610,24 @@ class RequestRules:
                                 validated["id"],
                             )
                             migrated = True
+                            self._repair_required = True
                             continue
                         seen_ids.add(validated["id"])
+                        if (
+                            validated.get("group_id") is not None
+                            and validated["group_id"] not in known_group_ids
+                        ):
+                            self._repair_required = True
                         self._rules.append(validated)
                         migrated = migrated or validated != raw
                     except ValueError as err:
                         _LOGGER.warning("Ignoring invalid stored Request Rule: %s", err)
                         migrated = True
+                        self._repair_required = True
                 migrated = self._sort_and_compile() or migrated
-                if migrated:
+                if migrated and not self._repair_required:
                     await self._async_save_locked(reconcile_failure=False)
+                self._require_current_owner()
                 self._remember_committed_state()
                 self._initialized = True
             except BaseException:
@@ -594,10 +645,16 @@ class RequestRules:
                 self._committed_revision_generation = 0
                 raise
 
+    @property
+    def initialized(self) -> bool:
+        """Whether the retained manager owns an admitted storage generation."""
+        return self._initialized
+
     def revision(self) -> str:
         """Return a revision that also detects a committed A -> B -> A cycle."""
         payload = json.dumps(
             {
+                **({"retired": True} if self._retired else {}),
                 "generation": self._revision_generation,
                 "defaults": self._defaults,
                 "wording_groups": self._wording_groups,
@@ -612,6 +669,9 @@ class RequestRules:
 
     def _require_revision_locked(self, expected_revision: str | None) -> None:
         """Reject a stale management writer while the mutation lock is held."""
+        self._require_current_owner()
+        if self._repair_required:
+            raise StorageRepairRequired("Request Rules")
         if expected_revision is None:
             return
         if not isinstance(expected_revision, str):
@@ -631,6 +691,7 @@ class RequestRules:
             "groups": deepcopy(self._groups),
             "rules": [dict(rule) for rule in self._rules],
             "diagnostics": dict(self._diagnostics),
+            **({"storage_repair_required": True} if self._repair_required else {}),
         }
 
     def rule_snapshot(self, rule_id: str) -> dict[str, Any]:
@@ -657,6 +718,9 @@ class RequestRules:
 
     async def async_backup_data(self) -> dict[str, Any]:
         """Return durable Request Rule state without management-only fields."""
+        self._require_current_owner()
+        if self._repair_required:
+            raise StorageRepairRequired("Request Rules")
         snapshot = self.snapshot()
         snapshot.pop("revision", None)
         snapshot.pop("diagnostics", None)
@@ -715,6 +779,7 @@ class RequestRules:
         """Replace all durable state from a fully validated backup."""
         prepared = self.validate_backup_data(value)
         async with self._lock:
+            self._require_current_owner()
             self._defaults = prepared["defaults"]
             self._wording_groups = prepared["wording_groups"]
             self._groups = prepared["groups"]
@@ -729,7 +794,7 @@ class RequestRules:
             self._discard_condition_checkers()
             self._sort_and_compile()
             self._initialized = True
-            await self._async_save_locked()
+            await self._async_save_locked(replacing=True)
 
     async def async_set_defaults(
         self, value: Any, *, expected_revision: str | None = None
@@ -779,13 +844,19 @@ class RequestRules:
         }
 
     async def async_create(
-        self, value: Any, *, expected_revision: str | None = None
+        self,
+        value: Any,
+        *,
+        expected_revision: str | None = None,
+        check_configuration: Callable[[], None] | None = None,
     ) -> dict[str, Any]:
-        """Create one rule."""
+        """Create a Rule, checking its prepared configuration under the write lock."""
         if not isinstance(value, Mapping):
             raise ValueError("rule must be an object")
         async with self._lock:
             self._require_revision_locked(expected_revision)
+            if check_configuration is not None:
+                check_configuration()
             if len(self._rules) >= MAX_RULES:
                 raise ValueError("Request Rule limit reached")
             raw = dict(value)
@@ -840,12 +911,15 @@ class RequestRules:
         value: Any,
         *,
         expected_revision: str | None = None,
+        check_configuration: Callable[[], None] | None = None,
     ) -> dict[str, Any]:
-        """Replace one rule while preserving its id."""
+        """Replace a Rule, checking its prepared configuration under the write lock."""
         if not isinstance(value, Mapping):
             raise ValueError("rule must be an object")
         async with self._lock:
             self._require_revision_locked(expected_revision)
+            if check_configuration is not None:
+                check_configuration()
             index = self._index(rule_id)
             raw = dict(value)
             raw["id"] = rule_id
@@ -1079,6 +1153,9 @@ class RequestRules:
             if cached is None or cached.config != conditions:
                 self._discard_condition_checkers(match.rule["id"])
                 cached = await _NativeConditions.async_create(hass, conditions)
+                if self._retired:
+                    cached.async_unload()
+                    self._require_current_owner()
                 self._condition_checkers[match.rule["id"]] = cached
             return cached.check(
                 hass, {"request": {"slots": match.slots}, **match.slots}
@@ -1319,8 +1396,14 @@ class RequestRules:
         self._diagnostics = diagnostics
         return order_changed
 
-    async def _async_save_locked(self, *, reconcile_failure: bool = True) -> None:
+    async def _async_save_locked(
+        self, *, reconcile_failure: bool = True, replacing: bool = False
+    ) -> None:
         """Settle each Store write before propagating failure or cancellation."""
+        self._require_current_owner()
+        if self._repair_required and not replacing:
+            self._restore_committed_state()
+            raise StorageRepairRequired("Request Rules")
         # The counter belongs to the persisted transaction, so a manager reload
         # keeps its revision and committed A -> B -> A changes remain detectable.
         self._revision_generation += 1
@@ -1340,13 +1423,21 @@ class RequestRules:
             self._async_reconcile_failed_save if reconcile_failure else None,
             self._invalidate_after_unreadable_store,
         )
+        if replacing:
+            self._repair_required = False
         if self._on_change is not None:
-            self._on_change()
+            try:
+                self._on_change()
+            except Exception as err:
+                _LOGGER.warning(
+                    "Request Rule change notification failed (%s)", type(err).__name__
+                )
 
     async def _async_reconcile_failed_save(self) -> None:
         """Adopt the validated Store state when a failed acknowledgement followed rename."""
         disk_state = RequestRules(self._store)
         await disk_state.async_initialize()
+        self._repair_required = disk_state._repair_required
         if not disk_state._initialized:
             raise RuntimeError("persisted Request Rules could not be initialized")
         disk_snapshot = {
@@ -3161,20 +3252,18 @@ def _guard_native_actions(actions: Sequence[Mapping[str, Any]]) -> list[dict[str
         descend: Callable[[], dict[str, Any]],
     ) -> list[dict[str, Any]]:
         guarded = []
-        if any(
-            name in action
-            for name in (
-                "action",
-                "service",
-                "device_id",
-                "event",
-                "event_type",
-                "scene",
-            )
-        ):
+        if any(name in action for name in ("device_id", "event", "event_type")):
             guard = {
                 "action": f"{DOMAIN}.{_GUARD_SERVICE}",
-                "data": {"pending_action": dict(action)},
+                # These actions bypass the service boundary. Guest policy denies
+                # their category; never render their payload or literal metadata.
+                "data": {
+                    "pending_action": {
+                        key: True
+                        for key in ("device_id", "event", "event_type")
+                        if key in action
+                    }
+                },
             }
             if "enabled" in action:
                 guard["enabled"] = action["enabled"]
@@ -3338,6 +3427,8 @@ async def async_evaluate_rule(
     entry_data: Mapping[str, Any] | None = None,
 ) -> RuleEvaluation | None:
     """Apply each eligible rule once, stopping on handoff or failure."""
+    if isinstance(rules, RequestRules) and not rules.initialized:
+        raise HomeAssistantError(REQUEST_RULES_UNAVAILABLE)
     matching_generation = rules._generation if isinstance(rules, RequestRules) else None
     matching_snapshot = (
         rules._committed_matching_snapshot if isinstance(rules, RequestRules) else None
@@ -3376,6 +3467,7 @@ async def async_evaluate_rule(
         try:
             match = await rules.async_match(hass, text)
         except SentenceMatchLimitError as err:
+            require_matching_revision()
             _LOGGER.warning(
                 "Skipping Request Rules for bounded matching failure: %s", err
             )
@@ -3473,6 +3565,7 @@ async def async_evaluate_rule(
                 return last
     except SentenceMatchLimitError as err:
         if last is None:
+            require_matching_revision()
             _LOGGER.warning(
                 "Skipping Request Rules for bounded matching failure: %s", err
             )
@@ -3598,25 +3691,6 @@ async def _async_evaluate_matched_rule(
             # they must never invite a retry of an already executed action.
             if commit_execution_snapshot is not None:
                 commit_execution_snapshot()
-            script = Script(
-                cast(
-                    HomeAssistant,
-                    _AuthorizedScriptHass(
-                        hass,
-                        None,
-                        [],
-                        frozenset(
-                            {(DOMAIN, _GUARD_SERVICE), (DOMAIN, SERVICE_CALL_FUNCTION)}
-                        ),
-                    ),
-                )
-                if context is not None and context.user_id
-                else hass,
-                validated_actions,
-                f"Request Rule {rule['id']}",
-                DOMAIN,
-                log_exceptions=False,
-            )
 
             def authorize_pending(pending: Mapping[str, Any]) -> None:
                 nonlocal policy
@@ -3633,8 +3707,42 @@ async def _async_evaluate_matched_rule(
                 if not _guest_script_allowed(hass, [pending], policy):
                     raise GuestModeDenied()
 
+            def authorize_prepared(pending: Mapping[str, Any]) -> None:
+                if pending.get("action") == f"{DOMAIN}.{_GUARD_SERVICE}":
+                    return  # The internal guard authorizes non-service effects.
+                try:
+                    authorize_pending(pending)
+                except GuestModeDenied as err:
+                    # Authorization is not an authored recoverable HA failure.
+                    # Native continue_on_error must never continue past denial.
+                    raise _NativeActionDenied(GUEST_MODE_UNAVAILABLE) from err
+
+            script = Script(
+                cast(
+                    HomeAssistant,
+                    _AuthorizedScriptHass(
+                        hass,
+                        None,
+                        [],
+                        frozenset(
+                            {(DOMAIN, _GUARD_SERVICE), (DOMAIN, SERVICE_CALL_FUNCTION)}
+                        ),
+                        authorize_prepared if live_guest_policy is not None else None,
+                    ),
+                )
+                if live_guest_policy is not None
+                or (context is not None and context.user_id)
+                else hass,
+                validated_actions,
+                f"Request Rule {rule['id']}",
+                DOMAIN,
+                log_exceptions=False,
+            )
+
             action_token = _ACTIVE_RULE_ACTION.set(
-                RuleActionExecution(function_executor, authorize_pending, result_values)
+                RuleActionExecution(
+                    function_executor, authorize_prepared, result_values
+                )
             )
             execution = StopReason()
             execution_token = script_execution_cv.set(execution)
@@ -4049,42 +4157,45 @@ async def async_get_request_rules(
     The manager is shared across platforms while its entry is loaded and evicted
     when that entry unloads, so a later load always validates the persisted Store.
     """
-    managers = hass.data.setdefault(_MANAGERS, {})
-    key = (entry_id, subentry_id)
+    async with get_agent_maintenance_gate(hass, entry_id, subentry_id).shared(
+        maintenance=True
+    ):
+        managers = hass.data.setdefault(_MANAGERS, {})
+        key = (entry_id, subentry_id)
 
-    def reconcile_lifecycle() -> None:
-        from .model_lifecycle import sync_entry_model_lifecycle
+        def reconcile_lifecycle() -> None:
+            from .model_lifecycle import sync_entry_model_lifecycle
 
-        entry = hass.config_entries.async_get_entry(entry_id)
-        if entry is not None:
-            sync_entry_model_lifecycle(hass, entry)
+            entry = hass.config_entries.async_get_entry(entry_id)
+            if entry is not None:
+                sync_entry_model_lifecycle(hass, entry)
 
-    if key not in managers:
-        managers[key] = RequestRules(
-            RequestRuleStore(
-                hass,
-                STORAGE_VERSION,
-                f"{STORAGE_KEY_PREFIX}.{entry_id}.{subentry_id}",
-            ).bind_agent(entry_id, subentry_id),
-            on_change=reconcile_lifecycle,
-        )
-    manager = cast(RequestRules, managers[key])
-    if manager._unsubscribe_stop is None:
+        if key not in managers:
+            managers[key] = RequestRules(
+                RequestRuleStore(
+                    hass,
+                    STORAGE_VERSION,
+                    f"{STORAGE_KEY_PREFIX}.{entry_id}.{subentry_id}",
+                ).bind_agent(entry_id, subentry_id),
+                on_change=reconcile_lifecycle,
+            )
+        manager = cast(RequestRules, managers[key])
+        if manager._unsubscribe_stop is None:
 
-        @callback
-        def unload_conditions(_event: Event) -> None:
-            # HA removes a one-shot listener before invoking it. Cleanup must
-            # stay on the event loop and must not unsubscribe that listener again.
-            manager._unsubscribe_stop = None
-            manager.async_unload()
+            @callback
+            def unload_conditions(_event: Event) -> None:
+                # HA removes a one-shot listener before invoking it. Cleanup must
+                # stay on the event loop and must not unsubscribe that listener again.
+                manager._unsubscribe_stop = None
+                manager.async_unload()
 
-        manager._unsubscribe_stop = hass.bus.async_listen_once(
-            EVENT_HOMEASSISTANT_STOP, unload_conditions
-        )
-    await manager.async_initialize()
-    if manager._initialized:
-        reconcile_lifecycle()
-    return manager
+            manager._unsubscribe_stop = hass.bus.async_listen_once(
+                EVENT_HOMEASSISTANT_STOP, unload_conditions
+            )
+        await manager.async_initialize()
+        if manager._initialized:
+            reconcile_lifecycle()
+        return manager
 
 
 def get_request_rule_runtime(

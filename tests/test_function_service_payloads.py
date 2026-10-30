@@ -76,13 +76,10 @@ async def test_effective_payload_validation_and_dependencies(hass, shape):
     if shape == "override_arguments":
         with pytest.raises(HomeAssistantError, match="message"):
             await integrity.async_validate_request_rule_functions(hass, rule, tools())
-        with pytest.raises(HomeAssistantError, match="message"):
-            management_ui._validate_request_rule_functions(rule, tools())
         return
     selected = management_ui._request_rule_function_tools(rule, {"functions": tools()})
     assert [item["spec"]["name"] for item in selected] == [target]
     await integrity.async_validate_request_rule_functions(hass, rule, selected)
-    management_ui._validate_request_rule_functions(rule, selected)
     manager = rr.RequestRules(MemoryStore({"rules": [rule]}))
     await manager.async_initialize()
     assert integrity.recursive_function_references(manager, target) == [
@@ -241,7 +238,6 @@ async def test_whole_arguments_template_defers_only_runtime_validation(hass):
         }
     )
     await integrity.async_validate_request_rule_functions(hass, rule, tools())
-    management_ui._validate_request_rule_functions(rule, tools())
     bad = deepcopy(rule)
     bad["action"]["actions"][0]["data_template"]["arguments"] = "not an object"
     with pytest.raises(HomeAssistantError, match="arguments must be an object"):

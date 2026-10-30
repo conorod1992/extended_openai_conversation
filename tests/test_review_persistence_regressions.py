@@ -16,6 +16,7 @@ from custom_components.extended_openai_conversation_responses.agent_config impor
 from custom_components.extended_openai_conversation_responses.conversation_archive import (
     _excerpt,
 )
+from tests.restore_participants import participants
 from tests.test_backup import _document
 from tests.test_memory_v2 import FakeStorage
 from tests.test_transfer_user_mapping import _prepared
@@ -62,19 +63,24 @@ async def test_private_rollback_and_selected_restore_preserve_malformed_destinat
     subentry = SimpleNamespace(title="Agent", subentry_id="agent", data=config)
     document = _document()
     document["guest_mode"] = {"schedule": None}
-    managers = tuple(
-        SimpleNamespace(async_backup_data=AsyncMock(return_value=document[key]))
-        for key in (
-            "memories",
-            "temporary_memories",
-            "knowledge",
-            "archive",
-            "usage",
-            "guest_mode",
-            "request_rules",
-        )
+    categories = {
+        "memory": "memories",
+        "temporary": "temporary_memories",
+        "knowledge": "knowledge",
+        "archive": "archive",
+        "usage": "usage",
+        "guest_mode": "guest_mode",
+        "request_rules": "request_rules",
+    }
+    managers = participants(
+        **{
+            name: SimpleNamespace(
+                async_backup_data=AsyncMock(return_value=document[key])
+            )
+            for name, key in categories.items()
+        }
     )
-    managers[3].async_recovery_data = AsyncMock(
+    managers.archive.async_recovery_data = AsyncMock(
         return_value={**document["archive"], "active": {}}
     )
     current = await backup._snapshot_for_restore(managers, subentry)

@@ -19,6 +19,22 @@ from homeassistant.helpers.template import TemplateEnvironment  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
+def direct_backend_system_caller():
+    """Direct backend probes are intentional userless calls, not HA requests.
+
+    Missing-authority tests use a fresh contextvars.Context so this fixture
+    cannot satisfy their prerequisite. Request-entry tests still bind and check
+    their real caller rather than inheriting this system actor.
+    """
+    from custom_components.extended_openai_conversation_responses.ha_permissions import (
+        bind_active_ha_context,
+    )
+
+    with bind_active_ha_context(None):
+        yield
+
+
+@pytest.fixture(autouse=True)
 def mock_ha_action_owners(monkeypatch):
     """Unit HA doubles do not include registries or service ownership records."""
     from custom_components.extended_openai_conversation_responses import ha_actions

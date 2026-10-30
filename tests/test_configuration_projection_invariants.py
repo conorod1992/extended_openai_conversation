@@ -15,6 +15,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     LEGACY_DEFAULT_PROMPTS,
 )
 from homeassistant.config_entries import ConfigEntryState
+from tests.restore_participants import participants
 
 CASES = [
     pytest.param({}, id="missing-fields"),
@@ -444,20 +445,26 @@ async def test_rollback_preparation_preserves_function_runtime_interpretation(
     from tests.test_backup import _document
 
     base = _document()
-    managers = (
-        SimpleNamespace(async_backup_data=AsyncMock(return_value=base["memories"])),
-        SimpleNamespace(
+    managers = participants(
+        memory=SimpleNamespace(
+            async_backup_data=AsyncMock(return_value=base["memories"])
+        ),
+        temporary=SimpleNamespace(
             async_backup_data=AsyncMock(return_value=base["temporary_memories"])
         ),
-        SimpleNamespace(async_backup_data=AsyncMock(return_value=base["knowledge"])),
-        SimpleNamespace(
+        knowledge=SimpleNamespace(
+            async_backup_data=AsyncMock(return_value=base["knowledge"])
+        ),
+        archive=SimpleNamespace(
             async_recovery_data=AsyncMock(
                 return_value={**base["archive"], "active": {}}
             )
         ),
-        SimpleNamespace(async_backup_data=AsyncMock(return_value=base["usage"])),
-        SimpleNamespace(async_backup_data=AsyncMock(return_value={"schedule": None})),
-        SimpleNamespace(
+        usage=SimpleNamespace(async_backup_data=AsyncMock(return_value=base["usage"])),
+        guest_mode=SimpleNamespace(
+            async_backup_data=AsyncMock(return_value={"schedule": None})
+        ),
+        request_rules=SimpleNamespace(
             async_backup_data=AsyncMock(return_value={"defaults": {}, "rules": []})
         ),
     )

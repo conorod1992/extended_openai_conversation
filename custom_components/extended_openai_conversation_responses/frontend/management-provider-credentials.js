@@ -1,3 +1,4 @@
+import {callMutation, captureConfigurationOwner, presentAcknowledgedMutation, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
 const CREDENTIAL_COMMAND = "extended_openai_conversation_responses/management/update_api_key";
 
 export function providerCredentialScope(agent = {}) {
@@ -31,11 +32,11 @@ export async function updateProviderApiKey(panel, agent, apiKey) {
   const connection = panel?._hass;
   if (!connection?.callWS) throw new Error("Home Assistant connection is unavailable.");
   if (!agent?.entry_id) throw new Error("Provider connection is unavailable.");
-  return connection.callWS({
+  return callMutation(() => connection.callWS({
     type: CREDENTIAL_COMMAND,
     entry_id: agent.entry_id,
     api_key: apiKey,
-  });
+  }));
 }
 
 function ensureStyles(panel) {
@@ -147,23 +148,21 @@ function ensureApiKeyDialog(panel, agent) {
     const previousLabel = save.textContent;
     setDialogBusy(dialog, true);
     save.textContent = "Validating…";
+    const submission = captureConfigurationOwner(panel);
     try {
       const result = await updateProviderApiKey(panel, agent, apiKey);
+      requireMutationAcknowledgement(typeof result?.updated === "boolean", "updating provider credentials");
+      // Never retain the submitted secret while refreshing the displayed state.
       input.value = "";
-      dialog.close();
-      resetDiagnosticsAfterCredentialUpdate(panel, result);
-      const validationNote = result?.validation_performed === false
-        ? " Authentication validation is skipped for this provider connection."
-        : "";
-      if (result?.updated === false && result?.reload_requested !== true) {
-        panel._toast(`API key unchanged.${validationNote}`);
-      } else if (result?.reload_requested === false) {
-        panel._toast(`API key updated.${validationNote} The provider connection was not reloaded automatically.`);
-      } else if (result?.updated === false) {
-        panel._toast(`API key unchanged.${validationNote} Extended OpenAI is retrying the provider connection.`);
-      } else {
-        panel._toast(`API key updated.${validationNote} Extended OpenAI is reloading the provider connection.`);
-      }
+      const validationNote = result.validation_performed === false ? " Authentication validation is skipped for this provider connection." : "";
+      const message = result.updated === false && result.reload_requested !== true ? `API key unchanged.${validationNote}`
+        : result.reload_requested === false ? `API key updated.${validationNote} The provider connection was not reloaded automatically.`
+        : result.updated === false ? `API key unchanged.${validationNote} Extended OpenAI is retrying the provider connection.`
+        : `API key updated.${validationNote} Extended OpenAI is reloading the provider connection.`;
+      await presentAcknowledgedMutation(panel, submission, message, () => {
+        dialog.close();
+        resetDiagnosticsAfterCredentialUpdate(panel, result);
+      }, result);
     } catch (err) {
       error.textContent = err.message || String(err);
       input.focus();

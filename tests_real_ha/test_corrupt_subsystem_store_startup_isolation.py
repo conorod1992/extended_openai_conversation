@@ -23,7 +23,9 @@ from custom_components.extended_openai_conversation_responses.const import (
 )
 from custom_components.extended_openai_conversation_responses.knowledge import (
     KnowledgeLibrary,
+    async_get_knowledge,
 )
+from custom_components.extended_openai_conversation_responses.persistence_hardening import StorageRepairRequired
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
     TemporaryMemory,
 )
@@ -178,12 +180,10 @@ async def test_corrupt_knowledge_store_on_fresh_setup_does_not_poison_siblings(
     assert restarted is not None
     assert restarted is not agent
 
-    # Home Assistant owns malformed-JSON recovery at the Store boundary: it moves the
-    # corrupt file aside and returns an empty store. The integration should therefore
-    # cold-start a fresh, healthy Knowledge manager rather than fail the whole agent.
-    assert restarted._knowledge is not None
-    assert restarted._knowledge is not old_knowledge
-    assert restarted._knowledge.source_count == 0
+    # HA preserves malformed JSON and returns None. That does not establish an
+    # authoritative empty generation. Keep the damaged feature unavailable while
+    # healthy siblings and the agent itself remain usable.
+    assert restarted._knowledge is None
     assert restarted._temporary_memory is not None
     assert restarted._temporary_memory is not old_temporary
     assert restarted._usage is not None
@@ -191,7 +191,8 @@ async def test_corrupt_knowledge_store_on_fresh_setup_does_not_poison_siblings(
 
     statuses = hass.data[SUBSYSTEM_STATUS_KEY][(entry.entry_id, subentry_id)]
     assert statuses["knowledge"]["configured"] is True
-    assert statuses["knowledge"]["status"] == "healthy"
+    assert statuses["knowledge"]["status"] == "failed"
+    assert statuses["knowledge"]["error_type"] == "StorageRepairRequired"
     assert statuses["temporary_memory"]["configured"] is True
     assert statuses["temporary_memory"]["status"] == "healthy"
 
@@ -232,3 +233,15 @@ async def test_corrupt_knowledge_store_on_fresh_setup_does_not_poison_siblings(
         await hass.async_add_executor_job(corrupt_paths[0].read_text, "utf-8")
         == _CORRUPT_CONTENT
     )
+
+    # A subsequent ordinary create must not install a healthy empty generation
+    # over the damaged one. Inspect the actual disk after attempting the action.
+    blocked = False
+    try:
+        writer = await async_get_knowledge(hass, entry.entry_id, subentry_id)
+        await writer.async_create("Unsafe retry", "", "Must not replace corruption")
+    except StorageRepairRequired:
+        blocked = True
+    assert not await hass.async_add_executor_job(knowledge_path.exists)
+    assert blocked
+    assert await hass.async_add_executor_job(corrupt_paths[0].read_text, "utf-8") == _CORRUPT_CONTENT

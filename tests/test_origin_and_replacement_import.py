@@ -95,20 +95,22 @@ async def test_model_broadcast_carries_satellite_without_device(hass, monkeypatc
     from tests.test_conversation_orchestration import _assist_fixture
 
     entity, invoke, _logs, _seen = _assist_fixture(monkeypatch)
-    manager = SimpleNamespace(
-        resolve_targets=lambda **kw: (
-            ["assist_satellite.hall"]
-            if kw.get("origin_entity_id") == "assist_satellite.kitchen"
-            else ["assist_satellite.hall", "assist_satellite.kitchen"]
-        ),
-        async_send=AsyncMock(
-            return_value={
-                "id": "test",
-                "targets": ["assist_satellite.hall"],
-                "deliveries": {},
-            }
-        ),
+    from custom_components.extended_openai_conversation_responses import intercom
+
+    manager = intercom.IntercomManager(hass)
+    manager._enabled = True
+    monkeypatch.setattr(manager, "_refresh_state_listener", lambda: None)
+    monkeypatch.setattr(manager, "_schedule_drain", lambda _: None)
+    monkeypatch.setattr(
+        intercom.er, "async_get", lambda _: SimpleNamespace(async_get=lambda _: None)
     )
+    hass.states.async_all.return_value = [
+        SimpleNamespace(
+            entity_id=entity_id,
+            attributes={"supported_features": intercom.ANNOUNCE_FEATURE},
+        )
+        for entity_id in ("assist_satellite.hall", "assist_satellite.kitchen")
+    ]
     monkeypatch.setattr(native, "async_get_intercom", AsyncMock(return_value=manager))
 
     async def process(_log, **kwargs):
@@ -123,13 +125,9 @@ async def test_model_broadcast_carries_satellite_without_device(hass, monkeypatc
 
     entity._async_handle_chat_log.side_effect = process
     await invoke(satellite="assist_satellite.kitchen", device=None)
-    assert manager.async_send.call_args.kwargs["entity_ids"] == [
-        "assist_satellite.hall"
-    ]
-    assert (
-        manager.async_send.call_args.kwargs["origin_entity_id"]
-        == "assist_satellite.kitchen"
-    )
+    assert manager.history()[0]["targets"] == ["assist_satellite.hall"]
+    assert manager.history()[0]["origin_entity_id"] == "assist_satellite.kitchen"
+    assert set(manager._queues) == {"assist_satellite.hall"}
 
 
 @pytest.mark.parametrize(

@@ -120,7 +120,13 @@ def _manager_needs_recovery(entity: Any, attribute: str) -> bool:
 def _runtime_needs_recovery(entity: Any) -> bool:
     return any(
         _manager_needs_recovery(entity, attribute)
-        for attribute in ("_memory", "_temporary_memory", "_knowledge", "_archive")
+        for attribute in (
+            "_guest_mode",
+            "_memory",
+            "_temporary_memory",
+            "_knowledge",
+            "_archive",
+        )
     )
 
 
@@ -214,8 +220,8 @@ async def async_reconcile_runtime_configuration(
     """Make one long-lived agent match its current subentry configuration.
 
     Home Assistant replaces ``subentry.data`` when saved, so unchanged requests take
-    the identity fast path. A failed required manager keeps the retry flag set, making
-    the next request retry only the missing optional subsystem without an entity reload.
+    the identity fast path. Invalidated managers retry on the next request without
+    an entity reload. Required Guest state retains its own fail-closed boundary.
     """
     options = entity.subentry.data
     if (
@@ -252,6 +258,21 @@ async def async_reconcile_runtime_configuration(
             and not _runtime_needs_recovery(entity)
         ):
             return
+
+        if _manager_needs_recovery(entity, "_guest_mode"):
+            from .guest_mode import async_get_guest_mode
+
+            try:
+                entity._guest_mode = await async_get_guest_mode(
+                    entity.hass, entity.entry.entry_id, entity.subentry.subentry_id
+                )
+            except Exception as err:
+                # Keep the unavailable manager: the normal Guest policy boundary
+                # reports failure before processing, just as before recovery.
+                _LOGGER.warning(
+                    "Guest Mode recovery remains unavailable (%s)", type(err).__name__
+                )
+                return
 
         from .conversation_archive import async_get_archive
         from .knowledge import async_get_knowledge

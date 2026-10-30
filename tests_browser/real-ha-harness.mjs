@@ -43,7 +43,13 @@ const hass = {
       const payload = await response.json();
       outcomes[index] = {success: response.ok};
       sessionStorage.setItem("eocRealHaOutcomes", JSON.stringify(outcomes));
-      if (!response.ok) throw new Error(payload?.message || payload?.error?.message || `Home Assistant WebSocket bridge returned ${response.status}`);
+      if (!response.ok) {
+        const error = new Error(payload?.message || payload?.error?.message || `Home Assistant WebSocket bridge returned ${response.status}`);
+        // The HTTP adapter must preserve HA's WebSocket error contract. Losing
+        // this code turns an authoritative rejection into an uncertain mutation.
+        if (payload?.error && typeof payload.error === "object" && "code" in payload.error) error.code = payload.error.code;
+        throw error;
+      }
       return payload;
     } catch (error) {
       outcomes[index] = {success: false};

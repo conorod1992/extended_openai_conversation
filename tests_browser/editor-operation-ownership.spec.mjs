@@ -8,7 +8,7 @@ async function gate(page, section, actions) {
     browserHarness.hass.callWS = async request => {
       if (request.section !== section || !actions.includes(request.action)) return original(request);
       return new Promise((resolve, reject) => pendingEditors.push({request, finish: async fail => {
-        if (fail) reject(new Error('Delayed editor failure'));
+        if (fail) reject({code:'invalid_request', message:'Delayed editor failure'});
         else resolve(request.action === 'import_preview'
           ? {title: request.document, summary: {model: 'gpt-5.6', tools: 0, function_groups: 0, speech_rules: 0}}
           : await original(request));

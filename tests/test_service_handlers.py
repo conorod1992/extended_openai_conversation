@@ -8,6 +8,7 @@ from openai import OpenAIError
 import pytest
 
 from custom_components.extended_openai_conversation_responses import services
+from custom_components.extended_openai_conversation_responses.agent_config import validate_function_tools
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_RESPONSES,
     CONF_API_MODE,
@@ -1008,7 +1009,7 @@ async def test_function_enable_action_persists_only_runtime_function_defaults(
     persisted = hass.config_entries.async_update_subentry.call_args.kwargs["data"]
     # Materialize the runtime's default Functions without adopting unrelated defaults.
     assert set(persisted) == {"functions"}
-    tools = services.validate_function_tools(persisted["functions"])
+    tools = validate_function_tools(persisted["functions"])
     assert (
         next(tool for tool in tools if tool["spec"]["name"] == "execute_services")[
             "enabled"

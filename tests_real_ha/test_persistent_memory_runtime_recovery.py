@@ -178,6 +178,6 @@ async def test_cold_memory_storage_removes_credential_categories_before_publicat
     assert retained["memories"][0]["content"] == "My plant is purple"
     assert (await storage.async_load()) == retained
     assert not loaded._key_index
-    assert "Ignoring malformed persistent memory record" in caplog.text
+    assert "Removing persistent memory rejected by privacy policy" in caplog.text
     assert "PRIVATE_MEMORY_VALUE" not in caplog.text
     assert "private_memory_value" not in caplog.text

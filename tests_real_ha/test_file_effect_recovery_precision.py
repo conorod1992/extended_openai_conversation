@@ -14,6 +14,9 @@ from custom_components.extended_openai_conversation_responses.const import (
 from custom_components.extended_openai_conversation_responses.functions import (
     file as files,
 )
+from custom_components.extended_openai_conversation_responses.tool_replay_guard import (
+    replay_safety,
+)
 from tests_real_ha.test_cross_feature_acceptance import _agent, _say
 from tests_real_ha.test_provider_wire_e2e import (
     _chat_sse_text,
@@ -273,7 +276,7 @@ async def test_repeated_cancellation_settles_usage_and_preserves_file_recovery(
     assert failed_run.request_count == 2
     assert failed_run.failed_request_count == 1
     assert failed_run.error_type == "CancelledError"
-    assert agent._unacknowledged_effects[seed.conversation_id]
+    assert replay_safety(agent).effects[seed.conversation_id]
     assert agent._execution_effect_receipts
     assert writes == [(target, "written once")]
 
@@ -285,5 +288,5 @@ async def test_repeated_cancellation_settles_usage_and_preserves_file_recovery(
     _install_wire(monkeypatch, agent, [text("Acknowledged")])
     acknowledged = await _say(hass, agent, "acknowledge", seed.conversation_id)
     assert acknowledged.response.error_code is None
-    assert not agent._unacknowledged_effects.get(seed.conversation_id)
+    assert not replay_safety(agent).effects.get(seed.conversation_id)
     assert not agent._execution_effect_receipts

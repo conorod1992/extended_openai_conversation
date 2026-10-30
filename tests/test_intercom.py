@@ -8,6 +8,8 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+from homeassistant.core import Context
+
 import pytest
 
 from homeassistant.exceptions import HomeAssistantError
@@ -88,7 +90,7 @@ async def test_disabled_broadcast_rejects_send(hass) -> None:
 
     with pytest.raises(HomeAssistantError, match="Broadcast is disabled"):
         await manager.async_send(
-            "Dinner is ready", entity_ids=["assist_satellite.kitchen"]
+            "Dinner is ready", entity_ids=["assist_satellite.kitchen"], context=Context()
         )
 
 
@@ -102,7 +104,7 @@ async def test_busy_satellite_is_queued_without_announce(hass, monkeypatch) -> N
     call = AsyncMock()
     monkeypatch.setattr(hass.services, "async_call", call)
 
-    result = await manager.async_send("Dinner is ready", entity_ids=["assist_satellite.kitchen"])
+    result = await manager.async_send("Dinner is ready", entity_ids=["assist_satellite.kitchen"], context=Context())
     await manager._async_drain("assist_satellite.kitchen")
 
     assert result["deliveries"]["assist_satellite.kitchen"]["status"] == "queued_busy"
@@ -126,7 +128,7 @@ async def test_idle_satellite_delivers_after_stability_check(hass, monkeypatch) 
         "custom_components.extended_openai_conversation_responses.intercom.asyncio.sleep",
         no_sleep,
     )
-    result = await manager.async_send("Dinner is ready", entity_ids=["assist_satellite.kitchen"])
+    result = await manager.async_send("Dinner is ready", entity_ids=["assist_satellite.kitchen"], context=Context())
     await manager._async_drain("assist_satellite.kitchen")
 
     call.assert_awaited_once()
@@ -147,7 +149,7 @@ async def test_expiry_during_idle_stability_wait_prevents_delivery(
     monkeypatch.setattr(hass.services, "async_call", call)
 
     result = await manager.async_send(
-        "Dinner is ready", entity_ids=["assist_satellite.kitchen"]
+        "Dinner is ready", entity_ids=["assist_satellite.kitchen"], context=Context()
     )
 
     async def expire_during_sleep(_seconds):
@@ -772,7 +774,7 @@ async def test_send_clamps_ttl_and_handles_missing_state(
         lambda _hass, delay, callback: scheduled.append((delay, callback)),
     )
 
-    result = await manager.async_send(" Hello ", ttl_seconds=ttl_seconds)
+    result = await manager.async_send(" Hello ", ttl_seconds=ttl_seconds, context=Context())
 
     assert result["message"] == "Hello"
     assert result["deliveries"][entity_id]["status"] == "queued_busy"

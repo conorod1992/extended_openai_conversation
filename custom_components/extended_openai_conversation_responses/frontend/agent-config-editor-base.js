@@ -1,4 +1,5 @@
-import {invalidateImportPreview, renderConfigurationActions, bindSavedConfigurationActions} from "./assistant-configuration-actions.js";
+import {copyTextToClipboard} from "./clipboard.js";
+import {invalidateImportPreview, renderConfigurationActions, bindSavedConfigurationActions, applyConfigurationImport} from "./assistant-configuration-actions.js";
 export {invalidateImportPreview, renderConfigurationActions} from "./assistant-configuration-actions.js";
 import {searchTokens, matchesFunctionSearchTokens, cachedFunctionSearchTokens} from "./function-search.js";
 export {matchesFunctionSearch} from "./function-search.js";
@@ -85,33 +86,7 @@ export const toggle = (panel, key, label, value, description = "", disabled = fa
   return `<div class="config-toggle setting" data-field="${key}" data-setting data-search="${panel._e(settingSearch(label, description, key, helpKey))}"><span class="setting-copy">${labelRow(panel, label, key, helpKey, true, value, inactive)}${description ? `<small>${description}</small>` : ""}${state.note ? `<small class="capability-note">${panel._e(state.note)}</small>` : ""}</span><label class="switch-control" for="config-${key}"><input id="config-${key}" data-config="${key}" data-type="boolean" type="checkbox" role="switch" ${bool(value)} ${inactive ? "disabled" : ""}><span class="switch-track" aria-hidden="true"></span></label></div>`;
 };
 
-export async function copyTextToClipboard(text, clipboardNavigator = globalThis.navigator, clipboardDocument = globalThis.document) {
-  const writeText = clipboardNavigator?.clipboard?.writeText;
-  if (typeof writeText === "function") {
-    try {
-      await writeText.call(clipboardNavigator.clipboard, text);
-      return;
-    } catch (err) {
-      if (!clipboardDocument) throw err;
-    }
-  }
-  if (!clipboardDocument?.body || typeof clipboardDocument.createElement !== "function" || typeof clipboardDocument.execCommand !== "function") {
-    throw new Error("Clipboard access is unavailable in this browser context");
-  }
-  const textarea = clipboardDocument.createElement("textarea");
-  textarea.value = text;
-  textarea.setAttribute("readonly", "");
-  textarea.style.position = "fixed";
-  textarea.style.opacity = "0";
-  clipboardDocument.body.appendChild(textarea);
-  try {
-    textarea.select();
-    if (!clipboardDocument.execCommand("copy")) throw new Error("Browser copy command failed");
-  } finally {
-    textarea.remove();
-  }
-}
-
+export {copyTextToClipboard} from "./clipboard.js";
 
 export function section(panel, id, title, description, keywords, body, includeHeading = true) {
   if (panel._configSectionFilter && !panel._configSectionFilter.has(id)) return "";
@@ -400,7 +375,7 @@ export function bindConfiguration(panel) {
       importApply.disabled = true;
     }
   });
-  bindOwnedEvent(root.querySelector("#import-apply"), "click", "assistant-actions", async () => { const mode=root.querySelector('input[name="import-mode"]:checked').value, source=importDocument.value, revision=panel._importRevision; if(!panel._importDocument||panel._importDocument!==source||panel._importMode!==mode||panel._importRevision!==panel._configData?.revision){invalidateImportPreview(panel,importApply,importSummary);return;} if(mode==="current"&&!await panel._confirm("Overwrite this agent?",`The saved configuration will be replaced.${panel._configDirty ? " Your unsaved shared draft will be discarded." : ""} Retained history and parent-entry credentials are not affected.`,"Overwrite"))return; if(panel._importDocument!==source||importDocument.value!==source||panel._configData?.revision!==revision){invalidateImportPreview(panel,importApply,importSummary);return;} try { await panel._call("configuration","import",{document:source,mode,confirm:mode==="current",...(mode==="current"?{revision}:{})}); root.querySelector("#import-dialog").close(); if(mode==="current")panel._clearConfigDraft(); await panel._loadAgents(panel._agentId); panel._toast(mode==="current"?"Configuration imported":"Agent created from import; your current draft is preserved"); } catch(err){panel._toast(`Unable to import: ${err.message||String(err)}`,true);} });
+  bindOwnedEvent(root.querySelector("#import-apply"), "click", "assistant-actions", () => applyConfigurationImport(panel, root));
   bindOwnedEvent(root.querySelector("#import-cancel"), "click", "assistant-actions",()=>{invalidateImportPreview(panel,importApply,importSummary);root.querySelector("#import-dialog").close();actionsMenu?.querySelector("summary")?.focus();});
   bindOwnedEvent(root.querySelector("#import-dialog"), "cancel", "assistant-actions",()=>{invalidateImportPreview(panel,importApply,importSummary);requestAnimationFrame(()=>actionsMenu?.querySelector("summary")?.focus());});
   if (panel._configRestoreFocus) { const selector=panel._configRestoreFocus; panel._configRestoreFocus=null; requestAnimationFrame(()=>root.querySelector(selector)?.focus({preventScroll:true})); }

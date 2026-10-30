@@ -1,8 +1,9 @@
+import {requestRuleMutationNeedsRecovery, requireRequestRuleAcknowledgement} from "./request-rule-acknowledgement.js";
 import {localRuleActionSummary} from "./request-rule-response-summary.js";
 import {formatWordingAlternatives} from "./wording-alternatives.js";
 import {adoptKeyedElements, elementFromMarkup, keyedElement, placeChildren, pruneKeys} from "./keyed-collection.js";
 import {requestRuleEmptyContent, updateRequestRuleEmptyState} from "./request-rule-empty-state.js";
-import {captureConfigurationOwner, configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
+import {captureConfigurationOwner, configurationSubmissionIsCurrent, presentAcknowledgedMutation} from "./configuration-acknowledgement.js";
 import {beginOperation, invalidateOperation} from "./operation-ownership.js";
 
 const sharingGroupOptions = new WeakMap();
@@ -59,6 +60,9 @@ export function requestRuleSummary(rule = {}, defaults = {}) {
 }
 
 export async function recoverRequestRuleMutation(panel, error, label, isCurrent = () => true) {
+  // Recover after queued mutations have settled, so an earlier read cannot
+  // release uncertainty ahead of an already queued write or re-marking error.
+  await panel._eocRequestRuleMutationTail?.catch(() => {});
   if (!isCurrent()) return;
   const owner = captureConfigurationOwner(panel), root = panel.shadowRoot, view = panel._viewKey?.();
   const message = error?.message || String(error || "Unknown error");
@@ -70,6 +74,7 @@ export async function recoverRequestRuleMutation(panel, error, label, isCurrent 
     const refresh = panel._loadSection(true);
     assetToken = panel._eocViewAssetToken;
     await refresh;
+
   }
   catch (refreshError) {
     if (!configurationSubmissionIsCurrent(panel, owner) || panel.shadowRoot !== root || panel._viewKey?.() !== view
@@ -89,7 +94,7 @@ function captureRuleCollectionOperation(panel, control, {queued = false} = {}) {
   const ownsControls = () => latest() && panel.shadowRoot === root && root.contains(control);
   const owns = () => latest() && panel.shadowRoot === root
     && configurationSubmissionIsCurrent(panel, owner) && panel._viewKey?.() === view;
-  return {revision:panel._result?.revision, ownsControls,
+  return {owner, revision:panel._result?.revision, ownsControls,
     isCurrent:() => owns() && panel._loadToken === visit,
     // A read before commit cannot hide this own ACK. A genuinely newer read
     // retires it through the shared tracked-revision admission boundary.
@@ -100,11 +105,14 @@ function captureRuleCollectionOperation(panel, control, {queued = false} = {}) {
 
 async function runRuleCollectionMutation(panel, operation, action, payload, accept, label, rollback) {
   if (!operation.isCurrent() || !operation.ownsControls()) return false;
+  if (requestRuleMutationNeedsRecovery(panel, operation.owner)) {
+    await recoverRequestRuleMutation(panel, new Error("Refresh Request Rules before another mutation"), label, operation.isCurrent);
+    return false;
+  }
   try {
     const result = await panel._call("request_rules", action, payload);
     if (!operation.accepts(result)) return false;
-    accept(result);
-    return true;
+    return await presentAcknowledgedMutation(panel, operation.owner, null, () => accept(result), result);
   } catch (error) {
     if (operation.isCurrent()) rollback?.();
     await recoverRequestRuleMutation(panel, error, label, operation.isCurrent);
@@ -252,7 +260,7 @@ function finishMutation(panel,result,rules){
   if (!reconciled) panel._render();
 }
 export function applyRequestRuleMutation(panel, action, result, context={}) {
-  if (!result || result.revision == null) return false;
+  requireRequestRuleAcknowledgement(action, result, context.ruleId);
   let rules=[...(panel._result?.rules || [])];
   const presentedRule = result.rule
     ? {

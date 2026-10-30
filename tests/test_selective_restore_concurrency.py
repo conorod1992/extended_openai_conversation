@@ -14,6 +14,7 @@ from custom_components.extended_openai_conversation_responses import (
     restore_recovery,
     transfer,
 )
+from tests.restore_participants import participants
 from tests.test_restore_recovery import FakeHass, MemoryJournalStore, _identity, _states
 
 
@@ -64,14 +65,16 @@ class RestoreHarness:
 
             return SimpleNamespace(async_replace_backup=replace_data)
 
-        self.managers = (
-            manager("memories"),
-            manager("temporary_memories"),
-            manager("knowledge"),
-            manager("archive_sessions", "archive_turns"),
-            manager("usage_totals", "usage_daily", "usage_requests", "usage_runs"),
-            manager("guest_mode_schedule"),
-            manager("request_rules"),
+        self.managers = participants(
+            memory=manager("memories"),
+            temporary=manager("temporary_memories"),
+            knowledge=manager("knowledge"),
+            archive=manager("archive_sessions", "archive_turns"),
+            usage=manager(
+                "usage_totals", "usage_daily", "usage_requests", "usage_runs"
+            ),
+            guest_mode=manager("guest_mode_schedule"),
+            request_rules=manager("request_rules"),
         )
 
         async def snapshot(*_args):
@@ -345,18 +348,18 @@ async def test_private_active_conversation_survives_selective_restore_and_rollba
     document = restore_recovery._prepared_document(
         harness.state, harness.entry.entry_id, harness.subentry.subentry_id
     )
-    for index, section in (
-        (0, "memories"),
-        (1, "temporary_memories"),
-        (2, "knowledge"),
-        (4, "usage"),
-        (5, "guest_mode"),
-        (6, "request_rules"),
+    for name, section in (
+        ("memory", "memories"),
+        ("temporary", "temporary_memories"),
+        ("knowledge", "knowledge"),
+        ("usage", "usage"),
+        ("guest_mode", "guest_mode"),
+        ("request_rules", "request_rules"),
     ):
-        harness.managers[index].async_backup_data = AsyncMock(
+        getattr(harness.managers, name).async_backup_data = AsyncMock(
             return_value=document[section]
         )
-    harness.managers = (*harness.managers[:3], archive, *harness.managers[4:])
+    harness.managers = replace(harness.managers, archive=archive)
     monkeypatch.setattr(
         restore_recovery, "_durable_managers", AsyncMock(return_value=harness.managers)
     )
@@ -403,3 +406,54 @@ async def test_private_active_conversation_survives_selective_restore_and_rollba
         assert "PRIVATE FOLLOWUP" not in str(await archive.async_backup_data())
     finally:
         await continuity.async_release(resolution.key, resolution.claim_token)
+
+
+@pytest.mark.parametrize("full_restore", [False, True])
+@pytest.mark.parametrize("retention", ["private", "retained"])
+async def test_knowledge_only_restore_preserves_retained_user_continuity(monkeypatch, full_restore, retention):
+    from custom_components.extended_openai_conversation_responses.continuity import ConversationContinuity
+    from custom_components.extended_openai_conversation_responses.const import CONVERSATION_CONTINUITY_USER
+    from custom_components.extended_openai_conversation_responses.scope import user_scope
+    from homeassistant.components import conversation
+
+    reset = restore_recovery.reset_restored_runtime
+    tx = RestoreHarness(monkeypatch)
+    manager = ConversationContinuity(tx.subentry.subentry_id)
+    scope = user_scope("alice", source="authenticated_user")
+    before = await manager.async_resolve(CONVERSATION_CONTINUITY_USER, scope, None, None, 30)
+    from custom_components.extended_openai_conversation_responses.conversation_archive import ConversationArchive
+    from tests.test_conversation_archive import FakeArchiveStorage
+    archive = ConversationArchive(FakeArchiveStorage(), tx.subentry.subentry_id)
+    await archive.async_initialize()
+    await archive.async_begin_session(f"continuity:{before.key}", scope, before.conversation_id,
+        archive_enabled=True, shared_archive_enabled=False, inactivity_minutes=30)
+    if retention == "private":
+        await archive.async_make_private(next(iter(archive._sessions)))
+    tx.state.archive_sessions = list(archive._sessions.values())
+    tx.state.archive_active = dict(archive._active)
+    tx.managers = replace(tx.managers, archive=archive)
+    monkeypatch.setattr(restore_recovery, "_durable_managers", AsyncMock(return_value=tx.managers))
+    history = [conversation.SystemContent(content="Retained context witness")]
+    await manager.async_record_success(before.key, before.claim_token, history)
+    monkeypatch.setattr(restore_recovery, "_active_agent", lambda *_: SimpleNamespace(_continuity=manager))
+    monkeypatch.setattr(restore_recovery, "reset_restored_runtime", reset)
+    if full_restore:
+        await restore_recovery.async_restore_backup_recoverably(tx.hass, tx.entry, tx.subentry, tx.state)
+    else:
+        await tx.restore()
+    after = await manager.async_resolve(CONVERSATION_CONTINUITY_USER, scope, None, before.conversation_id, 30)
+    try:
+        assert (after.conversation_id == before.conversation_id) == (not full_restore or retention == "private")
+        assert after.history == (history if not full_restore and retention == "retained" else [])
+        other = await manager.async_resolve(
+            CONVERSATION_CONTINUITY_USER, user_scope("bob", source="authenticated_user"),
+            None, before.conversation_id, 30,
+        )
+        assert other.conversation_id != before.conversation_id
+        assert other.history == []
+        await manager.async_release(other.key, other.claim_token)
+        if not full_restore:
+            assert tx.state.knowledge == []
+        assert tx.journal.data is None
+    finally:
+        await manager.async_release(after.key, after.claim_token)

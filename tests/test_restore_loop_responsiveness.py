@@ -1,8 +1,8 @@
 """Real Usage histories must not monopolize the loop during journaled restore."""
 
 import asyncio
-import threading
 from copy import deepcopy
+import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -14,9 +14,10 @@ from custom_components.extended_openai_conversation_responses import (
     transfer,
 )
 from custom_components.extended_openai_conversation_responses.usage import (
-    UsageManager,
     RequestUsage,
+    UsageManager,
 )
+from tests.restore_participants import participants
 from tests.test_backup import _document
 from tests.test_restore_recovery import FakeHass
 
@@ -63,25 +64,27 @@ async def test_restore_prepares_retained_history_in_workers(monkeypatch, count, 
     document.setdefault("guest_mode", {"schedule": None})
     document.setdefault("request_rules", {"defaults": {}, "rules": []})
     target = backup.inspect_backup(document, "agent-new")
-    categories = [
-        "memories",
-        "temporary_memories",
-        "knowledge",
-        "archive",
-        "usage",
-        "guest_mode",
-        "request_rules",
-    ]
-    managers = tuple(
-        manager
-        if key == "usage"
-        else SimpleNamespace(
-            async_backup_data=AsyncMock(return_value=document[key]),
-            async_replace_backup=AsyncMock(),
-        )
-        for key in categories
+    categories = {
+        "memory": "memories",
+        "temporary": "temporary_memories",
+        "knowledge": "knowledge",
+        "archive": "archive",
+        "usage": "usage",
+        "guest_mode": "guest_mode",
+        "request_rules": "request_rules",
+    }
+    managers = participants(
+        **{
+            name: manager
+            if key == "usage"
+            else SimpleNamespace(
+                async_backup_data=AsyncMock(return_value=document[key]),
+                async_replace_backup=AsyncMock(),
+            )
+            for name, key in categories.items()
+        }
     )
-    managers[3].async_recovery_data = AsyncMock(
+    managers.archive.async_recovery_data = AsyncMock(
         return_value={**document["archive"], "active": {}}
     )
     hass = FakeHass()

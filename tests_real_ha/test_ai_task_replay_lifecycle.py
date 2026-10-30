@@ -10,6 +10,9 @@ from custom_components.extended_openai_conversation_responses import (
     execution_outcomes as outcomes,
     tool_replay_guard as guard,
 )
+from custom_components.extended_openai_conversation_responses.tool_replay_guard import (
+    replay_safety,
+)
 from homeassistant.components import ai_task
 from homeassistant.components.ai_task.const import DATA_COMPONENT
 from homeassistant.exceptions import HomeAssistantError
@@ -101,13 +104,13 @@ def _assert_no_retained_records(entity):
         "_read_only_tool_inputs",
         "_execution_tool_outcomes",
         "_execution_effect_receipts",
-        "_retired_replay_conversations",
-        "_unacknowledged_tool_schemas",
-        "_unacknowledged_effects",
-        "_unacknowledged_uncertain_tools",
+        "retired_conversations",
+        "schemas",
+        "effects",
+        "uncertain_tools",
     ):
         assert not getattr(entity, name, {}), name
-    assert not getattr(entity, "_replay_history_incomplete", False)
+    assert not replay_safety(entity).history_incomplete
 
 
 @pytest.mark.parametrize("reused_conversation", [False, True])
@@ -177,7 +180,7 @@ async def test_loaded_failed_task_preserves_effect_until_provider_ack(
             await _generate_in_session(hass, entity, caller_api, conversation_id)
     assert hass.states.get("counter.receipt_probe").state == "1"
     assert len(tool.calls) == 1
-    assert entity._unacknowledged_effects[conversation_id]
+    assert replay_safety(entity).effects[conversation_id]
     assert set(entity._dispatched_tool_conversations.values()) == {conversation_id}
 
     client.completions.outcomes[:] = [

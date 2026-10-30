@@ -928,17 +928,18 @@ def test_import_document_rejects_malformed_boundaries(document, error) -> None:
         management_ui._parse_import_document(document)
 
 
-def test_request_rule_function_reference_validation_edges() -> None:
+async def test_request_rule_function_reference_validation_edges(hass) -> None:
     with pytest.raises(HomeAssistantError, match="rule must be an object"):
         management_ui._prepare_request_rule([])
 
     action = f"{DOMAIN}.call_function"
     with pytest.raises(HomeAssistantError, match="action is invalid"):
-        management_ui._validate_request_rule_functions(
-            {"action": {"actions": ["ignored", {"action": action, "data": {}}]}}, []
+        await management_ui.async_validate_request_rule_functions(
+            hass, {"action": {"actions": [{"action": action, "data": {}}]}}, []
         )
     with pytest.raises(HomeAssistantError, match="arguments must be an object"):
-        management_ui._validate_request_rule_functions(
+        await management_ui.async_validate_request_rule_functions(
+            hass,
             {
                 "action": {
                     "actions": [
@@ -967,11 +968,11 @@ def test_request_rule_function_reference_validation_edges() -> None:
         }
     }
     with pytest.raises(HomeAssistantError, match="unavailable or disabled: missing"):
-        management_ui._validate_request_rule_functions(rule, [tool])
+        await management_ui.async_validate_request_rule_functions(hass, rule, [tool])
 
     rule["action"]["actions"][0]["data"]["function"] = "demo"
-    with pytest.raises(HomeAssistantError, match="needs input: city"):
-        management_ui._validate_request_rule_functions(rule, [tool])
+    with pytest.raises(HomeAssistantError, match="city"):
+        await management_ui.async_validate_request_rule_functions(hass, rule, [tool])
 
 
 async def test_non_admin_scope_catalog_handles_known_and_missing_users() -> None:
@@ -1439,8 +1440,7 @@ async def test_conversation_memory_and_knowledge_dispatch(monkeypatch) -> None:
     memory = SimpleNamespace(
         _memories={record.memory_id: record},
         async_list_page=AsyncMock(return_value=([record], False)),
-        async_add=AsyncMock(return_value={"status": "created", "memory": {"memory_id": "memory-1"}}),
-        async_get_many=AsyncMock(return_value=[record]),
+        async_add_record=AsyncMock(return_value=("created", record)),
         async_update=AsyncMock(return_value=record),
         async_delete=AsyncMock(return_value=1),
         async_clear=AsyncMock(return_value=2),

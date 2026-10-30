@@ -9,7 +9,7 @@ async function failNextManagementCall(page, section, action, message) {
     hass.callWS = async (request) => {
       if (!failed && request.section === section && request.action === action) {
         failed = true;
-        throw new Error(message);
+        throw {code:"invalid_request", message};
       }
       return original(request);
     };

@@ -161,7 +161,7 @@ test("failed delete restores its button for a deliberate retry", async ({page}) 
     host._hass.callWS = async (message) => {
       if (fail && message.section === "tools" && message.action === "delete") {
         fail = false;
-        throw new Error("Injected delete failure");
+        throw Object.assign(new Error("Injected delete failure"), {code:"invalid_request"});
       }
       return original(message);
     };

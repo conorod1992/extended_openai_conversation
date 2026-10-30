@@ -9,16 +9,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from tests.test_subsystem_lifecycle_apis import _seeded_continuity
-
 from custom_components.extended_openai_conversation_responses import (
     backup,
     management_function_repair,
     restore_recovery,
 )
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
+from tests.restore_participants import participants
 from tests.test_backup import _document
-
+from tests.test_subsystem_lifecycle_apis import _seeded_continuity
 
 # Template configuration validation needs HA's event-loop context.
 pytestmark = pytest.mark.usefixtures("hass")
@@ -99,7 +98,7 @@ async def _recover_with_journal(monkeypatch, journal):
 
     monkeypatch.setattr(restore_recovery, "_journal_store", lambda *_args: store)
     monkeypatch.setattr(
-        restore_recovery, "_durable_managers", AsyncMock(return_value=(object(),) * 7)
+        restore_recovery, "_durable_managers", AsyncMock(return_value=participants())
     )
     monkeypatch.setattr(restore_recovery, "_apply_prepared", apply)
     monkeypatch.setattr(restore_recovery, "_async_persist_config_entries", AsyncMock())
@@ -168,7 +167,7 @@ async def test_journal_is_verified_before_first_destructive_write(
 
     monkeypatch.setattr(restore_recovery, "_journal_store", lambda *_args: store)
     monkeypatch.setattr(
-        restore_recovery, "_durable_managers", AsyncMock(return_value=(object(),) * 7)
+        restore_recovery, "_durable_managers", AsyncMock(return_value=participants())
     )
     monkeypatch.setattr(
         backup, "_snapshot_for_restore", AsyncMock(return_value=rollback)
@@ -229,7 +228,7 @@ async def test_unpersisted_commit_decision_rolls_back(monkeypatch) -> None:
 
     monkeypatch.setattr(restore_recovery, "_journal_store", lambda *_args: store)
     monkeypatch.setattr(
-        restore_recovery, "_durable_managers", AsyncMock(return_value=(object(),) * 7)
+        restore_recovery, "_durable_managers", AsyncMock(return_value=participants())
     )
     monkeypatch.setattr(
         backup, "_snapshot_for_restore", AsyncMock(return_value=rollback)
@@ -269,7 +268,7 @@ async def test_unverifiable_commit_decision_stays_pending(monkeypatch) -> None:
 
     monkeypatch.setattr(restore_recovery, "_journal_store", lambda *_args: store)
     monkeypatch.setattr(
-        restore_recovery, "_durable_managers", AsyncMock(return_value=(object(),) * 7)
+        restore_recovery, "_durable_managers", AsyncMock(return_value=participants())
     )
     monkeypatch.setattr(
         backup, "_snapshot_for_restore", AsyncMock(return_value=rollback)
@@ -311,7 +310,7 @@ async def test_interrupted_rollback_remains_retryable(monkeypatch) -> None:
 
     monkeypatch.setattr(restore_recovery, "_journal_store", lambda *_args: store)
     monkeypatch.setattr(
-        restore_recovery, "_durable_managers", AsyncMock(return_value=(object(),) * 7)
+        restore_recovery, "_durable_managers", AsyncMock(return_value=participants())
     )
     monkeypatch.setattr(restore_recovery, "_apply_prepared", flaky_apply)
     monkeypatch.setattr(restore_recovery, "_async_persist_config_entries", AsyncMock())
@@ -357,7 +356,7 @@ async def test_committed_state_survives_cleanup_failure_and_retries(
 
     monkeypatch.setattr(restore_recovery, "_journal_store", lambda *_args: store)
     monkeypatch.setattr(
-        restore_recovery, "_durable_managers", AsyncMock(return_value=(object(),) * 7)
+        restore_recovery, "_durable_managers", AsyncMock(return_value=participants())
     )
     monkeypatch.setattr(restore_recovery, "_apply_prepared", apply)
     monkeypatch.setattr(restore_recovery, "_async_persist_config_entries", AsyncMock())
@@ -416,14 +415,14 @@ def test_runtime_reset_keeps_authoritative_objects_and_rebinds_usage(
             usage._VOLATILE_USAGE_MANAGERS: {key: fallback_usage},
         }
     )
-    managers = (
-        object(),
-        object(),
-        object(),
-        object(),
-        durable_usage,
-        object(),
-        object(),
+    managers = participants(
+        memory=object(),
+        temporary=object(),
+        knowledge=object(),
+        archive=object(),
+        usage=durable_usage,
+        guest_mode=object(),
+        request_rules=object(),
     )
     monkeypatch.setattr(restore_recovery, "_active_agent", lambda *_args: agent)
     rebind_sensors = MagicMock(return_value=4)
@@ -711,19 +710,21 @@ async def test_durable_managers_bypasses_volatile_usage_fallback(monkeypatch) ->
         usage,
     )
 
-    expected = [object() for _ in range(7)]
-    getters = [
-        (memory, "async_get_memory"),
-        (temporary_memory, "async_get_temporary_memory"),
-        (knowledge, "async_get_knowledge"),
-        (conversation_archive, "async_get_archive"),
-        (usage, "async_get_durable_usage"),
-        (guest_mode, "async_get_guest_mode"),
-        (request_rules, "async_get_request_rules"),
-    ]
+    expected = {}
+    getters = {
+        "memory": (memory, "async_get_memory"),
+        "temporary": (temporary_memory, "async_get_temporary_memory"),
+        "knowledge": (knowledge, "async_get_knowledge"),
+        "archive": (conversation_archive, "async_get_archive"),
+        "usage": (usage, "async_get_durable_usage"),
+        "guest_mode": (guest_mode, "async_get_guest_mode"),
+        "request_rules": (request_rules, "async_get_request_rules"),
+    }
 
     mocks = []
-    for (module, name), value in zip(getters, expected, strict=True):
+    for field, (module, name) in getters.items():
+        value = object()
+        expected[field] = value
         mock = AsyncMock(return_value=value)
         monkeypatch.setattr(module, name, mock)
         mocks.append(mock)
@@ -731,15 +732,19 @@ async def test_durable_managers_bypasses_volatile_usage_fallback(monkeypatch) ->
     hass = object()
     result = await restore_recovery._durable_managers(hass, "entry-1", "agent-1")
 
-    assert result == tuple(expected)
+    assert result == participants(**expected)
     for mock in mocks:
         mock.assert_awaited_once_with(hass, "entry-1", "agent-1")
 
 
 @pytest.mark.parametrize("invalid", [None, {"conversation:browser": "missing-session"}, {"": "session"}])
 async def test_local_archive_bindings_validate_without_entering_portable_backup(invalid):
-    from custom_components.extended_openai_conversation_responses.conversation_archive import ConversationArchive
-    from custom_components.extended_openai_conversation_responses.scope import user_scope
+    from custom_components.extended_openai_conversation_responses.conversation_archive import (
+        ConversationArchive,
+    )
+    from custom_components.extended_openai_conversation_responses.scope import (
+        user_scope,
+    )
     from tests.test_conversation_archive import FakeArchiveStorage
 
     archive = ConversationArchive(FakeArchiveStorage(), "agent-new")
@@ -763,6 +768,7 @@ async def test_local_archive_bindings_validate_without_entering_portable_backup(
 
 async def test_unretained_archive_sessions_are_local_content_free_recovery_only():
     from dataclasses import asdict, replace
+
     from custom_components.extended_openai_conversation_responses.conversation_archive import (
         ArchiveTurn,
         ConversationArchive,

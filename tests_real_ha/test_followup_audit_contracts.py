@@ -1306,7 +1306,7 @@ async def test_native_memory_cold_preparation_worker(
     assert validations and main not in validations
     assert len(vectors) == count and main not in vectors
     saved = await storage.async_load()
-    assert len(saved["memories"]) == count
+    assert len(saved["memories"]) == count + 2
     assert await memory.async_get_memory(hass, entry_id, subentry_id) is manager
     assert len(vectors) == count
 

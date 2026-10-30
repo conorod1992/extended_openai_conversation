@@ -1,5 +1,8 @@
 import {clone, same, mergeAcknowledgedDraft} from "./unsaved-state.js";
 
+import {callMutation, processMutationResponse, requireMutationAcknowledgement, mutationResponseError} from "./mutation-response.js";
+export {callMutation, processMutationResponse, requireMutationAcknowledgement};
+
 const field = (config, key) => Object.hasOwn(config, key) ? [config[key]] : [];
 
 // Authored values survive a temporary identity transition. An operation made
@@ -45,6 +48,23 @@ export function configurationReadOvertookSubmission(panel, submission) {
   return (panel._eocConfigurationReadEpoch || 0) !== (submission.readEpoch || 0);
 }
 
+// A committed replacement consumes the draft it displaced, not later edits.
+// Keep its comparison baseline until an authoritative read can merge that delta.
+export function retireReplacedConfigurationDraft(panel, submission) {
+  if (!configurationSubmissionIsCurrent(panel, submission)) return;
+  if (same(panel._draft || {}, submission.draft) && panel._draftTitle === submission.title
+      && (panel._eocModelIntent || null) === submission.modelIntent) panel._clearConfigDraft();
+  else {
+    panel._eocRestoredConfiguration = submission;
+    panel._configDataStale = true;
+  }
+  if (panel._eocModelIntent === submission.modelIntent) {
+    panel._eocModelChangeToken = (panel._eocModelChangeToken || 0) + 1;
+    panel._eocPendingModelPreparation = null;
+    panel._eocModelIntent = null;
+  }
+}
+
 function preservesModelPreparation(panel, submission, fields) {
   const ownsModel = !fields || fields.some(key => ["chat_model", "azure_model", "reasoning_effort"].includes(key));
   return !ownsModel || (panel._eocModelIntent || null) !== (submission.modelIntent || null);
@@ -63,7 +83,13 @@ export function discardConfigurationDraft(panel) {
   if (!baseline?.config) return false;
   panel._draft = clone(baseline.config);
   panel._draftTitle = baseline.title;
-  if (panel._eocAcknowledgedConfiguration) {
+  const replacement = panel._eocRestoredConfiguration;
+  if (replacement && configurationSubmissionIsCurrent(panel, replacement)) {
+    // The replacement's saved values are still unknown. Reset its comparison
+    // to the discarded display so a fresh read cannot resurrect the old delta.
+    panel._eocRestoredConfiguration = {...replacement, draft:clone(panel._draft), title:panel._draftTitle};
+  }
+  if (panel._eocAcknowledgedConfiguration || replacement) {
     // Discard the authored delta, not the completed write's refresh obligation.
     // An older read cannot certify the next write or become a recovered edit.
     panel._invalidateCleanConfiguration?.(panel._agentId);
@@ -74,7 +100,10 @@ export function discardConfigurationDraft(panel) {
 }
 
 export function mergeConfigurationRead(panel, current, baseline, saved) {
-  const comparison = configurationDraftBaseline(panel, baseline);
+  const restored = panel._eocRestoredConfiguration;
+  // Restore replaces the submitted draft. Only subsequently authored edits survive.
+  const comparison = restored && configurationSubmissionIsCurrent(panel, restored)
+    ? {config:restored.draft, title:restored.title} : configurationDraftBaseline(panel, baseline);
   const pending = panel._eocConfigurationSubmission;
   const protectedFields = pending && !pending.acknowledged && configurationSubmissionIsCurrent(panel, pending) ? pending.fields : [];
   panel._eocModelIntent?.acceptReasoningRead?.(panel, saved.config, {comparisonConfig:comparison.config, protectedFields});
@@ -239,7 +268,7 @@ export function reconcileConfigurationAcknowledgement(panel, saved, submission, 
 
 // Once the backend acknowledges a write, presentation errors cannot turn it
 // into a rejected mutation or cause a replay. Feature refresh policies stay local.
-export async function completeConfigurationAcknowledgement(panel, saved, submission, {message, refresh, ...projection}) {
+export async function completeConfigurationAcknowledgement(panel, saved, submission, {message, refresh, response = saved, ...projection}) {
   if (!configurationSubmissionIsCurrent(panel, submission) || saved?.valid === false || !saved?.config) return false;
   return presentAcknowledgedMutation(panel, submission, message, async () => {
     const overtaken = configurationReadOvertookSubmission(panel, submission);
@@ -254,19 +283,27 @@ export async function completeConfigurationAcknowledgement(panel, saved, submiss
       if (panel.isConnected !== false && configurationSubmissionIsCurrent(panel, submission)
           && panel._viewKey?.() === view && panel._loadToken === visit && panel._result === panel._configData) panel._render?.();
     }
-  });
+  }, response);
 }
 
-export async function presentAcknowledgedMutation(panel, submission, message, refresh) {
-  if (!configurationSubmissionIsCurrent(panel, submission)) return false;
+export async function presentAcknowledgedMutation(panel, submission, message, refresh, result, {warning = false} = {}) {
+  const current = typeof submission === "function" ? submission : () => configurationSubmissionIsCurrent(panel, submission);
+  if (!current()) return false;
+  let processingError = mutationResponseError(result);
   try {
     await refresh?.();
   } catch (error) {
-    if (configurationSubmissionIsCurrent(panel, submission)) {
-      panel._toast(`${message}, but some displayed information could not be refreshed: ${error.message || String(error)}`, true);
-    }
-    return true;
+    processingError = error;
   }
-  if (configurationSubmissionIsCurrent(panel, submission)) panel._toast(message);
+  // Notification is also presentation. Once confirmed, even a broken toast must
+  // not enter a caller's rejection/retry path.
+  try {
+    if (current()) {
+      if (processingError) panel._toast(`${message || "Changes saved"}, but some displayed information could not be refreshed: ${processingError.message || String(processingError)}`, true);
+      else if (message) panel._toast(message, warning);
+    }
+  } catch {
+    // A detached or failed renderer may have no usable notification surface.
+  }
   return true;
 }

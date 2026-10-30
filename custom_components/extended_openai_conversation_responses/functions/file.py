@@ -25,7 +25,11 @@ from ..const import (
     DOMAIN,
     FILE_READ_SIZE_LIMIT,
 )
-from ..execution_outcomes import execution_completed, execution_started
+from ..execution_outcomes import (
+    execution_completed,
+    execution_started,
+    owns_execution_receipts,
+)
 from ..function_execution import backend_failure
 from ..operation_settlement import (
     async_settle_owned_operation as _async_settle_native_edit,
@@ -361,6 +365,7 @@ class WriteFileFunction(FileFunction):
         )
         super().__init__(schema)
 
+    @owns_execution_receipts
     async def execute(
         self,
         hass: HomeAssistant,
@@ -424,6 +429,7 @@ class EditFileFunction(FileFunction):
         )
         super().__init__(schema)
 
+    @owns_execution_receipts
     async def execute(
         self,
         hass: HomeAssistant,

@@ -172,7 +172,7 @@ for (const surface of ["functions", "request-rules"]) {
       hass.callWS = message => {
         if (!failed && message.section === (isTools ? "tools" : "request_rules") && message.action === (isTools ? "set_enabled" : "update")) {
           failed = true;
-          return Promise.reject(new Error("stale revision"));
+          return Promise.reject(Object.assign(new Error("stale revision"), {code:"invalid_request"}));
         }
         return original(message);
       };
@@ -261,7 +261,7 @@ test("Functions: adding HA tools refreshes saved metadata without rebinding exis
       }
       if (message.section === "tools" && message.action === "ha_add") {
         const config = browserHarness.panel._draft;
-        return Promise.resolve({functions: [...structuredClone(config.functions), {spec: {name: "new_ha_tool"}, function: reference}], function_groups: structuredClone(config.function_groups), ha_saved: {new_ha_tool: {description: "Saved tool metadata", available: true, source: "fixture"}}});
+        return Promise.resolve({revision:browserHarness.panel._configData.revision, functions: [...structuredClone(config.functions), {spec: {name: "new_ha_tool"}, function: reference}], function_groups: structuredClone(config.function_groups), ha_saved: {new_ha_tool: {description: "Saved tool metadata", available: true, source: "fixture"}}});
       }
       return original(message);
     };

@@ -177,16 +177,19 @@ async def test_guest_mode_cancellation_waits_for_known_persistence_outcome(hass)
         ["legacy", "payload"],
     ],
 )
-async def test_initialize_ignores_malformed_persisted_schedule(hass, caplog, stored) -> None:
+async def test_initialize_blocks_malformed_persisted_schedule(hass, caplog, stored) -> None:
     manager = GuestModeManager(hass, "entry", "agent")
     manager._store = SimpleNamespace(async_load=AsyncMock(return_value=stored))
 
-    await manager.async_initialize()
-
+    from custom_components.extended_openai_conversation_responses.persistence_hardening import StorageRepairRequired
+    from homeassistant.exceptions import HomeAssistantError
+    with pytest.raises(StorageRepairRequired):
+        await manager.async_initialize()
     assert manager.schedule is None
-    assert manager._initialized is True
-    if isinstance(stored, dict) and isinstance(stored.get("schedule"), dict):
-        assert "Ignoring malformed Guest Mode state" in caplog.text
+    assert manager._initialized is False
+    with pytest.raises(HomeAssistantError):
+        manager.is_active()
+    assert "not-a-timestamp" not in caplog.text
 
 
 @pytest.mark.asyncio

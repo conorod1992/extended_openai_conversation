@@ -75,17 +75,18 @@ async def test_failed_write_reconciles_durable_revision(write_reached_disk):
 
 
 @pytest.mark.parametrize("generation", [-1, True, "bad"])
-async def test_invalid_stored_generation_is_repaired_once(generation):
+async def test_invalid_stored_generation_is_preserved_and_blocks_writes(generation):
     store = MemoryStore({"revision_generation": generation})
     manager = rr.RequestRules(store)
     await manager.async_initialize()
-    assert type(store.data["revision_generation"]) is int
-    assert store.data["revision_generation"] >= 1
+    assert store.data["revision_generation"] == generation
+    with pytest.raises(ValueError, match="needs repair"):
+        await manager.async_create(local_rule())
     revision = manager.revision()
     reloaded = rr.RequestRules(store)
     await reloaded.async_initialize()
     assert reloaded.revision() == revision
-    assert store.saves == 1
+    assert store.saves == 0
 
 
 async def test_pending_save_does_not_publish_new_matching_generation():

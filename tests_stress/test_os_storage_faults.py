@@ -44,6 +44,7 @@ from custom_components.extended_openai_conversation_responses.request_rules impo
 from custom_components.extended_openai_conversation_responses.restore_recovery import (
     _async_write_journal_verified,
     _journal_store,
+    _JournalVerificationUnavailable,
 )
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
     TemporaryMemory,
@@ -269,6 +270,7 @@ async def test_public_consumer_recovers_first_after_commit_and_failed_readback(
 ):
     """Assist is the first caller after restoration; no test getter heals runtime."""
     import json
+
     from custom_components.extended_openai_conversation_responses.memory import (
         PersistentMemory,
     )
@@ -278,9 +280,9 @@ async def test_public_consumer_recovers_first_after_commit_and_failed_readback(
     from tests_real_ha.test_provider_wire_e2e import (
         _chat_sse_text,
         _chat_sse_tool_call,
+        _install_wire,
         _responses_sse_text,
         _responses_sse_tool_call,
-        _install_wire,
         _speech,
     )
     from tests_stress.test_function_provider_wire_remaining import _provider_result
@@ -621,9 +623,8 @@ async def test_restore_journal_replace_eacces_never_claims_commit(
     before_bytes = Path(path).read_bytes()
     with monkeypatch.context() as fault:
         fault.setattr(atomicwrites, "replace_atomic", _raise_os_error(errno.EACCES))
-        assert not await _async_write_journal_verified(
-            store, {"phase": "not-committed"}
-        )
+        with pytest.raises(_JournalVerificationUnavailable):
+            await _async_write_journal_verified(store, {"phase": "not-committed"})
     assert Path(path).read_bytes() == before_bytes
     assert _files(path) == before_files
     assert await _journal_store(hass, "disk-entry", "disk-agent").async_load() == saved

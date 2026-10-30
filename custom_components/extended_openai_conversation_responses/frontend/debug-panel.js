@@ -1,3 +1,5 @@
+import {copyTextToClipboard} from "./clipboard.js";
+import {callMutation, presentAcknowledgedMutation, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
 import {readOptionalStorage, writeOptionalStorage} from "./browser-storage.js";
 import {DEBUG_PROVIDER_PAGE_LIMIT, debugPageText, providerPageLabel, providerPageMeta, sessionLabel} from "./debug-management.js";
 
@@ -38,7 +40,7 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
   }
 
   async _call(action, extra = {}, agent = this._agent) {
-    return await this._hass.callWS({
+    const send = () => this._hass.callWS({
       type: WS_TYPE,
       action,
       ...(agent ? {
@@ -47,6 +49,7 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
       } : {}),
       ...extra,
     });
+    return await (["configure", "clear"].includes(action) ? callMutation(send) : send());
   }
 
   disconnectedCallback() {
@@ -125,10 +128,8 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
     const operation = this._mutationTail.then(async () => {
       try {
         const result = await this._call(action, extra, agent);
-        if (current()) {
-          await this._fetchRuns(agent, revision);
-          if (current()) this._toast(action === "clear" ? "Debug captures cleared" : result.enabled ? "Request debugging enabled" : "Request debugging disabled");
-        }
+        requireMutationAcknowledgement(action === "clear" ? Number.isInteger(result?.deleted) && result.deleted >= 0 : typeof result?.enabled === "boolean", "updating debugging");
+        await presentAcknowledgedMutation(this, current, action === "clear" ? "Debug captures cleared" : result.enabled ? "Request debugging enabled" : "Request debugging disabled", () => this._fetchRuns(agent, revision), result);
       } catch (err) {
         if (current()) {
           await this._fetchRuns(agent, revision);
@@ -247,26 +248,7 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
   }
 
   async _copyText(text) {
-    if (navigator.clipboard?.writeText) {
-      try {
-        await navigator.clipboard.writeText(text);
-        return;
-      } catch (_) {
-        // Fall back for browsers/contexts that deny clipboard API access.
-      }
-    }
-    const textarea = document.createElement("textarea");
-    textarea.value = text;
-    textarea.setAttribute("readonly", "");
-    textarea.style.position = "fixed";
-    textarea.style.opacity = "0";
-    document.body.appendChild(textarea);
-    try {
-      textarea.select();
-      if (!document.execCommand("copy")) throw new Error("Clipboard access failed");
-    } finally {
-      textarea.remove();
-    }
+    await copyTextToClipboard(text);
   }
 
   _formatDate(value) {

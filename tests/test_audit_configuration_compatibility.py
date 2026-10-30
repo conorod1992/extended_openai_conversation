@@ -85,19 +85,18 @@ async def test_fast_save_uses_canonical_title_limit():
     assert (await _async_save_configuration(request))["valid"] is False
 
 
-async def test_repair_rejects_incompatible_api_before_writing():
+async def test_repair_preparation_rejects_incompatible_api():
     from custom_components.extended_openai_conversation_responses import (
         management_function_repair as repair,
     )
     from tests.test_management_function_repair import (
         _entry_and_subentry,
-        _FakeConfigEntries,
         _mixed_legacy_tool_data,
     )
     data, tools, _ = _mixed_legacy_tool_data()
     data.update(chat_model="gpt-6-astra", api_mode="chat_completions")
     entry, subentry = _entry_and_subentry(data)
-    entries = _FakeConfigEntries()
+    before = deepcopy(subentry.data)
     with pytest.raises(Exception, match="calling|API|support"):
-        repair._persist_raw_tools(SimpleNamespace(config_entries=entries), entry, subentry, tools, [])
-    assert entries.updates == 0
+        repair._prepare_raw_tools(entry, subentry, tools, [])
+    assert subentry.data == before

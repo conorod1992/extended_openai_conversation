@@ -17,14 +17,18 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
-from .persistence_hardening import _async_settle_transactional_save
+from .persistence_hardening import (
+    StorageRepairRequired,
+    _async_settle_transactional_save,
+)
 from .runtime_hardening import MAX_MODEL_TOOL_RESULT_CHARACTERS
+from .storage_namespaces import KNOWLEDGE_PREFIX as STORAGE_KEY_PREFIX
 from .strict_store import PropagatingWriteStore, async_storage_lock
 
 _LOGGER = logging.getLogger(__name__)
 
 STORAGE_VERSION = 2
-STORAGE_KEY_PREFIX = f"{DOMAIN}.knowledge"
+
 MAX_SOURCES_PER_AGENT = 500
 MAX_TITLE_LENGTH = 120
 MAX_DESCRIPTION_LENGTH = 500
@@ -242,6 +246,7 @@ class KnowledgeLibrary:
         self._token_index: dict[str, set[tuple[str, int]]] = defaultdict(set)
         self._lock = asyncio.Lock()
         self._initialized = False
+        self._repair_required = False
         self._committed_state: dict[str, Any] | None = None
         self._committed_chunk_count = 0
 
@@ -269,6 +274,7 @@ class KnowledgeLibrary:
                     data.get("sources", []) if isinstance(data, Mapping) else []
                 )
                 sources, index = await asyncio.to_thread(_load_index, raw_sources)
+                self._repair_required = len(sources) != len(raw_sources)
                 self._sources = sources
                 self._publish_index(index)
                 self._remember_committed_state()
@@ -276,7 +282,11 @@ class KnowledgeLibrary:
                 normalized = await asyncio.to_thread(
                     _canonical_stored_sources, raw_sources, sources
                 )
-                if persist_normalization and normalized != raw_sources:
+                if (
+                    persist_normalization
+                    and not self._repair_required
+                    and normalized != raw_sources
+                ):
                     # Canonicalize accepted fields without erasing malformed siblings
                     # or modifying independent restore-journal evidence.
                     await _async_settle_transactional_save(
@@ -394,7 +404,7 @@ class KnowledgeLibrary:
         title, description, content = _validated_fields(title, description, content)
         enabled = _validated_enabled(enabled)
         async with async_storage_lock(self._storage, self._lock):
-            self._ensure_initialized()
+            self._require_writable()
             if len(self._sources) >= MAX_SOURCES_PER_AGENT:
                 raise ValueError(
                     "knowledge source limit reached; delete a source before adding more"
@@ -425,7 +435,7 @@ class KnowledgeLibrary:
     ) -> KnowledgeSource:
         """Update and immediately re-index one source."""
         async with async_storage_lock(self._storage, self._lock):
-            self._ensure_initialized()
+            self._require_writable()
             current = self._source(source_id)
             if (
                 expected_revision is not None
@@ -460,7 +470,7 @@ class KnowledgeLibrary:
     async def async_delete(self, source_id: str) -> bool:
         """Delete one source."""
         async with async_storage_lock(self._storage, self._lock):
-            self._ensure_initialized()
+            self._require_writable()
             if source_id not in self._sources:
                 return False
             self._unindex(source_id)
@@ -657,6 +667,7 @@ class KnowledgeLibrary:
         return {
             "knowledge_backend": "home_assistant_store",
             "knowledge_storage_version": STORAGE_VERSION,
+            "knowledge_storage_repair_required": self._repair_required,
             "knowledge_source_count": len(self._published_sources()),
             "knowledge_enabled_source_count": self.source_count,
             "knowledge_total_character_count": sum(
@@ -668,7 +679,7 @@ class KnowledgeLibrary:
     async def async_backup_data(self) -> dict[str, Any]:
         """Return canonical Knowledge sources, excluding the derived index."""
         async with async_storage_lock(self._storage, self._lock):
-            self._ensure_initialized()
+            self._require_writable()
             return {"sources": [asdict(source) for source in self._sources.values()]}
 
     @staticmethod
@@ -687,15 +698,10 @@ class KnowledgeLibrary:
         for raw in raw_sources:
             try:
                 source = _source_from_stored(raw)
-            except (KeyError, TypeError, ValueError) as err:
+            except (KeyError, TypeError) as err:
                 raise ValueError("Knowledge source is invalid") from err
             if source.source_id in seen:
                 raise ValueError("Knowledge source IDs must be unique")
-            if (
-                dt_util.parse_datetime(source.created_at) is None
-                or dt_util.parse_datetime(source.updated_at) is None
-            ):
-                raise ValueError("Knowledge source timestamp is invalid")
             seen.add(source.source_id)
             sources.append(source)
         return sources
@@ -710,6 +716,7 @@ class KnowledgeLibrary:
             self._sources = {source.source_id: source for source in snapshot}
             self._publish_index(index)
             await self._async_save_locked()
+            self._repair_required = False
 
     def _source(self, source_id: str) -> KnowledgeSource:
         source = self._sources.get(source_id)
@@ -770,6 +777,7 @@ class KnowledgeLibrary:
         """Reload validated sources and reconstruct every search index."""
         disk_state = KnowledgeLibrary(self._storage)
         await disk_state.async_initialize(persist_normalization=False)
+        self._repair_required = disk_state._repair_required
         self._sources = disk_state._sources
         self._publish_index(
             _KnowledgeIndex(
@@ -806,6 +814,11 @@ class KnowledgeLibrary:
             store.require_available()
         if not self._initialized:
             raise RuntimeError("Knowledge Library has not been initialized")
+
+    def _require_writable(self) -> None:
+        self._ensure_initialized()
+        if self._repair_required:
+            raise StorageRepairRequired("Knowledge Library")
 
 
 _KNOWLEDGE_MANAGERS = f"{DOMAIN}.knowledge_managers"
@@ -974,6 +987,8 @@ def knowledge_tools() -> list[dict[str, Any]]:
 
 def _migrated_storage_payload(old_data: Any) -> dict[str, Any]:
     """Normalize legacy stores and make previous sources explicitly enabled."""
+    if not isinstance(old_data, (list, Mapping)):
+        raise StorageRepairRequired("Knowledge Library")
     raw_sources = (
         old_data
         if isinstance(old_data, list)
@@ -982,7 +997,7 @@ def _migrated_storage_payload(old_data: Any) -> dict[str, Any]:
         else []
     )
     if not isinstance(raw_sources, list):
-        raw_sources = []
+        raise StorageRepairRequired("Knowledge Library")
     migrated: list[Any] = []
     for raw in raw_sources:
         if isinstance(raw, Mapping):
@@ -991,7 +1006,7 @@ def _migrated_storage_payload(old_data: Any) -> dict[str, Any]:
             migrated.append(record)
         else:
             migrated.append(raw)
-    return {"sources": migrated}
+    return {**(old_data if isinstance(old_data, Mapping) else {}), "sources": migrated}
 
 
 def _source_from_stored(raw: Any) -> KnowledgeSource:
@@ -1026,6 +1041,11 @@ def _source_from_stored(raw: Any) -> KnowledgeSource:
     )
     if not source.source_id or len(source.source_id) > 128:
         raise ValueError("invalid source ID")
+    if (
+        dt_util.parse_datetime(source.created_at) is None
+        or dt_util.parse_datetime(source.updated_at) is None
+    ):
+        raise ValueError("Knowledge source timestamp is invalid")
     return replace(source, title=title, description=description, content=content)
 
 

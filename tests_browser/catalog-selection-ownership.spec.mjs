@@ -182,7 +182,7 @@ for(const bundled of [false,true]) {
         if(request.section === "configuration" && request.action === "import") {
           if(request.mode !== "new") throw new Error("Fixture only permits a new-agent import");
           importCatalog.writes++;
-          return {subentry_id:"imported-agent",title:"Imported agent"};
+          return {status:"created",subentry_id:"imported-agent",title:"Imported agent"};
         }
         const result=await original(request);
         if(importCatalog.writes && request.action === "agents" && !request.section) result.agents.push({...result.agents[0],subentry_id:"imported-agent",title:"Imported agent"});

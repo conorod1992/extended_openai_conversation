@@ -1,6 +1,5 @@
 """Bulk restore categories are detached and validated outside HA's loop."""
 
-import asyncio
 from copy import deepcopy
 from dataclasses import asdict
 import threading
@@ -11,6 +10,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from custom_components.extended_openai_conversation_responses import backup, transfer
+from tests.restore_participants import participants
 from tests.test_backup import _document
 from tests.test_conversation_archive import _session, _turn
 
@@ -61,21 +61,25 @@ async def test_bulk_category_validation_uses_workers(monkeypatch, route):
     if route == "backup":
         await backup.async_inspect_backup(document, "agent-new")
     elif route == "snapshot":
-        keys = (
-            "memories",
-            "temporary_memories",
-            "knowledge",
-            "archive",
-            "usage",
-            "guest_mode",
-            "request_rules",
-        )
+        categories = {
+            "memory": "memories",
+            "temporary": "temporary_memories",
+            "knowledge": "knowledge",
+            "archive": "archive",
+            "usage": "usage",
+            "guest_mode": "guest_mode",
+            "request_rules": "request_rules",
+        }
         document.setdefault("guest_mode", {"schedule": None})
-        managers = tuple(
-            SimpleNamespace(async_backup_data=AsyncMock(return_value=document[k]))
-            for k in keys
+        managers = participants(
+            **{
+                name: SimpleNamespace(
+                    async_backup_data=AsyncMock(return_value=document[key])
+                )
+                for name, key in categories.items()
+            }
         )
-        managers[3].async_recovery_data = AsyncMock(
+        managers.archive.async_recovery_data = AsyncMock(
             return_value={**document["archive"], "active": {}}
         )
         await backup._snapshot_for_restore(

@@ -3,14 +3,17 @@
 import json
 
 import pytest
-from tests_real_ha.test_entry_point_contract_matrix import _contract_agent
+
+from homeassistant.components import conversation
+from homeassistant.config_entries import ConfigEntryState
 from tests_real_ha.test_cross_feature_acceptance import _say, _speech
-from tests_real_ha.test_provider_wire_e2e import _install_wire, _responses_sse_text
+from tests_real_ha.test_entry_point_contract_matrix import _contract_agent
 from tests_real_ha.test_management_backend_acceptance import (
     _admin_client,
     _management_call,
     _management_response,
 )
+from tests_real_ha.test_provider_wire_e2e import _install_wire, _responses_sse_text
 
 
 @pytest.mark.parametrize("enabled,budget", [(True, 0), (False, 0), (True, 1)])
@@ -67,18 +70,27 @@ async def test_zero_budget_group_ws_validation_matches_effective_wire(
         action="validate",
         config=changes,
     )
-    saved = await _management_call(
-        client,
-        entry=agent.entry,
-        section="configuration",
-        action="save",
-        config=changes,
-        revision=before["revision"],
-    )
+    try:
+        saved = await _management_call(
+            client,
+            entry=agent.entry,
+            section="configuration",
+            action="save",
+            config=changes,
+            revision=before["revision"],
+        )
+    finally:
+        # An accepted API-mode change reloads after acknowledging persistence.
+        # Settle that work even if an assertion fails, so HA's fixture can unload
+        # the loaded replacement before stopping the instance.
+        await hass.async_block_till_done()
+    assert agent.entry.state is ConfigEntryState.LOADED
+    current = conversation.async_get_agent(hass, agent.entry.entry_id)
     if budget:
         assert preview["success"] is False
         assert valid["valid"] is saved["valid"] is False
         assert "function/tool calling" in str(preview) + str(valid)
+        assert current is agent
     else:
         assert preview["success"] is True, preview
         sections = {
@@ -91,3 +103,5 @@ async def test_zero_budget_group_ws_validation_matches_effective_wire(
         )
         assert valid["valid"] is saved["valid"] is True
         assert agent.subentry.data["api_mode"] == "chat_completions"
+        assert current is not agent
+        assert current.subentry.data["api_mode"] == "chat_completions"

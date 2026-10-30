@@ -6,6 +6,9 @@ import json
 import httpx
 import pytest
 
+from custom_components.extended_openai_conversation_responses.tool_replay_guard import (
+    replay_safety,
+)
 from homeassistant.components import conversation
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
 from homeassistant.core import Context
@@ -125,7 +128,7 @@ async def test_completed_counter_effect_is_not_replayed_after_lost_continuation(
                 "counter": hass.states.get(entity_id).state,
                 "requests": len(requests),
                 "remembered_effect": bool(
-                    getattr(agent, "_unacknowledged_tool_schemas", {})
+                    replay_safety(agent).schemas
                 ),
             }
         )

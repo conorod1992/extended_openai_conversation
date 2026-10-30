@@ -19,6 +19,7 @@ from custom_components.extended_openai_conversation_responses.conversation_archi
     ConversationArchive,
 )
 from custom_components.extended_openai_conversation_responses.scope import user_scope
+from tests.restore_participants import participants
 from tests.test_conversation_archive import FakeArchiveStorage
 
 
@@ -58,7 +59,7 @@ async def test_private_archive_binding_after_actual_restore_cleanup(hass, mode):
     # and call the same production runtime-cleanup function below.
     await archive.async_replace_backup(sessions, turns, active=saved["active"])
     restore_recovery.reset_restored_runtime(
-        hass, "entry", "agent", (None, None, None, archive, None, None, None)
+        hass, "entry", "agent", participants(archive=archive)
     )
     second = await manager.async_resolve(mode, scope, "device", original_id, 30)
     next_key = (

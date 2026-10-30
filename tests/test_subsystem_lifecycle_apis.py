@@ -1,6 +1,7 @@
 """Event-specific lifecycle APIs preserve disposal and restore boundaries."""
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -12,6 +13,7 @@ from custom_components.extended_openai_conversation_responses import (
     usage,
 )
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
+from tests.resource_lifecycle_ledger import assert_owned_removed, capture_owned
 
 
 def _seeded_continuity(**state):
@@ -39,7 +41,9 @@ async def _pending_task():
 
 @pytest.mark.parametrize("state", ["pending", "finished", "absent"])
 @pytest.mark.parametrize("kind", ["usage", "temporary"])
-async def test_deletion_preparation_drains_work_without_persistence(kind, state):
+async def test_deletion_preparation_drains_work_without_persistence(
+    kind, state, tmp_path
+):
     store = Mock(async_save=AsyncMock(), async_load=AsyncMock(return_value=None))
     if kind == "usage":
         manager = usage.UsageManager(store, store, store)
@@ -58,8 +62,17 @@ async def test_deletion_preparation_drains_work_without_persistence(kind, state)
         await asyncio.gather(task, return_exceptions=True)
     setattr(manager, field, None if state == "absent" else task)
 
+    registry = {("entry", "agent"): manager}
+    hass = SimpleNamespace(
+        data={f"{DOMAIN}.{kind}_managers": registry},
+        config=SimpleNamespace(path=lambda _: str(tmp_path)),
+    )
+    before = capture_owned(hass, "entry", "agent")
+
     await manager.async_prepare_for_deletion()
     await manager.async_prepare_for_deletion()
+    registry.clear()
+    assert_owned_removed(before, capture_owned(hass, "entry", "agent"))
 
     assert finished.is_set()
     assert task.cancelled()

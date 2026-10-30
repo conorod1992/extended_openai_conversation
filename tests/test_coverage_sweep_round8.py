@@ -10,43 +10,54 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_guest_mode_commit_publish_reconcile_and_invalidate_callbacks(
-    hass, monkeypatch
-) -> None:
+async def test_guest_mode_commit_publish_reconcile_and_invalidate_callbacks(hass, monkeypatch) -> None:
+    from pathlib import Path
+    import json
+    from homeassistant.exceptions import HomeAssistantError
     from custom_components.extended_openai_conversation_responses import guest_mode
 
     manager = guest_mode.GuestModeManager(hass, "entry", "agent")
-    schedule = guest_mode.GuestModeSchedule(
-        active_from="2026-10-05T18:00:00+00:00",
-        active_until=None,
-        source="home_assistant",
-        updated_at="2026-10-05T18:00:00+00:00",
-    )
-    listener = Mock()
-    manager._listeners.add(listener)
-    manager._store = SimpleNamespace(
-        async_save=Mock(return_value=object()),
-        async_load=AsyncMock(return_value={"schedule": None}),
-    )
+    await manager.async_initialize()
+    observed = []
+    manager.async_add_listener(lambda: observed.append(manager.is_active()))
+    await manager.async_update_trusted(indefinite=True)
+    assert observed == [True]
+    write = manager._store._async_write_data
 
-    async def settle(_op, _rollback, publish, reconcile, invalidate):
-        publish()
-        assert manager._schedule == schedule
-        await reconcile()
-        assert manager._schedule is None
-        invalidate()
+    async def committed_but_unacknowledged(data):
+        await write(data)
+        raise OSError("directory sync failed after replacement")
 
-    monkeypatch.setattr(
-        guest_mode,
-        "_async_settle_transactional_save",
-        settle,
-    )
+    with monkeypatch.context() as fault:
+        fault.setattr(manager._store, "_async_write_data", committed_but_unacknowledged)
+        with pytest.raises(OSError):
+            await manager.async_disable_trusted()
+    assert observed == [True, False]
+    assert json.loads(Path(manager._store.path).read_text())["data"] == {"schedule": None}
+    fresh = guest_mode.GuestModeManager(hass, "entry", "agent")
+    await fresh.async_initialize()
+    assert not fresh.is_active()
 
-    await manager._async_commit_schedule(schedule)
+    async def rejected(data):
+        raise OSError("write failed")
 
-    assert manager._persistence_unavailable is True
-    assert manager._initialized is False
-    assert listener.call_count == 2
+    with monkeypatch.context() as fault:
+        fault.setattr(manager._store, "_async_write_data", rejected)
+        fault.setattr(manager._store, "async_load", AsyncMock(side_effect=OSError("readback failed")))
+        with pytest.raises(OSError):
+            await manager.async_update_trusted(indefinite=True)
+    assert manager._persistence_unavailable and not manager._initialized
+    with pytest.raises(HomeAssistantError):
+        manager.is_active()
+    assert observed == [True, False]
+
+    await manager.async_initialize()
+    assert observed == [True, False, False]
+    await manager.async_update_trusted(indefinite=True)
+    assert observed == [True, False, False, True]
+    fresh = guest_mode.GuestModeManager(hass, "entry", "agent")
+    await fresh.async_initialize()
+    assert fresh.is_active()
 
 
 def test_backup_preview_forget_only_removes_matching_session(hass) -> None:

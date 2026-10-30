@@ -69,14 +69,15 @@ async def _memory(
 
 
 async def test_store_migration_accepts_legacy_mapping_and_version_one() -> None:
-    """Both supported legacy container shapes migrate and discard bad entries."""
+    """Supported legacy shapes retain malformed siblings for repair."""
     store = MemoryStore.__new__(MemoryStore)
     legacy = {"memories": [{"memory_id": "one"}, "bad"]}
 
-    assert "importance" not in (await store._async_migrate_func(0, 0, legacy))["memories"][0]
+    assert await store._async_migrate_func(0, 0, legacy) == legacy
     assert (await store._async_migrate_func(1, 0, legacy))["memories"][0][
         "memory_id"
     ] == "one"
+    assert (await store._async_migrate_func(1, 0, legacy))["memories"][1] == "bad"
     with pytest.raises(NotImplementedError):
         await store._async_migrate_func(0, 0, "bad")
 
@@ -104,18 +105,20 @@ def test_home_assistant_embedding_cache_uses_an_isolated_key(hass) -> None:
 
 
 @pytest.mark.parametrize("data", [[], {}, {"memories": "bad"}])
-async def test_initialization_self_heals_invalid_container_shapes(data: Any) -> None:
+async def test_initialization_preserves_invalid_container_shapes(data: Any) -> None:
     storage = FakeStorage(data)
     manager = PersistentMemory(storage)
 
     await manager.async_initialize()
     await manager.async_initialize()
 
-    assert storage.data == {"memories": []}
-    assert storage.save_count == 1
+    assert storage.data == data
+    assert storage.save_count == 0
+    with pytest.raises(ValueError, match="needs repair"):
+        await manager.async_add("alice", "A fact", "pets", "explicit")
 
 
-async def test_initialization_truncates_at_capacity(monkeypatch) -> None:
+async def test_initialization_bounds_reads_without_truncating_storage(monkeypatch) -> None:
     monkeypatch.setattr(memory_module, "MAX_MEMORIES_PER_AGENT", 1)
     storage = FakeStorage(
         {
@@ -130,7 +133,8 @@ async def test_initialization_truncates_at_capacity(monkeypatch) -> None:
     await manager.async_initialize()
 
     assert list(manager._memories) == ["one"]
-    assert len(storage.data["memories"]) == 1
+    assert len(storage.data["memories"]) == 2
+    assert storage.save_count == 0
 
 
 async def test_uninitialized_manager_rejects_operations() -> None:

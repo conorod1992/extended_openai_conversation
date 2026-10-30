@@ -8,10 +8,12 @@ from unittest.mock import Mock
 import pytest
 
 from custom_components.extended_openai_conversation_responses import completion_events
+from custom_components.extended_openai_conversation_responses.completion_events import (
+    CompletionMetadata,
+)
 from custom_components.extended_openai_conversation_responses.conversation import (
     ExtendedOpenAIAgentEntity,
 )
-
 
 _SECRET = "private-completion-result-do-not-log"
 
@@ -44,7 +46,7 @@ async def test_bus_failure_retains_request_outcome_and_later_events(
     caplog.set_level(logging.DEBUG, logger=completion_events.__name__)
 
     def fire(_event, payload):
-        if payload["index"] == failed_index:
+        if int(payload["conversation_id"]) == failed_index:
             raise ValueError(_SECRET)
 
     fire_mock = Mock(side_effect=fire)
@@ -56,7 +58,11 @@ async def test_bus_failure_retains_request_outcome_and_later_events(
     async def process(_request):
         for index in range(3):
             completion_events.queue_completion_event(
-                hass, {"index": index}, [Content(index, fail=index == failed_index)]
+                hass,
+                CompletionMetadata(
+                    agent_id="agent", conversation_id=str(index), status="success"
+                ),
+                [Content(index, fail=index == failed_index)],
             )
         if outcome == "error":
             raise RuntimeError("original request failure")
@@ -79,9 +85,10 @@ async def test_bus_failure_retains_request_outcome_and_later_events(
     else:
         with pytest.raises(asyncio.CancelledError, match="original cancellation"):
             await call
-    assert [call.args[1]["index"] for call in hass.bus.async_fire.call_args_list] == [
-        index for index in range(3)
-    ]
+    assert [
+        int(call.args[1]["conversation_id"])
+        for call in hass.bus.async_fire.call_args_list
+    ] == [index for index in range(3)]
     _assert_warning(caplog)
 
 
@@ -97,7 +104,7 @@ async def test_real_cancellation_during_failed_delivery_still_drains_queue(
     original = completion_events._async_emit
 
     async def blocked_emit(hass, payload):
-        if payload["index"] == failed_index:
+        if int(payload["conversation_id"]) == failed_index:
             entered.set()
             await release.wait()
             # Exercise the same best-effort bus boundary after suspension.
@@ -119,7 +126,9 @@ async def test_real_cancellation_during_failed_delivery_still_drains_queue(
             for index in range(3):
                 completion_events.queue_completion_event(
                     hass,
-                    {"index": index},
+                    CompletionMetadata(
+                        agent_id="agent", conversation_id=str(index), status="success"
+                    ),
                     [Content(index, fail=True)],
                 )
 
@@ -134,7 +143,8 @@ async def test_real_cancellation_during_failed_delivery_still_drains_queue(
         with pytest.raises(asyncio.CancelledError):
             await task
         assert [
-            call.args[1]["index"] for call in hass.bus.async_fire.call_args_list
+            int(call.args[1]["conversation_id"])
+            for call in hass.bus.async_fire.call_args_list
         ] == [index for index in range(3) if index != failed_index]
         _assert_warning(caplog)
     finally:
@@ -147,21 +157,29 @@ async def test_bus_failure_isolated_from_other_events(standalone, caplog):
     delivered = []
 
     def fire(_event_type, payload):
-        if payload["index"] == 1:
+        if int(payload["conversation_id"]) == 1:
             raise ValueError(_SECRET)
-        delivered.append(payload["index"])
+        delivered.append(int(payload["conversation_id"]))
 
     hass = SimpleNamespace(bus=SimpleNamespace(async_fire=fire))
     if standalone:
         for index in range(3):
             completion_events.queue_completion_event(
-                hass, {"index": index}, [Content(index)]
+                hass,
+                CompletionMetadata(
+                    agent_id="agent", conversation_id=str(index), status="success"
+                ),
+                [Content(index)],
             )
     else:
         async with completion_events.completion_event_scope():
             for index in range(3):
                 completion_events.queue_completion_event(
-                    hass, {"index": index}, [Content(index)]
+                    hass,
+                    CompletionMetadata(
+                        agent_id="agent", conversation_id=str(index), status="success"
+                    ),
+                    [Content(index)],
                 )
     assert delivered == [0, 2]
     _assert_warning(caplog)
@@ -170,7 +188,14 @@ async def test_bus_failure_isolated_from_other_events(standalone, caplog):
 async def test_standalone_never_converts_private_history():
     hass = SimpleNamespace(bus=SimpleNamespace(async_fire=Mock()))
     completion_events.queue_completion_event(
-        hass, {"status": "success"}, [Content(0, fail=True)]
+        hass,
+        CompletionMetadata(agent_id="agent", conversation_id=None, status="success"),
+        [Content(0, fail=True)],
     )
     hass.bus.async_fire.assert_called_once()
-    assert hass.bus.async_fire.call_args.args[1] == {"status": "success"}
+    assert hass.bus.async_fire.call_args.args[1] == {
+        "schema_version": 2,
+        "agent_id": "agent",
+        "conversation_id": None,
+        "status": "success",
+    }

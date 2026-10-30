@@ -174,3 +174,42 @@ async def test_auth_refresh_does_not_cache_missing_user(hass, monkeypatch):
     await tasks[0]
 
     assert "user-1" not in hass.data[ha_permissions._USER_CACHE_KEY]
+
+
+@pytest.mark.parametrize(
+    "user_id,allowed", [("allowed", True), ("denied", False), (None, True)]
+)
+async def test_public_conversation_owns_authority_from_genuinely_unbound_task(
+    entry_agent, entry_input, user_id, allowed
+):
+    import contextvars
+    from homeassistant.exceptions import HomeAssistantError
+
+    writes = []
+    hass = entry_agent.hass
+    hass.auth.async_get_user.return_value = SimpleNamespace(
+        is_active=True, permissions=SimpleNamespace(check_entity=lambda *_: allowed)
+    )
+    entry_input.context = Context(user_id=user_id)
+
+    async def effect(_request):
+        await ha_permissions.async_require_control_permission(hass, ["light.probe"])
+        writes.append("light off")
+        return "changed"
+
+    entry_agent._async_process_with_continuity = effect
+
+    async def enter():
+        assert (
+            ha_permissions._ACTIVE_HA_CONTEXT.get()
+            is ha_permissions._AuthorityState.UNBOUND
+        )
+        return await entry_agent.async_process(entry_input)
+
+    task = contextvars.Context().run(asyncio.create_task, enter())
+    if allowed:
+        assert await task == "changed"
+    else:
+        with pytest.raises(HomeAssistantError):
+            await task
+    assert writes == (["light off"] if allowed else [])

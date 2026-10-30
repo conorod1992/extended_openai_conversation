@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import suppress
 from copy import deepcopy
 from dataclasses import dataclass
@@ -81,11 +80,10 @@ from .exposed_attributes import exposed_attribute_catalog
 from .frontend_assets import async_register_frontend_assets, frontend_entry_url
 from .function_configuration_repair import has_unavailable_native_tool
 from .function_dependency_integrity import (
-    _is_template_string,
     _rule_script_actions,
+    async_finish_function_rename,
     async_validate_request_rule_functions,
     group_reference_updates,
-    renamed_function_references_are_saved,
 )
 from .function_groups import get_function_group_runtime
 from .functions import FUNCTIONS
@@ -127,6 +125,7 @@ from .management_function_quarantine import (
     merge_unchanged_function_configuration,
 )
 from .management_function_repair import (
+    adopt_saved_configuration_revision,
     agent_config_revision as _agent_config_revision,  # noqa: F401
     async_prepare_persisted_function_tools,
     normalized_persisted_config_snapshot,
@@ -183,6 +182,7 @@ from .secret_redaction import is_redacted_secret, redact_secrets
 from .temporary_memory import async_get_temporary_memory, temporary_memory_as_dict
 from .usage import async_get_usage
 
+_LOGGER = logging.getLogger(__name__)
 _PERFORMANCE_LOGGER = logging.getLogger(f"{__name__}.performance")
 _MANAGEMENT_SERVER_EPOCH = uuid4().hex
 
@@ -587,54 +587,6 @@ def _request_rule_function_tools(
     return validate_function_tools(selected)
 
 
-def _validate_request_rule_functions(
-    rule: Mapping[str, Any], configured_tools: list[dict[str, Any]]
-) -> None:
-    """Validate configured Function references in canonical persisted actions."""
-    calls: list[Mapping[str, Any]] = []
-    for action in rule.get("action", {}).get("actions", []):
-        if not isinstance(action, Mapping):
-            continue
-        if not is_function_service_action(action):
-            continue
-        data = effective_service_payload(action)
-        if not isinstance(data, Mapping) or not isinstance(data.get("function"), str):
-            raise HomeAssistantError("Configured Function action is invalid")
-        arguments = data.get("arguments", {})
-        if not isinstance(arguments, Mapping) and not _is_template_string(arguments):
-            raise HomeAssistantError("Configured Function arguments must be an object")
-        calls.append(data)
-
-    available = {
-        tool["spec"]["name"] for tool in configured_tools if function_tool_enabled(tool)
-    }
-    missing = {
-        str(call["function"]) for call in calls if call["function"] not in available
-    }
-    if missing and rule.get("enabled", True):
-        raise HomeAssistantError(
-            "Function Tool is unavailable or disabled: " + ", ".join(sorted(missing))
-        )
-    by_name = {tool["spec"]["name"]: tool for tool in configured_tools}
-    for call in calls:
-        function_name = str(call["function"])
-        if function_name not in by_name:
-            continue
-        parameters = by_name[function_name]["spec"].get("parameters", {})
-        required = (
-            parameters.get("required", []) if isinstance(parameters, dict) else []
-        )
-        arguments = call.get("arguments", {})
-        missing_inputs = (
-            set(required) - set(arguments) if isinstance(arguments, Mapping) else set()
-        )
-        if missing_inputs:
-            raise HomeAssistantError(
-                f"Function Tool `{function_name}` needs input: "
-                + ", ".join(sorted(missing_inputs))
-            )
-
-
 async def _validate_request_rule_conditions(
     hass: HomeAssistant,
     rule: Mapping[str, Any],
@@ -869,6 +821,35 @@ def _unknown_management_action(request: _ManagementRequest) -> dict[str, Any]:
     )
 
 
+async def _async_validate_request_rule_mutation(
+    hass: HomeAssistant,
+    rule: Mapping[str, Any],
+    entry: Any,
+    subentry: Any,
+) -> Callable[[], None]:
+    """Validate dependencies and retain their configuration owner for admission."""
+    await _validate_request_rule_conditions(hass, rule)
+    source = subentry.data
+    await async_validate_request_rule_functions(
+        hass, rule, _request_rule_function_tools(rule, source)
+    )
+
+    def check_configuration() -> None:
+        # HA replaces this immutable mapping on each configuration change. Check
+        # both after awaited validation and after waiting for the Rule write lock.
+        if subentry.data is not source:
+            raise HomeAssistantError(
+                "Configuration changed while validating the Request Rule. "
+                "Reload the latest settings before saving."
+            )
+
+    check_configuration()
+    from .request_rules import validate_rule_model_request
+
+    validate_rule_model_request(rule, source, getattr(entry, "data", {}))
+    return check_configuration
+
+
 async def async_request_rules_command(request: _ManagementRequest) -> dict[str, Any]:
     """Handle the request rules Management section."""
     hass = request.hass
@@ -902,10 +883,6 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
             return dict(result or {})
         rules = await async_get_request_rules(hass, entry_id, subentry_id)
         return await async_request_rule_match_preview(hass, rules, text)
-    if action in {"create", "update"}:
-        # Static validation can await Home Assistant schemas. Keep the legacy
-        # second read so the final rule validator sees current Function Tools.
-        _entry, subentry = entry_and_agent(hass, entry_id, subentry_id)
     rules = await async_get_request_rules(hass, entry_id, subentry_id)
     if action == "rule_pack_export":
         return export_rule_pack(
@@ -998,20 +975,13 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
         )
     if action == "create":
         candidate = _prepare_request_rule(message.get("rule"))
-        await _validate_request_rule_conditions(hass, candidate)
-        _validate_request_rule_functions(
-            candidate,
-            _request_rule_function_tools(candidate, subentry.data)
-            if hasattr(subentry, "data")
-            else [],
-        )
-        from .request_rules import validate_rule_model_request
-
-        validate_rule_model_request(
-            candidate, subentry.data, getattr(request.entry, "data", {})
+        check_configuration = await _async_validate_request_rule_mutation(
+            hass, candidate, request.entry, subentry
         )
         rule = await rules.async_create(
-            candidate, expected_revision=message.get("revision")
+            candidate,
+            expected_revision=message.get("revision"),
+            check_configuration=check_configuration,
         )
         return {
             "rule": rule,
@@ -1032,20 +1002,14 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
         if field_only and update_revision is None:
             update_revision = rules.revision()
         candidate = _prepare_request_rule(message.get("rule"), rule_id, rules)
-        await _validate_request_rule_conditions(hass, candidate)
-        _validate_request_rule_functions(
-            candidate,
-            _request_rule_function_tools(candidate, subentry.data)
-            if hasattr(subentry, "data")
-            else [],
-        )
-        from .request_rules import validate_rule_model_request
-
-        validate_rule_model_request(
-            candidate, subentry.data, getattr(request.entry, "data", {})
+        check_configuration = await _async_validate_request_rule_mutation(
+            hass, candidate, request.entry, subentry
         )
         rule = await rules.async_update(
-            rule_id, candidate, expected_revision=update_revision
+            rule_id,
+            candidate,
+            expected_revision=update_revision,
+            check_configuration=check_configuration,
         )
         return {
             "rule": rule,
@@ -1262,14 +1226,15 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
             raise HomeAssistantError("Guest policy contains unknown fields")
         updates[CONF_GUEST_POLICY_VERSION] = GUEST_POLICY_VERSION
         normalized, snapshot = merge_unchanged_function_configuration(subentry, updates)
+        configured_tools = snapshot[CONF_FUNCTION_TOOLS]
+        policy_config = guest_policy_editor_snapshot(hass, normalized, configured_tools)
         update_live_subentry(hass, entry, subentry, data=normalized)
         revision = saved_agent_config_revision(subentry, normalized, subentry.title)
-        seed_persisted_config_projection(entry, subentry, snapshot, revision)
-        configured_tools = snapshot[CONF_FUNCTION_TOOLS]
-        return {
-            "revision": revision,
-            "config": guest_policy_editor_snapshot(hass, normalized, configured_tools),
-        }
+        try:
+            seed_persisted_config_projection(entry, subentry, snapshot, revision)
+        except Exception:
+            _LOGGER.warning("Committed Guest policy could not seed its optional cache")
+        return {"revision": revision, "config": policy_config}
     if action == "update":
         return {
             "status": await guest_manager.async_update_trusted(
@@ -1402,14 +1367,6 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
         subentry.data, persisted, updates
     )
     timings["persistence_preparation_ms"] = _elapsed_ms(phase)
-    phase = perf_counter()
-    title_update = {"title": saved_title} if isinstance(title, str) else {}
-    live_update = update_configuration_subentry(
-        hass, entry, subentry, data=persisted, **title_update
-    )
-    timings["subentry_update_ms"] = _elapsed_ms(phase)
-    timings["live_runtime_update"] = live_update
-
     # merge_agent_config validated both fields before persistence. Decode the
     # normalized YAML for the editor without repeating schema validation.
     phase = perf_counter()
@@ -1424,9 +1381,6 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
     snapshot = _snapshot_normalized_configuration(response_data, validated=True)
     timings["response_snapshot_ms"] = _elapsed_ms(phase)
     phase = perf_counter()
-    revision = saved_agent_config_revision(subentry, persisted, saved_title)
-    timings["revision_calculation_ms"] = _elapsed_ms(phase)
-    phase = perf_counter()
     capability_hits = _cached_model_capabilities.cache_info().hits
     capabilities = _configuration_model_capabilities(
         str(snapshot.get("azure_model") or snapshot[CONF_CHAT_MODEL])
@@ -1438,7 +1392,7 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
     saved = {
         "title": saved_title,
         "config": snapshot,
-        "revision": revision,
+        "revision": None,
         "model_capabilities": capabilities,
     }
     if repair_state is not None:
@@ -1452,9 +1406,6 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
             "tools_valid": not repair_state.invalid
             and repair_state.field_updates_allowed,
         }
-    phase = perf_counter()
-    seed_persisted_config_projection(entry, subentry, snapshot, revision)
-    timings["projection_seed_ms"] = _elapsed_ms(phase)
     phase = perf_counter()
     if refresh_local_handling:
         saved["local_handling"] = local_handling_snapshot(
@@ -1476,6 +1427,24 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
         "_performance": timings,
     }
     timings["response_assembly_ms"] = _elapsed_ms(phase)
+    phase = perf_counter()
+    title_update = {"title": saved_title} if isinstance(title, str) else {}
+    live_update = update_configuration_subentry(
+        hass, entry, subentry, data=persisted, **title_update
+    )
+    timings["subentry_update_ms"] = _elapsed_ms(phase)
+    timings["live_runtime_update"] = live_update
+    phase = perf_counter()
+    revision = saved_agent_config_revision(subentry, persisted, saved_title)
+    result["revision"] = revision
+    timings["revision_calculation_ms"] = _elapsed_ms(phase)
+
+    phase = perf_counter()
+    try:
+        seed_persisted_config_projection(entry, subentry, snapshot, revision)
+    except Exception:
+        _LOGGER.warning("Committed configuration could not seed its optional cache")
+    timings["projection_seed_ms"] = _elapsed_ms(phase)
     timings["total_ms"] = _elapsed_ms(started)
     return result
 
@@ -1722,29 +1691,38 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         refresh_local_handling = _local_handling_config_changed(
             subentry.data, normalized, updates
         )
-        update_configuration_subentry(
-            hass, entry, subentry, data=normalized, title=saved_title
-        )
         from .management_loading_performance import _snapshot_normalized_configuration
 
         snapshot = _snapshot_normalized_configuration(
             response_candidate, validated=True
         )
         result = {
+            "valid": True,
+            "errors": {},
             "title": saved_title,
-            "revision": saved_agent_config_revision(subentry, normalized, saved_title),
             "config": snapshot,
             "model_capabilities": model_capabilities(
                 str(snapshot.get("azure_model") or snapshot[CONF_CHAT_MODEL])
             ),
         }
-        seed_persisted_config_projection(entry, subentry, snapshot, result["revision"])
         if refresh_local_handling:
             result["local_handling"] = local_handling_snapshot(
                 hass,
                 entry_id,
                 subentry_id,
                 snapshot.get(CONF_LOCAL_INTENT_EXCLUSIONS, []),
+            )
+        update_configuration_subentry(
+            hass, entry, subentry, data=normalized, title=saved_title
+        )
+        adopt_saved_configuration_revision(subentry, normalized, result)
+        try:
+            seed_persisted_config_projection(
+                entry, subentry, snapshot, result["revision"]
+            )
+        except Exception:
+            _LOGGER.warning(
+                "Committed configuration update could not seed its optional cache"
             )
         return result
     if action == "duplicate":
@@ -2232,45 +2210,20 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             rules_manager=rules,
             expected_revision=operation_revision,
         )
-        try:
-            renamed_rule_references = await rules.async_rename_function_reference(
-                original_name,
-                saved_name,
-                expected_revision=rules_revision,
-            )
-        except (Exception, asyncio.CancelledError) as err:
-            rule_rename_saved = renamed_function_references_are_saved(
-                rules, original_name, saved_name, references.get("request_rules", [])
-            )
-            if rule_rename_saved is None:
-                if isinstance(err, asyncio.CancelledError):
-                    raise
-                raise HomeAssistantError(
-                    "Request Rule storage cannot be verified. The saved Function Tool "
-                    "rename was retained; restore storage access and reload to review "
-                    "Rule references."
-                ) from err
-            if rule_rename_saved:
-                if isinstance(err, asyncio.CancelledError):
-                    raise
-                raise HomeAssistantError(
-                    "Function Tool and Request Rule rename were saved, but the save "
-                    "acknowledgement failed. Reload the latest saved settings."
-                ) from err
-            try:
-                _require_agent_config_revision(subentry, result["revision"])
-                # A rollback restores the authoritative raw snapshot, including
-                # quarantined references that a usable projection cannot recover.
-                update_live_subentry(hass, entry, subentry, data=original_data)
-            except HomeAssistantError as rollback_err:
-                if isinstance(err, asyncio.CancelledError):
-                    raise err from rollback_err
-                raise HomeAssistantError(
-                    "Function Tool configuration changed while a related Request Rule "
-                    "rename failed. The newer configuration was preserved; reload "
-                    "before retrying."
-                ) from rollback_err
-            raise err
+
+        def rollback_configuration() -> None:
+            _require_agent_config_revision(subentry, result["revision"])
+            # Restore the raw snapshot, including quarantined references.
+            update_live_subentry(hass, entry, subentry, data=original_data)
+
+        renamed_rule_references = await async_finish_function_rename(
+            rules,
+            original_name,
+            saved_name,
+            expected_rules_revision=rules_revision,
+            original_references=references.get("request_rules", []),
+            rollback_configuration=rollback_configuration,
+        )
         result["renamed_references"] = {
             "request_rules": renamed_rule_references,
             "guest_mode": references["guest_mode"],
@@ -2284,6 +2237,14 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
         tool = next((item for item in tools if item["spec"]["name"] == name), None)
         if tool is None:
             raise HomeAssistantError("The Function Tool no longer exists")
+        operation_revision = persisted_config_projection(subentry).revision
+        # Reference projection can fail independently of the write. Prepare it
+        # before persistence so a rejected response never hides a saved toggle.
+        references = None
+        if not enabled:
+            _rules, references = await _function_reference_state(
+                hass, entry_id, subentry_id, subentry.data, name
+            )
         tool["enabled"] = enabled
         result = await _persist_function_configuration(
             hass,
@@ -2291,12 +2252,9 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             subentry,
             tools,
             groups,
-            expected_revision=message.get("revision"),
+            expected_revision=operation_revision,
         )
         if not enabled:
-            _rules, references = await _function_reference_state(
-                hass, entry_id, subentry_id, subentry.data, name
-            )
             result["references"] = references
         return result
     if action == "delete":
@@ -2838,21 +2796,17 @@ async def async_memories_command(request: _ManagementRequest) -> dict[str, Any]:
                     raise HomeAssistantError("Shared household memory is disabled")
         if action == "add":
             await _require_existing_user_destination(hass, target)
-            added = await memory.async_add(
+            status, record = await memory.async_add_record(
                 _memory_scope(target),
                 str(message.get("content", "")),
                 str(message.get("category", "general")),
                 "explicit",
                 **metadata,
             )
-            records = await memory.async_get_many(
-                [(_memory_scope(target), added["memory"]["memory_id"])],
-                [_memory_scope(target)],
-            )
             return {
-                "status": added["status"],
+                "status": status,
                 "scope_id": target,
-                "memory": management_memory_dict(records[0], include_scope=is_admin),
+                "memory": management_memory_dict(record, include_scope=is_admin),
             }
         record = await memory.async_update(
             owner,
@@ -2896,6 +2850,33 @@ async def async_memories_command(request: _ManagementRequest) -> dict[str, Any]:
     return _unknown_management_action(request)
 
 
+def _knowledge_mutation_result(
+    request: _ManagementRequest,
+    library: Any,
+    result: dict[str, Any],
+    source: Any = None,
+) -> dict[str, Any]:
+    from .feature_status import management_feature_status
+    from .knowledge import source_summary
+
+    if source is not None:
+        result["source"] = knowledge_source_as_dict(source)
+    enrichments = {
+        "stats": library.stats,
+        "feature_status": lambda: management_feature_status(
+            request.subentry.data, knowledge_source_count=library.total_source_count
+        )["knowledge"],
+    }
+    if source is not None:
+        enrichments["summary"] = lambda: source_summary(source)
+    for name, build in enrichments.items():
+        try:
+            result[name] = build()
+        except Exception:
+            _LOGGER.warning("Committed Knowledge mutation omitted optional %s", name)
+    return result
+
+
 async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]:
     """Handle the knowledge Management section."""
     hass = request.hass
@@ -2932,28 +2913,35 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
             request.subentry, {CONF_KNOWLEDGE_ENABLED: enabled}
         )
         persisted = normalized
-        update_live_subentry(
-            request.hass, request.entry, request.subentry, data=persisted
-        )
-        revision = saved_agent_config_revision(
-            request.subentry, persisted, request.subentry.title
-        )
         from .management_loading_performance import _snapshot_normalized_configuration
 
         response_data = dict(persisted)
         response_data[CONF_FUNCTION_TOOLS] = snapshot[CONF_FUNCTION_TOOLS]
         response_data[CONF_FUNCTION_GROUPS] = snapshot[CONF_FUNCTION_GROUPS]
         snapshot = _snapshot_normalized_configuration(response_data, validated=True)
-        seed_persisted_config_projection(
-            request.entry, request.subentry, snapshot, revision
-        )
-        return {
-            "revision": revision,
+        result: dict[str, Any] = {
+            "revision": None,
             "knowledge_enabled": bool(persisted.get(CONF_KNOWLEDGE_ENABLED, False)),
             "feature_status": management_feature_status(
                 persisted, knowledge_source_count=library.total_source_count
             )["knowledge"],
         }
+        update_live_subentry(
+            request.hass, request.entry, request.subentry, data=persisted
+        )
+        revision = saved_agent_config_revision(
+            request.subentry, persisted, request.subentry.title
+        )
+        result["revision"] = revision
+        try:
+            seed_persisted_config_projection(
+                request.entry, request.subentry, snapshot, revision
+            )
+        except Exception:
+            _LOGGER.warning(
+                "Committed Knowledge setting could not seed its optional cache"
+            )
+        return result
     if action == "get":
         return {
             "source": knowledge_source_as_dict(
@@ -2961,28 +2949,16 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
             )
         }
     if action == "create":
-        from .feature_status import management_feature_status
-        from .knowledge import source_summary
-
         knowledge_source = await library.async_create(
             message.get("title", ""),
             message.get("description", ""),
             message.get("content", ""),
             message.get("enabled", True),
         )
-        return {
-            "status": "created",
-            "source": knowledge_source_as_dict(knowledge_source),
-            "summary": source_summary(knowledge_source),
-            "stats": library.stats(),
-            "feature_status": management_feature_status(
-                request.subentry.data, knowledge_source_count=library.total_source_count
-            )["knowledge"],
-        }
+        return _knowledge_mutation_result(
+            request, library, {"status": "created"}, knowledge_source
+        )
     if action == "update":
-        from .feature_status import management_feature_status
-        from .knowledge import source_summary
-
         knowledge_source = await library.async_update(
             str(message.get("source_id", "")),
             message.get("title"),
@@ -2991,28 +2967,14 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
             message.get("enabled"),
             expected_revision=message.get("expected_revision"),
         )
-        return {
-            "status": "updated",
-            "source": knowledge_source_as_dict(knowledge_source),
-            "summary": source_summary(knowledge_source),
-            "stats": library.stats(),
-            "feature_status": management_feature_status(
-                request.subentry.data, knowledge_source_count=library.total_source_count
-            )["knowledge"],
-        }
+        return _knowledge_mutation_result(
+            request, library, {"status": "updated"}, knowledge_source
+        )
     if action == "delete":
-        from .feature_status import management_feature_status
-
         if message.get("confirm") is not True:
             raise HomeAssistantError("Explicit confirmation is required")
         deleted = int(await library.async_delete(str(message.get("source_id", ""))))
-        return {
-            "deleted": deleted,
-            "stats": library.stats(),
-            "feature_status": management_feature_status(
-                request.subentry.data, knowledge_source_count=library.total_source_count
-            )["knowledge"],
-        }
+        return _knowledge_mutation_result(request, library, {"deleted": deleted})
 
     return _unknown_management_action(request)
 
@@ -3192,25 +3154,7 @@ async def _async_management_request(
     handler = _MANAGEMENT_SECTION_HANDLERS.get(section)
     if handler is None:
         return _unknown_management_action(request)
-    # These safety checks were outside the former quarantine/permission wrappers.
-    # Non-admin requests reach their section's authorization error, never schema
-    # or revision diagnostics. Rule mutations retain strict dependency validation.
-    if is_admin and section == "request_rules" and action in {"create", "update"}:
-        rule_id = message.get("rule_id") if action == "update" else None
-        existing_rules = (
-            await async_get_request_rules(hass, entry_id, subentry_id)
-            if action == "update"
-            else None
-        )
-        candidate = _prepare_request_rule(
-            message.get("rule"),
-            rule_id if isinstance(rule_id, str) else None,
-            existing_rules,
-        )
-        await async_validate_request_rule_functions(
-            hass, candidate, _request_rule_function_tools(candidate, subentry.data)
-        )
-    elif is_admin and is_tool_mutation(section, action):
+    if is_admin and is_tool_mutation(section, action):
         _require_agent_config_revision(subentry, message.get("revision"))
 
     configuration_action = _configuration_action(message)
@@ -3224,37 +3168,48 @@ async def _async_management_request(
     result = await handler(request)
     handler_ms = _elapsed_ms(handler_started) if handler_started is not None else None
 
-    if isinstance(result.get("config"), dict):
-        # Effective defaults and capabilities depend on installation-wide data,
-        # independently of the persisted assistant's configuration revision.
-        result["catalog_generation"] = catalog_generation()
-        result["catalog_version"] = active_catalog_version()
+    committed_result = result
+    try:
+        result = dict(result)
+        if isinstance(result.get("config"), dict):
+            # Effective defaults and capabilities depend on installation-wide data,
+            # independently of the persisted assistant's configuration revision.
+            result["catalog_generation"] = catalog_generation()
+            result["catalog_version"] = active_catalog_version()
 
-    if configuration_action is not None:
-        decoration_started = perf_counter()
-        result = decorate_configuration_result(
-            hass,
-            getattr(entry, "data", {}),
-            result,
-            action=configuration_action,
-        )
-        decoration_ms = _elapsed_ms(decoration_started)
-        assert handler_started is not None
-        request_total_ms = _elapsed_ms(handler_started)
-        performance = result.get("_performance")
-        if isinstance(performance, dict):
-            performance["decoration_ms"] = decoration_ms
-            performance["request_total_ms"] = request_total_ms
-            if is_configuration_timing_operation(section, action):
+        if configuration_action is not None:
+            decoration_started = perf_counter()
+            result = decorate_configuration_result(
+                hass,
+                getattr(entry, "data", {}),
+                result,
+                action=configuration_action,
+            )
+            decoration_ms = _elapsed_ms(decoration_started)
+            assert handler_started is not None
+            request_total_ms = _elapsed_ms(handler_started)
+            performance = result.get("_performance")
+            if isinstance(performance, dict):
+                performance["decoration_ms"] = decoration_ms
+                performance["request_total_ms"] = request_total_ms
+                if is_configuration_timing_operation(section, action):
+                    performance["dispatch_ms"] = dispatch_ms
+                    performance["agent_resolution_ms"] = resolution_ms
+                    performance["handler_ms"] = handler_ms
+        elif trace_tool_mutation:
+            performance = result.get("_performance")
+            if isinstance(performance, dict):
                 performance["dispatch_ms"] = dispatch_ms
                 performance["agent_resolution_ms"] = resolution_ms
                 performance["handler_ms"] = handler_ms
-    elif trace_tool_mutation:
-        performance = result.get("_performance")
-        if isinstance(performance, dict):
-            performance["dispatch_ms"] = dispatch_ms
-            performance["agent_resolution_ms"] = resolution_ms
-            performance["handler_ms"] = handler_ms
+    except Exception:
+        if (
+            configuration_action not in {"save", "update"}
+            or committed_result.get("valid") is not True
+        ):
+            raise
+        _LOGGER.warning("Committed configuration omitted optional response decoration")
+        result = committed_result
     return result
 
 
@@ -3353,13 +3308,17 @@ def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
 async def websocket_management(
     hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
 ) -> None:
+    from .mutation_outcomes import mutation_error_code, mutation_failure
+
     started = perf_counter()
     try:
         result = await async_management_command(
             hass, connection.user.id, connection.user.is_admin, msg
         )
-    except (HomeAssistantError, RuntimeError, ValueError) as err:
-        connection.send_error(msg["id"], "invalid_request", str(err))
+    except (HomeAssistantError, RuntimeError, ValueError, OSError) as err:
+        if isinstance(err, OSError) and mutation_failure(err) is None:
+            raise
+        connection.send_error(msg["id"], mutation_error_code(err), str(err))
         return
     trace_request = is_configuration_timing_operation(
         msg.get("section"), msg.get("action")

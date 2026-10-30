@@ -12,6 +12,9 @@ from custom_components.extended_openai_conversation_responses.request_rules impo
     _outcome_probes,
     async_evaluate_rule,
 )
+from custom_components.extended_openai_conversation_responses.guest_mode import (
+    GUEST_MODE_UNAVAILABLE,
+)
 from homeassistant.core import SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
 
@@ -27,7 +30,7 @@ class MemoryStore:
         pass
 
 
-async def evaluate(hass, actions, *, handoff=False):
+async def evaluate(hass, actions, *, handoff=False, live_guest_policy=None):
     rule = {
         "id": "native",
         "name": "Native",
@@ -47,7 +50,14 @@ async def evaluate(hass, actions, *, handoff=False):
     }
     rules = RequestRules(MemoryStore(rule))
     await rules.async_initialize()
-    return await async_evaluate_rule(hass, rules, RequestRuleRuntime(), "run", "native")
+    return await async_evaluate_rule(
+        hass,
+        rules,
+        RequestRuleRuntime(),
+        "run",
+        "native",
+        live_guest_policy=live_guest_policy,
+    )
 
 
 @pytest.mark.parametrize(
@@ -312,3 +322,166 @@ def test_stop_probe_shares_one_native_enabled_decision_and_keeps_source():
         key: value for key, value in original.items() if key != "enabled"
     }
     assert stop == original
+
+
+@pytest.mark.parametrize("live", [False, True])
+@pytest.mark.parametrize("kind", ["data", "alias", "metadata", "event"])
+async def test_live_guard_preserves_native_template_boundaries(hass, live, kind):
+    from custom_components.extended_openai_conversation_responses.guest_mode import (
+        GuestCapabilityPolicy,
+    )
+
+    hass.loop = asyncio.get_running_loop()
+    hass.async_create_task_internal.side_effect = lambda coro, **kw: (
+        asyncio.create_task(coro)
+    )
+    action = {"action": "light.turn_on", "continue_on_error": True}
+    if kind == "data":
+        action["data"] = {"brightness": "{{ 1 / 0 }}"}
+    elif kind == "event":
+        action = {"event": "test_event", "event_data": {"value": "{{ 1 / 0 }}"}}
+    else:
+        action[kind] = "{{ 1 / 0 }}" if kind == "alias" else {"note": "{{ 1 / 0 }}"}
+    outcome = await evaluate(
+        hass,
+        [action, {"set_conversation_response": "reached"}],
+        live_guest_policy=GuestCapabilityPolicy.unrestricted if live else None,
+    )
+    assert outcome.successful and outcome.response == "reached"
+    if kind == "data":
+        assert not hass.services.async_call.called
+    elif kind != "event":
+        assert any(
+            (
+                call.args[:2] == ("light", "turn_on")
+                or (call.kwargs.get("domain"), call.kwargs.get("service"))
+                == ("light", "turn_on")
+            )
+            for call in hass.services.async_call.call_args_list
+        ), hass.services.async_call.call_args_list
+
+
+@pytest.mark.parametrize("shape", ["direct", "while", "until"])
+@pytest.mark.parametrize("wrap_service_errors", [False, True])
+async def test_live_authorization_after_permission_lookup_cannot_be_ignored(
+    hass, monkeypatch, wrap_service_errors, shape
+):
+    from unittest.mock import AsyncMock
+    from custom_components.extended_openai_conversation_responses import ha_actions
+    from custom_components.extended_openai_conversation_responses.guest_mode import (
+        GuestCapabilityPolicy,
+    )
+
+    if wrap_service_errors:
+        # HA 2026.10 wraps non-HA service errors when continue_on_error is set.
+        # Exercise that compatibility boundary even on the older local engine.
+        from homeassistant.helpers import script as native_script
+
+        original_step = native_script._ScriptRun._async_step_call_service
+
+        async def current_ha_step(run):
+            try:
+                return await original_step(run)
+            except HomeAssistantError:
+                raise
+            except Exception as err:
+                if run._action.get("continue_on_error", False):
+                    raise HomeAssistantError(err) from err
+                raise
+
+        monkeypatch.setattr(
+            native_script._ScriptRun, "_async_step_call_service", current_ha_step
+        )
+
+    hass.loop = asyncio.get_running_loop()
+    hass.async_create_task_internal.side_effect = lambda coro, **kw: (
+        asyncio.create_task(coro)
+    )
+    policy = GuestCapabilityPolicy.unrestricted()
+    lookups = []
+
+    async def lookup(*args, **kwargs):
+        nonlocal policy
+        lookups.append(True)
+        policy = GuestCapabilityPolicy(guest_active=True)
+        return set()
+
+    dispatch = AsyncMock()
+    monkeypatch.setattr(ha_actions, "async_authorize_ha_action", lookup)
+    monkeypatch.setattr(ha_actions, "async_dispatch_ha_service", dispatch)
+    effect = {"action": "light.turn_on", "continue_on_error": True}
+    if shape != "direct":
+        effect = {
+            "repeat": {
+                shape: "{{ repeat.index <= 1 }}"
+                if shape == "while"
+                else "{{ repeat.index >= 1 }}",
+                "sequence": [effect],
+            }
+        }
+    if shape != "direct":
+        effect = {"choose": [{"conditions": "{{ true }}", "sequence": [effect]}]}
+    outcome = await evaluate(
+        hass,
+        [effect, {"set_conversation_response": "must not reach"}],
+        live_guest_policy=lambda: policy,
+    )
+    assert lookups == [True], "The native action must reach permission lookup"
+    assert not outcome.successful and outcome.response == GUEST_MODE_UNAVAILABLE
+    dispatch.assert_not_called()
+
+
+@pytest.mark.parametrize("effect_kind", ["service", "event"])
+async def test_real_service_registry_rechecks_revoked_guest_control(
+    tmp_path, effect_kind
+):
+    from homeassistant.core import HomeAssistant
+    from custom_components.extended_openai_conversation_responses.guest_mode import (
+        GuestCapabilityPolicy,
+    )
+    from custom_components.extended_openai_conversation_responses.ha_permissions import (
+        bind_active_ha_context,
+    )
+
+    real = HomeAssistant(str(tmp_path))
+    calls = []
+    policy = GuestCapabilityPolicy.unrestricted()
+
+    async def pause(call):
+        nonlocal policy
+        policy = GuestCapabilityPolicy(True, controllable_entity_ids=frozenset())
+
+    async def effect(call):
+        calls.append(dict(call.data))
+
+    real.services.async_register("test", "pause", pause)
+    real.services.async_register("light", "turn_on", effect)
+    real.states.async_set("light.kitchen", "off")
+    real.bus.async_listen("denied_probe", lambda event: calls.append(event.data))
+    effect_action = (
+        {"action": "light.turn_on", "target": {"entity_id": "light.kitchen"}}
+        if effect_kind == "service"
+        else {"event": "denied_probe"}
+    )
+    with bind_active_ha_context(None):
+        result = await evaluate(
+            real,
+            [
+                {"action": "test.pause"},
+                {
+                    "sequence": [
+                        {
+                            "repeat": {
+                                "while": "{{ repeat.index <= 1 }}",
+                                "sequence": [effect_action],
+                            }
+                        }
+                    ],
+                    "continue_on_error": True,
+                },
+                {"set_conversation_response": "must not reach"},
+            ],
+            live_guest_policy=lambda: policy,
+        )
+    assert not result.successful, calls
+    assert calls == []

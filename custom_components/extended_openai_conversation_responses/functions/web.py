@@ -41,7 +41,11 @@ from homeassistant.util.json import JSON_DECODE_EXCEPTIONS, json_loads
 
 from ..const import CONF_PAYLOAD_TEMPLATE
 from ..exceptions import FunctionResponseParseError
-from ..execution_outcomes import execution_completed, execution_started
+from ..execution_outcomes import (
+    execution_completed,
+    execution_started,
+    owns_execution_receipts,
+)
 from ..public_errors import SanitizedRequestError
 from ..resource_limits import MAX_REMOTE_RESPONSE_BYTES
 from ..template_diagnostics import private_template_diagnostics
@@ -254,6 +258,9 @@ class _BoundedResponse:
             # Raising here keeps the underlying request's __aexit__ in charge
             # of cleanup, including when HA catches a transport exception.
             raise SanitizedRequestError(status)
+        if self._response.status == 204:
+            self._body = b""
+            return self._body
         if self._body is not None:
             return self._body
 
@@ -291,6 +298,8 @@ class _BoundedResponse:
     async def text(self, encoding: str | None = None, errors: str = "strict") -> str:
         """Decode the same bounded body that aiohttp would expose as text."""
         body = await self.read()
+        if self._response.status == 204:
+            return ""
         selected_encoding = encoding or self._response.charset or "utf-8"
         try:
             return body.decode(selected_encoding, errors=errors)
@@ -404,35 +413,35 @@ async def _private_rest_update(data: rest.data.RestData) -> None:
     if data._request_data:
         kwargs["data"] = data._request_data
     data.last_exception = None
+    cast(Any, data)._eoai_no_content = False
     session = data._session
     if session is None:
         raise HomeAssistantError("REST session is unavailable")
     # Match the operation HA will dispatch, rather than the model arguments that
     # produced it. Only the digest enters the continuation-recovery ledger.
-    receipt = None
-    if getattr(data, "_eoai_record_receipts", False) is True:
-        headers = CIMultiDict(kwargs.get("headers") or {})
-        if isinstance(kwargs.get("auth"), aiohttp.BasicAuth):
-            headers["Authorization"] = kwargs["auth"].encode()
-        normalized_headers: dict[str, list[str]] = {}
-        for name, value in headers.items():
-            normalized_headers.setdefault(name.casefold(), []).append(value)
-        receipt = execution_started(
-            kind="rest",
-            prepared={
-                "method": data._method.upper(),
-                "resource": str(
-                    URL(data._resource).extend_query(params or {}).with_fragment(None)
-                ),
-                "headers": sorted(normalized_headers.items()),
-                "payload": kwargs.get("data", ""),
-                # An opaque authentication middleware deliberately produces a
-                # conservative receipt, never an identity based on object repr().
-                "authentication": kwargs.get("middlewares"),
-            },
-        )
+    headers = CIMultiDict(kwargs.get("headers") or {})
+    if isinstance(kwargs.get("auth"), aiohttp.BasicAuth):
+        headers["Authorization"] = kwargs["auth"].encode()
+    normalized_headers: dict[str, list[str]] = {}
+    for name, value in headers.items():
+        normalized_headers.setdefault(name.casefold(), []).append(value)
+    receipt = execution_started(
+        kind="rest",
+        prepared={
+            "method": data._method.upper(),
+            "resource": str(
+                URL(data._resource).extend_query(params or {}).with_fragment(None)
+            ),
+            "headers": sorted(normalized_headers.items()),
+            "payload": kwargs.get("data", ""),
+            # An opaque authentication middleware deliberately produces a
+            # conservative receipt, never an identity based on object repr().
+            "authentication": kwargs.get("middlewares"),
+        },
+    )
     try:
         async with session.request(data._method, data._resource, **kwargs) as response:
+            cast(Any, data)._eoai_no_content = response.status == 204
             if not data._force_use_set_encoding and response.charset:
                 try:
                     data.data = await response.text()
@@ -518,6 +527,8 @@ def get_rest_data(
             content_type = (
                 rest_data.headers.get("Content-Type", "") if rest_data.headers else ""
             )
+            if getattr(rest_data, "_eoai_no_content", False):
+                return value
             if value is not None and content_type.startswith(rest.const.XML_MIME_TYPES):
                 return json_dumps(xmltodict.parse(value))
             return value
@@ -557,6 +568,7 @@ class RestFunction(Function):
             )
         )
 
+    @owns_execution_receipts
     async def execute(
         self,
         hass: HomeAssistant,
@@ -567,7 +579,6 @@ class RestFunction(Function):
     ) -> Any:
         """Execute REST API call."""
         rest_data = get_rest_data(hass, function_config, arguments)
-        cast(Any, rest_data)._eoai_record_receipts = True
 
         try:
             await rest_data.async_update(log_errors=False)

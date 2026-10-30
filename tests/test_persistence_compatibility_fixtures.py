@@ -91,9 +91,10 @@ async def test_memory_v0_fixture_migrates_with_v2_defaults() -> None:
     assert records[0].valid_from is None
 
 
-async def test_memory_mixed_corruption_self_heals_without_losing_good_record() -> None:
-    """Malformed and duplicate records are removed without resetting valid facts."""
-    storage = FixtureStorage(_fixture("memory_v2_mixed_corrupt.json"))
+async def test_memory_mixed_corruption_preserves_original_and_good_record() -> None:
+    """Malformed and duplicate records remain repair evidence; good facts are readable."""
+    damaged = _fixture("memory_v2_mixed_corrupt.json")
+    storage = FixtureStorage(damaged)
     first = PersistentMemory(storage)
 
     await first.async_initialize()
@@ -102,15 +103,15 @@ async def test_memory_mixed_corruption_self_heals_without_losing_good_record() -
     assert [(record.memory_id, record.key) for record in records] == [
         ("memory-good", "units.temperature")
     ]
-    assert storage.save_count == 1
-    assert [item["memory_id"] for item in storage.data["memories"]] == ["memory-good"]
+    assert storage.save_count == 0
+    assert storage.data == damaged
 
     second = PersistentMemory(storage)
     await second.async_initialize()
     assert [record.memory_id for record in await second.async_list("alice")] == [
         "memory-good"
     ]
-    assert storage.save_count == 1
+    assert storage.save_count == 0
 
 
 async def test_knowledge_v1_fixture_migrates_to_explicit_enabled_state() -> None:

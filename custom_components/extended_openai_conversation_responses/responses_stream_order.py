@@ -5,19 +5,23 @@ from contextlib import aclosing
 from typing import Any
 
 from .provider_errors import ProviderStreamError
+from .provider_output_budget import ProviderOutputBudget
 
 
 async def _validated_output_events(
     events: AsyncIterator[Any],
     recover_usage: Callable[[], Awaitable[None]] | None = None,
+    budget: ProviderOutputBudget | None = None,
 ) -> AsyncGenerator[Any]:
     """Validate wire identities and arguments before presentation can buffer them."""
+    budget = budget or ProviderOutputBudget()
     terminal_seen = False
     completed_items: set[tuple[Any, Any]] = set()
     output_items: dict[Any, tuple[Any, Any, Any]] = {}
     argument_fragments: dict[Any, str] = {}
     try:
         async for event in events:
+            budget.responses_event(event)
             event_type = getattr(event, "type", "")
             if (
                 terminal_seen
@@ -132,10 +136,14 @@ async def ordered_output_events(
     content entry. Keep all indexed events together, including text, refusals,
     arguments and native completion. No payload is copied or reinterpreted.
     """
+    budget = ProviderOutputBudget()
     next_index = 0
     pending: dict[int, list[Any]] = {}
+    pending_weights: dict[int, int] = {}
     known_indices: set[int] = set()
-    async with aclosing(_validated_output_events(events, recover_usage)) as validated:
+    async with aclosing(
+        _validated_output_events(events, recover_usage, budget)
+    ) as validated:
         async for event in validated:
             index = getattr(event, "output_index", None)
             if index is not None and event.type in {
@@ -160,7 +168,16 @@ async def ordered_output_events(
                     # Identities/completions were checked in original wire order.
                     yield event
                 else:
+                    try:
+                        weight = budget.buffer(event)
+                    except ProviderStreamError:
+                        # Backlog admission is outside wire validation, but still
+                        # owns the normalized/raw stream until accounting settles.
+                        if recover_usage is not None:
+                            await recover_usage()
+                        raise
                     pending.setdefault(index, []).append(event)
+                    pending_weights[index] = pending_weights.get(index, 0) + weight
                 continue
             yield event
             if event.type != "response.output_item.done":
@@ -168,6 +185,7 @@ async def ordered_output_events(
             next_index += 1
             while next_index in pending:
                 buffered = pending.pop(next_index)
+                budget.release_buffer(pending_weights.pop(next_index), len(buffered))
                 for buffered_event in buffered:
                     yield buffered_event
                 if buffered[-1].type != "response.output_item.done":

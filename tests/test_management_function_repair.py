@@ -613,7 +613,7 @@ async def test_save_one_repairs_and_renames_group_reference_without_touching_sib
     monkeypatch.setattr(
         repair,
         "_safe_configuration_payload",
-        lambda *_args, **_kwargs: {"function_repair": {"invalid_count": 0}},
+        lambda *_args, **_kwargs: {"title": subentry.title, "function_repair": {"invalid_count": 0}},
     )
     monkeypatch.setattr(
         management_loading_performance,
@@ -683,7 +683,7 @@ async def test_delete_one_removes_only_broken_tool_and_its_group_reference(
     monkeypatch.setattr(
         repair,
         "_safe_configuration_payload",
-        lambda *_args, **_kwargs: {"function_repair": {"invalid_count": 0}},
+        lambda *_args, **_kwargs: {"title": subentry.title, "function_repair": {"invalid_count": 0}},
     )
     monkeypatch.setattr(
         management_loading_performance,

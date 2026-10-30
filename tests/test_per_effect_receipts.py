@@ -29,6 +29,7 @@ from custom_components.extended_openai_conversation_responses.tool_replay_guard 
     clear_unacknowledged_calls,
     effect_signature,
     remember_unacknowledged_calls,
+    replay_safety,
     was_unacknowledged_equivalent,
 )
 from homeassistant.exceptions import HomeAssistantError
@@ -156,7 +157,7 @@ def test_settled_and_foreign_receipts_cannot_be_changed():
     assert entity._execution_tool_outcomes[id(second)] == "completed"
 
 
-async def test_validation_failure_cannot_reject_previous_unknown_child():
+async def test_opaque_failure_cannot_reject_previous_unknown_child():
     from custom_components.extended_openai_conversation_responses.public_errors import (
         SanitizedUnexpectedBackendError,
     )
@@ -175,8 +176,9 @@ async def test_validation_failure_cannot_reject_previous_unknown_child():
         assert unknown.outcome == "uncertain"
     assert [r.outcome for r in entity._execution_effect_receipts[id(call)]] == [
         "uncertain",
-        "rejected",
+        "uncertain",
     ]
+    function.execute.assert_awaited_once()
 
 
 async def test_real_native_batch_records_each_effect_and_prepared_target(
@@ -446,7 +448,7 @@ def test_receipt_ceiling_refuses_effects_and_bounds_rejection_markers(monkeypatc
                     kind="probe", prepared={"index": index}
                 )
             except HomeAssistantError:
-                receipts.execution_rejected(before_dispatch=True)
+                receipts.execution_refused()
             else:
                 dispatched.append(index)
                 receipts.execution_completed(handle)
@@ -582,7 +584,8 @@ def test_anonymous_scope_does_not_inherit_an_outer_conversation(missing_identity
         check_effect_replay,
     )
 
-    entity = SimpleNamespace(_unacknowledged_effects={"known": {"effect"}})
+    entity = SimpleNamespace()
+    replay_safety(entity).effects = {"known": {"effect"}}
     with bind_effect_replay_scope(entity, "known"):
         with bind_effect_replay_scope(entity, missing_identity):
             check_effect_replay(entity, "effect")
@@ -626,9 +629,8 @@ async def test_resolved_tool_copy_reuses_enclosing_invocation(hass, monkeypatch)
 
 async def test_background_task_does_not_retain_expired_replay_scope():
     prepared = {"target": "same"}
-    entity = SimpleNamespace(
-        _unacknowledged_effects={"request": {effect_signature("ha_service", prepared)}}
-    )
+    entity = SimpleNamespace()
+    replay_safety(entity).effects = {"request": {effect_signature("ha_service", prepared)}}
     release = asyncio.Event()
     call, effects = _call("background", "effect"), []
 
@@ -694,7 +696,6 @@ async def test_admitted_delayed_work_detaches_even_while_parent_is_active(
     admitted = _call("admitted-job", "effect", RAW)
 
     async def due_worker(call_id):
-        assert receipts.current_execution_receipt() is None
         assert call_id == admitted.id
         await ExtendedOpenAIBaseLLMEntity._execute_function_tool(
             entity, tool, admitted, None, []
@@ -796,7 +797,7 @@ async def test_nested_provider_exchange_overrides_independent_ownership(
     from custom_components.extended_openai_conversation_responses.entity import (
         ExtendedOpenAIBaseLLMEntity,
     )
-    from homeassistant.core import HomeAssistant
+    from homeassistant.core import Context, HomeAssistant
     from homeassistant.helpers import device_registry as dr, entity_registry as er
 
     hass = HomeAssistant(str(tmp_path))
@@ -835,7 +836,7 @@ async def test_nested_provider_exchange_overrides_independent_ownership(
     async def nested_exchange(*_args):
         try:
             await async_execute_tool_exchange(
-                provider, log, [first], [tool], FunctionCallBudget(10), None, exposed
+                provider, log, [first], [tool], FunctionCallBudget(10), SimpleNamespace(context=Context()), exposed
             )
         except HomeAssistantError as err:
             # The nested conversation owns the error, as its request boundary

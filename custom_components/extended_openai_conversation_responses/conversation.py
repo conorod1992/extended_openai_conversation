@@ -48,7 +48,11 @@ from .agent_configuration import (
 )
 from .agent_maintenance import conversation_request_lease, get_agent_maintenance_gate
 from .assistant_response import final_assistant_text
-from .completion_events import completion_event_scope, queue_completion_event
+from .completion_events import (
+    CompletionMetadata,
+    completion_event_scope,
+    queue_completion_event,
+)
 from .const import (
     CONF_ARCHIVE_ENABLED,
     CONF_ARCHIVE_MODEL_SEARCH_ENABLED,
@@ -223,6 +227,7 @@ from .request_diagnostics import (
 )
 from .request_origin import bind_request_satellite
 from .request_rules import (
+    REQUEST_RULES_UNAVAILABLE,
     RequestRuleRuntime,
     RequestRules,
     async_evaluate_rule,
@@ -253,7 +258,12 @@ from .temporary_memory import (
     async_get_temporary_memory,
     temporary_memory_as_dict,
 )
-from .tool_replay_guard import clear_unacknowledged_calls, remember_unacknowledged_calls
+from .tool_replay_guard import (
+    clear_unacknowledged_calls,
+    get_agent_replay_safety,
+    has_unacknowledged_calls,
+    remember_unacknowledged_calls,
+)
 from .usage import async_get_usage, extract_usage
 from .voice_identity_runtime import voice_identity_scope, voice_source_device_id
 
@@ -415,6 +425,9 @@ class ExtendedOpenAIAgentEntity(
                 if not owns_registration():
                     return
                 await super().async_added_to_hass()
+                self._replay_safety = get_agent_replay_safety(
+                    self.hass, self.entry.entry_id, self.subentry.subentry_id
+                )
                 if not owns_registration():
                     return
                 await self._async_initialize_agent_state()
@@ -1011,6 +1024,22 @@ class ExtendedOpenAIAgentEntity(
                     else nullcontext(None)
                 ) as run:
                     try:
+                        if (
+                            isinstance(self._request_rules, RequestRules)
+                            and not self._request_rules.initialized
+                        ):
+                            try:
+                                self._request_rules = await async_get_request_rules(
+                                    self.hass,
+                                    self.entry.entry_id,
+                                    self.subentry.subentry_id,
+                                )
+                            except Exception:
+                                # Preserve the unavailable manager and reject this
+                                # turn through the existing local failure boundary.
+                                raise HomeAssistantError(
+                                    REQUEST_RULES_UNAVAILABLE
+                                ) from None
                         evaluation = (
                             await async_evaluate_rule(
                                 self.hass,
@@ -1368,9 +1397,7 @@ class ExtendedOpenAIAgentEntity(
                     None
                     if requested_conversation_reset() is not None
                     else chat_log.conversation_id
-                    if getattr(self, "_unacknowledged_tool_schemas", {}).get(
-                        chat_log.conversation_id
-                    )
+                    if has_unacknowledged_calls(self, chat_log.conversation_id)
                     else user_input.conversation_id
                 ),
             )
@@ -1490,22 +1517,21 @@ class ExtendedOpenAIAgentEntity(
         user_input: ConversationInput,
         chat_log: ChatLog,
         *,
-        status: str,
+        status: Literal["success", "local", "error"],
         handled_locally: bool = False,
         error_type: str | None = None,
     ) -> None:
         """Emit metadata only: HA Recorder can persist every custom bus event."""
-        payload: dict[str, Any] = {
-            "schema_version": 2,
-            "conversation_id": getattr(chat_log, "conversation_id", None),
-            "agent_id": self.subentry.subentry_id,
-            "status": status,
-        }
-        if handled_locally:
-            payload["handled_locally"] = True
-        if error_type is not None:
-            payload["error_type"] = error_type
-        queue_completion_event(self.hass, payload)
+        queue_completion_event(
+            self.hass,
+            CompletionMetadata(
+                conversation_id=getattr(chat_log, "conversation_id", None),
+                agent_id=self.subentry.subentry_id,
+                status=status,
+                handled_locally=handled_locally,
+                error_type=error_type,
+            ),
+        )
 
     async def _async_archive_turn(
         self,

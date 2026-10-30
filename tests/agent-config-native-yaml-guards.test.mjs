@@ -1,3 +1,4 @@
+import {completeNativeDocument} from "./frontend-test-helpers.mjs";
 import assert from "node:assert/strict";
 
 const originalDocument = globalThis.document;
@@ -51,6 +52,7 @@ class GuardEditor {
 
   setValue(value) {
     this.values.push(value);
+    completeNativeDocument(this, value);
   }
 
   addEventListener(type, listener) {
@@ -85,13 +87,14 @@ function makeRoot({textarea = new GuardTextArea(), editor = new GuardEditor()} =
   const status = {className: "validation", textContent: ""};
   let style = null;
   let appendCount = 0;
+  const dialog = {open:true};
   return {
     root: {
       querySelector(selector) {
         if (selector === "#tool-yaml") return textarea;
         if (selector === "#tool-yaml-native") return editor;
         if (selector === "#tool-error") return status;
-        if (selector === "#tool-dialog") return {open: true};
+        if (selector === "#tool-dialog") return dialog;
         if (selector === "#tool-save") return {disabled: false, click() {}};
         if (selector === "style[data-native-tool-yaml]") return style;
         return null;
@@ -104,6 +107,7 @@ function makeRoot({textarea = new GuardTextArea(), editor = new GuardEditor()} =
     textarea,
     editor,
     status,
+    dialog,
     getAppendCount: () => appendCount,
   };
 }
@@ -290,12 +294,76 @@ try {
     const hydration = deferred();
     globalThis.customElements = {get: () => GuardEditor, whenDefined: () => Promise.resolve()};
     bindNativeToolYaml({shadowRoot: harness.root, _call: () => hydration.promise});
-    harness.editor.yaml = "newer user YAML";
-    harness.editor.emit("value-changed", {isValid: true});
+    harness.textarea.value = "newer user YAML";
+    harness.textarea.dispatchEvent(new Event("input"));
     hydration.resolve({valid: true, config: {spec: {name: "stale"}}});
     await flush();
     assert.equal(harness.textarea.value, "newer user YAML");
     assert.deepEqual(harness.editor.values, [], "a stale hydration response must not call setValue");
+  }
+
+  // Hidden hydration never owns a draft, including after navigation, a new
+  // editor visit or authentication changes while the native document is pending.
+  for (const transition of ["typing", "selection", "agent", "auth", "visit", "close", "destroy", "root"]) {
+    const harness = makeRoot({textarea:new GuardTextArea("stored YAML")});
+    const panel = {shadowRoot:harness.root, _agentId:"a", hass:{user:{id:"user-a"}},
+      _call:async () => ({valid:true, config:{name:"stored"}})};
+    const outer = deferred(), inner = deferred();
+    harness.editor.setValue = function(value) {
+      completeNativeDocument(this, value);
+      this.updateComplete = outer.promise;
+      this.shadowRoot.querySelector("ha-code-editor").updateComplete = inner.promise;
+    };
+    globalThis.customElements = {get:() => GuardEditor};
+    bindNativeToolYaml(panel);
+    await flush();
+    assert.equal(harness.editor.hidden, true);
+    assert.equal(harness.textarea.hidden, false);
+    if (transition === "typing") {
+      harness.textarea.value = "new user draft";
+      harness.textarea.dispatchEvent(new Event("input"));
+    } else if (transition === "selection") harness.textarea.dispatchEvent(new Event("keydown"));
+    else if (transition === "agent") panel._agentId = "b";
+    else if (transition === "auth") panel._eocAuthenticationGeneration = 1;
+    else if (transition === "visit") panel._toolEditorLoad = {};
+    else if (transition === "close") harness.dialog.open = false;
+    else if (transition === "destroy") panel._toolYamlEditorAdapter.destroy();
+    else panel.shadowRoot = {querySelector:() => null};
+    harness.editor.yaml = "late native document";
+    harness.editor.emit("value-changed", {isValid:true});
+    outer.resolve(); inner.resolve();
+    await flush();
+    assert.equal(harness.editor.hidden, true, transition);
+    assert.equal(harness.textarea.value, transition === "typing" ? "new user draft" : "stored YAML", transition);
+  }
+
+  // An unavailable/stalled native document has a bounded fallback, rather than
+  // leaving the dialog disabled forever or calling an empty document ready.
+  for (const stalled of ["document", "validation"]) {
+    const harness = makeRoot({textarea:new GuardTextArea("fallback YAML")});
+    const originalTimeout = globalThis.setTimeout;
+    let expire;
+    globalThis.setTimeout = (callback, delay) => {
+      assert.equal(delay, 5000);
+      expire = callback;
+      return undefined;
+    };
+    try {
+      harness.editor.setValue = function(value) {
+        completeNativeDocument(this, value);
+        this.updateComplete = new Promise(() => {});
+      };
+      globalThis.customElements = {get:() => GuardEditor};
+      const panel = {shadowRoot:harness.root, _call:async () => stalled === "validation"
+        ? new Promise(() => {}) : {valid:true, config:{name:"fallback"}}};
+      bindNativeToolYaml(panel);
+      await flush();
+      expire();
+      await flush();
+      assert.equal(harness.editor.hidden, true);
+      assert.equal(harness.textarea.hidden, false);
+      assert.equal(panel._toolYamlEditorAdapter.getYaml(), "fallback YAML");
+    } finally { globalThis.setTimeout = originalTimeout; }
   }
 
   console.log("Native Function Tool YAML guard/error tests passed");

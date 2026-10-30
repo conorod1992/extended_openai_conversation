@@ -19,6 +19,7 @@ from homeassistant.helpers import (
 from homeassistant.util import dt as dt_util
 
 from .agent_config import CONF_GUEST_WEB_SEARCH, DEFAULT_GUEST_WEB_SEARCH
+from .agent_maintenance import get_agent_maintenance_gate
 from .const import (
     CONF_FUNCTION_GROUPS,
     CONF_GUEST_ALLOWED_FUNCTION_NAMES,
@@ -55,12 +56,13 @@ from .const import (
 from .functions.security import FunctionSecurity, classify_tool
 from .helpers import get_exposed_entities
 from .persistence_hardening import _async_settle_transactional_save
+from .storage_namespaces import GUEST_MODE_PREFIX as GUEST_MODE_STORAGE_PREFIX
 from .strict_store import PropagatingWriteStore
 
 _LOGGER = logging.getLogger(__name__)
 
 GUEST_MODE_STORAGE_VERSION = 1
-GUEST_MODE_STORAGE_PREFIX = f"{DOMAIN}.guest_mode"
+
 GUEST_MODE_UNAVAILABLE = "This capability is unavailable in Guest Mode."
 EXECUTION_FAILED = "The requested action could not be completed."
 GUEST_MODE_PROMPT = """
@@ -227,42 +229,69 @@ class GuestModeManager:
         self._mutation_lock = asyncio.Lock()
         self._initialized = False
         self._persistence_unavailable = False
-        self._initialization_lock = asyncio.Lock()
 
     async def async_initialize(self) -> None:
         """Publish validated state once, leaving Store failures retryable."""
-        async with self._initialization_lock:
+        if self._initialized:
+            return
+        # Recovery and queued mutations publish the same schedule generation.
+        # A separate initialization lock could install an older read after a
+        # later write has committed and acknowledged its restriction.
+        async with self._mutation_lock:
             if self._initialized:
                 return
             # Storage I/O failures are not malformed state. Propagate them so a
             # later getter/setup can retry instead of silently disabling Guest Mode.
-            data = await self._store.async_load()
-            if self._persistence_unavailable:
-                # An ambiguous write cannot recover by ignoring malformed data.
-                self._schedule = self.validate_backup_data(
-                    {"schedule": None} if data is None else data
-                )
-                self._persistence_unavailable = False
-                self._initialized = True
-                self._notify()
-                return
-            raw = data.get("schedule") if isinstance(data, Mapping) else None
-            schedule = None
-            if isinstance(raw, Mapping):
-                try:
-                    candidate = GuestModeSchedule(**dict(raw))
-                    _parse_timestamp(self.hass, candidate.active_from, "active_from")
-                    if candidate.active_until is not None:
-                        _parse_timestamp(
-                            self.hass, candidate.active_until, "active_until"
-                        )
-                    schedule = candidate
-                except TypeError, ValueError:
-                    _LOGGER.warning(
-                        "Ignoring malformed Guest Mode state", exc_info=True
+            try:
+                data = await self._store.async_load()
+            except Exception:
+                self._persistence_unavailable = True
+                raise
+            recovering = self._persistence_unavailable
+            try:
+                if data is None or data == {}:
+                    schedule = None
+                elif not isinstance(data, Mapping) or "schedule" not in data:
+                    raise ValueError("Guest Mode storage is invalid")
+                elif data["schedule"] is None:
+                    schedule = None
+                else:
+                    raw = data["schedule"]
+                    if not isinstance(raw, Mapping):
+                        raise ValueError("Guest Mode schedule is invalid")
+                    # Retain the legacy dataclass defaults and HA-local timestamps.
+                    schedule = GuestModeSchedule(**dict(raw))
+                    start = _parse_timestamp(
+                        self.hass, schedule.active_from, "active_from"
                     )
+                    end = (
+                        _parse_timestamp(
+                            self.hass, schedule.active_until, "active_until"
+                        )
+                        if schedule.active_until is not None
+                        else None
+                    )
+                    if end is not None and end <= start:
+                        raise ValueError("Guest Mode interval is invalid")
+                    if not isinstance(schedule.source, str) or not schedule.source:
+                        raise ValueError("Guest Mode source is invalid")
+                    if schedule.updated_at is not None:
+                        _parse_timestamp(self.hass, schedule.updated_at, "updated_at")
+            except TypeError, ValueError:
+                self._persistence_unavailable = True
+                from .persistence_hardening import StorageRepairRequired
+
+                raise StorageRepairRequired("Guest Mode") from None
             self._schedule = schedule
+            self._persistence_unavailable = False
             self._initialized = True
+            if recovering:
+                self._notify()
+
+    @property
+    def initialized(self) -> bool:
+        """Expose invalidated required state to the live request reconciler."""
+        return self._initialized
 
     @property
     def schedule(self) -> GuestModeSchedule | None:
@@ -433,6 +462,14 @@ class GuestModeManager:
                 raise ValueError(f"Guest Mode {field} is invalid")
         if not isinstance(schedule.source, str) or not schedule.source:
             raise ValueError("Guest Mode source is invalid")
+        start = dt_util.parse_datetime(schedule.active_from)
+        end = (
+            dt_util.parse_datetime(schedule.active_until)
+            if schedule.active_until is not None
+            else None
+        )
+        if start is not None and end is not None and end <= start:
+            raise ValueError("Guest Mode interval is invalid")
         return schedule
 
     async def async_replace_backup(self, schedule: GuestModeSchedule | None) -> None:
@@ -461,33 +498,38 @@ class GuestModeManager:
         """Persist one schedule before publishing it to live Guest Mode readers."""
         payload = {"schedule": asdict(schedule) if schedule is not None else None}
 
+        committed = False
+
         def publish() -> None:
+            nonlocal committed
             self._schedule = schedule
             self._persistence_unavailable = False
-            self._notify()
+            committed = True
 
         async def reconcile() -> None:
             data = await self._store.async_load()
             durable = self.validate_backup_data(
                 {"schedule": None} if data is None else data
             )
-            changed = durable != self._schedule
             self._schedule = durable
             self._persistence_unavailable = False
-            if changed:
-                self._notify()
 
         def invalidate() -> None:
             self._persistence_unavailable = True
             self._initialized = False
 
-        await _async_settle_transactional_save(
-            self._store.async_save(payload),
-            lambda: None,
-            publish,
-            reconcile,
-            invalidate,
-        )
+        previous = self._schedule
+        try:
+            await _async_settle_transactional_save(
+                self._store.async_save(payload),
+                lambda: None,
+                publish,
+                reconcile,
+                invalidate,
+            )
+        finally:
+            if committed or self._schedule != previous:
+                self._notify()
 
     def _live_or_future_schedule(self, now: Any) -> GuestModeSchedule | None:
         if self._persistence_unavailable:
@@ -502,21 +544,27 @@ class GuestModeManager:
 
     def _notify(self) -> None:
         for listener in tuple(self._listeners):
-            listener()
+            try:
+                listener()
+            except Exception as err:
+                _LOGGER.warning("Guest Mode listener failed (%s)", type(err).__name__)
 
 
 async def async_get_guest_mode(
     hass: HomeAssistant, entry_id: str, subentry_id: str
 ) -> GuestModeManager:
-    managers: dict[tuple[str, str], GuestModeManager] = hass.data.setdefault(
-        _MANAGERS, {}
-    )
-    key = (entry_id, subentry_id)
-    if key not in managers:
-        managers[key] = GuestModeManager(hass, entry_id, subentry_id)
-    manager = managers[key]
-    await manager.async_initialize()
-    return manager
+    async with get_agent_maintenance_gate(hass, entry_id, subentry_id).shared(
+        maintenance=True
+    ):
+        managers: dict[tuple[str, str], GuestModeManager] = hass.data.setdefault(
+            _MANAGERS, {}
+        )
+        key = (entry_id, subentry_id)
+        if key not in managers:
+            managers[key] = GuestModeManager(hass, entry_id, subentry_id)
+        manager = managers[key]
+        await manager.async_initialize()
+        return manager
 
 
 def get_loaded_guest_mode(

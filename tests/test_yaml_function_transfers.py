@@ -22,8 +22,9 @@ from custom_components.extended_openai_conversation_responses.agent_config impor
 from custom_components.extended_openai_conversation_responses.delayed_tools import (
     tool_definition_fingerprint,
 )
-from tests.test_backup import _document
 from tests.helpers import legacy_agent_export
+from tests.restore_participants import participants
+from tests.test_backup import _document
 
 TOOL_YAML = """spec:
   name: dated_reminder
@@ -168,20 +169,26 @@ async def test_unselected_configuration_preserves_yaml_date_in_restore_rollback(
 ):
     entry, subentry = saved_date_tool
     base = _document()
-    managers = (
-        SimpleNamespace(async_backup_data=AsyncMock(return_value=base["memories"])),
-        SimpleNamespace(
+    managers = participants(
+        memory=SimpleNamespace(
+            async_backup_data=AsyncMock(return_value=base["memories"])
+        ),
+        temporary=SimpleNamespace(
             async_backup_data=AsyncMock(return_value=base["temporary_memories"])
         ),
-        SimpleNamespace(async_backup_data=AsyncMock(return_value=base["knowledge"])),
-        SimpleNamespace(
+        knowledge=SimpleNamespace(
+            async_backup_data=AsyncMock(return_value=base["knowledge"])
+        ),
+        archive=SimpleNamespace(
             async_recovery_data=AsyncMock(
                 return_value={**base["archive"], "active": {}}
             )
         ),
-        SimpleNamespace(async_backup_data=AsyncMock(return_value=base["usage"])),
-        SimpleNamespace(async_backup_data=AsyncMock(return_value={"schedule": None})),
-        SimpleNamespace(
+        usage=SimpleNamespace(async_backup_data=AsyncMock(return_value=base["usage"])),
+        guest_mode=SimpleNamespace(
+            async_backup_data=AsyncMock(return_value={"schedule": None})
+        ),
+        request_rules=SimpleNamespace(
             async_backup_data=AsyncMock(return_value={"defaults": {}, "rules": []})
         ),
     )

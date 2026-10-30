@@ -7,6 +7,8 @@ from inspect import unwrap
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from homeassistant.core import Context
+
 import pytest
 
 from custom_components.extended_openai_conversation_responses import (
@@ -71,18 +73,18 @@ async def test_broadcast_service_registration_is_idempotent(hass) -> None:
 
 
 @pytest.mark.asyncio
-async def test_service_permission_denial_stops_before_send(hass) -> None:
+async def test_service_propagates_queue_admission_denial(hass) -> None:
     """A denied service caller cannot queue or mutate any Broadcast state."""
     hass.services.has_service.return_value = False
-    manager = SimpleNamespace(async_send=AsyncMock())
-    denied = AsyncMock(side_effect=HomeAssistantError("not authorized"))
+    manager = SimpleNamespace(
+        async_send=AsyncMock(side_effect=HomeAssistantError("not authorized"))
+    )
 
     with (
         patch.object(intercom_services, "async_setup_broadcast_api", AsyncMock()),
         patch.object(
             intercom_services, "async_get_intercom", AsyncMock(return_value=manager)
         ),
-        patch.object(intercom_services, "async_authorized_broadcast_targets", denied),
     ):
         await intercom_services.async_setup_intercom_services(hass)
         handler = hass.services.async_register.call_args.args[2]
@@ -99,14 +101,15 @@ async def test_service_permission_denial_stops_before_send(hass) -> None:
         with pytest.raises(HomeAssistantError, match="not authorized"):
             await handler(service_call)
 
-    denied.assert_awaited_once()
-    manager.async_send.assert_not_awaited()
+    manager.async_send.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_websocket_permission_denial_returns_one_error_without_send(hass) -> None:
+async def test_websocket_queue_admission_denial_returns_one_error(hass) -> None:
     """Frontend authorization failure yields one controlled error and no queue mutation."""
-    manager = SimpleNamespace(async_send=AsyncMock())
+    manager = SimpleNamespace(
+        async_send=AsyncMock(side_effect=HomeAssistantError("target permission denied"))
+    )
     connection = SimpleNamespace(
         user=SimpleNamespace(is_admin=False),
         context=MagicMock(return_value=SimpleNamespace(user_id="restricted-user")),
@@ -118,11 +121,6 @@ async def test_websocket_permission_denial_returns_one_error_without_send(hass) 
         patch.object(
             intercom_panel, "async_get_intercom", AsyncMock(return_value=manager)
         ),
-        patch.object(
-            intercom_panel,
-            "async_authorized_broadcast_targets",
-            AsyncMock(side_effect=HomeAssistantError("target permission denied")),
-        ) as authorize,
     ):
         await unwrap(intercom_panel.websocket_broadcast)(
             hass,
@@ -137,8 +135,7 @@ async def test_websocket_permission_denial_returns_one_error_without_send(hass) 
             },
         )
 
-    authorize.assert_awaited_once()
-    manager.async_send.assert_not_awaited()
+    manager.async_send.assert_awaited_once()
     connection.send_result.assert_not_called()
     connection.send_error.assert_called_once_with(
         7, "invalid_request", "target permission denied"
@@ -214,7 +211,7 @@ async def test_announcement_failure_cleans_queue_and_marks_delivery_failed(
     monkeypatch.setattr(intercom.asyncio, "sleep", AsyncMock(return_value=None))
 
     result = await manager.async_send(
-        "Dinner is ready", entity_ids=["assist_satellite.kitchen"]
+        "Dinner is ready", entity_ids=["assist_satellite.kitchen"], context=Context()
     )
     await manager._async_drain("assist_satellite.kitchen")
 
@@ -258,8 +255,8 @@ async def test_same_target_announcements_are_serialized_in_queue_order(
 
     hass.services.async_call = AsyncMock(side_effect=announce)
 
-    await manager.async_send("First", entity_ids=["assist_satellite.kitchen"])
-    await manager.async_send("Second", entity_ids=["assist_satellite.kitchen"])
+    await manager.async_send("First", entity_ids=["assist_satellite.kitchen"], context=Context())
+    await manager.async_send("Second", entity_ids=["assist_satellite.kitchen"], context=Context())
 
     drain = asyncio.create_task(manager._async_drain("assist_satellite.kitchen"))
     await first_started.wait()
@@ -299,8 +296,8 @@ async def test_stalled_announcement_times_out_and_releases_target_queue(
             await asyncio.Event().wait()
 
     hass.services.async_call = AsyncMock(side_effect=announce)
-    await manager.async_send("Stalled", entity_ids=["assist_satellite.kitchen"])
-    await manager.async_send("Next", entity_ids=["assist_satellite.kitchen"])
+    await manager.async_send("Stalled", entity_ids=["assist_satellite.kitchen"], context=Context())
+    await manager.async_send("Next", entity_ids=["assist_satellite.kitchen"], context=Context())
 
     await asyncio.wait_for(manager._async_drain("assist_satellite.kitchen"), timeout=1)
 

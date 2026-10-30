@@ -23,6 +23,7 @@ from homeassistant.helpers import (
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
 from homeassistant.helpers.storage import Store
 
+from .intercom_permissions import async_authorized_broadcast_targets
 from .strict_store import PropagatingWriteStore
 
 DOMAIN = "extended_openai_conversation_responses"
@@ -348,13 +349,29 @@ class IntercomManager:
         text = message.strip()
         if not text:
             raise HomeAssistantError("Broadcast message cannot be empty")
-        targets = self.resolve_targets(
+        authorized = await async_authorized_broadcast_targets(
+            self.hass,
+            self,
+            context=context,
             whole_home=whole_home,
             entity_ids=entity_ids,
             device_ids=device_ids,
             area_ids=area_ids,
             floor_ids=floor_ids,
             label_ids=label_ids,
+            origin_entity_id=origin_entity_id,
+            origin_device_id=origin_device_id,
+        )
+        # Permission lookup may yield. Never expand selectors after authorization.
+        # Current eligibility/origin changes may only remove authorized identities.
+        if not self._enabled:
+            raise HomeAssistantError(
+                "Broadcast is disabled. Enable it from the Extended OpenAI Overview."
+            )
+        if self._closed:
+            raise HomeAssistantError("Broadcast is unavailable")
+        targets = self.resolve_targets(
+            entity_ids=authorized,
             origin_entity_id=origin_entity_id,
             origin_device_id=origin_device_id,
         )

@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv, llm
 
+from ..execution_outcomes import owns_execution_receipts
 from ..function_execution import propagate_function_execution_errors
 from .base import Function, _RuntimeFunctionConfig
 
@@ -94,6 +95,7 @@ class CompositeFunction(Function):
             )
         return validated
 
+    @owns_execution_receipts
     async def execute(
         self,
         hass: HomeAssistant,

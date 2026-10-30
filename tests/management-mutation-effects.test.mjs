@@ -3,7 +3,7 @@ import test from "node:test";
 
 // This reviewed inventory describes observable effects independently of production metadata.
 const commands = {
-  backup:["restore"], quiet_hours:["update"], configuration:["update", "save", "import"],
+  backup:["restore"], quiet_hours:["update"], configuration:["update", "save", "import", "duplicate"],
   function_repair:["save", "save_one", "delete_one", "configuration_save"],
   conversations:["delete", "end_active"], guest_mode:["save_policy", "update", "disable"],
   knowledge:["create", "update", "delete", "set_enabled"],
@@ -42,9 +42,9 @@ for (const [section, actions] of Object.entries(commands)) for (const action of 
   test(`${section}.${action} preserves mutation protection and exact projection effects`, () => {
     const host = panel();
     const restore = section === "backup";
-    const config = ["backup", "configuration", "function_repair", "tools", "settings"].includes(section)
+    const config = (["backup", "configuration", "function_repair", "tools", "settings"].includes(section) && action !== "duplicate")
       || section === "knowledge" && action === "set_enabled" || section === "guest_mode" && action === "save_policy";
-    const rules = ["configuration", "function_repair", "tools", "request_rules"].includes(section);
+    const rules = ["configuration", "function_repair", "tools", "request_rules"].includes(section) && !(section === "configuration" && action === "duplicate");
     const collection = ["request_rules", "knowledge", "memories"].includes(section);
     const usage = section === "usage";
     assert.equal(isAgentMutation(section, action), true);
@@ -112,7 +112,7 @@ for (const family of ["tools", "request_rules"]) for (const explicit of [false, 
     host._callCore = async (section, action, extra) => {
       calls.push({section, action, extra});
       if (calls.length === 1) return new Promise(resolve => { release = resolve; });
-      return {revision:"ack-3"};
+      return {revision:"ack-3", functions:[], function_groups:[], rules:[], groups:[]};
     };
     const action = family === "tools" ? "set_enabled" : "rule_pack_import";
     const first = host._call(family, action, {marker:"first"});
@@ -122,7 +122,7 @@ for (const family of ["tools", "request_rules"]) for (const explicit of [false, 
     assert.equal(calls.length, 1);
     assert.equal(host._eocAgentMutations, 1);
     assert.equal(calls[0].extra.revision, family === "tools" ? "config-1" : "rules-1");
-    release({revision:"ack-2"});
+    release({revision:"ack-2", functions:[], function_groups:[], rules:[], groups:[]});
     await Promise.all([first, second]);
     assert.equal(calls[1].extra.revision, explicit ? "caller-guard" : "ack-2");
     assert.equal(host._pendingMutations.size, 0);
@@ -139,7 +139,7 @@ for (const fail of [false, true]) {
     let release;
     host._hass = {callWS:message => message.action === "list"
       ? new Promise(resolve => { release = resolve; })
-      : fail ? Promise.reject(new Error("write rejected")) : Promise.resolve({revision:"rules-2"})};
+      : fail ? Promise.reject(new Error("write rejected")) : Promise.resolve({revision:"rules-2", groups:[], rules:[]})};
     const reading = host._call("request_rules", "list");
     while (!release) await Promise.resolve();
     const writing = host._call("request_rules", "groups", {groups:[]});

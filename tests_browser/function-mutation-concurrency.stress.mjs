@@ -220,7 +220,7 @@ test("nightly HA LLM catalogue handles scale, duplicate opening, filtering, add 
       if (message.section === "tools" && message.action === "ha_add") {
         window.haAddAttempts += 1;
         window.haAddPayloads.push(structuredClone(message));
-        if (window.haAddAttempts === 1) throw new Error("Injected HA add failure");
+        if (window.haAddAttempts === 1) throw Object.assign(new Error("Injected HA add failure"), {code:"invalid_request"});
         const additions = message.tools.map((reference, index) => ({
           spec:{name:`added_ha_${index}`, description:"Added HA tool", parameters:{type:"object",properties:{}}},
           function:structuredClone(reference),

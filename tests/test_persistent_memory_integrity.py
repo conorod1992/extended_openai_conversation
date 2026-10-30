@@ -305,8 +305,8 @@ async def test_memory_metadata_can_be_explicitly_cleared() -> None:
     assert replacement["status"] == "created"
 
 
-async def test_memory_startup_canonical_validation_self_heals_bad_records() -> None:
-    """Malformed and duplicate-key records are dropped and the clean set is saved."""
+async def test_memory_startup_preserves_bad_records_without_exposing_them() -> None:
+    """Usable facts remain readable; lossy saves and backups require repair."""
     timestamp = "2026-09-01T12:00:00+00:00"
     valid = {
         "memory_id": "valid",
@@ -339,10 +339,12 @@ async def test_memory_startup_canonical_validation_self_heals_bad_records() -> N
     await memory.async_initialize()
 
     assert [item.memory_id for item in await memory.async_list("alice")] == ["valid"]
-    assert storage.save_count == 1
-    assert storage.data == {"memories": [{key: value for key, value in valid.items() if key not in {"importance", "last_confirmed_at"}}]}
+    assert storage.save_count == 0
+    assert storage.data == {"memories": [valid, malformed, duplicate_key]}
+    with pytest.raises(ValueError, match="needs repair"):
+        await memory.async_backup_data()
 
     reloaded = PersistentMemory(storage)
     await reloaded.async_initialize()
     assert [item.memory_id for item in await reloaded.async_list("alice")] == ["valid"]
-    assert storage.save_count == 1
+    assert storage.save_count == 0

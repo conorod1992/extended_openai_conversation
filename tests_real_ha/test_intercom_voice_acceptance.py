@@ -16,6 +16,9 @@ from custom_components.extended_openai_conversation_responses.intercom import (
     ANNOUNCE_FEATURE,
     async_get_intercom,
 )
+from custom_components.extended_openai_conversation_responses.tool_replay_guard import (
+    replay_safety,
+)
 from homeassistant.components import conversation
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
 from homeassistant.const import ATTR_SUPPORTED_FEATURES
@@ -297,11 +300,11 @@ async def test_pending_broadcast_survives_history_eviction_and_expiry(
     )
     try:
         old = await manager.async_send(
-            "Still pending", entity_ids=["assist_satellite.kitchen"]
+            "Still pending", entity_ids=["assist_satellite.kitchen"], context=Context()
         )
         for i in range(intercom.HISTORY_LIMIT):
             await manager.async_send(
-                f"Finished {i}", entity_ids=["assist_satellite.hall"]
+                f"Finished {i}", entity_ids=["assist_satellite.hall"], context=Context()
             )
             await hass.async_block_till_done()
         assert len(manager.history()) == intercom.HISTORY_LIMIT
@@ -444,7 +447,7 @@ async def test_broadcast_replay_identity_is_shared_across_routes(
         await hass.async_block_till_done()
         assert retry.response.error_code is not None
         assert announcements == ["Dinner is ready"]
-        assert agent._unacknowledged_effects
+        assert replay_safety(agent).effects
         # A different message remains executable before acknowledgement.
         _install_wire(
             monkeypatch,

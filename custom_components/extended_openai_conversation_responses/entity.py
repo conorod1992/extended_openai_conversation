@@ -31,6 +31,7 @@ from homeassistant.helpers import device_registry as dr, llm
 from homeassistant.helpers.entity import Entity
 from homeassistant.util import slugify
 
+from .assistant_response import classify_provider_output, provider_output_presentation
 from .const import (
     API_MODE_CHAT_COMPLETIONS,
     API_MODE_RESPONSES,
@@ -79,7 +80,6 @@ from .context_usage_hardening import (
     async_prepared_input_revision,
     async_recover_trailing_usage,
     async_validate_tool_call_ids_with_usage,
-    estimate_prepared_request,
     normalized_chat_stream,
     normalized_responses_stream,
 )
@@ -129,6 +129,7 @@ from .provider_errors import (
     provider_transport_error,
 )
 from .provider_loop import MAX_PROVIDER_REQUESTS, assert_provider_loop_completed
+from .provider_output_budget import ProviderOutputBudget
 from .request import (
     CONTINUE_CONVERSATION_TOOL,
     CONTINUE_CONVERSATION_TOOL_NAME,
@@ -1147,11 +1148,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 )
 
                 request_usage = RequestTokenMeasurements(
-                    context_estimate=estimate_prepared_request(
-                        messages,
-                        tool_kwargs.get("tools"),
-                        input_tokens=round_estimate,
-                    )
+                    context_estimate=round_estimate
                 )
                 request_started = time.monotonic()
                 request_history_length = len(chat_log.content)
@@ -1510,6 +1507,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                         finalizer_content, conversation.AssistantContent
                                     )
                                     and finalizer_content.content
+                                    and not finalizer_content.tool_calls
+                                    and classify_provider_output(
+                                        finalizer_content.native
+                                    )
+                                    == "answer"
                                 ):
                                     chat_log.delta_listener(
                                         chat_log,
@@ -1901,6 +1903,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         """Transform OpenAI stream to Home Assistant format."""
         request_usage = request_usage or RequestTokenMeasurements()
         recovery_state = current_tool_recovery_state()
+        budget = ProviderOutputBudget()
         current_tool_calls: dict[int, dict[str, Any]] = {}
         first_chunk = True
         refusal_seen = False
@@ -1910,6 +1913,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
         async for chunk in normalized_chat_stream(chat_log, result, request_usage):
             event_count += 1
+            try:
+                budget.event()
+            except ProviderStreamError:
+                await async_recover_trailing_usage(result, request_usage)
+                raise
             # Signal new assistant message on first chunk
             if first_chunk:
                 yield {"role": "assistant"}
@@ -1930,6 +1938,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             choice = chunk.choices[0]
             delta = choice.delta
             finish_reason = choice.finish_reason
+            try:
+                budget.chat_delta(delta)
+            except ProviderStreamError:
+                await async_recover_trailing_usage(result, request_usage)
+                raise
 
             if delta.content:
                 content_value = answer_text(delta.content)
@@ -2087,18 +2100,22 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         terminal_event_seen = False
         completed_calls: list[llm.ToolInput] = []
         event_count = 0
-        async with aclosing(
-            ordered_output_events(
-                normalized_responses_stream(chat_log, result, request_usage),
-                recover_usage=lambda: async_recover_trailing_usage(
-                    result, request_usage
-                ),
-            )
-        ) as events:
+        async with (
+            provider_output_presentation(chat_log) as select_output,
+            aclosing(
+                ordered_output_events(
+                    normalized_responses_stream(chat_log, result, request_usage),
+                    recover_usage=lambda: async_recover_trailing_usage(
+                        result, request_usage
+                    ),
+                )
+            ) as events,
+        ):
             async for event in events:
                 event_count += 1
                 event_type = getattr(event, "type", "")
                 if event_type == "response.output_item.added":
+                    select_output(event.item)
                     item_type = getattr(event.item, "type", "")
                     if item_type in {
                         "message",

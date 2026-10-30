@@ -59,14 +59,14 @@ test("Knowledge availability loads, edits and submits once after normal rerender
   await page.evaluate(async () => {
     const {panel, hass} = window.browserHarness;
     const original = hass.callWS.bind(hass);
-    const source = {source_id:"source-1",title:"House notes",description:"Reference",content:"Keep this source",enabled:false};
+    const source = {source_id:"source-1",title:"House notes",description:"Reference",content:"Keep this source",enabled:false,updated_at:"2026-09-22T01:00:00Z"};
     window.featureCalls = [];
     hass.callWS = async (message) => {
       if (message.section === "knowledge") {
         window.featureCalls.push(message);
         if (message.action === "list") return {sources:[source]};
         if (message.action === "get") return {source};
-        if (message.action === "update") { Object.assign(source, message, {character_count: message.content.length, updated_at: "2026-09-23T01:00:00Z"}); return {status:"updated", source:structuredClone(source), summary:structuredClone(source), stats:{source_count:1}, feature_status:{state:"available",enabled:true,source_count:1}}; }
+        if (message.action === "update") { if (message.expected_revision !== source.updated_at) throw {code:"invalid_request", message:"Source changed before save"}; Object.assign(source, message, {character_count: message.content.length, updated_at: "2026-09-23T01:00:00Z"}); return {status:"updated", source:structuredClone(source), summary:structuredClone(source), stats:{source_count:1}, feature_status:{state:"available",enabled:true,source_count:1}}; }
       }
       return original(message);
     };
@@ -85,7 +85,7 @@ test("Knowledge availability loads, edits and submits once after normal rerender
   await expect(panel.locator(".knowledge-source-availability-badge")).toHaveText("Available");
   const updates = await page.evaluate(() => window.featureCalls.filter((c) => c.action === "update"));
   expect(updates).toHaveLength(1);
-  expect(updates[0]).toMatchObject({source_id:"source-1",enabled:true,content:"Keep this source"});
+  expect(updates[0]).toMatchObject({source_id:"source-1",enabled:true,content:"Keep this source",expected_revision:"2026-09-22T01:00:00Z"});
   await panel.locator("#add-source").click();
   await expect(panel.locator("#knowledge-source-enabled")).toBeChecked();
   await expectHarnessClean(page, errors);

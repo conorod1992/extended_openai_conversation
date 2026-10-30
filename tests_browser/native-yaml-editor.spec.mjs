@@ -21,6 +21,17 @@ async function installFakeHaYamlEditor(page, {defineImmediately = true} = {}) {
       setValue(value) {
         this.setValueCalls += 1;
         this.lastSetValue = structuredClone(value);
+        this._yaml = JSON.stringify(value);
+        const yaml = this._yaml;
+        const code = {updateComplete:Promise.resolve(true), codemirror:{state:{doc:{toString:() => yaml}}}};
+        // These suites drive native value-changed directly; the dedicated
+        // readiness suite supplies real shadow DOM and delayed Lit updates.
+        this.updateComplete = Promise.resolve(true);
+        if (!this.shadowRoot) this.attachShadow({mode:"open"});
+        let child = this.shadowRoot.querySelector("ha-code-editor");
+        if (!child) { child = document.createElement("ha-code-editor"); this.shadowRoot.append(child); }
+        child.updateComplete = code.updateComplete;
+        child.codemirror = code.codemirror;
       }
 
       get yaml() {
@@ -55,9 +66,13 @@ async function installFakeHaYamlEditor(page, {defineImmediately = true} = {}) {
 
 const toolSaveCalls = (page) => page.evaluate(() => window.browserHarness.calls.filter((call) => call.section === "tools" && call.action === "save"));
 const waitForNativeStarter = async (nativeEditor) => {
+  await expect(nativeEditor).toBeVisible();
   await expect.poll(() => nativeEditor.evaluate((element) => element.lastSetValue?.spec?.name)).toBe("browser_tool");
 };
-const nativeDescription = (nativeEditor) => nativeEditor.evaluate((element) => element.lastSetValue?.spec?.description);
+const nativeDescription = async nativeEditor => {
+  await expect(nativeEditor).toBeVisible();
+  return nativeEditor.evaluate(element => element.lastSetValue?.spec?.description);
+};
 
 test("Function Tool YAML uses the Home Assistant editor when it is registered", async ({page}) => {
   const pageErrors = trackPageErrors(page);
@@ -145,6 +160,28 @@ test("Function Tool YAML activates after Home Assistant defines the editor late"
   await panel.locator("#tool-save").click();
   await expect(panel.locator(".tool-card").filter({hasText: "browser_tool"})).toContainText("Late native registration");
   await expectHarnessClean(page, pageErrors);
+});
+
+test("late native registration cannot replace a user-selected fallback draft", async ({page}) => {
+  const errors = trackPageErrors(page);
+  await installFakeHaYamlEditor(page, {defineImmediately:false});
+  await page.goto(fixtureUrl("capabilities/functions"));
+  const panel = page.locator("extended-openai-management-panel");
+  await panel.locator("#function-add").click();
+  await panel.locator("#add-tool").click();
+  const fallback = panel.locator("#tool-yaml");
+  await expect(panel.locator("#tool-save")).toBeEnabled();
+  await fallback.click();
+  await fallback.press("ControlOrMeta+A");
+  await page.evaluate(() => window.defineFakeHaYamlEditor());
+  const yaml = browserToolYaml("Selected fallback survives late registration");
+  await page.keyboard.insertText(yaml);
+  await expect(fallback).toBeVisible();
+  await expect(fallback).toHaveValue(yaml);
+  await panel.locator("#tool-save").click();
+  await expect(panel.locator("#tool-dialog")).not.toHaveJSProperty("open", true);
+  expect(await page.evaluate(() => window.browserHarness.getState().toolYamls.browser_tool)).toBe(yaml);
+  await expectHarnessClean(page, errors);
 });
 
 test("built-in Function Tool presets replace the raw YAML bridge and refresh the native editor", async ({page}) => {

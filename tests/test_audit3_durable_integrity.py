@@ -1,5 +1,6 @@
 """Restore and persistence regressions from audit PR 5."""
 
+from copy import deepcopy
 from dataclasses import replace
 
 from dataclasses import asdict
@@ -8,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from custom_components.extended_openai_conversation_responses import (
-    management_function_quarantine as quarantine,
+    function_configuration_mutations as mutations,
 )
 from custom_components.extended_openai_conversation_responses.conversation import (
     ExtendedOpenAIAgentEntity,
@@ -34,6 +35,7 @@ from custom_components.extended_openai_conversation_responses.secret_redaction i
     redact_secrets,
     restore_redacted_secrets,
 )
+from tests.test_management_function_quarantine import _mixed_unknown_native_data
 from tests.test_conversation_archive import FakeArchiveStorage
 from tests.test_memory import FakeStorage, _memory
 
@@ -205,20 +207,29 @@ def test_configuration_redaction_preserves_named_counts_and_flags():
     )
 
 
-def test_group_rename_transfers_hidden_quarantined_members():
-    raw = [
-        {"id": "old", "functions": ["good", "broken"]},
-        {"id": "other", "functions": ["other_broken"]},
+def test_group_rename_transfers_hidden_quarantined_members(hass):
+    raw, valid, invalid = _mixed_unknown_native_data()
+    name, hidden = valid["spec"]["name"], invalid["spec"]["name"]
+    raw["function_groups"] = [
+        {"id": "old", "name": "Group", "description": "Tools", "loading_mode": "on_demand", "functions": [name, hidden]},
+        {"id": "other", "name": "Other", "description": "Unavailable", "loading_mode": "on_demand", "functions": ["other_broken"]},
     ]
-    edited = [{"id": "new", "functions": ["good"]}, {"id": "other", "functions": []}]
-    restored = quarantine._restore_quarantined_group_members(
-        edited, raw, frozenset({"broken", "other_broken"}), ("old", "new")
+    original = deepcopy(raw)
+    state = mutations.function_configuration_repair_state(raw)
+    assert state is not None
+    edited = deepcopy(state.groups)
+    edited[0]["id"] = "new"
+
+    prepared = mutations.prepare_quarantined_function_configuration(
+        raw, state.valid, edited, state, renamed_group=("old", "new")
     )
-    assert restored == [
-        {"id": "new", "functions": ["good", "broken"]},
-        {"id": "other", "functions": ["other_broken"]},
-    ]
-    assert edited[0]["functions"] == ["good"]
+
+    saved = prepared.persisted["function_groups"]
+    assert saved[0] == {**original["function_groups"][0], "id": "new", "enabled": True}
+    assert saved[1] == original["function_groups"][1]
+    assert prepared.persisted["functions"] == original["functions"]
+    assert raw == original
+    assert edited[0]["functions"] == [name]
 
 
 @pytest.mark.parametrize(

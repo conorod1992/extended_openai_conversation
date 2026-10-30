@@ -6,11 +6,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from tests.test_subsystem_lifecycle_apis import _seeded_continuity
-
 from custom_components.extended_openai_conversation_responses import restore_recovery
 from homeassistant.components import conversation
 from homeassistant.components.conversation.const import DATA_COMPONENT
+from tests.restore_participants import participants
+from tests.test_subsystem_lifecycle_apis import _seeded_continuity
 
 
 def test_active_agent_finds_exact_subentry_when_parent_mapping_points_elsewhere(
@@ -219,14 +219,14 @@ def test_runtime_reset_reconciles_distinct_registry_and_agent_objects(
             restore_recovery.SUBSYSTEM_STATUS_KEY: {key: {"status": "degraded"}},
         }
     )
-    managers = (
-        object(),
-        object(),
-        object(),
-        object(),
-        durable_usage,
-        object(),
-        object(),
+    managers = participants(
+        memory=object(),
+        temporary=object(),
+        knowledge=object(),
+        archive=object(),
+        usage=durable_usage,
+        guest_mode=object(),
+        request_rules=object(),
     )
     monkeypatch.setattr(restore_recovery, "_active_agent", lambda *_args: agent)
 

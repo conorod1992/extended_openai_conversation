@@ -22,7 +22,11 @@ from ..const import (
     SHELL_OUTPUT_LIMIT,
     SHELL_TIMEOUT,
 )
-from ..execution_outcomes import execution_completed, execution_started
+from ..execution_outcomes import (
+    execution_completed,
+    execution_started,
+    owns_execution_receipts,
+)
 from ..function_execution import backend_failure
 from ..operation_settlement import async_wait_owned_cleanup
 from ..operational_errors import log_handled_failure
@@ -343,6 +347,7 @@ class BashFunction(Function):
             None,
         )
 
+    @owns_execution_receipts
     async def execute(
         self,
         hass: HomeAssistant,

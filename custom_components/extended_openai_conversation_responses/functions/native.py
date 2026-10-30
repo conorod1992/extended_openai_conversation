@@ -30,6 +30,7 @@ import homeassistant.util.dt as dt_util
 
 from ..const import DOMAIN, EVENT_AUTOMATION_REGISTERED
 from ..exceptions import CallServiceError, NativeNotFound
+from ..execution_outcomes import owns_execution_receipts
 from ..function_execution import backend_failure
 from ..ha_actions import (
     _service_participants,
@@ -38,7 +39,6 @@ from ..ha_actions import (
 )
 from ..ha_permissions import entity_access_error, get_active_ha_context
 from ..intercom import async_get_intercom
-from ..intercom_permissions import async_authorized_broadcast_targets
 from ..operational_errors import log_handled_failure
 from ..recorder_budget import bounded_history, bounded_statistics
 from ..request_origin import get_request_satellite
@@ -272,6 +272,7 @@ class NativeFunction(Function):
 
         super().__init__(vol.Schema({vol.Required("name"): implementation}))
 
+    @owns_execution_receipts
     async def execute(
         self,
         hass: HomeAssistant,
@@ -360,17 +361,9 @@ class NativeFunction(Function):
         # authenticated HA user retain the existing trusted behavior.
         origin_entity_id = get_request_satellite()
         context = get_active_ha_context() or getattr(llm_context, "context", None)
-        targets = await async_authorized_broadcast_targets(
-            hass,
-            manager,
-            context=context,
-            origin_entity_id=origin_entity_id,
-            origin_device_id=origin_device_id,
-            **target,
-        )
         result = await manager.async_send(
             str(arguments.get("message", "")),
-            entity_ids=targets,
+            **target,
             origin_entity_id=origin_entity_id,
             origin_device_id=origin_device_id,
             source="llm_tool",
@@ -466,7 +459,7 @@ class NativeFunction(Function):
             hass, service_data, exposed_entities, domain=domain, service=service
         )
 
-        from ..execution_outcomes import execution_operation, execution_rejected
+        from ..execution_outcomes import execution_operation, execution_refused
 
         with execution_operation("ha_service", service_argument) as operation:
             try:
@@ -476,6 +469,7 @@ class NativeFunction(Function):
                     service,
                     data=service_data,
                     blocking=True,
+                    context=getattr(llm_context, "context", None),
                     include_response=True,
                 )
                 result: dict[str, Any] = {"success": True}
@@ -484,7 +478,7 @@ class NativeFunction(Function):
                 return result
             except HomeAssistantError as e:
                 if operation.receipt is None:
-                    execution_rejected(before_dispatch=True)
+                    execution_refused()
                 log_handled_failure(
                     _LOGGER, f"Native Function Tool action={domain}.{service} failed", e
                 )

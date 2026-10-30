@@ -124,11 +124,17 @@ async def test_failed_initialization_repair_clears_partial_state_and_retries(
     store = BlockingStorage()
     seeded = await _create_manager(kind, store)
     await _mutate(kind, seeded, "first")
+    if kind == "request_rules":
+        from tests.test_request_rules import local_rule
+
+        await seeded.async_replace_backup(
+            {"defaults": seeded._defaults, "rules": [local_rule("Repair")]}
+        )
     expected = _snapshot(kind, seeded)
     if kind == "memory":
-        store.data["memories"].append({"invalid": True})
+        store.data["memories"][0]["importance"] = "normal"
     else:
-        store.data["rules"].append({"invalid": True})
+        store.data["rules"][0]["order"] = 100
     save = store.async_save
     store.async_save = AsyncMock(side_effect=error("repair failed"))
     manager = DURABLE[kind](store)

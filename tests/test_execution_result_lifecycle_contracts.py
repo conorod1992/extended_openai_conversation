@@ -104,13 +104,13 @@ def test_receipts_do_not_depend_on_result_history_or_business_payload(hass, stat
     _retain_calls(log, [call])
     with execution_attempt(entity, call, tool):
         execution_prepared(call.tool_args)
-        execution_started()
+        receipt = execution_started()
         if state in {"completed", "partial"}:
-            execution_completed()
+            execution_completed(receipt)
         if state == "partial":
-            execution_started()
+            receipt = execution_started()
         if state == "rejected":
-            execution_rejected()
+            execution_rejected(receipt)
     # No ToolResultContent exists: normalization/serialization may have failed.
     remember_unacknowledged_calls(entity, log, set())
     assert was_unacknowledged_equivalent(

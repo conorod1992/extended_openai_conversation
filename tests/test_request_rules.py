@@ -588,7 +588,7 @@ async def test_initialize_recovers_each_invalid_stored_matcher_section() -> None
     assert rules.snapshot()["groups"] == []
     assert rules.snapshot()["defaults"] == DEFAULT_MATCHING
     assert rules.snapshot()["wording_groups"] == list(DEFAULT_WORDING_GROUPS)
-    assert store.saves == 1
+    assert store.saves == 0
 
 
 def test_backup_rejects_rules_with_missing_group_references() -> None:

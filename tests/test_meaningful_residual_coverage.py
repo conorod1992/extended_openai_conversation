@@ -2,25 +2,21 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-
 import asyncio
-from contextlib import suppress
-from copy import deepcopy
-from datetime import UTC, datetime, timedelta
+from dataclasses import replace
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from tests.test_subsystem_lifecycle_apis import _seeded_continuity
-
+from custom_components.extended_openai_conversation_responses import conversation
 from homeassistant.components import conversation as ha_conversation
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
-
-from custom_components.extended_openai_conversation_responses import conversation
+from tests.restore_participants import participants
+from tests.test_subsystem_lifecycle_apis import _seeded_continuity
 
 
 @pytest.mark.asyncio
@@ -416,7 +412,9 @@ def test_skill_publish_failure_restores_previous_target(tmp_path, monkeypatch) -
 
 @pytest.mark.asyncio
 async def test_temporary_memory_initialization_is_idempotent_after_first_load() -> None:
-    from custom_components.extended_openai_conversation_responses import temporary_memory
+    from custom_components.extended_openai_conversation_responses import (
+        temporary_memory,
+    )
 
     store = SimpleNamespace(async_load=AsyncMock(return_value=None), async_save=AsyncMock())
     manager = temporary_memory.TemporaryMemory(store)
@@ -611,7 +609,9 @@ def test_restore_runtime_rebinds_live_agent_and_clears_transient_state(
     hass.data[function_groups._RUNTIMES] = {key: registry_groups}
     hass.data[usage._VOLATILE_USAGE_MANAGERS] = {key: fallback_usage}
     hass.data[restore_recovery.SUBSYSTEM_STATUS_KEY] = {key: {"x": 1}}
-    managers = (None, None, None, None, durable_usage)
+    managers = participants(
+        memory=None, temporary=None, knowledge=None, archive=None, usage=durable_usage
+    )
 
     restore_recovery.reset_restored_runtime(
         hass,

@@ -27,8 +27,13 @@ test("generated multilingual programmes retain semantics through native editor r
       // Reopen the committed native document, edit only its description and save.
       await card.locator(".edit-tool").click();
       const editor = panel.locator("#tool-yaml-native");
+      // A closed/reopening editor can retain the previous native YAML while
+      // serialization is pending. Read only after this open owns a ready editor.
+      await expect(panel.locator("#tool-dialog")).toHaveAttribute("aria-busy", "false");
+      await expect(editor).toBeVisible();
       await expect.poll(() => editor.evaluate(element => element.yaml)).toContain(name);
       const serialized = await editor.evaluate(element => element.yaml);
+      expect(serialized).toContain(name);
       const edited = serialized.replace(/^  description:.*$/m, "  description: " + JSON.stringify("Reviewed harmless edit " + item.caption));
       expect(edited).not.toBe(serialized);
       await replaceNativeYaml(page, editor, edited);

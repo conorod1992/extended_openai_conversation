@@ -9,11 +9,16 @@ import pytest
 from custom_components.extended_openai_conversation_responses.knowledge import (
     KnowledgeLibrary,
 )
-from custom_components.extended_openai_conversation_responses.memory import PersistentMemory
+from custom_components.extended_openai_conversation_responses.memory import (
+    PersistentMemory,
+)
+from custom_components.extended_openai_conversation_responses.persistence_hardening import (
+    StorageRepairRequired,
+)
 from custom_components.extended_openai_conversation_responses.request_rules import (
     STORAGE_VERSION as RULES_VERSION,
-    RequestRuleStore,
     RequestRules,
+    RequestRuleStore,
 )
 from tests_real_ha.test_cross_feature_acceptance import _rule
 from tests_stress.conftest import record
@@ -115,12 +120,25 @@ async def test_dirty_memory_corpus_preserves_valid_and_orphaned_records() -> Non
     orphan = await memory.async_list("deleted-user-id", limit=100)
     assert {item.memory_id for item in current} == {"valid", "first-key"}
     assert [item.memory_id for item in orphan] == ["orphan"]
-    assert storage.saved, "dirty memory state should be rewritten to a canonical form"
-    healed = storage.saved[-1]["memories"]
+    # Loading usable siblings must preserve corruption evidence until an explicit
+    # replacement repairs it; automatic canonicalization would erase that evidence.
+    assert storage.saved == []
+    assert len(storage.payload["memories"]) == 7
+    with pytest.raises(StorageRepairRequired):
+        await memory.async_add("current-user", "Unadmitted edit", "preferences", "explicit")
+    assert storage.saved == []
+    records = current + orphan
+    await memory.async_replace_backup(records)
+    healed = (await memory.async_backup_data())["memories"]
     assert {item["memory_id"] for item in healed} == {"valid", "orphan", "first-key"}
     assert not any(
         key in item for item in healed for key in ("importance", "last_confirmed_at", "embedding")
     )
+    fresh = PersistentMemory(storage)
+    await fresh.async_initialize()
+    assert (await fresh.async_backup_data())["memories"] == healed
+    await fresh.async_add("current-user", "Following repaired state", "preferences", "explicit")
+    assert len(storage.payload["memories"]) == 4
 
 
 async def test_dirty_knowledge_corpus_ignores_bad_and_duplicate_siblings() -> None:
@@ -148,10 +166,10 @@ async def test_dirty_knowledge_corpus_ignores_bad_and_duplicate_siblings() -> No
 
 
 @pytest.mark.usefixtures("real_store_io")
-async def test_dirty_request_rule_corpus_self_heals_without_losing_opaque_fields(
+async def test_dirty_request_rule_corpus_requires_explicit_repair_without_losing_opaque_fields(
     hass, stress_trace
 ) -> None:
-    """Mixed legacy, duplicate and invalid Rules converge to one safe generation."""
+    """Usable Rules remain readable without silently rewriting damaged siblings."""
     key = "extended_openai_conversation_responses.request_rules.dirty.agent"
     store = RequestRuleStore(hass, RULES_VERSION, key)
 
@@ -191,8 +209,23 @@ async def test_dirty_request_rule_corpus_self_heals_without_losing_opaque_fields
         "source": "older-dev-build",
         "kept": True,
     }
-    assert [rule["id"] for rule in durable["rules"]] == ["legacy-route"]
-    assert durable["rules"][0]["action"]["scope"] == "conversation"
+    assert [rule["id"] for rule in durable["rules"]] == ["legacy-route", "legacy-route", "broken"]
+    with pytest.raises(StorageRepairRequired):
+        await manager.async_create(legacy)
+    assert await store.async_load() == durable
+    replacement = {
+        "defaults": snapshot["defaults"],
+        "wording_groups": snapshot["wording_groups"],
+        "groups": snapshot["groups"],
+        "rules": snapshot["rules"],
+    }
+    await manager.async_replace_backup(replacement)
+    fresh = RequestRules(RequestRuleStore(hass, RULES_VERSION, key))
+    await fresh.async_initialize()
+    assert [rule["id"] for rule in (await fresh.async_backup_data())["rules"]] == ["legacy-route"]
+    assert (await store.async_load())["future_metadata"] == durable["future_metadata"]
+    await fresh.async_update("legacy-route", {**snapshot["rules"][0], "name": "Following repaired state"}, expected_revision=fresh.revision())
+    assert (await store.async_load())["rules"][0]["name"] == "Following repaired state"
     record(
         stress_trace,
         "dirty_legacy_state_corpus",

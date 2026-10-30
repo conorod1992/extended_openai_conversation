@@ -12,6 +12,7 @@ from custom_components.extended_openai_conversation_responses.execution_outcomes
     execution_completed,
     execution_prepared,
     execution_rejected,
+    execution_refused,
     execution_started,
 )
 from custom_components.extended_openai_conversation_responses.tool_replay_guard import (
@@ -46,13 +47,17 @@ def _effect_tool(function):
 def _attempt_outcome(entity, call, tool, steps):
     with execution_attempt(entity, call, tool):
         execution_prepared(call.tool_args)
+        receipt = None
         for step in steps:
             if step == "start":
-                execution_started()
+                receipt = execution_started()
             elif step == "complete":
-                execution_completed()
+                execution_completed(receipt)
             else:
-                execution_rejected()
+                if receipt is None or receipt.outcome != "uncertain":
+                    execution_refused()
+                else:
+                    execution_rejected(receipt)
     return entity._execution_tool_outcomes[id(call)]
 
 
@@ -92,8 +97,8 @@ async def test_scheduled_commit_is_replay_protected_after_lost_acknowledgement(h
     with execution_attempt(entity, call, tool):
         execution_prepared(call.tool_args)
         # The queue commit has the same side-effect receipt as a native action.
-        execution_started()
-        execution_completed()
+        receipt = execution_started()
+        execution_completed(receipt)
     log.async_add_assistant_content_without_tools(
         _result(entity, call, {"result": "Scheduled"})
     )

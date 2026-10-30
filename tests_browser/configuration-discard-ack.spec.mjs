@@ -145,3 +145,56 @@ for (const bundled of [false, true]) test(`navigation Discard preserves current 
   expect(await page.evaluate(() => browserHarness.getState().configuration.title)).toBe(acknowledged);
   await expectHarnessClean(page, errors);
 });
+
+for (const bundled of [false, true]) for (const numericLast of [false, true]) for (const command of ["revert", "save"]) test(`numeric capability ${command} restores controls and subsequent saved state (${bundled ? "bundle" : "source"}, numeric last=${numericLast})`, async ({page}) => {
+  await page.goto(fixtureUrl("assistant/basics", bundled ? "&bundle=1" : ""));
+  const panel=page.locator("extended-openai-management-panel");
+  await expect(panel.locator('[data-config="max_tokens"]')).toBeVisible();
+  await panel.evaluate(async host => {
+    await host._call("configuration", "save", {config:{max_function_calls_per_conversation:10}, revision:host._configData.revision});
+    await host._loadSection(true);
+  });
+  await panel.locator(".general-advanced summary").click();
+  const limit=panel.locator('[data-config="max_function_calls_per_conversation"]');
+  const before=await limit.inputValue();
+  const other=panel.locator('[data-config="max_tokens"]');
+  if (numericLast) await other.fill("1301");
+  await limit.fill("11");
+  if (!numericLast) await other.fill("1301");
+  await panel.locator(command === "revert" ? "#revert-config" : "#save-config").click();
+  const expected=command === "revert" ? before : "11";
+  await expect(panel.locator("#save-config")).toHaveCount(0);
+  await expect(limit).toHaveValue(expected);
+  expect(await panel.evaluate(host=>host._draft.max_function_calls_per_conversation)).toBe(Number(expected));
+  await panel.locator('[data-config="max_tokens"]').fill("1401");
+  await panel.locator("#save-config").click();
+  await expect(panel.locator("#save-config")).toHaveCount(0);
+  expect(await page.evaluate(()=>browserHarness.getState().configuration.config.max_function_calls_per_conversation)).toBe(Number(expected));
+});
+
+
+for (const bundled of [false, true]) test(`rejected numeric capability save keeps the draft and permits the next real save (${bundled ? "bundle" : "source"})`, async ({page}) => {
+  await page.goto(fixtureUrl("assistant/basics", bundled ? "&bundle=1" : ""));
+  const panel=page.locator("extended-openai-management-panel");
+  await expect(panel.locator('[data-config="max_tokens"]')).toBeVisible();
+  await panel.locator(".general-advanced summary").click();
+  const before=await page.evaluate(()=>browserHarness.getState().configuration.config.max_function_calls_per_conversation);
+  await panel.evaluate(host => {
+    const call=host._call.bind(host); window.numericSaveAttempts=0;
+    host._call=async (section, action, args) => {
+      if (section === "configuration" && action === "save" && ++window.numericSaveAttempts === 1)
+        return {valid:false, errors:{max_tokens:"Rejected numeric draft witness"}};
+      return call(section, action, args);
+    };
+  });
+  const limit=panel.locator('[data-config="max_function_calls_per_conversation"]');
+  await limit.fill("0"); await panel.locator("#save-config").click();
+  await expect(panel.locator('[data-error="max_tokens"]')).toHaveText("Rejected numeric draft witness");
+  await expect(limit).toHaveValue("0");
+  expect(await page.evaluate(()=>browserHarness.getState().configuration.config.max_function_calls_per_conversation)).toBe(before);
+  if (!await panel.locator(".general-advanced").evaluate(element=>element.open)) await panel.locator(".general-advanced summary").click();
+  await limit.fill("11"); await panel.locator("#save-config").click();
+  await expect(panel.locator("#save-config")).toHaveCount(0);
+  expect(await page.evaluate(()=>browserHarness.getState().configuration.config.max_function_calls_per_conversation)).toBe(11);
+  expect(await page.evaluate(()=>window.numericSaveAttempts)).toBe(2);
+});

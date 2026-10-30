@@ -1,6 +1,9 @@
 """Service participation and Broadcast ambiguity against real HA registries."""
 
 import logging
+from types import SimpleNamespace
+
+from homeassistant.core import Context
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -100,7 +103,7 @@ async def test_indirect_target_ignores_unrelated_unavailable_sensor(
 
     with action_target_revalidation(revalidate):
         result = await NativeFunction().execute(
-            hass, {"name": "execute_service"}, arguments, None, exposed
+            hass, {"name": "execute_service"}, arguments, SimpleNamespace(context=Context()), exposed
         )
     assert result[0]["success"] is True
     assert hass.states.get(light.entity_id).state == "on"
@@ -108,12 +111,12 @@ async def test_indirect_target_ignores_unrelated_unavailable_sensor(
     hass.states.async_set(light.entity_id, "unavailable")
     with pytest.raises(HomeAssistantError, match="unavailable"):
         await NativeFunction().execute(
-            hass, {"name": "execute_service"}, arguments, None, exposed
+            hass, {"name": "execute_service"}, arguments, SimpleNamespace(context=Context()), exposed
         )
     hass.states.async_set(light.entity_id, "off")
     # Unrelated sensors do not participate in the light service.
     await NativeFunction().execute(
-        hass, {"name": "execute_service"}, arguments, None,
+        hass, {"name": "execute_service"}, arguments, SimpleNamespace(context=Context()),
         [{"entity_id": light.entity_id}],
     )
     with pytest.raises(HomeAssistantError):
@@ -121,7 +124,7 @@ async def test_indirect_target_ignores_unrelated_unavailable_sensor(
             hass,
             {"name": "execute_service"},
             arguments,
-            None,
+            SimpleNamespace(context=Context()),
             [{"entity_id": sensor.entity_id}],
         )
 
@@ -256,7 +259,7 @@ async def test_service_casing_preserves_participants_and_previous_state(
     with action_target_revalidation(revalidate):
         if route == "shared":
             result = await async_call_ha_action(
-                hass, domain, service, data=data, blocking=True, include_response=True
+                hass, domain, service, data=data, blocking=True, context=Context(), include_response=True
             )
         else:
             implementation = (
@@ -270,7 +273,7 @@ async def test_service_casing_preserves_participants_and_previous_state(
             supplied = arguments if route == "single" else {"list": [arguments]}
             validate_function_arguments(tool["spec"], supplied)
             result = await NativeFunction().execute(
-                hass, tool["function"], supplied, None, exposed
+                hass, tool["function"], supplied, SimpleNamespace(context=Context()), exposed
             )
             if route == "batch":
                 result = result[0]
@@ -286,9 +289,9 @@ async def test_service_casing_preserves_participants_and_previous_state(
     exposed.clear()
     with action_target_revalidation(revalidate), pytest.raises(HomeAssistantError):
         if route == "shared":
-            await async_call_ha_action(hass, domain, service, data=data, blocking=True)
+            await async_call_ha_action(hass, domain, service, data=data, blocking=True, context=Context())
         else:
             await NativeFunction().execute(
-                hass, tool["function"], supplied, None, exposed
+                hass, tool["function"], supplied, SimpleNamespace(context=Context()), exposed
             )
     assert len(effects) == 1

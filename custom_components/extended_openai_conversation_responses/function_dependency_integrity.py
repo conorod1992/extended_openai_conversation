@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection, Mapping, Sequence
+import asyncio
+from collections.abc import Callable, Collection, Mapping, Sequence
 from copy import deepcopy
 from typing import Any, cast
 
@@ -13,6 +14,7 @@ from . import request_rules
 from .agent_config import function_tool_enabled
 from .const import CONF_GUEST_ALLOWED_GROUP_IDS
 from .function_execution import async_validate_function_arguments, inferred_schema_type
+from .mutation_outcomes import mark_mutation_failure
 from .script_payload import (
     effective_service_payload,
     is_function_service_action,
@@ -203,6 +205,75 @@ def renamed_function_references_are_saved(
         and not references(old_name)
         and original_ids <= {item["id"] for item in references(new_name)}
     )
+
+
+async def async_finish_function_rename(
+    rules: request_rules.RequestRules,
+    old_name: str,
+    new_name: str,
+    *,
+    expected_rules_revision: str,
+    original_references: Sequence[Mapping[str, Any]],
+    rollback_configuration: Callable[[], None],
+) -> int:
+    """Settle Rule references after a saved Tool rename, retaining write evidence.
+
+    Each configuration owner supplies its own synchronous, revision-checked raw
+    rollback. Both ordinary edits and quarantine repair share the same decision
+    about whether that rollback is safe and how a retained rename is reported.
+    """
+    try:
+        return await rules.async_rename_function_reference(
+            old_name, new_name, expected_revision=expected_rules_revision
+        )
+    except (Exception, asyncio.CancelledError) as err:
+        saved = renamed_function_references_are_saved(
+            rules, old_name, new_name, original_references
+        )
+        if saved is not False:
+            if isinstance(err, asyncio.CancelledError):
+                raise
+            message = (
+                "Request Rule storage cannot be verified. The saved Function Tool "
+                "rename was retained; restore storage access and reload to review "
+                "Rule references."
+                if saved is None
+                else "Function Tool and Request Rule rename were saved, but the save "
+                "acknowledgement failed. Reload the latest saved settings."
+            )
+            raise mark_mutation_failure(
+                HomeAssistantError(message), "uncertain"
+            ) from err
+        # Another Rule writer can acknowledge a new consumer after the Tool
+        # commit, then make our Rule revision stale. Rolling back the Tool would
+        # remove that consumer's validated dependency even if config is unchanged.
+        if rules.revision() != expected_rules_revision and rules.function_references(
+            new_name
+        ):
+            if isinstance(err, asyncio.CancelledError):
+                raise
+            raise mark_mutation_failure(
+                HomeAssistantError(
+                    "Request Rules changed and now reference the saved Function Tool "
+                    "rename. The rename was retained; reload to review Rule references "
+                    "before retrying."
+                ),
+                "uncertain",
+            ) from err
+        try:
+            rollback_configuration()
+        except HomeAssistantError as rollback_err:
+            if isinstance(err, asyncio.CancelledError):
+                raise err from rollback_err
+            raise mark_mutation_failure(
+                HomeAssistantError(
+                    "Function Tool configuration changed while a related Request Rule "
+                    "rename failed. The newer configuration was preserved; reload "
+                    "before retrying."
+                ),
+                "uncertain",
+            ) from rollback_err
+        raise
 
 
 def recursive_function_references(

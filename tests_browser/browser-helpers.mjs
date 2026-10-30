@@ -80,7 +80,7 @@ export async function exerciseConfigurationDraftTransition(page, marker) {
     hass.callWS = request => {
       if (!failed && request.section === "configuration" && request.action === "save") {
         failed = true;
-        return Promise.reject(new Error("Generated save failure"));
+        return Promise.reject({code:"invalid_request", message:"Generated save failure"});
       }
       return original(request);
     };

@@ -15,7 +15,7 @@ function ensureRouteStyle(panel) {
 }
 
 import {adoptKeyedElements, elementFromMarkup, keyedElement, placeChildren, pruneKeys, setAttribute, setText} from "./keyed-collection.js";
-import {captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, reconcileConfigurationAcknowledgement, completeConfigurationAcknowledgement} from "./configuration-acknowledgement.js";
+import {captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, reconcileConfigurationAcknowledgement, completeConfigurationAcknowledgement, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
 import {same} from "./unsaved-state.js";
 import { haToolName, isHALlmTool, renderHAToolCard, toolDescription } from "./ha-llm-tools-list.js";
 import { bindHelp, helpButton, helpPopover } from "./agent-config-help.js";
@@ -474,7 +474,7 @@ function bindToolCollection(panel) {
 }
 
 function functionAcknowledgement(result) {
-  return {...result, function_repair: result.function_repair ?? null, config:{functions:result.functions || [], function_groups:result.function_groups || []}};
+  return {...result, function_repair: result.function_repair ?? null, config:{functions:result.functions, function_groups:result.function_groups}};
 }
 
 export function synchronizePersistedFunctions(panel, result, submission = captureConfigurationSubmission(panel)) {
@@ -484,8 +484,10 @@ export function synchronizePersistedFunctions(panel, result, submission = captur
 }
 
 function completeFunctionMutation(panel, result, submission, message, refresh = () => panel._render()) {
+  requireMutationAcknowledgement(typeof result?.revision === "string" && result.revision.length > 0
+    && Array.isArray(result.functions) && Array.isArray(result.function_groups), "saving Function configuration");
   return completeConfigurationAcknowledgement(panel, functionAcknowledgement(result), submission, {
-    fields:["functions", "function_groups"], metadata:["function_repair"], message,
+    fields:["functions", "function_groups"], metadata:["function_repair"], message, response:result,
     refresh:() => {
       if (!panel._viewKey || panel._viewKey() === "capabilities/functions") panel._result = panel._configData;
       return refresh();
@@ -557,7 +559,8 @@ export async function openTool(panel, index = null, initialTool = null) {
       populateToolPresetPicker(panel, catalog);
     }
     if (!isCurrent()) return;
-    editor.setYaml(response.yaml);
+    await editor.setYaml(response.yaml);
+    if (!isCurrent()) return;
     panel._toolInitialYaml = response.yaml;
     panel._toolReplaceableYaml = response.yaml;
     root.querySelector("#tool-dialog-meta").textContent = index === null ? "New tool / YAML" : `${tool.spec?.name || "Unnamed"} / ${tool.function?.type || "unknown"}`;
@@ -698,18 +701,19 @@ async function saveFunctionGroup(panel) {
     }
     const previous = {revision:panel._configData?.revision, config:panel._configData?.config};
     await completeFunctionMutation(panel, result, submission, "Function group saved", () => {
-      if (unchanged()) dialog.close();
-      else if (ownsEditor()) {
-        // Dirty tracking follows the acknowledged submission independently of
-        // whether it is safe to advance the editor's authoring revision.
+      const closeAfterAcknowledgement = unchanged();
+      if (ownsEditor()) {
+        // Identity and dirty tracking belong to the commit. A failed modal close
+        // must leave the next command updating this group at its saved revision.
         setDialogBaseline(panel, "group-dialog", authored);
         if (previous.config === baselineConfig && [revision, result.revision].includes(previous.revision)) {
           panel._groupOriginalId = id;
           panel._groupRevision = result.revision;
           panel._groupRepair = false;
-          error.textContent = "Submitted version saved. Your newer changes are still unsaved.";
-        } else error.textContent = "Submitted version saved. Reload the latest settings before saving these edits.";
+          if (!closeAfterAcknowledgement) error.textContent = "Submitted version saved. Your newer changes are still unsaved.";
+        } else if (!closeAfterAcknowledgement) error.textContent = "Submitted version saved. Reload the latest settings before saving these edits.";
       }
+      if (closeAfterAcknowledgement) dialog.close();
       panel._render();
     });
   } catch(err) { if (ownsEditor()) { delete error.dataset.field; error.textContent=err.message||String(err); } }
@@ -826,8 +830,9 @@ export function bindTools(panel) {
       }
       const previous = {revision:panel._configData?.revision, config:panel._configData?.config};
       await completeFunctionMutation(panel, result, submission, "Changes saved", () => {
-        if (operation.isUnchanged()) operation.dialog.close();
-        else finishingOperation = acknowledgeToolEditor(panel, operation, result, previous);
+        const closeAfterAcknowledgement = operation.isUnchanged();
+        finishingOperation = acknowledgeToolEditor(panel, operation, result, previous);
+        if (closeAfterAcknowledgement) operation.dialog.close();
         panel._render();
       });
     } catch (err) {

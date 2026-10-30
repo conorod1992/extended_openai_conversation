@@ -7,13 +7,15 @@ import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from custom_components.extended_openai_conversation_responses import restore_recovery
-
 import pytest
 
-from custom_components.extended_openai_conversation_responses import backup
-from custom_components.extended_openai_conversation_responses import backup_transfer
-from tests.test_backup import _document
+from custom_components.extended_openai_conversation_responses import (
+    backup,
+    backup_transfer,
+    restore_recovery,
+)
+from tests.restore_participants import participant_values, participants
+from tests.test_backup import FakeStorage, _document
 
 
 class _StatefulReplaceManager:
@@ -61,11 +63,27 @@ async def test_partial_restore_failure_restores_all_manager_state(
     baseline = backup.inspect_backup(baseline_document, "agent-new")
     baseline_state = _manager_state(baseline)
 
-    managers = tuple(
-        _StatefulReplaceManager(state, fail_on_call=1 if index == 1 else None)
-        for index, state in enumerate(baseline_state)
+    managers = participants(
+        memory=_StatefulReplaceManager((baseline.memories,)),
+        temporary=_StatefulReplaceManager(
+            (baseline.temporary_memories,), fail_on_call=1
+        ),
+        knowledge=_StatefulReplaceManager((baseline.knowledge,)),
+        archive=_StatefulReplaceManager(
+            (baseline.archive_sessions, baseline.archive_turns)
+        ),
+        usage=_StatefulReplaceManager(
+            (
+                baseline.usage_totals,
+                baseline.usage_daily,
+                baseline.usage_requests,
+                baseline.usage_runs,
+            )
+        ),
+        guest_mode=_StatefulReplaceManager((baseline.guest_mode_schedule,)),
+        request_rules=_StatefulReplaceManager((baseline.request_rules,)),
     )
-    usage = managers[4]
+    usage = managers.usage
     usage.request_retention_days = 0
     usage.run_retention_days = 0
 
@@ -84,10 +102,66 @@ async def test_partial_restore_failure_restores_all_manager_state(
     with pytest.raises(backup.BackupError, match="previous agent state was recovered"):
         await backup.async_restore_backup(hass, entry, subentry, target)
 
-    assert managers[0].calls == 2
-    assert managers[1].calls == 2
-    assert managers[2].calls == 1
-    assert tuple(manager.state for manager in managers) == baseline_state
+    assert managers.memory.calls == 2
+    assert managers.temporary.calls == 2
+    assert managers.knowledge.calls == 1
+    assert tuple(manager.state for manager in participant_values(managers)) == baseline_state
+
+
+async def test_failed_restore_and_retry_persist_memory_across_manager_reload(
+    monkeypatch, hass
+) -> None:
+    """Rollback and retry must survive disposing of the live Memory manager."""
+    _journal_fixture(monkeypatch)
+    target_document = _document()
+    target_document["memories"]["memories"][0]["content"] = "Restored value"
+    target = backup.inspect_backup(target_document, "agent-new")
+    baseline_document = _document()
+    baseline_document["memories"]["memories"][0]["content"] = "Original value"
+    baseline = backup.inspect_backup(baseline_document, "agent-new")
+    store = FakeStorage()
+    memory = backup.PersistentMemory(store)
+    await memory.async_initialize()
+    await memory.async_replace_backup(baseline.memories)
+    initial_storage = deepcopy(store.data)
+    managers = participants(
+        memory=memory,
+        temporary=SimpleNamespace(async_replace_backup=AsyncMock()),
+        knowledge=SimpleNamespace(
+            async_replace_backup=AsyncMock(
+                side_effect=[OSError("write failed"), None, None]
+            )
+        ),
+        archive=SimpleNamespace(async_replace_backup=AsyncMock()),
+        usage=SimpleNamespace(async_replace_backup=AsyncMock()),
+        guest_mode=SimpleNamespace(async_replace_backup=AsyncMock()),
+        request_rules=SimpleNamespace(async_replace_backup=AsyncMock()),
+    )
+    monkeypatch.setattr(
+        restore_recovery, "_durable_managers", AsyncMock(return_value=managers)
+    )
+    monkeypatch.setattr(
+        backup, "_snapshot_for_restore", AsyncMock(return_value=baseline)
+    )
+    entry = SimpleNamespace(entry_id="entry-1")
+    subentry = SimpleNamespace(
+        subentry_id="agent-new", title=baseline.title, data=deepcopy(baseline.config)
+    )
+
+    with pytest.raises(backup.BackupError, match="previous agent state was recovered"):
+        await backup.async_restore_backup(hass, entry, subentry, target)
+
+    assert store.data == initial_storage
+    reloaded = backup.PersistentMemory(store)
+    await reloaded.async_initialize()
+    assert backup.PersistentMemory.validate_backup_data(await reloaded.async_backup_data()) == baseline.memories
+
+    result = await backup.async_restore_backup(hass, entry, subentry, target)
+
+    assert result["status"] == "restored"
+    reloaded = backup.PersistentMemory(store)
+    await reloaded.async_initialize()
+    assert backup.PersistentMemory.validate_backup_data(await reloaded.async_backup_data()) == target.memories
 
 
 async def test_export_serialization_failure_removes_temp_archive_and_is_normalized(

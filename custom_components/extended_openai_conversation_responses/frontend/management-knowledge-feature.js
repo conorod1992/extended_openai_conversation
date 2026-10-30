@@ -2,7 +2,7 @@ import {adoptKeyedElements, reconcileKeyedChildren, delegateCollectionActions, s
 import {selectedFeatureStatus} from "./management-feature-status-core.js";
 import {knowledgeSourceAvailabilityBadge} from "./knowledge-presentation.js";
 import {formatUsageNumber} from "./usage-format.js";
-import {captureConfigurationSubmission, configurationSubmissionIsCurrent, completeConfigurationAcknowledgement} from "./configuration-acknowledgement.js";
+import {requireMutationAcknowledgement, captureConfigurationSubmission, configurationSubmissionIsCurrent, completeConfigurationAcknowledgement} from "./configuration-acknowledgement.js";
 
 const collections = new WeakMap();
 const identity = panel => JSON.stringify([panel._selectedAgent?.()?.entry_id, panel._agentId, panel._hass?.user?.id]);
@@ -69,8 +69,9 @@ async function saveKnowledgeAvailability(panel, input) {
   input.disabled = true;
   try {
     const result = await panel._call("knowledge", "set_enabled", {enabled: desired});
+    requireMutationAcknowledgement(typeof result?.knowledge_enabled === "boolean", "changing Knowledge availability");
     await completeConfigurationAcknowledgement(panel, {revision:result.revision, config:{knowledge_enabled:result.knowledge_enabled}}, submission, {
-      fields:["knowledge_enabled"], message:`Knowledge ${result.knowledge_enabled ? "enabled" : "disabled"}`,
+      response:result, fields:["knowledge_enabled"], message:`Knowledge ${result.knowledge_enabled ? "enabled" : "disabled"}`,
       refresh:() => {
         const agent = panel._selectedAgent?.();
         if (agent) {

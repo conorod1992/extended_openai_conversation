@@ -69,7 +69,7 @@ async def test_internal_save_neither_starts_nor_settles_enclosing_effect():
     call = _call("outer", "effect", {})
     tool = {"spec": {"name": "effect", "parameters": {"type": "object"}}}
     with execution_attempt(entity, call, tool):
-        execution_started()
+        receipt = execution_started()
         await _async_settle_transactional_save(
             AsyncMock()(),
             lambda: None,
@@ -78,7 +78,7 @@ async def test_internal_save_neither_starts_nor_settles_enclosing_effect():
             lambda: None,
             record_execution=False,
         )
-        execution_completed()
+        execution_completed(receipt)
     assert entity._execution_tool_outcomes[id(call)] == "completed"
 
 

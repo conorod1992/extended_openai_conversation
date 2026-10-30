@@ -33,7 +33,10 @@ from homeassistant.core import Context
 from homeassistant.exceptions import HomeAssistantError
 from tests_real_ha.test_cross_feature_acceptance import _agent, _rule
 from tests_real_ha.test_provider_wire_e2e import _install_wire
-from tests_real_ha.test_service_registry_acceptance import _response_service_call
+from tests_real_ha.test_service_registry_acceptance import (
+    _broadcast_queue,
+    _response_service_call,
+)
 from tests_real_ha.test_user_permission_acceptance import (
     _ALLOWED_ENTITY,
     _DENIED_ENTITY,
@@ -335,14 +338,9 @@ async def test_broadcast_routes_cannot_queue_denied_targets(
     user.add_to_hass(hass)
     target = _ALLOWED_ENTITY if allowed else _DENIED_ENTITY
     context = Context(user_id=user.id)
-    # Replace delivery/discovery only; use HA's real user policy for authorization.
-    manager = SimpleNamespace(
-        enabled=True,
-        resolve_targets=lambda **kwargs: [target],
-        resolve_named_target=lambda name: {"entity_id": target},
-        async_send=AsyncMock(
-            return_value={"id": "message", "targets": [target], "deliveries": []}
-        ),
+    manager = _broadcast_queue(hass, monkeypatch, [target])
+    monkeypatch.setattr(
+        manager, "resolve_named_target", lambda name: {"entity_id": target}
     )
     for module in (intercom_services, intercom_panel, local_intents, native):
         monkeypatch.setattr(
@@ -403,9 +401,14 @@ async def test_broadcast_routes_cannot_queue_denied_targets(
     else:
         with pytest.raises(HomeAssistantError):
             await execute()
-    assert manager.async_send.await_count == int(allowed)
+    assert len(manager.history()) == int(allowed)
     if allowed:
-        assert manager.async_send.await_args.kwargs["entity_ids"] == [target]
+        assert manager.history()[0]["targets"] == [target]
+        assert len(manager._queues[target]) == 1
+        assert manager._history[0].context.user_id == user.id
+    else:
+        assert manager._queues == {}
+        assert manager._expiry_by_message == {}
 
 
 @pytest.mark.parametrize("advanced", [False, True])

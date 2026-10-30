@@ -61,9 +61,8 @@ async function executeRule(panel) {
   await panel.locator("#eoc-rule-live-text").fill("cross engine execute");
   await panel.locator("#eoc-rule-live-run").click();
   const confirm = panel.locator("#confirm-dialog");
-  if (await confirm.waitFor({state:"visible", timeout:2000}).then(()=>true).catch(()=>false)) {
-    await panel.locator("#confirm-accept").click();
-  }
+  await expect(confirm).toBeVisible();
+  await panel.locator("#confirm-accept").click();
   await expect(panel.locator("#eoc-rule-live-result")).toContainText("Cross-engine rule complete");
 }
 

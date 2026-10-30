@@ -7,6 +7,7 @@ from unittest.mock import ANY, AsyncMock, Mock
 
 import pytest
 
+from custom_components.extended_openai_conversation_responses import function_configuration_mutations as mutations
 from homeassistant.exceptions import HomeAssistantError
 
 
@@ -29,8 +30,8 @@ def test_repair_persistence_reuses_tools_while_preserving_absence(monkeypatch, h
     monkeypatch.setattr(repair, "require_agent_config_revision", Mock())
     monkeypatch.setattr(repair, "persisted_config_projection", Mock(return_value=projection))
     monkeypatch.setattr(
-        repair,
-        "_strict_merge_agent_config",
+        mutations,
+        "merge_agent_config",
         Mock(
             return_value={
                 repair.CONF_FUNCTION_TOOLS: tools,

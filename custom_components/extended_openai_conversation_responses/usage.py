@@ -21,6 +21,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
+from .agent_maintenance import get_agent_maintenance_gate
 from .const import (
     CONF_USAGE_REQUEST_RETENTION_DAYS,
     CONF_USAGE_RUN_RETENTION_DAYS,
@@ -30,6 +31,8 @@ from .const import (
 )
 from .debug import record_current_run_failure
 from .operational_errors import log_handled_failure
+from .persistence_hardening import StorageRepairRequired
+from .storage_namespaces import USAGE_PREFIX as STORAGE_KEY_PREFIX
 from .strict_store import (
     PropagatingWriteStore,
     RecoveryGuardedStore,
@@ -38,7 +41,7 @@ from .strict_store import (
 )
 
 STORAGE_VERSION = 2
-STORAGE_KEY_PREFIX = f"{DOMAIN}.usage"
+
 _USAGE_MANAGERS = f"{DOMAIN}.usage_managers"
 _VOLATILE_USAGE_MANAGERS = f"{DOMAIN}.volatile_usage_managers"
 _USAGE_GETTER_LOCKS = f"{DOMAIN}.usage_getter_locks"
@@ -219,6 +222,25 @@ def _totals_from_storage(stored: dict[str, Any] | None) -> UsageTotals:
     return UsageTotals(**values)
 
 
+def _stored_totals_need_repair(stored: Any) -> bool:
+    """Omitted legacy counters are defaults; malformed supplied data is evidence."""
+    if stored is None:
+        return False
+    if not isinstance(stored, dict):
+        return True
+    source = stored.get("totals", stored)
+    if not isinstance(source, dict):
+        return True
+    try:
+        keys = {item.name for item in fields(UsageTotals)} - {"details"}
+        _validate_counter_mapping(source, keys & source.keys())
+        if "details" in source:
+            _validate_breakdown(source["details"], "usage details")
+    except ValueError:
+        return True
+    return False
+
+
 def extract_usage(usage: Any) -> RequestUsage:
     """Normalize Chat Completions or Responses token metadata."""
     if usage is None:
@@ -289,6 +311,7 @@ class UsageManager:
         self._lock = asyncio.Lock()
         self._initialize_lock = asyncio.Lock()
         self._initialized = False
+        self._repair_required = False
         self._detail_retention_dirty = False
         self._current_run: ContextVar[UsageRun | None] = ContextVar(
             f"usage_run_{id(self)}", default=None
@@ -314,40 +337,77 @@ class UsageManager:
             if self._initialized:
                 return
 
+            repair_required = False
+            totals_data: dict[str, Any] | None
             daily_data: dict[str, Any] = {}
             if self._daily_storage is not None:
-                daily_data = await self._daily_storage.async_load() or {}
+                loaded_daily = await self._daily_storage.async_load()
+                daily_data = loaded_daily if loaded_daily is not None else {}
                 if not isinstance(daily_data, dict):
+                    repair_required = True
                     daily_data = {}
 
             if "totals" in daily_data:
-                staged_totals = _totals_from_storage({"totals": daily_data["totals"]})
+                totals_data = {"totals": daily_data["totals"]}
+                staged_totals = _totals_from_storage(totals_data)
             else:
-                staged_totals = _totals_from_storage(await self._storage.async_load())
+                totals_data = await self._storage.async_load()
+                staged_totals = _totals_from_storage(totals_data)
+            repair_required |= _stored_totals_need_repair(totals_data)
 
             days = daily_data.get("days")
-            staged_daily = {
-                str(key): deepcopy(value)
-                for key, value in (days if isinstance(days, dict) else {}).items()
-                if isinstance(value, dict)
-            }
+            repair_required |= "days" in daily_data and not isinstance(days, dict)
+            staged_daily = {}
+            for key, value in (days if isinstance(days, dict) else {}).items():
+                if not isinstance(value, dict):
+                    repair_required = True
+                    continue
+                try:
+                    # Older stores omit newer counters. Migrate omissions only;
+                    # malformed supplied values must not become valid zeros.
+                    staged_daily[key] = _validate_usage_day(
+                        key, {**_empty_day(key), **value}
+                    )
+                except TypeError, ValueError:
+                    repair_required = True
+                    continue
             staged_requests: list[UsageRequest] = []
             staged_runs: list[UsageRun] = []
+            request_ids: set[str] = set()
+            run_ids: set[str] = set()
             if self._detail_storage is not None:
-                detail_data = await self._detail_storage.async_load() or {}
+                loaded_details = await self._detail_storage.async_load()
+                detail_data = loaded_details if loaded_details is not None else {}
                 if not isinstance(detail_data, dict):
+                    repair_required = True
                     detail_data = {}
                 requests = detail_data.get("requests")
+                repair_required |= "requests" in detail_data and not isinstance(
+                    requests, list
+                )
                 for raw in requests if isinstance(requests, list) else []:
                     try:
-                        staged_requests.append(UsageRequest(**raw))
+                        record = _usage_request_from_record(raw)
+                        if record.request_id not in request_ids:
+                            staged_requests.append(record)
+                            request_ids.add(record.request_id)
+                        else:
+                            repair_required = True
                     except TypeError, ValueError:
+                        repair_required = True
                         continue
                 runs = detail_data.get("runs")
+                repair_required |= "runs" in detail_data and not isinstance(runs, list)
                 for raw in runs if isinstance(runs, list) else []:
                     try:
-                        staged_runs.append(UsageRun(**raw))
+                        record_run = _usage_run_from_record(raw)
+                        if record_run.run_id not in run_ids:
+                            staged_runs.append(record_run)
+                            run_ids.add(record_run.run_id)
+                        else:
+                            repair_required = True
                     except TypeError, ValueError:
+                        repair_required = True
                         continue
 
             now = dt_util.utcnow()
@@ -374,11 +434,17 @@ class UsageManager:
             self._detail_retention_dirty = loaded_detail_count != (
                 len(staged_requests) + len(staged_runs)
             )
+            self._repair_required = repair_required
+            if repair_required:
+                _LOGGER.warning(
+                    "Usage storage needs repair; original stores preserved and persistence disabled"
+                )
             self._initialized = True
 
     async def async_record_conversation(self) -> None:
         """Compatibility API; new conversation code uses ``async_run``."""
         async with async_storage_lock(self._storage, self._lock):
+            self._require_writable()
             self.totals.conversation_count += 1
             await self._async_save_aggregates()
 
@@ -470,6 +536,8 @@ class UsageManager:
                     _LOGGER.info(
                         "Usage flush deferred while assistant restore recovery is pending"
                     )
+                    return
+                if self._repair_required:
                     return
                 await self._async_save_aggregates()
                 await self._async_save_details()
@@ -645,6 +713,7 @@ class UsageManager:
         self, requests: list[UsageRequest], runs: list[UsageRun]
     ) -> None:
         """Persist one candidate detail state before publishing it in memory."""
+        self._require_writable()
         if self._detail_storage is None:
             return
         details = await asyncio.to_thread(_serialize_usage_details, requests, runs)
@@ -653,6 +722,7 @@ class UsageManager:
     async def async_prune_details(self, *, save: bool = True) -> dict[str, int]:
         """Apply retention transactionally, persisting survivors before publication."""
         async with async_storage_lock(self._storage, self._lock):
+            self._require_writable()
             requests, runs, result = self._pruned_detail_state()
             if save and (
                 self._detail_retention_dirty
@@ -673,6 +743,7 @@ class UsageManager:
         if not confirm:
             raise ValueError("Explicit confirmation is required")
         async with async_storage_lock(self._storage, self._lock):
+            self._require_writable()
             result = {
                 "deleted_requests": len(self.requests),
                 "deleted_runs": len(self.runs),
@@ -685,7 +756,7 @@ class UsageManager:
 
     async def _async_prune_usage_if_due(self) -> None:
         """Schedule bounded daily retention maintenance outside the response path."""
-        if self._stopping:
+        if self._stopping or self._repair_required:
             return
         today = dt_util.utcnow().date().isoformat()
         if self._last_prune_date == today:
@@ -836,8 +907,13 @@ class UsageManager:
         volatile = isinstance(self._storage, _VolatileUsageStorage)
         return {
             "mode": "volatile" if volatile else "durable",
-            "survives_restart": not volatile,
+            "survives_restart": not volatile and not self._repair_required,
+            **({"storage_repair_required": True} if self._repair_required else {}),
         }
+
+    def _require_writable(self) -> None:
+        if self._repair_required:
+            raise StorageRepairRequired("Usage")
 
     async def async_backup_data(self) -> dict[str, Any]:
         """Return all persisted usage categories without in-flight run state."""
@@ -848,6 +924,7 @@ class UsageManager:
         async with async_storage_lock(self._storage, self._lock):
             if not self._initialized:
                 raise RuntimeError("usage statistics have not been initialized")
+            self._require_writable()
             # Completed records are immutable after publication. Capture their
             # membership under the manager lock; serialize only local references.
             requests, runs = list(self.requests), list(self.runs)
@@ -882,12 +959,6 @@ class UsageManager:
             raise ValueError("daily usage data is invalid")
         daily: dict[str, dict[str, Any]] = {}
         for date, day in daily_raw.items():
-            if not isinstance(date, str) or len(date) != 10:
-                raise ValueError("daily usage date is invalid")
-            try:
-                datetime.fromisoformat(date)
-            except ValueError as err:
-                raise ValueError("daily usage date is invalid") from err
             daily[date] = _validate_usage_day(date, day)
 
         if not isinstance(data["requests"], list) or not isinstance(data["runs"], list):
@@ -915,9 +986,10 @@ class UsageManager:
             self.daily = deepcopy(daily)
             self.requests = list(requests)
             self.runs = list(runs)
-            await self._async_save_aggregates()
+            await self._async_save_aggregates(replacing=True)
             if self._detail_storage is not None:
-                await self._async_save_details()
+                await self._async_save_details(replacing=True)
+            self._repair_required = False
         await self.async_prune_details()
 
     @staticmethod
@@ -931,30 +1003,36 @@ class UsageManager:
             for key, value in usage.details.items():
                 target.details[key] = target.details.get(key, 0) + value
 
-    async def _async_save_totals(self) -> None:
+    async def _async_save_totals(self, *, replacing: bool = False) -> None:
+        if not replacing:
+            self._require_writable()
         if not self._initialized:
             raise RuntimeError("usage statistics have not been initialized")
         await self._storage.async_save(self.as_dict())
 
-    async def _async_save_aggregates(self) -> None:
+    async def _async_save_aggregates(self, *, replacing: bool = False) -> None:
         """Persist lifetime and daily aggregates in one authoritative snapshot."""
+        if not replacing:
+            self._require_writable()
         if not self._initialized:
             raise RuntimeError("usage statistics have not been initialized")
         if self._daily_storage is None:
-            await self._async_save_totals()
+            await self._async_save_totals(replacing=replacing)
             return
         await self._daily_storage.async_save(
             {"totals": self.as_dict(), "days": self.daily}
         )
         try:
-            await self._async_save_totals()
+            await self._async_save_totals(replacing=replacing)
         except Exception:
             _LOGGER.exception(
                 "Unable to update legacy usage totals mirror; aggregate snapshot "
                 "remains current"
             )
 
-    async def _async_save_details(self) -> None:
+    async def _async_save_details(self, *, replacing: bool = False) -> None:
+        if not replacing:
+            self._require_writable()
         if self._detail_storage is not None:
             details = await asyncio.to_thread(
                 _serialize_usage_details, list(self.requests), list(self.runs)
@@ -1008,7 +1086,10 @@ class UsageManager:
 
     async def _async_save_safely(self, label: str, save: Callable[[], Any]) -> None:
         """Coalesce routine telemetry writes without changing request outcomes."""
+        if self._repair_required:
+            return
         try:
+            self._require_writable()
             if self._stopping:
                 await save()
                 return
@@ -1077,6 +1158,12 @@ def _validate_breakdown(value: Any, label: str) -> dict[str, int]:
 
 
 def _validate_usage_day(date: str, value: Any) -> dict[str, Any]:
+    if not isinstance(date, str) or len(date) != 10:
+        raise ValueError("daily usage date is invalid")
+    try:
+        datetime.fromisoformat(date)
+    except ValueError as err:
+        raise ValueError("daily usage date is invalid") from err
     expected = _empty_day(date)
     if not isinstance(value, dict) or set(value) != set(expected):
         raise ValueError("daily usage record is invalid")
@@ -1106,10 +1193,16 @@ def _validate_usage_day(date: str, value: Any) -> dict[str, Any]:
 
 
 def _usage_request_from_backup(raw: Any, target_agent_id: str) -> UsageRequest:
+    return _usage_request_from_record(
+        {**raw, "agent_subentry_id": target_agent_id} if isinstance(raw, dict) else raw
+    )
+
+
+def _usage_request_from_record(raw: Any) -> UsageRequest:
     if not isinstance(raw, dict):
         raise ValueError("usage request must be an object")
     try:
-        request = UsageRequest(**{**raw, "agent_subentry_id": target_agent_id})
+        request = UsageRequest(**raw)
     except TypeError as err:
         raise ValueError("usage request is invalid") from err
     string_values = (
@@ -1148,10 +1241,16 @@ def _usage_request_from_backup(raw: Any, target_agent_id: str) -> UsageRequest:
 
 
 def _usage_run_from_backup(raw: Any, target_agent_id: str) -> UsageRun:
+    return _usage_run_from_record(
+        {**raw, "agent_subentry_id": target_agent_id} if isinstance(raw, dict) else raw
+    )
+
+
+def _usage_run_from_record(raw: Any) -> UsageRun:
     if not isinstance(raw, dict):
         raise ValueError("usage run must be an object")
     try:
-        run = UsageRun(**{**raw, "agent_subentry_id": target_agent_id})
+        run = UsageRun(**raw)
     except TypeError as err:
         raise ValueError("usage run is invalid") from err
     counter_keys = {
@@ -1355,87 +1454,93 @@ async def async_get_durable_usage(
     hass: HomeAssistant, entry_id: str, subentry_id: str
 ) -> UsageManager:
     """Return the persistent Usage manager, propagating storage failures."""
-    managers: dict[tuple[str, str], UsageManager] = hass.data.setdefault(
-        _USAGE_MANAGERS, {}
-    )
-    key = (entry_id, subentry_id)
-    manager = managers.get(key)
-    if manager is None:
-        prefix = f"{STORAGE_KEY_PREFIX}.{entry_id}.{subentry_id}"
-        manager = UsageManager(
-            _UsageStore(hass, 1, prefix, atomic_writes=True).bind_agent(
-                entry_id, subentry_id
-            ),
-            _UsageStore(
-                hass,
-                STORAGE_VERSION,
-                f"{prefix}.daily",
-                atomic_writes=True,
-            ).bind_agent(entry_id, subentry_id),
-            _UsageStore(
-                hass,
-                STORAGE_VERSION,
-                f"{prefix}.details",
-                private=True,
-                atomic_writes=True,
-                serialize_in_event_loop=False,
-            ).bind_agent(entry_id, subentry_id),
-            agent_subentry_id=subentry_id,
-            **_saved_retention(hass, entry_id, subentry_id),
+    async with get_agent_maintenance_gate(hass, entry_id, subentry_id).shared(
+        maintenance=True
+    ):
+        managers: dict[tuple[str, str], UsageManager] = hass.data.setdefault(
+            _USAGE_MANAGERS, {}
         )
-        # Publish before the first await so every concurrent caller initializes and
-        # retains the same authoritative manager instance.
-        managers[key] = manager
-    await manager.async_initialize()
-    _register_usage_maintenance(hass, manager)
-    return manager
+        key = (entry_id, subentry_id)
+        manager = managers.get(key)
+        if manager is None:
+            prefix = f"{STORAGE_KEY_PREFIX}.{entry_id}.{subentry_id}"
+            manager = UsageManager(
+                _UsageStore(hass, 1, prefix, atomic_writes=True).bind_agent(
+                    entry_id, subentry_id
+                ),
+                _UsageStore(
+                    hass,
+                    STORAGE_VERSION,
+                    f"{prefix}.daily",
+                    atomic_writes=True,
+                ).bind_agent(entry_id, subentry_id),
+                _UsageStore(
+                    hass,
+                    STORAGE_VERSION,
+                    f"{prefix}.details",
+                    private=True,
+                    atomic_writes=True,
+                    serialize_in_event_loop=False,
+                ).bind_agent(entry_id, subentry_id),
+                agent_subentry_id=subentry_id,
+                **_saved_retention(hass, entry_id, subentry_id),
+            )
+            # Publish before the first await so every concurrent caller initializes and
+            # retains the same authoritative manager instance.
+            managers[key] = manager
+        await manager.async_initialize()
+        _register_usage_maintenance(hass, manager)
+        return manager
 
 
 async def async_get_usage(
     hass: HomeAssistant, entry_id: str, subentry_id: str
 ) -> UsageManager:
     """Return the effective Usage manager without making telemetry startup fatal."""
-    key = (entry_id, subentry_id)
-    locks: dict[tuple[str, str], asyncio.Lock] = hass.data.setdefault(
-        _USAGE_GETTER_LOCKS, {}
-    )
-    lock = locks.setdefault(key, asyncio.Lock())
-
-    async with lock:
-        fallbacks: dict[tuple[str, str], UsageManager] = hass.data.setdefault(
-            _VOLATILE_USAGE_MANAGERS, {}
+    async with get_agent_maintenance_gate(hass, entry_id, subentry_id).shared(
+        maintenance=True
+    ):
+        key = (entry_id, subentry_id)
+        locks: dict[tuple[str, str], asyncio.Lock] = hass.data.setdefault(
+            _USAGE_GETTER_LOCKS, {}
         )
-        if fallback := fallbacks.get(key):
-            return fallback
+        lock = locks.setdefault(key, asyncio.Lock())
 
-        try:
-            return await async_get_durable_usage(hass, entry_id, subentry_id)
-        except Exception as err:
-            # The durable getter publishes before initialization so concurrent callers
-            # converge on one manager. Discard a failed published instance before
-            # installing the shared volatile fallback for this Home Assistant runtime.
-            persistent_managers = hass.data.get(_USAGE_MANAGERS)
-            if isinstance(persistent_managers, dict):
-                persistent_managers.pop(key, None)
+        async with lock:
+            fallbacks: dict[tuple[str, str], UsageManager] = hass.data.setdefault(
+                _VOLATILE_USAGE_MANAGERS, {}
+            )
+            if fallback := fallbacks.get(key):
+                return fallback
 
-            log_handled_failure(
-                _LOGGER,
-                f"Unable to initialize Usage storage entry={entry_id} assistant={subentry_id}; "
-                "continuing with volatile accounting in memory. Usage totals/history recorded "
-                "in this mode will be lost on Home Assistant restart; conversation remains available",
-                err,
-            )
-            manager = UsageManager(
-                _VolatileUsageStorage(),
-                _VolatileUsageStorage(),
-                _VolatileUsageStorage(),
-                agent_subentry_id=subentry_id,
-                **_saved_retention(hass, entry_id, subentry_id),
-            )
-            await manager.async_initialize()
-            fallbacks[key] = manager
-            _register_usage_maintenance(hass, manager)
-            return manager
+            try:
+                return await async_get_durable_usage(hass, entry_id, subentry_id)
+            except Exception as err:
+                # The durable getter publishes before initialization so concurrent callers
+                # converge on one manager. Discard a failed published instance before
+                # installing the shared volatile fallback for this Home Assistant runtime.
+                persistent_managers = hass.data.get(_USAGE_MANAGERS)
+                if isinstance(persistent_managers, dict):
+                    persistent_managers.pop(key, None)
+
+                log_handled_failure(
+                    _LOGGER,
+                    f"Unable to initialize Usage storage entry={entry_id} assistant={subentry_id}; "
+                    "continuing with volatile accounting in memory. Usage totals/history recorded "
+                    "in this mode will be lost on Home Assistant restart; conversation remains available",
+                    err,
+                )
+                manager = UsageManager(
+                    _VolatileUsageStorage(),
+                    _VolatileUsageStorage(),
+                    _VolatileUsageStorage(),
+                    agent_subentry_id=subentry_id,
+                    **_saved_retention(hass, entry_id, subentry_id),
+                )
+                await manager.async_initialize()
+                fallbacks[key] = manager
+                _register_usage_maintenance(hass, manager)
+                return manager
 
 
 def _serialize_usage_details(

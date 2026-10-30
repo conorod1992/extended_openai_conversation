@@ -15,9 +15,13 @@ from uuid import uuid4
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
-from .memory import validate_memory_privacy
-from .persistence_hardening import _async_settle_transactional_save
+from .memory import MemoryPrivacyRejected, validate_memory_privacy
+from .persistence_hardening import (
+    StorageRepairRequired,
+    _async_settle_transactional_save,
+)
 from .scope import SHARED_HOUSEHOLD_SCOPE_ID
+from .storage_namespaces import TEMPORARY_MEMORY_PREFIX as STORAGE_KEY_PREFIX
 from .strict_store import PropagatingWriteStore, async_storage_lock
 
 _LOGGER = logging.getLogger(__name__)
@@ -26,7 +30,7 @@ _ACTIVE_OWNER_SCOPE_ID: ContextVar[str | None] = ContextVar(
 )
 
 STORAGE_VERSION = 1
-STORAGE_KEY_PREFIX = f"{DOMAIN}.temporary_memory"
+
 MAX_ACTIVE_RECORDS = 100
 MAX_CONTENT_LENGTH = 500
 MAX_CATEGORY_LENGTH = 64
@@ -54,6 +58,10 @@ class TemporaryMemoryRecord:
     created_at: str
     updated_at: str
     owner_scope_id: str | None = None
+
+
+class _InvalidStoredMetadata(ValueError):
+    """Invalid metadata must not trigger lossy startup cleanup."""
 
 
 class TemporaryMemoryStore(PropagatingWriteStore):
@@ -112,18 +120,41 @@ class TemporaryMemory:
             ):
                 raise ValueError("Temporary Memory records have invalid structure")
             raw_records = data.get("records", []) if isinstance(data, Mapping) else []
-            for raw in raw_records:
+            seen_ids: set[str] = set()
+            privacy_rejected: set[int] = set()
+            damaged = False
+            for index, raw in enumerate(raw_records):
                 try:
                     record = _record_from_storage(raw)
+                    if record.memory_id in seen_ids:
+                        raise _InvalidStoredMetadata("duplicate temporary memory ID")
+                    seen_ids.add(record.memory_id)
                     if asdict(record) != raw:
                         self._normalization_pending = True
                     if _parse_expiry(record.expires_at) > dt_util.utcnow():
                         self._records[record.memory_id] = record
                     else:
                         self.expired_pruned += 1
-                except TypeError, ValueError:
+                except MemoryPrivacyRejected:
+                    privacy_rejected.add(index)
                     self._normalization_pending = True
-                    continue
+                except TypeError, ValueError:
+                    damaged = True
+            if damaged:
+                if privacy_rejected:
+                    # Purge only policy-rejected records. Keep every other raw
+                    # sibling and opaque field as repair evidence.
+                    await self._store.async_save(
+                        {
+                            **(data or {}),
+                            "records": [
+                                raw
+                                for index, raw in enumerate(raw_records)
+                                if index not in privacy_rejected
+                            ],
+                        }
+                    )
+                raise StorageRepairRequired("Temporary Memory")
             self._initialized = True
             if self.expired_pruned:
                 await self._async_save_locked(reconcile_failure=False)
@@ -132,6 +163,7 @@ class TemporaryMemory:
             self.expired_pruned = 0
             self._initialized = False
             self._committed_state = None
+            self._normalization_pending = False
             raise
         self._remember_committed_state()
         await self._async_normalize_loaded_records_locked()
@@ -424,44 +456,18 @@ class TemporaryMemory:
                 record = _record_from_storage(raw)
             except TypeError as err:
                 raise ValueError("temporary memory record is invalid") from err
-            if not all(
-                isinstance(value, str)
-                for value in (
-                    record.memory_id,
-                    record.scope_id,
-                    record.content,
-                    record.category,
-                    record.source,
-                    record.expires_at,
-                    record.created_at,
-                    record.updated_at,
-                )
-            ):
-                raise ValueError("temporary memory fields must be strings")
             if record.owner_scope_id is not None and not isinstance(
                 record.owner_scope_id, str
             ):
                 raise ValueError("temporary memory owner must be a string")
-            if (
-                not record.memory_id
-                or len(record.memory_id) > 128
-                or record.memory_id in seen
-                or not record.scope_id
-                or (
-                    record.owner_scope_id is not None
-                    and (not record.owner_scope_id or len(record.owner_scope_id) > 128)
-                )
-                or record.source not in {"automatic", "manual"}
+            if record.memory_id in seen or (
+                record.owner_scope_id is not None
+                and (not record.owner_scope_id or len(record.owner_scope_id) > 128)
             ):
                 raise ValueError("temporary memory metadata is invalid")
             _clean(record.content, MAX_CONTENT_LENGTH, "content")
             _clean(record.category, MAX_CATEGORY_LENGTH, "category")
             expiry = _parse_expiry(record.expires_at)
-            if (
-                dt_util.parse_datetime(record.created_at) is None
-                or dt_util.parse_datetime(record.updated_at) is None
-            ):
-                raise ValueError("temporary memory timestamp is invalid")
             seen.add(record.memory_id)
             if (
                 expiry > now
@@ -524,13 +530,19 @@ class TemporaryMemory:
         records: list[TemporaryMemoryRecord] = []
         invalid_owners = 0
         normalized_owners = 0
+        seen_ids: set[str] = set()
         for raw in raw_records:
             try:
                 record = _record_from_storage(raw)
+                if record.memory_id in seen_ids:
+                    raise _InvalidStoredMetadata("duplicate temporary memory ID")
+                seen_ids.add(record.memory_id)
                 _parse_expiry(record.expires_at)
                 normalized = _normalize_record_owner(record)
-            except TypeError, ValueError:
+            except MemoryPrivacyRejected:
                 continue
+            except (TypeError, ValueError) as err:
+                raise StorageRepairRequired("Temporary Memory") from err
             if normalized is None:
                 invalid_owners += 1
                 continue
@@ -739,8 +751,32 @@ def _record_from_storage(raw: Mapping[str, Any]) -> TemporaryMemoryRecord:
         )
     record = TemporaryMemoryRecord(**values)
     _validate_record_scope_id(record.scope_id)
-    if not isinstance(record.content, str):
-        raise ValueError("temporary memory fields must be strings")
+    if not all(
+        isinstance(value, str)
+        for value in (
+            record.memory_id,
+            record.scope_id,
+            record.content,
+            record.category,
+            record.source,
+            record.expires_at,
+            record.created_at,
+            record.updated_at,
+        )
+    ):
+        raise _InvalidStoredMetadata("temporary memory fields must be strings")
+    if (
+        not record.memory_id
+        or len(record.memory_id) > 128
+        or record.source not in {"automatic", "manual"}
+    ):
+        raise _InvalidStoredMetadata("temporary memory metadata is invalid")
+    _parse_expiry(record.expires_at)
+    if (
+        dt_util.parse_datetime(record.created_at) is None
+        or dt_util.parse_datetime(record.updated_at) is None
+    ):
+        raise _InvalidStoredMetadata("temporary memory timestamp is invalid")
     validate_memory_privacy(record.content, automatic=record.source == "automatic")
     validate_memory_privacy(record.category, automatic=record.source == "automatic")
     return replace(

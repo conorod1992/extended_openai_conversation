@@ -333,12 +333,7 @@ async def test_storage_migration_from_legacy_list() -> None:
     old = [{"memory_id": "one"}]
 
     migrated = await store._async_migrate_func(0, 1, old)
-    assert migrated["memories"][0] == {
-        "memory_id": "one",
-        "subject": None,
-        "key": None,
-        "valid_from": None,
-    }
+    assert migrated["memories"] == old
     with pytest.raises(NotImplementedError):
         await store._async_migrate_func(99, 1, {})
 

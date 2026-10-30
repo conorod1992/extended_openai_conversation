@@ -176,8 +176,14 @@ async def test_large_installation_survives_setup_management_backup_and_assist(
     snapshot = await backup.async_collect_backup_snapshot(hass, primary, subentry)
     assert backup.inspect_backup(snapshot, subentry.subentry_id)
     snapshot_seconds = round(perf_counter() - snapshot_started, 3)
+    previous_rules = rules
     assert await hass.config_entries.async_reload(primary.entry_id)
     await hass.async_block_till_done()
+    # Reload retires the old Rule owner. Continue the workload through the same
+    # public factory as production, and verify its replacement loaded every rule.
+    rules = await async_get_request_rules(hass, primary.entry_id, subentry.subentry_id)
+    assert rules is not previous_rules
+    assert await rules.async_backup_data() == snapshot["request_rules"]
     assert (await backup.async_collect_backup_snapshot(hass, primary, subentry))[
         "memories"
     ] == snapshot["memories"]
