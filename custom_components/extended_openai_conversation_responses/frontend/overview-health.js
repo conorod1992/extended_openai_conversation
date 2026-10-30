@@ -1,3 +1,6 @@
+import {CONFIG_OWNER_BY_KEY} from "./management-config-owners.js";
+const [modelPage, modelSection] = CONFIG_OWNER_BY_KEY.chat_model.split("/");
+
 const action = (page, subsection, target = null) => ({page, subsection, target});
 
 function titleCase(value) {
@@ -48,7 +51,7 @@ function modelLifecycleCheck(facts) {
         || (shutdown
           ? `${model} is deprecated and is scheduled to stop working on ${shutdown}. Choose a replacement before then.`
           : `${model} is deprecated. Choose a replacement before the provider retires it.`),
-    action: action("assistant", "model-responses", "config-chat_model"),
+    action: action(modelPage, modelSection, "config-chat_model"),
   };
 }
 
