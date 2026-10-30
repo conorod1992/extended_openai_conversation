@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Iterator, Mapping
 from contextlib import suppress
 from copy import deepcopy
@@ -83,9 +82,9 @@ from .function_configuration_repair import has_unavailable_native_tool
 from .function_dependency_integrity import (
     _is_template_string,
     _rule_script_actions,
+    async_finish_function_rename,
     async_validate_request_rule_functions,
     group_reference_updates,
-    renamed_function_references_are_saved,
 )
 from .function_groups import get_function_group_runtime
 from .functions import FUNCTIONS
@@ -159,7 +158,6 @@ from .management_request_preview import (
 )
 from .memory import ANONYMOUS_USER_ID, async_get_memory
 from .model_catalog import active_catalog_version, catalog_generation
-from .mutation_outcomes import mark_mutation_failure
 from .regex_execution import async_process_speech_text
 from .request_rule_match_preview import async_request_rule_match_preview
 from .request_rule_packs import (
@@ -2239,54 +2237,20 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             rules_manager=rules,
             expected_revision=operation_revision,
         )
-        try:
-            renamed_rule_references = await rules.async_rename_function_reference(
-                original_name,
-                saved_name,
-                expected_revision=rules_revision,
-            )
-        except (Exception, asyncio.CancelledError) as err:
-            rule_rename_saved = renamed_function_references_are_saved(
-                rules, original_name, saved_name, references.get("request_rules", [])
-            )
-            if rule_rename_saved is None:
-                if isinstance(err, asyncio.CancelledError):
-                    raise
-                raise mark_mutation_failure(
-                    HomeAssistantError(
-                        "Request Rule storage cannot be verified. The saved Function Tool "
-                        "rename was retained; restore storage access and reload to review "
-                        "Rule references."
-                    ),
-                    "uncertain",
-                ) from err
-            if rule_rename_saved:
-                if isinstance(err, asyncio.CancelledError):
-                    raise
-                raise mark_mutation_failure(
-                    HomeAssistantError(
-                        "Function Tool and Request Rule rename were saved, but the save "
-                        "acknowledgement failed. Reload the latest saved settings."
-                    ),
-                    "uncertain",
-                ) from err
-            try:
-                _require_agent_config_revision(subentry, result["revision"])
-                # A rollback restores the authoritative raw snapshot, including
-                # quarantined references that a usable projection cannot recover.
-                update_live_subentry(hass, entry, subentry, data=original_data)
-            except HomeAssistantError as rollback_err:
-                if isinstance(err, asyncio.CancelledError):
-                    raise err from rollback_err
-                raise mark_mutation_failure(
-                    HomeAssistantError(
-                        "Function Tool configuration changed while a related Request Rule "
-                        "rename failed. The newer configuration was preserved; reload "
-                        "before retrying."
-                    ),
-                    "uncertain",
-                ) from rollback_err
-            raise err
+
+        def rollback_configuration() -> None:
+            _require_agent_config_revision(subentry, result["revision"])
+            # Restore the raw snapshot, including quarantined references.
+            update_live_subentry(hass, entry, subentry, data=original_data)
+
+        renamed_rule_references = await async_finish_function_rename(
+            rules,
+            original_name,
+            saved_name,
+            expected_rules_revision=rules_revision,
+            original_references=references.get("request_rules", []),
+            rollback_configuration=rollback_configuration,
+        )
         result["renamed_references"] = {
             "request_rules": renamed_rule_references,
             "guest_mode": references["guest_mode"],

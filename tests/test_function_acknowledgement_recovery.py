@@ -43,7 +43,7 @@ async def function_agent(hass, monkeypatch):
     return hass, entry, subentry, rules, store
 
 
-async def send(agent, action, **extra):
+async def send(agent, action, *, section="tools", **extra):
     hass, entry, subentry, *_ = agent
     connection = SimpleNamespace(
         user=SimpleNamespace(id="admin", is_admin=True),
@@ -53,7 +53,7 @@ async def send(agent, action, **extra):
     omit_revision = extra.pop("omit_revision", False)
     message = {
         "id": 1,
-        "section": "tools",
+        "section": section,
         "action": action,
         "entry_id": entry.entry_id,
         "subentry_id": subentry.subentry_id,
@@ -113,10 +113,12 @@ async def test_disable_does_not_overwrite_a_change_during_reference_preparation(
 
 
 @pytest.mark.parametrize("fault", ["after_write", "unreadable", "concurrent"])
+@pytest.mark.parametrize("route", ["normal", "repair"])
 async def test_retained_rename_is_uncertain_through_websocket_and_next_action(
     function_agent,
     monkeypatch,
     fault,
+    route,
 ):
     hass, _, subentry, _rules, store = function_agent
     original_write = store._write_prepared_data
@@ -136,7 +138,22 @@ async def test_retained_rename_is_uncertain_through_websocket_and_next_action(
         )
     tool = yaml.safe_load(subentry.data["functions"])[0]
     tool["spec"]["name"] = "renamed_probe"
-    reply = await send(function_agent, "save", original_name="native_probe", tool=tool)
+    if route == "repair":
+        damaged = yaml.safe_load(subentry.data["functions"])
+        damaged[0]["function"]["name"] = "missing_legacy_implementation"
+        sibling = deepcopy(damaged[0])
+        sibling["spec"]["name"] = "unrelated_legacy_tool"
+        subentry.data = {
+            **subentry.data,
+            "functions": yaml.safe_dump([*damaged, sibling]),
+        }
+        reply = await send(
+            function_agent, "save_one", section="function_repair", index=0, tool=tool
+        )
+    else:
+        reply = await send(
+            function_agent, "save", original_name="native_probe", tool=tool
+        )
     assert reply.send_error.call_args is not None, reply.send_result.call_args
     assert reply.send_error.call_args.args[1] == "eoai_mutation_uncertain"
     assert (
@@ -165,4 +182,6 @@ async def test_retained_rename_is_uncertain_through_websocket_and_next_action(
     final_rules = RequestRules(RequestRuleStore(hass, STORAGE_VERSION, store.key))
     await final_rules.async_initialize()
     assert final_rules.function_references("renamed_probe")
+    if route == "repair":
+        assert yaml.safe_load(subentry.data["functions"])[1] == sibling
     assert Path(store.path).exists()
