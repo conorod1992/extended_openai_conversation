@@ -2,6 +2,7 @@
 set -euo pipefail
 
 TEST_PATHS=(
+  tests_real_ha/test_provider_boundary_contracts.py::test_replay_rejection_leaves_next_turn_provider_history_complete
   tests/test_conversation_archive.py
   tests/test_memory.py
   tests/test_knowledge.py

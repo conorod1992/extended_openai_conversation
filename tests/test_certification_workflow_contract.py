@@ -159,6 +159,8 @@ def test_full_validation_form_passes_mode_to_dispatcher():
         if step.get("run") == "python3 ci/full_validation.py"
     )
     assert step["env"]["FULL_VALIDATION_MODE"] == "${{ inputs.mode }}"
+    assert triggers["workflow_dispatch"]["inputs"]["ha_dev_sha"]["type"] == "string"
+    assert step["env"]["FULL_VALIDATION_HA_DEV_SHA"] == "${{ inputs.ha_dev_sha }}"
 
 
 def test_existing_historical_matrix_supports_complete_dispatch_and_exact_checkout():

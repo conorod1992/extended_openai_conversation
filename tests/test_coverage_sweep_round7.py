@@ -1012,17 +1012,17 @@ def test_usage_recent_runs_filters_and_clamps_paging() -> None:
     assert result["has_more"] is False
 
 
-def test_usage_requests_for_run_filters_and_paginates(monkeypatch) -> None:
+def test_usage_requests_for_run_filters_and_paginates() -> None:
     from custom_components.extended_openai_conversation_responses import usage
 
-    monkeypatch.setattr(usage.dt_util, "utcnow", lambda: datetime(2026, 10, 2, tzinfo=UTC))
+    timestamp = datetime.now(UTC).isoformat()
     manager = usage.UsageManager.__new__(usage.UsageManager)
     manager.request_retention_days = manager.run_retention_days = 30
     manager.requests = [
         usage.UsageRequest(
             request_id="one",
             run_id="run",
-            timestamp="2026-10-01T00:00:00+00:00",
+            timestamp=timestamp,
             agent_subentry_id="agent",
             provider="openai",
             model="model",
@@ -1033,7 +1033,7 @@ def test_usage_requests_for_run_filters_and_paginates(monkeypatch) -> None:
         usage.UsageRequest(
             request_id="other",
             run_id="other-run",
-            timestamp="2026-10-01T00:00:00+00:00",
+            timestamp=timestamp,
             agent_subentry_id="agent",
             provider="openai",
             model="model",
