@@ -21,7 +21,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv, llm
 from homeassistant.helpers.template import Template
 
-from ..execution_outcomes import owns_execution_receipts
+from ..execution_outcomes import owns_read_only_execution_receipts
 from .base import Function
 
 _LOGGER = logging.getLogger(__name__)
@@ -330,7 +330,7 @@ class SqliteFunction(Function):
     def set_url_read_only(self, url: str) -> str:
         return _read_only_sqlite_uri(url)
 
-    @owns_execution_receipts
+    @owns_read_only_execution_receipts
     async def execute(
         self,
         hass: HomeAssistant,

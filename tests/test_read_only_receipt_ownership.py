@@ -86,6 +86,37 @@ async def test_template_retry_has_no_effect_receipt(hass):
         remember_unacknowledged_calls(entity, log, set())
 
 
+@pytest.mark.parametrize("backend", ["sqlite", "template"])
+async def test_standalone_read_failure_does_not_block_another_attempt(
+    hass, database, backend
+):
+    attempts = []
+
+    async def run(function, *args):
+        attempts.append(args)
+        return function(*args)
+
+    hass.async_add_executor_job.side_effect = run
+    function = SqliteFunction() if backend == "sqlite" else TemplateFunction()
+    config = function.validate_schema(
+        {
+            "type": "sqlite",
+            "db_url": str(database),
+            "query": "SELECT missing FROM states",
+        }
+        if backend == "sqlite"
+        else {"type": "template", "value_template": "{{ 1 / 0 }}"}
+    )
+    entity, log = SimpleNamespace(hass=hass), _chat_log(hass)
+    for call_id in ["first", "fresh"]:
+        with pytest.raises(HomeAssistantError) as error:
+            await dispatch(entity, log, function, config, name="read", call_id=call_id)
+        assert "not acknowledged" not in str(error.value)
+        remember_unacknowledged_calls(entity, log, set())
+    if backend == "sqlite":
+        assert len(attempts) == 2
+
+
 @pytest.mark.parametrize("base", [SqliteFunction, TemplateFunction])
 async def test_overridden_read_backend_keeps_conservative_protection(hass, base):
     effects = []
