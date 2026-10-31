@@ -223,7 +223,7 @@ def main() -> int:
         for workflow, inputs in workflows:
             if workflow == "enhanced-stress.yml":
                 inputs["campaign"] = "all-except-long-lifetime"
-    ha_dev_sha = resolve_ha_dev_sha()
+    ha_dev_sha = resolve_ha_dev_sha(os.environ.get("FULL_VALIDATION_HA_DEV_SHA", ""))
     print(
         f"Running {len(workflows)} test workflows ({MODE}) for {TARGET_SHA} "
         f"on isolated ref {REF_NAME}; HA dev={ha_dev_sha}; enhanced stress seed={STRESS_SEED}",
@@ -304,6 +304,7 @@ def main() -> int:
             "mode": MODE,
             "candidate_sha": TARGET_SHA,
             "ha_dev_sha": ha_dev_sha,
+            "stress_seed": STRESS_SEED,
             "validation_ref": REF_NAME,
             "run_id": RUN_ID,
             "run_attempt": RUN_ATTEMPT,

@@ -108,7 +108,7 @@ def test_full_cohort_dispatches_one_pin_to_every_dev_consumer(monkeypatch, tmp_p
     )
     monkeypatch.chdir(tmp_path)
     assert driver.main() == 0
-    driver.resolve_ha_dev_sha.assert_called_once_with()
+    driver.resolve_ha_dev_sha.assert_called_once_with("")
     assert dispatched.keys() >= HA_DEV_WORKFLOWS
     for name, original in TEST_WORKFLOWS:
         assert dispatched[name] == {
