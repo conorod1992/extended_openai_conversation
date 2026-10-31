@@ -657,3 +657,31 @@ async def test_frontend_mutation_effects_preserve_real_revisions_and_projections
         )
     finally:
         await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_frontend_usability_transactions_in_native_ha(real_ha_shell, hass):
+    """Use real validation, group dependencies, persisted retention and native UI."""
+    from custom_components.extended_openai_conversation_responses.usage import (
+        RequestUsage,
+        async_get_usage,
+    )
+
+    entry = real_ha_shell["entry"]
+    subentry = next(iter(entry.subentries.values()))
+    manager = await async_get_usage(hass, entry.entry_id, subentry.subentry_id)
+    async with manager.async_run():
+        await manager.async_record_request(
+            successful=True,
+            usage=RequestUsage(input_tokens=12, output_tokens=5, total_tokens=17),
+            provider="openai",
+            model="gpt-5-mini",
+            api_mode="responses",
+        )
+    await _run_playwright(
+        repo_root=Path(__file__).resolve().parent.parent,
+        spec="tests_browser/real-ha-usability.spec.mjs",
+        config="playwright.real-ha-shell.config.mjs",
+        env=real_ha_shell["env"],
+        failure_label="Native HA usability transactions failed",
+    )

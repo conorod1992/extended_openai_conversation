@@ -40,6 +40,18 @@ export function setText(node, text) {
   if (node && node.textContent !== text) node.textContent = text;
 }
 
+// Native dialog focus restoration may target a card that reconciliation just
+// replaced. Repair only missing/hidden focus, never a newer user destination.
+export function restoreCollectionFocus(root, selector, fallback) {
+  if (root.querySelector("dialog[open]")) return;
+  const active = root.activeElement;
+  const visible = node => node?.isConnected && node.getClientRects().length && !node.closest("[hidden],dialog:not([open])");
+  if (visible(active)) return;
+  const target = root.querySelector(selector);
+  const alternative = root.querySelector(fallback);
+  (visible(target) ? target : visible(alternative) ? alternative : null)?.focus({preventScroll:true});
+}
+
 export function setAttribute(node, name, value) {
   if (node.getAttribute(name) !== String(value)) node.setAttribute(name, value);
 }

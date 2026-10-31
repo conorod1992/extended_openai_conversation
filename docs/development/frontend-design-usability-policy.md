@@ -97,6 +97,8 @@ For example:
 - unknown must not appear as off;
 - stale state must not appear authoritative.
 
+Search results, counts, empty messages, and dependent summaries must describe the completed query and available data they belong to. Previous results may remain visible during loading or failure when clearly identified as previous or potentially stale; they must not be relabelled as results of an unsuccessful request.
+
 ### 1.7 Performance is part of usability
 
 Frontend speed and responsiveness are product qualities, not merely implementation details.
@@ -710,6 +712,8 @@ Validation should:
 - avoid relying only on colour;
 - preserve the user's entered value where safe.
 
+When a save includes fields outside the current view or inside collapsed content, retain a concise error summary that leads to each affected field. Reuse the existing setting destinations, section expansion, and focus behaviour. Associate inline errors with their controls so they remain understandable with assistive technology.
+
 ### 9.5 Save semantics
 
 A user should be able to tell whether:
@@ -719,6 +723,8 @@ A user should be able to tell whether:
 - changes remain unsaved.
 
 Save behaviour should be consistent across similar sections.
+
+When one draft spans several sections, explain the scope of Save and Discard where ambiguity matters. Consequential destructive changes retained in that draft must still be made clear at the actual commit action, even when the user saves from another section. Cancelling a required confirmation must preserve the draft.
 
 ### 9.6 Dirty state
 
@@ -930,6 +936,8 @@ Status changes that matter should use appropriate live-region or equivalent acce
 
 Clickable cards or custom interactive regions must behave like genuine accessible controls.
 
+When an update replaces or removes a focused control or a modal's opener, retain focus on the equivalent control or move it to a meaningful surviving neighbour. Validation recovery should reveal and focus the affected field. Do not override a newer intentional focus change or move focus merely because background information refreshed.
+
 Native HA controls are preferred partly because they already provide established accessibility behaviour.
 
 ## 16. RESPONSIVE DESIGN
@@ -1073,6 +1081,15 @@ If a new visual or interaction pattern is introduced, there should be a clear re
 ## 22. CURRENT CANONICAL PATTERNS
 
 The following existing EOAI patterns should be treated as useful references.
+
+Start with the current shared implementation, rather than copying an entire feature:
+
+- [management renderer and shell](../../custom_components/extended_openai_conversation_responses/frontend/management-renderer.js);
+- [settings field builders](../../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-base.js) and [setting destinations](../../custom_components/extended_openai_conversation_responses/frontend/management-config-destinations.js);
+- [shared configuration Save](../../custom_components/extended_openai_conversation_responses/frontend/management-actions.js), [draft scopes](../../custom_components/extended_openai_conversation_responses/frontend/management-page-drafts.js), and [acknowledgement handling](../../custom_components/extended_openai_conversation_responses/frontend/configuration-acknowledgement.js);
+- [keyed collection reconciliation](../../custom_components/extended_openai_conversation_responses/frontend/keyed-collection.js).
+
+Configuration is distributed across several routes. These references identify shared responsibilities; they are not frozen templates or a requirement to restructure specialised workflows.
 
 ### 22.1 Settings pages
 

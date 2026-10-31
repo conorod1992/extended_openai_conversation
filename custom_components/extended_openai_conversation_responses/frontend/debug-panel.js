@@ -88,6 +88,7 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
     try {
       const result = await this._call("runs", {}, agent);
       if (!current()) return;
+      if (typeof result?.enabled !== "boolean") throw new Error("Debug capture status is unavailable. Refresh to retry.");
       this._status = result;
       this._runs = result.runs || [];
       this._error = "";
@@ -103,7 +104,11 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
     const revision = this._revision;
     if (!agent) return;
     await this._mutationTail;
-    if (agent === this._agent && revision === this._revision) await this._fetchRuns(agent, revision);
+    if (agent === this._agent && revision === this._revision) {
+      this._loading = true;
+      this._render();
+      await this._fetchRuns(agent, revision);
+    }
   }
 
   async _selectAgent(subentryId) {
@@ -142,6 +147,7 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
   }
 
   async _configure(extra) {
+    if (!this._status || this._loading || this._error) return;
     await this._mutate("configure", extra);
   }
 
@@ -327,7 +333,11 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
     if (!this.shadowRoot) return;
     this._cancelClear?.();
     const embedded = this.hasAttribute("embedded");
-    const status = this._status || {enabled:false,limit:10,count:0,allowed_limits:[5,10,25,50]};
+    const status = this._status || {};
+    const known = typeof status.enabled === "boolean";
+    const unavailable = !this._agent || !known || this._loading || Boolean(this._error);
+    const statusText = !known ? (this._loading ? "Loading capture status…" : "Capture status unavailable. Refresh to retry.")
+      : `${this._loading ? "Refreshing; last known state: " : this._error ? "Last known state (refresh failed): " : ""}${status.enabled ? `Capturing requests · ${this._number(status.count)} of ${this._number(status.limit)} slots used.` : "Capture is off. Normal usage history remains content-free."}`;
     const agentOptions = this._agents.map((agent) => `<option value="${this._e(agent.subentry_id)}" ${agent.subentry_id === this._agent?.subentry_id ? "selected" : ""}>${this._e(agent.title)}</option>`).join("");
     const rows = this._runs.map((run) => `<tr>
       <td>${this._e(this._formatDate(run.completed_at || run.started_at))}</td>
@@ -343,26 +353,26 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
     </tr>`).join("");
 
     this.shadowRoot.innerHTML = `${this._styles()}<main>
-      <div class="debug-intro"><section class="page-intro"><h1>Request debugging</h1><p>Inspect exactly what Extended OpenAI assembled and how long each provider request took.</p></section><button id="refresh" class="secondary">Refresh</button></div>
+      <div class="debug-intro"><section class="page-intro"><h1>Request debugging</h1><p>Inspect exactly what Extended OpenAI assembled and how long each provider request took.</p></section><button id="refresh" class="secondary" ${this._loading ? "disabled" : ""}>Refresh</button></div>
       <section class="card warning"><strong>Debug captures can contain private data</strong><p>When enabled, Extended OpenAI keeps complete recent request material in memory, including the effective system prompt, conversation input, entity states, retrieved memories, tool schemas, provider events and tool results carried into later requests. Captures are bounded and disappear when Home Assistant restarts. Do not share a copied log without reviewing it first.</p></section>
-      ${this._error ? `<div class="error-box">${this._e(this._error)}</div>` : ""}
+      ${this._error ? `<div class="error-box" role="alert">${this._e(this._error)}</div>` : ""}
       <section class="card"><div class="controls">
         <label ${embedded ? "hidden" : ""}>Conversation agent<select id="agent" ${this._loading ? "disabled" : ""}>${agentOptions}</select></label>
-        <label>Capture limit<select id="limit" ${!this._agent ? "disabled" : ""}>${(status.allowed_limits || [5,10,25,50]).map((value) => `<option value="${value}" ${Number(status.limit) === Number(value) ? "selected" : ""}>${value} runs</option>`).join("")}</select></label>
-        <label>Request debugging<span class="switch-row"><input id="enabled" type="checkbox" ${status.enabled ? "checked" : ""} ${!this._agent ? "disabled" : ""}><span>${status.enabled ? "Enabled" : "Disabled"}</span></span></label>
-        <button id="clear" class="danger" ${!this._agent || !status.count ? "disabled" : ""}>Clear captures</button>
-      </div><p class="status">${status.enabled ? `Capturing the next requests · ${this._number(status.count)} of ${this._number(status.limit)} slots currently used.` : "Capture is off. Normal usage history remains content-free."}</p></section>
-      <section class="card"><div class="card-heading"><div><h2>Recent debug runs</h2><p>${embedded ? "Times are measured locally. First text is relative to provider request dispatch. Session handling describes how this run resolved conversation history. Prompt-cache hits can be shared across separate sessions and do not imply shared conversation history." : "Times are measured locally. First text is relative to provider request dispatch. Continuity shows whether the request started a new conversation, continued the incoming Home Assistant conversation, or restored integration-managed continuity."}</p></div></div><div class="table-wrap" tabindex="0"><table><thead><tr><th>Completed</th><th>Run</th><th>Input</th><th>Cached</th><th>Requests</th><th>First text</th><th>Conversation ID</th><th>${embedded ? "Session handling" : "Continuity"}</th><th>Result</th><th>Debug log</th></tr></thead><tbody>${rows}</tbody></table>${rows ? "" : `<div class="empty">${status.enabled ? "No debug runs captured yet." : "Enable request debugging to capture future runs."}</div>`}</div></section>
+        <label>Capture limit<select id="limit" ${unavailable ? "disabled" : ""}>${known ? "" : '<option value="">Unknown</option>'}${(status.allowed_limits || [5,10,25,50]).map((value) => `<option value="${value}" ${Number(status.limit) === Number(value) ? "selected" : ""}>${value} runs</option>`).join("")}</select></label>
+        <label>Request debugging<span class="switch-row"><input id="enabled" type="checkbox" ${status.enabled ? "checked" : ""} ${unavailable ? "disabled" : ""}><span>${!known ? "Unknown" : status.enabled ? "Enabled" : "Disabled"}</span></span></label>
+        <button id="clear" class="danger" ${unavailable || !status.count ? "disabled" : ""}>Clear captures</button>
+      </div><p class="status">${this._e(statusText)}</p></section>
+      <section class="card"><div class="card-heading"><div><h2>Recent debug runs</h2><p>${embedded ? "Times are measured locally. First text is relative to provider request dispatch. Session handling describes how this run resolved conversation history. Prompt-cache hits can be shared across separate sessions and do not imply shared conversation history." : "Times are measured locally. First text is relative to provider request dispatch. Continuity shows whether the request started a new conversation, continued the incoming Home Assistant conversation, or restored integration-managed continuity."}</p></div></div><div class="table-wrap" tabindex="0"><table><thead><tr><th>Completed</th><th>Run</th><th>Input</th><th>Cached</th><th>Requests</th><th>First text</th><th>Conversation ID</th><th>${embedded ? "Session handling" : "Continuity"}</th><th>Result</th><th>Debug log</th></tr></thead><tbody>${rows}</tbody></table>${rows ? "" : `<div class="empty">${!known ? this._e(statusText) : this._error ? "Recent captures could not be refreshed." : status.enabled ? "No debug runs captured yet." : "Enable request debugging to capture future runs."}</div>`}</div></section>
     </main>
-    <dialog id="debug-dialog"><div class="dialog-head"><h2 id="debug-dialog-title">Debug run</h2><button id="close-debug" class="secondary" aria-label="Close">Close</button></div><div class="dialog-body"><pre id="debug-json"></pre></div><div class="dialog-foot">${embedded ? `<span id="debug-provider-status" class="status"></span><button id="debug-provider-previous" class="secondary" disabled>Previous requests</button><button id="debug-provider-next" class="secondary" disabled>Next requests</button>` : ""}<button id="copy-debug-log" class="primary" disabled>${embedded ? "Copy visible page" : "Copy entire debug log"}</button></div></dialog>
+    <dialog id="debug-dialog" aria-labelledby="debug-dialog-title"><div class="dialog-head"><h2 id="debug-dialog-title">Debug run</h2><button id="close-debug" class="secondary" aria-label="Close">Close</button></div><div class="dialog-body"><pre id="debug-json"></pre></div><div class="dialog-foot">${embedded ? `<span id="debug-provider-status" class="status"></span><button id="debug-provider-previous" class="secondary" disabled>Previous requests</button><button id="debug-provider-next" class="secondary" disabled>Next requests</button>` : ""}<button id="copy-debug-log" class="primary" disabled>${embedded ? "Copy visible page" : "Copy entire debug log"}</button></div></dialog>
     <dialog id="debug-confirm-dialog" class="confirm-dialog" aria-labelledby="debug-confirm-title"><div class="dialog-head"><h2 id="debug-confirm-title">Clear debug captures?</h2></div><div class="dialog-body"><p>This removes all captured debug runs for the selected assistant. This cannot be undone.</p></div><div class="dialog-foot"><button id="debug-confirm-cancel" class="secondary">Cancel</button><button id="debug-confirm-accept" class="danger">Clear captures</button></div></dialog>
-    <div id="toast" class="toast"></div>`;
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>`;
 
     this.shadowRoot.querySelector("#agent")?.addEventListener("change", (event) => this._selectAgent(event.target.value));
     this.shadowRoot.querySelector("#enabled")?.addEventListener("change", (event) => this._configure({enabled:event.target.checked}));
     this.shadowRoot.querySelector("#limit")?.addEventListener("change", (event) => this._configure({limit:Number(event.target.value)}));
     this.shadowRoot.querySelector("#clear")?.addEventListener("click", () => this._clear());
-    this.shadowRoot.querySelector("#refresh")?.addEventListener("click", async () => { try { await this._loadRuns(); this._render(); } catch (err) { this._toast(err.message || String(err), true); } });
+    this.shadowRoot.querySelector("#refresh")?.addEventListener("click", async () => { try { if (this._agent) await this._loadRuns(); else await this._loadAgents(); } catch (err) { this._toast(err.message || String(err), true); } });
     this.shadowRoot.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => this._viewRun(button.dataset.view)));
     this.shadowRoot.querySelectorAll("[data-copy]").forEach((button) => button.addEventListener("click", () => this._copyRun(button.dataset.copy)));
     this.shadowRoot.querySelector("#close-debug")?.addEventListener("click", () => this.shadowRoot.querySelector("#debug-dialog")?.close());

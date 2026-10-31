@@ -37,7 +37,7 @@ export function renderMemorySettings(panel) {
         <div class="config-stack">
           <div class="setting-group"><div class="subheading"><h2>Personal memory</h2><p>Control long-term memories and automatically expiring short-term details.</p></div>
             ${select(panel, "memory_mode", "Long-term memory", config.memory_mode, "Choose whether long-term memories are off, saved only when explicitly requested, or may also be created automatically.")}
-            ${select(panel, "temporary_memory", "Short-term memory", config.temporary_memory, "Choose how readily useful temporary details are remembered until they expire automatically.")}
+            ${select(panel, "temporary_memory", "Short-term memory", config.temporary_memory, "Balanced remembers clearly useful temporary details. Eager more readily remembers near-term context. Both expire details automatically.")}
           </div>
           <div class="setting-group"><div class="subheading"><h2>Matching memories</h2><p>Choose which memories are included automatically and how they are matched.</p></div>
             ${numberField(panel, "memory_auto_retrieve_limit", "Automatically include memories", config.memory_auto_retrieve_limit, "Select up to this many relevant memories when a new conversation starts. Set to 0 to use long-term memory only on demand.", 0, 10)}

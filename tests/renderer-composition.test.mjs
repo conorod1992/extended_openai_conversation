@@ -95,7 +95,7 @@ try {
     const html = renderTools(owner);
     assert.equal((html.match(/class="group-enabled"/g)||[]).length, 1);
     assert.equal(html.includes("group-disabled-badge"), !enabled);
-    assert.equal(/class="secondary edit-group"[^>]* disabled/.test(html), !enabled);
+    assert.equal(/class="secondary edit-group"[^>]* disabled/.test(html), false);
     assert.match(html, /aria-label="Edit Function Group &lt;Group&gt;"/);
     assert.match(html, /class="function-group-assignment"/);
     assert.match(html, /0 enabled · 1 disabled/);

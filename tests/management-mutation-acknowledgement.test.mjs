@@ -17,7 +17,7 @@ const {applyConfigurationImport, bindSavedConfigurationActions} = await import(n
 const {updateProviderApiKey} = await import(new URL("management-provider-credentials.js", frontend));
 const {ExtendedOpenAIDebugPanel:DebugPanel} = await import(new URL("debug-panel.js", frontend));
 const {bindBroadcast} = await import(new URL("overview-broadcast.js", frontend));
-await Promise.all([routeAssetPromise("data-memory/knowledge"), routeAssetPromise("data-memory/memories")]);
+await Promise.all([routeAssetPromise("data-memory/knowledge"), routeAssetPromise("data-memory/memories"), routeAssetPromise("capabilities/guest-mode")]);
 
 function host(kind = "knowledge", PanelType = Panel) {
   const panel = new PanelType();
@@ -230,6 +230,11 @@ for (const operation of ["_updateGuestMode", "_disableGuestMode", "_saveReassign
   test(`${operation}: a confirmed effect cannot become a failed mutation during presentation`, async () => {
     const {panel, control} = host();
     panel._viewKey = () => operation === "_deleteSession" ? "data-memory/conversations" : "capabilities/guest-mode";
+    if (operation === "_updateGuestMode") {
+      control("#guest-start");
+      control("#guest-end");
+      control("#guest-indefinite").checked = true;
+    }
     control("#reassign-scope").value = "user:test-user";
     let writes = 0;
     panel._hass.callWS = async () => {
@@ -319,6 +324,7 @@ for (const shape of ["nested", "bare"]) {
 
   test(`debugging: ${shape} HA disconnect cannot certify an applied configuration`, async () => {
     const panel = new DebugPanel();
+    panel._status = {enabled:true, limit:10, count:0};
     panel._agent = {entry_id:"entry-1", subentry_id:"agent-1"};
     let enabled = true, writes = 0;
     panel._hass = {callWS:async message => { writes++; enabled = message.enabled; throw lost(); }};

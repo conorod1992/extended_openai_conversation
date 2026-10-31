@@ -216,3 +216,26 @@ function historyPanel() {
   assert.equal(button("Previous turns").disabled, true);
   assert.equal(button("Start of conversation"), undefined);
 }
+
+// A secondary active-conversation read replaces the container, not the retained
+// session snapshot. The user's pending search must still settle into that view.
+{
+  const panel = historyPanel();
+  const pending = loadConversationPage(panel, 0);
+  panel._contentData = {...panel._contentData, active:{active:[]}};
+  panel.calls[0].request.resolve({results:[], offset:0, returned:0, total:0, has_more:false});
+  await pending;
+  assert.equal(panel._eocHistoryResult.mode, "search");
+  assert.equal(panel._eocHistoryResult.sessions, panel._contentData.sessions);
+  panel._contentData = {...panel._contentData, loading:{active:false}};
+  assert.equal(panel._eocHistoryResult.sessions, panel._contentData.sessions);
+}
+{
+  const panel = historyPanel();
+  const pending = loadConversationPage(panel, 0);
+  panel._eocAuthenticationGeneration = 2;
+  panel.calls[0].request.resolve({results:[{session_id:"retired"}], total:1});
+  await pending;
+  assert.equal(panel._eocHistoryResult, undefined);
+  assert.deepEqual(panel._contentData.sessions, {});
+}

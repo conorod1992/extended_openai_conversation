@@ -1,3 +1,4 @@
+import {restoreCollectionFocus} from "./keyed-collection.js";
 import {functionUncertainty, requireFunctionAcknowledgement, markFunctionUncertainty, settleFunctionRead} from "./function-acknowledgement.js";
 import {clearRequestRuleUncertainty, requestRuleUncertainty, requireRequestRuleAcknowledgement, markUncertainRuleMutation} from "./request-rule-acknowledgement.js";
 import {mutationEffects} from "./management-mutation-effects.js";
@@ -19,7 +20,7 @@ import {
 import {readSectionCache, writeSectionCache, pruneCacheTimes, SCOPE_CACHE_TTL_MS, CLEAN_CONFIG_TTL_MS} from "./management-cache.js";
 import {bindPanelDialogs, knowledgeSourceAvailabilityControl, updateDialogs, setDialogBaseline} from "./management-dialogs.js";
 import {ASSISTANT_INTRO_MARKUP, renderManagement, showPendingDestination, reconcileScopePicker, reconcileHistoryConfiguration} from "./management-renderer.js";
-import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, syncAgentPicker} from "./management-actions.js";
+import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, syncAgentPicker, refreshConfigurationErrors} from "./management-actions.js";
 import {callMutation, captureConfigurationOwner, configurationSubmissionIsCurrent, configurationReadOvertookSubmission, mergeConfigurationRead, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
 import {captureCatalogLoad, catalogFailureIsCurrent} from "./management-catalog-ownership.js";
 import {capturePageRead, acceptPageRead} from "./page-save-acknowledgement.js";
@@ -1902,6 +1903,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       applyRequestRuleSearch(this);
     }
     if (ownsPageDraft) refreshPageSaveBar(this);
+    refreshConfigurationErrors(this);
 
     // Keep the former decorator ordering explicit without mutating class methods at runtime.
     this._enhanceSubsectionNavigation();
@@ -2169,6 +2171,11 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const root = this.shadowRoot;
       const agentId = this._agentId;
       const submission = captureConfigurationOwner(this);
+      const intervalSubmission = getRouteFeature("capabilities/guest-mode")?.captureGuestInterval(this);
+      if (!intervalSubmission) {
+        this._toast("Reload Guest Mode before changing its interval.", true);
+        return;
+      }
       const indefinite = root.querySelector("#guest-indefinite")?.checked ?? true;
       const start = now ? new Date().toISOString() : root.querySelector("#guest-start")?.value;
       const endInput = root.querySelector("#guest-end");
@@ -2185,7 +2192,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
           indefinite,
         });
         requireMutationAcknowledgement(result?.status && typeof result.status === "object", "the Guest Mode change");
-        await presentAcknowledgedMutation(this, submission, "Guest Mode updated", () => this._refreshGuestModeMutation(agentId, result), result);
+        await presentAcknowledgedMutation(this, submission, "Guest Mode updated", () => {
+          getRouteFeature("capabilities/guest-mode")?.acknowledgeGuestInterval(this, intervalSubmission, result.status);
+          return this._refreshGuestModeMutation(agentId, result);
+        }, result);
       } catch (err) {
         this._toast(`Unable to update Guest Mode: ${err.message || String(err)}`, true);
       }
@@ -2295,6 +2305,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (view === "usage-maintenance/usage") q("#clear-details")?.addEventListener("click", (event) => this._clearUsageDetails(event.currentTarget));
     q("#test-agent")?.addEventListener("click", () => this._testAgent());
     if (view === "capabilities/guest-mode") {
+      getRouteFeature("capabilities/guest-mode")?.bindGuestInterval(this);
       q("#guest-indefinite")?.addEventListener("change", (event) => { const end = q("#guest-end"); if (end) end.disabled = event.target.checked; });
       q("#guest-update")?.addEventListener("click", () => this._updateGuestMode(false));
       q("#guest-now")?.addEventListener("click", () => this._updateGuestMode(true));
@@ -2584,6 +2595,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       return await presentAcknowledgedMutation(this, submission, editing ? "Knowledge source updated" : "Knowledge source saved", async () => {
         if (ownsList && !getRouteFeature("data-memory/knowledge")?.applyKnowledgeMutation(this, response)) throw new Error("The saved source could not be displayed.");
         this._setSaving(button, false);
+        const returnFocus = Boolean(dialog.contains?.(this.shadowRoot.activeElement));
         if (same(this._knowledgeValues(), values)) dialog.close();
         else {
           // Acknowledge this submission without discarding text authored while
@@ -2600,6 +2612,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         const agent = this._selectedAgent();
         if (ownsList && agent && Number.isFinite(response?.feature_status?.source_count)) agent.knowledge_source_count = response.feature_status.source_count;
         this._render();
+        if (returnFocus && !dialog.open) restoreCollectionFocus(this.shadowRoot, `.source-edit-button[data-id="${CSS.escape(response.source.source_id)}"]`, "#add-source");
         if (!this.isConnected || !this._ownsRetainedMutation(owner)) this._revalidateAcknowledgedCollection(owner);
       }, response);
     } catch (err) {
@@ -2672,6 +2685,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         if (!current()) return;
         this._setSaving(button, false);
         unlock();
+        const returnFocus = Boolean(dialog.contains?.(this.shadowRoot.activeElement));
         if (same(this._memoryValues(), values)) dialog.close();
         else {
           this._editingMemory = {...response.memory};
@@ -2689,6 +2703,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         if (ownsList) this._patchScopeCount(owner.scope, "memory_count", 0);
         if (ownsList && !temporary && response.status === "created") this._selectedAgent().memory_count = Number(this._selectedAgent().memory_count || 0) + 1;
         this._render();
+        if (returnFocus && !dialog.open) restoreCollectionFocus(this.shadowRoot, `.memory-edit-button[data-id="${CSS.escape(response.memory.memory_id)}"]`, "#add-memory");
         if (!this.isConnected || !this._ownsRetainedMutation(owner)) this._revalidateAcknowledgedCollection(owner);
       }, response);
     } catch (err) {

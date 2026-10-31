@@ -81,6 +81,7 @@ export function discardConfigurationDraft(panel) {
   if (panel._configurationSaving) return false;
   const baseline = configurationDraftBaseline(panel);
   if (!baseline?.config) return false;
+  panel._eocConfigurationErrors = null;
   panel._draft = clone(baseline.config);
   panel._draftTitle = baseline.title;
   const replacement = panel._eocRestoredConfiguration;

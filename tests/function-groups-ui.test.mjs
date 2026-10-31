@@ -176,7 +176,7 @@ assert.match(editorSource, /id="tool-save">Save<\/button>/);
 assert.match(editorSource, /id="group-save">Save<\/button>/);
 assert.match(editorSource, /class=\"group-enabled\"/, "groups should expose an independent enabled switch");
 const disabledMarkup = renderTools({_e:String, _empty:String, _draft:{...config, function_groups:config.function_groups.map((group) => ({...group, enabled:false}))}});
-assert.match(disabledMarkup, /class="secondary edit-group"[^>]*disabled[^>]*Enable this Function Group before editing it/, "disabled groups must render a disabled edit button immediately");
+assert.doesNotMatch(disabledMarkup, /class="secondary edit-group"[^>]*disabled/, "disabled groups remain safely editable without enabling them");
 assert.match(editorSource, /member Function Tool settings were kept/, "group state changes should explain that member states are retained");
 for (const action of ["save","set_enabled","delete","save_group","delete_group"]) {
   assert.match(editorSource,new RegExp(`panel\\._call\\(\"tools\",\\s*\"${action}\"`));
