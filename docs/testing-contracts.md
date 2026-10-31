@@ -34,6 +34,23 @@ The nightly `memory-knowledge` campaign adds 300 operations (1,200 at heavy inte
 
 ## Provider boundary and test sensitivity
 
+`tests/test_runtime_readiness.py` asserts that an accepted save reaches the actual
+initial provider request. It covers provider/API combinations, the Azure Chat
+tool boundary, Conditional finalization, Group loading, generated and provider-owned
+tools, YAML schema values, quarantined legacy definitions, availability mutations,
+imports, duplication and restoration. A genuine HA Script/service probe preserves
+typed YAML values in backend payloads while provider-facing schemas require JSON.
+
+`request.validate_runtime_readiness` is the pure mutation-boundary contract layered
+on existing configuration preparation. It reuses request capability resolution,
+Function Group assembly, integration tool generation, finalizer insertion and the
+runtime tool-count guard. It checks the guaranteed initial request with no loaded
+Groups or request-specific discovery, installed Skills, retained-data scopes or
+Knowledge catalogue. Those dynamic capabilities remain subject to runtime checks.
+Repair-owned definitions use the same usable projection as runtime; their raw
+payloads remain available for repair. New restores validate before journal creation;
+replaying an existing recovery journal retains its original recovery contract.
+
 `tests_real_ha/test_provider_boundary_contracts.py` keeps HA dispatch and the real OpenAI SDK. A strict HTTP fixture checks serialized Chat Completions and Responses histories against an independent call/result oracle. It rejects incomplete, duplicate and orphan exchanges and unsupported Function schemas, and requires attachment bytes in every historical request. Violations are recorded separately so an integration error handler cannot hide a failed protocol assertion.
 
 The journeys combine corrected pre-dispatch arguments with a one-execution budget, an executed action followed by a lost continuation and equivalent replay, text-only production plus diagnostic requests, and historical image/PDF follow-ups. The attachment journey uses Core's AI Task entity interface with a retained ChatSession: the public AI Task action creates a new session and does not itself expose a conversation ID parameter. Text-only capability expectations come from the fixture, not EOAI's catalogue.

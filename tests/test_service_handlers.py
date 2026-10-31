@@ -996,7 +996,7 @@ async def test_function_enable_action_persists_only_runtime_function_defaults(
     subentry = SimpleNamespace(
         subentry_id="agent", subentry_type="conversation", data={}
     )
-    entry = SimpleNamespace(domain=DOMAIN, subentries={"agent": subentry})
+    entry = SimpleNamespace(domain=DOMAIN, subentries={"agent": subentry}, data={})
     hass.config_entries.async_get_entry.return_value = entry
     monkeypatch.setattr(
         services.er,

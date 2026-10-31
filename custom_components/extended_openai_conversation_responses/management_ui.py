@@ -311,28 +311,8 @@ def _validated_model_request(
     current: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Use the live resolver only at a configuration mutation boundary."""
-    relevant = {
-        "chat_model",
-        "azure_model",
-        "max_function_calls_per_conversation",
-        "continue_conversation",
-        "api_mode",
-        "reasoning_effort",
-        "max_tokens",
-        "functions",
-        "function_groups",
-        "memory_enabled",
-        "knowledge_enabled",
-        "archive_enabled",
-        "guest_mode_enabled",
-        "web_search",
-    }
-    if current is not None:
-        defaults = agent_config_defaults()
-        if all(
-            config.get(key) == current.get(key, defaults.get(key)) for key in relevant
-        ):
-            return config
+    # Validate the candidate itself, including generated capabilities. A manual
+    # list of supposedly relevant fields can miss a new runtime constraint.
     from .request_rules import validate_routed_request_options
 
     try:
@@ -1230,6 +1210,7 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
         updates[CONF_GUEST_POLICY_VERSION] = GUEST_POLICY_VERSION
         normalized, snapshot = merge_unchanged_function_configuration(subentry, updates)
         configured_tools = snapshot[CONF_FUNCTION_TOOLS]
+        _validated_model_request(snapshot, entry.data, subentry.data)
         policy_config = guest_policy_editor_snapshot(hass, normalized, configured_tools)
         update_live_subentry(hass, entry, subentry, data=normalized)
         revision = saved_agent_config_revision(subentry, normalized, subentry.title)
@@ -1757,6 +1738,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             title=title,
             unique_id=None,
         )
+        _validated_model_request(duplicate.data, entry.data)
         hass.config_entries.async_add_subentry(entry, duplicate)
         return {
             "status": "created",

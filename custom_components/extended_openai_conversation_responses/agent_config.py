@@ -176,6 +176,7 @@ from .const import (
 )
 from .function_execution import (
     validate_function_schema,
+    validate_provider_spec,
     validate_strict_function_schema,
 )
 from .function_tool_policy import (
@@ -590,6 +591,11 @@ def validate_function_tools(value: Any) -> list[dict[str, Any]]:
         parameters = spec.get("parameters", {})
         if not isinstance(parameters, dict):
             raise AgentConfigError(f"{field}.spec.parameters", "must be an object")
+        try:
+            validate_provider_spec(spec, f"{field}.spec")
+        except HomeAssistantError as err:
+            message = str(err).removeprefix("Function input schema is invalid: ")
+            raise AgentConfigError(f"{field}.spec", message) from err
         try:
             validate_function_schema(parameters)
             if strict:
