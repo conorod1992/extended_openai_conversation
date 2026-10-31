@@ -8,7 +8,7 @@ For an introduction, start with [Custom functions](index.md).
 
 Native functions are implemented by the integration itself.
 
-Built-in native capabilities include service execution, automation creation, and entity-history retrieval. The exact default Functions configuration is managed by the integration and can be inspected from the agent options.
+Built-in native capabilities include service execution, automation creation, and entity-history retrieval. Inspect the current presets and configured tools in **Extended OpenAI → Capabilities → Functions**.
 
 A native implementation names the integration function to execute:
 
@@ -23,6 +23,8 @@ Use native functions when the integration already provides the operation you nee
 ## `script`
 
 A script function executes a Home Assistant action sequence and can interpolate model-provided arguments. Its service calls, including inline nested sequences, check the authenticated caller's CONTROL permission and EOAI entity exposure before dispatch. Home Assistant service response variables remain available.
+
+Device actions are rejected because they can bypass those service checks. Use a service action with an entity, device, or area target instead. Home Assistant script entities called by a Function Tool retain their own behavior and responsibilities; review their contents as part of granting the tool access.
 
 Script Functions use independent runners for each invocation. The `mode`, `max`
 and `max_exceeded` controls are rejected because they require a shared runner.
@@ -153,8 +155,8 @@ Conceptually:
 
 ```yaml
 - spec:
-    name: get_last_state_change
-    description: Get the most recent state change for an exposed entity.
+    name: get_last_recorded_update
+    description: Get the most recent stored update for an exposed entity.
     parameters:
       type: object
       properties:
@@ -165,19 +167,18 @@ Conceptually:
   function:
     type: sqlite
     query: >-
-      {%- if is_exposed(entity_id) -%}
-        SELECT datetime(s.last_updated_ts, 'unixepoch', 'localtime') AS last_updated
-        FROM states s
-        INNER JOIN states_meta sm ON s.metadata_id = sm.metadata_id
-        WHERE sm.entity_id = '{{ entity_id }}'
-        ORDER BY s.last_updated_ts DESC
-        LIMIT 1
-      {%- else -%}
-        {{ raise('entity_id should be exposed.') }}
-      {%- endif -%}
+      SELECT datetime(s.last_updated_ts, 'unixepoch', 'localtime') AS last_updated
+      FROM states s
+      INNER JOIN states_meta sm ON s.metadata_id = sm.metadata_id
+      WHERE sm.entity_id = :entity_id
+      ORDER BY s.last_updated_ts DESC
+      LIMIT 1
+    parameters:
+      entity_id: "{{ entity_id if is_exposed(entity_id) else raise('Entity must be exposed') }}"
+    string_parameters: [entity_id]
 ```
 
-The exact Recorder schema can change between Home Assistant versions, so database queries should be tested against your installation.
+The value is bound separately from SQL rather than inserted into the query text. The exact Recorder schema can change between Home Assistant versions, so database queries should be tested against your installation. This example reads the most recent stored update, which is not necessarily the last time the state value changed.
 
 ### Model-generated SQL
 
@@ -189,10 +190,12 @@ Use generated SQL only when you accept that trade-off. For ordinary history ques
 
 ## `delay`
 
-`delay` is a reserved parameter that can defer execution.
+An object-shaped `delay` parameter with numeric `hours`, `minutes`, or `seconds` can defer execution. A parameter named `delay` with another schema remains an ordinary argument.
 
 A function schema can expose hours, minutes, and seconds as non-negative integers. The integration can then execute the function after the requested delay.
 
 For normal reminders or time-based automation, consider whether a Home Assistant automation, timer, calendar event, or dedicated reminder system is a better fit before relying on delayed tool execution.
+
+See [Delayed Function Tools](../features/delayed-function-tools.md) for a schema fragment and persistence limits.
 
 For file permissions and safe configuration, see [File Function Tools](file-tools.md). Bash execution requires an explicit unsafe-shell opt-in; see [Bash Function Tool](bash.md). For query limits and privacy considerations, see [SQLite Function Tool](sqlite.md).

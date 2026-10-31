@@ -34,6 +34,7 @@ You do **not** need to configure all of these features. For most users, the best
 - [Get an OpenAI API key](getting-started/api-key.md)
 - [First setup](getting-started/setup.md)
 - [Configuration](configuration.md)
+- [7.0.0 release notes and upgrade considerations](release-notes.md)
 - [Troubleshooting](troubleshooting.md)
 
 ## Find the right guide
@@ -45,13 +46,15 @@ You do **not** need to configure all of these features. For most users, the best
 - [Request Rules](features/request-rules.md), [Function Groups](features/function-groups.md), [delayed Function Tools](features/delayed-function-tools.md), and [custom functions](functions/index.md)
 - [Guest Mode](features/guest-mode.md), [model data](features/model-data.md), [usage statistics](features/usage-statistics.md), [request debugging](features/request-debugging.md), and [Backup & Restore](features/backup-restore.md)
 
-The left-hand documentation navigation is organised by the kind of task you are trying to accomplish: Assistant behaviour, Voice & Speech, Home Assistant access, Automation & Tools, Memory & Data, Usage & Maintenance, Functions, Skills, and Help & Reference.
+The documentation navigation groups getting started, configuration, feature guides, Function Tools, Home Assistant actions, Skills, reference material, and help. The in-app Guide provides shorter explanations with links to the relevant management pages.
 
 ## Permissions and privacy
 
 Home Assistant Assist exposure determines which normal entities are available to the assistant, but it does not grant control by itself. The Home Assistant user making the request must also have the required permission, and Extended OpenAI features such as Guest Mode can restrict access further.
 
 When model processing is needed, relevant request text, prompts/context, tool definitions and retrieved memory or Knowledge content may be sent to the provider you configure. Provider-side retention and processing are governed by that provider's policies.
+
+Optional Hybrid semantic memory retrieval also sends eligible memory text and search queries to the configured embedding provider to build or refresh its local search cache. Choose lexical retrieval if you do not want that additional embedding request path.
 
 Memories, Knowledge Library content, Request Rules, optional archived conversations, usage data and related integration state are stored locally in Home Assistant. Private full backups include provider connection settings and API credentials alongside sensitive retained data. They are not encrypted: store them securely and use redacted Shareable Setup exports when sharing configuration.
 

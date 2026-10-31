@@ -6,11 +6,13 @@ as “My parents live in Cork” remain candidates for persistent memory, while 
 parents are visiting this weekend” belongs in temporary memory and should expire at
 the end of Sunday.
 
-- **Off** creates and injects no temporary memories.
+- **Off** disables model-created temporary memories and automatic context injection.
 - **Balanced** stores clearly useful near-term facts.
 - **Eager** proactively stores useful short-lived context when it could plausibly be
   relevant again, preferring to retain it when uncertain while still excluding
   secrets, sensitive information, trivial fragments, and conversational filler.
+
+These modes control automatic model use. **Off** is the default and does not delete saved records or prevent an authorized user from creating or managing short-term memories in the panel.
 
 The model infers reasonable expiry in Home Assistant's configured timezone instead of
 asking unnecessary questions. “Waiting for a parcel today” lasts through today;
@@ -30,3 +32,9 @@ temporary facts. The Memories page has Long-term and Short-term views. **+ Add m
 Manual short-term creation uses an explicit privacy policy and records `source: manual`; model-created records retain `source: automatic` and automatic sensitivity restrictions. Both reject secrets and credentials. Expiry must include a timezone internally, remain in the future, and be within one year. The configured automatic mode does not prevent manual creation.
 
 Category metadata follows the same privacy policy as the memory content, including when editing or loading existing records.
+
+## Limits and reminders
+
+Each agent can retain up to 100 active temporary memories. A record holds up to 500 characters of content and a 64-character category. Automatic context includes at most 30 records and 6,000 characters, so retaining a record does not guarantee that it is included in every request.
+
+Expiry removes context; it does not schedule a notification, reminder or delayed Home Assistant action.

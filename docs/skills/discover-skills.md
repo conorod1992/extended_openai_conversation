@@ -39,4 +39,4 @@ action: extended_openai_conversation_responses.reload_skills
 
 ## Enable a Skill for an agent
 
-Open the dedicated Extended OpenAI management page, select the agent, and choose its Skills in **Configuration**. A saved selection only becomes available when the Skill is installed and the built-in `load_skill` Function Tool is usable. See [Skills](../features/skills.md) and [Creating Skills](creating-skills.md).
+Open **Extended OpenAI**, select the agent, and open **Capabilities → Web search & Skills**. Enter each installed Skill's directory name on its own line and select **Save**. A saved selection only becomes available when the Skill is installed and the built-in `load_skill` Function Tool is usable. See [Skills](../features/skills.md) and [Creating Skills](creating-skills.md).

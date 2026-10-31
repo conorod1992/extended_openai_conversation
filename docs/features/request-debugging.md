@@ -29,4 +29,8 @@ For token and request totals rather than request contents, use [Usage statistics
 
 ## Privacy and retention
 
-Captured request details are diagnostic records, not a replacement conversation archive. Use the retention controls under **Usage & Maintenance → Retention & maintenance** to limit how long detailed request/run data is kept.
+Only administrators can enable or inspect captures. Capture is off by default and records future runs for the selected agent. The default capture limit is **10 runs**; choose **5**, **10**, **25**, or **50** under **Capture limit**. When the limit is reached, older captures are replaced.
+
+Captures are held in memory and disappear when Home Assistant restarts. Turning capture off stops new captures; use **Clear captures** to remove existing ones. The **Usage data retention** settings apply to content-free Usage records, not these captures.
+
+The management view pages through provider requests and bounds large fields. Copying a visible page or the first page does not export every provider request or guarantee an untruncated provider payload. Review copied material before sharing: private text can appear inside prompts, tool arguments, results, or retrieved context even when connection credentials are excluded from request settings.

@@ -20,7 +20,8 @@ test("Guide composes final groups, selected topics and destinations immediately"
     panel._guideQuery = "";
     return {groups, open:backup.open, destination:[local.dataset.page, local.dataset.subsection], searched, text:root.content.textContent};
   }, frontend);
-  expect(result.groups.find(([id]) => id === "operations")[1]).toEqual(["guide-backup-restore", "guide-request-debugging", "guide-model-data", "guide-usage"]);
+  expect(result.groups.find(([id]) => id === "operations")[1]).toEqual(["guide-backup-restore", "guide-request-debugging", "guide-recovery", "guide-model-data", "guide-usage"]);
+  expect(result.groups.find(([id]) => id === "capabilities")[1]).toEqual(["guide-functions", "guide-skills", "guide-request-rules", "guide-local-handling", "guide-broadcast"]);
   expect(result.groups.find(([id]) => id === "voice-speech")[1]).toEqual(["guide-quiet-hours", "guide-voice", "guide-speech-processing"]);
   expect(result.open).toBe(true);
   expect(result.destination).toEqual(["capabilities", "home-assistant"]);
