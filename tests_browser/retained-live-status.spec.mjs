@@ -145,7 +145,7 @@ test("Whole-home Broadcast omits retained specific selections", async ({page}) =
       };
       if (message.type?.endsWith("/broadcast") && message.action === "send") {
         host._sentBroadcast = message;
-        return {id: "sent"};
+        return {id: "sent", targets: ["assist_satellite.hall"], deliveries: {"assist_satellite.hall": {status: "queued_idle"}}};
       }
       return original(message);
     }};

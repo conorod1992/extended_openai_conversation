@@ -16,6 +16,7 @@ import pytest
 from pytest_homeassistant_custom_component.common import CLIENT_ID, MockUser
 import yaml
 
+from custom_components.extended_openai_conversation_responses import intercom
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_FUNCTION_TOOLS,
     CONF_GUEST_POLICY_VERSION,
@@ -23,6 +24,7 @@ from custom_components.extended_openai_conversation_responses.const import (
 )
 from homeassistant.components import conversation, onboarding
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
+from homeassistant.const import ATTR_SUPPORTED_FEATURES
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.setup import async_setup_component
@@ -155,12 +157,32 @@ async def _start_ws_bridge(
 async def test_shipped_browser_frontend_talks_to_real_management_websocket(
     hass: HomeAssistant,
     hass_ws_client: Any,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Chromium CRUD journeys must satisfy the genuine HA management contract."""
     entry = _entry("Browser Backend Acceptance")
     await _setup_entry(hass, entry)
     # Both assistants are genuine loaded entries; identity coverage must not skip.
     await _setup_entry(hass, _entry("Dependent Journey"))
+
+    # Exercise the real queue-admission response and physical delivery, rather
+    # than a browser fixture inventing an acknowledgement's shape.
+    monkeypatch.setattr(intercom, "IDLE_STABILITY_SECONDS", 0)
+    # Delivery is under test; the long TTL callback must not outlive this journey.
+    monkeypatch.setattr(intercom, "async_call_later", lambda *_args, **_kwargs: None)
+    manager = await intercom.async_get_intercom(hass)
+    await manager.async_set_enabled(True)
+    hass.states.async_set(
+        "assist_satellite.kitchen",
+        "idle",
+        {ATTR_SUPPORTED_FEATURES: intercom.ANNOUNCE_FEATURE},
+    )
+    announcements: list[dict] = []
+
+    async def announce(call) -> None:
+        announcements.append(dict(call.data))
+
+    hass.services.async_register("assist_satellite", "announce", announce)
 
     class BrowserClient:
         # Slow runner startup must not age an authenticated, unpolled test socket.
@@ -186,6 +208,25 @@ async def test_shipped_browser_frontend_talks_to_real_management_websocket(
             config="playwright.config.mjs",
             env={"REAL_HA_BACKEND_URL": backend_url},
             failure_label="Playwright genuine-HA backend acceptance failed",
+        )
+        await _run_playwright(
+            repo_root=repo_root,
+            spec="tests_browser/real-ha-broadcast-ack.spec.mjs",
+            config="playwright.config.mjs",
+            env={"REAL_HA_BACKEND_URL": backend_url},
+            failure_label="Playwright genuine-HA Broadcast acknowledgement failed",
+        )
+        await hass.async_block_till_done()
+        expected = ["Dinner source", "Dinner bundle"]
+        assert announcements == [
+            {"message": message, "entity_id": "assist_satellite.kitchen"}
+            for message in expected
+        ]
+        history = manager.history()
+        assert sorted(item["message"] for item in history) == sorted(expected)
+        assert all(
+            item["deliveries"]["assist_satellite.kitchen"]["status"] == "delivered"
+            for item in history
         )
     finally:
         await runner.cleanup()
