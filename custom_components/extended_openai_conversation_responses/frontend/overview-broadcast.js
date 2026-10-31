@@ -157,7 +157,11 @@ function bindBroadcastControls(panel, snapshot) {
         whole_home: wholeHome,
         entity_ids: wholeHome ? [] : selected,
       }));
-      requireMutationAcknowledgement(typeof result?.status === "string", "queuing Broadcast");
+      // async_send acknowledges admission with a message identity and concrete
+      // recipients. Delivery status belongs to each recipient and may change later.
+      requireMutationAcknowledgement(typeof result?.id === "string" && !!result.id.trim()
+        && Array.isArray(result.targets) && result.targets.length > 0
+        && result.targets.every(target => typeof target === "string" && !!target.trim()), "queuing Broadcast");
       const current = captureConfigurationOwner(panel);
       if (current.userId === submission.userId && current.authenticationGeneration === submission.authenticationGeneration
           && (panel._broadcastDraftRevision || 0) === draftRevision) {

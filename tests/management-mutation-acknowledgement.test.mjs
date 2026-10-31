@@ -374,7 +374,7 @@ for (const newer of [false,true]) test(`Broadcast consumes only its submitted dr
     if(request.action==="snapshot")return state;
     sent.push(request.message); panel._agentId="another-agent";
     if(newer){panel._broadcastMessage="New message";composer.value="New message";panel._broadcastDraftRevision=(panel._broadcastDraftRevision||0)+1;}
-    return {status:"queued"};
+    return {id:"broadcast-1", targets:["satellite.kitchen"], deliveries:{"satellite.kitchen":{status:"queued_idle"}}};
   };
   await bindBroadcast(panel,Promise.resolve(state));
   await button.click({currentTarget:button});
@@ -383,6 +383,83 @@ for (const newer of [false,true]) test(`Broadcast consumes only its submitted dr
   await button.click({currentTarget:button});
   assert.deepEqual(sent,newer?["Dinner","New message"]:["Dinner"]);
 });
+
+async function broadcastAdmissionWitness(bind = bindBroadcast, {refreshFails = false, status = "queued_idle"} = {}) {
+  const {panel, control} = host();
+  panel._viewKey = () => "overview";
+  panel._broadcastMessage = "Dinner";
+  panel._broadcastWholeHome = true;
+  panel._e = String; panel._titleCase = String;
+  control("#broadcast-card"); control("#broadcast-enabled");
+  const button = control("#broadcast-send"), composer = control("#broadcast-message");
+  composer.value = "Dinner";
+  const state = {enabled:true, can_manage:true, catalog:{satellites:[{id:"assist_satellite.kitchen", name:"Kitchen"}]}, history:[], pending:[]};
+  const admitted = [];
+  panel._hass.callWS = async request => {
+    if (request.action === "snapshot") {
+      if (refreshFails) throw Error("history unavailable");
+      return state;
+    }
+    // Match BroadcastMessage.as_dict(): admission identity and concrete targets,
+    // with status on each delivery, never on the top-level acknowledgement.
+    const record = {id:"broadcast-1", message:request.message, targets:["assist_satellite.kitchen"],
+      deliveries:{"assist_satellite.kitchen":{status}}};
+    admitted.push(record);
+    return record;
+  };
+  await bind(panel, Promise.resolve(state));
+  await button.click({currentTarget:button});
+  assert.equal(panel._broadcastMessage, "", "an admitted Broadcast must retire its submitted draft");
+  assert.equal(composer.value, "");
+  assert.match(panel.toasts.at(-1)[0], /Broadcast queued/);
+  if (refreshFails) assert.match(panel.toasts.at(-1)[0], /could not be refreshed/);
+  await button.click({currentTarget:button});
+  assert.equal(admitted.length, 1, "the next click cannot resubmit the acknowledged message");
+}
+
+for (const status of ["queued_idle", "delivered", "failed"]) {
+  test(`Broadcast admission retires the composer independently of delivery state (${status})`, async () => {
+    await broadcastAdmissionWitness(bindBroadcast, {status});
+  });
+}
+test("Broadcast admission survives a subsequent history refresh failure", async () => {
+  await broadcastAdmissionWitness(bindBroadcast, {refreshFails:true});
+});
+
+test("Broadcast acknowledgement cannot retire a draft after an authentication round trip", async () => {
+  const {panel, control} = host();
+  panel._viewKey = () => "overview"; panel._broadcastMessage = "Dinner"; panel._broadcastWholeHome = true;
+  panel._e = String; panel._titleCase = String;
+  control("#broadcast-card"); control("#broadcast-enabled");
+  const button = control("#broadcast-send"), composer = control("#broadcast-message"); composer.value = "Dinner";
+  const state = {enabled:true, can_manage:true, catalog:{satellites:[{id:"assist_satellite.kitchen",name:"Kitchen"}]},history:[],pending:[]};
+  panel._hass.callWS = async request => {
+    if (request.action === "snapshot") return state;
+    authenticationRoundTrip(panel);
+    panel._broadcastMessage = "Other session's draft"; composer.value = panel._broadcastMessage;
+    return {id:"broadcast-1",targets:["assist_satellite.kitchen"]};
+  };
+  await bindBroadcast(panel, Promise.resolve(state));
+  await button.click({currentTarget:button});
+  assert.equal(panel._broadcastMessage, "Other session's draft");
+  assert.equal(composer.value, "Other session's draft");
+});
+
+for (const response of [{}, {status:"queued"}, {id:"",targets:["assist_satellite.kitchen"]}, {id:"b",targets:[]}, {id:"b",targets:[null]}]) {
+  test(`Broadcast retains its draft for an incomplete admission: ${JSON.stringify(response)}`, async () => {
+    const {panel, control} = host();
+    panel._viewKey = () => "overview"; panel._broadcastMessage = "Dinner"; panel._broadcastWholeHome = true;
+    panel._e = String; panel._titleCase = String;
+    control("#broadcast-card"); control("#broadcast-enabled");
+    const button = control("#broadcast-send");
+    const state = {enabled:true,can_manage:true,catalog:{satellites:[{id:"assist_satellite.kitchen",name:"Kitchen"}]},history:[],pending:[]};
+    panel._hass.callWS = async () => response;
+    await bindBroadcast(panel, Promise.resolve(state));
+    await button.click({currentTarget:button});
+    assert.equal(panel._broadcastMessage, "Dinner");
+    assert.match(panel.toasts.at(-1)[0], /outcome is unknown/);
+  });
+}
 
 test("transport adaptation preserves an authoritative server rejection unchanged", async () => {
   const rejection = {code:"invalid_request", message:"Rejected before dispatch"};
@@ -421,6 +498,13 @@ async function mutantModule(file, anchor, replacement) {
   const mutated = source.replace(anchor, replacement).replaceAll("import.meta.url", JSON.stringify(new URL(file, frontend).href)).replace(/from "(\.\/[^\"]+)"/g, (_match, path) => `from "${new URL(path, frontend)}"`);
   return import(`data:text/javascript;base64,${Buffer.from(mutated).toString("base64")}`);
 }
+
+test("sensitivity: Broadcast's next-action witness detects the obsolete top-level status contract", async () => {
+  const mutant = await mutantModule("overview-broadcast.js",
+    'requireMutationAcknowledgement(typeof result?.id === "string" && !!result.id.trim()\n        && Array.isArray(result.targets) && result.targets.length > 0\n        && result.targets.every(target => typeof target === "string" && !!target.trim()), "queuing Broadcast");',
+    'requireMutationAcknowledgement(typeof result?.status === "string", "queuing Broadcast");');
+  await assert.rejects(() => broadcastAdmissionWitness(mutant.bindBroadcast), /an admitted Broadcast must retire its submitted draft/);
+});
 
 test("sensitivity: the creation witness detects loss of committed identity", async () => {
   const mutant = await mutantModule("management-panel.js", 'this._knowledgeMode = "edit";\n      setDialogBaseline', 'this._knowledgeMode = "create";\n      setDialogBaseline');
