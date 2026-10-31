@@ -33,7 +33,7 @@ description: Explain how to summarize this household's calendar. Use when asked 
 
 Keep each Skill focused. State when it applies, give concrete steps and examples, and explain how to handle missing data or errors. Refer to bundled files by relative path; the loader resolves files within the Skill directory.
 
-For the layout above, enable `household_calendar` only if the directory is named `household_calendar`. `load_skill` takes that name and a relative file path, such as `SKILL.md` or `references/example.md`. Supporting files are read on demand; they are not all included automatically. Keep text files small: discovery accepts `SKILL.md` up to 2 MiB, while the Function Tool used to read it or a reference file has a 1 MiB limit.
+For the layout above, enable `household_calendar` only if the directory is named `household_calendar`. `load_skill` takes that name and a relative file path, such as `SKILL.md` or `references/example.md`. Supporting files are read on demand; they are not all included automatically. Keep each text file within **1 MiB (1,048,576 bytes)**. Discovery uses the same ceiling as the file reader, so an oversized `SKILL.md` is skipped rather than offered to the model. Split larger instructions into smaller supporting files and reload Skills after correcting an oversized file.
 
 ## Scripts and permissions
 
