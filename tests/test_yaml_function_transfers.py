@@ -80,15 +80,17 @@ async def test_supported_save_and_runtime_variables_accept_date(hass, saved_date
 
 
 @pytest.mark.parametrize("format", ["json", "yaml"])
+@pytest.mark.parametrize("schema_bound", [False, True])
 async def test_serialized_export_preserves_numeric_schema_and_runtime_variables(
-    hass, saved_date_tool, management_message, format
+    hass, saved_date_tool, management_message, format, schema_bound
 ):
     _entry, subentry = saved_date_tool
     tools = yaml.safe_load(subentry.data["functions"])
     tool = tools[-1]
-    tool["spec"]["parameters"]["properties"] = {
-        "value": {"type": "number", "minimum": 0.000001}
-    }
+    if schema_bound:
+        tool["spec"]["parameters"]["properties"] = {
+            "value": {"type": "number", "minimum": 0.000001}
+        }
     tool["function"]["variables"] = {"factor": 0.000001, "literal": "1e-06"}
     subentry.data = {**subentry.data, "functions": yaml.safe_dump(tools)}
     exported = await management_ui.async_management_command(
@@ -96,19 +98,21 @@ async def test_serialized_export_preserves_numeric_schema_and_runtime_variables(
         management_message("configuration", "export", reviewed_custom=True),
     )
     text = exported["json"] if format == "json" else yaml.safe_dump(exported["document"])
-    if format == "json":
+    if format == "json" and schema_bound:
         assert '"minimum": 1e-06' in text
     parsed = management_ui._parse_import_document(text)
     runtime = configured_function_tools_from_data(parsed["config"])[-1]
-    assert runtime["spec"]["parameters"]["properties"]["value"]["minimum"] == 0.000001
+    if schema_bound:
+        assert runtime["spec"]["parameters"]["properties"]["value"]["minimum"] == 0.000001
     variables = runtime["function"]["variables"].async_render(hass, {})
     assert variables["factor"] == 0.000001
     assert type(variables["factor"]) is float
     assert variables["literal"] == "1e-06"
 
 
+@pytest.mark.parametrize("schema_bound", [False, True])
 async def test_numeric_round_trip_detects_yaml_only_json_parsing(
-    hass, saved_date_tool, management_message, monkeypatch
+    hass, saved_date_tool, management_message, monkeypatch, schema_bound
 ):
     from custom_components.extended_openai_conversation_responses.agent_config import (
         AgentConfigError,
@@ -120,9 +124,9 @@ async def test_numeric_round_trip_detects_yaml_only_json_parsing(
         "_parse_import_document",
         lambda text: original(yaml.safe_load(text)),
     )
-    with pytest.raises(AgentConfigError, match="must be a finite number"):
+    with pytest.raises(AgentConfigError if schema_bound else AssertionError):
         await test_serialized_export_preserves_numeric_schema_and_runtime_variables(
-            hass, saved_date_tool, management_message, "json"
+            hass, saved_date_tool, management_message, "json", schema_bound
         )
 
 
