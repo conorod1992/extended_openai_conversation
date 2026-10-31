@@ -14,6 +14,8 @@ Skills are loaded from:
 
 Each conversation agent can choose which installed skills it is allowed to load.
 
+`SKILL.md` must fit the loader's **1 MiB (1,048,576 bytes)** file limit. Discovery skips larger instruction files with a warning rather than offering a Skill that cannot be loaded. Split larger material into supporting files, each within the same read limit. After reducing an oversized file, reload Skills to make it available again.
+
 ## Enable skills
 
 1. Open **Extended OpenAI** in the Home Assistant sidebar.
@@ -32,7 +34,7 @@ Saved selection and live availability are deliberately separate. A Skill can rem
 
 The built-in `load_skill` tool is likewise exposed only when at least one selected Skill is installed and the loader is reachable. If `load_skill` belongs to an on-demand Function Group, that group must itself be loadable; the model first loads the group and then receives `load_skill` on the next tool round. If the Function Tool runtime is unavailable, the Skill loader and any otherwise-empty Skill group are omitted rather than advertised as unusable capabilities.
 
-These checks affect the live conversation path and the effective-request Preview in the management UI, so Preview reflects the same advertised Skill/tool set as a real request. `SKILL.md` discovery and loading share a **1 MiB (1,048,576 bytes)** limit. Larger instruction files are skipped with a warning; split larger material into supporting files, each within the same read limit. After reducing an oversized file, reload Skills to make it available again. Discovery does not guarantee a later read: a file that grows beyond the limit after discovery is still rejected when loaded.
+These checks affect the live conversation path and the effective-request Preview in the management UI, so Preview reflects the same advertised Skill/tool set as a real request. Discovery does not guarantee a later read: a file that grows beyond the shared 1 MiB limit after discovery is still rejected when loaded.
 
 ## Download a skill
 
