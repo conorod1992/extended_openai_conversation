@@ -2,13 +2,30 @@
 
 Open **Extended OpenAI → Usage & Maintenance → Backup & Restore** to create or restore a private backup for one conversation agent.
 
-This is different from **Export configuration**. Configuration export is mainly for copying agent behaviour and settings; a full backup also carries the agent's saved memories, Knowledge, conversation history and other retained data.
+Choose an export type according to what you need:
+
+| Export type | Use it for | Important limits |
+| --- | --- | --- |
+| **Shareable Setup** | Sharing supported public behaviour settings | Excludes provider credentials and private histories. Custom prompts, Function Tools and Rules are omitted by default; including reviewed custom content is an explicit choice. |
+| **Full Backup (private)** | Recovering or moving the selected agent's configuration and retained data | Preserves credentials and private content; the file is not encrypted. |
+| **Custom (private)** | Backing up only selected sections | Preserves the selected private sections, including provider credentials when configuration is selected; the file is not encrypted. |
+
+The configuration editor's **Export configuration** is also for sharing configuration, not retained data. See [sharing security](credential-security.md) before sharing any setup.
+
+## Create an export
+
+1. Select the conversation agent you want to back up.
+2. Open **Usage & Maintenance → Backup & Restore** and choose **Export type**.
+3. For **Custom (private)**, select the sections to include. For **Shareable Setup**, include custom content only after reviewing it.
+4. Choose **Create export** and save the downloaded file securely.
+
+Exports use saved configuration. Save any draft settings first if you want them included.
 
 ## What a full backup includes
 
 A full backup contains the selected agent's:
 
-- saved configuration
+- saved configuration, including Function Tools, Function Groups and selected Skill names
 - Request Rules, including their groups, global priority order, matching settings and wording alternatives
 - persistent memories
 - active temporary memories with their original expiry time
@@ -16,22 +33,39 @@ A full backup contains the selected agent's:
 - retained conversation archive sessions and turns
 - Guest Mode schedule
 - saved lifetime, daily, request and run usage data
+- the parent provider connection and credentials
 
 ## What it does not include
 
-New private backups preserve inline credentials and include the parent provider connection when configuration is selected. Historical backup versions excluded parent credentials and redacted recognized inline secrets; their import semantics remain unchanged. Temporary runtime state such as requests currently in progress, Function Groups loaded only for the active conversation, caches and locks is excluded.
+Installed Skill files, external Home Assistant scripts/files/services, integration-wide Quiet Hours and Broadcast settings, and the pending delayed Function Tool queue are not included. Reinstall or copy Skills and preserve external dependencies separately when moving to another Home Assistant installation. Use an appropriate Home Assistant backup when you need to preserve the wider installation.
+
+Temporary runtime state such as requests currently in progress, Function Groups loaded only for the active conversation, caches and locks is excluded. Historical backup versions excluded parent credentials and redacted recognized inline secrets; their import semantics remain unchanged.
 
 Provider restoration requires an explicit shared-connection choice because other agents may use that connection. It runs after agent restoration and refuses to overwrite concurrent connection edits. External HA scripts/files/services and expired credentials may still require attention. See [credential security](credential-security.md) for scope, format versions and limitations.
 
 ## What happens when you restore
 
-Selecting a backup validates it before anything is replaced. Temporary memories that have already expired are discarded during restore.
+1. Select the destination conversation agent and choose **Choose file** under **Import / Restore**. The panel accepts Extended OpenAI JSON exports and ZIP backups.
+2. Review the validated summary and select **Sections to replace**. Only sections present in the file are offered; unselected destination sections remain unchanged.
+3. If the backup contains personal data for users missing from this installation, map each source user to a destination Home Assistant user.
+4. Choose whether to **Also restore the provider connection**, if the file contains one. This affects all agents sharing that connection.
+5. Choose **Restore selected sections** and confirm the replacement.
 
-**Restore everything** replaces the agent's corresponding saved data rather than merging the backup with what is already there. Request Rules are therefore restored as the saved rule set, including their exact global order and groups. This is different from **Rule Sharing**, which appends shared rules after existing rules in their shared relative order and does not import agent-wide wording alternatives. Knowledge search indexes are rebuilt from the restored source text, and usage totals are replaced rather than added again.
+Validation checks the combined destination configuration, including Request Rule references to Function Tools. An incompatible combination of selected and unselected sections must be resolved before restore. Temporary memories that have already expired are discarded. If configuration is selected, restoring it replaces any unsaved configuration draft for the destination agent.
+
+Every selected section replaces the agent's corresponding saved data rather than merging the backup with what is already there. Request Rules are therefore restored as the saved rule set, including their exact global order and groups. This is different from **Rule Sharing**, which appends shared rules after existing rules in their shared relative order and does not import agent-wide wording alternatives. Knowledge search indexes are rebuilt from the restored source text, and usage totals are replaced rather than added again.
 
 Restore is designed to avoid leaving only half of the backup applied. If saving the restored data fails part-way through, Extended OpenAI attempts to return the agent to the state it had before the restore began.
 
 Delayed Function Tools are paused behind the same restore operation, so a due action is not deliberately run while the agent's configuration or restrictions are only partly restored.
+
+The shared provider connection is updated separately after the agent restore. A connection-update failure does not undo an already committed agent restore; read the outcome message and import/preview again before retrying that connection update.
+
+## Interrupted restore or uncertain result
+
+The integration keeps a private local recovery record while replacing saved data. If Home Assistant stops during the operation, startup uses the saved decision to recover the previous state or finish the committed restore. If recovery cannot finish, the affected assistant remains blocked rather than processing requests with partly restored state.
+
+If the panel reports **Restore recovery is pending** or that completion is pending, restart Home Assistant as directed and resolve any reported storage problem before trying another restore. Keep the recovery files intact. If the browser loses the result and reports **Restore outcome is unknown**, refresh the agent's saved state before deciding whether another restore is needed; losing the response does not prove that nothing changed.
 
 ## Damaged saved data
 

@@ -23,9 +23,9 @@ For Responses API replies, structured URL citation information is still retained
 Advanced replacement rules use Python regular expressions and run in order after the full response is complete. Built-in Markdown and bare-URL cleanup runs first, so replacements see the cleaned text. Turn off **Remove bare URLs** if a custom rule needs to match a URL.
 
 ```yaml
-- pattern: '\\[[0-9]+\\]'
+- pattern: '\[[0-9]+\]'
   replacement: ''
-- pattern: '\\bHA\\b'
+- pattern: '\bHA\b'
   replacement: 'Home Assistant'
 ```
 

@@ -8,7 +8,7 @@ The archive is **off by default**. When enabled, the default retention is 30 day
 
 Only the user message, the final assistant reply, timestamps, session/run identifiers, success state, and resolved scope/source metadata are stored. A title is normalized and truncated from the first user message locally.
 
-The archive never stores hidden reasoning, intermediate tool messages, tool arguments or results, provider payloads, exposed-entity dumps, web-search bodies, image/PDF contents, or attachments. No extra model call creates titles, summaries, topics, embeddings, classifications, or metadata.
+The archive does not separately capture hidden reasoning, intermediate tool messages, tool arguments or results, provider payloads, exposed-entity dumps, web-search bodies, image/PDF files, or attachments. Information quoted in the user message or final assistant reply is still part of that transcript. No extra model call creates titles, summaries, topics, embeddings, classifications, or metadata.
 
 Monthly transcript partitions keep each write bounded. Compact session metadata is stored separately, and lexical search uses normalized phrase matching, token overlap, simple stemming, dates, bounded excerpts, strict result limits, and ownership validation.
 
@@ -44,18 +44,20 @@ These commands use backend tools; they are not a promise made only in generated 
 
 Private mode applies only to the exact active session. Enabling it deletes already retained turns and the conversation-derived title for that session, returns the exact turn count, and prevents future turns in that session from being archived. Existing private-session titles are removed when loaded; importing an older backup also removes those titles. Other browser or satellite sessions are unaffected. Resuming saving creates a new retained session for future turns; private messages are not restored or saved retroactively. A request that makes the conversation private is never archived, even if it also resumes saving later in the same turn. This applies when saving was already active and is resumed before making the conversation private.
 
-Single-session deletion is exact. Semantic deletion begins with bounded search and requires selected session IDs. Date-range and whole-scope deletion require explicit confirmation and return exact session and turn counts. Deleting transcript text never changes token aggregates. You can verify the result under **Extended OpenAI → Conversations**.
+Archive privacy controls only this integration's transcript retention. It does not stop the active conversation from being sent to the configured provider, disable separate memory features or opt-in Request debugging, or erase copies already exported or recorded elsewhere. Review those settings separately when you do not want information retained.
+
+Single-session deletion is exact. Semantic deletion begins with bounded search and requires selected session IDs. Date-range and whole-scope deletion require explicit confirmation and return exact session and turn counts. Deleting transcript text never changes token aggregates. You can verify the result under **Extended OpenAI → Data & Memory → Conversation history**.
 
 ## Voice satellite ownership
 
-Scope is resolved once when the session starts and remains stable:
+An authenticated Home Assistant request user takes precedence for retained-data ownership. Without one, the selected **Unidentified voice requests** policy determines the scope:
 
-1. authenticated Home Assistant request user
-2. a future supported speaker identity, if Home Assistant exposes one
-3. explicit satellite/device mapping
-4. selected agent-wide default voice owner
-5. configured shared-household scope
-6. unretained, with memory writes disabled
+- **Use a device assignment** uses the source device's explicit user, shared-household, or unretained assignment. Missing or unavailable user assignments use the configured fallback under **When a voice device is not assigned**.
+- **Use the default user** uses the explicitly selected active Home Assistant user.
+- **Use shared household data** uses the deliberately shared scope.
+- **Don't use saved personal data**, or an unavailable default user, uses an unretained scope with memory writes disabled.
+
+Scope remains stable for a retained archive session. See [Voice Identity](voice-identity.md) for device assignments and continuity boundaries.
 
 The integration never infers identity from presence, room occupancy, phone location, Bluetooth, cameras, or the room containing a satellite.
 
@@ -73,4 +75,6 @@ Existing `__anonymous__` records are preserved as **Legacy anonymous**. They are
 
 Normal users can manage only their personal memory/archive scope. Home Assistant administrators can select personal, shared, and legacy scopes and manage integration-wide retention and voice mappings. Administrator panel selection never changes the scope available to model-facing tools.
 
-Settings are available both under **Settings → Devices & services → Extended OpenAI** and in the feature tabs of the **Extended OpenAI** panel. Backend updates accept only named validated fields and rely on the integration update listener for one reload.
+Manage archive retention and model search, and review or delete transcripts, from **Extended OpenAI → Data & Memory → Conversation history**. Configure device ownership under **Assistant → Voice & identity**. Select the intended conversation agent before changing its settings; conversation-agent reconfiguration in **Devices & services** points to this panel.
+
+The integration's completion event now contains metadata only, rather than transcript text. Upgrading does not remove transcripts that older event consumers or Home Assistant Recorder already saved. See [Completion notifications and Recorder](credential-security.md#completion-notifications-and-recorder) for the event fields and upgrade considerations.

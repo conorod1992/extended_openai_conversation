@@ -54,7 +54,7 @@ Request Rule enable/disable sends only that field; the server retains the exact 
 
 **These files are private and unencrypted. Keep them private and store them securely.** ZIP compression, base64 and checksums do not provide confidentiality or prove who authored a file. Shareable export is the route for public sharing; a private backup is the route for complete credential-bearing restoration.
 
-Optional password protection is a follow-up, not part of this implementation. It needs a reviewed authenticated container, a password KDF calibrated for supported HA hardware, bounded KDF/file parameters, authentication before archive parsing, wrong-password/corruption tests and careful plaintext staging cleanup. Encryption will wrap the same lossless payload rather than redact it. No ad-hoc ZIP password scheme or custom streaming cryptography is introduced here.
+There is no built-in password protection for these exports. If you need an encrypted copy, protect the downloaded file with your own trusted storage or encryption tools.
 
 ## Errors, logs and support information
 

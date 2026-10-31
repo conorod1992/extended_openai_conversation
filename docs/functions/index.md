@@ -59,6 +59,14 @@ Large function collections can be organized into **Always available** and **Load
 
 See [Function groups](../features/function-groups.md) for lifecycle, compatibility, UI, diagnostics, and token-use details.
 
+## Tool-call limits and error correction
+
+**Assistant → Basics → Advanced request settings → Tool-call limit per request** limits executable tool calls during one conversation turn. The allowance resets on the next turn. A Function Group load has its own bound and does not use this allowance; reading a Skill file does.
+
+**Correct safe tool-call errors automatically** is off by default. When enabled, malformed JSON or invalid configured-tool arguments can be returned to the model for correction only before dispatch, when that tool call has not started. There are at most two such corrections per request. Rejected arguments do not consume the execution allowance, but a corrected execution does, and extra model exchanges may increase latency and provider usage. Permission denials, changed or unavailable tools, and failures after dispatch do not qualify for this recovery. An action that may already have run is not automatically repeated.
+
+Arbitrary custom Function Tools and external Home Assistant tools run sequentially. Only batches made entirely of integration-owned, known read-only capabilities can run concurrently, such as memory/Knowledge searches and supported native history/statistics reads. A provider returning several tool calls does not make arbitrary actions parallel.
+
 ## Function types
 
 The integration supports several implementation types:
@@ -102,11 +110,13 @@ Treat function definitions as permissions granted to the model.
 
 SQLite deserves particular care: read-only access prevents writes, but unrestricted generated queries can still read more information than intended. Prefer fixed or constrained queries when privacy matters.
 
+Administrator-authored Home Assistant templates can also read data directly. Entity-input checks do not turn an arbitrary Jinja template into a privacy sandbox. Review the template and the information it returns, not just the tool's name and input schema.
+
 ## Reserved delay parameter
 
-Function specifications can use the reserved `delay` parameter to schedule execution after a model-supplied delay.
+Function specifications can use an object-shaped `delay` parameter containing numeric `hours`, `minutes`, or `seconds` to schedule execution after a model-supplied delay. Other fields literally named `delay`, such as a string or number, remain ordinary tool arguments.
 
-Use this only for tools where delayed execution is appropriate and understandable to the user.
+Use this only for tools where delayed execution is appropriate and understandable to the user. See [Delayed Function Tools](../features/delayed-function-tools.md) for the schema, restart behavior, and authorization checks.
 
 ## Existing examples
 

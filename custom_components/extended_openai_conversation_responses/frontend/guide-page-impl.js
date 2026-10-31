@@ -67,7 +67,7 @@ const GUIDE_GROUPS = [
     id: "capabilities",
     title: "Capabilities & Home Assistant",
     description: "Control what the assistant can do, what stays local, and how extra capabilities are exposed.",
-    topicIds: ["home-assistant", "functions", "request-rules", "local-handling", "broadcast"],
+    topicIds: ["home-assistant", "functions", "skills", "request-rules", "local-handling", "broadcast"],
   },
   {
     id: "voice-speech",
@@ -85,7 +85,7 @@ const GUIDE_GROUPS = [
     id: "operations",
     title: "Operations & troubleshooting",
     description: "Understand diagnostics, request debugging, backups, model data, and maintenance behaviour.",
-    topicIds: ["backup-restore", "request-debugging", "model-data", "usage"],
+    topicIds: ["backup-restore", "request-debugging", "recovery", "model-data", "usage"],
   },
 ];
 

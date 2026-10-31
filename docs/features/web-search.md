@@ -11,7 +11,7 @@ Web Search in this integration requires:
 - the direct OpenAI API
 - **Responses** API mode, either selected directly or chosen through Auto
 - a model that supports the hosted Web Search tool
-- **Web Search** enabled in the conversation agent options
+- **Web search** enabled under **Extended OpenAI → Capabilities → Web search & Skills** for the selected agent
 
 It is not supported through Chat Completions, custom Base URLs, or Azure OpenAI in the integration's current implementation.
 
@@ -31,7 +31,7 @@ may use one.
 
 ## Web search context
 
-The **Web search context** option controls the breadth of information retrieved by the hosted tool.
+The **Web search detail** option controls the breadth of information retrieved by the hosted tool.
 
 Available values are **Low**, **Medium**, and **High**.
 

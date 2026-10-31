@@ -1,6 +1,6 @@
 # File Function Tools
 
-The `read_file`, `write_file`, and `edit_file` implementations operate on UTF-8 text files. Relative paths resolve inside the integration workspace. Each operation checks the resolved path against its allowed directories; paths that escape those directories are rejected. The implementation enforces a bounded file size.
+The `read_file`, `write_file`, and `edit_file` implementations operate on UTF-8 text files. Relative paths resolve inside the integration workspace. Each operation checks the resolved path against its allowed directories; paths that escape those directories are rejected. Reads and written results are limited to 1 MiB each.
 
 ## Read a file
 
@@ -37,7 +37,7 @@ function:
     - "{{ config_dir }}/automations"
 ```
 
-`path`, `old_text`, and `new_text` are required templates. The edit is applied only when the expected text and file version are still valid; concurrent changes cause a retryable error rather than silently overwriting newer content. Use a narrow `allow_dir` and clear tool descriptions so the model knows which files may be changed.
+`path`, `old_text`, and `new_text` are required templates. The expected text must be present. Edits are serialized with other integration writes to the same path, and detected changes to the file version cause a retryable error. A separate program can still change a file between the final version check and replacement, so avoid concurrent external edits. Use a narrow `allow_dir` and clear tool descriptions so the model knows which files may be changed.
 
 These tools are not general backups. Review write/edit permissions and keep recovery copies of important configuration files.
 

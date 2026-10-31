@@ -16,11 +16,13 @@ Then restart Home Assistant and check the logs for component-loading errors.
 
 ## The assistant cannot see or control an entity
 
-First check Assist exposure:
+First check Assist exposure and the requesting user's access:
 
 1. open **Settings > Voice assistants > Expose**
 2. confirm the entity is exposed
 3. retry a simple request using that entity's normal friendly name
+
+Then check the agent's Home Assistant access settings, enabled Function Tools, and Guest Mode. Voice Identity selects retained-data scope; mapping a satellite to an administrator does not grant that administrator's action permissions. See [Home Assistant access](features/home-assistant-access.md).
 
 You do not need a custom function for ordinary exposed-entity control.
 
@@ -75,7 +77,7 @@ In **Manual** mode, explicitly say something like:
 
 Then start a separate conversation and ask for the fact.
 
-If **Automatically retrieved memories** is `0`, the model must use memory tools to retrieve stored information rather than receiving local matches automatically.
+If **Automatically include memories** is `0`, the model must use memory tools to retrieve stored information rather than receiving local matches automatically.
 
 You can inspect stored records from **Extended OpenAI > Data & memory > Memories**.
 
@@ -96,7 +98,7 @@ Where possible, test the Home Assistant script/action independently first. Then 
 
 ## The conversation loses old context
 
-Check **Context Threshold** and **Context truncation strategy**.
+Check **Assistant → Conversation → Trim history after** and the selected history strategy.
 
 If the conversation exceeded the threshold, older turns may have been removed, summarized, or cleared according to the configured strategy.
 
@@ -106,9 +108,9 @@ Automatic persistent-memory ranking runs only when a logical conversation starts
 
 ## The assistant does not use a Knowledge source
 
-Confirm that **Knowledge Library** is On for the same conversation agent selected in **Manage knowledge**, and that at least one source exists. The tools are intentionally absent when the feature is Off or the library is empty.
+Open **Extended OpenAI → Data & Memory → Knowledge Library** and select the conversation agent you are using. Check **Allow the assistant to use Knowledge** and confirm that at least one source is marked **Available to assistant**. The tools are absent when the feature is off or no enabled sources remain. Guest Mode can restrict the permitted sources further.
 
-Search is lexical. Add important alternative terms to the source title or description, use clear headings, and split unrelated material into focused sources. The assistant is prompted to use short keyword searches, retry once with broader terms, and browse unfiltered metadata with `knowledge_list` when needed. It is also instructed never to invent source IDs. Blank or unknown IDs are ignored and an all-invalid filter falls back to searching the full agent library. A source is re-indexed immediately after editing; no Home Assistant restart is required. Knowledge is not learned automatically from conversations, and “remember this” continues to use persistent memory rather than the Knowledge Library.
+Search is lexical. Add important alternative terms to the source title or description, use clear headings, and split unrelated material into focused sources. The assistant is prompted to use short keyword searches, retry once with broader terms, and browse metadata with `knowledge_list` when needed. It is also instructed never to invent source IDs. A filter containing only blank or unknown source IDs returns no results; it does not broaden the search to the full library. Use IDs returned by `knowledge_list`, or omit the filter to search the agent's full permitted library. A source is re-indexed immediately after editing; no Home Assistant restart is required. Knowledge is not learned automatically from conversations, and “remember this” continues to use persistent memory rather than the Knowledge Library.
 
 Do not put instructions or action authorization in a source. Source text is untrusted reference content and cannot override the assistant's higher-priority instructions.
 
@@ -122,9 +124,23 @@ Do not compare the Usage sensor directly with a monetary bill; it intentionally 
 
 ## Use Test agent
 
-Under **Settings > Devices & services**, open the integration and choose **Configure > Test agent**.
+Select the conversation agent under **Extended OpenAI → Usage & Maintenance → Diagnostics** and use **Test agent**. Conversation-agent reconfiguration in **Settings → Devices & services** directs you to this panel.
 
 The test checks local configuration plus at most one minimal model request. It does not execute Home Assistant device or service actions.
+
+The separate **Test request** feature runs the normal request pipeline and can perform real actions, write memories, or consume API usage. Use harmless wording and test devices when checking Request Rules or tools.
+
+## A save reports a conflict or its result is uncertain
+
+The management UI checks that an editor is still based on the current saved configuration. If another tab or automation changes it, load the latest saved version and review your edits before saving again. **Save** applies the shared settings draft; Function Tool, Group, Rule, Knowledge, and policy editors have their own save actions.
+
+If a connection drops while saving, the change may already have been committed. Let the panel reconnect and read the current saved state before retrying. Recovered unsaved edits are a browser convenience, not a backup; restarting Home Assistant or changing browsers is not a reliable way to preserve a draft.
+
+## Retained data or settings cannot be loaded
+
+Damaged retained-data stores can be blocked for repair rather than silently replaced with empty data. Check Home Assistant Repairs and the integration's diagnostic message. Keep a Home Assistant backup and any existing private agent backup before attempting recovery; do not delete `.storage` files to make the message disappear.
+
+For recovery into a clean assistant when the affected assistant cannot initialize, see [Backup & Restore](features/backup-restore.md). An agent backup restores only the sections it contains; it cannot replace a full Home Assistant backup.
 
 ## Enable debug logging
 
