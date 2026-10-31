@@ -52,7 +52,7 @@ For an Azure deployment with a custom name, keep the deployment name in **Model*
 and enter its actual model ID in **Azure underlying model**. For example, use
 `ha-production` and `gpt-4.1`. Requests use the deployment name; capability checks
 use the underlying model. This setting is also available in the assistant's
-**Assistant → Model & responses** settings. Other providers do not use the Azure binding.
+**Assistant → Basics → Advanced request settings**. Other providers do not use the Azure binding.
 
 Strict structured outputs normalize nested `oneOf` only when alternatives have
 disjoint types or a required discriminator with disjoint values. Ambiguous
