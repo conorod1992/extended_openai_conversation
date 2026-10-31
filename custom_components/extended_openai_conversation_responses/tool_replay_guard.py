@@ -393,7 +393,10 @@ def _needs_tool_wide_guard(entity: Any, call: llm.ToolInput) -> bool:
     """Precise identities protect themselves even when their outcome is unknown."""
     receipts = getattr(entity, "_execution_effect_receipts", {}).get(id(call), ())
     return not receipts or any(
-        item.outcome != "rejected"
+        # An opaque backend refusal after an earlier effect leaves the whole
+        # invocation partial. It cannot authorize a changed-argument retry.
+        # Pure refusals have outcome "rejected" and are never retained above.
+        (item.outcome != "rejected" or item.kind == "backend")
         and (item.kind not in _PRECISE_EFFECT_KINDS or item.signature == "*")
         for item in receipts
     )

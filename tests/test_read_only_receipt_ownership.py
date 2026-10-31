@@ -154,7 +154,10 @@ async def test_scheduled_read_still_creates_only_one_durable_job(hass, backend):
     assert len(persisted["calls"]) == 1
 
 
-async def test_template_child_does_not_exempt_composite_mutation(hass, monkeypatch):
+@pytest.mark.parametrize("late_failure", [False, True])
+async def test_template_child_does_not_exempt_composite_mutation(
+    hass, monkeypatch, late_failure
+):
     from custom_components.extended_openai_conversation_responses.function_call_budget import (
         FunctionCallBudget,
     )
@@ -175,7 +178,9 @@ async def test_template_child_does_not_exempt_composite_mutation(hass, monkeypat
     tool = _tool(
         {
             "type": "composite",
-            "sequence": [{"type": "template", "value_template": "{{ 2 + 2 }}"}, NATIVE],
+            "sequence": [NATIVE, {"type": "template", "value_template": "{{ 1 / 0 }}"}]
+            if late_failure
+            else [{"type": "template", "value_template": "{{ 2 + 2 }}"}, NATIVE],
         }
     )
     entity, log = _entity(hass), _chat_log(hass)
@@ -189,7 +194,9 @@ async def test_template_child_does_not_exempt_composite_mutation(hass, monkeypat
         return await _execute(entity, definition, call)
 
     entity._execute_function_tool = execute
-    retry = _call("fresh", "effect", ALIAS)
+    retry = _call(
+        "fresh", "effect", {**ALIAS, "service": "turn_off"} if late_failure else ALIAS
+    )
     _retain_calls(log, [retry])
     with pytest.raises(HomeAssistantError, match="not acknowledged"):
         await async_execute_tool_exchange(
