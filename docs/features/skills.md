@@ -14,6 +14,8 @@ Skills are loaded from:
 
 Each conversation agent can choose which installed skills it is allowed to load.
 
+`SKILL.md` must fit the loader's **1 MiB (1,048,576 bytes)** file limit. Discovery skips larger instruction files with a warning rather than offering a Skill that cannot be loaded. Split larger material into supporting files, each within the same read limit. After reducing an oversized file, reload Skills to make it available again.
+
 ## Enable skills
 
 1. Open **Extended OpenAI** in the Home Assistant sidebar.

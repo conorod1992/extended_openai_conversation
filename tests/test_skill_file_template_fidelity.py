@@ -24,8 +24,8 @@ async def skill_reader(hass, tmp_path, monkeypatch):
     for name in ("heating", "lighting"):
         directory = root / name
         (directory / "references").mkdir(parents=True)
-        (directory / "SKILL.md").write_text(
-            "---\ndescription: Audit Skill\n---\nInstructions"
+        (directory / "SKILL.md").write_bytes(
+            b"---\ndescription: Audit Skill\n---\nInstructions"
         )
         (directory / "references" / "setup.md").write_text(f"{name} setup")
     manager = await SkillManager.async_get_instance(hass, user_skills_dir=str(root))
