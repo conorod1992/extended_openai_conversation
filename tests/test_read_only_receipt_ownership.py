@@ -1,5 +1,6 @@
 """Read retries use actual I/O, without granting overrides an effect exemption."""
 
+from contextlib import closing
 from functools import wraps
 import sqlite3
 from types import SimpleNamespace
@@ -24,7 +25,7 @@ from tests.test_receipt_ownership_contracts import dispatch
 @pytest.fixture
 def database(tmp_path):
     path = tmp_path / "states.db"
-    with sqlite3.connect(path) as db:
+    with closing(sqlite3.connect(path)) as db, db:
         db.execute("CREATE TABLE states (state TEXT)")
         db.execute("INSERT INTO states VALUES ('22.5')")
     return path
@@ -51,7 +52,7 @@ async def sqlite_retry_witness(hass, database):
     ) == [{"state": "22.5"}]
     # Failed provider continuations retain through this production boundary.
     remember_unacknowledged_calls(entity, log, set())
-    with sqlite3.connect(database) as db:
+    with closing(sqlite3.connect(database)) as db, db:
         db.execute("UPDATE states SET state='23.0'")
     assert await dispatch(
         entity, log, backend, config, name="read", call_id="fresh-id"
