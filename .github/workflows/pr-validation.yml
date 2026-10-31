@@ -33,7 +33,8 @@ jobs:
       - name: Lint GitHub Actions workflows
         run: |
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
-          actionlint -color
+          # Keep workflow checks independent of optional host-installed linters.
+          actionlint -color -shellcheck= -pyflakes=
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.14"
