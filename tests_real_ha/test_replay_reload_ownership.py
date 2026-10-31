@@ -1,11 +1,14 @@
 """Replay evidence must outlive the conversation entity that observed an effect."""
 
+import sqlite3
+
 import pytest
 
 from homeassistant.components import conversation
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
 from homeassistant.core import Context
 from tests_real_ha.entity_service_probe import register_entity_service_probe
+from tests_real_ha.test_cross_feature_acceptance import _agent as configured_agent, _say
 from tests_real_ha.test_provider_wire_e2e import (
     _agent,
     _chat_sse_text,
@@ -161,3 +164,78 @@ async def test_budget_failure_preserves_effect_through_retry_and_reload(
     await test_failed_effect_cannot_replay_after_genuine_reload(
         hass, monkeypatch, mode, failure_kind="output_budget"
     )
+
+
+@pytest.mark.parametrize("mode", ["chat_completions", "responses"])
+@pytest.mark.parametrize("backend", ["sqlite", "template"])
+async def test_read_retry_after_failed_provider_continuation(
+    hass, monkeypatch, tmp_path, mode, backend
+):
+    path = tmp_path / "read.db"
+
+    def prepare_database():
+        with sqlite3.connect(path) as db:
+            db.execute("CREATE TABLE states (state TEXT)")
+            db.execute("INSERT INTO states VALUES ('22.5')")
+
+    await hass.async_add_executor_job(prepare_database)
+    config = (
+        {"type": "sqlite", "db_url": str(path), "query": "SELECT state FROM states"}
+        if backend == "sqlite"
+        else {"type": "template", "value_template": "{{ 2 + 2 }}"}
+    )
+    tool = {
+        "spec": {
+            "name": "read_value",
+            "description": "Read",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "function": config,
+    }
+    agent = await configured_agent(hass, api_mode=mode, functions=[tool])
+
+    def call(call_id):
+        return (
+            _responses_sse_tool_call(call_id, name="read_value", tool_arguments={})
+            if mode == "responses"
+            else _chat_sse_tool_call(call_id, name="read_value", arguments={})
+        )
+
+    final = _responses_sse_text if mode == "responses" else _chat_sse_text
+    _install_wire(
+        monkeypatch,
+        agent,
+        [
+            call("first"),
+            (
+                400,
+                {
+                    "error": {
+                        "message": "continuation failed",
+                        "type": "invalid_request_error",
+                    }
+                },
+            ),
+        ],
+    )
+    failed = await _say(hass, agent, "Read the value")
+    assert failed.response.error_code is not None
+
+    # Verify a fresh provider call reaches actual I/O, not a retained result.
+    def change_database():
+        with sqlite3.connect(path) as db:
+            db.execute("UPDATE states SET state='23.0'")
+
+    await hass.async_add_executor_job(change_database)
+    wire = _install_wire(monkeypatch, agent, [call("fresh-id"), final("Read again")])
+    resumed = await _say(hass, agent, "Read again", failed.conversation_id)
+    assert resumed.response.error_code is None
+    assert resumed.conversation_id == failed.conversation_id
+    assert len(wire.requests) == 2
+    payloads = str(wire.requests)
+    assert ("23.0" if backend == "sqlite" else "4") in payloads
+    assert "not acknowledged" not in payloads
+    _install_wire(monkeypatch, agent, [call("acknowledged"), final("Done")])
+    assert (
+        await _say(hass, agent, "Read again", failed.conversation_id)
+    ).response.error_code is None
