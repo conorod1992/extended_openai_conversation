@@ -9,11 +9,15 @@ from typing import Any
 
 from homeassistant.exceptions import HomeAssistantError
 
+from .const import FILE_READ_SIZE_LIMIT
+
 # These ceilings are intentionally generous so ordinary Skills are unaffected while
 # malformed or unexpectedly large trees cannot consume unbounded memory/disk/CPU.
 MAX_SKILL_DISCOVERY_ENTRIES = 4096
 MAX_DISCOVERED_SKILLS = 512
-MAX_SKILL_METADATA_BYTES = 2 * 1024 * 1024
+# The canonical load_skill preset uses read_file. Do not advertise instructions
+# that discovery can read but that the model's bounded file reader cannot load.
+MAX_SKILL_METADATA_BYTES = FILE_READ_SIZE_LIMIT
 MAX_SKILL_DOWNLOAD_DEPTH = 16
 MAX_SKILL_DOWNLOAD_FILES = 1024
 MAX_SKILL_FILE_BYTES = 16 * 1024 * 1024
