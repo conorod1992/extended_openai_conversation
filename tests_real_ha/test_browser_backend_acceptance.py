@@ -168,8 +168,6 @@ async def test_shipped_browser_frontend_talks_to_real_management_websocket(
     # Exercise the real queue-admission response and physical delivery, rather
     # than a browser fixture inventing an acknowledgement's shape.
     monkeypatch.setattr(intercom, "IDLE_STABILITY_SECONDS", 0)
-    # Delivery is under test; the long TTL callback must not outlive this journey.
-    monkeypatch.setattr(intercom, "async_call_later", lambda *_args, **_kwargs: None)
     manager = await intercom.async_get_intercom(hass)
     await manager.async_set_enabled(True)
     hass.states.async_set(
