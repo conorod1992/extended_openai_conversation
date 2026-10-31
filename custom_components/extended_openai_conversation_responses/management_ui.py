@@ -1738,7 +1738,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             title=title,
             unique_id=None,
         )
-        _validated_model_request(duplicate.data, entry.data)
+        _validated_model_request(dict(duplicate.data), entry.data)
         hass.config_entries.async_add_subentry(entry, duplicate)
         return {
             "status": "created",
