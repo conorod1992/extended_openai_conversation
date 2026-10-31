@@ -54,6 +54,7 @@ async def test_failed_effect_cannot_replay_after_genuine_reload(
         )
 
     final = _responses_sse_text if mode == "responses" else _chat_sse_text
+
     if failure_kind == "output_budget":
         from custom_components.extended_openai_conversation_responses import (
             conversation as owner,
@@ -214,6 +215,9 @@ async def test_read_retry_after_failed_provider_continuation(
             if item.get("role") == "tool" or item.get("type") == "function_call_output"
         ]
 
+    _install_wire(monkeypatch, agent, [final("Ready")])
+    seed = await _say(hass, agent, "Hello")
+    assert seed.conversation_id
     first_wire = _install_wire(
         monkeypatch,
         agent,
@@ -230,7 +234,7 @@ async def test_read_retry_after_failed_provider_continuation(
             ),
         ],
     )
-    failed = await _say(hass, agent, "Read the value")
+    failed = await _say(hass, agent, "Read the value", seed.conversation_id)
     assert failed.response.error_code is not None
     assert outputs(first_wire)[-1] == (
         [{"state": "22.5"}] if backend == "sqlite" else "4"
