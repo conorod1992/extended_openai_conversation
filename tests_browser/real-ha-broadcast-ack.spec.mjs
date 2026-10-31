@@ -29,6 +29,15 @@ for (const bundle of [false, true]) {
     }, !bundle);
     await panel.locator("#broadcast-message").fill(`Dinner ${bundle ? "bundle" : "source"}`);
     await panel.locator("#broadcast-send").click();
+    if (!bundle) {
+      // A failed refresh replaces the card with an error. Return through the
+      // normal navigation path before exercising the next composer action.
+      await expect(panel.locator("#broadcast-card [role=alert]")).toContainText("controlled history refresh failure");
+      expect(await panel.evaluate(host => host._broadcastMessage)).toBe("");
+      await panel.evaluate(host => host._testFailBroadcastRefresh = false);
+      await panel.getByRole("button", {name:"Guide", exact:true}).click();
+      await panel.getByRole("button", {name:"Overview", exact:true}).click();
+    }
     await expect(panel.locator("#broadcast-message")).toHaveValue("");
     await expect(panel.locator("#broadcast-send")).toBeEnabled();
     const response = await panel.evaluate(host => host._testBroadcastAck);
