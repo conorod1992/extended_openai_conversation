@@ -125,6 +125,7 @@
     },
     "tests_real_ha/test_browser_backend_acceptance.py": {
       "nodes": [
+        "test_broadcast_admission_retires_composer_without_duplicate_delivery",
         "test_shipped_browser_frontend_talks_to_real_management_websocket",
         "test_shipped_frontend_treats_hostile_knowledge_and_memory_as_text"
       ],
