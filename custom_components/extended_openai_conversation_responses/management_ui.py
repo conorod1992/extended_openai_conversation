@@ -473,9 +473,12 @@ def _export_agent(subentry, *, reviewed: bool = False) -> dict[str, Any]:
 def _parse_import_document(value: Any, *, destination: Any = None) -> dict[str, Any]:
     if isinstance(value, str):
         try:
-            value = yaml.safe_load(value)
-        except yaml.YAMLError as err:
-            raise AgentConfigError("document", f"invalid JSON/YAML: {err}") from err
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            try:
+                value = yaml.safe_load(value)
+            except yaml.YAMLError as err:
+                raise AgentConfigError("document", f"invalid JSON/YAML: {err}") from err
     if not isinstance(value, dict):
         raise AgentConfigError("document", "must be an object")
     if value.get("schema") != "extended_openai_conversation.agent":
