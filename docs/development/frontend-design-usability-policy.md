@@ -1084,10 +1084,10 @@ The following existing EOAI patterns should be treated as useful references.
 
 Start with the current shared implementation, rather than copying an entire feature:
 
-- [management renderer and shell](../../custom_components/extended_openai_conversation_responses/frontend/management-renderer.js);
-- [settings field builders](../../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-base.js) and [setting destinations](../../custom_components/extended_openai_conversation_responses/frontend/management-config-destinations.js);
-- [shared configuration Save](../../custom_components/extended_openai_conversation_responses/frontend/management-actions.js), [draft scopes](../../custom_components/extended_openai_conversation_responses/frontend/management-page-drafts.js), and [acknowledgement handling](../../custom_components/extended_openai_conversation_responses/frontend/configuration-acknowledgement.js);
-- [keyed collection reconciliation](../../custom_components/extended_openai_conversation_responses/frontend/keyed-collection.js).
+- [management renderer and shell](https://github.com/conorod1992/extended_openai_conversation/blob/develop/custom_components/extended_openai_conversation_responses/frontend/management-renderer.js);
+- [settings field builders](https://github.com/conorod1992/extended_openai_conversation/blob/develop/custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-base.js) and [setting destinations](https://github.com/conorod1992/extended_openai_conversation/blob/develop/custom_components/extended_openai_conversation_responses/frontend/management-config-destinations.js);
+- [shared configuration Save](https://github.com/conorod1992/extended_openai_conversation/blob/develop/custom_components/extended_openai_conversation_responses/frontend/management-actions.js), [draft scopes](https://github.com/conorod1992/extended_openai_conversation/blob/develop/custom_components/extended_openai_conversation_responses/frontend/management-page-drafts.js), and [acknowledgement handling](https://github.com/conorod1992/extended_openai_conversation/blob/develop/custom_components/extended_openai_conversation_responses/frontend/configuration-acknowledgement.js);
+- [keyed collection reconciliation](https://github.com/conorod1992/extended_openai_conversation/blob/develop/custom_components/extended_openai_conversation_responses/frontend/keyed-collection.js).
 
 Configuration is distributed across several routes. These references identify shared responsibilities; they are not frozen templates or a requirement to restructure specialised workflows.
 
