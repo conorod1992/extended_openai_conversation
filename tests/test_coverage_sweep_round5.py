@@ -1011,7 +1011,7 @@ async def test_service_function_tool_enable_updates_requested_tool(
         {"spec": {"name": "two"}, "enabled": True},
     ]
     subentry = SimpleNamespace(subentry_id="agent", data={})
-    entry = SimpleNamespace(entry_id="entry", subentries={"agent": subentry})
+    entry = SimpleNamespace(entry_id="entry", subentries={"agent": subentry}, data={})
     hass.config_entries.async_get_entry = Mock(return_value=entry)
     monkeypatch.setattr(
         mutations, "validate_function_tools", Mock(return_value=deepcopy(configured))
@@ -1044,7 +1044,7 @@ async def test_service_function_group_enable_missing_and_success_paths(
         services, "get_agent_maintenance_gate", Mock(return_value=_SharedGate())
     )
     subentry = SimpleNamespace(subentry_id="agent", data={})
-    entry = SimpleNamespace(entry_id="entry", subentries={"agent": subentry})
+    entry = SimpleNamespace(entry_id="entry", subentries={"agent": subentry}, data={})
     hass.config_entries.async_get_entry = Mock(return_value=entry)
     monkeypatch.setattr(mutations, "validate_function_tools", Mock(return_value=[]))
     groups = [
