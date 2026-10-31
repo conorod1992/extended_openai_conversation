@@ -1,4 +1,5 @@
-import {callMutation, captureConfigurationOwner, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
+import {callMutation, captureConfigurationOwner, presentAcknowledgedMutation, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
+import {acknowledgeBroadcast} from "./broadcast-acknowledgement.js";
 import {watchLiveStatus, stopLiveStatus} from "./management-live-status.js";
 const ROUTE_STYLE = `/* Overview Broadcast */
 #broadcast-card{background:color-mix(in srgb,var(--secondary-background-color) 20%,var(--card-background-color));border-color:color-mix(in srgb,var(--divider-color) 72%,var(--secondary-text-color))}
@@ -150,27 +151,14 @@ function bindBroadcastControls(panel, snapshot) {
     panel._broadcastSending = true;
     button.disabled = true;
     try {
-      const result = await callMutation(() => panel._hass.callWS({
+      const response = await callMutation(() => panel._hass.callWS({
         type: WS_BROADCAST,
         action: "send",
         message,
         whole_home: wholeHome,
         entity_ids: wholeHome ? [] : selected,
       }));
-      // async_send acknowledges admission with a message identity and concrete
-      // recipients. Delivery status belongs to each recipient and may change later.
-      requireMutationAcknowledgement(typeof result?.id === "string" && !!result.id.trim()
-        && Array.isArray(result.targets) && result.targets.length > 0
-        && result.targets.every(target => typeof target === "string" && !!target.trim()), "queuing Broadcast");
-      const current = captureConfigurationOwner(panel);
-      if (current.userId === submission.userId && current.authenticationGeneration === submission.authenticationGeneration
-          && (panel._broadcastDraftRevision || 0) === draftRevision) {
-        panel._broadcastMessage = "";
-        processMutationResponse(result, () => {
-          const composer = panel.shadowRoot.querySelector("#broadcast-message");
-          if (composer && composer.value.trim() === message) composer.value = "";
-        });
-      }
+      const result = acknowledgeBroadcast(panel, submission, message, draftRevision, response);
       await presentAcknowledgedMutation(panel, submission, "Broadcast queued", async () => {
         if (!await loadBroadcast(panel)) throw Error("Broadcast history could not be refreshed.");
       }, result);

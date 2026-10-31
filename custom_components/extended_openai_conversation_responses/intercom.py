@@ -7,7 +7,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 import re
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 from uuid import uuid4
 
 from homeassistant.const import ATTR_FRIENDLY_NAME, ATTR_SUPPORTED_FEATURES
@@ -52,6 +52,29 @@ def _announcement_timeout_seconds(message: str) -> float:
     )
 
 
+class BroadcastAdmission(TypedDict):
+    """Queue-admission evidence; delivery is reported separately."""
+
+    id: str
+    targets: list[str]
+
+
+class DeliverySnapshot(TypedDict):
+    status: str
+    detail: str | None
+    updated_at: str
+
+
+class BroadcastMessageSnapshot(BroadcastAdmission):
+    message: str
+    created_at: str
+    expires_at: str
+    source: str
+    origin_entity_id: str | None
+    origin_device_id: str | None
+    deliveries: dict[str, DeliverySnapshot]
+
+
 @dataclass(slots=True)
 class Delivery:
     entity_id: str
@@ -78,7 +101,7 @@ class BroadcastMessage:
     deliveries: dict[str, Delivery]
     context: Context | None = field(default=None, repr=False, compare=False)
 
-    def as_dict(self) -> dict[str, Any]:
+    def as_dict(self) -> BroadcastMessageSnapshot:
         return {
             "id": self.id,
             "message": self.message,
@@ -335,7 +358,7 @@ class IntercomManager:
         source: str = "manual",
         ttl_seconds: int = DEFAULT_TTL_SECONDS,
         context: Context | None = None,
-    ) -> dict[str, Any]:
+    ) -> BroadcastMessageSnapshot:
         if not self._enabled:
             raise HomeAssistantError(
                 "Broadcast is disabled. Enable it from the Extended OpenAI Overview."
@@ -607,10 +630,10 @@ class IntercomManager:
             if not queue:
                 self._queues.pop(entity_id, None)
 
-    def history(self) -> list[dict[str, Any]]:
+    def history(self) -> list[BroadcastMessageSnapshot]:
         return [item.as_dict() for item in self._history]
 
-    def pending(self) -> list[dict[str, Any]]:
+    def pending(self) -> list[BroadcastMessageSnapshot]:
         """Return active deliveries independently of the bounded recent history."""
         messages = {
             item.id: item

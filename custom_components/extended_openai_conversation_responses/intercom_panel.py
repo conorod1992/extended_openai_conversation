@@ -13,7 +13,7 @@ from homeassistant.exceptions import HomeAssistantError
 
 from .const import DOMAIN
 from .ha_schema import websocket_command as ha_websocket_command
-from .intercom import async_get_intercom
+from .intercom import BroadcastMessageSnapshot, async_get_intercom
 
 WS_BROADCAST = f"{DOMAIN}/broadcast"
 _SETUP_KEY = f"{DOMAIN}.broadcast_api_setup"
@@ -55,7 +55,9 @@ async def websocket_broadcast(
                 }
                 catalog = manager.catalog(entity_ids=readable)
 
-                def visible(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+                def visible(
+                    items: list[BroadcastMessageSnapshot],
+                ) -> list[BroadcastMessageSnapshot]:
                     return [
                         {**item, "origin_device_id": None}
                         for item in items
@@ -66,8 +68,8 @@ async def websocket_broadcast(
                             for entity_id in item.get("deliveries", {})
                         )
                         and (
-                            not item.get("origin_entity_id")
-                            or can_read(item["origin_entity_id"])
+                            not (origin := item.get("origin_entity_id"))
+                            or can_read(origin)
                         )
                     ]
 

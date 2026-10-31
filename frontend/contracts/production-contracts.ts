@@ -12,6 +12,15 @@ const numeric: number = response.revision;
 requireMutationAcknowledgement(response, "save");
 void numeric;
 
+import {requireBroadcastAdmission, acknowledgeBroadcast} from "../../custom_components/extended_openai_conversation_responses/frontend/broadcast-acknowledgement.js";
+const admission = requireBroadcastAdmission({id:"broadcast", targets:["assist_satellite.kitchen"]});
+const recipients: string[] = admission.targets;
+// @ts-expect-error Admission has no top-level delivery status.
+admission.status;
+// @ts-expect-error Authentication generations cannot be user IDs.
+acknowledgeBroadcast({shadowRoot:{querySelector:() => null}}, {userId:7, authenticationGeneration:0}, "Dinner", 0, admission);
+void recipients;
+
 import {requireRequestRuleAcknowledgement} from "../../custom_components/extended_openai_conversation_responses/frontend/request-rule-acknowledgement.js";
 requireRequestRuleAcknowledgement("update", {revision:2, rule:{id:"rule-1"}}, "rule-1");
 // @ts-expect-error Rule identity must not be confused with the numeric revision.

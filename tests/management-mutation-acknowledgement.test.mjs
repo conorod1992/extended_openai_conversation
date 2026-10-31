@@ -498,17 +498,19 @@ for (const mode of ["current", "new"]) {
 
 // Run the same independent outcome assertion against deliberately broken source.
 // Mutations are evaluated in memory; the checkout is never rewritten.
-async function mutantModule(file, anchor, replacement) {
+async function mutantModule(file, anchor, replacement, urlOnly = false) {
   const source = (await readFile(new URL(file, frontend), "utf8")).replaceAll("\r\n", "\n");
   assert.equal(source.split(anchor).length, 2, "sensitivity anchor must be unique");
   const mutated = source.replace(anchor, replacement).replaceAll("import.meta.url", JSON.stringify(new URL(file, frontend).href)).replace(/from "(\.\/[^\"]+)"/g, (_match, path) => `from "${new URL(path, frontend)}"`);
-  return import(`data:text/javascript;base64,${Buffer.from(mutated).toString("base64")}`);
+  const url = `data:text/javascript;base64,${Buffer.from(mutated).toString("base64")}`;
+  return urlOnly ? url : import(url);
 }
 
 test("sensitivity: Broadcast's next-action witness detects the obsolete top-level status contract", async () => {
-  const mutant = await mutantModule("overview-broadcast.js",
-    'requireMutationAcknowledgement(typeof result?.id === "string" && !!result.id.trim()\n        && Array.isArray(result.targets) && result.targets.length > 0\n        && result.targets.every(target => typeof target === "string" && !!target.trim()), "queuing Broadcast");',
-    'requireMutationAcknowledgement(typeof result?.status === "string", "queuing Broadcast");');
+  const brokenContract = await mutantModule("broadcast-acknowledgement.js",
+    'value !== null && "id" in value\n    && typeof value.id === "string" && !!value.id.trim()\n    && "targets" in value && Array.isArray(value.targets) && value.targets.length > 0\n    && value.targets.every((/** @type {unknown} */ target) => typeof target === "string" && !!target.trim())',
+    'value !== null && "status" in value && typeof value.status === "string"', true);
+  const mutant = await mutantModule("overview-broadcast.js", 'from "./broadcast-acknowledgement.js"', `from "${brokenContract}"`);
   await assert.rejects(() => broadcastAdmissionWitness(mutant.bindBroadcast), /an admitted Broadcast must retire its submitted draft/);
 });
 
