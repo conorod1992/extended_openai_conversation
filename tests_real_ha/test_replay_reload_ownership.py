@@ -1,5 +1,6 @@
 """Replay evidence must outlive the conversation entity that observed an effect."""
 
+from contextlib import closing
 import json
 import sqlite3
 
@@ -176,7 +177,7 @@ async def test_read_retry_after_failed_provider_continuation(
     path = tmp_path / "read.db"
 
     def prepare_database():
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db, db:
             db.execute("CREATE TABLE states (state TEXT)")
             db.execute("INSERT INTO states VALUES ('22.5')")
 
@@ -242,7 +243,7 @@ async def test_read_retry_after_failed_provider_continuation(
 
     # Verify a fresh provider call reaches actual I/O, not a retained result.
     def change_database():
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db, db:
             db.execute("UPDATE states SET state='23.0'")
 
     await hass.async_add_executor_job(change_database)
