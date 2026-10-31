@@ -157,30 +157,12 @@ async def _start_ws_bridge(
 async def test_shipped_browser_frontend_talks_to_real_management_websocket(
     hass: HomeAssistant,
     hass_ws_client: Any,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Chromium CRUD journeys must satisfy the genuine HA management contract."""
     entry = _entry("Browser Backend Acceptance")
     await _setup_entry(hass, entry)
     # Both assistants are genuine loaded entries; identity coverage must not skip.
     await _setup_entry(hass, _entry("Dependent Journey"))
-
-    # Exercise the real queue-admission response and physical delivery, rather
-    # than a browser fixture inventing an acknowledgement's shape.
-    monkeypatch.setattr(intercom, "IDLE_STABILITY_SECONDS", 0)
-    manager = await intercom.async_get_intercom(hass)
-    await manager.async_set_enabled(True)
-    hass.states.async_set(
-        "assist_satellite.kitchen",
-        "idle",
-        {ATTR_SUPPORTED_FEATURES: intercom.ANNOUNCE_FEATURE},
-    )
-    announcements: list[dict] = []
-
-    async def announce(call) -> None:
-        announcements.append(dict(call.data))
-
-    hass.services.async_register("assist_satellite", "announce", announce)
 
     class BrowserClient:
         # Slow runner startup must not age an authenticated, unpolled test socket.
@@ -207,8 +189,49 @@ async def test_shipped_browser_frontend_talks_to_real_management_websocket(
             env={"REAL_HA_BACKEND_URL": backend_url},
             failure_label="Playwright genuine-HA backend acceptance failed",
         )
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_broadcast_admission_retires_composer_without_duplicate_delivery(
+    hass: HomeAssistant,
+    hass_ws_client: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An actual admission retires the draft, regardless of history rendering."""
+    await _setup_entry(hass, _entry("Browser Broadcast acknowledgement"))
+    monkeypatch.setattr(intercom, "IDLE_STABILITY_SECONDS", 0)
+    manager = await intercom.async_get_intercom(hass)
+    await manager.async_set_enabled(True)
+    hass.states.async_set(
+        "assist_satellite.kitchen",
+        "idle",
+        {ATTR_SUPPORTED_FEATURES: intercom.ANNOUNCE_FEATURE},
+    )
+    announcements: list[dict] = []
+
+    async def announce(call) -> None:
+        announcements.append(dict(call.data))
+
+    hass.services.async_register("assist_satellite", "announce", announce)
+
+    class BrowserClient:
+        client = None
+        _eoai_test_hass = hass
+
+        async def send_json_auto_id(self, message):
+            if self.client is None:
+                self.client = await _admin_client(hass, hass_ws_client)
+            await self.client.send_json_auto_id(message)
+
+        async def receive_json(self):
+            return await self.client.receive_json()
+
+    runner, backend_url = await _start_ws_bridge(BrowserClient())
+    try:
         await _run_playwright(
-            repo_root=repo_root,
+            repo_root=Path(__file__).resolve().parent.parent,
             spec="tests_browser/real-ha-broadcast-ack.spec.mjs",
             config="playwright.config.mjs",
             env={"REAL_HA_BACKEND_URL": backend_url},
