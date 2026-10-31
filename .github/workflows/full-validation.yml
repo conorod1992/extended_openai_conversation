@@ -16,6 +16,11 @@ on:
         required: false
         type: string
 
+      ha_dev_sha:
+        description: Optional full Home Assistant dev commit SHA for replay
+        required: false
+        type: string
+
 permissions:
   actions: write
   contents: write
@@ -45,6 +50,7 @@ jobs:
           GH_RUN_ID: ${{ github.run_id }}
           GH_RUN_ATTEMPT: ${{ github.run_attempt }}
           FULL_VALIDATION_SEED: ${{ inputs.seed }}
+          FULL_VALIDATION_HA_DEV_SHA: ${{ inputs.ha_dev_sha }}
           FULL_VALIDATION_MODE: ${{ inputs.mode }}
         run: python3 ci/full_validation.py
       - name: Preserve exact validation cohort for release certification

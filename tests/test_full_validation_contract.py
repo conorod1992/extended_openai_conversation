@@ -73,6 +73,7 @@ def test_validation_mode_dispatches_expected_inventory(monkeypatch, tmp_path, mo
     assert programme.call_count == int(mode == "full" and not failed)
     assert original == driver.TEST_WORKFLOWS
     cohort = json.loads(Path("full-validation-cohort.json").read_text())
+    assert cohort["stress_seed"] == driver.STRESS_SEED
     assert cohort["mode"] == mode
     assert cohort["passed"] is (not failed)
     assert {row["workflow"] for row in cohort["runs"]} == expected
@@ -345,3 +346,12 @@ def test_programme_uses_this_runs_verified_environment(monkeypatch, tmp_path, de
             "ha_dev_sha": DEV_SHA,
         }
     artifacts.assert_called_once_with(42)
+
+
+def test_replay_pin_is_passed_to_resolver(monkeypatch, tmp_path):
+    monkeypatch.setenv("FULL_VALIDATION_HA_DEV_SHA", DEV_SHA)
+    driver = _driver(monkeypatch, tmp_path)
+    driver.resolve_ha_dev_sha.side_effect = ValueError("stop before dispatch")
+    with pytest.raises(ValueError, match="stop before dispatch"):
+        driver.main()
+    driver.resolve_ha_dev_sha.assert_called_once_with(DEV_SHA)

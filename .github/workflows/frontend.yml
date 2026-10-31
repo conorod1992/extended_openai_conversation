@@ -159,6 +159,13 @@ jobs:
           tests_browser/stale-response-matrix.stress.mjs
           --grep 'late read cannot repaint a newer route'
 
+      - name: Check Request Rules failed-save recovery and persistence
+        if: matrix.shard == 1
+        run: >-
+          npx playwright test --config=playwright.stress.config.mjs
+          tests_browser/request-rules-matching-preview.stress.mjs
+          --grep 'defaults and wording edits persist'
+
       - name: Upload browser diagnostics
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
