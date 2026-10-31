@@ -1,5 +1,6 @@
 """Replay evidence must outlive the conversation entity that observed an effect."""
 
+import json
 import sqlite3
 
 import pytest
@@ -202,7 +203,18 @@ async def test_read_retry_after_failed_provider_continuation(
         )
 
     final = _responses_sse_text if mode == "responses" else _chat_sse_text
-    _install_wire(
+
+    def outputs(wire):
+        body = wire.requests[-1]["body"]
+        return [
+            json.loads(
+                item["content"] if mode == "chat_completions" else item["output"]
+            )["result"]
+            for item in body["messages" if mode == "chat_completions" else "input"]
+            if item.get("role") == "tool" or item.get("type") == "function_call_output"
+        ]
+
+    first_wire = _install_wire(
         monkeypatch,
         agent,
         [
@@ -220,6 +232,9 @@ async def test_read_retry_after_failed_provider_continuation(
     )
     failed = await _say(hass, agent, "Read the value")
     assert failed.response.error_code is not None
+    assert outputs(first_wire)[-1] == (
+        [{"state": "22.5"}] if backend == "sqlite" else "4"
+    )
 
     # Verify a fresh provider call reaches actual I/O, not a retained result.
     def change_database():
@@ -232,9 +247,7 @@ async def test_read_retry_after_failed_provider_continuation(
     assert resumed.response.error_code is None
     assert resumed.conversation_id == failed.conversation_id
     assert len(wire.requests) == 2
-    payloads = str(wire.requests)
-    assert ("23.0" if backend == "sqlite" else "4") in payloads
-    assert "not acknowledged" not in payloads
+    assert outputs(wire)[-1] == ([{"state": "23.0"}] if backend == "sqlite" else "4")
     _install_wire(monkeypatch, agent, [call("acknowledged"), final("Done")])
     assert (
         await _say(hass, agent, "Read again", failed.conversation_id)
