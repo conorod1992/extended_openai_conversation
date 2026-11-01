@@ -979,13 +979,15 @@ def test_usage_daily_series_clamps_limit_and_date_range() -> None:
 def test_usage_recent_runs_filters_and_clamps_paging() -> None:
     from custom_components.extended_openai_conversation_responses import usage
 
+    # Keep records within retention while testing filtering and paging.
+    timestamp = datetime.now(UTC).isoformat()
     manager = usage.UsageManager.__new__(usage.UsageManager)
     manager.request_retention_days = manager.run_retention_days = 30
     manager.runs = [
         usage.UsageRun(
             run_id="one",
-            started_at="2026-10-01T00:00:00+00:00",
-            completed_at="2026-10-01T00:01:00+00:00",
+            started_at=timestamp,
+            completed_at=timestamp,
             duration_ms=1,
             agent_subentry_id="agent",
             home_assistant_conversation_id=None,
@@ -994,8 +996,8 @@ def test_usage_recent_runs_filters_and_clamps_paging() -> None:
         ),
         usage.UsageRun(
             run_id="two",
-            started_at="2026-10-02T00:00:00+00:00",
-            completed_at="2026-10-02T00:01:00+00:00",
+            started_at=timestamp,
+            completed_at=timestamp,
             duration_ms=1,
             agent_subentry_id="agent",
             home_assistant_conversation_id=None,
