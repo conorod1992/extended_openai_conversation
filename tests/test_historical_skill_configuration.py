@@ -55,9 +55,11 @@ async def empty_rules(monkeypatch):
     return rules
 
 
+@pytest.mark.parametrize("budget", [0, 1, "0", "1", "1.0"])
 async def test_released_config_migrates_reads_saves_and_can_be_explicitly_repaired(
-    hass, management_agent, management_message, historical_config, empty_rules
+    hass, management_agent, management_message, historical_config, empty_rules, budget
 ):
+    historical_config["max_function_calls_per_conversation"] = budget
     entry, subentry = management_agent
     subentry.data = historical_config
     entry.version = CONFIG_ENTRY_VERSION
@@ -68,7 +70,16 @@ async def test_released_config_migrates_reads_saves_and_can_be_explicitly_repair
     read = await management_ui.async_management_command(
         hass, "admin", True, management_message("configuration", "get")
     )
-    assert read["configuration_guidance"]["skills"]["available"] is False
+    # Positive-budget controls make the former zero-budget case usable; the
+    # missing/disabled-loader cases must remain inactive in every representation.
+    usable = (
+        any(
+            t["spec"]["name"] == "load_skill" and t.get("enabled", True)
+            for t in yaml.safe_load(historical_config["functions"])
+        )
+        and float(budget) > 0
+    )
+    assert read["configuration_guidance"]["skills"]["available"] is usable
     assert "load_skill" in read["configuration_guidance"]["skills"]["repair"]
     saved = await management_ui.async_management_command(
         hass,
@@ -180,9 +191,11 @@ def test_unavailable_skill_recovery_does_not_hide_other_invalid_fields(
         merge_agent_config(historical_config, {"max_tokens": -1})
 
 
-def test_recovery_rejects_hidden_new_blockers_and_allows_partial_repairs():
+@pytest.mark.parametrize("budget", [0, "0", "0.0"])
+def test_recovery_rejects_hidden_new_blockers_and_allows_partial_repairs(budget):
     case = next(case for case in HISTORICAL["cases"] if case["id"] == "zero_budget")
     current = deepcopy({**HISTORICAL["base"], **case["overrides"]})
+    current["max_function_calls_per_conversation"] = budget
     # The budget diagnostic must not hide a newly removed/disabled loader.
     with pytest.raises(AgentConfigError, match="skills"):
         merge_agent_config(current, {"functions": "[]"})
@@ -197,11 +210,22 @@ def test_recovery_rejects_hidden_new_blockers_and_allows_partial_repairs():
     assert yaml.safe_load(partial["functions"]) == []
 
 
+@pytest.mark.parametrize("budget", [0, 1, "0", "1", "1.0"])
 async def test_skill_recovery_coexists_with_function_quarantine(
-    hass, management_agent, management_message, historical_config, empty_rules
+    hass, management_agent, management_message, historical_config, empty_rules, budget
 ):
+    historical_config["max_function_calls_per_conversation"] = budget
     _entry, subentry = management_agent
     tools = yaml.safe_load(historical_config["functions"])
+    tools.append(
+        {
+            "spec": {
+                "name": "stable",
+                "parameters": {"type": "object", "properties": {}},
+            },
+            "function": {"type": "template", "value_template": "ok"},
+        }
+    )
     tools.append(
         {
             "spec": {
@@ -230,3 +254,11 @@ async def test_skill_recovery_coexists_with_function_quarantine(
     )
     assert saved["valid"], saved
     assert subentry.data == {**before, "max_tokens": 613}
+    await management_ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        management_message("tools", "set_enabled", name="stable", enabled=False),
+    )
+    assert subentry.data["max_function_calls_per_conversation"] == budget
+    assert yaml.safe_load(subentry.data["functions"])[-1] == tools[-1]

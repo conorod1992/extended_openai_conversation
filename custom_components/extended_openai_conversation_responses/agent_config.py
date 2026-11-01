@@ -936,6 +936,17 @@ def normalize_agent_numeric_values(candidate: dict[str, Any]) -> None:
     _coerce_legacy_numbers(candidate)
 
 
+def normalized_function_call_budget(data: Mapping[str, Any]) -> int:
+    """Read a historical budget without validating unrelated damaged fields."""
+    key = CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION
+    scalar = {key: data.get(key, DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION)}
+    normalize_agent_numeric_values(scalar)
+    _require_type(scalar, (key,), int)
+    if scalar[key] < 0:
+        raise AgentConfigError(key, "must be at least 0")
+    return scalar[key]
+
+
 def normalize_reasoning_defaults(config: dict[str, Any], *, explicit: bool) -> None:
     """Apply the same model-aware omitted-value contract to reads and saves."""
     selected_model = str(
@@ -1355,10 +1366,7 @@ def merge_agent_config(
                 current.get(CONF_SKILLS, []) or [],
                 previous_tools,
                 previous_groups,
-                max_function_calls=current.get(
-                    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-                    DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-                ),
+                max_function_calls=normalized_function_call_budget(current),
             )
             if not preserves_skill_loader_availability(
                 before,
