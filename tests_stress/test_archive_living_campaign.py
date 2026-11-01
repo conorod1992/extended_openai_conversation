@@ -491,7 +491,7 @@ async def test_public_archive_date_range_bulk_transaction(
     )
     from tests.test_conversation_archive import _session, _turn
 
-    # These fixed July–October records test deletion boundaries. Keep the
+    # These fixed July to October records test deletion boundaries. Keep the
     # October control within retention when setup/reload runs maintenance.
     freezer.move_to("2026-10-15T12:00:00+00:00")
     entry = _make_entry("Bulk archive", include_ai_task=False)
