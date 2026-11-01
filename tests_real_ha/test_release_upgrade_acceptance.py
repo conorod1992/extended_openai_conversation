@@ -453,7 +453,13 @@ async def _released_phase(hass: Any, config_dir: Path) -> None:
     # historical stock Function Tool schemas, and customize only stable user fields.
     data = dict(subentry.data)
     custom_values: dict[str, Any] = {}
-    supports_no_reasoning = "none" in getattr(const, "REASONING_EFFORT_OPTIONS", ())
+    helpers = importlib.import_module(f"custom_components.{DOMAIN}.helpers")
+    effort_options = getattr(helpers, "get_reasoning_effort_options", None)
+    supports_no_reasoning = "none" in (
+        effort_options("gpt-5.6")
+        if callable(effort_options)
+        else getattr(const, "REASONING_EFFORT_OPTIONS", ())
+    )
     for name, value in (
         (
             "CONF_CHAT_MODEL",
