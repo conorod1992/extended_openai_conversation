@@ -944,7 +944,7 @@ def normalized_function_call_budget(data: Mapping[str, Any]) -> int:
     _require_type(scalar, (key,), int)
     if scalar[key] < 0:
         raise AgentConfigError(key, "must be at least 0")
-    return scalar[key]
+    return cast(int, scalar[key])
 
 
 def normalize_reasoning_defaults(config: dict[str, Any], *, explicit: bool) -> None:
