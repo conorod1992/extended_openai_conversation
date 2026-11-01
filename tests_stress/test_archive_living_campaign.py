@@ -482,7 +482,7 @@ async def test_cached_archive_retries_native_partition_interruption(
 )
 @pytest.mark.usefixtures("real_store_io")
 async def test_public_archive_date_range_bulk_transaction(
-    hass, monkeypatch, stress_trace, count, boundary
+    hass, monkeypatch, freezer, stress_trace, count, boundary
 ):
     from dataclasses import asdict, replace
 
@@ -491,6 +491,9 @@ async def test_public_archive_date_range_bulk_transaction(
     )
     from tests.test_conversation_archive import _session, _turn
 
+    # These fixed July–October records test deletion boundaries. Keep the
+    # October control within retention when setup/reload runs maintenance.
+    freezer.move_to("2026-10-15T12:00:00+00:00")
     entry = _make_entry("Bulk archive", include_ai_task=False)
     await _setup_entry(hass, entry)
     subentry = _conversation_subentry(entry)
