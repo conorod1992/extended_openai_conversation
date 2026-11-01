@@ -3039,7 +3039,25 @@
     "tests_real_ha/test_replay_reload_ownership.py::test_reload_oracle_detects_entity_owned_state[chat_completions]",
     "tests_real_ha/test_replay_reload_ownership.py::test_reload_oracle_detects_entity_owned_state[responses]",
     "tests_real_ha/test_replay_reload_ownership.py::test_budget_failure_preserves_effect_through_retry_and_reload[chat_completions]",
-    "tests_real_ha/test_replay_reload_ownership.py::test_budget_failure_preserves_effect_through_retry_and_reload[responses]"
+    "tests_real_ha/test_replay_reload_ownership.py::test_budget_failure_preserves_effect_through_retry_and_reload[responses]",
+    "tests_real_ha/test_trigger_capture_sensor_isolation.py::test_failed_restore_isolates_sensors_and_recovery_readmits_owner[False-0]",
+    "tests_real_ha/test_trigger_capture_sensor_isolation.py::test_failed_restore_isolates_sensors_and_recovery_readmits_owner[False-1]",
+    "tests_real_ha/test_trigger_capture_sensor_isolation.py::test_failed_restore_isolates_sensors_and_recovery_readmits_owner[False-2]",
+    "tests_real_ha/test_trigger_capture_sensor_isolation.py::test_failed_restore_isolates_sensors_and_recovery_readmits_owner[True-0]",
+    "tests_real_ha/test_trigger_capture_sensor_isolation.py::test_failed_restore_isolates_sensors_and_recovery_readmits_owner[True-1]",
+    "tests_real_ha/test_trigger_capture_sensor_isolation.py::test_failed_restore_isolates_sensors_and_recovery_readmits_owner[True-2]",
+    "tests_real_ha/test_trigger_capture_sensor_isolation.py::test_saved_rule_native_wait_selects_only_its_entity[False-direct-numeric_state]",
+    "tests_real_ha/test_trigger_capture_sensor_isolation.py::test_saved_rule_native_wait_selects_only_its_entity[False-direct-state]",
+    "tests_real_ha/test_trigger_capture_sensor_isolation.py::test_saved_rule_native_wait_selects_only_its_entity[False-grouped-numeric_state]",
+    "tests_real_ha/test_trigger_capture_sensor_isolation.py::test_saved_rule_native_wait_selects_only_its_entity[False-grouped-state]",
+    "tests_real_ha/test_trigger_capture_sensor_isolation.py::test_saved_rule_native_wait_selects_only_its_entity[False-options-numeric_state]",
+    "tests_real_ha/test_trigger_capture_sensor_isolation.py::test_saved_rule_native_wait_selects_only_its_entity[False-options-state]",
+    "tests_real_ha/test_trigger_capture_sensor_isolation.py::test_saved_rule_native_wait_selects_only_its_entity[True-direct-numeric_state]",
+    "tests_real_ha/test_trigger_capture_sensor_isolation.py::test_saved_rule_native_wait_selects_only_its_entity[True-direct-state]",
+    "tests_real_ha/test_trigger_capture_sensor_isolation.py::test_saved_rule_native_wait_selects_only_its_entity[True-grouped-numeric_state]",
+    "tests_real_ha/test_trigger_capture_sensor_isolation.py::test_saved_rule_native_wait_selects_only_its_entity[True-grouped-state]",
+    "tests_real_ha/test_trigger_capture_sensor_isolation.py::test_saved_rule_native_wait_selects_only_its_entity[True-options-numeric_state]",
+    "tests_real_ha/test_trigger_capture_sensor_isolation.py::test_saved_rule_native_wait_selects_only_its_entity[True-options-state]"
   ],
   "browser": {
     "browser": [
@@ -4104,7 +4122,8 @@
       "tests_stress/test_skill_lifecycle_campaign.py",
       "tests_stress/test_streaming_speech_endurance.py",
       "tests_stress/test_usage_retention_endurance.py",
-      "tests_stress/test_valid_configuration_transitions.py"
+      "tests_stress/test_valid_configuration_transitions.py",
+      "tests_real_ha/test_trigger_capture_sensor_isolation.py"
     ],
     "functions": [
       "tests_real_ha/test_script_cleanup_settlement.py",

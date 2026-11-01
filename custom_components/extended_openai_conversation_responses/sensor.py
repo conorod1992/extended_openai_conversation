@@ -4,18 +4,21 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime
+import logging
 
 from homeassistant.components import sensor as sensor_component
 from homeassistant.components.sensor import SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigSubentry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_track_time_change
 from homeassistant.util import dt as dt_util
 
 from . import ExtendedOpenAIConfigEntry
+from .agent_maintenance import get_agent_maintenance_gate
 from .const import (
     CONF_CHAT_MODEL,
     CONF_USAGE_REQUEST_RETENTION_DAYS,
@@ -28,6 +31,8 @@ from .const import (
 from .guest_mode import GuestModeManager, async_get_guest_mode
 from .usage import UsageManager, async_get_usage
 
+_LOGGER = logging.getLogger(__name__)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -38,10 +43,24 @@ async def async_setup_entry(
     for subentry in config_entry.subentries.values():
         if subentry.subentry_type != "conversation":
             continue
-        usage = await async_get_usage(hass, config_entry.entry_id, subentry.subentry_id)
-        guest_mode = await async_get_guest_mode(
-            hass, config_entry.entry_id, subentry.subentry_id
-        )
+        try:
+            usage = await async_get_usage(
+                hass, config_entry.entry_id, subentry.subentry_id
+            )
+            guest_mode = await async_get_guest_mode(
+                hass, config_entry.entry_id, subentry.subentry_id
+            )
+        except HomeAssistantError:
+            gate = get_agent_maintenance_gate(
+                hass, config_entry.entry_id, subentry.subentry_id
+            )
+            if not gate.recovery_required:
+                raise
+            _LOGGER.error(
+                "Assistant %s sensors remain unavailable pending restore recovery",
+                subentry.subentry_id,
+            )
+            continue
         usage.request_retention_days = int(
             subentry.data.get(
                 CONF_USAGE_REQUEST_RETENTION_DAYS,
