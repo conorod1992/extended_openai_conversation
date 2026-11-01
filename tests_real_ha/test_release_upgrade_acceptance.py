@@ -144,7 +144,9 @@ def _chat_sse_tool_call(call_id: str, name: str, arguments: dict[str, Any]) -> b
                             "type": "function",
                             "function": {
                                 "name": name,
-                                "arguments": json.dumps(arguments, separators=(",", ":")),
+                                "arguments": json.dumps(
+                                    arguments, separators=(",", ":")
+                                ),
                             },
                         }
                     ],
@@ -229,7 +231,11 @@ def _active_effects(config_dir: Path) -> list[dict[str, Any]]:
     path = config_dir / _ACTIVE_EFFECT_FILE
     if not path.exists():
         return []
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line
+    ]
 
 
 async def _exercise_populated_provider_journey(
@@ -237,6 +243,7 @@ async def _exercise_populated_provider_journey(
 ) -> None:
     """Prove migrated release-owned data and tools through the real SDK wire."""
     import httpx
+
     from homeassistant.components import conversation
     from homeassistant.core import Context
 
@@ -263,7 +270,9 @@ async def _exercise_populated_provider_journey(
         body = json.loads(request.content)
         requests.append(body)
         index = len(requests) - 1
-        assert index < len(replies), "Unexpected provider request during upgrade journey"
+        assert index < len(replies), (
+            "Unexpected provider request during upgrade journey"
+        )
         if index == 0:
             names = {
                 item["function"]["name"]
@@ -311,13 +320,13 @@ async def _assert_populated_release_state(
     hass: Any, entry_id: str, state: dict[str, Any]
 ) -> None:
     """Read the exact release-created durable records through candidate managers."""
-    from homeassistant.components import conversation
     from custom_components.extended_openai_conversation_responses.knowledge import (
         async_get_knowledge,
     )
     from custom_components.extended_openai_conversation_responses.memory import (
         async_get_memory,
     )
+    from homeassistant.components import conversation
 
     agent = conversation.async_get_agent(hass, entry_id)
     assert agent is not None
@@ -472,7 +481,11 @@ async def _released_phase(hass: Any, config_dir: Path) -> None:
 
     function_tools_key = getattr(const, "CONF_FUNCTION_TOOLS", "function_tools")
     raw_tools = data.get(function_tools_key, [])
-    tools = yaml.safe_load(raw_tools) if isinstance(raw_tools, str) else list(raw_tools or [])
+    tools = (
+        yaml.safe_load(raw_tools)
+        if isinstance(raw_tools, str)
+        else list(raw_tools or [])
+    )
     tools.append(
         {
             "spec": {
@@ -491,6 +504,16 @@ async def _released_phase(hass: Any, config_dir: Path) -> None:
             "enabled": True,
         }
     )
+    # Exercise a genuinely accepted historical dependency incompatibility. Keep
+    # this version-specific: later releases may intentionally reject new saves.
+    inactive_skills = (
+        str(_manifest(Path(os.environ[_FROM_COMPONENT_ENV]))["version"]) == "6.8.3"
+    )
+    if inactive_skills:
+        loader = next(tool for tool in tools if tool["spec"]["name"] == "load_skill")
+        loader["enabled"] = False
+        data[const.CONF_SKILLS] = ["upgrade_reference"]
+        custom_values[const.CONF_SKILLS] = ["upgrade_reference"]
     # Persist the release's canonical storage representation. 6.8.3 stores
     # Function Tools as YAML text even though frontend snapshots expose a list.
     # Writing a raw list directly into the subentry bypasses that normalization
@@ -498,6 +521,11 @@ async def _released_phase(hass: Any, config_dir: Path) -> None:
     data[function_tools_key] = yaml.safe_dump(
         tools, sort_keys=False, allow_unicode=True
     )
+    if inactive_skills:
+        released_config = importlib.import_module(
+            f"custom_components.{DOMAIN}.agent_config"
+        )
+        data = released_config.normalize_agent_config(data)
 
     hass.config_entries.async_update_subentry(
         entry,
@@ -513,9 +541,9 @@ async def _released_phase(hass: Any, config_dir: Path) -> None:
     assert entry.state is ConfigEntryState.LOADED
     subentry = _conversation_subentry(entry)
     assert subentry.title == "Upgrade Acceptance Agent"
-    agent = importlib.import_module("homeassistant.components.conversation").async_get_agent(
-        hass, entry.entry_id
-    )
+    agent = importlib.import_module(
+        "homeassistant.components.conversation"
+    ).async_get_agent(hass, entry.entry_id)
     assert agent is not None
     owner = await hass.auth.async_create_user(
         "Release upgrade owner", group_ids=["system-admin"]
@@ -568,6 +596,7 @@ async def _released_phase(hass: Any, config_dir: Path) -> None:
         "knowledge_marker": knowledge_marker,
         "knowledge_source_id": source.source_id,
         "request_rule_marker": "RELEASE_RULE_MARKER",
+        "inactive_skills": inactive_skills,
         "released_runtime": {
             "homeassistant": version("homeassistant"),
             "openai": version("openai"),
@@ -617,10 +646,14 @@ async def _released_active_phase(hass: Any, config_dir: Path) -> None:
 
     effect_path = config_dir / _ACTIVE_EFFECT_FILE
 
-    from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
+    from homeassistant.components.homeassistant.exposed_entities import (
+        async_expose_entity,
+    )
 
     target_entity = "switch.upgrade_probe_target"
-    hass.states.async_set(target_entity, "on", {"friendly_name": "Upgrade Probe Target"})
+    hass.states.async_set(
+        target_entity, "on", {"friendly_name": "Upgrade Probe Target"}
+    )
     async_expose_entity(hass, conversation.DOMAIN, target_entity, True)
 
     async def record_effect(call: Any) -> None:
@@ -716,15 +749,47 @@ async def _candidate_migration_phase(hass: Any, config_dir: Path) -> None:
     # crossing the HA persistence boundary. A raw dict copy can retain legacy
     # coupled fields in a representation that runtime accepts in-process but a
     # genuine candidate save would canonicalize before the next cold start.
-    agent_config = importlib.import_module(
-        f"custom_components.{DOMAIN}.agent_config"
-    )
+    agent_config = importlib.import_module(f"custom_components.{DOMAIN}.agent_config")
     max_tokens_key = getattr(const, "CONF_MAX_TOKENS", None)
     updates: dict[str, Any] = {}
     if isinstance(max_tokens_key, str):
         updates[max_tokens_key] = 640
         state["post_upgrade_edit"] = {"key": max_tokens_key, "value": 640}
-    edited = agent_config.merge_agent_config(dict(subentry.data), updates)
+    if state.get("inactive_skills"):
+        from custom_components.extended_openai_conversation_responses.management_ui import (
+            async_management_command,
+        )
+
+        identity = {
+            "entry_id": entry.entry_id,
+            "subentry_id": subentry.subentry_id,
+            "section": "configuration",
+        }
+        read = await async_management_command(
+            hass, state["owner_id"], True, {**identity, "action": "get"}
+        )
+        assert read["configuration_guidance"]["skills"]["available"] is False
+        saved = await async_management_command(
+            hass,
+            state["owner_id"],
+            True,
+            {
+                **identity,
+                "action": "save",
+                "config": updates,
+                "revision": read["revision"],
+            },
+        )
+        assert saved["valid"]
+        edited = dict(subentry.data)
+        loader = next(
+            tool
+            for tool in yaml.safe_load(edited[function_tools_key])
+            if tool["spec"]["name"] == "load_skill"
+        )
+        assert loader["enabled"] is False
+    else:
+        edited = agent_config.merge_agent_config(dict(subentry.data), updates)
 
     hass.config_entries.async_update_subentry(
         entry,
@@ -749,7 +814,9 @@ async def _candidate_migration_phase(hass: Any, config_dir: Path) -> None:
     state["candidate_title"] = reloaded.title
     state["candidate_entry_version"] = entry.version
     from custom_components.extended_openai_conversation_responses import backup
-    from custom_components.extended_openai_conversation_responses.private_backup import encode_document
+    from custom_components.extended_openai_conversation_responses.private_backup import (
+        encode_document,
+    )
 
     snapshot = await backup.async_collect_backup_snapshot(hass, entry, reloaded)
     (config_dir / _BACKUP_FILE).write_text(
@@ -780,9 +847,7 @@ async def _candidate_restart_phase(hass: Any, config_dir: Path) -> None:
     assert subentry.title == state["candidate_title"]
     post_upgrade_edit = state.get("post_upgrade_edit")
     if post_upgrade_edit:
-        assert (
-            subentry.data.get(post_upgrade_edit["key"]) == post_upgrade_edit["value"]
-        )
+        assert subentry.data.get(post_upgrade_edit["key"]) == post_upgrade_edit["value"]
 
     await _assert_populated_release_state(hass, entry.entry_id, state)
     await _exercise_release_rule(hass, entry.entry_id, state)
@@ -806,14 +871,50 @@ async def _candidate_restart_phase(hass: Any, config_dir: Path) -> None:
     assert restored.title == state["candidate_title"]
     # Compare restored persistence data with the decoded private artifact, not
     # with its wire envelope or the former normalized public projection.
-    assert dict(restored.data) == backup.inspect_backup(
-        saved, restored.subentry_id
-    ).config
+    assert (
+        dict(restored.data) == backup.inspect_backup(saved, restored.subentry_id).config
+    )
     await _assert_populated_release_state(hass, entry.entry_id, state)
     await _exercise_release_rule(hass, entry.entry_id, state)
     await _exercise_populated_provider_journey(
         hass, entry.entry_id, state, "Migrated candidate backup restored successfully."
     )
+    if state.get("inactive_skills"):
+        from custom_components.extended_openai_conversation_responses.management_ui import (
+            async_management_command,
+        )
+
+        loader = next(
+            tool
+            for tool in yaml.safe_load(restored.data[const.CONF_FUNCTION_TOOLS])
+            if tool["spec"]["name"] == "load_skill"
+        )
+        assert loader["enabled"] is False
+        identity = {"entry_id": entry.entry_id, "subentry_id": restored.subentry_id}
+        # Only this explicit admin command enables the retained loader.
+        await async_management_command(
+            hass,
+            state["owner_id"],
+            True,
+            {
+                **identity,
+                "section": "tools",
+                "action": "set_enabled",
+                "name": "load_skill",
+                "enabled": True,
+            },
+        )
+        repaired = await async_management_command(
+            hass,
+            state["owner_id"],
+            True,
+            {
+                **identity,
+                "section": "configuration",
+                "action": "get",
+            },
+        )
+        assert repaired["configuration_guidance"]["skills"]["available"] is True
 
 
 async def _child_main() -> None:
