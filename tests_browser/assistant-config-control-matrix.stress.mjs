@@ -157,7 +157,7 @@ test("nightly configuration validation maps backend field errors onto the matchi
   });
   await panel.locator("#save-config").click();
   await expect(panel.locator('[data-error="max_tokens"]')).toHaveText("Nightly validation: token limit rejected.");
-  await expect(panel.locator("#toast")).toContainText("Fix the highlighted configuration errors");
+  await expect(panel.locator("#toast")).toHaveText("Some settings could not be saved. Review the configuration errors.");
   await expect(panel.locator("#save-config")).toBeVisible();
   await expectHarnessClean(page, errors);
 });
