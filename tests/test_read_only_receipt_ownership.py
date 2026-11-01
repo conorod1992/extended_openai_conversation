@@ -7,6 +7,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from custom_components.extended_openai_conversation_responses.functions.file import (
+    ReadFileFunction,
+)
 from custom_components.extended_openai_conversation_responses.functions.sqlite import (
     SqliteFunction,
 )
@@ -118,7 +121,7 @@ async def test_standalone_read_failure_does_not_block_another_attempt(
         assert len(attempts) == 2
 
 
-@pytest.mark.parametrize("base", [SqliteFunction, TemplateFunction])
+@pytest.mark.parametrize("base", [SqliteFunction, TemplateFunction, ReadFileFunction])
 async def test_overridden_read_backend_keeps_conservative_protection(hass, base):
     effects = []
 
@@ -137,7 +140,7 @@ async def test_overridden_read_backend_keeps_conservative_protection(hass, base)
     assert effects == ["effect"]
 
 
-@pytest.mark.parametrize("backend", ["sqlite", "template"])
+@pytest.mark.parametrize("backend", ["sqlite", "template", "read_file"])
 async def test_scheduled_read_still_creates_only_one_durable_job(hass, backend):
     from copy import deepcopy
 
@@ -164,6 +167,8 @@ async def test_scheduled_read_still_creates_only_one_durable_job(hass, backend):
     config = (
         {"type": "sqlite", "query": "SELECT 1"}
         if backend == "sqlite"
+        else {"type": "read_file", "path": "notes.txt"}
+        if backend == "read_file"
         else {"type": "template", "value_template": "{{ 2 + 2 }}"}
     )
     entity, log, tool = _entity(hass), _chat_log(hass), _tool(config)
