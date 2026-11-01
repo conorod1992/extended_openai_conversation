@@ -631,7 +631,12 @@ async def _rollback_transaction(
 ) -> None:
     """Durably return every category to the pre-restore snapshot."""
     await _apply_prepared(managers, rollback)
-    reset_restored_runtime(hass, entry.entry_id, subentry.subentry_id, managers)
+    # The exclusive transaction restored this same agent's pre-restore Archive.
+    # Retain only live identities verified by those restored bindings; portable
+    # target replacement must still use its separate reset policy.
+    reset_restored_runtime(
+        hass, entry.entry_id, subentry.subentry_id, managers, preserve_continuity=True
+    )
     await _update_configuration(hass, entry, subentry, rollback)
     await store.async_remove()
 
@@ -836,7 +841,13 @@ async def _async_recover_pending_restore(
         try:
             managers = await _recovery_managers(hass, entry_id, subentry_id, selected)
             await _apply_prepared(managers, selected)
-            reset_restored_runtime(hass, entry_id, subentry_id, managers)
+            reset_restored_runtime(
+                hass,
+                entry_id,
+                subentry_id,
+                managers,
+                preserve_continuity=journal["phase"] != _PHASE_COMMITTED,
+            )
             await _update_configuration(hass, entry, subentry, selected)
             await store.async_remove()
         except Exception as err:

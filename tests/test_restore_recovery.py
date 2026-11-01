@@ -348,7 +348,7 @@ async def test_committed_state_survives_cleanup_failure_and_retries(
 
     cleanup_calls = 0
 
-    def cleanup(*_args):
+    def cleanup(*_args, **_kwargs):
         nonlocal cleanup_calls
         cleanup_calls += 1
         if cleanup_calls == 1:
@@ -850,3 +850,139 @@ async def test_unretained_archive_sessions_are_local_content_free_recovery_only(
             "agent-new",
             local_recovery=True,
         )
+
+@pytest.mark.parametrize(
+    "outcome", ["no_restore", "success", "rollback", "pending_rollback"]
+)
+async def test_failed_knowledge_restore_preserves_retained_and_private_continuity(
+    monkeypatch,
+    outcome,
+):
+    from dataclasses import replace
+    from custom_components.extended_openai_conversation_responses import continuity
+    from custom_components.extended_openai_conversation_responses.conversation_archive import (
+        ConversationArchive,
+    )
+    from custom_components.extended_openai_conversation_responses.scope import (
+        user_scope,
+    )
+    from custom_components.extended_openai_conversation_responses.knowledge import (
+        KnowledgeLibrary,
+    )
+    from tests.test_conversation_archive import FakeArchiveStorage
+    from tests.test_knowledge import FakeStorage
+
+    hass = FakeHass()
+    entry, subentry = _identity()
+    target, baseline = _states()
+    archive = ConversationArchive(FakeArchiveStorage(), subentry.subentry_id)
+    await archive.async_initialize()
+    manager = continuity.ConversationContinuity(subentry.subentry_id)
+    sessions = []
+    for name in ("retained", "private"):
+        scope = user_scope(name, source="test")
+        resolved = await manager.async_resolve("user", scope, None, None, 30)
+        await manager.async_record_success(
+            resolved.key, resolved.claim_token, [], extra_system_prompt="before restore"
+        )
+        session = await archive.async_begin_session(
+            f"continuity:{resolved.key}",
+            scope,
+            resolved.conversation_id,
+            archive_enabled=True,
+            shared_archive_enabled=False,
+            inactivity_minutes=30,
+        )
+        if name == "private":
+            await archive.async_make_private(session.session_id)
+        sessions.append((scope, resolved, session))
+    unbound = await manager.async_resolve(
+        "user", user_scope("unbound", source="test"), None, None, 30
+    )
+    await manager.async_record_success(unbound.key, unbound.claim_token, [])
+    baseline.archive_sessions = list(archive._sessions.values())
+    baseline.archive_turns = []
+    baseline.archive_active = dict(archive._active)
+    target.archive_sessions = deepcopy(baseline.archive_sessions)
+    target.archive_turns = []
+    target.archive_active = dict(baseline.archive_active)
+    target.preserve_retained_continuity = True
+    target.knowledge[0] = replace(
+        target.knowledge[0], content="Changed restored knowledge"
+    )
+    storage = FakeStorage()
+    library = KnowledgeLibrary(storage)
+    await library.async_initialize()
+    await library.async_replace_backup(baseline.knowledge)
+    before = deepcopy(storage.data)
+    replace_knowledge = library.async_replace_backup
+    calls = 0
+
+    async def fail_after_write(records):
+        nonlocal calls
+        calls += 1
+        await replace_knowledge(records)
+        if (outcome in {"rollback", "pending_rollback"} and calls == 1) or (
+            outcome == "pending_rollback" and calls == 2
+        ):
+            raise OSError("Knowledge acknowledgement failed after durable write")
+
+    monkeypatch.setattr(library, "async_replace_backup", fail_after_write)
+    dummy = lambda: SimpleNamespace(async_replace_backup=AsyncMock())
+    managers = participants(
+        memory=dummy(),
+        temporary=dummy(),
+        knowledge=library,
+        archive=archive,
+        usage=dummy(),
+        guest_mode=dummy(),
+        request_rules=dummy(),
+    )
+    store = MemoryJournalStore()
+    monkeypatch.setattr(restore_recovery, "_journal_store", lambda *_: store)
+    monkeypatch.setattr(
+        restore_recovery, "_durable_managers", AsyncMock(return_value=managers)
+    )
+    monkeypatch.setattr(
+        backup, "_snapshot_for_restore", AsyncMock(return_value=baseline)
+    )
+    monkeypatch.setattr(restore_recovery, "_async_persist_config_entries", AsyncMock())
+    hass.data[continuity._MANAGERS] = {(entry.entry_id, subentry.subentry_id): manager}
+    if outcome == "rollback":
+        with pytest.raises(
+            backup.BackupError, match="previous agent state was recovered"
+        ):
+            await backup.async_restore_backup(hass, entry, subentry, target)
+    elif outcome == "pending_rollback":
+        with pytest.raises(backup.BackupError, match="recovery is still pending"):
+            await backup.async_restore_backup(hass, entry, subentry, target)
+        assert store.data is not None
+        assert await restore_recovery.async_recover_pending_restore(
+            hass, entry, subentry
+        )
+    elif outcome == "success":
+        assert (await backup.async_restore_backup(hass, entry, subentry, target))[
+            "status"
+        ] == "restored"
+    assert (
+        calls
+        == {"no_restore": 0, "success": 1, "rollback": 2, "pending_rollback": 3}[
+            outcome
+        ]
+    )
+    assert (storage.data == before) is (outcome != "success")
+    assert store.data is None
+    assert (unbound.key in manager._sessions) is (outcome == "no_restore")
+    for scope, original, session in sessions:
+        continued = await manager.async_resolve("user", scope, None, None, 30)
+        assert continued.conversation_id == original.conversation_id
+        active = await archive.async_begin_session(
+            f"continuity:{continued.key}",
+            scope,
+            continued.conversation_id,
+            archive_enabled=True,
+            shared_archive_enabled=False,
+            inactivity_minutes=30,
+        )
+        assert active.session_id == session.session_id
+    assert len(archive._sessions) == 2
