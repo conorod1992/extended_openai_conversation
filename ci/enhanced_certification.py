@@ -80,7 +80,14 @@ def merge_lifetime_partitions(rows: list[dict]) -> dict:
     for key in ("measured_totals", "trace_outcomes"):
         total = Counter()
         for row in rows:
-            total.update(row.get(key, {}))
+            values = row.get(key, {})
+            # Addition must not turn a malformed boolean into a valid integer
+            # before the ordinary execution-contract metric checks see it.
+            assert all(
+                isinstance(value, (int, float)) and not isinstance(value, bool)
+                for value in values.values()
+            ), key
+            total.update(values)
         merged[key] = dict(total)
     merged["tests_traced"] = sum(row.get("tests_traced", 0) for row in rows)
     return merged

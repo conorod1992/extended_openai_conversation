@@ -53,7 +53,7 @@ def test_lifetime_partitions_preserve_every_reviewed_node(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "fault", ["missing", "duplicate", "overlap", "sha", "environment", "seed"]
+    "fault", ["missing", "duplicate", "overlap", "sha", "environment", "seed", "metric"]
 )
 def test_lifetime_merge_rejects_incomplete_or_inconsistent_evidence(fault):
     rows = [
@@ -74,6 +74,8 @@ def test_lifetime_merge_rejects_incomplete_or_inconsistent_evidence(fault):
         rows[1]["lifetime_partition"] = "reload"
     elif fault == "overlap":
         rows[1]["execution_cases"] = rows[0]["execution_cases"]
+    elif fault == "metric":
+        rows[1]["measured_totals"] = {"pre_gc_resource_samples": True}
     else:
         rows[1][{"sha": "eoai_sha"}.get(fault, fault)] = "wrong"
     with pytest.raises(AssertionError):
