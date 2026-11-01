@@ -181,6 +181,7 @@ from .script_payload import (
 from .secret_redaction import is_redacted_secret, redact_secrets
 from .temporary_memory import async_get_temporary_memory, temporary_memory_as_dict
 from .usage import async_get_usage
+from .yaml_serialization import load_yaml_or_json
 
 _LOGGER = logging.getLogger(__name__)
 _PERFORMANCE_LOGGER = logging.getLogger(f"{__name__}.performance")
@@ -1893,7 +1894,7 @@ async def _async_validate_configuration_dependencies(
     candidate = deepcopy(dict(config))
     tools = candidate.get(CONF_FUNCTION_TOOLS)
     if isinstance(tools, str):
-        tools = yaml.safe_load(tools)
+        tools = load_yaml_or_json(tools)
     if isinstance(tools, list):
         for tool in tools:
             if isinstance(tool, dict):

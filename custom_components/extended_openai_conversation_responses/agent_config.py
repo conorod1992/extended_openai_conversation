@@ -184,6 +184,7 @@ from .function_tool_policy import (
     NATIVE_FUNCTION_IMPLEMENTATIONS,
     RESERVED_FUNCTION_TOOL_NAMES,
 )
+from .function_yaml import contains_yaml_types
 from .functions import FUNCTIONS, get_function
 from .functions.base import copy_runtime_function_config
 from .ha_llm_tools import is_ha_tool, reference_key, validate_reference
@@ -198,7 +199,7 @@ from .local_intents import (
 )
 from .memory import get_memory_mode
 from .skill_availability import skill_loader_status
-from .yaml_serialization import dump_yaml
+from .yaml_serialization import dump_yaml, load_yaml_or_json
 
 CONF_GUEST_WEB_SEARCH = "guest_web_search"
 DEFAULT_GUEST_WEB_SEARCH = False
@@ -511,7 +512,7 @@ def validate_function_tools(value: Any) -> list[dict[str, Any]]:
     """Parse and validate function tools without executing them."""
     if isinstance(value, str):
         try:
-            value = yaml.safe_load(value)
+            value = load_yaml_or_json(value)
         except yaml.YAMLError as err:
             raise AgentConfigError(CONF_FUNCTION_TOOLS, f"invalid YAML: {err}") from err
     if value is None:
@@ -635,7 +636,7 @@ def function_tool_enabled(tool: dict[str, Any]) -> bool:
 @lru_cache(maxsize=64)
 def _decoded_function_tools(raw_yaml: str) -> Any:
     """Cache pure decoding separately from HA-aware validation/hydration."""
-    return yaml.safe_load(raw_yaml)
+    return load_yaml_or_json(raw_yaml)
 
 
 async def async_prepare_runtime_function_tools(
@@ -804,7 +805,7 @@ def validate_single_function_tool(value: Any) -> dict[str, Any]:
     """Parse and validate one function tool from a clean editor document."""
     if isinstance(value, str):
         try:
-            value = yaml.safe_load(value)
+            value = load_yaml_or_json(value)
         except yaml.YAMLError as err:
             raise AgentConfigError(CONF_FUNCTION_TOOLS, f"invalid YAML: {err}") from err
     if isinstance(value, list):
@@ -1380,11 +1381,13 @@ def _configured_tools_yaml(data: Mapping[str, Any]) -> str | None:
         return None
     if isinstance(configured, str):
         return configured
+    if contains_yaml_types(configured):
+        return dump_yaml(configured, sort_keys=True)
     try:
         # Persisted Function Tool collections are JSON-compatible. Using JSON here
         # keeps cache-key construction linear and avoids PyYAML's expensive emitter
-        # on every Management/agent catalogue read. JSON is valid YAML, so the
-        # existing cached parser can consume this representation unchanged.
+        # on every Management/agent catalogue read. The cached decoder recognizes
+        # JSON explicitly, retaining exponent floats and their numeric types.
         return json.dumps(
             configured,
             sort_keys=True,

@@ -10,6 +10,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import lru_cache
+import json
 from typing import Any
 
 import yaml
@@ -23,8 +24,9 @@ from .agent_config import (
     validate_function_tools,
 )
 from .const import CONF_FUNCTION_GROUPS, CONF_FUNCTION_TOOLS, DEFAULT_FUNCTION_GROUPS
+from .function_yaml import contains_yaml_types
 from .request import canonical_json
-from .yaml_serialization import dump_yaml
+from .yaml_serialization import dump_yaml, load_yaml_or_json
 
 
 @dataclass
@@ -48,7 +50,7 @@ def editable_function_tools(options: dict[str, Any]) -> Any:
     if not isinstance(raw, str):
         return deepcopy(raw)
     try:
-        parsed = yaml.safe_load(raw)
+        parsed = load_yaml_or_json(raw)
     except yaml.YAMLError:
         return raw
     return [] if parsed is None else parsed
@@ -61,6 +63,8 @@ def _function_tools_cache_key(options: dict[str, Any]) -> tuple[str, str]:
         return ("none", "")
     if isinstance(raw, str):
         return ("string", raw)
+    if contains_yaml_types(raw):
+        return ("yaml", dump_yaml(raw, sort_keys=True))
     try:
         return ("json", canonical_json(raw))
     except TypeError, ValueError:
@@ -72,6 +76,8 @@ def _options_from_function_tools_cache_key(kind: str, payload: str) -> dict[str,
         return {}
     if kind == "string":
         return {CONF_FUNCTION_TOOLS: payload}
+    if kind == "json":
+        return {CONF_FUNCTION_TOOLS: json.loads(payload)}
     return {CONF_FUNCTION_TOOLS: yaml.safe_load(payload)}
 
 

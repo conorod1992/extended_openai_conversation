@@ -61,6 +61,7 @@ from .temporary_memory import (
     async_get_temporary_memory,
 )
 from .usage import UsageManager, UsageRequest, UsageRun, UsageTotals, async_get_usage
+from .yaml_serialization import load_yaml_or_json
 
 type ValidatedUsage = tuple[
     UsageTotals, dict[str, dict[str, Any]], list[UsageRequest], list[UsageRun]
@@ -193,7 +194,7 @@ def _configuration_snapshot_preserving_quarantine(
                 if frontend_shape and isinstance(snapshot[key], str):
                     # Redaction must see mappings, including quarantined siblings.
                     try:
-                        snapshot[key] = yaml.safe_load(snapshot[key])
+                        snapshot[key] = load_yaml_or_json(snapshot[key])
                     except yaml.YAMLError as err:
                         raise BackupError(
                             "Repair malformed Function YAML before exporting configuration"

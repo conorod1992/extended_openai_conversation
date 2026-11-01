@@ -7,7 +7,7 @@ from typing import Any
 import yaml
 
 from .const import CONF_FUNCTION_TOOLS
-from .yaml_serialization import dump_yaml
+from .yaml_serialization import dump_yaml, load_yaml_or_json
 
 # Reserved only on the Management wire. A literal mapping with this key is itself
 # YAML-encoded, so decoding never confuses user-authored data with a scalar tag.
@@ -120,7 +120,7 @@ def decode_management_function_request(message: dict[str, Any]) -> dict[str, Any
     return result
 
 
-def _contains_yaml_types(value: Any) -> bool:
+def contains_yaml_types(value: Any) -> bool:
     """Inspect types without encoding scalar values ahead of transport budgets.
 
     Visit shared containers once, using depth-sized iterator storage. Export's
@@ -166,7 +166,7 @@ def json_safe_function_fields(config: dict[str, Any]) -> dict[str, Any]:
     """
     result = dict(config)
     tools = result.get(CONF_FUNCTION_TOOLS)
-    if isinstance(tools, list) and _contains_yaml_types(tools):
+    if isinstance(tools, list) and contains_yaml_types(tools):
         result[CONF_FUNCTION_TOOLS] = dump_yaml(tools, sort_keys=False)
     return result
 
@@ -179,7 +179,7 @@ def decoded_function_fields(config: Any) -> Any:
     if not isinstance(tools, str):
         return config
     try:
-        decoded = yaml.safe_load(tools)
+        decoded = load_yaml_or_json(tools)
     except yaml.YAMLError:
         return config  # Malformed text is retained only for private recovery.
     if not isinstance(decoded, list):
