@@ -453,12 +453,19 @@ async def _released_phase(hass: Any, config_dir: Path) -> None:
     # historical stock Function Tool schemas, and customize only stable user fields.
     data = dict(subentry.data)
     custom_values: dict[str, Any] = {}
+    supports_no_reasoning = "none" in getattr(const, "REASONING_EFFORT_OPTIONS", ())
     for name, value in (
-        ("CONF_CHAT_MODEL", "gpt-5.6"),
+        (
+            "CONF_CHAT_MODEL",
+            "gpt-5.6" if supports_no_reasoning else "gpt-4.1-mini",
+        ),
         # gpt-5.6 Chat Completions only supports function calling with
-        # reasoning_effort=none in the current capability catalogue. Keep the
-        # release-created state valid on both sides of the upgrade boundary.
-        ("CONF_REASONING_EFFORT", "none"),
+        # reasoning_effort=none. Releases before that option existed use their
+        # own default effort and a model that does not require reasoning.
+        (
+            "CONF_REASONING_EFFORT",
+            "none" if supports_no_reasoning else const.DEFAULT_REASONING_EFFORT,
+        ),
         ("CONF_TEMPERATURE", 0.42),
     ):
         key = getattr(const, name, None)
@@ -506,9 +513,7 @@ async def _released_phase(hass: Any, config_dir: Path) -> None:
     )
     # Exercise a genuinely accepted historical dependency incompatibility. Keep
     # this version-specific: later releases may intentionally reject new saves.
-    inactive_skills = (
-        str(_manifest(Path(os.environ[_FROM_COMPONENT_ENV]))["version"]) == "6.8.3"
-    )
+    inactive_skills = str(_manifest(Path(const.__file__).parent)["version"]) == "6.8.3"
     if inactive_skills:
         loader = next(tool for tool in tools if tool["spec"]["name"] == "load_skill")
         loader["enabled"] = False
