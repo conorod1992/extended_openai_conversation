@@ -92,6 +92,9 @@ def main() -> None:
     plan["python_matrix"] = [
         row for row in plan["python_matrix"] if row["campaign"] != "persistence"
     ]
+    # Offer the measured critical path first; actual starts still depend on
+    # runner availability. Keep the original order of all other matrix rows.
+    plan["python_matrix"].sort(key=lambda row: row["campaign"] != "large-installation")
     for key, value in plan.items():
         print(key + "=" + json.dumps(value, separators=(",", ":")))
 

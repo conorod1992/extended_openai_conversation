@@ -11,6 +11,7 @@ import pytest
 import yaml
 
 from ci import enhanced_certification as gate
+from ci.actions_schedule import python_matrix
 from ci.execution_contract import CONTRACT, check_execution, expected_cases
 from tests.test_candidate_certification import SOURCE, lifecycle_item
 
@@ -187,6 +188,10 @@ def test_python_matrices_are_disjoint_and_preserve_all_campaigns():
         for key, value in (line.split("=", 1) for line in result.stdout.splitlines())
     }
     main, persistence = plan["python_matrix"], plan["persistence_matrix"]
+    assert [row["campaign"] for row in main[:2]] == ["large-installation"] * 2
+    assert Counter(json.dumps(row, sort_keys=True) for row in main + persistence) == Counter(
+        json.dumps(row, sort_keys=True) for row in python_matrix(plan, scheduled=False)
+    )
     assert all(row["campaign"] != "persistence" for row in main)
     assert {(row["campaign"], row["intensity"]) for row in persistence} == {
         ("persistence", "normal"),
