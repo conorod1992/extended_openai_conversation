@@ -89,6 +89,26 @@ def test_reachability_campaign_is_part_of_normal_and_nightly_browser_discovery()
         in spec
     )
     assert '"control-reachability.spec.mjs"' in stress
+    contract = json.loads(
+        (ROOT / "tests_stress/nightly_execution_contract.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    reviewed = set(contract["browser"]["browser"])
+    prefix = (
+        "tests_browser/control-reachability.spec.mjs::chromium::"
+        "control-reachability.spec.mjs::"
+    )
+    for viewport in _payload()["viewports"]:
+        assert (
+            prefix
+            + f"conditional recovery controls remain reachable ({viewport['name']})"
+        ) in reviewed
+        assert (
+            prefix
+            + "all rendered controls remain reachable across shipped routes and viewports::"
+            + f"reachable controls: {viewport['name']}"
+        ) in reviewed
 
 
 def test_conditional_group_repair_controls_have_reviewed_browser_coverage() -> None:
