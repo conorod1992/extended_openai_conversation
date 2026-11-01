@@ -48,6 +48,8 @@ function collectionState(panel) {
     // merge into this collection so filtering alone never destroys cards.
     state.items = new Map((panel._result?.memories || []).map(memory => [String(memory.memory_id), memory]));
     state.result = panel._result;
+    state.searchPending = false;
+    state.searchError = null;
   }
   return state;
 }
@@ -112,6 +114,8 @@ function currentSearch(panel, identity, sequence, query) {
 
 function applySearchResult(panel, result, query) {
   const collection = collectionState(panel);
+  collection.searchPending = false;
+  collection.searchError = null;
   for (const memory of result.memories || []) collection.items.set(String(memory.memory_id), memory);
   panel._result = result;
   collection.result = result;
@@ -129,6 +133,10 @@ async function runMemorySearch(panel) {
   const sequence = ++state.memorySearchSequence;
   const identity = memoryCollectionIdentity(panel);
   const action = query ? "search" : "list";
+  const collection = collectionState(panel);
+  collection.searchPending = true;
+  collection.searchError = null;
+  applyMemoryFilter(panel);
   try {
     const result = await panel._call("memories", action, {
       scope_id: panel._scopeId, query, limit: MEMORY_PAGE_SIZE, offset: 0,
@@ -136,7 +144,12 @@ async function runMemorySearch(panel) {
     if (!currentSearch(panel, identity, sequence, query)) return;
     applySearchResult(panel, result, query);
   } catch (err) {
-    if (currentSearch(panel, identity, sequence, query)) panel._toast(`Unable to search memories: ${err.message || String(err)}`, true);
+    if (currentSearch(panel, identity, sequence, query)) {
+      collection.searchPending = false;
+      collection.searchError = err.message || String(err);
+      applyMemoryFilter(panel);
+      panel._toast(`Unable to search memories: ${err.message || String(err)}`, true);
+    }
   }
 }
 
@@ -147,7 +160,10 @@ function scheduleMemorySearch(panel) {
   state.memorySearchSequence++;
   const identity = memoryCollectionIdentity(panel), query = panel._query.trim();
   const sequence = state.memorySearchSequence;
-  if (query.toLocaleLowerCase() === state.memoryQuery) return;
+  const collection = collectionState(panel);
+  collection.searchError = null;
+  collection.searchPending = query.toLocaleLowerCase() !== state.memoryQuery;
+  if (!collection.searchPending) return;
   state.memorySearchTimer = setTimeout(() => {
     if (currentSearch(panel, identity, sequence, query)) void runMemorySearch(panel);
   }, MEMORY_SEARCH_DEBOUNCE_MS);
@@ -198,7 +214,7 @@ const memoryStatusMarkup = panel => {
 
 export function renderPersistentMemories(panel) {
   const items = [...collectionState(panel).items.values()];
-  return `<section class="content-card" data-persistent-memories data-collection-identity="${panel._e(memoryCollectionIdentity(panel))}"><div class="section-heading"><div><h2>Long-term memories</h2><p>Long-term facts the assistant can reuse in future conversations. <button type="button" class="guide-topic-link guide-link" data-guide-topic="memory">Learn more</button></p></div><button type="button" id="add-memory">+ Add memory</button></div><div data-memory-feature-status>${memoryStatusMarkup(panel)}</div><div class="config-jumps"><button type="button" class="secondary memory-kind" data-kind="persistent" disabled>Long-term</button><button type="button" class="secondary memory-kind" data-kind="temporary">Short-term</button></div><input id="list-search" class="search" type="search" value="${panel._e(panel._query)}" placeholder="Search memories" aria-label="Search memories"><div class="list memory-list">${items.map(memory => memoryCard(panel, memory)).join("")}<div data-memory-empty>${panel._empty(panel._query.trim() ? "No memories match this search." : "No long-term memories yet.")}</div></div><div class="section-actions" data-memory-pagination ${panel._result?.has_more ? "" : "hidden"}><button type="button" class="secondary" id="load-more-memories">Load more ${browserState(panel).memoryQuery ? "matches" : "memories"}</button></div></section>`;
+  return `<section class="content-card" data-persistent-memories data-collection-identity="${panel._e(memoryCollectionIdentity(panel))}"><div class="section-heading"><div><h2>Long-term memories</h2><p>Long-term facts the assistant can reuse in future conversations. <button type="button" class="guide-topic-link guide-link" data-guide-topic="memory">Learn more</button></p></div><button type="button" id="add-memory">+ Add memory</button></div><div data-memory-feature-status>${memoryStatusMarkup(panel)}</div><div class="config-jumps"><button type="button" class="secondary memory-kind" data-kind="persistent" disabled>Long-term</button><button type="button" class="secondary memory-kind" data-kind="temporary">Short-term</button></div><input id="list-search" class="search" type="search" value="${panel._e(panel._query)}" placeholder="Search memories" aria-label="Search memories"><p class="help" role="status" data-memory-search-status></p><button type="button" class="secondary" id="retry-memory-search" hidden>Retry search</button><div class="list memory-list">${items.map(memory => memoryCard(panel, memory)).join("")}<div data-memory-empty>${panel._empty(panel._query.trim() ? "No memories match this search." : "No long-term memories yet.")}</div></div><div class="section-actions" data-memory-pagination ${panel._result?.has_more ? "" : "hidden"}><button type="button" class="secondary" id="load-more-memories">Load more ${browserState(panel).memoryQuery ? "matches" : "memories"}</button></div></section>`;
 }
 
 function applyMemoryFilter(panel) {
@@ -214,10 +230,15 @@ function applyMemoryFilter(panel) {
     if (record.node.hidden === show) record.node.hidden = !show;
     if (show) visible++;
   }
-  collection.empty.hidden = visible > 0;
+  const pending = collection.searchPending || query !== backendQuery && !collection.searchError;
+  const failure = collection.searchError;
+  collection.empty.hidden = visible > 0 || Boolean(pending || failure);
+  const status = collection.host.querySelector("[data-memory-search-status]");
+  setText(status, pending ? "Searching all memories… Showing any matches from loaded records." : failure ? "Search failed. Any visible matches are from loaded records; the full search is unavailable." : "");
+  collection.host.querySelector("#retry-memory-search").hidden = !failure;
   const message = query ? "No memories match this search." : "No long-term memories yet.";
   setText(collection.empty.firstElementChild || collection.empty, message);
-  collection.host.querySelector("[data-memory-pagination]").hidden = !panel._result?.has_more || query !== backendQuery;
+  collection.host.querySelector("[data-memory-pagination]").hidden = !panel._result?.has_more || query !== backendQuery || Boolean(pending || failure);
   const button = collection.host.querySelector("#load-more-memories");
   if (!button.disabled) setText(button, `Load more ${backendQuery ? "matches" : "memories"}`);
 }
@@ -262,10 +283,11 @@ function bindPersistentMemories(panel) {
     reconcilePersistentMemories(panel);
     host.querySelector("#list-search").addEventListener("input", event => { panel._query = event.target.value; filterPersistentMemories(panel); });
   }
-  delegateCollectionActions(host, "#add-memory,.edit-memory,.memory-edit-button,.delete-memory,.reassign-memory,.memory-kind,#load-more-memories", control => {
+  delegateCollectionActions(host, "#add-memory,.edit-memory,.memory-edit-button,.delete-memory,.reassign-memory,.memory-kind,#load-more-memories,#retry-memory-search", control => {
     if (control.matches(".delete-memory")) void panel._deleteMemory(control.dataset.id, false, control);
     else if (control.matches(".reassign-memory")) panel._openReassign(control.dataset.id);
     else if (control.matches("#load-more-memories")) void loadMoreMemories(panel, control);
+    else if (control.matches("#retry-memory-search")) void runMemorySearch(panel);
     else if (control.matches(".memory-kind")) {
       panel._memoryKind = control.dataset.kind; panel._query = "";
       void panel._loadSection();
@@ -275,8 +297,8 @@ function bindPersistentMemories(panel) {
 
 
 export function filterPersistentMemories(panel) {
-  applyMemoryFilter(panel);
   scheduleMemorySearch(panel);
+  applyMemoryFilter(panel);
 }
 
 export function bindMemoryBrowser(panel) {

@@ -10,6 +10,7 @@ function panel() {
   host._toast = () => {};
   host._agents = [{entry_id:"parent",subentry_id:"one"},{entry_id:"parent",subentry_id:"two"}];
   host._agent = host._agents[0];
+  host._status = {enabled:false, limit:10, count:0};
   return host;
 }
 test("Debug discards stale successes and failures across refresh and assistant selection", async () => {

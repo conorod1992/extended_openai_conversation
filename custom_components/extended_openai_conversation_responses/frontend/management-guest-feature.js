@@ -1,5 +1,77 @@
 import {renderGuestWebSearchSetting} from "./guest-mode-ui.js";
 import {formatUsageNumber} from "./usage-format.js";
+import {captureConfigurationDraftOwner, configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
+import {clone, same, mergeAcknowledgedDraft} from "./unsaved-state.js";
+import {pageCoordinator} from "./management-page-drafts.js";
+
+const GUEST_VIEW = "capabilities/guest-mode";
+const intervalValues = (panel, status, retainedEnd = "") => ({start:panel._dateTimeLocal(status.active_from), end:status.indefinite ? retainedEnd : panel._dateTimeLocal(status.active_until), indefinite:Boolean(status.indefinite)});
+
+function intervalState(panel, status = panel._result?.status || {}) {
+  let state = panel._guestIntervalDraft;
+  const owner = captureConfigurationDraftOwner(panel);
+  // An explicitly retired assistant draft cannot return. A temporary identity
+  // transition keeps its authored values private until the same owner returns.
+  if (state && ["agentId", "entryId", "draftGeneration"].some(key => state.owner[key] !== owner[key])) state = null;
+  if (state && state.owner.userId == null && owner.userId != null) state.owner.userId = owner.userId;
+  if (state && !configurationSubmissionIsCurrent(panel, state.owner)) return null;
+  if (!state) {
+    const baseline = intervalValues(panel, status);
+    state = {owner, baseline, values:clone(baseline)};
+    panel._guestIntervalDraft = state;
+    const current = () => panel._guestIntervalDraft === state && configurationSubmissionIsCurrent(panel, state.owner);
+    pageCoordinator(panel).register("guest-interval", {
+      dirty:() => current() && !same(state.values, state.baseline),
+      get pending() { return current() && Boolean(panel._guestOperation); },
+      owns:destination => Boolean(destination) && current(),
+      destinations:() => [GUEST_VIEW],
+      discard:() => { if (current()) state.values = clone(state.baseline); },
+      restore:target => {
+        const targetOwner = captureConfigurationDraftOwner(target);
+        if (!current() || target._viewKey?.() !== GUEST_VIEW || !target._data?.is_admin
+            || ["agentId", "entryId", "userId"].some(key => state.owner[key] !== targetOwner[key])) return;
+        const destination = intervalState(target);
+        if (!destination || !same(destination.values, destination.baseline)) return;
+        destination.baseline = clone(state.baseline);
+        destination.values = clone(state.values);
+        state.values = clone(state.baseline);
+        target._render();
+      },
+    });
+  } else if (same(state.values, state.baseline)) {
+    state.baseline = intervalValues(panel, status, state.values.end);
+    state.values = clone(state.baseline);
+  }
+  return state;
+}
+
+export function captureGuestInterval(panel) {
+  const state = intervalState(panel);
+  const root = panel.shadowRoot;
+  if (!state || !root.querySelector("#guest-start")) return null;
+  state.values = {start:root.querySelector("#guest-start").value, end:root.querySelector("#guest-end").value, indefinite:root.querySelector("#guest-indefinite").checked};
+  return {state, values:clone(state.values)};
+}
+
+export function acknowledgeGuestInterval(panel, submission, status) {
+  const state = submission?.state;
+  if (!state || panel._guestIntervalDraft !== state || !configurationSubmissionIsCurrent(panel, state.owner)) return;
+  // Older/partial replies can confirm an action without supplying an interval.
+  // Missing fields must not canonicalize authored values to empty or false.
+  if (!["active_from", "active_until", "indefinite"].every(key => Object.hasOwn(status || {}, key))) return;
+  // An indefinite interval does not submit Ends. Keep that inactive input so
+  // toggling indefinite off does not silently erase an authored finite end.
+  const saved = intervalValues(panel, status, state.values.end);
+  state.values = mergeAcknowledgedDraft(state.values, submission.values, saved);
+  state.baseline = saved;
+}
+
+export function bindGuestInterval(panel) {
+  for (const id of ["guest-start", "guest-end", "guest-indefinite"]) {
+    const control = panel.shadowRoot.querySelector(`#${id}`);
+    for (const type of ["input", "change"]) control?.addEventListener(type, () => captureGuestInterval(panel));
+  }
+}
 
 export function guestMode(panel) {
   const status = panel._result?.status || {};
@@ -10,6 +82,7 @@ export function guestMode(panel) {
 
 export function guestPolicyView(panel, status, policy, state) {
   const config = panel._guestDraft || panel._result?.config || {};
+  const interval = intervalState(panel, status)?.values || intervalValues(panel, status);
   const selector = (key, type, label) => `<label class="setting"><span>${label}</span><ha-selector data-guest-key="${key}" data-guest-selector="${type}"></ha-selector></label>`;
   const manager = (key, type, label, description) => `<details class="guest-manager eoc-details-base"><summary><span><strong>${label}</strong><small>${formatUsageNumber((config[key] || []).length)} excluded · ${description}</small></span><span class="manage-label">Manage</span></summary><div class="guest-manager-body">${selector(key,type,`Choose ${label.toLowerCase()}`)}</div></details>`;
   const mode = (key, label, values) => `<label>${label}<select data-guest-mode="${key}">${values.map(([value,text]) => `<option value="${value}" ${config[key] === value ? "selected" : ""}>${text}</option>`).join("")}</select></label>`;
@@ -17,7 +90,7 @@ export function guestPolicyView(panel, status, policy, state) {
   const hasInterval = Boolean(status.currently_active || status.scheduled || status.active_from || status.active_until);
   const canEditPolicy = panel._data?.is_admin && (!panel._result?.legacy_policy || panel._guestMigrationReview);
   const assistantPermission = canEditPolicy ? `<details class="guest-advanced eoc-details-base"><summary>Assistant activation permission</summary><p class="help">This permission is separate from the Guest Mode activation state.</p><label class="toggle"><span>Allow the assistant to activate Guest Mode</span><input id="guest-controls-enabled" type="checkbox" ${config.guest_mode_enabled ? "checked" : ""}></label><p class="help">Lets the assistant activate Guest Mode, start it earlier, or extend it. The assistant can never shorten or disable Guest Mode. Turning this off never ends or weakens an active restriction.</p></details>` : "";
-  const activation = `<section class="content-card"><div class="section-heading"><div><h2>Guest Mode activation</h2><p class="meta" data-guest-live-status>${panel._e(panel._titleCase(state))} · ${intervalSummary}</p><p>The assistant can enable or extend Guest Mode, but cannot shorten or disable it. Administrators and Home Assistant automations can change or end Guest Mode.</p></div></div>${panel._data?.is_admin ? `<div class="form-grid"><label>Starts<input id="guest-start" type="datetime-local" value="${panel._e(panel._dateTimeLocal(status.active_from))}"></label><label>Ends<input id="guest-end" type="datetime-local" value="${panel._e(panel._dateTimeLocal(status.active_until))}" ${status.indefinite ? "disabled" : ""}></label></div><label class="toggle"><span>Remain active indefinitely</span><input id="guest-indefinite" type="checkbox" ${status.indefinite ? "checked" : ""}></label><div class="section-actions">${hasInterval ? `<button type="button" id="guest-update">Update interval</button><button type="button" class="secondary" id="guest-now">Activate now</button>` : `<button type="button" id="guest-now">Activate now</button><button type="button" class="secondary" id="guest-update">Update interval</button>`}${hasInterval ? `<button type="button" class="danger secondary-danger" id="guest-disable">${status.scheduled ? "Cancel schedule" : "End Guest Mode"}</button>` : ""}</div>` : ""}${assistantPermission}</section>`;
+  const activation = `<section class="content-card"><div class="section-heading"><div><h2>Guest Mode activation</h2><p class="meta" data-guest-live-status>${panel._e(panel._titleCase(state))} · ${intervalSummary}</p><p>The assistant can enable or extend Guest Mode, but cannot shorten or disable it. Administrators and Home Assistant automations can change or end Guest Mode.</p></div></div>${panel._data?.is_admin ? `<div class="form-grid"><label>Starts<input id="guest-start" type="datetime-local" value="${panel._e(interval.start)}"></label><label>Ends<input id="guest-end" type="datetime-local" value="${panel._e(interval.end)}" ${interval.indefinite ? "disabled" : ""}></label></div><label class="toggle"><span>Remain active indefinitely</span><input id="guest-indefinite" type="checkbox" ${interval.indefinite ? "checked" : ""}></label><div class="section-actions">${hasInterval ? `<button type="button" id="guest-update">Update interval</button><button type="button" class="secondary" id="guest-now">Activate now</button>` : `<button type="button" id="guest-now">Activate now</button><button type="button" class="secondary" id="guest-update">Update interval</button>`}${hasInterval ? `<button type="button" class="danger secondary-danger" id="guest-disable">${status.scheduled ? "Cancel schedule" : "End Guest Mode"}</button>` : ""}</div>` : ""}${assistantPermission}</section>`;
   const baseSelectors = `${manager("guest_excluded_labels","label","Labels","The easiest way to restrict groups of related entities")}${manager("guest_excluded_areas","area","Areas","Hide every exposed entity in selected areas")}${manager("guest_excluded_domains","domain","Domains","Hide entire entity types, such as cameras or device trackers")}${manager("guest_excluded_entities","entity","Individual entities","Hide specific entities not covered by the rules above")}`;
   const controlSelectors = `${manager("guest_control_excluded_labels","label","Labels","Make labelled entities read-only")}${manager("guest_control_excluded_areas","area","Areas","Make entities in selected areas read-only")}${manager("guest_control_excluded_domains","domain","Domains","Make entire domains read-only")}${manager("guest_control_excluded_entities","entity","Individual entities","Make specific entities read-only")}`;
   const legacyNotice = panel._result?.legacy_policy && !panel._guestMigrationReview ? `<section class="notice warning legacy-migration"><strong>Previous Guest Mode settings found</strong><p>Your old Guest Mode rules used an allow-list. We have kept an equivalent restrictive draft so the upgrade does not accidentally give guests more access. The old policy remains enforced until you save.</p><div class="section-actions"><button type="button" id="guest-review-converted">Review converted settings</button><button type="button" class="secondary" id="guest-start-fresh">Start fresh with new defaults</button></div></section>` : "";

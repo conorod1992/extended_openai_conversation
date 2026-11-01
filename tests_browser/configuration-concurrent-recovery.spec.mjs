@@ -101,6 +101,9 @@ for (const bundled of [false, true]) test(`conflicting Retention drafts remain a
   expect(await page.evaluate(() => partialMergeState.source._configDirty)).toBe(false);
   expect(await panel.evaluate(host => host._draft.usage_request_retention_days)).toBe(0);
   await panel.locator("#save-config").click();
+  await expect(panel.locator("#confirm-dialog")).toBeVisible();
+  await expect(panel.locator("#confirm-message")).toContainText("request details");
+  await panel.locator("#confirm-accept").click();
   await expect.poll(() => panel.evaluate(host => host._configurationSaving || host._configDirty)).toBe(false);
   const writes = await page.evaluate(() => browserHarness.calls.filter(call => call.section === "configuration" && call.action === "save"));
   expect(writes).toHaveLength(1);

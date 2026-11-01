@@ -246,6 +246,16 @@ function historyRangeLabel(history) {
   return `${history.label} · ${history.startDate} to ${history.endDate}`;
 }
 
+function usageDependency(result, key, label) {
+  const available = key === "days" ? Array.isArray(result.days?.days) : key === "runs" ? Array.isArray(result.runs?.runs) : Boolean(result.summary);
+  const failed = (result.load_errors || []).some(issue => issue.key === key);
+  const loading = Boolean(result.loading?.[key]);
+  const message = loading ? `${available ? "Refreshing" : "Loading"} ${label.toLowerCase()}…${available ? " Showing the last loaded data." : ""}`
+    : failed ? `${label} unavailable.${available ? " Showing the last loaded data; it may be stale." : ""}`
+      : !available ? `${label} unavailable.` : "";
+  return {available, failed, loading, message};
+}
+
 export function renderUsageDiagnostics(panel, result = {}) {
   const history = selectUsageHistory(
     result.days?.days || [],
@@ -253,6 +263,8 @@ export function renderUsageDiagnostics(panel, result = {}) {
     resultToday(result, panel),
   );
   const summary = history.summary;
+  const dailyState = usageDependency(result, "days", "Daily usage");
+  const runsState = usageDependency(result, "runs", "Recent runs");
   const recentRuns = result.runs?.runs || [];
   const failedRuns = recentRuns.filter((run) => run.successful === false).slice(0, 5);
   const localRuns = result.days?.local_run_summary;
@@ -283,7 +295,8 @@ export function renderUsageDiagnostics(panel, result = {}) {
     </style>
     <section class="content-card usage-diagnostics" aria-label="Usage diagnostics">
       <div class="usage-diagnostics-heading"><div><h2>Usage diagnostics</h2><p>Use these figures to spot repeated provider calls, slow turns, failures, and how much input is being served from cache.</p></div><span class="usage-window">${panel._e(historyRangeLabel(history))}</span></div>
-      <div class="usage-diagnostic-grid">
+      ${dailyState.message ? `<p class="help" role="status">${panel._e(dailyState.message)}</p>` : ""}
+      ${dailyState.available ? `      <div class="usage-diagnostic-grid">
         ${diagnosticMetric(panel, "Cached input", formatPercent(summary.cache_percent), cacheDetail)}
         ${diagnosticMetric(panel, "Run success", formatPercent(summary.run_success_percent), `${formatUsageNumber(summary.failed_run_count)} failed run${summary.failed_run_count === 1 ? "" : "s"}`)}
         ${diagnosticMetric(panel, "Requests per run", summary.average_requests_per_run.toFixed(summary.average_requests_per_run >= 10 ? 1 : 2), `${formatUsageNumber(summary.api_request_count)} provider requests`)}
@@ -312,10 +325,11 @@ export function renderUsageDiagnostics(panel, result = {}) {
         ${breakdownList(panel, "Providers", summary.provider_breakdown)}
         ${breakdownList(panel, "API modes", summary.api_mode_breakdown)}
       </div>
-      <section class="usage-diagnostic-panel"><h3>Recent failed runs</h3>${failedRuns.length ? `<div class="usage-failures">${failedRuns.map((run) => {
+      ` : ""}
+      <section class="usage-diagnostic-panel"><h3>Recent failed runs</h3>${runsState.message ? `<p class="help" role="status">${panel._e(runsState.message)}</p>` : ""}${failedRuns.length ? `<div class="usage-failures">${failedRuns.map((run) => {
         const completed = formatUsageTimestamp(run.completed_at, undefined, panel._hass?.config?.time_zone);
         return `<div class="usage-failure"><div><p><strong>${panel._e(run.error_type || "Failed")}</strong></p><small>${panel._e(completed.display)} · ${formatUsageNumber(run.request_count)} request${run.request_count === 1 ? "" : "s"} · ${panel._e(formatDuration(run.duration_ms))}</small></div><button type="button" class="usage-run-details" data-usage-run-id="${panel._e(run.run_id)}">View requests</button></div>`;
-      }).join("")}</div>` : `<p class="usage-diagnostic-empty">No failed runs were found in the saved recent runs.</p>`}</section>
+      }).join("")}</div>` : `<p class="usage-diagnostic-empty">${runsState.loading || runsState.failed || !runsState.available ? (runsState.available ? "No failures in the last loaded recent runs." : "Failure information is not available yet.") : "No failed runs were found in the saved recent runs."}</p>`}</section>
       <p class="help">The totals and breakdowns above use your selected history period. Recent individual runs are stored separately, so they may cover a shorter period. Figures show provider-reported usage only; they do not estimate API cost or expose prompt, response, tool-argument, or reasoning content.</p>
     </section>`;
 }
@@ -344,7 +358,7 @@ function renderUsageBar(panel, bucket, max) {
 }
 
 function usageWarnings(panel, result) {
-  return (result.load_errors || []).map((issue) => `<div class="notice warning"><strong>${panel._e(issue.label)} unavailable</strong><p>${panel._e(issue.message)} Other usage information is still shown where available.</p></div>`).join("");
+  return (result.load_errors || []).map((issue) => `<div class="notice warning"><strong>${panel._e(issue.label)} unavailable</strong><p>${panel._e(issue.message)} Other usage information is still shown where available.</p><button type="button" class="secondary" data-usage-retry>Retry usage loading</button></div>`).join("");
 }
 
 function usageRecentRows(panel, result) {
@@ -353,8 +367,9 @@ function usageRecentRows(panel, result) {
     const completed = formatUsageTimestamp(run.completed_at, undefined, panel._hass?.config?.time_zone);
     return `<tr><td><time datetime="${panel._e(completed.datetime)}" title="${panel._e(completed.datetime)}">${panel._e(completed.display)}</time></td><td>${formatUsageNumber(tokens.total)}</td><td>${formatUsageNumber(tokens.cached)}</td><td>${formatUsageNumber(tokens.uncached)}</td><td>${formatUsageNumber(run.request_count)}</td><td>${panel._e(`${formatUsageNumber(run.duration_ms)} ms`)}</td><td>${panel._e(run.successful ? "Success" : run.error_type || "Failed")}</td></tr>`;
   }).join("");
-  return result.loading?.runs ? `<tr><td colspan="7">Loading recent runs…</td></tr>`
-    : rows || `<tr><td colspan="7">No saved recent runs.</td></tr>`;
+  const state = usageDependency(result, "runs", "Recent runs");
+  const notice = state.message ? `<tr><td colspan="7" role="status">${panel._e(state.message)}</td></tr>` : "";
+  return notice + (rows || (state.loading || state.failed || !state.available ? "" : `<tr><td colspan="7">No saved recent runs.</td></tr>`));
 }
 
 export function reconcileUsageSecondary(panel, key) {
@@ -369,8 +384,8 @@ export function reconcileUsageSecondary(panel, key) {
     if (!diagnostics || !rows) return false;
     diagnostics.innerHTML = renderUsageDiagnostics(panel, panel._result || {});
     rows.innerHTML = usageRecentRows(panel, panel._result || {});
-    bindUsageDiagnostics(panel);
   }
+  bindUsageDiagnostics(panel);
   return true;
 }
 
@@ -378,6 +393,8 @@ export function renderUsagePage(panel, result = {}) {
   const today = resultToday(result, panel);
   const history = selectUsageHistory(result.days?.days || [], panel._usageHistoryWindow || DEFAULT_USAGE_WINDOW, today);
   const summary = history.summary;
+  const dailyState = usageDependency(result, "days", "Daily usage");
+  const summaryState = usageDependency(result, "summary", "Usage summary");
   const lifetime = result.summary?.lifetime || {};
   const latest = result.summary?.latest || null;
   const buckets = usageChartBuckets(history.days, history.id);
@@ -385,7 +402,7 @@ export function renderUsagePage(panel, result = {}) {
   const chartByMonth = ["year", "all"].includes(history.id);
   const chartAxis = buckets.length ? `<div class="chart-axis" aria-hidden="true"><span>${panel._e(formatUsageDate(buckets[0].label, undefined, chartByMonth))}</span><span>${panel._e(formatUsageDate(buckets[Math.floor((buckets.length - 1) / 2)].label, undefined, chartByMonth))}</span><span>${panel._e(formatUsageDate(buckets.at(-1).label, undefined, chartByMonth))}</span></div>` : "";
   const cachedMeta = (value) => `${formatUsageNumber(value || 0)} cached input`;
-  const availableText = history.availableStart
+  const availableText = !dailyState.available ? dailyState.message : history.availableStart
     ? `${formatUsageDate(history.availableStart)} to ${formatUsageDate(history.availableEnd)}`
     : "No daily usage history yet";
   const selectedText = history.id === "all"
@@ -398,14 +415,15 @@ export function renderUsagePage(panel, result = {}) {
       @media(max-width:680px){.usage-range-card{display:grid}.usage-range-control{min-width:0;width:100%}}
     </style><section class="page-intro"><h1>Usage</h1><p>Review token use, provider activity, recent runs, and retained usage detail for this assistant.</p></section><div data-eoc-usage-warnings>${usageWarnings(panel, result)}</div>
     <section class="content-card usage-range-card"><div class="usage-range-copy"><h2>Usage period</h2><p>Totals, chart data, and model/provider/API-mode breakdowns use this same Home Assistant local-calendar period.</p><small>${panel._e(historyRangeLabel(history))}</small></div><label class="usage-range-control">History window<select id="usage-window">${options}</select></label></section>
+    ${(dailyState.message || summaryState.message) ? `<p class="help" role="status">${panel._e([dailyState.message, summaryState.message].filter(Boolean).join(" "))}</p>` : ""}
     <section class="metric-grid compact">
-      ${panel._metric(history.label, summary.total_tokens || 0, cachedMeta(summary.cached_input_tokens))}
-      ${panel._metric("Input tokens", summary.input_tokens || 0, `${formatUsageNumber(summary.output_tokens || 0)} output`)}
-      ${panel._metric("Provider requests", summary.api_request_count || 0, `${formatUsageNumber(summary.run_count || 0)} conversation runs`)}
-      ${panel._metric("Lifetime tokens", lifetime.total_tokens || 0, "Separate cumulative counter")}
+      ${panel._metric(history.label, dailyState.available ? summary.total_tokens || 0 : "—", dailyState.available ? cachedMeta(summary.cached_input_tokens) : "Daily usage unavailable")}
+      ${panel._metric("Input tokens", dailyState.available ? summary.input_tokens || 0 : "—", dailyState.available ? `${formatUsageNumber(summary.output_tokens || 0)} output` : "Daily usage unavailable")}
+      ${panel._metric("Provider requests", dailyState.available ? summary.api_request_count || 0 : "—", dailyState.available ? `${formatUsageNumber(summary.run_count || 0)} conversation runs` : "Daily usage unavailable")}
+      ${panel._metric("Lifetime tokens", summaryState.available ? lifetime.total_tokens || 0 : "—", summaryState.available ? "Separate cumulative counter" : "Usage summary unavailable")}
       ${panel._metric("Latest response", latest?.total_tokens ?? "—", latest ? cachedMeta(latest.cached_input_tokens) : "Saved individual run")}
     </section>
-    <section class="content-card"><div class="card-heading"><h2>Tokens by ${chartByMonth ? "month" : "recorded day"}</h2><div class="chart-legend" aria-label="Token categories"><span><i class="legend-swatch uncached"></i>Uncached</span><span><i class="legend-swatch cached"></i>Cached input</span></div></div><div class="chart" tabindex="0" role="region" aria-label="Token usage for the selected period; cached input tokens are included within each total">${buckets.map((bucket) => renderUsageBar(panel, bucket, chartMax)).join("") || panel._empty("No daily usage is recorded in this period.")}</div>${chartAxis}<p class="chart-note"><strong>Cached input</strong> is input recognised as cached by the provider. It is included in total tokens and may be billed at a lower rate.</p></section>
+    <section class="content-card"><div class="card-heading"><h2>Tokens by ${chartByMonth ? "month" : "recorded day"}</h2><div class="chart-legend" aria-label="Token categories"><span><i class="legend-swatch uncached"></i>Uncached</span><span><i class="legend-swatch cached"></i>Cached input</span></div></div><div class="chart" tabindex="0" role="region" aria-label="Token usage for the selected period; cached input tokens are included within each total">${buckets.map((bucket) => renderUsageBar(panel, bucket, chartMax)).join("") || panel._empty(dailyState.available ? "No daily usage is recorded in this period." : dailyState.message)}</div>${chartAxis}<p class="chart-note"><strong>Cached input</strong> is input recognised as cached by the provider. It is included in total tokens and may be billed at a lower rate.</p></section>
     <section class="notice usage-history-note"><strong>Daily usage history: ${panel._e(availableText)}</strong><p>You’re viewing ${panel._e(selectedText)}. Older daily history is loaded only when you choose a longer history range. “All available” means all stored daily history, which may differ from your lifetime usage total.</p></section>
     <div data-eoc-usage-diagnostics>${renderUsageDiagnostics(panel, result)}</div>
     <section class="content-card"><div class="card-heading"><div><h2>Recent runs</h2><p>This table shows saved individual runs. Changing the history range above does not load additional detailed records.</p></div></div><div class="table"><table><thead><tr>${["Completed", "Total", "Cached input", "Uncached", "Requests", "Duration", "Result"].map((header) => `<th>${header}</th>`).join("")}</tr></thead><tbody data-eoc-usage-runs>${usageRecentRows(panel, result)}</tbody></table></div></section>
@@ -414,6 +432,7 @@ export function renderUsagePage(panel, result = {}) {
 
 export function bindUsageDiagnostics(panel) {
   const root = panel.shadowRoot;
+  root.querySelectorAll("[data-usage-retry]").forEach(button => { button.onclick = () => panel._loadSection(true); });
   const window = root.querySelector("#usage-window");
   if (window) window.onchange = async (event) => {
     const previous = normalizeUsageWindow(panel._usageHistoryWindow || DEFAULT_USAGE_WINDOW);

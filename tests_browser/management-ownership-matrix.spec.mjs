@@ -104,7 +104,7 @@ for (const bundled of [false,true]) for (const retention of [false,true])
       if (relation === "conflict") {
         const copy=panel.getByRole("heading",{name:"Recovered unsaved configuration"});
         await expect(copy).toBeVisible();
-        expect(JSON.parse(await panel.getByLabel("Recovered configuration values").inputValue()).config[primary]).toBe(later);
+        expect(JSON.parse(await panel.getByRole("textbox", {name:"Recovered configuration values", exact:true}).inputValue()).config[primary]).toBe(later);
         expect(await panel.evaluate((host,key) => host._draft[key],primary)).toBe(conflicting);
         await panel.getByRole("button",{name:"Discard recovered edits"}).click();
         await expect(copy).toHaveCount(0);
@@ -116,6 +116,11 @@ for (const bundled of [false,true]) for (const retention of [false,true])
       const expected={ [primary]:relation === "conflict" ? conflicting : later,
         ...(retention && relation === "disjoint" ? {usage_run_retention_days:7} : {}) };
       await panel.locator("#save-config").click();
+      if (retention && expected[primary] === 0) {
+        await expect(panel.locator("#confirm-dialog")).toBeVisible();
+        await expect(panel.locator("#confirm-message")).toContainText("request details");
+        await panel.locator("#confirm-accept").click();
+      }
       await expect.poll(() => panel.evaluate(host => host._configurationSaving || host._configDirty)).toBe(false);
       const writes=await page.evaluate(() => ownershipMatrix.writes);
       expect(writes).toHaveLength(2);

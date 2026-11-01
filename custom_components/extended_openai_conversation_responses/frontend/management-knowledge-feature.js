@@ -1,4 +1,5 @@
 import {adoptKeyedElements, reconcileKeyedChildren, delegateCollectionActions, setText} from "./keyed-collection.js";
+export {restoreCollectionFocus} from "./keyed-collection.js";
 import {selectedFeatureStatus} from "./management-feature-status-core.js";
 import {knowledgeSourceAvailabilityBadge} from "./knowledge-presentation.js";
 import {formatUsageNumber} from "./usage-format.js";

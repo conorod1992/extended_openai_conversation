@@ -1219,6 +1219,7 @@ for (const refreshOutcome of ["failure", "scope-change"]) {
 
 // Audit: retain the second occurrence of an unchanged ambiguous local time.
 {
+  await routeAssetPromise("capabilities/guest-mode");
   const panel = panelFor("capabilities", "guest-mode");
   const previousTimezone = process.env.TZ;
   process.env.TZ = "Europe/Dublin";

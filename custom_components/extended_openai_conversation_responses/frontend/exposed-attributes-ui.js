@@ -1,4 +1,5 @@
 import {applyTargetedConfigDirty} from "./management-state-safety.js";
+import {restoreCollectionFocus} from "./keyed-collection.js";
 const CONFIG_KEY = "exposed_entity_attributes";
 
 const clonePreferences = (value = {}) => Object.fromEntries(
@@ -144,10 +145,16 @@ function markConfigDirty(panel) {
   applyTargetedConfigDirty(panel, [CONFIG_KEY]);
 }
 
-function rerenderKeepingEditor(panel, entityId = null) {
+function rerenderKeepingEditor(panel, entityId = null, focusSelector = null) {
+  const root = panel.shadowRoot;
+  const active = root.activeElement;
+  if (!focusSelector && active?.matches?.("[data-exposed-attribute]")) {
+    focusSelector = `[data-exposed-attribute][data-reference="${CSS.escape(active.dataset.reference)}"][data-attribute="${CSS.escape(active.dataset.attribute)}"]`;
+  }
   panel._exposedAttributeEntityId = entityId;
   panel._render?.();
   reconcileExposedAttributeSettings(panel);
+  if (focusSelector) restoreCollectionFocus(root, focusSelector, "#exposed-entity-picker-fallback:not([hidden]),#exposed-entity-picker:not([hidden])");
 }
 
 export function reconcileExposedAttributeSettings(panel) {
@@ -225,18 +232,22 @@ export function bindExposedAttributeSettings(panel) {
   const entities = Array.isArray(catalog?.entities) ? catalog.entities : [];
   bindEntityPicker(panel, entities);
 
-  root.querySelector("[data-close-exposed-editor]")?.addEventListener("click", () => rerenderKeepingEditor(panel, null));
+  root.querySelector("[data-close-exposed-editor]")?.addEventListener("click", () => {
+    const entityId = panel._exposedAttributeEntityId;
+    rerenderKeepingEditor(panel, null, `[data-edit-exposed-entity="${CSS.escape(entityId || "")}"]`);
+  });
   root.querySelectorAll("[data-edit-exposed-entity]").forEach((button) => button.addEventListener("click", () => {
-    rerenderKeepingEditor(panel, button.dataset.editExposedEntity);
+    rerenderKeepingEditor(panel, button.dataset.editExposedEntity, "[data-exposed-attribute]:not(:disabled)");
   }));
 
   root.querySelectorAll("[data-exposed-attribute]").forEach((input) => input.addEventListener("change", () => {
+    const focused = root.activeElement === input;
     panel._draft ||= {};
     panel._draft[CONFIG_KEY] = updateExposedAttributePreference(
       panel._draft[CONFIG_KEY], input.dataset.reference, input.dataset.attribute, input.checked,
     );
     markConfigDirty(panel);
-    rerenderKeepingEditor(panel, panel._exposedAttributeEntityId);
+    rerenderKeepingEditor(panel, panel._exposedAttributeEntityId, focused ? `[data-exposed-attribute][data-reference="${CSS.escape(input.dataset.reference)}"][data-attribute="${CSS.escape(input.dataset.attribute)}"]` : null);
   }));
 
   root.querySelectorAll(".remove-exposed-preference").forEach((button) => button.addEventListener("click", () => {

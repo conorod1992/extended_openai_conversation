@@ -137,7 +137,7 @@ describe("native management rendering", () => {
     panel._draft = {functions:[{spec:{name:"one"}}],function_groups:[{id:"g",name:"Group",enabled:false,functions:["one"]}]};
     const html = renderTools(panel);
     expect(html).toContain("group-disabled-badge");
-    expect(html).toMatch(/class="secondary edit-group"[^>]*disabled/);
+    expect(html).not.toMatch(/class="secondary edit-group"[^>]*disabled/);
     expect(html).toContain('class="function-group-assignment"');
     expect(html).toContain('Group (disabled)</option>');
     expect(html.match(/class="group-enabled"/g)).toHaveLength(1);

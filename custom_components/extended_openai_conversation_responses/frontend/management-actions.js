@@ -1,22 +1,73 @@
 import {same} from "./unsaved-state.js";
 import {reconcileSavedConfiguration} from "./configuration-save-dom.js";
-import {requireMutationAcknowledgement, captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, completeConfigurationAcknowledgement, reconcileConfigurationAcknowledgement, discardConfigurationDraft} from "./configuration-acknowledgement.js";
+import {requireMutationAcknowledgement, captureConfigurationDraftOwner, captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, completeConfigurationAcknowledgement, reconcileConfigurationAcknowledgement, discardConfigurationDraft} from "./configuration-acknowledgement.js";
+import {CONFIG_OWNER_BY_KEY} from "./management-config-owners.js";
+import {SETTING_LOOKUP} from "./management-setting-lookup.js";
+import {focusManagementSetting} from "./frontend-navigation.js";
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
 function fieldErrorKey(key) {
   return key === "title" ? "__title" : key;
 }
 
-function showErrors(panel, errors = {}) {
+const baseErrorKey = key => fieldErrorKey(key.split(/\[|\./)[0]);
+
+function showErrors(panel, errors = {}, submission = null) {
+  panel._eocConfigurationErrors = {owner:captureConfigurationDraftOwner(panel), draft:clone(submission?.draft || panel._draft || {}), title:submission ? submission.title : panel._draftTitle, errors:{...errors}};
+  refreshConfigurationErrors(panel);
+}
+
+export function refreshConfigurationErrors(panel) {
   const root = panel.shadowRoot;
-  root.querySelectorAll(".field-error").forEach((item) => { item.textContent = ""; });
+  if (!root?.querySelectorAll) return;
+  const state = panel._eocConfigurationErrors;
+  const errors = state && panel._data?.is_admin !== false && configurationSubmissionIsCurrent(panel, state.owner) ? state.errors : {};
+  for (const key of Object.keys(errors)) {
+    const base = baseErrorKey(key);
+    if (!same(base === "__title" ? panel._draftTitle : panel._draft?.[base], base === "__title" ? state.title : state.draft[base])) delete errors[key];
+  }
+  root.querySelectorAll("[data-eoc-server-error]").forEach(control => { control.removeAttribute("aria-invalid"); delete control.dataset.eocServerError; });
+  root.querySelectorAll("[data-eoc-configuration-error]").forEach(item => { item.textContent = ""; delete item.dataset.eocConfigurationError; });
   Object.entries(errors).forEach(([key, message]) => {
-    const mappedKey = fieldErrorKey(key);
-    const escaped = CSS.escape(mappedKey);
-    const fallback = CSS.escape(fieldErrorKey(key.split("[")[0]));
-    const target = root.querySelector(`[data-error="${escaped}"]`) || root.querySelector(`[data-error="${fallback}"]`);
-    if (target) target.textContent = message;
+    const target = root.querySelector(`[data-error="${CSS.escape(fieldErrorKey(key))}"]`) || root.querySelector(`[data-error="${CSS.escape(baseErrorKey(key))}"]`);
+    if (target) { target.textContent = String(message); target.dataset.eocConfigurationError = ""; }
   });
+  // Reuse existing field markup; connect both normal help and server errors to
+  // the control even after route replacement. Do not erase native validity.
+  root.querySelectorAll("[data-setting][data-field]").forEach(setting => {
+    const key = setting.dataset.field;
+    const control = root.getElementById?.(`config-${key}`);
+    if (!control) return;
+    const descriptions = new Set((control.getAttribute("aria-describedby") || "").split(/\s+/).filter(Boolean));
+    setting.querySelectorAll("small,.field-error").forEach((node, index) => {
+      node.id ||= `config-${key}-description-${index}`;
+      descriptions.add(node.id);
+      if (node.matches(".field-error") && node.textContent) {
+        control.setAttribute("aria-invalid", "true");
+        control.dataset.eocServerError = "";
+      }
+    });
+    if (descriptions.size) control.setAttribute("aria-describedby", [...descriptions].join(" "));
+  });
+  let summary = root.querySelector("#configuration-errors");
+  if (!Object.keys(errors).length) { summary?.remove(); return; }
+  const markup = `<strong>Some settings could not be saved</strong><ul>${Object.entries(errors).map(([key, message]) => {
+    const label = SETTING_LOOKUP[baseErrorKey(key)]?.label || key;
+    const text = `${label}: ${String(message)}`;
+    return `<li>${CONFIG_OWNER_BY_KEY[baseErrorKey(key)] ? `<button type="button" class="secondary" data-config-error="${panel._e(key)}">${panel._e(text)}</button>` : panel._e(text)}</li>`;
+  }).join("")}</ul>`;
+  const host = root.querySelector("#save-config")?.closest(".save-bar") || root.querySelector("main");
+  if (!host) return;
+  if (!summary) {
+    summary = document.createElement("div");
+    summary.id = "configuration-errors";
+    summary.className = "notice error";
+    summary.tabIndex = -1;
+    summary.setAttribute("role", "region");
+    summary.setAttribute("aria-label", "Configuration errors");
+    host.before(summary);
+  }
+  if (summary.innerHTML !== markup) summary.innerHTML = markup;
 }
 
 function normalizeGuestModeTimestamp(value) {
@@ -103,8 +154,26 @@ async function saveConfiguration(panel, button) {
   submission.writesTitle = dirty.has("__title");
   panel._eocConfigurationSubmission = submission;
   panel._configurationSaving = true;
+  // Disabling Save can blur it before a network response arrives. Retain that
+  // focus intent only until the next user interaction, including outside EOAI.
+  let restoreErrorFocus = panel.shadowRoot.activeElement?.id === "save-config";
+  const focusDocument = panel.ownerDocument;
+  const relinquishErrorFocus = () => { restoreErrorFocus = false; };
+  const focusEvents = restoreErrorFocus ? ["focusin", "pointerdown", "keydown"] : [];
+  for (const type of focusEvents) focusDocument?.addEventListener(type, relinquishErrorFocus, true);
   panel._setSaving(button, true);
   try {
+    const destructive = [["usage_request_retention_days", "request details"], ["usage_run_retention_days", "run details"]]
+      .filter(([key]) => Object.hasOwn(changed, key) && Number(changed[key]) === 0 && Number(submission.baseline[key]) > 0)
+      .map(([, label]) => label);
+    if (destructive.length) {
+      if (!await panel._confirm("Delete stored usage details?", `Saving Disabled retention deletes existing ${destructive.join(" and ")} for this assistant. Overall usage totals are kept.`, "Save and delete details")) return;
+      if (!configurationSubmissionIsCurrent(panel, submission)) return;
+      if (!same(panel._draft, submitted) || panel._draftTitle !== submittedTitle) {
+        panel._toast("Settings changed while confirmation was open. Review your changes and save again.");
+        return;
+      }
+    }
     const result = await saveConfigurationAcrossRestart(panel, {
       config: changed,
       ...(dirty.has("__title") ? {title: submittedTitle} : {}),
@@ -112,8 +181,11 @@ async function saveConfiguration(panel, button) {
     }, submitted, submittedTitle);
     if (!configurationSubmissionIsCurrent(panel, submission)) return;
     if (result?.valid === false) {
-      showErrors(panel, result?.errors || {});
-      panel._toast("Fix the highlighted configuration errors", true);
+      showErrors(panel, result?.errors || {}, submission);
+      const active = panel.shadowRoot.activeElement;
+      if (panel._viewKey?.() === submission.view && (active?.id === "save-config"
+          || restoreErrorFocus && !active && focusDocument?.hasFocus())) panel.shadowRoot.querySelector("#configuration-errors")?.focus();
+      panel._toast("Some settings could not be saved. Review the configuration errors.", true);
       return;
     }
 
@@ -130,6 +202,7 @@ async function saveConfiguration(panel, button) {
   } catch (err) {
     if (configurationSubmissionIsCurrent(panel, submission)) panel._toast(`Unable to save configuration: ${err.message || String(err)}`, true);
   } finally {
+    for (const type of focusEvents) focusDocument?.removeEventListener(type, relinquishErrorFocus, true);
     if (panel._eocConfigurationSubmission === submission) panel._eocConfigurationSubmission = null;
     if (panel.isConnected !== false && !panel._configDataStale) panel._eocAcknowledgedConfiguration = null;
     panel._configurationSaving = false;
@@ -143,6 +216,21 @@ export function bindSingleRequestSave(panel) {
   const root = panel.shadowRoot;
   if (root.__eocSingleRequestSaveBound) return;
   root.__eocSingleRequestSaveBound = true;
+  root.addEventListener("eoc-config-dirty-changed", () => refreshConfigurationErrors(panel));
+  root.addEventListener("click", async event => {
+    const button = event.target?.closest?.("[data-config-error]");
+    if (!button) return;
+    const key = baseErrorKey(button.dataset.configError);
+    const route = CONFIG_OWNER_BY_KEY[key];
+    if (!route) return;
+    const [page, section] = route.split("/");
+    panel._pendingSettingFocus = `config-${key}`;
+    await panel._navigate(page, section);
+    if (panel._viewKey?.() === route && panel._pendingSettingFocus) {
+      const control = root.getElementById(`config-${key}`);
+      if (control) { panel._pendingSettingFocus = null; focusManagementSetting(control); }
+    }
+  });
   root.addEventListener("click", (event) => {
     if (event.target?.closest?.("#revert-config")) {
       event.preventDefault();

@@ -45,13 +45,24 @@ async function loadConversationPage(panel, offset) {
   const scopeId = panel._scopeId;
   const agentId = panel._agentId;
   const target = conversationResult(panel);
+  const sessions = target.sessions;
+  const visit = panel._loadToken;
+  // Keep this list-only lazy chunk independent of configuration authoring.
+  const authenticationGeneration = panel._eocAuthenticationGeneration || 0;
+  const entryId = panel._selectedAgent?.()?.entry_id;
+  const userId = panel.hass?.user?.id;
+  panel._eocHistoryPendingSessions = sessions;
+  panel._eocHistoryPageError = null;
   const stillCurrent = () => panel._eocHistoryLoadToken === token
+    && (panel._eocAuthenticationGeneration || 0) === authenticationGeneration
+    && panel._selectedAgent?.()?.entry_id === entryId && panel.hass?.user?.id === userId
     && panel._agentId === agentId
     && panel._scopeId === scopeId
     && panel._viewKey?.() === CONVERSATIONS_VIEW
-    && conversationResult(panel) === target
+    && panel._loadToken === visit && conversationResult(panel).sessions === sessions
     && panel._eocHistoryMode === mode
     && (mode !== "search" || (panel._eocHistoryQuery || "") === query);
+  decorateConversationPager(panel);
   try {
     const extra = {
       scope_id: scopeId,
@@ -61,10 +72,13 @@ async function loadConversationPage(panel, offset) {
     if (mode === "search") extra.query = query;
     const response = await panel._call("conversations", mode, extra);
     if (!stillCurrent()) return false;
-    setSessionResult(target, response, mode);
+    const current = conversationResult(panel);
+    setSessionResult(current, response, mode);
+    panel._eocHistoryResult = {sessions:current.sessions, mode, query};
     return true;
   } catch (err) {
     if (stillCurrent()) {
+      panel._eocHistoryPageError = {sessions, offset, message:err.message || String(err)};
       panel._toast(`Unable to load conversation history: ${err.message || String(err)}`, true);
     }
     return false;
@@ -84,19 +98,34 @@ function decorateConversationPager(panel) {
   input.value = panel._eocHistoryMode === "search" ? (panel._eocHistoryQuery || "") : "";
 
   const sessions = conversationResult(panel).sessions || {};
+  const target = conversationResult(panel);
+  const successful = panel._eocHistoryResult && panel._eocHistoryResult.sessions === target.sessions ? panel._eocHistoryResult : {mode:"list", query:""};
+  const pending = panel._eocHistoryPagePending && panel._eocHistoryPendingSessions === target.sessions;
+  const error = panel._eocHistoryPageError && panel._eocHistoryPageError.sessions === target.sessions ? panel._eocHistoryPageError : null;
   const existing = card.querySelector(".eoc-history-pager");
+  const focusedAction = existing?.contains(panel.shadowRoot.activeElement) ? panel.shadowRoot.activeElement.textContent : null;
   existing?.remove();
   const pager = document.createElement("div");
   pager.className = "section-actions eoc-history-pager";
 
   const status = document.createElement("small");
   status.className = "meta";
+  status.tabIndex = -1;
   status.style.marginRight = "auto";
-  status.textContent = pageLabel(
+  status.setAttribute("role", "status");
+  status.textContent = `${pending ? "Loading; showing previous results. " : error ? "Unable to load results; showing previous results. " : ""}${pageLabel(
     sessions,
-    panel._eocHistoryMode === "search" ? "matching turns" : "conversations",
-  );
+    successful.mode === "search" ? "matching turns" : "conversations",
+  )}${successful.mode === "search" ? ` for “${successful.query}”` : ""}`;
   pager.append(status);
+  if (error && !pending) {
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "secondary";
+    retry.textContent = "Retry";
+    retry.addEventListener("click", () => void loadConversationPage(panel, error.offset));
+    pager.append(retry);
+  }
 
   if (panel._eocHistoryMode === "search") {
     const clear = document.createElement("button");
@@ -117,7 +146,7 @@ function decorateConversationPager(panel) {
   previous.textContent = "Previous";
   const offset = integer(sessions.offset);
   const limit = Math.max(1, integer(sessions.limit, panel._eocHistoryMode === "search" ? SEARCH_PAGE_LIMIT : LIST_PAGE_LIMIT));
-  previous.disabled = offset === 0 || panel._eocHistoryPagePending;
+  previous.disabled = offset === 0 || pending || Boolean(error);
   previous.addEventListener("click", () => void loadConversationPage(panel, Math.max(0, offset - limit)));
   pager.append(previous);
 
@@ -125,7 +154,7 @@ function decorateConversationPager(panel) {
   next.type = "button";
   next.className = "secondary";
   next.textContent = "Next";
-  next.disabled = !sessions.has_more || panel._eocHistoryPagePending;
+  next.disabled = !sessions.has_more || pending || Boolean(error);
   const nextOffset = sessions.next_offset == null
     ? offset + integer(sessions.returned, (sessions.sessions || []).length)
     : integer(sessions.next_offset);
@@ -133,6 +162,10 @@ function decorateConversationPager(panel) {
   pager.append(next);
 
   card.append(pager);
+  if (focusedAction !== null && !panel.shadowRoot.activeElement) {
+    const replacement = [...pager.querySelectorAll("button")].find(button => !button.disabled && button.textContent === focusedAction);
+    (replacement || status).focus({preventScroll:true});
+  }
 }
 
 function renderTurns(panel, data) {
@@ -267,7 +300,11 @@ export function reconcileActiveConversations(panel) {
 
 export function renderConversations(panel) {
   const result = panel._contentData || panel._result || {};
+  const completedMode = panel._eocHistoryResult && panel._eocHistoryResult.sessions === result.sessions ? panel._eocHistoryResult.mode : "list";
+  const emptyMessage = panel._eocHistoryPageError && panel._eocHistoryPageError.sessions === result.sessions ? "No previous results to display. Retry loading conversations."
+    : panel._eocHistoryPagePending && panel._eocHistoryPendingSessions === result.sessions ? "Loading results…"
+      : completedMode === "search" ? "No conversations match this search." : "No retained conversations in this scope.";
   const content = `<div data-eoc-active-conversations>${activeConversationMarkup(panel, result)}</div>
-    <section class="content-card"><div class="section-heading"><div><h2>Retained conversations</h2><p>Search and review conversations for the selected scope.</p></div></div><div class="search-row"><input id="archive-query" type="search" placeholder="Search retained discussions" aria-label="Search retained discussions"><button type="button" id="archive-search">Search</button></div><div class="list">${(result.sessions?.sessions || []).map((item) => `<article class="list-card"><div class="card-main clickable open-session" tabindex="0" role="button" data-start-turn="${integer(item.turn_index)}" data-id="${panel._e(item.session_id)}"><h3>${panel._e(item.title || "Untitled conversation")}</h3><p class="meta">${panel._e(panel._formatDate(item.last_message_at))} · ${panel._e(String(item.turn_count))} turns · ${panel._e(item.scope_source)}</p>${item.excerpt ? `<p class="search-excerpt">${panel._e(item.excerpt)}</p>` : ""}</div><div class="actions"><button type="button" class="secondary view-session" data-start-turn="${integer(item.turn_index)}" data-id="${panel._e(item.session_id)}">View</button><button type="button" class="danger delete-session" data-id="${panel._e(item.session_id)}">Delete</button></div></article>`).join("") || panel._empty(panel._eocHistoryMode === "search" ? "No conversations match this search." : "No retained conversations in this scope.")}</div></section>`;
+    <section class="content-card"><div class="section-heading"><div><h2>Retained conversations</h2><p>Search and review conversations for the selected scope.</p></div></div><div class="search-row"><input id="archive-query" type="search" placeholder="Search retained discussions" aria-label="Search retained discussions"><button type="button" id="archive-search">Search</button></div><div class="list">${(result.sessions?.sessions || []).map((item) => `<article class="list-card"><div class="card-main clickable open-session" tabindex="0" role="button" data-start-turn="${integer(item.turn_index)}" data-id="${panel._e(item.session_id)}"><h3>${panel._e(item.title || "Untitled conversation")}</h3><p class="meta">${panel._e(panel._formatDate(item.last_message_at))} · ${panel._e(String(item.turn_count))} turns · ${panel._e(item.scope_source)}</p>${item.excerpt ? `<p class="search-excerpt">${panel._e(item.excerpt)}</p>` : ""}</div><div class="actions"><button type="button" class="secondary view-session" data-start-turn="${integer(item.turn_index)}" data-id="${panel._e(item.session_id)}">View</button><button type="button" class="danger delete-session" data-id="${panel._e(item.session_id)}">Delete</button></div></article>`).join("") || panel._empty(emptyMessage)}</div></section>`;
   return content;
 }
