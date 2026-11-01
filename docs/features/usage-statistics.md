@@ -10,6 +10,8 @@ Provider-request counters and tokens are committed when each real provider reque
 
 Missing provider metadata is handled safely: the request and run are still counted, while unavailable token fields remain zero. Failed, cancelled, interrupted-stream, and exception paths finalize their run once.
 
+Local context-size estimates are used only for history management. They are never substituted for provider-reported Usage tokens, so successful context trimming does not mean a provider returned token counts.
+
 Detail expiry runs daily during inactivity as well as after requests. Expired details are hidden from reads immediately; lifetime and daily aggregates remain intact.
 
 ## Sensors

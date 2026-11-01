@@ -6,7 +6,7 @@ This guide gets the integration installed and visible in Home Assistant. Configu
 
 You need:
 
-- a supported Home Assistant installation
+- **Home Assistant 2026.7.0 or newer**; see [Compatibility](../reference/compatibility.md)
 - an API key for OpenAI or another compatible provider
 - HACS if you want the recommended installation method
 
@@ -59,9 +59,9 @@ After Home Assistant restarts:
 1. Open **Settings > Devices & services**.
 2. Select **Add Integration**.
 3. Search for **Extended OpenAI Conversation (Responses)**.
-4. Enter your API key.
-5. Leave **Base URL** unchanged when using OpenAI directly.
-6. Set a custom Base URL only when your provider requires one.
+4. Choose **OpenAI** or **Azure OpenAI**, then enter the requested credentials.
+5. For direct OpenAI, leave **Show advanced provider settings** off. A compatible third-party endpoint uses the OpenAI option with advanced provider settings enabled.
+6. Set **Base URL** only when your provider requires one. Azure requires its endpoint and API version.
 
 The integration is now installed. Continue with [First setup](setup.md) to select the conversation agent and expose Home Assistant entities.
 
@@ -82,3 +82,5 @@ If you are moving from the original project, see [Migration](../migration.md).
 When installed through HACS, update the integration through HACS in the normal way and restart Home Assistant when required.
 
 For a manual installation, replace the integration folder with the new version while preserving your Home Assistant configuration, then restart Home Assistant.
+
+For 7.0.0, read [Upgrading this fork](../migration.md#upgrading-this-fork-to-700) before updating. Use a complete Home Assistant backup for rollback. An agent backup does not replace a backup of the integration installation and its external dependencies.

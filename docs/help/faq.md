@@ -20,9 +20,11 @@ For direct OpenAI Web Search, use API mode **Responses**, a direct OpenAI Base U
 
 Tool calling depends on the model and provider's support for structured tool calls. Check the request diagnostics and provider documentation. Try a model with explicit tool support and confirm the function is available in the effective request.
 
+Unknown model IDs use conservative catalogue metadata and are not assumed to support tools. Choosing Chat Completions alone does not override that check. Azure deployments can supply their actual **Azure underlying model** separately from the deployment name. See [Compatibility](../reference/compatibility.md).
+
 ## Why is context being shortened?
 
-Check **Context Threshold** and **Context truncation strategy**. The threshold uses provider-reported input-token usage; a provider that omits usage metadata cannot reliably trigger the threshold. The configured strategy can keep recent turns, clear older context, or summarize older turns. See [Context management](../features/context-management.md).
+Check **Assistant → Conversation → Trim history after (input tokens)** and **Conversation history trimming**. The integration uses provider-reported input usage when available and a conservative local estimate when it is missing. Local estimates help bound history but are not recorded as provider Usage tokens. The configured strategy can keep recent turns, clear older context, or summarize older turns. See [Context management](../features/context-management.md).
 
 ## Why are token totals incomplete?
 
@@ -30,7 +32,7 @@ Usage depends on metadata returned by the provider. Some compatible providers om
 
 ## Where can I find errors?
 
-For operational logs, use **Settings → Devices & services → Extended OpenAI Conversation → Enable debug logging**. Reproduce the issue, then disable debug logging to download the log. Review it before sharing; automatic redaction is not guaranteed. **Extended OpenAI → Request debugging** separately enables deeper per-request capture; neither enables the other. See [Logging](../reference/logging.md).
+For operational logs, use **Settings → Devices & services → Extended OpenAI Conversation → Enable debug logging**. Reproduce the issue, then disable debug logging to download the log. Review it before sharing; automatic redaction is not guaranteed. **Extended OpenAI → Usage & Maintenance → Request debugging** separately enables deeper per-request capture; neither enables the other. See [Logging](../reference/logging.md).
 
 ## Still stuck?
 

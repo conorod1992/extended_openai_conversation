@@ -2,6 +2,22 @@
 
 Configured Function Tools can request actions that should happen later, such as turning a device off after a delay. This is separate from Home Assistant's ordinary timer feature: the pending item represents a future Function Tool action.
 
+## Allow a Function Tool to request a delay
+
+Add an optional `delay` property to the tool's `spec.parameters.properties`, alongside its normal inputs:
+
+```yaml
+delay:
+  type: object
+  properties:
+    hours: {type: integer, minimum: 0}
+    minutes: {type: integer, minimum: 0}
+    seconds: {type: integer, minimum: 0}
+  additionalProperties: false
+```
+
+For example, `"delay": {"minutes": 10}` schedules the configured operation for later. The integration removes this scheduling object before passing the other arguments to the implementation. A non-object parameter named `delay` remains an ordinary tool argument. Home Assistant LLM Tool references cannot use this scheduler.
+
 ## What happens if Home Assistant restarts?
 
 Pending delayed calls are saved. If Home Assistant or the integration restarts before a call is due, an eligible pending action can be restored and executed once using the Home Assistant user context that originally scheduled it.
@@ -26,6 +42,8 @@ Guest Mode and other current restrictions can therefore make a previously schedu
 If the Function Tool has been removed, disabled, or its schema or implementation has changed, the pending action is cancelled. A saved fingerprint binds the call to the definition used when it was scheduled; keeping the same tool name does not authorize a different implementation. Pending calls created before fingerprint support are also cancelled because their original definition cannot be verified. Schedule those actions again after upgrading.
 
 Delayed execution is also coordinated with maintenance operations such as full Backup & Restore, so a due action is not deliberately run while the agent's configuration or policy is only partly restored.
+
+Full agent backups do not contain the delayed-call queue. Restoring an agent on another installation does not migrate its pending jobs; schedule the required actions again on that installation.
 
 ## Local handling
 

@@ -14,6 +14,8 @@ The separate **Include exposed devices** setting under **Assistant → Prompt & 
 
 When a request is associated with an authenticated Home Assistant user, model-driven entity actions are checked against that user's Home Assistant permissions. Being readable or exposed does not automatically mean the user may control it.
 
+Entity context and discovery are also filtered by that user's read permissions. Voice or system requests without an authenticated Home Assistant user retain the Assist exposure boundary and the configured Extended OpenAI restrictions. A Voice Identity device assignment selects retained-data ownership; it does not turn that person into the Home Assistant caller or apply their account permissions to a userless request.
+
 A permitted action runs as that same Home Assistant user. If Home Assistant denies the operation, Extended OpenAI does not bypass that decision merely because the model requested it.
 
 Administrator-only management operations are also enforced by the backend, not just hidden in the interface.
@@ -52,3 +54,7 @@ For shared voice devices:
 4. use [Guest Mode](guest-mode.md) when visitors need an additional restriction policy.
 
 Prompt instructions such as "do not control the alarm" can guide a model, but they are not a substitute for enforced access controls.
+
+Administrator-authored prompts, templates and custom Function Tools are trusted configuration. A template can read Home Assistant state, and an allowed script or automation can have indirect effects beyond its immediate target. Entity exposure and Guest Mode do not recursively inspect every effect of that custom code. Review these definitions before making them available on shared or Guest assistants.
+
+Home Assistant action targets must resolve to explicit entities or supported area, device, floor or label selectors. `entity_id: all` is rejected because Home Assistant expands it after the integration's authorization check. Use an explicit target or selector instead.

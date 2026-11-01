@@ -14,7 +14,7 @@ When the model determines that a group is relevant, it can load one or several g
 {"groups": ["calendar", "reminders"]}
 ```
 
-Loading performs no Home Assistant action. The integration validates the requested IDs, records them for the active conversation, returns a short result, and rebuilds the next provider request with the detailed schemas from those groups. The configured functions still pass through the same backend validation, Home Assistant permissions, exposed-entity restrictions, and execution safeguards as always.
+Loading performs no Home Assistant action. The integration validates the requested IDs, records them for the active conversation, returns a short result, and rebuilds the next provider request with the detailed schemas from those groups. Grouping does not change a tool's validation or security boundaries: the normal permissions, exposure checks, and safeguards of its implementation still apply. Review custom templates, shell commands, database queries, and external tools before granting access; grouping does not sandbox them.
 
 There is no separate classifier request, routing model, embedding lookup, or local keyword matching. The same conversational model chooses a group from its compact semantic description.
 
@@ -39,12 +39,12 @@ A function belongs to at most one group. Group membership is stored separately f
 
 1. Open **Extended OpenAI** in the Home Assistant sidebar.
 2. Select the conversation agent and open **Capabilities → Functions**.
-3. Select **Create group**.
+3. Select **+ Add → Group**.
 4. Enter a friendly name. Review the generated stable group ID.
 5. Write a concise description that explains when the capability is useful.
 6. Choose **Always available** or **Load when needed**.
 7. Search for and select the member functions.
-8. Select **Save group**. The group persists immediately.
+8. Select **Save**. The group persists immediately.
 
 The overview shows a distinct card for each group, its availability, member count, description, and expandable member list. Search matches groups and functions. Editing a group can move selected functions from another group without editing YAML.
 
@@ -82,7 +82,7 @@ Loaded state is intentionally ephemeral and resets when Home Assistant or the in
 
 If an on-demand group is disabled or loses all executable members while it is loaded, its loaded state is discarded and its members disappear from subsequent model requests. If a provider had already returned a call for a member before the change, Extended OpenAI re-checks the latest persisted tool/group state immediately before execution and rejects a stale disabled call.
 
-Setting **Maximum function calls** to zero makes configured Functions and the Group loader dormant; their configuration is preserved. Conditional continuation can still expose its own finalizer. When the allowance is positive, the loader does not consume it because it performs no user action. It has a separate hard limit of five loader rounds within one model run, while the existing overall tool-loop bound remains in place.
+Setting **Tool-call limit per request** to zero makes configured Functions and the Group loader dormant; their configuration is preserved. Conditional continuation can still expose its own finalizer. When the allowance is positive, the loader does not consume it because it performs no user action. It has a separate hard limit of five loader rounds within one model run, while the existing overall tool-loop bound remains in place. The normal Function Tool allowance resets for the next conversation turn.
 
 ## Token-use example
 

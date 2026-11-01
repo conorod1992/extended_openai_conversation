@@ -12,9 +12,11 @@ Persistent memory keeps concise durable facts after chat history ends. It is off
 
 ## Retrieval modes
 
-**Lightweight lexical** is the default and is fully local. It uses deterministic BM25-style IDF and term-frequency scoring, phrase bonuses, stemming and normalization, conservative prefix/one-edit typo matching, and category, subject, and canonical-key matches. A minimum relevance threshold filters weak matches, and equal scores use stable memory-ID order.
+**Keyword matching** (lightweight lexical) is the default and is fully local. It uses deterministic BM25-style IDF and term-frequency scoring, phrase bonuses, stemming and normalization, conservative prefix/one-edit typo matching, and category, subject, and canonical-key matches. A minimum relevance threshold filters weak matches, and equal scores use stable memory-ID order.
 
-**Hybrid semantic** combines lexical relevance with locally calculated cosine similarity. It uses embeddings, not another LLM, classifier, or reranker call. Memory embeddings are generated when retrieval-relevant data changes and regenerated after restore when needed; one query embedding is requested for a new conversation. No vector database is used and raw embeddings are excluded from normal results, diagnostics, prompts, and backups. If the configured OpenAI-compatible provider or embedding model does not support embeddings, retrieval logs the failure and falls back to lexical without breaking the conversation. Semantic matching remains probabilistic and should not be treated as perfect.
+**Keyword + meaning** (hybrid semantic) combines lexical relevance with locally calculated cosine similarity. It sends memory text and retrieval metadata from the permitted scopes to the configured provider's embedding endpoint when vectors are missing or stale. Vectors are cached locally; changed records and restored memories are regenerated on the next relevant search, rather than when a fact is saved. Each hybrid search also sends its query for embedding, including the opening-message search and later `memory_search` calls. These provider requests can add latency and API cost.
+
+Hybrid uses embeddings, not another LLM, classifier, or reranker call. No vector database is used and raw embeddings are excluded from normal results, diagnostics, prompts, and backups. If the configured provider or embedding model does not support embeddings, retrieval logs the failure and falls back to lexical without breaking the conversation. Semantic matching remains probabilistic and should not be treated as perfect. Choose lightweight lexical matching if you want memory ranking to remain entirely local.
 
 ## Records and reliable updates
 
@@ -38,11 +40,11 @@ Writes are deliberately stricter. Authenticated conversations default to persona
 
 ## Management, safety, backup, and limits
 
-Open **Extended OpenAI → Data & Memory → Memories** to search/filter by text, category, or owner and edit content, category, owner, subject, key, and valid-from metadata. Use **+ Add memory** on either tab to choose Long-term or Short-term. Existing memories keep their type. Advanced fields remain optional. Destructive bulk actions retain confirmation, and authenticated users cannot manipulate another user's personal scope.
+Open **Extended OpenAI → Data & Memory → Memories** to search/filter by text, category, or owner and edit content, category, owner, subject, key, and valid-from metadata. Use **+ Add memory** on either tab to choose Long-term or Short-term. Existing memories keep their type. Advanced fields remain optional. Destructive bulk actions retain confirmation. Non-administrator users can manage only their own personal scope; administrators can select other owners and shared-household or legacy scopes. Administrator management access does not expand the scope available to a conversation's model tools.
 
 Storage uses Home Assistant's private versioned `.storage` API with a 10,000-record limit per agent. Existing stores and backups remain compatible: obsolete importance and confirmation fields are ignored and removed when saved. Full backup/restore round-trips the new metadata and accepts prior records; embeddings are regenerated instead of exported.
 
-Memory context is sent to the configured provider only when selected or returned by a tool. It is always framed as untrusted background data, never instructions or authorization. The storage layer rejects secrets, usable financial credentials, and automatic sensitive-personal facts. Persistent memory is not a secrets manager.
+Memory context enters conversation requests when selected automatically or returned by a tool. Hybrid retrieval additionally sends eligible memory text and queries to the embedding endpoint as described above. In conversation context, memory is framed as untrusted background data, never instructions or authorization. The storage layer rejects recognized secrets, usable financial credentials, and automatic sensitive-personal facts, but cannot identify every possible secret in free-form text. Persistent memory is not a secrets manager.
 
 ### Deleting an assistant
 

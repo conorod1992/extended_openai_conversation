@@ -1,6 +1,6 @@
 # Native Function Tools
 
-Native Function Tools are implemented by Extended OpenAI. Open **Extended OpenAI → Capabilities → Functions → Add Function Tool → Insert Built-in Function** to insert the current editable preset into the YAML editor. The catalogue, labels, and schemas in that UI are authoritative; presets may evolve.
+Native Function Tools are implemented by Extended OpenAI. Open **Extended OpenAI → Capabilities → Functions → + Add → Function Tool**, then choose **Insert Built-in Function** to insert the current editable preset into the YAML editor. The catalogue, labels, and schemas in that UI are authoritative; presets may evolve.
 
 ## Built-in operations
 

@@ -2,7 +2,7 @@
 
 A `scrape` Function Tool fetches a web page and extracts selected content with CSS selectors. Prefer a stable API when one is available; page structure can change. Use public URLs unless you have reviewed how credentials and private responses are handled.
 
-The examples below are retained patterns from the previous reference and validated against the current Function Tool schema. Adapt selectors and output shaping to the target page.
+The examples below illustrate supported configuration patterns. Adapt selectors and output shaping to the target page; an example selector is not a guarantee that a public website still uses that markup. Missing selectors or attributes are reported in Home Assistant logs, and the extracted value can be empty.
 
 ## Example 1
 
@@ -21,14 +21,14 @@ function:
 
 ```yaml
 function:
-      type: scrape
-      resource: https://example.com
-      headers:
-        User-Agent: "Mozilla/5.0"
-        Cookie: "session=abc123"
-      sensor:
-        - name: data
-          select: ".content"
+  type: scrape
+  resource: https://example.com
+  headers:
+    User-Agent: "Mozilla/5.0"
+    Cookie: "session=YOUR_REVIEWED_COOKIE"
+  sensor:
+    - name: data
+      select: ".content"
 ```
 
 ## Example 3
@@ -57,6 +57,8 @@ function:
 ```
 
 ## Example 4
+
+This pattern lets the model supply a URL. Use a fixed trusted resource or constrain the URL input when unrestricted network access is not appropriate.
 
 ```yaml
 - spec:

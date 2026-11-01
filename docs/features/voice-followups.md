@@ -2,7 +2,7 @@
 
 Voice follow-ups control whether a compatible Home Assistant voice client listens for another utterance immediately after the assistant answers.
 
-This is configured through **Continue conversation** on the conversation agent.
+Configure **Listen for a follow-up** under **Extended OpenAI → Assistant → Basics** for the selected conversation agent. It is the agent's continue-conversation policy.
 
 This setting only controls responses handled by ExtendedOpenAI. Home Assistant sentence triggers and native local handling may intercept a request before ExtendedOpenAI is invoked; their follow-up behavior remains controlled by Home Assistant.
 
@@ -46,7 +46,7 @@ Use **Conditional** when you want the assistant to behave conversationally witho
 
 If follow-ups do not occur:
 
-1. confirm the conversation agent's Continue conversation setting
+1. confirm the conversation agent's Listen for a follow-up setting
 2. confirm the voice client supports `continue_conversation`
 3. test with a response that clearly asks the user a question
 4. compare behavior with **Always** mode to separate model-decision issues from client support issues

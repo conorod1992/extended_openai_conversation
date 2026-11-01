@@ -39,7 +39,7 @@ You do **not** need to configure all of these features. A basic conversation age
 
 You will need:
 
-- Home Assistant
+- **Home Assistant 2026.7.0 or newer**
 - an OpenAI API key, or credentials for a compatible provider
 - a Home Assistant Assist pipeline if you want to use Extended OpenAI as a conversation agent
 
@@ -104,11 +104,17 @@ Provider connection details are managed through Home Assistant's integration con
 The management interface is organised around:
 
 - **Assistant** — models, API behaviour, prompt/context, conversation, voice and speech
-- **Capabilities** — Home Assistant access, Request Rules, Function Tools/Groups and Guest Mode
-- **Data & Memory** — memories, Knowledge Library and conversation history
+- **Capabilities** — Home Assistant access/local handling, Web search & Skills, Request Rules, Function Tools/Groups, Quiet Hours and Guest Mode
+- **Data & Memory** — memory settings, memories, Knowledge Library and conversation history
 - **Usage & Maintenance** — usage, request debugging, backups, diagnostics and retention
 
 The built-in **Guide** provides concise in-app orientation. The [full documentation](https://conorod1992.github.io/extended_openai_conversation/) is the canonical reference for feature behaviour and edge cases.
+
+Conversation settings require a Home Assistant administrator. Settings share an unsaved draft across sections; save when finished. Collections such as Function Tools and Knowledge sources have their own save controls.
+
+## Upgrading to 7.0.0
+
+Back up Home Assistant before updating, and check the [release notes](https://conorod1992.github.io/extended_openai_conversation/release-notes/) and [upgrade notes](https://conorod1992.github.io/extended_openai_conversation/migration/#upgrading-this-fork-to-700). Conversation settings live in the **Extended OpenAI** sidebar panel, with reorganised sections for memory, Web search & Skills, and local handling. Saved model choices and custom prompts are preserved; untouched historical stock prompts adopt the current default. Restart Home Assistant after replacing the integration and reload the browser if it still shows the previous interface.
 
 ## Start with the right guide
 
@@ -124,6 +130,7 @@ The built-in **Guide** provides concise in-app orientation. The [full documentat
 | Keep/search previous conversations | [Conversation Archive](https://conorod1992.github.io/extended_openai_conversation/features/conversation-archive/) |
 | Handle predictable requests specially | [Request Rules](https://conorod1992.github.io/extended_openai_conversation/features/request-rules/) |
 | Add or organise model-callable tools | [Functions](https://conorod1992.github.io/extended_openai_conversation/functions/) and [Function Groups](https://conorod1992.github.io/extended_openai_conversation/features/function-groups/) |
+| Add reusable instructions for a task | [Skills](https://conorod1992.github.io/extended_openai_conversation/features/skills/) |
 | Delay a configured Function Tool safely | [Delayed Function Tools](https://conorod1992.github.io/extended_openai_conversation/features/delayed-function-tools/) |
 | Understand entity exposure and permissions | [Home Assistant access](https://conorod1992.github.io/extended_openai_conversation/features/home-assistant-access/) |
 | Associate voice requests with individual users | [Voice Identity](https://conorod1992.github.io/extended_openai_conversation/features/voice-identity/) |
@@ -147,9 +154,13 @@ Home Assistant Assist exposure defines the normal entity set available to the as
 
 When model processing is needed, relevant prompt/context, request text, available tool definitions, and retrieved memory or Knowledge content may be sent to the configured provider. Provider-side retention and processing are governed by that provider's policies.
 
+Optional **Keyword + meaning** memory retrieval also sends eligible memory text and search queries to the configured embedding provider and may incur API usage. **Keyword matching** performs retrieval locally.
+
 Memories, Knowledge Library content, Request Rules, optional archived conversations, usage data, and related integration state are stored locally in Home Assistant. Features that complete a request locally can avoid a provider request for that request.
 
 Full backups can contain private prompts, memories, Knowledge content, archived conversations and usage metadata. Treat exported backup files accordingly.
+
+Private backups also preserve provider credentials and are not encrypted. **Shareable Setup** is a separate configuration format that excludes retained data and provider credentials; review any custom content you choose to include before sharing.
 
 ## Provider compatibility
 

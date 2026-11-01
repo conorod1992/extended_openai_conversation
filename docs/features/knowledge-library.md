@@ -8,7 +8,7 @@ Knowledge is different from persistent memory:
 | --- | --- |
 | Longer maintained reference sources | Short individual facts |
 | Scoped to a conversation agent | Scoped to an agent and Home Assistant user |
-| Created and edited only in **Manage knowledge** | Can be managed by the user and, depending on memory mode, through model memory tools |
+| Created and edited by an administrator in **Data & Memory → Knowledge Library** | Can be managed by the user and, depending on memory mode, through model memory tools |
 | Never learned automatically from conversations | Automatic mode can save selected stable facts |
 | Read-only to the model | Memory tools can add, update, and delete facts when allowed |
 
@@ -16,16 +16,16 @@ The two systems use independent storage and settings.
 
 ## Enable the feature
 
-1. Open **Settings > Devices & services**.
-2. Open **Extended OpenAI Conversation (Responses)**.
-3. Reconfigure the desired conversation agent.
-4. Turn on **Knowledge Library** and save.
+1. Open **Extended OpenAI** from the Home Assistant sidebar.
+2. Select the conversation agent you want to configure.
+3. Open **Data & Memory → Knowledge Library**.
+4. Turn on **Allow the assistant to use Knowledge**. This switch saves immediately.
 
 The setting defaults to Off. Stored sources are retained while it is Off, which lets you prepare or temporarily disable a library without losing it.
 
 ## Manage Knowledge sources
 
-Open **Extended OpenAI** from the Home Assistant sidebar, then **Data & memory > Knowledge** (`/extended-openai/data-memory/knowledge`). The integration's **Configure > Manage knowledge** form also displays this path. Knowledge management requires an administrator.
+Open **Extended OpenAI** from the Home Assistant sidebar, then **Data & Memory → Knowledge Library** (`/extended-openai/data-memory/knowledge`). The integration's **Configure → Manage knowledge** form also displays this path. Conversation-agent reconfiguration points to the sidebar panel rather than offering a separate settings editor. Knowledge management requires an administrator.
 
 Select a conversation agent, then use the panel to:
 
@@ -102,7 +102,7 @@ The assistant is instructed to start with short keyword searches, broaden an emp
 
 ## Guest Mode
 
-Guest Mode is an additional restriction on top of source availability. A guest allowlist can reduce the enabled sources visible to a guest, but it cannot make a disabled source available. To expose a source to a guest, the source itself must first be **Available to assistant** and then permitted by the applicable Guest Mode Knowledge policy.
+Guest Mode is an additional restriction on top of source availability. Its Knowledge policy can be **Off**, **On**, or **Custom**; Custom selects which sources guests may use. It cannot make a disabled source available. To expose a source to a guest, the source itself must first be **Available to assistant** and then permitted by the applicable Guest Mode Knowledge policy. Existing legacy Guest policies retain their saved allow-list behavior until an administrator explicitly adopts the current policy.
 
 ## Backup and restore
 

@@ -38,7 +38,21 @@ The response retains `response`, `conversation_id`, and local-handling metadata.
 
 ## Request image analysis
 
-`query_image` takes a `config_entry`, `prompt`, and `images` array; the optional `model`, `api_mode`, and `max_tokens` are shown in the action UI. Use a provider and model that support the selected vision request. Local image paths must satisfy Home Assistant's external-directory access requirements.
+`query_image` takes a `config_entry`, `prompt`, and an `images` array of objects with a `url` field. It calls that provider connection directly; it does not run a conversation agent's Request Rules, memory, or custom Function Tools. Set `model` explicitly: its default is `gpt-4.1-mini`, independent of the model saved on a conversation agent. The optional `api_mode` and `max_tokens` default to `auto` and `300`.
+
+```yaml
+action: extended_openai_conversation_responses.query_image
+data:
+  config_entry: YOUR_CONFIG_ENTRY_ID
+  model: gpt-4.1-mini
+  prompt: "Describe this camera image."
+  images:
+    - url: /config/www/camera.jpg
+  max_tokens: 300
+response_variable: image_result
+```
+
+Use a provider and model that support vision, and replace the example entry ID and file path. Local paths must be allowed by Home Assistant's `allowlist_external_dirs`; remote URLs must be accessible to the provider. For a named Azure deployment, `model` is the deployment name and `azure_model` identifies its underlying model for capability checks. The result is the provider response object, so its shape depends on the selected API.
 
 ## Broadcast
 
@@ -58,4 +72,6 @@ Normal releases use the integration-version tag. `source_ref` can select a branc
 
 ## Administrative actions
 
-The memory, Function Tool/Group, Guest Mode, and Quiet Hours actions are explicit Home Assistant actions. They are not automatically exposed to the model as Function Tools. For available fields and required confirmations, use each action's selector and description in Developer Tools → Actions. Avoid wiring destructive memory actions to an untrusted automation trigger.
+Provider changes, image queries, Skill downloads/reloads, Function Tool/Group state changes, Guest Mode changes, and Quiet Hours changes require administrator permission for user-originated calls; trusted system automations can also call them. Memory actions instead use the calling user's data scope. These actions are not automatically exposed to the model as Function Tools. `call_function` requires an active Request Rule execution and cannot be used as a standalone arbitrary tool runner.
+
+For available fields and required confirmations, use each action's selector and description in Developer Tools → Actions. Avoid wiring destructive memory actions to an untrusted automation trigger.

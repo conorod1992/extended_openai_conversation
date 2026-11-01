@@ -6,6 +6,8 @@ If you are using OpenAI and do not have an API key yet, see the [simple OpenAI A
 
 After the provider connection succeeds, connect the integration to a Home Assistant Voice Assistant and expose the entities you want it to use.
 
+A fresh installation creates a Conversation agent and a separate AI Task agent. AI Task is optional and does not replace the conversation agent used by Assist. Provider credentials belong to the integration connection; multiple agents on that connection share them.
+
 ## Select the conversation agent
 
 1. Open **Settings > Voice assistants**.
@@ -43,16 +45,18 @@ If the assistant cannot see an entity, first confirm that the entity is exposed 
 
 ## Choose a model and API mode
 
-Open the conversation agent's **Options**.
+As a Home Assistant administrator, open **Extended OpenAI** from the sidebar, select your conversation agent, and open **Assistant → Basics**. The conversation agent's native Home Assistant configuration screen points to this panel.
 
 For a first setup, it is usually best to:
 
 - choose the model you want to use
-- leave **API mode** on **Auto**
-- leave **Memory** and **Web Search** off until basic conversations work
+- leave **Provider API format** on **Auto** under **Advanced request settings**
+- leave memory and Web search off until basic conversations work
 - keep the included Functions configuration unless you intentionally want to customize tools
 
 Once the basic agent works, enable additional features one at a time.
+
+Press **Save** to apply settings. Moving between settings sections preserves the draft, but changes do not affect requests until saved. Use **Assistant → Model & responses** for supported reasoning and sampling controls; use **Capabilities → Web search & Skills** and **Data & Memory → Memory settings** for optional features.
 
 ## Optional: enable Web Search
 
@@ -66,7 +70,7 @@ See [Web Search](../features/web-search.md) for limitations and cost considerati
 
 ## Optional: enable persistent memory
 
-Set **Memory mode** to **Manual** if you want the safest introduction to persistent memory. Then say:
+Under **Data & Memory → Memory settings**, set **Long-term memory** to **Manual** for an introduction to persistent memory. Save, then say:
 
 > Remember that I prefer temperatures in Celsius.
 
@@ -78,7 +82,7 @@ See [Persistent memory](../features/persistent-memory.md) for storage, privacy, 
 
 ## Optional: configure voice follow-ups
 
-The **Continue conversation** option controls whether a compatible voice client listens for an immediate reply after the assistant responds.
+The **Listen for a follow-up** option in **Assistant → Basics** controls whether a compatible voice client listens for an immediate reply after the assistant responds.
 
 - **HA Default** preserves Home Assistant behavior.
 - **Always** requests a follow-up after every successful response.
@@ -88,7 +92,7 @@ See [Voice follow-ups](../features/voice-followups.md).
 
 ## Use Test agent when something looks wrong
 
-Under **Settings > Devices & services**, open the integration and choose **Configure > Test agent**.
+Open **Extended OpenAI → Usage & Maintenance → Diagnostics** for the selected agent. The integration's **Configure > Test agent** flow under **Settings > Devices & services** also remains available.
 
 The test checks the agent configuration and performs at most one minimal model request. It does not execute Home Assistant device or service actions.
 

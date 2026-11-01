@@ -1,14 +1,14 @@
 # Context management
 
-Long conversations eventually become too large to keep sending unchanged. Context management controls what happens when a conversation crosses the configured **Context Threshold**.
+Long conversations eventually become too large to keep sending unchanged. Configure **Trim history after** and the history strategy under **Extended OpenAI → Assistant → Conversation**.
 
 ## Context threshold
 
-The threshold is based on input-token usage reported by the configured provider.
+The threshold uses provider-reported input usage when available and a conservative local estimate when the provider omits it. The integration also measures prepared input before sending oversized history. Local estimates help manage context; they are never added to the provider-reported Usage token totals.
 
 The default threshold is `40000`.
 
-When the threshold is crossed, the selected strategy is applied before continuing the conversation.
+When the threshold is crossed, the selected strategy reduces older context. This is not a hard cap on the provider's context window: the current user turn is preserved even if it alone exceeds the threshold. Very large prompts, attachments, or tool definitions can still exceed a model's limits.
 
 ## Keep recent messages
 

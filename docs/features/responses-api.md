@@ -4,13 +4,15 @@ The integration supports both OpenAI's Chat Completions API and the newer Respon
 
 ## Which mode should I use?
 
-For most users, leave **API mode** set to **Auto**.
+For most users, leave **Provider API format** (API mode) set to **Auto** under **Assistant → Basics → Advanced request settings**.
 
-- **Auto** selects the integration's appropriate endpoint for the configured model.
-- **Chat Completions** always uses `/v1/chat/completions`.
-- **Responses** always uses `/v1/responses`.
+- **Auto** selects an endpoint from the active catalogue using the exact model, reasoning setting and required tools.
+- **Chat Completions** selects `/v1/chat/completions`.
+- **Responses** selects `/v1/responses`.
 
 Use a forced mode mainly for provider compatibility, testing, or a known model requirement.
+
+All modes validate supported capabilities before sending. Auto does not discover a provider's capabilities or automatically retry a failed request through another API. An unknown model ID has conservative capabilities; text-only Auto requests use Responses, and function calling is unavailable without explicit model metadata. See [Compatibility](../reference/compatibility.md).
 
 ## What Responses mode adds
 
@@ -26,7 +28,7 @@ Depending on the model/provider, Responses mode can support:
 - service tiers
 - OpenAI hosted Web Search
 
-A feature being available in Responses mode does not mean every model supports it. The options UI hides some model-specific settings when they are not applicable.
+A feature being available in Responses mode does not mean every model supports it. The management UI uses model metadata to show supported values and explain unavailable controls. Streaming, function calls, images, structured outputs and some reasoning controls are also available through Chat Completions where supported; PDF input and OpenAI hosted Web Search require Responses in this integration.
 
 ## Custom providers
 
@@ -38,6 +40,8 @@ Many providers implement `/v1/chat/completions` without implementing the Respons
 
 Azure/provider support varies by endpoint and deployment. OpenAI-hosted Web Search in this integration is specifically limited to direct OpenAI Responses usage.
 
+For Azure, **Chat model** is the deployment name. If it differs from the underlying model ID, set **Azure underlying model** under Advanced request settings so capability checks use the actual model while requests continue using your deployment name.
+
 See [Compatibility](../reference/compatibility.md) for a concise capability matrix.
 
 ## Tool calls
@@ -48,6 +52,8 @@ This matters particularly in long Home Assistant conversations where a model may
 
 ## Reasoning effort
 
-For supported reasoning models, the options UI exposes **Low**, **Medium**, or **High** reasoning effort.
+Under **Assistant → Model & responses**, reasoning choices depend on the exact model and API. Supported values can include **None**, **Minimal**, **Low**, **Medium**, **High**, **Xhigh**, or **Max**. Some models permit tool calling or sampling controls only with particular reasoning settings.
 
 Reasoning effort is not a general quality slider. Higher settings can be useful for difficult planning or reasoning tasks, but they can also increase response time and token use.
+
+Reasoning tokens may count against the model's output limit. If a reasoning model repeatedly ends without a useful answer, review **Maximum response length (tokens)** as well as its effort setting.

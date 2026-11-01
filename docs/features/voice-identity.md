@@ -6,6 +6,8 @@ Voice Identity controls whose retained data a voice request is allowed to use. I
 
 It is separate from conversation continuity: identity answers **whose data may this request use?**, while continuity answers **which recent conversation should this request continue?**
 
+An authenticated Home Assistant user attached to the request takes precedence. The voice policies below apply when the request has no authenticated user; they do not detect who is physically speaking.
+
 ## How a voice source is identified
 
 For Assist requests that contain both a Home Assistant device-registry device ID and satellite metadata, Extended OpenAI uses the Home Assistant `device_id` as the canonical source identity. Satellite metadata remains useful as context and as a fallback when no registry device ID is available.
@@ -43,6 +45,6 @@ Changing an assignment does not merge historical user data or make Guest convers
 
 ## Relationship to Home Assistant permissions
 
-Voice Identity chooses the user/data scope used by Extended OpenAI. It does not grant Home Assistant permissions that the resolved requesting user does not have. Entity actions remain subject to Home Assistant authorization and any stricter Extended OpenAI policy such as Guest Mode.
+Voice Identity chooses retained-data ownership, not the authority to perform actions. Mapping a device to a user does not authenticate the speaker as that user or borrow that user's Home Assistant permissions. Entity actions remain subject to the actual Home Assistant request context and any stricter Extended OpenAI policy such as Guest Mode.
 
 See [Home Assistant access and permissions](home-assistant-access.md) for the authorization layers.

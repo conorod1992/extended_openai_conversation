@@ -60,6 +60,6 @@ Satellite-initiated task background (`extra_system_prompt`) stays available on f
 
 ## Management
 
-The Conversations page offers a compact administrator action to end a named active
+The **Data & Memory → Conversation history** page offers a compact administrator action to end a named active
 continuity session. This remains an explicit management action; stale claim tokens
 cannot recreate or mutate a replacement session after it has been ended.

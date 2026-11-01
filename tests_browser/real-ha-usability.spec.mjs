@@ -13,8 +13,8 @@ test("native HA Guest intervals retain finite values through indefinite saves an
   await panel.locator("#guest-end").fill(values.end);
   await panel.locator("#guest-indefinite").check();
   await panel.getByRole("button", {name:"Usage & Maintenance", exact:true}).click();
-  await panel.getByRole("button", {name:"Capabilities", exact:true}).click();
-  await panel.getByRole("button", {name:"Guest Mode", exact:true}).click();
+  await panel.getByRole("button", {name:/^Capabilities(?:,|$)/}).click();
+  await panel.getByRole("button", {name:/^Guest Mode(?:,|$)/}).click();
   await expect(panel.locator("#guest-start")).toHaveValue(values.start);
   await expect(panel.locator("#guest-end")).toHaveValue(values.end);
   await expect(panel.locator("#guest-indefinite")).toBeChecked();

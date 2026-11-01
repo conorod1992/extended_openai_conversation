@@ -1,6 +1,6 @@
 # Local handling
 
-Extended OpenAI can try Home Assistant's built-in command handling after Request Rules and before sending a request to Function Tools or the model. Configure it under the agent's **Configuration → Local handling** section in the dedicated Extended OpenAI management UI.
+Extended OpenAI can try Home Assistant's built-in command handling after Request Rules and before sending a request to Function Tools or the model. Configure it under **Extended OpenAI → Capabilities → Home Assistant & local handling** for the selected agent.
 
 When enabled, a matching built-in command is handled locally. Requests that do not match, or command types you exclude, continue to Function Tools and AI. The command-type list is supplied by Home Assistant and may vary with the installed intents.
 
