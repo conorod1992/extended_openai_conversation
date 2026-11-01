@@ -513,7 +513,12 @@ async def _released_phase(hass: Any, config_dir: Path) -> None:
     )
     # Exercise a genuinely accepted historical dependency incompatibility. Keep
     # this version-specific: later releases may intentionally reject new saves.
-    inactive_skills = str(_manifest(Path(const.__file__).parent)["version"]) == "6.8.3"
+    # This helper also seeds candidate-only HA/HACS journeys. Their development
+    # manifest may still say 6.8.3, so require a pinned published-release payload.
+    from_component = os.environ.get(_FROM_COMPONENT_ENV)
+    inactive_skills = bool(
+        from_component and _manifest(Path(from_component))["version"] == "6.8.3"
+    )
     if inactive_skills:
         loader = next(tool for tool in tools if tool["spec"]["name"] == "load_skill")
         loader["enabled"] = False
