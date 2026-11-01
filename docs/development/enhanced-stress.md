@@ -7,8 +7,9 @@ The current campaigns are:
 Python campaigns start after candidate preparation. Only `persistence` also waits
 for the verified historical runtime. The matrix split retains each campaign's
 selectors, seed, intensity and execution requirements.
-The measured critical `large-installation` rows are emitted first in the matrix;
-actual start times still depend on runner availability.
+Long-lifetime rows are emitted first when selected, followed by the measured
+Quick critical `large-installation` rows; actual starts still depend on runner
+availability. All remaining rows retain their original order.
 
 Chromium browser acceptance uses two isolated runners per intensity: `static`
 runs the main Playwright suite and targeted recheck; `native` runs genuine HA

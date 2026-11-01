@@ -166,7 +166,8 @@ def test_browser_certificate_requires_both_actual_job_results(
     assert gate.main(tmp_path) == expected
 
 
-def test_python_matrices_are_disjoint_and_preserve_all_campaigns():
+@pytest.mark.parametrize("campaign", ["all", "all-except-long-lifetime"])
+def test_python_matrices_are_disjoint_and_preserve_all_campaigns(campaign):
     result = subprocess.run(
         [
             sys.executable,
@@ -174,7 +175,7 @@ def test_python_matrices_are_disjoint_and_preserve_all_campaigns():
             "--event",
             "workflow_dispatch",
             "--campaign",
-            "all",
+            campaign,
             "--intensity",
             "all",
         ],
@@ -188,7 +189,11 @@ def test_python_matrices_are_disjoint_and_preserve_all_campaigns():
         for key, value in (line.split("=", 1) for line in result.stdout.splitlines())
     }
     main, persistence = plan["python_matrix"], plan["persistence_matrix"]
-    assert [row["campaign"] for row in main[:2]] == ["large-installation"] * 2
+    if campaign == "all":
+        assert [row["campaign"] for row in main[:4]] == ["long-lifetime"] * 4
+        assert [row["campaign"] for row in main[4:6]] == ["large-installation"] * 2
+    else:
+        assert [row["campaign"] for row in main[:2]] == ["large-installation"] * 2
     assert Counter(json.dumps(row, sort_keys=True) for row in main + persistence) == Counter(
         json.dumps(row, sort_keys=True) for row in python_matrix(plan, scheduled=False)
     )

@@ -94,7 +94,8 @@ def main() -> None:
     ]
     # Offer the measured critical path first; actual starts still depend on
     # runner availability. Keep the original order of all other matrix rows.
-    plan["python_matrix"].sort(key=lambda row: row["campaign"] != "large-installation")
+    priority = {"long-lifetime": 0, "large-installation": 1}
+    plan["python_matrix"].sort(key=lambda row: priority.get(row["campaign"], 2))
     for key, value in plan.items():
         print(key + "=" + json.dumps(value, separators=(",", ":")))
 
