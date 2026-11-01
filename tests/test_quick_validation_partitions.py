@@ -1,6 +1,7 @@
 """Parallel execution must preserve reviewed obligations and fail closed."""
 
 from copy import deepcopy
+from collections import Counter
 import json
 from pathlib import Path
 import subprocess
@@ -20,6 +21,11 @@ def browser_rows():
     policy = json.loads(CONTRACT.read_text(encoding="utf-8"))
     expected = expected_cases(policy, "browser")
     fixture = next(node for node in expected if node in policy["allowances"])
+    inventory = json.loads(
+        CONTRACT.with_name("browser_partition_contract.json").read_text(
+            encoding="utf-8"
+        )
+    )["partitions"]
     rows = []
     for part in ("static", "native"):
         row = lifecycle_item("stable", "2026.9.4")
@@ -36,10 +42,7 @@ def browser_rows():
                 if part == "static" and node == fixture
                 else "passed",
             }
-            for node in sorted(expected)
-            if (node.startswith("tests_browser/") and part == "static")
-            or (not node.startswith("tests_browser/") and part == "native")
-            or node == fixture
+            for node in inventory[part]
         ]
         row["measured_totals"] = (
             policy["minimums"]["browser"] if part == "native" else {}
@@ -59,7 +62,8 @@ def test_browser_union_retains_fixture_skip_and_requires_its_genuine_pass():
     broken[1]["execution_cases"] = [
         case for case in broken[1]["execution_cases"] if case["nodeid"] != fixture
     ]
-    assert check_execution(gate.merge_browser_partitions(broken), policy)
+    with pytest.raises(AssertionError, match="inventory mismatch"):
+        gate.merge_browser_partitions(broken)
 
 
 @pytest.mark.parametrize(
@@ -71,7 +75,12 @@ def test_browser_union_retains_fixture_skip_and_requires_its_genuine_pass():
         "sha",
         "seed",
         "environment",
+        "source_version",
+        "target_version",
         "fixture_failure",
+        "native_skip",
+        "missing_shared_copy",
+        "missing_repeat",
         "metric",
     ],
 )
@@ -95,6 +104,24 @@ def test_browser_merge_rejects_invalid_or_duplicated_evidence(fault):
         next(case for case in rows[0]["execution_cases"] if case["nodeid"] == fixture)[
             "outcome"
         ] = "failed"
+    elif fault == "native_skip":
+        rows[1]["execution_cases"][0]["outcome"] = "skipped"
+    elif fault == "missing_repeat":
+        counts = Counter(case["nodeid"] for case in rows[1]["execution_cases"])
+        repeated = next(node for node, count in counts.items() if count > 1)
+        index = next(
+            i for i, case in enumerate(rows[1]["execution_cases"])
+            if case["nodeid"] == repeated
+        )
+        rows[1]["execution_cases"].pop(index)
+    elif fault == "missing_shared_copy":
+        shared = {c["nodeid"] for c in rows[0]["execution_cases"]} & {
+            c["nodeid"] for c in rows[1]["execution_cases"]
+        }
+        node = next(node for node in shared if node != fixture)
+        rows[0]["execution_cases"] = [
+            c for c in rows[0]["execution_cases"] if c["nodeid"] != node
+        ]
     elif fault == "metric":
         rows[0]["measured_totals"] = {"browser_creates": True}
     else:

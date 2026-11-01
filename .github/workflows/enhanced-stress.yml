@@ -619,6 +619,7 @@ jobs:
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           TAG="${{ needs.prepare.outputs.published_release_tag }}"
           git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
+          test "$(git rev-parse "${TAG}^{commit}")" = "${{ needs.prepare.outputs.published_release_sha }}"
           OLD_ROOT="${RUNNER_TEMP}/eoai-published-frontend"
           mkdir -p "$OLD_ROOT"
           git archive "$TAG" custom_components/extended_openai_conversation_responses/frontend | tar -x -C "$OLD_ROOT"
@@ -710,7 +711,7 @@ jobs:
         if: failure() || inputs.campaign == 'diagnostics'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: diagnostics-browser-${{ matrix.intensity }}-seed-${{ needs.prepare.outputs.seed }}
+          name: diagnostics-browser-${{ matrix.intensity }}${{ inputs.campaign != 'diagnostics' && format('-{0}', matrix.partition) || '' }}-seed-${{ needs.prepare.outputs.seed }}
           path: |
             playwright-report/
             test-results/

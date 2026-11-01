@@ -83,26 +83,30 @@ def merge_partitions(
     nodes = [{case["nodeid"] for case in row["execution_cases"]} for row in rows]
     overlap = nodes[0] & nodes[1]
     if campaign == "browser":
-        allowances = json.loads(CONTRACT.read_text(encoding="utf-8")).get(
-            "allowances", {}
+        policy = json.loads(CONTRACT.read_text(encoding="utf-8"))
+        inventory = json.loads(
+            CONTRACT.with_name("browser_partition_contract.json").read_text(
+                encoding="utf-8"
+            )
         )
-        for node in overlap:
-            allowance = allowances.get(node, {})
-            assert allowance.get(
-                "requires_pass"
-            ) is True and "skipped" in allowance.get("outcomes", []), node
-            outcomes = [
-                {
-                    case["outcome"]
-                    for case in row["execution_cases"]
-                    if case["nodeid"] == node
-                }
-                for row in rows
-            ]
-            assert sorted(outcomes, key=lambda values: sorted(values)) == [
-                {"passed"},
-                {"skipped"},
-            ], node
+        assert inventory["schema"] == 1
+        assert set(inventory["partitions"]) == partitions
+        for row in rows:
+            part = row[field]
+            # Compare multisets: a passing native copy cannot conceal a missing
+            # static copy, nor can the main suite replace its targeted recheck.
+            assert Counter(
+                case["nodeid"] for case in row["execution_cases"]
+            ) == Counter(inventory["partitions"][part]), (
+                f"Browser partition inventory mismatch: {part}"
+            )
+            for case in row["execution_cases"]:
+                if part == "native" or case["outcome"] != "skipped":
+                    assert case["outcome"] == "passed", case["nodeid"]
+                else:
+                    allowance = policy["allowances"].get(case["nodeid"], {})
+                    assert allowance.get("requires_pass") is True
+                    assert "skipped" in allowance.get("outcomes", [])
         # check_execution still enforces allowance expiry, review, and a genuine pass.
     else:
         assert not overlap, "Overlapping lifetime partitions"

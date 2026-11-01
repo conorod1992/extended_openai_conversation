@@ -4,6 +4,24 @@
 
 The current campaigns are:
 
+Python campaigns start after candidate preparation. Only `persistence` also waits
+for the verified historical runtime. The matrix split retains each campaign's
+selectors, seed, intensity and execution requirements.
+
+Chromium browser acceptance uses two isolated runners per intensity: `static`
+runs the main Playwright suite and targeted recheck; `native` runs genuine HA
+multi-tab and WebSocket acceptance. Each retains its original sequential commands
+and single Playwright worker. Both stage the same published frontend selected by
+preparation. Diagnostics remain a single job.
+
+`tests_stress/browser_partition_contract.json` independently records the exact
+node-ID multiset required in each partition, including intentional shared tests
+and repeated checks. Update it through review when browser selection changes.
+Certification requires both actual job conclusions, matching candidate/environment
+identity and complete partition evidence before applying the existing combined
+mandatory-case, reviewed-skip and execution-minimum checks. A passing copy in one
+partition cannot replace a missing copy in the other.
+
 | Campaign | New nightly work |
 | --- | --- |
 | `runtime` | Seeded public Assist conversations across two agents and six users, concurrent batches, unload/setup cycles, registry ownership, stable EOAI manager/service counts after warm setup, and provider ChatLog isolation. Caller-selected conversation IDs are also deliberately reused across users and agents to verify HA ChatLogs cannot cross EOAI privacy boundaries. |
