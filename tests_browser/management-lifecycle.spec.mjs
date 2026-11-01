@@ -674,7 +674,7 @@ test("Usage becomes usable before recent runs and retention settle", async ({pag
   await panel.evaluate(host => host._navigate("usage-maintenance", "usage"));
   await expect(panel.locator("#usage-window")).toBeVisible();
   await panel.evaluate(host => { window.usageChartNode = host.shadowRoot.querySelector(".chart"); });
-  await expect(panel.getByText("Loading recent runs…")).toBeVisible();
+  await expect(panel.locator("[data-eoc-usage-runs]").getByText("Loading recent runs…")).toBeVisible();
   expect(await panel.evaluate(host => host._busy)).toBe(false);
   expect(await page.evaluate(() => progressiveUsage.calls.sort())).toEqual(["daily", "retention", "runs", "summary"]);
   expect(await panel.evaluate(host => host._result.loading)).toEqual({runs:true, retention:true});
@@ -763,7 +763,7 @@ test("secondary Usage failure does not replace the primary page", async ({page})
 
   await panel.evaluate(host => host._navigate("usage-maintenance", "usage"));
   await expect(panel.locator("#usage-window")).toBeVisible();
-  await expect(panel.getByText("Loading recent runs…")).toBeVisible();
+  await expect(panel.locator("[data-eoc-usage-runs]").getByText("Loading recent runs…")).toBeVisible();
 
   await page.evaluate(() => progressiveUsageFailure.releaseRuns());
   await expect(panel.getByText("Recent runs unavailable", {exact:true})).toBeVisible();

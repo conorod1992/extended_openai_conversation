@@ -2,7 +2,7 @@
   "schema_version": 1,
   "purpose": "Reviewed source-level tripwire for interactive frontend markup. Runtime reachability is exercised by tests_browser/control-reachability.spec.mjs.",
   "interactive_marker_pattern": "<(?:button|input|select|textarea|summary|a)\\\\b|<ha-selector\\\\b|role=[\\\"'](?:button|switch|checkbox|link|tab)[\\\"']",
-  "expected_total_markers": 445,
+  "expected_total_markers": 448,
   "viewports": [
     {
       "name": "small-phone",
@@ -44,10 +44,11 @@
     "debug-panel.js": 13,
     "exposed-attributes-ui.js": 7,
     "function-add-menu.js": 4,
-    "guest-mode-ui.js": 11,
+    "guest-mode-ui.js": 12,
     "guide-page-impl.js": 4,
     "ha-llm-tools-list.js": 3,
     "ha-llm-tools.js": 8,
+    "management-actions.js": 1,
     "management-decision-guidance.js": 3,
     "management-dialogs.js": 2,
     "management-feature-status-core.js": 2,
@@ -77,11 +78,23 @@
     "retention-settings-ui.js": 1,
     "sharing-review.js": 7,
     "unsaved-state.js": 2,
-    "usage-chart.js": 9,
+    "usage-chart.js": 10,
     "voice-identity-core.js": 4,
     "voice-identity-ui.js": 8
   },
   "conditional_controls": [
+    {
+      "source": "management-actions.js",
+      "scenario": "Configuration validation errors include an actionable off-route summary",
+      "selectors": ["[data-config-error]"],
+      "browser_spec": "tests_browser/control-reachability.spec.mjs"
+    },
+    {
+      "source": "guest-mode-ui.js",
+      "scenario": "Memory search failure exposes a retry without reporting authoritative empty results",
+      "selectors": ["#retry-memory-search"],
+      "browser_spec": "tests_browser/control-reachability.spec.mjs"
+    },
     {
       "source": "management-function-repair.js",
       "scenario": "Group-only quarantine with valid Function Tools",
@@ -110,6 +123,12 @@
         "#usage-request-retry"
       ],
       "browser_spec": "tests_browser/usage-request-pagination.spec.mjs"
+    },
+    {
+      "source": "usage-chart.js",
+      "scenario": "Failed usage dependencies expose section reload controls",
+      "selectors": ["[data-usage-retry]"],
+      "browser_spec": "tests_browser/control-reachability.spec.mjs"
     },
     {
       "source": "sharing-review.js",

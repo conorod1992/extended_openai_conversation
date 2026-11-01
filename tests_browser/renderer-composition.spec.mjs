@@ -95,7 +95,7 @@ test("configuration emits the shipped local, exposed-attribute, group and transf
   expect(result.transfer).toContain("Custom content you choose to include may still contain secrets.");
   expect(result.dialog).toContain("Your unsaved configuration changes will be discarded");
   expect(result.dialog).toContain("Sections to replace");
-  expect(result.group).toEqual({disabled:true, badge:"Disabled", edit:true, checked:false, name:"Group <one>"});
+  expect(result.group).toEqual({disabled:true, badge:"Disabled", edit:false, checked:false, name:"Group <one>"});
 });
 
 test("render owners emit final markup without creating a template in a browser", async ({page}) => {
@@ -138,7 +138,7 @@ test("Function Group switches save once and preserve individually disabled membe
   await page.evaluate(() => { window.browserHarness.panel._render(); window.browserHarness.panel._render(); });
   const group = panel.locator('.function-group-card[data-group-id="baseline-group"]');
   await group.locator(".group-enabled").uncheck();
-  await expect(group.locator(".edit-group")).toBeDisabled();
+  await expect(group.locator(".edit-group")).toBeEnabled();
   await expect(group.locator(".group-disabled-badge")).toHaveCount(1);
   await expect(group.locator(".group-enabled")).toHaveAttribute("role", "switch");
   await group.locator("summary").click();

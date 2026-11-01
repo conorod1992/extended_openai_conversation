@@ -98,6 +98,50 @@ const SURFACES = {
   ],
 };
 
+for (const viewport of reachabilityInventory.viewports) {
+  test(`conditional recovery controls remain reachable (${viewport.name})`, async ({page}) => {
+    await page.setViewportSize({width:viewport.width, height:viewport.height});
+    await page.goto(fixtureUrl("assistant/basics"));
+    const panel = page.locator("extended-openai-management-panel");
+    await expect(panel.locator("#config-max_tokens")).toBeVisible();
+    await panel.evaluate(host => {
+      const original = host.hass.callWS.bind(host.hass);
+      window.recoveryReachability = {memoryFailed:true, usageFailed:true};
+      host.hass.callWS = async request => {
+        if (request.section === "configuration" && request.action === "save") return {valid:false, errors:{max_tokens:"Must be at least 1"}};
+        if (request.section === "memories" && request.action === "search") {
+          if (window.recoveryReachability.memoryFailed) throw Error("Search unavailable");
+          return {memories:[], total:0, offset:0, returned:0, has_more:false};
+        }
+        if (request.section === "usage" && ["daily", "runs"].includes(request.action) && window.recoveryReachability.usageFailed) throw Error("Usage unavailable");
+        return original(request);
+      };
+    });
+    await panel.locator("#config-max_tokens").fill("-1");
+    await panel.locator("#save-config").click();
+    await expect(panel.locator("[data-config-error]")).toBeVisible();
+    await auditControls(page, panel, `${viewport.name}/validation recovery`, panel.locator("#configuration-errors"));
+    await panel.locator("[data-config-error]").click();
+    await expect(panel.locator("#config-max_tokens")).toBeFocused();
+    await panel.locator("#revert-config").click();
+
+    await panel.evaluate(host => host._navigate("data-memory", "memories"));
+    await panel.locator("#list-search").fill("recovery-probe-no-matches");
+    await expect(panel.locator("#retry-memory-search")).toBeVisible();
+    await auditControls(page, panel, `${viewport.name}/memory recovery`, panel.locator("[data-persistent-memories]"));
+    await page.evaluate(() => { window.recoveryReachability.memoryFailed = false; });
+    await panel.locator("#retry-memory-search").click();
+    await expect(panel.locator("#retry-memory-search")).not.toBeVisible();
+
+    await panel.evaluate(host => host._navigate("usage-maintenance", "usage"));
+    await expect(panel.locator("[data-usage-retry]").first()).toBeVisible();
+    await auditControls(page, panel, `${viewport.name}/usage recovery`, panel.locator("[data-eoc-usage-warnings]"));
+    await page.evaluate(() => { window.recoveryReachability.usageFailed = false; });
+    await panel.locator("[data-usage-retry]").first().click();
+    await expect(panel.locator("[data-usage-retry]")).toHaveCount(0);
+  });
+}
+
 function identityFor(index, meta) {
   return [
     meta.id && `#${meta.id}`,

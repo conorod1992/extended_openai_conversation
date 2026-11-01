@@ -31,11 +31,25 @@ test("native HA Guest intervals retain finite values through indefinite saves an
 
 test("native HA validates off-route fields and reveals the error without dropping the draft", async ({context, page}) => {
   const panel = await openColdHaRoute(context, page, "assistant/basics");
+  await panel.evaluate(host => {
+    const original = host.hass.callWS.bind(host.hass);
+    host.hass.callWS = async request => {
+      const response = await original(request);
+      if (request.section === "configuration" && request.action === "save" && response.valid === false) {
+        await new Promise(resolve => { window.releaseNativeValidation = resolve; });
+      }
+      return response;
+    };
+  });
   await panel.locator("#config-max_tokens").fill("-1");
   await panel.getByRole("button", {name:"Usage & Maintenance", exact:true}).click();
   await panel.getByRole("button", {name:"Usage data retention", exact:true}).click();
-  await panel.locator("#save-config").click();
+  await panel.locator("#save-config").press("Enter");
+  await expect.poll(() => page.evaluate(() => Boolean(window.releaseNativeValidation))).toBe(true);
+  await expect.poll(() => panel.evaluate(host => host.shadowRoot.activeElement?.id || "")).toBe("");
+  await page.evaluate(() => window.releaseNativeValidation());
   const errors = panel.getByRole("region", {name:"Configuration errors", exact:true});
+  await expect(errors).toBeFocused();
   await errors.locator('[data-config-error="max_tokens"]').click();
   await expect(panel.locator("#config-max_tokens")).toBeFocused();
   await expect(panel.locator("#config-max_tokens")).toHaveValue("-1");

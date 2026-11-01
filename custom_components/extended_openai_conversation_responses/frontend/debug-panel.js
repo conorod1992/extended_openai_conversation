@@ -147,7 +147,9 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
   }
 
   async _configure(extra) {
-    if (!this._status || this._loading || this._error) return;
+    // A known capture policy can still be changed during a refresh, especially
+    // to turn capture off. Mutation revisions retire the older read.
+    if (typeof this._status?.enabled !== "boolean") return;
     await this._mutate("configure", extra);
   }
 
@@ -335,7 +337,7 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
     const embedded = this.hasAttribute("embedded");
     const status = this._status || {};
     const known = typeof status.enabled === "boolean";
-    const unavailable = !this._agent || !known || this._loading || Boolean(this._error);
+    const unavailable = !this._agent || !known;
     const statusText = !known ? (this._loading ? "Loading capture status…" : "Capture status unavailable. Refresh to retry.")
       : `${this._loading ? "Refreshing; last known state: " : this._error ? "Last known state (refresh failed): " : ""}${status.enabled ? `Capturing requests · ${this._number(status.count)} of ${this._number(status.limit)} slots used.` : "Capture is off. Normal usage history remains content-free."}`;
     const agentOptions = this._agents.map((agent) => `<option value="${this._e(agent.subentry_id)}" ${agent.subentry_id === this._agent?.subentry_id ? "selected" : ""}>${this._e(agent.title)}</option>`).join("");

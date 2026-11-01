@@ -108,15 +108,23 @@ test("configuration errors survive navigation and reveal collapsed fields withou
   const panel = await open(page, "assistant/basics");
   await panel.evaluate(host => {
     const original = host.hass.callWS.bind(host.hass);
-    host.hass.callWS = request => request.section === "configuration" && request.action === "save" && request.config.max_tokens < 1
-      ? Promise.resolve({valid:false, errors:{max_tokens:"Must be at least 1"}}) : original(request);
+    host.hass.callWS = async request => {
+      if (request.section === "configuration" && request.action === "save" && request.config.max_tokens < 1) {
+        await new Promise(resolve => { window.releaseConfigurationErrors = resolve; });
+        return {valid:false, errors:{max_tokens:"Must be at least 1"}};
+      }
+      return original(request);
+    };
   });
   await panel.locator("#config-max_tokens").fill("-1");
   await panel.getByRole("button", {name:"Usage & Maintenance", exact:true}).click();
   await panel.getByRole("button", {name:"Usage data retention", exact:true}).click();
-  await panel.locator("#save-config").click();
+  await panel.locator("#save-config").press("Enter");
+  await expect.poll(() => panel.evaluate(host => host.shadowRoot.activeElement?.id || "")).toBe("");
+  await page.evaluate(() => window.releaseConfigurationErrors());
   const errors = panel.getByRole("region", {name:"Configuration errors", exact:true});
   await expect(errors).toContainText("Maximum response length: Must be at least 1");
+  await expect(errors).toBeFocused();
   await errors.getByRole("button").click();
   await expect(panel.locator("#config-max_tokens")).toBeFocused();
   await expect(panel.locator("#config-max_tokens")).toHaveValue("-1");
@@ -141,6 +149,44 @@ test("configuration errors survive navigation and reveal collapsed fields withou
   await expect(panel.locator(".general-advanced")).toHaveAttribute("open", "");
   await expect(panel.locator("#config-max_function_calls_per_conversation")).toBeFocused();
 });
+
+for (const destination of ["field", "outside", "navigation"]) {
+  test(`delayed validation respects newer ${destination} focus`, async ({page}) => {
+    const panel = await open(page, "assistant/basics");
+    await panel.locator("#config-max_tokens").fill("-1");
+    await panel.evaluate(host => {
+      const original = host.hass.callWS.bind(host.hass);
+      host.hass.callWS = async request => {
+        if (request.section === "configuration" && request.action === "save") {
+          await new Promise(resolve => { window.releaseConfigurationErrors = resolve; });
+          return {valid:false, errors:{max_tokens:"Must be at least 1"}};
+        }
+        return original(request);
+      };
+    });
+    await panel.locator("#save-config").press("Enter");
+    await expect.poll(() => page.evaluate(() => Boolean(window.releaseConfigurationErrors))).toBe(true);
+    let target;
+    if (destination === "field") {
+      target = panel.getByRole("textbox", {name:"Agent name", exact:true});
+      await target.fill("Newer draft while saving");
+    } else if (destination === "outside") {
+      await page.evaluate(() => { const button = document.createElement("button"); button.id = "outside-focus"; button.textContent = "Outside the panel"; document.body.append(button); });
+      target = page.locator("#outside-focus");
+      await target.click();
+      await target.focus();
+    } else {
+      target = panel.getByRole("button", {name:"Usage & Maintenance", exact:true});
+      await target.focus();
+    }
+    await expect(target).toBeFocused();
+    await page.evaluate(() => window.releaseConfigurationErrors());
+    await expect(panel.locator("#configuration-errors")).toBeVisible();
+    await expect(target).toBeFocused();
+    expect(await panel.evaluate(host => host._draft.max_tokens)).toBe(-1);
+    if (destination === "field") await expect(target).toHaveValue("Newer draft while saving");
+  });
+}
 
 test("debug status is unknown until loaded and retained snapshots are labelled after refresh failure", async ({page}) => {
   const panel = await open(page, "overview");
@@ -173,7 +219,7 @@ test("debug status is unknown until loaded and retained snapshots are labelled a
   await debug.locator("#refresh").click();
   await expect(debug.locator("p.status")).toContainText("Last known state (refresh failed)");
   await expect(debug.locator("#enabled")).toBeChecked();
-  await expect(debug.locator("#enabled")).toBeDisabled();
+  await expect(debug.locator("#enabled")).toBeEnabled();
 });
 
 test("failed Conversation search keeps the previous result identity and Retry publishes only actual matches", async ({page}) => {

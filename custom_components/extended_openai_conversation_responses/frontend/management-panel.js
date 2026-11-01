@@ -1,4 +1,3 @@
-import {restoreCollectionFocus} from "./keyed-collection.js";
 import {functionUncertainty, requireFunctionAcknowledgement, markFunctionUncertainty, settleFunctionRead} from "./function-acknowledgement.js";
 import {clearRequestRuleUncertainty, requestRuleUncertainty, requireRequestRuleAcknowledgement, markUncertainRuleMutation} from "./request-rule-acknowledgement.js";
 import {mutationEffects} from "./management-mutation-effects.js";
@@ -2612,7 +2611,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         const agent = this._selectedAgent();
         if (ownsList && agent && Number.isFinite(response?.feature_status?.source_count)) agent.knowledge_source_count = response.feature_status.source_count;
         this._render();
-        if (returnFocus && !dialog.open) restoreCollectionFocus(this.shadowRoot, `.source-edit-button[data-id="${CSS.escape(response.source.source_id)}"]`, "#add-source");
+        if (returnFocus && !dialog.open) getRouteFeature("data-memory/knowledge")?.restoreCollectionFocus(this.shadowRoot, `.source-edit-button[data-id="${CSS.escape(response.source.source_id)}"]`, "#add-source");
         if (!this.isConnected || !this._ownsRetainedMutation(owner)) this._revalidateAcknowledgedCollection(owner);
       }, response);
     } catch (err) {
@@ -2703,7 +2702,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         if (ownsList) this._patchScopeCount(owner.scope, "memory_count", 0);
         if (ownsList && !temporary && response.status === "created") this._selectedAgent().memory_count = Number(this._selectedAgent().memory_count || 0) + 1;
         this._render();
-        if (returnFocus && !dialog.open) restoreCollectionFocus(this.shadowRoot, `.memory-edit-button[data-id="${CSS.escape(response.memory.memory_id)}"]`, "#add-memory");
+        if (returnFocus && !dialog.open) getRouteFeature("data-memory/memories")?.restoreCollectionFocus(this.shadowRoot, `.memory-edit-button[data-id="${CSS.escape(response.memory.memory_id)}"]`, "#add-memory");
         if (!this.isConnected || !this._ownsRetainedMutation(owner)) this._revalidateAcknowledgedCollection(owner);
       }, response);
     } catch (err) {

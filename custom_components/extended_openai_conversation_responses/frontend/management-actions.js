@@ -154,6 +154,13 @@ async function saveConfiguration(panel, button) {
   submission.writesTitle = dirty.has("__title");
   panel._eocConfigurationSubmission = submission;
   panel._configurationSaving = true;
+  // Disabling Save can blur it before a network response arrives. Retain that
+  // focus intent only until the next user interaction, including outside EOAI.
+  let restoreErrorFocus = panel.shadowRoot.activeElement?.id === "save-config";
+  const focusDocument = panel.ownerDocument;
+  const relinquishErrorFocus = () => { restoreErrorFocus = false; };
+  const focusEvents = restoreErrorFocus ? ["focusin", "pointerdown", "keydown"] : [];
+  for (const type of focusEvents) focusDocument?.addEventListener(type, relinquishErrorFocus, true);
   panel._setSaving(button, true);
   try {
     const destructive = [["usage_request_retention_days", "request details"], ["usage_run_retention_days", "run details"]]
@@ -176,7 +183,8 @@ async function saveConfiguration(panel, button) {
     if (result?.valid === false) {
       showErrors(panel, result?.errors || {}, submission);
       const active = panel.shadowRoot.activeElement;
-      if (active?.id === "save-config" && panel._viewKey?.() === submission.view) panel.shadowRoot.querySelector("#configuration-errors")?.focus();
+      if (panel._viewKey?.() === submission.view && (active?.id === "save-config"
+          || restoreErrorFocus && !active && focusDocument?.hasFocus())) panel.shadowRoot.querySelector("#configuration-errors")?.focus();
       panel._toast("Some settings could not be saved. Review the configuration errors.", true);
       return;
     }
@@ -194,6 +202,7 @@ async function saveConfiguration(panel, button) {
   } catch (err) {
     if (configurationSubmissionIsCurrent(panel, submission)) panel._toast(`Unable to save configuration: ${err.message || String(err)}`, true);
   } finally {
+    for (const type of focusEvents) focusDocument?.removeEventListener(type, relinquishErrorFocus, true);
     if (panel._eocConfigurationSubmission === submission) panel._eocConfigurationSubmission = null;
     if (panel.isConnected !== false && !panel._configDataStale) panel._eocAcknowledgedConfiguration = null;
     panel._configurationSaving = false;
