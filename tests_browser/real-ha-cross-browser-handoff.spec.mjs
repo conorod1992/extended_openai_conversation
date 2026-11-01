@@ -58,6 +58,8 @@ async function executeRule(panel) {
   const live = panel.locator("#eoc-rule-live-test");
   await expect(live).toBeVisible();
   await live.locator("summary").click();
+  // Opening the section imports and binds the live tester asynchronously.
+  await expect(live).toHaveAttribute("data-eoc-bound", "");
   await panel.locator("#eoc-rule-live-text").fill("cross engine execute");
   await panel.locator("#eoc-rule-live-run").click();
   const confirm = panel.locator("#confirm-dialog");
