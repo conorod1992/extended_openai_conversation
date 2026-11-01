@@ -35,7 +35,7 @@ from .function_configuration_repair import (
     editable_function_tools,
     function_configuration_repair_state,
 )
-from .skill_availability import skill_loader_status
+from .skill_availability import preserves_skill_loader_availability, skill_loader_status
 from .yaml_serialization import dump_yaml
 
 
@@ -337,7 +337,12 @@ def prepare_quarantined_function_configuration(
             DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
         ),
     )
-    if not after.available and (before.available or before.reason != after.reason):
+    if not preserves_skill_loader_availability(
+        before,
+        after,
+        raw.get(CONF_SKILLS, []) or [],
+        persisted.get(CONF_SKILLS, []) or [],
+    ):
         raise HomeAssistantError(after.reason or "selected Skills are not loadable")
     return PreparedFunctionConfiguration(
         persisted, deepcopy(tools), deepcopy(response_groups), next_state

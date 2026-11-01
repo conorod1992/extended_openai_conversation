@@ -24,7 +24,9 @@ Each conversation agent can choose which installed skills it is allowed to load.
 
 For example, enter `crypto` after installing the repository's `crypto` example. The Skills field remains available even when no Skills are installed; entering a name does not download or install it.
 
-Selected Skills depend on the integration's built-in `load_skill` Function Tool. Extended OpenAI protects that dependency when configuration is saved: the loader must still exist, be individually enabled, belong to an enabled/reachable Function Group if grouped, and the agent must allow at least one Function Tool call per request. If one of those settings would make selected Skills unusable, the configuration change is rejected with a specific error instead of leaving the agent in a broken state.
+Selected Skills depend on the integration's built-in `load_skill` Function Tool. New configurations require the loader to exist, be individually enabled, belong to an enabled/reachable Function Group if grouped, and have at least one Function Tool call allowed per request. Edits that introduce new loader problems or newly unusable Skill selections are rejected with a specific error.
+
+Older releases, including 6.8.3, allowed selected Skills without a usable loader. Those saved configurations and their backups remain accessible after upgrading. Management shows an inactive-Skills warning with repair instructions; unrelated edits and partial repairs preserve the original selection and disabled settings. Explicitly restore or enable the loader and its group, allow a tool call, or clear the Skill selection. Migration and restore do not enable capabilities automatically.
 
 The **Test agent** diagnostic also reports when a selected Skill is not installed or its loader is unavailable.
 

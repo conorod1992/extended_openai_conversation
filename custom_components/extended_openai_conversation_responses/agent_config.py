@@ -198,7 +198,7 @@ from .local_intents import (
     DEFAULT_LOCAL_INTENTS_ENABLED,
 )
 from .memory import get_memory_mode
-from .skill_availability import skill_loader_status
+from .skill_availability import preserves_skill_loader_availability, skill_loader_status
 from .yaml_serialization import dump_yaml, load_yaml_or_json
 
 CONF_GUEST_WEB_SEARCH = "guest_web_search"
@@ -1046,12 +1046,16 @@ def normalize_agent_config(
     validated_functions: tuple[list[dict[str, Any]], list[dict[str, Any]] | None]
     | None = None,
     function_tools_as_list: bool = False,
+    allow_unavailable_skills: bool = False,
 ) -> dict[str, Any]:
     """Validate config; reuse Function results only for identical Function inputs.
 
     ``validated_functions`` is an internal persisted-projection result for the
     exact Function inputs in ``data``. Quarantined inputs use the validated
     effective subset. When groups is None, groups are validated here.
+
+    ``allow_unavailable_skills`` is an internal persisted/recovery policy, not an
+    edit permission. Updates use merge_agent_config's blocker-transition check.
     """
     if not isinstance(data, dict):
         raise AgentConfigError("config", "must be an object")
@@ -1260,7 +1264,7 @@ def normalize_agent_config(
         function_groups,
         max_function_calls=result[CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION],
     )
-    if not loader_status.available:
+    if not loader_status.available and not allow_unavailable_skills:
         raise AgentConfigError(
             CONF_SKILLS,
             loader_status.reason or "selected Skills are not loadable",
@@ -1316,7 +1320,55 @@ def merge_agent_config(
         {**known, **updates},
         validated_functions=validated_functions,
         function_tools_as_list=function_tools_as_list,
+        allow_unavailable_skills=True,
     )
+    if normalized.get(CONF_SKILLS):
+        # The candidate is already validated. Decode without applying persisted
+        # falsy/default semantics to an explicitly empty submitted collection.
+        candidate_tools = normalized[CONF_FUNCTION_TOOLS]
+        if isinstance(candidate_tools, str):
+            candidate_tools = _decoded_function_tools(candidate_tools)
+        after = skill_loader_status(
+            normalized[CONF_SKILLS],
+            candidate_tools or [],
+            normalized[CONF_FUNCTION_GROUPS],
+            max_function_calls=normalized[CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION],
+        )
+        if not after.available:
+            # A field-only recovery save may carry an authoritative, quarantined
+            # projection. Compare that same usable baseline instead of strictly
+            # revalidating untouched damaged siblings.
+            previous_tools = (
+                validated_functions[0]
+                if validated_functions is not None
+                else configured_function_tools_from_data(current)
+            )
+            previous_groups = (
+                validated_functions[1]
+                if validated_functions is not None
+                and validated_functions[1] is not None
+                else validate_function_groups(
+                    current.get(CONF_FUNCTION_GROUPS, []), previous_tools
+                )
+            )
+            before = skill_loader_status(
+                current.get(CONF_SKILLS, []) or [],
+                previous_tools,
+                previous_groups,
+                max_function_calls=current.get(
+                    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+                    DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+                ),
+            )
+            if not preserves_skill_loader_availability(
+                before,
+                after,
+                current.get(CONF_SKILLS, []) or [],
+                normalized[CONF_SKILLS],
+            ):
+                raise AgentConfigError(
+                    CONF_SKILLS, after.reason or "selected Skills are not loadable"
+                )
     # Recommended values are for creation/model changes, not unrelated
     # edits to older/restored configurations whose omission is meaningful.
     if not model_changed:
@@ -1351,7 +1403,13 @@ def normalize_persisted_agent_config(
     )
     if source[CONF_FUNCTION_TOOLS] is None:
         source[CONF_FUNCTION_TOOLS] = []
-    return normalize_agent_config(source, function_tools_as_list=function_tools_as_list)
+    # This recognized dependency problem leaves Skills inactive at runtime. Reads
+    # and recovery must preserve the administrator's settings, not enable a loader.
+    return normalize_agent_config(
+        source,
+        function_tools_as_list=function_tools_as_list,
+        allow_unavailable_skills=True,
+    )
 
 
 def agent_config_snapshot(

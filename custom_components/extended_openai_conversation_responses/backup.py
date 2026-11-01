@@ -168,7 +168,9 @@ def _configuration_snapshot_preserving_quarantine(
             return agent_config_snapshot(value, preparsed_function_tools=decoded)
         if persisted_source and not decoded:
             return normalize_persisted_agent_config(value)
-        return normalize_agent_config(value)
+        # A backup is also a repair path for older inactive Skill selections.
+        # All other scalar, Function and permission validation remains strict.
+        return normalize_agent_config(value, allow_unavailable_skills=True)
 
     try:
         snapshot = normalize(known)
