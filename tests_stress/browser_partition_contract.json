@@ -357,7 +357,10 @@
       "tests_stress/test_generated_editor_journey.py::test_utf8_rest_limits_count_bytes_separately_from_schema_characters[True]",
       "tests_stress/test_management_ws_contract.py::test_reviewed_browser_payloads_are_accepted_by_websocket_schemas",
       "tests_stress/test_management_ws_contract.py::test_shared_rule_dispatcher_preserves_literal_mutation_review",
-      "tests_stress/test_management_ws_contract.py::test_shipped_frontend_mutation_actions_are_reviewed"
+      "tests_stress/test_management_ws_contract.py::test_shipped_frontend_mutation_actions_are_reviewed",
+      "tests_browser/real-ha-broadcast-ack.spec.mjs::chromium::real-ha-broadcast-ack.spec.mjs::Broadcast retires an actual admitted message before the next click (bundle)",
+      "tests_browser/real-ha-broadcast-ack.spec.mjs::chromium::real-ha-broadcast-ack.spec.mjs::Broadcast retires an actual admitted message before the next click (source)",
+      "tests_real_ha/test_browser_backend_acceptance.py::test_broadcast_admission_retires_composer_without_duplicate_delivery"
     ]
   }
 }
