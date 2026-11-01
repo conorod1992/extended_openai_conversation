@@ -441,6 +441,33 @@ async def _create_released_entry(hass: Any) -> Any:
     return entry
 
 
+def _released_model_settings(const: Any, helpers: Any) -> tuple[tuple[str, Any], ...]:
+    """Choose settings accepted by the release and the candidate model policy."""
+    effort_options = getattr(helpers, "get_reasoning_effort_options", None)
+    supports_no_reasoning = "none" in (
+        effort_options("gpt-5.6")
+        if callable(effort_options)
+        else getattr(const, "REASONING_EFFORT_OPTIONS", ())
+    )
+    return (
+        (
+            "CONF_CHAT_MODEL",
+            "gpt-5.6" if supports_no_reasoning else "gpt-4.1-mini",
+        ),
+        # gpt-5.6 Chat Completions only supports function calling with
+        # reasoning_effort=none. Releases before that option existed use their
+        # own default effort and a model that does not require reasoning.
+        (
+            "CONF_REASONING_EFFORT",
+            "none" if supports_no_reasoning else const.DEFAULT_REASONING_EFFORT,
+        ),
+        # Older releases defaulted to flex, which gpt-4.1-mini cannot use.
+        # Model customization must choose a compatible tier as well.
+        ("CONF_SERVICE_TIER", "default"),
+        ("CONF_TEMPERATURE", 0.42),
+    )
+
+
 async def _released_phase(hass: Any, config_dir: Path) -> None:
     """Have the actual published release create and persist representative state."""
     from homeassistant.config_entries import ConfigEntryState
@@ -454,26 +481,7 @@ async def _released_phase(hass: Any, config_dir: Path) -> None:
     data = dict(subentry.data)
     custom_values: dict[str, Any] = {}
     helpers = importlib.import_module(f"custom_components.{DOMAIN}.helpers")
-    effort_options = getattr(helpers, "get_reasoning_effort_options", None)
-    supports_no_reasoning = "none" in (
-        effort_options("gpt-5.6")
-        if callable(effort_options)
-        else getattr(const, "REASONING_EFFORT_OPTIONS", ())
-    )
-    for name, value in (
-        (
-            "CONF_CHAT_MODEL",
-            "gpt-5.6" if supports_no_reasoning else "gpt-4.1-mini",
-        ),
-        # gpt-5.6 Chat Completions only supports function calling with
-        # reasoning_effort=none. Releases before that option existed use their
-        # own default effort and a model that does not require reasoning.
-        (
-            "CONF_REASONING_EFFORT",
-            "none" if supports_no_reasoning else const.DEFAULT_REASONING_EFFORT,
-        ),
-        ("CONF_TEMPERATURE", 0.42),
-    ):
+    for name, value in _released_model_settings(const, helpers):
         key = getattr(const, name, None)
         if isinstance(key, str) and key in data:
             data[key] = value
