@@ -101,8 +101,10 @@ def merge_partitions(
                 f"Browser partition inventory mismatch: {part}"
             )
             for case in row["execution_cases"]:
+                assert case.get("collected") is True, case["nodeid"]
                 if part == "native" or case["outcome"] != "skipped":
                     assert case["outcome"] == "passed", case["nodeid"]
+                    assert case.get("executed") is True, case["nodeid"]
                 else:
                     allowance = policy["allowances"].get(case["nodeid"], {})
                     assert allowance.get("requires_pass") is True

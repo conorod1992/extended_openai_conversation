@@ -79,6 +79,8 @@ def test_browser_union_retains_fixture_skip_and_requires_its_genuine_pass():
         "target_version",
         "fixture_failure",
         "native_skip",
+        "uncollected_copy",
+        "unexecuted_copy",
         "missing_shared_copy",
         "missing_repeat",
         "metric",
@@ -106,6 +108,9 @@ def test_browser_merge_rejects_invalid_or_duplicated_evidence(fault):
         ] = "failed"
     elif fault == "native_skip":
         rows[1]["execution_cases"][0]["outcome"] = "skipped"
+    elif fault in {"uncollected_copy", "unexecuted_copy"}:
+        key = "collected" if fault == "uncollected_copy" else "executed"
+        rows[1]["execution_cases"][0][key] = False
     elif fault == "missing_repeat":
         counts = Counter(case["nodeid"] for case in rows[1]["execution_cases"])
         repeated = next(node for node, count in counts.items() if count > 1)
