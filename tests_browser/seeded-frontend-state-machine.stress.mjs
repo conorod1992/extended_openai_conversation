@@ -157,7 +157,7 @@ for (const seed of seeds) {
         };
       });
       await route("usage-maintenance/usage");
-      await expect(panel.getByText("Usage summary unavailable", {exact:true})).toBeVisible();
+      await expect(panel.locator("[data-eoc-usage-warnings]").getByText("Usage summary unavailable", {exact:true})).toBeVisible();
       await page.evaluate(() => { window.browserHarness.backendOnline = true; });
       await route("data-memory/knowledge");
       await expect(panel.locator("#add-source")).toBeEnabled();

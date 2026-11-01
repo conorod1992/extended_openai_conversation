@@ -49,11 +49,21 @@ def actual_jobs() -> dict[str, str]:
 
 def merge_lifetime_partitions(rows: list[dict]) -> dict:
     """Join two isolated processes without relaxing any campaign obligations."""
+    return merge_partitions(
+        rows, "long-lifetime", "lifetime_partition", {"reload", "uninterrupted"}
+    )
+
+
+def merge_browser_partitions(rows: list[dict]) -> dict:
+    """Join fixture and genuine-HA journeys, retaining reviewed fixture skips."""
+    return merge_partitions(rows, "browser", "browser_partition", {"static", "native"})
+
+
+def merge_partitions(
+    rows: list[dict], campaign: str, field: str, partitions: set[str]
+) -> dict:
     assert len(rows) == 2
-    assert {row.get("lifetime_partition") for row in rows} == {
-        "reload",
-        "uninterrupted",
-    }
+    assert {row.get(field) for row in rows} == partitions
     first, second = rows
     for key in (
         "schema",
@@ -65,13 +75,45 @@ def merge_lifetime_partitions(rows: list[dict]) -> dict:
         "ha_version",
         "environment",
         "environment_fingerprint",
+        "source_version",
+        "target_version",
     ):
         assert first.get(key) == second.get(key), key
-    assert first["campaign"] == "long-lifetime"
+    assert first["campaign"] == campaign
     nodes = [{case["nodeid"] for case in row["execution_cases"]} for row in rows]
-    assert not nodes[0] & nodes[1], "Overlapping lifetime partitions"
+    overlap = nodes[0] & nodes[1]
+    if campaign == "browser":
+        policy = json.loads(CONTRACT.read_text(encoding="utf-8"))
+        inventory = json.loads(
+            CONTRACT.with_name("browser_partition_contract.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert inventory["schema"] == 1
+        assert set(inventory["partitions"]) == partitions
+        for row in rows:
+            part = row[field]
+            # Compare multisets: a passing native copy cannot conceal a missing
+            # static copy, nor can the main suite replace its targeted recheck.
+            assert Counter(
+                case["nodeid"] for case in row["execution_cases"]
+            ) == Counter(inventory["partitions"][part]), (
+                f"Browser partition inventory mismatch: {part}"
+            )
+            for case in row["execution_cases"]:
+                assert case.get("collected") is True, case["nodeid"]
+                if part == "native" or case["outcome"] != "skipped":
+                    assert case["outcome"] == "passed", case["nodeid"]
+                    assert case.get("executed") is True, case["nodeid"]
+                else:
+                    allowance = policy["allowances"].get(case["nodeid"], {})
+                    assert allowance.get("requires_pass") is True
+                    assert "skipped" in allowance.get("outcomes", [])
+        # check_execution still enforces allowance expiry, review, and a genuine pass.
+    else:
+        assert not overlap, "Overlapping lifetime partitions"
     merged = dict(first)
-    merged["lifetime_partition"] = "merged"
+    merged[field] = "merged"
     merged["status"] = (
         "success" if all(row["status"] == "success" for row in rows) else "failure"
     )
@@ -137,16 +179,20 @@ def main(root: Path) -> int:
         item = json.loads(path.read_text(encoding="utf-8"))
         assert item["schema"] == SCHEMA, path
         key = (item["campaign"], item["intensity"], item.get("ha_point"))
-        if item.get("lifetime_partition"):
+        if item.get("lifetime_partition") or item.get("browser_partition"):
             partitioned.setdefault(key, []).append(item)
-            artifact_names[key] = "isolated lifetime partitions"
+            artifact_names[key] = "isolated execution partitions"
             continue
         assert key not in found, key
         found[key] = item
         artifact_names[key] = path.parent.name
     for key, rows in partitioned.items():
         assert key not in found, key
-        found[key] = merge_lifetime_partitions(rows)
+        found[key] = (
+            merge_browser_partitions(rows)
+            if key[0] == "browser"
+            else merge_lifetime_partitions(rows)
+        )
     full_programme = (
         selected == "all"
         and set(campaigns) == set(CAMPAIGNS)
@@ -188,10 +234,18 @@ def main(root: Path) -> int:
             else f"{'browser' if campaign == 'browser-diagnostics' else campaign} / {intensity}"
         )
         actual = conclusions.get(job_name, "unverified")
-        if item and item.get("lifetime_partition") == "merged":
+        if item and (
+            item.get("lifetime_partition") == "merged"
+            or item.get("browser_partition") == "merged"
+        ):
+            partitions = (
+                ("static", "native")
+                if campaign == "browser"
+                else ("reload", "uninterrupted")
+            )
             partition_results = [
                 conclusions.get(f"{job_name} / {partition}", "unverified")
-                for partition in ("reload", "uninterrupted")
+                for partition in partitions
             ]
             actual = (
                 "success" if partition_results == ["success", "success"] else "failure"

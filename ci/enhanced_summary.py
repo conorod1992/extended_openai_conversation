@@ -466,6 +466,7 @@ def main() -> None:
         folder / "certification.json",
         {
             **metadata,
+            "browser_partition": os.environ.get("EOAI_BROWSER_PARTITION", ""),
             "lifetime_partition": os.environ.get("EOAI_LIFETIME_PARTITION", ""),
             "tests_traced": sum(
                 1 for path in files if path.name != "certification.json"

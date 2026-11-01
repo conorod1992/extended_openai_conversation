@@ -86,6 +86,16 @@ def main() -> None:
     args = parser.parse_args()
     plan = enhanced_plan(args.event, args.schedule, args.campaign, args.intensity)
     plan["python_matrix"] = python_matrix(plan, scheduled=args.event == "schedule")
+    plan["persistence_matrix"] = [
+        row for row in plan["python_matrix"] if row["campaign"] == "persistence"
+    ]
+    plan["python_matrix"] = [
+        row for row in plan["python_matrix"] if row["campaign"] != "persistence"
+    ]
+    # Offer the measured critical path first; actual starts still depend on
+    # runner availability. Keep the original order of all other matrix rows.
+    priority = {"long-lifetime": 0, "large-installation": 1}
+    plan["python_matrix"].sort(key=lambda row: priority.get(row["campaign"], 2))
     for key, value in plan.items():
         print(key + "=" + json.dumps(value, separators=(",", ":")))
 

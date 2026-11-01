@@ -419,7 +419,8 @@ def test_enhanced_prebuilt_lanes_keep_exact_browser_ha_and_certification_coverag
     historical_runtime = Path("ci/prepare_historical_runtime.sh").read_text()
     assert 'python -m venv "$HISTORICAL_RUNTIME_DIR"' in historical_runtime
     assert "homeassistant==$HISTORICAL_HA_VERSION" in historical_runtime
-    persistence_campaign = jobs["python-campaigns"]
+    assert jobs["python-campaigns"]["needs"] == "prepare"
+    persistence_campaign = jobs["persistence-campaign"]
     assert persistence_campaign["needs"] == ["prepare", "persistence_runtime"]
     assert "always()" in persistence_campaign["if"]
     assert "Verify or safely build the historical runtime" in [

@@ -33,7 +33,7 @@ test("one mounted panel has bounded backend calls after repeated disconnects", a
       await page.evaluate(() => { window.browserHarness.backendOnline = false; });
       await panel.locator('.top-nav button[data-page="usage-maintenance"]').click();
       await expect(page).toHaveURL(/\/extended-openai\/usage-maintenance\/usage$/);
-      await expect(panel.getByText("Usage summary unavailable", {exact: true})).toBeVisible();
+      await expect(panel.locator("[data-eoc-usage-warnings]").getByText("Usage summary unavailable", {exact: true})).toBeVisible();
       await page.evaluate(() => { window.browserHarness.backendOnline = true; });
       await panel.locator('.top-nav button[data-page="data-memory"]').click();
       await expect(page).toHaveURL(/\/extended-openai\/data-memory\//);

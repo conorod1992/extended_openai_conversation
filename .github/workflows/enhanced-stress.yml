@@ -46,6 +46,7 @@ jobs:
       intensities: ${{ steps.seed.outputs.intensities }}
       campaigns: ${{ steps.seed.outputs.campaigns }}
       python_matrix: ${{ steps.seed.outputs.python_matrix }}
+      persistence_matrix: ${{ steps.seed.outputs.persistence_matrix }}
       ha_version: ${{ steps.ha.outputs.version }}
       ha_test_plugin_version: ${{ steps.ha.outputs.plugin_version }}
       published_release_tag: ${{ steps.release.outputs.tag }}
@@ -75,7 +76,7 @@ jobs:
           echo "Stable Home Assistant: $VERSION; compatible test plugin: $PLUGIN_VERSION" >> "$GITHUB_STEP_SUMMARY"
       - name: Resolve one published EOAI release for persistence checks
         id: release
-        if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'all-except-long-lifetime' || inputs.campaign == 'persistence'
+        if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'all-except-long-lifetime' || inputs.campaign == 'persistence' || inputs.campaign == 'browser'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -203,14 +204,132 @@ jobs:
 
   python-campaigns:
     name: ${{ matrix.campaign }} / ${{ matrix.intensity }}${{ matrix.partition && format(' / {0}', matrix.partition) || '' }}
-    needs: [prepare, persistence_runtime]
-    if: always() && needs.prepare.result == 'success' && (github.event_name == 'schedule' || (inputs.campaign != 'browser' && inputs.campaign != 'browser-engines'))
+    needs: prepare
+    if: always() && needs.prepare.result == 'success' && needs.prepare.outputs.python_matrix != '[]' && (github.event_name == 'schedule' || (inputs.campaign != 'browser' && inputs.campaign != 'browser-engines'))
     runs-on: ubuntu-latest
     timeout-minutes: 300
     strategy:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.prepare.outputs.python_matrix) }}
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      STRESS_SEED: ${{ needs.prepare.outputs.seed }}
+      STRESS_INTENSITY: ${{ matrix.intensity }}
+      STRESS_CAMPAIGN: ${{ matrix.campaign }}
+      EOAI_LIFETIME_PARTITION: ${{ matrix.partition }}
+      EOAI_CONTAINER_IMAGE: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
+      EOAI_EXPECTED_HA_VERSION: ${{ needs.prepare.outputs.ha_version }}
+      EOAI_EXPECTED_HA_TEST_PLUGIN_VERSION: ${{ needs.prepare.outputs.ha_test_plugin_version }}
+      EOAI_RELEASE_TAG: ${{ needs.prepare.outputs.published_release_tag }}
+      EOAI_RELEASE_SHA: ${{ needs.prepare.outputs.published_release_sha }}
+      UPGRADE_ACTIVE_DISRUPTION: ${{ matrix.campaign == 'persistence' && '1' || '0' }}
+      STRESS_ARTIFACT_DIR: stress-artifacts
+      ENHANCED_EXECUTION_EVIDENCE: "1"
+      PYTEST_PLUGINS: ci.pytest_execution
+    steps:
+      - name: Checkout immutable run candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.prepare.outputs.candidate_sha }}
+      - name: Set up Node.js for runtime certification guards
+        if: matrix.campaign == 'runtime'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+      - name: Reconcile current test requirements
+        run: bash ci/reconcile_stable_environment.sh
+      - name: Stage candidate payload for clean-install acceptance
+        if: matrix.campaign == 'setup'
+        run: |
+          set -euo pipefail
+          CANDIDATE_COMPONENT="$GITHUB_WORKSPACE/custom_components/extended_openai_conversation_responses"
+          CANDIDATE_VERSION="$(python -c 'import json; print(json.load(open("custom_components/extended_openai_conversation_responses/manifest.json"))["version"])')"
+          echo "RELEASE_COMPONENT_DIR=$CANDIDATE_COMPONENT" >> "$GITHUB_ENV"
+          echo "RELEASE_EXPECTED_VERSION=$CANDIDATE_VERSION" >> "$GITHUB_ENV"
+          echo "Clean-install candidate payload: $CANDIDATE_VERSION" >> "$GITHUB_STEP_SUMMARY"
+      - name: Run enhanced campaign
+        id: campaign_run
+        env:
+          EOAI_GENERATOR_PROFILE: ${{ matrix.campaign == 'large-installation' && '1' || '0' }}
+          EOAI_GENERATOR_PROFILE_PATH: ${{ matrix.campaign == 'large-installation' && 'stress-artifacts/generator-profile.jsonl' || '' }}
+        run: |
+          case "$STRESS_CAMPAIGN" in
+            runtime) TEST_PATHS=(tests_real_ha/test_management_typed_yaml.py tests_real_ha/test_scoped_configuration_writes.py tests_stress/test_independent_critical_outcomes.py tests_real_ha/test_management_edge_semantics.py tests_real_ha/test_entry_point_contract_matrix.py tests_real_ha/test_provider_boundary_contracts.py tests_real_ha/test_provider_input_history.py tests_real_ha/test_state_transition_contracts.py tests_real_ha/test_archive_private_activity.py tests_stress/test_execution_contract.py tests_real_ha/test_management_backend_acceptance.py::test_configuration_transfer_survives_reload tests_real_ha/test_provider_serialization_invariants.py tests_real_ha/test_management_backend_acceptance.py::test_undercovered_management_mutations_survive_reload tests_stress/test_runtime_soak.py tests_stress/test_process_resource_soak.py::test_booted_process_resources_and_latency_survive_mixed_traffic tests_stress/test_process_resource_soak.py::test_resource_tripwires_reject_growth_or_lost_responsiveness[assist] tests_stress/test_process_resource_soak.py::test_resource_tripwires_reject_growth_or_lost_responsiveness[descriptors] tests_stress/test_process_resource_soak.py::test_resource_tripwires_reject_growth_or_lost_responsiveness[executor_pending] tests_stress/test_process_resource_soak.py::test_resource_tripwires_reject_growth_or_lost_responsiveness[loop_lag] tests_stress/test_process_resource_soak.py::test_resource_tripwires_reject_growth_or_lost_responsiveness[management] tests_stress/test_process_resource_soak.py::test_resource_tripwires_reject_growth_or_lost_responsiveness[rss_bytes] tests_stress/test_process_resource_soak.py::test_resource_tripwires_reject_growth_or_lost_responsiveness[storage_bytes] tests_stress/test_conversation_id_collision.py tests_stress/test_evidence_manifest.py tests_stress/test_frontend_route_inventory.py tests_stress/test_frontend_interaction_inventory.py tests_stress/test_management_action_inventory.py tests_stress/test_public_service_inventory.py tests_stress/test_backup_inventory.py tests_stress/test_nightly_inventory.py tests_real_ha/test_runtime_recovery_journey.py) ;;
+            lifecycle) TEST_PATHS=(tests_real_ha/test_embedding_cache_deletion_ownership.py tests_real_ha/test_agent_store_ownership.py tests_real_ha/test_optional_startup_ownership.py tests_real_ha/test_agent_registration_ownership.py tests_stress/test_agent_subentry_lifecycle_isolation.py tests_stress/test_repeated_subentry_churn.py tests/test_agent_maintenance.py tests_real_ha/test_inflight_subentry_removal.py tests_real_ha/test_shared_conversation_and_entry_removal.py tests_real_ha/test_agent_private_data_deletion.py tests_real_ha/test_live_configuration_save.py tests_stress/test_lifecycle_matrix.py tests_stress/test_process_harness_contract.py tests_stress/test_installed_lifecycle.py tests_stress/test_active_unload_races.py tests_stress/test_active_removal_races.py tests_stress/test_management_replay_safety.py tests_stress/test_complete_user_journeys.py tests_real_ha/test_multi_entry_lifecycle.py tests_real_ha/test_config_flow_lifecycle_contracts.py tests_real_ha/test_partial_platform_setup_retry.py) ;;
+            ai-task) TEST_PATHS=(tests_stress/test_conversation_tool_ai_task_runtime_semantics.py tests_stress/test_ai_task_continuity.py tests_stress/test_ai_task_mixed_campaign.py tests_real_ha/test_ai_task_runtime.py tests_real_ha/test_ai_task_lifecycle.py tests_real_ha/test_ai_task_provider_wire.py tests_real_ha/test_ai_task_exclusive_bounds.py tests/test_ai_task_replay_lifecycle.py tests_real_ha/test_ai_task_replay_lifecycle.py) ;;
+            voice-intercom) TEST_PATHS=(tests_real_ha/test_assist_origin_context.py tests_stress/test_voice_household_campaign.py tests_stress/test_native_audio_delivery.py tests_stress/test_downstream_delivery_ownership.py tests_stress/test_intercom_endurance_campaign.py tests_real_ha/test_assist_voice_identity_precedence.py tests_real_ha/test_intercom_voice_acceptance.py) ;;
+            archive) TEST_PATHS=(tests_stress/test_archive_living_campaign.py tests/test_conversation_archive.py) ;;
+            feature-crossroads) TEST_PATHS=(tests_real_ha/test_idle_retention_remediation.py tests_real_ha/test_generated_execution_privacy_workflows.py tests_real_ha/test_usage_period_statistics.py tests_stress/test_skill_download_cancellation.py tests_stress/test_skill_lifecycle_campaign.py tests_stress/test_local_intent_mixed_campaign.py tests_stress/test_streaming_speech_endurance.py tests_stress/test_usage_retention_endurance.py tests_stress/test_model_catalog_refresh_endurance.py tests_stress/test_exposure_churn_endurance.py tests_stress/test_generated_valid_transitions.py tests_stress/test_valid_configuration_transitions.py tests_stress/test_cross_subsystem_reconciliation.py tests_stress/test_cross_subsystem_state_machine.py tests_stress/test_evidence_manifest.py tests_real_ha/test_adversarial_metamorphic_coexistence.py tests_real_ha/test_local_intent_exclusions.py tests_real_ha/test_assist_streaming_speech_processing.py tests_real_ha/test_populated_feature_assist_journey.py tests_real_ha/test_usage_accounting_failure_recovery.py tests_real_ha/test_model_catalog_live_refresh.py tests_real_ha/test_entity_attribute_runtime_integrity.py tests_real_ha/test_entity_registry_customization.py tests/test_skill_availability.py tests/test_skill_filesystem_concurrency.py tests/test_usage_accounting_recovery.py tests/test_model_catalog_transitions.py) ;;
+            setup) TEST_PATHS=(tests_stress/test_provider_endpoint_selection.py tests_stress/test_backup_inventory.py tests_stress/test_reauth_active_traffic.py tests_real_ha/test_config_flow.py tests_real_ha/test_config_flow_edges.py tests_real_ha/test_config_flow_lifecycle_contracts.py tests_real_ha/test_packaged_release.py) ;;
+            backup) TEST_PATHS=(tests_real_ha/test_backup_processing_boundary.py tests/test_bounded_backup_serialization.py tests_stress/test_restore_journal_writer_reader_contract.py tests_stress/test_restore_recovery_safety.py tests_stress/test_restore_recovery_process.py tests_stress/test_restore_background_ownership.py::test_installed_retention_waits_for_restored_policy tests_stress/test_backup_fault_matrix.py tests_stress/test_backup_live_overlap.py tests_stress/test_backup_inventory.py tests_stress/test_historical_backup.py) ;;
+            backup-transfer) TEST_PATHS=(tests_stress/test_filesystem_process_recovery.py::test_booted_filesystem_recovers_after_hard_kill[transfer] tests_stress/test_restore_background_ownership.py::test_websocket_setup_export_is_coherent_across_restore tests_stress/test_backup_transfer.py tests_stress/test_backup_transfer_preview_races.py) ;;
+            persistence) TEST_PATHS=(tests_stress/test_restore_recovery_safety.py tests_stress/test_restore_recovery_process.py tests_stress/test_pending_retrieval_publication.py tests_stress/test_archive_living_campaign.py::test_archive_first_intent_failure_cannot_be_erased_by_session_publication tests_stress/test_persistence_forward_and_clock.py tests_stress/test_management_transaction_matrix.py tests_stress/test_published_downgrade_boundary.py tests_stress/test_backup_fault_matrix.py tests_stress/test_store_structure_recovery.py tests_stress/test_dirty_legacy_state_corpus.py tests_stress/test_os_storage_faults.py tests_stress/test_fixture_store_isolation.py tests_real_ha/test_fixture_store_isolation.py tests_stress/test_acknowledgement_loss.py tests_real_ha/test_corrupt_subsystem_store_startup_isolation.py tests_real_ha/test_pending_store_write_shutdown_recovery.py tests_real_ha/test_persistent_memory_shutdown_recovery.py tests_real_ha/test_store_write_process_crash.py tests_real_ha/test_delayed_tool_process_restart.py tests_real_ha/test_release_upgrade_acceptance.py) ;;
+            request-rules) TEST_PATHS=(tests_real_ha/test_action_failure_safety.py tests_real_ha/test_action_target_safety.py tests_stress/test_request_rule_publication.py tests_stress/test_request_rules_matrix.py tests_stress/test_request_rules_provider_wire.py tests_stress/test_generated_request_rule_action_contracts.py tests_real_ha/test_request_rules_script_semantics.py tests_real_ha/test_rule_payload_structure.py) ;;
+            guest-security) TEST_PATHS=(tests_stress/test_identity_privacy_continuity.py tests_stress/test_request_rule_guest_transitions.py tests_stress/test_guest_mode_acknowledgement.py tests_stress/test_guest_functions_matrix.py tests_stress/test_guest_provider_wire.py tests_real_ha/test_security_routing_boundaries.py tests_real_ha/test_management_authorization_matrix.py) ;;
+            quiet-hours) TEST_PATHS=(tests_real_ha/test_quiet_hours_identity_shutdown.py tests_real_ha/test_quiet_hours_generation_recovery.py tests_stress/test_quiet_hours_edges.py tests_stress/test_quiet_hours_multi_satellite.py tests_stress/test_quiet_hours_ownership_time.py tests_real_ha/test_quiet_hours_resilience.py tests_real_ha/test_quiet_hours_scheduling.py) ;;
+            functions) TEST_PATHS=(tests_real_ha/test_script_cleanup_settlement.py tests/test_script_cleanup_settlement.py tests_real_ha/test_file_effect_recovery_precision.py tests_real_ha/test_review_followup_replays.py tests_real_ha/test_replay_reload_ownership.py tests_real_ha/test_service_receipt_compatibility.py tests/test_review_replay_execution.py tests_real_ha/test_receipt_resources_and_unordered_identity.py tests_real_ha/test_execution_result_lifecycle_contracts.py tests_real_ha/test_prepared_effect_recovery.py tests_real_ha/test_service_effect_identity.py tests_real_ha/test_effect_receipts.py tests_real_ha/test_ha_runtime_mutation.py tests_real_ha/test_provider_input_history.py tests_real_ha/test_script_function_variables.py tests_stress/test_exploration_corpus_replay.py tests_stress/test_native_history_automation_lifecycle.py tests_stress/test_environment_edge_contracts.py tests_real_ha/test_script_function_outcomes.py tests_real_ha/test_public_version_journeys.py::test_public_script_function_cleanup_abort_and_repeat tests_stress/test_request_rules_provider_wire.py::test_function_execution_failure_stops_rule_independently_of_capture tests_stress/test_file_edit_native_cancellation.py tests_stress/test_function_groups_state_machine.py tests_stress/test_function_provider_wire.py tests_stress/test_function_provider_wire_remaining.py tests_stress/test_identity_generation_races.py tests_stress/test_delayed_mutation_matrix.py tests_stress/test_active_ha_request_mutations.py tests_stress/test_native_broadcast_authorization.py tests_real_ha/test_provider_wire_e2e.py tests_real_ha/test_native_service_disappearance.py tests_real_ha/test_native_recorder_acceptance.py tests_real_ha/test_native_automation_acceptance.py tests_real_ha/test_delayed_tool_due_reauthorization.py tests_real_ha/test_live_config_mutation_semantics.py tests_real_ha/test_target_registry_mutation_race.py tests_real_ha/test_management_backend_acceptance.py::test_consecutive_live_management_writes_do_not_reload_or_block_overview tests/functions tests/test_function_execution_coverage.py tests/test_resource_io_hardening.py::test_compressed_response_integrity_and_accepted_body_boundary) ;;
+            provider-resilience) TEST_PATHS=(tests_real_ha/test_provider_cleanup_file_recovery.py tests/test_provider_usage_characterization.py tests_real_ha/test_provider_usage_characterization.py tests_stress/test_provider_runtime_transitions.py tests_real_ha/test_provider_transport_diagnostics_privacy.py tests_stress/test_provider_protocol_acceptance.py tests_stress/test_model_lifecycle_acceptance.py tests_stress/test_provider_fault_matrix.py tests_stress/test_provider_fault_phases.py tests_stress/test_provider_event_sequences.py tests_stress/test_provider_dependency_degradation.py tests_stress/test_cancellation_resource_lifetime.py tests_stress/test_provider_valid_chunking.py tests_stress/test_provider_concurrent_backpressure.py tests_stress/test_active_provider_stream_cancellation.py tests_stress/test_provider_real_connection_pool.py tests_stress/test_shared_runtime_request_lifetimes.py tests_real_ha/test_provider_failure_recovery.py tests_real_ha/test_provider_wire_truncated_tool_stream.py tests_real_ha/test_cancel_after_side_effect.py tests_real_ha/test_usage_accounting_failure_recovery.py tests_real_ha/test_degraded_diagnostics.py tests/test_openai_sdk_wire.py tests/test_openai_sdk_malformed_wire.py tests/test_openai_sdk_error_matrix.py tests/test_openai_sdk_catalog_matrix.py tests/test_openai_sdk_multicall_wire.py) ;;
+            memory-knowledge) TEST_PATHS=(tests_real_ha/test_retained_context_publication_races.py tests_real_ha/test_deleted_user_memory_edit.py tests_real_ha/test_persistent_memory_runtime_recovery.py tests_stress/test_memory_contract_sequences.py tests_stress/test_pending_retrieval_publication.py tests_stress/test_memory_knowledge_scale.py tests_stress/test_temporary_memory_scale.py tests_stress/test_provider_wire_privacy.py tests_stress/test_private_content_destinations.py tests_stress/test_semantic_equivalence_retrieval.py) ;;
+            large-installation) TEST_PATHS=(tests_stress/test_large_installation.py tests_stress/test_extreme_context_matrix.py tests_stress/test_memory_knowledge_scale.py tests_stress/test_provider_wire_privacy.py tests_stress/test_archive_living_campaign.py tests_stress/test_generated_valid_states.py tests_stress/test_generated_state_lifecycle.py tests_stress/test_responses_scale_fairness.py) ;;
+            chaos) TEST_PATHS=(tests_stress/test_cross_feature_chaos.py) ;;
+            process-chaos) TEST_PATHS=(tests_stress/test_filesystem_process_recovery.py tests_stress/test_delayed_backlog.py tests_stress/test_backup_inventory.py tests_real_ha/test_immediate_tool_process_crash.py tests_real_ha/test_store_write_process_crash.py tests_real_ha/test_restore_transaction_process_crash.py tests_real_ha/test_delayed_tool_process_restart.py tests_real_ha/test_active_request_shutdown_recovery.py) ;;
+            diagnostics) TEST_PATHS=(tests_stress/test_diagnostics_failure_probe.py) ;;
+            long-lifetime) TEST_PATHS=(tests_stress/test_process_resource_soak.py tests_stress/test_responses_scale_fairness.py) ;;
+            *) exit 2 ;;
+          esac
+          set +e
+          TEST_TIMEOUT=600
+          if [ "$STRESS_CAMPAIGN" = long-lifetime ]; then TEST_TIMEOUT=2400; fi
+          pytest "${TEST_PATHS[@]}" -v -s --asyncio-mode=auto --log-cli-level=WARNING \
+            --timeout="$TEST_TIMEOUT" --durations=20 \
+            --stress-seed="$STRESS_SEED" --stress-intensity="$STRESS_INTENSITY" \
+            --show-capture=no --tb=short > enhanced-raw.log 2>&1
+          RESULT=$?
+          python ci/enhanced_evidence.py sanitize-log enhanced-raw.log stress-artifacts/pytest.log
+          rm enhanced-raw.log
+          cat stress-artifacts/pytest.log
+          if [ "$STRESS_CAMPAIGN" = diagnostics ]; then
+            test "$RESULT" -ne 0
+            python ci/verify_enhanced_failure.py stress-artifacts stress-artifacts/pytest.log
+          else
+            exit "$RESULT"
+          fi
+      - name: Summarize exercised operations
+        if: always()
+        env:
+          ENHANCED_JOB_STATUS: ${{ job.status }}
+        run: |
+          python ci/enhanced_evidence.py sanitize-dir stress-artifacts
+          python ci/enhanced_summary.py stress-artifacts
+      - name: Upload campaign evidence and diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: evidence-${{ matrix.campaign }}-${{ matrix.intensity }}${{ matrix.partition && format('-{0}', matrix.partition) || '' }}-seed-${{ needs.prepare.outputs.seed }}
+          path: stress-artifacts/
+          if-no-files-found: warn
+          retention-days: 14
+
+
+  persistence-campaign:
+    name: ${{ matrix.campaign }} / ${{ matrix.intensity }}${{ matrix.partition && format(' / {0}', matrix.partition) || '' }}
+    needs: [prepare, persistence_runtime]
+    if: always() && needs.prepare.result == 'success' && needs.prepare.outputs.persistence_matrix != '[]' && (github.event_name == 'schedule' || (inputs.campaign != 'browser' && inputs.campaign != 'browser-engines'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.prepare.outputs.persistence_matrix) }}
     container:
       image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
       credentials:
@@ -455,7 +574,7 @@ jobs:
           -v -s --asyncio-mode=auto --timeout=180 --tb=short
 
   browser:
-    name: browser / ${{ matrix.intensity }}
+    name: browser / ${{ matrix.intensity }}${{ inputs.campaign != 'diagnostics' && format(' / {0}', matrix.partition) || '' }}
     needs: prepare
     if: github.event_name == 'schedule' || inputs.campaign == 'all' || inputs.campaign == 'all-except-long-lifetime' || inputs.campaign == 'browser' || inputs.campaign == 'diagnostics'
     runs-on: ubuntu-latest
@@ -464,6 +583,7 @@ jobs:
       fail-fast: false
       matrix:
         intensity: ${{ fromJSON(needs.prepare.outputs.intensities) }}
+        partition: ${{ inputs.campaign == 'diagnostics' && fromJSON('["diagnostics"]') || fromJSON('["static","native"]') }}
     container:
       image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:browser-stable
       credentials:
@@ -481,6 +601,7 @@ jobs:
       EOAI_CONTAINER_IMAGE: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:browser-stable
       EOAI_EXPECTED_HA_VERSION: ${{ needs.prepare.outputs.ha_version }}
       EOAI_EXPECTED_HA_TEST_PLUGIN_VERSION: ${{ needs.prepare.outputs.ha_test_plugin_version }}
+      EOAI_BROWSER_PARTITION: ${{ inputs.campaign != 'diagnostics' && matrix.partition || '' }}
       STRESS_ARTIFACT_DIR: stress-artifacts
       ENHANCED_EXECUTION_EVIDENCE: "1"
       PYTEST_PLUGINS: ci.pytest_execution
@@ -493,11 +614,14 @@ jobs:
         if: inputs.campaign != 'diagnostics'
         env:
           GH_TOKEN: ${{ github.token }}
+          EOAI_PUBLISHED_RELEASE_TAG: ${{ needs.prepare.outputs.published_release_tag }}
+          EOAI_PUBLISHED_RELEASE_SHA: ${{ needs.prepare.outputs.published_release_sha }}
         run: |
           set -euo pipefail
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          TAG="$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/${{ github.repository }}/releases/latest" | python -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])')"
+          TAG="$EOAI_PUBLISHED_RELEASE_TAG"
           git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
+          test "$(git rev-parse "${TAG}^{commit}")" = "$EOAI_PUBLISHED_RELEASE_SHA"
           OLD_ROOT="${RUNNER_TEMP}/eoai-published-frontend"
           mkdir -p "$OLD_ROOT"
           git archive "$TAG" custom_components/extended_openai_conversation_responses/frontend | tar -x -C "$OLD_ROOT"
@@ -514,7 +638,7 @@ jobs:
         if: inputs.campaign != 'diagnostics'
         run: bash ci/reconcile_stable_environment.sh
       - name: Run long-lived browser campaign
-        if: inputs.campaign != 'diagnostics'
+        if: inputs.campaign != 'diagnostics' && matrix.partition == 'static'
         run: |
           set +e
           npx playwright test --config=playwright.stress.config.mjs > browser-raw.log 2>&1
@@ -524,7 +648,7 @@ jobs:
           cat stress-artifacts/browser.log
           exit "$RESULT"
       - name: Recheck gated stale responses and listener ownership
-        if: inputs.campaign != 'diagnostics'
+        if: inputs.campaign != 'diagnostics' && matrix.partition == 'static'
         run: >-
           python ci/run_sanitized.py stress-artifacts/browser-recheck.log --
           npx playwright test --config=playwright.config.mjs
@@ -532,14 +656,14 @@ jobs:
           tests_browser/backend-reconnect.spec.mjs
           tests_browser/management-lazy-ownership.spec.mjs
       - name: Run two tabs against one genuine HA backend
-        if: inputs.campaign != 'diagnostics'
+        if: inputs.campaign != 'diagnostics' && matrix.partition == 'native'
         run: >-
           python ci/run_sanitized.py stress-artifacts/browser-real-ha-tabs.log --
           pytest tests_stress/test_browser_multi_tab.py -v -s
           --asyncio-mode=auto --timeout=240
           --stress-seed="$STRESS_SEED" --stress-intensity="$STRESS_INTENSITY"
       - name: Run browser actions through genuine HA WebSocket schemas
-        if: inputs.campaign != 'diagnostics'
+        if: inputs.campaign != 'diagnostics' && matrix.partition == 'native'
         env:
           RUN_REAL_HA_BROWSER: "1"
           RUN_ENHANCED_MANAGEMENT_CONTRACT: "1"
@@ -581,7 +705,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: evidence-browser-${{ matrix.intensity }}-seed-${{ needs.prepare.outputs.seed }}
+          name: evidence-browser-${{ matrix.intensity }}${{ inputs.campaign != 'diagnostics' && format('-{0}', matrix.partition) || '' }}-seed-${{ needs.prepare.outputs.seed }}
           path: stress-artifacts/
           if-no-files-found: warn
           retention-days: 14
@@ -589,7 +713,7 @@ jobs:
         if: failure() || inputs.campaign == 'diagnostics'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: diagnostics-browser-${{ matrix.intensity }}-seed-${{ needs.prepare.outputs.seed }}
+          name: diagnostics-browser-${{ matrix.intensity }}${{ inputs.campaign != 'diagnostics' && format('-{0}', matrix.partition) || '' }}-seed-${{ needs.prepare.outputs.seed }}
           path: |
             playwright-report/
             test-results/
@@ -915,7 +1039,7 @@ jobs:
 
   certify:
     name: Consolidated nightly certification
-    needs: [prepare, python-campaigns, external-recorder, browser, browser-engines, ha-lifecycle-matrix, ha-lifecycle-dev]
+    needs: [prepare, python-campaigns, persistence-campaign, external-recorder, browser, browser-engines, ha-lifecycle-matrix, ha-lifecycle-dev]
     if: always() && needs.prepare.result == 'success'
     runs-on: ubuntu-latest
     steps:
