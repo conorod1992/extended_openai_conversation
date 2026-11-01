@@ -50,6 +50,32 @@ def management_function_response(value: Any, *, section: str | None = None) -> A
     if isinstance(value, dict):
         if "spec" in value and "function" in value:
             return _management_yaml_value(value)
+        if section == "function_repair" and value.get("tools") is not None:
+            tools = value["tools"]
+            value = {
+                **value,
+                "tools_yaml": tools
+                if isinstance(tools, str)
+                else dump_yaml(tools, sort_keys=False),
+            }
+        if isinstance(repair := value.get("function_repair"), dict):
+            tools = repair.get("tools")
+            if (
+                tools is not None
+                and repair.get("isolatable") is False
+                and repair.get("tools_valid") is not True
+            ):
+                # Editable source must be generated before wire tagging. Strings
+                # submitted by the YAML editor are authored data, never a codec.
+                value = {
+                    **value,
+                    "function_repair": {
+                        **repair,
+                        "tools_yaml": tools
+                        if isinstance(tools, str)
+                        else dump_yaml(tools, sort_keys=False),
+                    },
+                }
         # Portable artifacts already have their own JSON/YAML representation.
         # Applying editor tags inside them would change the exported document
         # (notably literal marker data) and disagree with its serialized JSON.
