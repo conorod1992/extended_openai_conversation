@@ -295,3 +295,32 @@ async def test_yaml_date_export_redacts_and_restores_secrets(saved_date_tool):
     # Preview must see structured secret markers even inside the YAML transport.
     prepared = transfer.inspect_transfer(document, subentry.subentry_id)
     assert prepared.redacted_sensitive_fields
+
+@pytest.mark.parametrize("number", [0.000001, 1e20, 1.25])
+async def test_exact_json_export_import_into_new_agent_preserves_numbers(
+    hass, saved_date_tool, management_message, number
+):
+    _, source = saved_date_tool
+    tools = yaml.safe_load(source.data["functions"])
+    tools[-1]["function"]["variables"] = {"number": number, "literal": "1e-06"}
+    source.data = {**source.data, "functions": yaml.safe_dump(tools)}
+    exported = await management_ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        management_message("configuration", "export", reviewed_custom=True),
+    )
+    created = await management_ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        management_message(
+            "configuration", "import", document=exported["json"], mode="new"
+        ),
+    )
+    assert created["status"] == "created"
+    imported = hass.config_entries.async_add_subentry.call_args.args[1]
+    runtime = configured_function_tools_from_data(imported.data)[-1]
+    variables = runtime["function"]["variables"].async_render(hass, {})
+    assert variables == {"number": number, "literal": "1e-06"}
+    assert type(variables["number"]) is float
