@@ -614,12 +614,14 @@ jobs:
         if: inputs.campaign != 'diagnostics'
         env:
           GH_TOKEN: ${{ github.token }}
+          EOAI_PUBLISHED_RELEASE_TAG: ${{ needs.prepare.outputs.published_release_tag }}
+          EOAI_PUBLISHED_RELEASE_SHA: ${{ needs.prepare.outputs.published_release_sha }}
         run: |
           set -euo pipefail
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          TAG="${{ needs.prepare.outputs.published_release_tag }}"
+          TAG="$EOAI_PUBLISHED_RELEASE_TAG"
           git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
-          test "$(git rev-parse "${TAG}^{commit}")" = "${{ needs.prepare.outputs.published_release_sha }}"
+          test "$(git rev-parse "${TAG}^{commit}")" = "$EOAI_PUBLISHED_RELEASE_SHA"
           OLD_ROOT="${RUNNER_TEMP}/eoai-published-frontend"
           mkdir -p "$OLD_ROOT"
           git archive "$TAG" custom_components/extended_openai_conversation_responses/frontend | tar -x -C "$OLD_ROOT"

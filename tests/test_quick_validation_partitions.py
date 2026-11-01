@@ -222,3 +222,7 @@ def test_python_steps_remain_consistent_and_only_persistence_waits():
     browser = jobs["browser"]
     assert '"static","native"' in browser["strategy"]["matrix"]["partition"]
     assert "EOAI_BROWSER_PARTITION" in browser["env"]
+    stage = next(step for step in browser["steps"] if step["name"].startswith("Stage the latest"))
+    assert stage["env"]["EOAI_PUBLISHED_RELEASE_TAG"] == "${{ needs.prepare.outputs.published_release_tag }}"
+    assert stage["env"]["EOAI_PUBLISHED_RELEASE_SHA"] == "${{ needs.prepare.outputs.published_release_sha }}"
+    assert "${{" not in stage["run"]
