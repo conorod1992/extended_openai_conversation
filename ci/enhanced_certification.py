@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 import json
 import os
 from pathlib import Path
@@ -46,6 +47,52 @@ def actual_jobs() -> dict[str, str]:
     return jobs
 
 
+def merge_lifetime_partitions(rows: list[dict]) -> dict:
+    """Join two isolated processes without relaxing any campaign obligations."""
+    assert len(rows) == 2
+    assert {row.get("lifetime_partition") for row in rows} == {
+        "reload",
+        "uninterrupted",
+    }
+    first, second = rows
+    for key in (
+        "schema",
+        "campaign",
+        "intensity",
+        "seed",
+        "eoai_sha",
+        "ha_point",
+        "ha_version",
+        "environment",
+        "environment_fingerprint",
+    ):
+        assert first.get(key) == second.get(key), key
+    assert first["campaign"] == "long-lifetime"
+    nodes = [{case["nodeid"] for case in row["execution_cases"]} for row in rows]
+    assert not nodes[0] & nodes[1], "Overlapping lifetime partitions"
+    merged = dict(first)
+    merged["lifetime_partition"] = "merged"
+    merged["status"] = (
+        "success" if all(row["status"] == "success" for row in rows) else "failure"
+    )
+    for key in ("execution_cases", "execution_runs", "artifact_files"):
+        merged[key] = [value for row in rows for value in row.get(key, [])]
+    for key in ("measured_totals", "trace_outcomes"):
+        total = Counter()
+        for row in rows:
+            values = row.get(key, {})
+            # Addition must not turn a malformed boolean into a valid integer
+            # before the ordinary execution-contract metric checks see it.
+            assert all(
+                isinstance(value, (int, float)) and not isinstance(value, bool)
+                for value in values.values()
+            ), key
+            total.update(values)
+        merged[key] = dict(total)
+    merged["tests_traced"] = sum(row.get("tests_traced", 0) for row in rows)
+    return merged
+
+
 def main(root: Path) -> int:
     candidate_sha = os.environ.get("ENHANCED_CANDIDATE_SHA", "unknown")
     expected_stable = os.environ.get("ENHANCED_EXPECTED_STABLE_HA_VERSION")
@@ -85,13 +132,21 @@ def main(root: Path) -> int:
         }
     found = {}
     artifact_names = {}
+    partitioned = {}
     for path in root.rglob("certification.json"):
         item = json.loads(path.read_text(encoding="utf-8"))
         assert item["schema"] == SCHEMA, path
         key = (item["campaign"], item["intensity"], item.get("ha_point"))
+        if item.get("lifetime_partition"):
+            partitioned.setdefault(key, []).append(item)
+            artifact_names[key] = "isolated lifetime partitions"
+            continue
         assert key not in found, key
         found[key] = item
         artifact_names[key] = path.parent.name
+    for key, rows in partitioned.items():
+        assert key not in found, key
+        found[key] = merge_lifetime_partitions(rows)
     full_programme = (
         selected == "all"
         and set(campaigns) == set(CAMPAIGNS)
@@ -133,6 +188,14 @@ def main(root: Path) -> int:
             else f"{'browser' if campaign == 'browser-diagnostics' else campaign} / {intensity}"
         )
         actual = conclusions.get(job_name, "unverified")
+        if item and item.get("lifetime_partition") == "merged":
+            partition_results = [
+                conclusions.get(f"{job_name} / {partition}", "unverified")
+                for partition in ("reload", "uninterrupted")
+            ]
+            actual = (
+                "success" if partition_results == ["success", "success"] else "failure"
+            )
         status = (
             "success"
             if item and item.get("status") == "success" and actual == "success"

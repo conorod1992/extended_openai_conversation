@@ -36,19 +36,36 @@ def _driver(monkeypatch, tmp_path):
 
 @pytest.mark.parametrize("mode", ["full", "quick"])
 @pytest.mark.parametrize("failed", [False, True])
-def test_validation_mode_dispatches_expected_inventory(monkeypatch, tmp_path, mode, failed):
+def test_validation_mode_dispatches_expected_inventory(
+    monkeypatch, tmp_path, mode, failed
+):
     monkeypatch.setenv("FULL_VALIDATION_MODE", mode)
     driver = _driver(monkeypatch, tmp_path)
     original = deepcopy(driver.TEST_WORKFLOWS)
     monkeypatch.setattr(driver, "api", Mock())
-    dispatch = Mock(side_effect=lambda workflow, inputs: {
-        "workflow": workflow, "run_id": dispatch.call_count, "url": "https://example.test/run",
-    })
+    dispatch = Mock(
+        side_effect=lambda workflow, inputs: {
+            "workflow": workflow,
+            "run_id": dispatch.call_count,
+            "url": "https://example.test/run",
+        }
+    )
     monkeypatch.setattr(driver, "dispatch", dispatch)
-    monkeypatch.setattr(driver, "wait_for_workflows", lambda items: [
-        (item, {"conclusion": "failure" if failed and item["workflow"] == "ci.yml" else "success"})
-        for item in items
-    ])
+    monkeypatch.setattr(
+        driver,
+        "wait_for_workflows",
+        lambda items: [
+            (
+                item,
+                {
+                    "conclusion": "failure"
+                    if failed and item["workflow"] == "ci.yml"
+                    else "success"
+                },
+            )
+            for item in items
+        ],
+    )
     programme = Mock(return_value={"candidate_sha": driver.TARGET_SHA})
     monkeypatch.setattr(driver, "programme_inputs", programme)
     monkeypatch.chdir(tmp_path)
@@ -170,7 +187,9 @@ def test_full_validation_includes_specialists_and_accounts_for_all_workflows():
     }
     ios = (root / ".github/workflows/ios-companion-app.yml").read_text()
     assert "workflow_dispatch:" in ios
-    assert "schedule:" not in ios
+    # Default-branch cache warming coexists with candidate-bound manual runs.
+    assert 'cron: "35 5 * * 1,4"' in ios
+    assert "branches: [develop]" in ios
     assert "pull_request:" not in ios
     assert {
         "android-companion-app.yml",

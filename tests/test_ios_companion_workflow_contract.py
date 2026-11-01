@@ -40,10 +40,18 @@ def test_ios_companion_workflow_pins_upstream_source_and_exact_candidate():
     assert "rev-parse HEAD" in clone
 
 
-def test_ios_companion_workflow_requires_explicit_dispatch():
+def test_ios_companion_workflow_warms_default_branch_without_pr_builds():
     data = _workflow()
     triggers = data.get("on", data.get(True))
-    assert triggers == {"workflow_dispatch": None}
+    assert set(triggers) == {"workflow_dispatch", "push", "schedule"}
+    assert triggers["push"] == {
+        "branches": ["develop"],
+        "paths": [
+            ".github/workflows/ios-companion-app.yml",
+            "ci/patch_ios_companion_e2e.py",
+        ],
+    }
+    assert triggers["schedule"] == [{"cron": "35 5 * * 1,4"}]
     assert "if" not in data["jobs"]["companion"]
 
 
@@ -103,14 +111,21 @@ def test_ios_companion_caches_expensive_build_state_across_retries():
         step for step in steps if step.get("name") == "Restore iOS DerivedData cache"
     )
     assert restore_derived["uses"].startswith("actions/cache/restore@")
-    assert "IOS_SOURCE_SHA" in restore_derived["with"]["key"]
+    assert "IOS_BUILD_CACHE_ID" in restore_derived["with"]["key"]
     assert "github.sha" not in restore_derived["with"]["key"]
 
     restore_gems = next(
         step for step in steps if step.get("name") == "Restore Bundler cache"
     )
     assert restore_gems["uses"].startswith("actions/cache/restore@")
-    assert "IOS_SOURCE_SHA" in restore_gems["with"]["key"]
+    assert "IOS_BUILD_CACHE_ID" in restore_gems["with"]["key"]
+    identity = next(
+        step["run"]
+        for step in steps
+        if step.get("name") == "Resolve exact native build cache identity"
+    )
+    assert 'os.environ["IOS_SOURCE_SHA"]' in identity
+    assert "patch_ios_companion_e2e.py" in identity
 
     save_derived = next(
         step for step in steps if step.get("name") == "Save iOS DerivedData cache"

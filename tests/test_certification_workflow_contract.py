@@ -114,9 +114,16 @@ def test_enhanced_dispatch_can_run_the_scheduled_intensity_matrix():
     assert "python ci/actions_schedule.py" in controls["run"]
     assert '--intensity "$INTENSITY"' in controls["run"]
     assert '--schedule "$RUN_SCHEDULE"' in controls["run"]
-    exclusion = jobs["python-campaigns"]["strategy"]["matrix"]["exclude"]
-    assert "github.event_name == 'schedule'" in exclusion
-    assert '{"campaign":"long-lifetime","intensity":"heavy"}' in exclusion
+    from ci.actions_schedule import ENHANCED_WEEKLY, enhanced_plan, python_matrix
+
+    assert jobs["python-campaigns"]["strategy"]["matrix"]["include"] == (
+        "${{ fromJSON(needs.prepare.outputs.python_matrix) }}"
+    )
+    weekly = python_matrix(enhanced_plan("schedule", ENHANCED_WEEKLY), scheduled=True)
+    lifetime = [row for row in weekly if row["campaign"] == "long-lifetime"]
+    assert {(row["intensity"], row["partition"]) for row in lifetime} == {
+        ("normal", "reload"), ("normal", "uninterrupted")
+    }
 
 
 def test_all_except_long_lifetime_includes_every_supplementary_lane():

@@ -64,6 +64,19 @@ def enhanced_plan(
     }
 
 
+def python_matrix(plan: dict, *, scheduled: bool) -> list[dict]:
+    """Keep lifetime processes on separate runners at the original intensity."""
+    return [
+        {"campaign": campaign, "intensity": intensity, "partition": partition}
+        for campaign in plan["campaigns"]
+        for intensity in plan["intensities"]
+        if not (scheduled and campaign == "long-lifetime" and intensity == "heavy")
+        for partition in (
+            ("reload", "uninterrupted") if campaign == "long-lifetime" else ("",)
+        )
+    ]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--event", required=True)
@@ -71,9 +84,9 @@ def main() -> None:
     parser.add_argument("--campaign", default="all")
     parser.add_argument("--intensity", default="normal")
     args = parser.parse_args()
-    for key, value in enhanced_plan(
-        args.event, args.schedule, args.campaign, args.intensity
-    ).items():
+    plan = enhanced_plan(args.event, args.schedule, args.campaign, args.intensity)
+    plan["python_matrix"] = python_matrix(plan, scheduled=args.event == "schedule")
+    for key, value in plan.items():
         print(key + "=" + json.dumps(value, separators=(",", ":")))
 
 

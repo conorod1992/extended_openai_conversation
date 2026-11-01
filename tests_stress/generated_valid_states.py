@@ -19,6 +19,8 @@ from typing import Any
 from custom_components.extended_openai_conversation_responses import agent_config, const
 from custom_components.extended_openai_conversation_responses.model_capabilities import (
     ModelCapabilityError,
+    get_model_capabilities,
+    model_capability_snapshot,
     select_api_path,
 )
 from custom_components.extended_openai_conversation_responses.model_catalog import (
@@ -217,13 +219,16 @@ def _valid(state: dict[str, Any]) -> tuple[bool, str]:
             if profile == "recommended"
             else profile
         )
-        select_api_path(
-            model,
-            state["api_mode"],
-            True,  # Every generated fresh conversation exposes its lifecycle tool.
-            effort,
-            state["web_search"],
-        )
+        # Keep authoritative metadata isolated while avoiding repeated deep copies
+        # inside this one capability decision. Never cache across generations.
+        with model_capability_snapshot(model, get_model_capabilities(model)):
+            select_api_path(
+                model,
+                state["api_mode"],
+                True,  # Every generated fresh conversation exposes its lifecycle tool.
+                effort,
+                state["web_search"],
+            )
         normalized_state(state)
     except (
         agent_config.AgentConfigError,
@@ -336,6 +341,12 @@ def generate(seed: int, *, heavy: bool, budget: int | None = None) -> CoveringSu
             index.setdefault(tuple(cap[key] for key in key_set), []).append(cap)
     timings["capability_index_seconds"] = perf_counter() - phase_started
     phase_started = perf_counter()
+    # Preserve the first production rejection for each projection, exactly as
+    # the previous linear search did, without rescanning all rejected states.
+    rejection_index = {key_set: {} for key_set in capability_key_sets}
+    for cap, reason in capability_rejected:
+        for key_set, index in rejection_index.items():
+            index.setdefault(tuple(cap[key] for key in key_set), reason)
     for keys in keys_to_cover:
         for values in product(*(DIMENSIONS[key] for key in keys)):
             obligation = tuple(zip(keys, values, strict=True))
@@ -360,13 +371,8 @@ def generate(seed: int, *, heavy: bool, budget: int | None = None) -> CoveringSu
                 candidates[json.dumps(witness, sort_keys=True)] = witness
             else:
                 if rejected_reason is None:
-                    rejected_reason = next(
-                        (
-                            reason
-                            for cap, reason in capability_rejected
-                            if all(fixed[key] == cap[key] for key in keys if key in cap)
-                        ),
-                        "no production-valid capability completion",
+                    rejected_reason = rejection_index[compatible_keys].get(
+                        compatible_values, "no production-valid capability completion"
                     )
                 reason = rejected_reason
                 excluded[reason] = excluded.get(reason, 0) + 1

@@ -45,6 +45,7 @@ jobs:
       seed: ${{ steps.seed.outputs.seed }}
       intensities: ${{ steps.seed.outputs.intensities }}
       campaigns: ${{ steps.seed.outputs.campaigns }}
+      python_matrix: ${{ steps.seed.outputs.python_matrix }}
       ha_version: ${{ steps.ha.outputs.version }}
       ha_test_plugin_version: ${{ steps.ha.outputs.plugin_version }}
       published_release_tag: ${{ steps.release.outputs.tag }}
@@ -201,7 +202,7 @@ jobs:
           echo "Historical runtime ready; current candidate runtime remains separate." >> "$GITHUB_STEP_SUMMARY"
 
   python-campaigns:
-    name: ${{ matrix.campaign }} / ${{ matrix.intensity }}
+    name: ${{ matrix.campaign }} / ${{ matrix.intensity }}${{ matrix.partition && format(' / {0}', matrix.partition) || '' }}
     needs: [prepare, persistence_runtime]
     if: always() && needs.prepare.result == 'success' && (github.event_name == 'schedule' || (inputs.campaign != 'browser' && inputs.campaign != 'browser-engines'))
     runs-on: ubuntu-latest
@@ -209,10 +210,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        campaign: ${{ fromJSON(needs.prepare.outputs.campaigns) }}
-        intensity: ${{ fromJSON(needs.prepare.outputs.intensities) }}
-        # Run elapsed/idle/expiry coverage once per nightly, at normal intensity.
-        exclude: ${{ github.event_name == 'schedule' && fromJSON('[{"campaign":"long-lifetime","intensity":"heavy"}]') || fromJSON('[]') }}
+        include: ${{ fromJSON(needs.prepare.outputs.python_matrix) }}
     container:
       image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
       credentials:
@@ -226,6 +224,7 @@ jobs:
       STRESS_SEED: ${{ needs.prepare.outputs.seed }}
       STRESS_INTENSITY: ${{ matrix.intensity }}
       STRESS_CAMPAIGN: ${{ matrix.campaign }}
+      EOAI_LIFETIME_PARTITION: ${{ matrix.partition }}
       EOAI_CONTAINER_IMAGE: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
       EOAI_EXPECTED_HA_VERSION: ${{ needs.prepare.outputs.ha_version }}
       EOAI_EXPECTED_HA_TEST_PLUGIN_VERSION: ${{ needs.prepare.outputs.ha_test_plugin_version }}
@@ -384,7 +383,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: evidence-${{ matrix.campaign }}-${{ matrix.intensity }}-seed-${{ needs.prepare.outputs.seed }}
+          name: evidence-${{ matrix.campaign }}-${{ matrix.intensity }}${{ matrix.partition && format('-{0}', matrix.partition) || '' }}-seed-${{ needs.prepare.outputs.seed }}
           path: stress-artifacts/
           if-no-files-found: warn
           retention-days: 14
