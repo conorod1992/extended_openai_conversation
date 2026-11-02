@@ -631,7 +631,12 @@ async def _rollback_transaction(
 ) -> None:
     """Durably return every category to the pre-restore snapshot."""
     await _apply_prepared(managers, rollback)
-    reset_restored_runtime(hass, entry.entry_id, subentry.subentry_id, managers)
+    # The exclusive transaction restored this same agent's pre-restore Archive.
+    # Retain only live identities verified by those restored bindings; portable
+    # target replacement must still use its separate reset policy.
+    reset_restored_runtime(
+        hass, entry.entry_id, subentry.subentry_id, managers, preserve_continuity=True
+    )
     await _update_configuration(hass, entry, subentry, rollback)
     await store.async_remove()
 
@@ -670,7 +675,12 @@ async def _recover_failed_apply(
 
 
 async def _async_restore_backup_recoverably(
-    hass: HomeAssistant, entry: Any, subentry: Any, value: Any
+    hass: HomeAssistant,
+    entry: Any,
+    subentry: Any,
+    value: Any,
+    *,
+    provider_data: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Restore one agent with a durable cross-category commit decision.
 
@@ -702,6 +712,19 @@ async def _async_restore_backup_recoverably(
             prepared, _preview = await async_materialize_restore(
                 hass, entry, subentry, value, current_snapshot=rollback
             )
+        from .request import validate_runtime_readiness
+
+        try:
+            validate_runtime_readiness(
+                prepared.config,
+                provider_data
+                if provider_data is not None
+                else getattr(entry, "data", {}),
+            )
+        except HomeAssistantError as err:
+            raise backup.BackupError(
+                f"Restored request is not runtime-ready: {err}"
+            ) from err
         journal = await asyncio.to_thread(
             _new_journal, entry_id, subentry_id, prepared, rollback
         )
@@ -818,7 +841,13 @@ async def _async_recover_pending_restore(
         try:
             managers = await _recovery_managers(hass, entry_id, subentry_id, selected)
             await _apply_prepared(managers, selected)
-            reset_restored_runtime(hass, entry_id, subentry_id, managers)
+            reset_restored_runtime(
+                hass,
+                entry_id,
+                subentry_id,
+                managers,
+                preserve_continuity=journal["phase"] != _PHASE_COMMITTED,
+            )
             await _update_configuration(hass, entry, subentry, selected)
             await store.async_remove()
         except Exception as err:
@@ -892,14 +921,21 @@ async def _async_recovery_operation[T](
 
 
 async def async_restore_backup_recoverably(
-    hass: HomeAssistant, entry: Any, subentry: Any, value: Any
+    hass: HomeAssistant,
+    entry: Any,
+    subentry: Any,
+    value: Any,
+    *,
+    provider_data: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Restore with exclusive ownership and quarantine any unresolved journal."""
     result = await _async_recovery_operation(
         hass,
         entry,
         subentry,
-        lambda: _async_restore_backup_recoverably(hass, entry, subentry, value),
+        lambda: _async_restore_backup_recoverably(
+            hass, entry, subentry, value, provider_data=provider_data
+        ),
         quarantine_on_entry=False,
     )
     await async_finish_restore_reload(hass, entry, subentry)

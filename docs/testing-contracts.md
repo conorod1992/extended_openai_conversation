@@ -34,6 +34,23 @@ The nightly `memory-knowledge` campaign adds 300 operations (1,200 at heavy inte
 
 ## Provider boundary and test sensitivity
 
+`tests/test_runtime_readiness.py` asserts that an accepted save reaches the actual
+initial provider request. It covers provider/API combinations, the Azure Chat
+tool boundary, Conditional finalization, Group loading, generated and provider-owned
+tools, YAML schema values, quarantined legacy definitions, availability mutations,
+imports, duplication and restoration. A genuine HA Script/service probe preserves
+typed YAML values in backend payloads while provider-facing schemas require JSON.
+
+`request.validate_runtime_readiness` is the pure mutation-boundary contract layered
+on existing configuration preparation. It reuses request capability resolution,
+Function Group assembly, integration tool generation, finalizer insertion and the
+runtime tool-count guard. It checks the guaranteed initial request with no loaded
+Groups or request-specific discovery, installed Skills, retained-data scopes or
+Knowledge catalogue. Those dynamic capabilities remain subject to runtime checks.
+Repair-owned definitions use the same usable projection as runtime; their raw
+payloads remain available for repair. New restores validate before journal creation;
+replaying an existing recovery journal retains its original recovery contract.
+
 `tests_real_ha/test_provider_boundary_contracts.py` keeps HA dispatch and the real OpenAI SDK. A strict HTTP fixture checks serialized Chat Completions and Responses histories against an independent call/result oracle. It rejects incomplete, duplicate and orphan exchanges and unsupported Function schemas, and requires attachment bytes in every historical request. Violations are recorded separately so an integration error handler cannot hide a failed protocol assertion.
 
 The journeys combine corrected pre-dispatch arguments with a one-execution budget, an executed action followed by a lost continuation and equivalent replay, text-only production plus diagnostic requests, and historical image/PDF follow-ups. The attachment journey uses Core's AI Task entity interface with a retained ChatSession: the public AI Task action creates a new session and does not itself expose a conversation ID parameter. Text-only capability expectations come from the fixture, not EOAI's catalogue.
@@ -98,6 +115,40 @@ acceptance is required by these deterministic checks.
 
 
 ## PR regressions and Enhanced certification scope
+
+The Function representation corpus in `tests/fixtures/function_configuration_representations.json`
+is shared by dependency, migration, serialized restore and journal-recovery checks.
+It distinguishes legacy raw empty values from explicitly empty serialized
+collections, preserves typed backend values and disabled definitions, and retains
+quarantined siblings unchanged. Repeated startup must be idempotent, keep healthy
+siblings usable, and never silently enable an unavailable capability. Unsupported
+data does not authorize replacement; unrelated programming, I/O and cancellation
+failures still propagate. The native process-crash journey also checks quarantine
+and healthy-sibling operation after recovery and another clean restart.
+
+Mutation wire tests serialize actual backend results and feed them to production
+JavaScript acknowledgement consumers, including Function, Group and Rule deletion.
+Rejection requires evidence that no write
+committed; missing/malformed responses and transport loss remain uncertain.
+Confirmed commitment retires only its submitted draft before presentation and
+refresh, including committed responses carrying warnings or partial outcomes.
+An uncertain configuration import consumes its preview but retains source text;
+another preview requires an authoritative assistant-list refresh. These checks
+extend existing owner and acknowledgement helpers rather than adding a global
+transaction coordinator.
+
+Broadcast retry tests drop the actual queue acknowledgement, retry its immutable
+operation identity, and assert a single admission. They cover payload/caller
+binding, bounded capacity without eviction of live receipts, expiry and server
+replacement, authorization changes, cancellation, and failures after insertion.
+Uncertain attempts survive snapshot refresh; edits and revoked authentication
+lifetimes require explicit new-send confirmation. Fresh sends obtain a current
+server retry window without renewing an uncertain predecessor; failed preparation
+does not count as a dispatched send. Real-browser disclosure/rebind
+journeys preserve Rule Sharing files, review and export choices, and initialization
+failure remains retryable. Already-open mounted disclosures initialize without
+needing another toggle. These journeys are registered in the nightly browser
+execution inventory in addition to PR smoke collection.
 
 PR lint runs the nightly selection and execution-catalog guards without Home
 Assistant fixtures. A new real-HA file must be selected by Enhanced or explicitly

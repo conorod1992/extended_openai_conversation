@@ -568,7 +568,7 @@ def _journal_fixture(monkeypatch):
     store = MemoryJournalStore()
     monkeypatch.setattr(restore_recovery, "_journal_store", lambda *_: store)
     monkeypatch.setattr(restore_recovery, "_async_persist_config_entries", AsyncMock())
-    monkeypatch.setattr(restore_recovery, "reset_restored_runtime", lambda *_: None)
+    monkeypatch.setattr(restore_recovery, "reset_restored_runtime", lambda *_, **__: None)
 
 
 def _minimal_document() -> dict:

@@ -5,6 +5,9 @@ import {devices} from "@playwright/test";
 // Heavy campaigns remain exclusive to *.stress.mjs; these existing smoke
 // journeys also close the nightly interaction inventory at negligible cost.
 export const nightlyInteractionSpecs = [
+  "broadcast-retry.spec.mjs",
+  "configuration-import-uncertain.spec.mjs",
+  "request-rule-sharing-retained.spec.mjs",
   "overview-broadcast-lazy.spec.mjs",
   "management-crud.spec.mjs",
   "native-yaml-editor-crud.spec.mjs",

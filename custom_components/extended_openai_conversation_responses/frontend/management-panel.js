@@ -1174,15 +1174,19 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     return this._serviceCatalogPromise;
   }
 
-  async _loadAgents(selectedId = null, owner = null, selectionIntent = null) {
+  async _loadAgents(selectedId = null, owner = null, selectionIntent = null, {preserveAuthoringOnFailure = false} = {}) {
     const context=captureCatalogLoad(this,owner,selectionIntent);
     this._markColdLifecycle("agents-start");
     try {
       await loadAgentsWithOverviewPrefetch(this, selectedId, owner, context);
       restorePanelDrafts(this);
       this._markColdLifecycle("agents-complete", {status: "fulfilled"});
+      return context.acceptedRead || null;
     } catch (err) {
       this._markColdLifecycle("agents-complete", {status: "rejected"});
+      // Import recovery keeps an unsubmitted source visible while its next
+      // preview remains blocked. Let that caller present the failed read.
+      if (preserveAuthoringOnFailure) throw err;
       if (!catalogFailureIsCurrent(this,context)) return;
       // Failed catalogue reads cannot validate the owner of a mounted editor.
       // Close it so the failure can render and stale drafts cannot be submitted.
@@ -1192,6 +1196,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._busy = false;
       this._error = err.message || String(err);
       this._render();
+      return null;
     }
   }
 

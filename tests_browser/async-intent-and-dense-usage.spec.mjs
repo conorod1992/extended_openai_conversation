@@ -10,7 +10,7 @@ for (const failure of [false,true]) test(`Broadcast preserves new drafts and pen
   await panel.evaluate(async host => {
     const original=host._hass.callWS.bind(host._hass);
     host._hass={...host._hass,callWS:async message=>{
-      if(message.type?.endsWith("/broadcast")&&message.action==="snapshot") return {enabled:true,can_manage:true,catalog:{satellites:[{id:"satellite.one",name:"Kitchen",state:"idle"}],areas:[]},history:[]};
+      if(message.type?.endsWith("/broadcast")&&message.action==="snapshot") return {enabled:true,can_manage:true,retry_token:"fixture-window",catalog:{satellites:[{id:"satellite.one",name:"Kitchen",state:"idle"}],areas:[]},history:[]};
       if(message.type?.endsWith("/broadcast")&&message.action==="send") {host._testSendCount=(host._testSendCount||0)+1;return new Promise((resolve,reject)=>{host._releaseSend=resolve;host._rejectSend=reject;});}
       return original(message);
     }};
@@ -23,7 +23,7 @@ for (const failure of [false,true]) test(`Broadcast preserves new drafts and pen
   await panel.locator("#broadcast-message").fill("New draft");
   await panel.locator('input[value="whole"]').check();await expect(panel.locator("#broadcast-send")).toBeDisabled();
   await panel.locator("#broadcast-refresh").click();await expect(panel.locator("#broadcast-send")).toBeDisabled();
-  await panel.evaluate((host,failure)=>failure?host._rejectSend(new Error("controlled send failure")):host._releaseSend({}),failure);
+  await panel.evaluate((host,failure)=>failure?host._rejectSend(new Error("controlled send failure")):host._releaseSend({id:"broadcast-1",targets:["satellite.one"],deliveries:{"satellite.one":{status:"queued_idle"}}}),failure);
   await expect(panel.locator("#broadcast-send")).toBeEnabled();await expect(panel.locator("#broadcast-message")).toHaveValue("New draft");
   expect(await panel.evaluate(host=>host._testSendCount)).toBe(1);
   await expectHarnessClean(page,errors);

@@ -13,7 +13,7 @@ from homeassistant.exceptions import HomeAssistantError
 
 from .const import DOMAIN
 from .ha_schema import websocket_command as ha_websocket_command
-from .intercom import async_get_intercom
+from .intercom import BroadcastMessageSnapshot, BroadcastRetryError, async_get_intercom
 
 WS_BROADCAST = f"{DOMAIN}/broadcast"
 _SETUP_KEY = f"{DOMAIN}.broadcast_api_setup"
@@ -27,6 +27,7 @@ _SETUP_KEY = f"{DOMAIN}.broadcast_api_setup"
         vol.Optional("whole_home"): bool,
         vol.Optional("entity_ids"): [str],
         vol.Optional("enabled"): bool,
+        vol.Optional("operation_id"): vol.All(str, vol.Length(max=112)),
     }
 )
 @websocket_api.async_response
@@ -55,7 +56,9 @@ async def websocket_broadcast(
                 }
                 catalog = manager.catalog(entity_ids=readable)
 
-                def visible(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+                def visible(
+                    items: list[BroadcastMessageSnapshot],
+                ) -> list[BroadcastMessageSnapshot]:
                     return [
                         {**item, "origin_device_id": None}
                         for item in items
@@ -66,8 +69,8 @@ async def websocket_broadcast(
                             for entity_id in item.get("deliveries", {})
                         )
                         and (
-                            not item.get("origin_entity_id")
-                            or can_read(item["origin_entity_id"])
+                            not (origin := item.get("origin_entity_id"))
+                            or can_read(origin)
                         )
                     ]
 
@@ -80,6 +83,7 @@ async def websocket_broadcast(
                     "catalog": catalog,
                     "history": history,
                     "pending": pending,
+                    "retry_token": manager.retry_token(),
                 },
             )
             return
@@ -106,6 +110,16 @@ async def websocket_broadcast(
 
         # Queue admission owns target authorization for this HA caller.
         context = connection.context(msg)
+        if "operation_id" in msg:
+            result = await manager.async_send_once(
+                message,
+                operation_id=msg["operation_id"],
+                whole_home=whole_home,
+                entity_ids=entity_ids,
+                context=context,
+            )
+            connection.send_result(msg["id"], result)
+            return
         result = await manager.async_send(
             message,
             whole_home=whole_home,
@@ -114,6 +128,8 @@ async def websocket_broadcast(
             context=context,
         )
         connection.send_result(msg["id"], result)
+    except BroadcastRetryError as err:
+        connection.send_error(msg["id"], err.code, str(err))
     except (HomeAssistantError, ValueError) as err:
         connection.send_error(msg["id"], "invalid_request", str(err))
 

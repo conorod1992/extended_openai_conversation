@@ -137,7 +137,8 @@ from .request import (
     auxiliary_output_token_limit,
     build_provider_request_snapshot,
     format_function_tools,
-    provider_tool_limit,
+    request_function_tools as provider_request_function_tools,
+    validate_provider_tool_count,
 )
 from .request_static_cache import cached_format_tools
 from .resource_limits import MAX_ATTACHMENT_COUNT, read_bounded_local_file
@@ -979,19 +980,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         if tool.get("function", {}).get("type")
                         == "function_group_loader"
                     ]
-                if conditional_continue and any(
-                    tool["spec"]["name"] == CONTINUE_CONVERSATION_TOOL_NAME
-                    for tool in request_function_tools
-                ):
-                    raise HomeAssistantError(
-                        f"Function tool name `{CONTINUE_CONVERSATION_TOOL_NAME}` is "
-                        "reserved for Conditional continue conversation mode"
-                    )
                 formatted_function_tools = _format_tools(
-                    [
-                        *request_function_tools,
-                        *([CONTINUE_CONVERSATION_TOOL] if conditional_continue else []),
-                    ],
+                    provider_request_function_tools(
+                        request_function_tools,
+                        conditional_continue=conditional_continue,
+                    ),
                     api_mode,
                 )
                 allowed_web_search = (
@@ -1008,13 +1001,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     else formatted_function_tools
                 )
                 tool_kwargs: dict[str, Any] = {}
-                limit = provider_tool_limit(
-                    getattr(self.entry, "data", {}).get("api_provider"), api_mode
+                validate_provider_tool_count(
+                    len(tools),
+                    getattr(self.entry, "data", {}).get("api_provider"),
+                    api_mode,
                 )
-                if limit is not None and len(tools) > limit:
-                    raise HomeAssistantError(
-                        f"Provider request exceeds the {limit}-tool limit"
-                    )
                 if tools:
                     tool_kwargs["tools"] = tools
                     tool_kwargs["tool_choice"] = (

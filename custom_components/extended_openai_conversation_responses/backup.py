@@ -61,6 +61,7 @@ from .temporary_memory import (
     async_get_temporary_memory,
 )
 from .usage import UsageManager, UsageRequest, UsageRun, UsageTotals, async_get_usage
+from .yaml_serialization import load_yaml_or_json
 
 type ValidatedUsage = tuple[
     UsageTotals, dict[str, dict[str, Any]], list[UsageRequest], list[UsageRun]
@@ -167,7 +168,9 @@ def _configuration_snapshot_preserving_quarantine(
             return agent_config_snapshot(value, preparsed_function_tools=decoded)
         if persisted_source and not decoded:
             return normalize_persisted_agent_config(value)
-        return normalize_agent_config(value)
+        # A backup is also a repair path for older inactive Skill selections.
+        # All other scalar, Function and permission validation remains strict.
+        return normalize_agent_config(value, allow_unavailable_skills=True)
 
     try:
         snapshot = normalize(known)
@@ -193,7 +196,7 @@ def _configuration_snapshot_preserving_quarantine(
                 if frontend_shape and isinstance(snapshot[key], str):
                     # Redaction must see mappings, including quarantined siblings.
                     try:
-                        snapshot[key] = yaml.safe_load(snapshot[key])
+                        snapshot[key] = load_yaml_or_json(snapshot[key])
                     except yaml.YAMLError as err:
                         raise BackupError(
                             "Repair malformed Function YAML before exporting configuration"

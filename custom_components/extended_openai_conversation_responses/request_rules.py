@@ -3292,11 +3292,9 @@ def validate_routed_request_options(
     options: Mapping[str, Any], entry_data: Mapping[str, Any]
 ) -> None:
     """Validate the complete Conversation request selected by a route."""
-    from .request import build_provider_request_snapshot, conversation_tools_required
+    from .request import validate_runtime_readiness
 
-    build_provider_request_snapshot(
-        options, entry_data, tools_required=conversation_tools_required(options)
-    )
+    validate_runtime_readiness(options, entry_data)
 
 
 def validate_rule_model_request(

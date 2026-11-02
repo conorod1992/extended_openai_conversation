@@ -3,10 +3,19 @@ import {
   apiModeConsequence,
   dependencyGuidance,
   hybridMemoryGuidance,
+  skillLoaderConflict,
   modelParameterGuidance,
   webSearchConflict,
   webSearchDetailConsequence,
 } from "../custom_components/extended_openai_conversation_responses/frontend/management-configuration-guidance.js";
+
+const skills = skillLoaderConflict({skills:["heating"]}, {skills:{available:false,
+  message:"The load_skill Function Tool is disabled.", repair:"Enable it explicitly or clear the Skill selection."}});
+assert.equal(skills.title, "Selected Skills are inactive");
+assert.match(skills.text, /disabled.*explicitly/);
+assert.equal(skills.action.subsection, "functions");
+assert.equal(skillLoaderConflict({skills:[]}, {skills:{available:false}}), null);
+assert.equal(skillLoaderConflict({skills:["heating"]}, {skills:{available:true}}), null);
 
 assert.match(
   dependencyGuidance("conversation_continuity", {conversation_continuity: "ha_default"}).text,

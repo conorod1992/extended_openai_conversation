@@ -6,8 +6,6 @@ from collections.abc import Mapping
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
-import yaml
-
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
@@ -54,13 +52,14 @@ from .model_catalog_manager import DATA_MANAGER
 from .request import build_provider_request_snapshot, conversation_tools_required
 from .temporary_memory import async_get_temporary_memory
 from .usage import async_get_usage
+from .yaml_serialization import load_yaml_or_json
 
 
 def _configured_function_tools(data: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Parse configured tools with the same missing-value fallback as execution."""
     function_tools_config = data.get(CONF_FUNCTION_TOOLS)
     return validate_function_tools(
-        yaml.safe_load(function_tools_config)
+        load_yaml_or_json(function_tools_config)
         if function_tools_config
         else DEFAULT_CONF_FUNCTION_TOOLS
     )

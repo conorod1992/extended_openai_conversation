@@ -176,6 +176,7 @@ from .const import (
 )
 from .function_execution import (
     validate_function_schema,
+    validate_provider_spec,
     validate_strict_function_schema,
 )
 from .function_tool_policy import (
@@ -183,6 +184,7 @@ from .function_tool_policy import (
     NATIVE_FUNCTION_IMPLEMENTATIONS,
     RESERVED_FUNCTION_TOOL_NAMES,
 )
+from .function_yaml import contains_yaml_types
 from .functions import FUNCTIONS, get_function
 from .functions.base import copy_runtime_function_config
 from .ha_llm_tools import is_ha_tool, reference_key, validate_reference
@@ -196,8 +198,8 @@ from .local_intents import (
     DEFAULT_LOCAL_INTENTS_ENABLED,
 )
 from .memory import get_memory_mode
-from .skill_availability import skill_loader_status
-from .yaml_serialization import dump_yaml
+from .skill_availability import preserves_skill_loader_availability, skill_loader_status
+from .yaml_serialization import dump_yaml, load_yaml_or_json
 
 CONF_GUEST_WEB_SEARCH = "guest_web_search"
 DEFAULT_GUEST_WEB_SEARCH = False
@@ -510,7 +512,7 @@ def validate_function_tools(value: Any) -> list[dict[str, Any]]:
     """Parse and validate function tools without executing them."""
     if isinstance(value, str):
         try:
-            value = yaml.safe_load(value)
+            value = load_yaml_or_json(value)
         except yaml.YAMLError as err:
             raise AgentConfigError(CONF_FUNCTION_TOOLS, f"invalid YAML: {err}") from err
     if value is None:
@@ -591,6 +593,11 @@ def validate_function_tools(value: Any) -> list[dict[str, Any]]:
         if not isinstance(parameters, dict):
             raise AgentConfigError(f"{field}.spec.parameters", "must be an object")
         try:
+            validate_provider_spec(spec, f"{field}.spec")
+        except HomeAssistantError as err:
+            message = str(err).removeprefix("Function input schema is invalid: ")
+            raise AgentConfigError(f"{field}.spec", message) from err
+        try:
             validate_function_schema(parameters)
             if strict:
                 validate_strict_function_schema(parameters)
@@ -629,7 +636,7 @@ def function_tool_enabled(tool: dict[str, Any]) -> bool:
 @lru_cache(maxsize=64)
 def _decoded_function_tools(raw_yaml: str) -> Any:
     """Cache pure decoding separately from HA-aware validation/hydration."""
-    return yaml.safe_load(raw_yaml)
+    return load_yaml_or_json(raw_yaml)
 
 
 async def async_prepare_runtime_function_tools(
@@ -798,7 +805,7 @@ def validate_single_function_tool(value: Any) -> dict[str, Any]:
     """Parse and validate one function tool from a clean editor document."""
     if isinstance(value, str):
         try:
-            value = yaml.safe_load(value)
+            value = load_yaml_or_json(value)
         except yaml.YAMLError as err:
             raise AgentConfigError(CONF_FUNCTION_TOOLS, f"invalid YAML: {err}") from err
     if isinstance(value, list):
@@ -929,6 +936,17 @@ def normalize_agent_numeric_values(candidate: dict[str, Any]) -> None:
     _coerce_legacy_numbers(candidate)
 
 
+def normalized_function_call_budget(data: Mapping[str, Any]) -> int:
+    """Read a historical budget without validating unrelated damaged fields."""
+    key = CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION
+    scalar = {key: data.get(key, DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION)}
+    normalize_agent_numeric_values(scalar)
+    _require_type(scalar, (key,), int)
+    if scalar[key] < 0:
+        raise AgentConfigError(key, "must be at least 0")
+    return cast(int, scalar[key])
+
+
 def normalize_reasoning_defaults(config: dict[str, Any], *, explicit: bool) -> None:
     """Apply the same model-aware omitted-value contract to reads and saves."""
     selected_model = str(
@@ -1039,12 +1057,16 @@ def normalize_agent_config(
     validated_functions: tuple[list[dict[str, Any]], list[dict[str, Any]] | None]
     | None = None,
     function_tools_as_list: bool = False,
+    allow_unavailable_skills: bool = False,
 ) -> dict[str, Any]:
     """Validate config; reuse Function results only for identical Function inputs.
 
     ``validated_functions`` is an internal persisted-projection result for the
     exact Function inputs in ``data``. Quarantined inputs use the validated
     effective subset. When groups is None, groups are validated here.
+
+    ``allow_unavailable_skills`` is an internal persisted/recovery policy, not an
+    edit permission. Updates use merge_agent_config's blocker-transition check.
     """
     if not isinstance(data, dict):
         raise AgentConfigError("config", "must be an object")
@@ -1253,7 +1275,7 @@ def normalize_agent_config(
         function_groups,
         max_function_calls=result[CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION],
     )
-    if not loader_status.available:
+    if not loader_status.available and not allow_unavailable_skills:
         raise AgentConfigError(
             CONF_SKILLS,
             loader_status.reason or "selected Skills are not loadable",
@@ -1309,7 +1331,52 @@ def merge_agent_config(
         {**known, **updates},
         validated_functions=validated_functions,
         function_tools_as_list=function_tools_as_list,
+        allow_unavailable_skills=True,
     )
+    if normalized.get(CONF_SKILLS):
+        # The candidate is already validated. Decode without applying persisted
+        # falsy/default semantics to an explicitly empty submitted collection.
+        candidate_tools = normalized[CONF_FUNCTION_TOOLS]
+        if isinstance(candidate_tools, str):
+            candidate_tools = _decoded_function_tools(candidate_tools)
+        after = skill_loader_status(
+            normalized[CONF_SKILLS],
+            candidate_tools or [],
+            normalized[CONF_FUNCTION_GROUPS],
+            max_function_calls=normalized[CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION],
+        )
+        if not after.available:
+            # A field-only recovery save may carry an authoritative, quarantined
+            # projection. Compare that same usable baseline instead of strictly
+            # revalidating untouched damaged siblings.
+            previous_tools = (
+                validated_functions[0]
+                if validated_functions is not None
+                else configured_function_tools_from_data(current)
+            )
+            previous_groups = (
+                validated_functions[1]
+                if validated_functions is not None
+                and validated_functions[1] is not None
+                else validate_function_groups(
+                    current.get(CONF_FUNCTION_GROUPS, []), previous_tools
+                )
+            )
+            before = skill_loader_status(
+                current.get(CONF_SKILLS, []) or [],
+                previous_tools,
+                previous_groups,
+                max_function_calls=normalized_function_call_budget(current),
+            )
+            if not preserves_skill_loader_availability(
+                before,
+                after,
+                current.get(CONF_SKILLS, []) or [],
+                normalized[CONF_SKILLS],
+            ):
+                raise AgentConfigError(
+                    CONF_SKILLS, after.reason or "selected Skills are not loadable"
+                )
     # Recommended values are for creation/model changes, not unrelated
     # edits to older/restored configurations whose omission is meaningful.
     if not model_changed:
@@ -1344,7 +1411,13 @@ def normalize_persisted_agent_config(
     )
     if source[CONF_FUNCTION_TOOLS] is None:
         source[CONF_FUNCTION_TOOLS] = []
-    return normalize_agent_config(source, function_tools_as_list=function_tools_as_list)
+    # This recognized dependency problem leaves Skills inactive at runtime. Reads
+    # and recovery must preserve the administrator's settings, not enable a loader.
+    return normalize_agent_config(
+        source,
+        function_tools_as_list=function_tools_as_list,
+        allow_unavailable_skills=True,
+    )
 
 
 def agent_config_snapshot(
@@ -1374,11 +1447,13 @@ def _configured_tools_yaml(data: Mapping[str, Any]) -> str | None:
         return None
     if isinstance(configured, str):
         return configured
+    if contains_yaml_types(configured):
+        return dump_yaml(configured, sort_keys=True)
     try:
         # Persisted Function Tool collections are JSON-compatible. Using JSON here
         # keeps cache-key construction linear and avoids PyYAML's expensive emitter
-        # on every Management/agent catalogue read. JSON is valid YAML, so the
-        # existing cached parser can consume this representation unchanged.
+        # on every Management/agent catalogue read. The cached decoder recognizes
+        # JSON explicitly, retaining exponent floats and their numeric types.
         return json.dumps(
             configured,
             sort_keys=True,

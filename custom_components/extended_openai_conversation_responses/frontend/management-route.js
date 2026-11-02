@@ -626,7 +626,11 @@ export async function loadAgentsWithOverviewPrefetch(panel, selectedId = null, o
 
   const data = await panel._hass.callWS({type: WS_TYPE, action: "agents"});
   if(!catalogMayPublish(panel,load)) return;
-  const agents=data.agents || [];
+  if (!Array.isArray(data?.agents)) throw new Error("The server returned an invalid assistant catalogue.");
+  const agents=data.agents;
+  // Only a complete membership read accepted by this authentication/sequence
+  // owner can authorize recovery after a mutation lost its reply.
+  load.acceptedRead = {sequence:load.sequence, userId:load.user};
   const active=agents.find(item => item.subentry_id === panel._agentId);
   const currentAgent=panel._selectedAgent?.();
   const accessChanged=typeof data.is_admin === "boolean" && data.is_admin !== panel._data?.is_admin;

@@ -825,28 +825,43 @@ async def test_undercovered_management_mutations_survive_reload(hass, hass_ws_cl
 
 @pytest.mark.parametrize("action", ["duplicate", "import"])
 async def test_configuration_transfer_survives_reload(hass, hass_ws_client, action):
+    import json
+    import yaml
+    from custom_components.extended_openai_conversation_responses.agent_config import configured_function_tools_from_data
+
     entry = _entry("Durable configuration transfer")
     await _setup_entry(hass, entry)
     client = await _admin_client(hass, hass_ws_client)
     before = await _management_call(client, entry=entry, section="configuration", action="get")
-    saved = await _management_call(client, entry=entry, section="configuration", action="save", revision=before["revision"], config={"max_tokens":777})
+    tool = {
+        "spec": {"name": "transfer_numbers", "description": "Typed transfer", "parameters": {"type": "object", "properties": {}}},
+        "function": {"type": "script", "variables": {"factor": 0.000001, "literal": "1e-06", "flag": True, "empty": None}, "sequence": [{"stop": "Done"}]},
+    }
+    saved = await _management_call(client, entry=entry, section="configuration", action="save", revision=before["revision"], config={"max_tokens":777, "functions":yaml.safe_dump([tool])})
     source_id = _conversation_subentry(entry).subentry_id
     if action == "duplicate":
         result = await _management_call(client, entry=entry, section="configuration", action=action, title="Durable transferred assistant")
         target_id = result["subentry_id"]
         expected_tokens = 777
     else:
-        exported = await _management_call(client, entry=entry, section="configuration", action="export")
-        document = exported["document"]
+        exported = await _management_call(client, entry=entry, section="configuration", action="export", reviewed_custom=True)
+        document = json.loads(exported["json"])
         document["title"] = "Durable transferred assistant"
         document["config"]["max_tokens"] = 888
-        await _management_call(client, entry=entry, section="configuration", action=action, document=document, mode="current", confirm=True, revision=saved["revision"])
+        await _management_call(client, entry=entry, section="configuration", action=action, document=json.dumps(document), mode="current", confirm=True, revision=saved["revision"])
         target_id = source_id
         expected_tokens = 888
     await _fresh_reload(hass, entry)
     readback = await _management_call(client, entry=entry, section="configuration", action="get", subentry_id=target_id)
     assert readback["title"] == "Durable transferred assistant"
     assert readback["config"]["max_tokens"] == expected_tokens
+    fresh = hass.config_entries.async_get_entry(entry.entry_id).subentries[target_id]
+    variables = configured_function_tools_from_data(fresh.data)[0]["function"]["variables"].async_render(hass, {})
+    assert variables == tool["function"]["variables"]
+    assert type(variables["factor"]) is float
+    assert type(variables["literal"]) is str
+    assert type(variables["flag"]) is bool
+    assert variables["empty"] is None
     if action == "duplicate":
         original = await _management_call(client, entry=entry, section="configuration", action="get", subentry_id=source_id)
         assert original["title"] != readback["title"]

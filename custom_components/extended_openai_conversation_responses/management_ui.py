@@ -181,6 +181,7 @@ from .script_payload import (
 from .secret_redaction import is_redacted_secret, redact_secrets
 from .temporary_memory import async_get_temporary_memory, temporary_memory_as_dict
 from .usage import async_get_usage
+from .yaml_serialization import dump_yaml
 
 _LOGGER = logging.getLogger(__name__)
 _PERFORMANCE_LOGGER = logging.getLogger(f"{__name__}.performance")
@@ -311,28 +312,8 @@ def _validated_model_request(
     current: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Use the live resolver only at a configuration mutation boundary."""
-    relevant = {
-        "chat_model",
-        "azure_model",
-        "max_function_calls_per_conversation",
-        "continue_conversation",
-        "api_mode",
-        "reasoning_effort",
-        "max_tokens",
-        "functions",
-        "function_groups",
-        "memory_enabled",
-        "knowledge_enabled",
-        "archive_enabled",
-        "guest_mode_enabled",
-        "web_search",
-    }
-    if current is not None:
-        defaults = agent_config_defaults()
-        if all(
-            config.get(key) == current.get(key, defaults.get(key)) for key in relevant
-        ):
-            return config
+    # Validate the candidate itself, including generated capabilities. A manual
+    # list of supposedly relevant fields can miss a new runtime constraint.
     from .request_rules import validate_routed_request_options
 
     try:
@@ -391,7 +372,9 @@ async def _persist_function_configuration(
         subentry,
         {
             **subentry.data,
-            CONF_FUNCTION_TOOLS: candidate_tools,
+            # This is a decoded edit, including an explicitly empty collection.
+            # Use its persistence form before the dependency reader interprets it.
+            CONF_FUNCTION_TOOLS: dump_yaml(deepcopy(candidate_tools), sort_keys=False),
             CONF_FUNCTION_GROUPS: groups,
         },
         renamed_function=renamed_function,
@@ -473,9 +456,12 @@ def _export_agent(subentry, *, reviewed: bool = False) -> dict[str, Any]:
 def _parse_import_document(value: Any, *, destination: Any = None) -> dict[str, Any]:
     if isinstance(value, str):
         try:
-            value = yaml.safe_load(value)
-        except yaml.YAMLError as err:
-            raise AgentConfigError("document", f"invalid JSON/YAML: {err}") from err
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            try:
+                value = yaml.safe_load(value)
+            except yaml.YAMLError as err:
+                raise AgentConfigError("document", f"invalid JSON/YAML: {err}") from err
     if not isinstance(value, dict):
         raise AgentConfigError("document", "must be an object")
     if value.get("schema") != "extended_openai_conversation.agent":
@@ -1227,6 +1213,7 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
         updates[CONF_GUEST_POLICY_VERSION] = GUEST_POLICY_VERSION
         normalized, snapshot = merge_unchanged_function_configuration(subentry, updates)
         configured_tools = snapshot[CONF_FUNCTION_TOOLS]
+        _validated_model_request(snapshot, entry.data, subentry.data)
         policy_config = guest_policy_editor_snapshot(hass, normalized, configured_tools)
         update_live_subentry(hass, entry, subentry, data=normalized)
         revision = saved_agent_config_revision(subentry, normalized, subentry.title)
@@ -1635,11 +1622,12 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         updates = message.get("config", {})
         if not isinstance(updates, dict):
             raise HomeAssistantError("config must be an object")
+        field_only = is_field_only_configuration_update(updates)
 
         def validation_candidate() -> dict[str, Any]:
-            if is_field_only_configuration_update(updates):
+            if field_only:
                 return merge_unchanged_function_configuration(subentry, updates)[1]
-            return agent_config_snapshot(merge_agent_config(subentry.data, updates))
+            return merge_agent_config(subentry.data, updates)
 
         result = _validation_result(validation_candidate)
         if result["valid"]:
@@ -1649,6 +1637,15 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
                 )
             except HomeAssistantError as err:
                 return {"valid": False, "errors": {"api_mode": str(err)}}
+            if not field_only:
+                try:
+                    await _async_validate_configuration_dependencies(
+                        hass, entry, subentry, result["config"]
+                    )
+                except HomeAssistantError as err:
+                    return {"valid": False, "errors": {CONF_FUNCTION_TOOLS: str(err)}}
+            if not field_only:
+                result["config"] = agent_config_snapshot(result["config"])
             result["model_capabilities"] = model_capabilities(
                 str(
                     result["config"].get("azure_model")
@@ -1754,6 +1751,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             title=title,
             unique_id=None,
         )
+        _validated_model_request(dict(duplicate.data), entry.data)
         hass.config_entries.async_add_subentry(entry, duplicate)
         return {
             "status": "created",
@@ -1902,18 +1900,11 @@ async def _async_validate_configuration_dependencies(
                     and data.get("function") == old_name
                 ):
                     set_effective_service_field(action, "function", new_name)
-    # Deepcopy dehydrates runtime templates to their persisted source. Disabling
-    # a retained definition intentionally inactivates its rules; it is distinct
-    # from removing it or making its argument schema incompatible.
+    # Keep the persistence representation intact: serialized [] is an explicit
+    # empty collection, while legacy raw [] retains its default-tool semantics.
+    # The dependency validator already permits retained disabled definitions;
+    # neither validation nor its temporary projection needs to enable them.
     candidate = deepcopy(dict(config))
-    tools = candidate.get(CONF_FUNCTION_TOOLS)
-    if isinstance(tools, str):
-        tools = yaml.safe_load(tools)
-    if isinstance(tools, list):
-        for tool in tools:
-            if isinstance(tool, dict):
-                tool["enabled"] = True
-        candidate[CONF_FUNCTION_TOOLS] = tools
     if document.get("rules"):
         await _async_validate_request_rule_function_dependencies(
             hass, document, candidate

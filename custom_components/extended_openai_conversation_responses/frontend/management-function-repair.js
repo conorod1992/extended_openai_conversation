@@ -80,8 +80,8 @@ function ownRepairDraft(panel, initial = null) {
   if (initial || !previous || previous.agent !== panel._agentId
       || (previous.text === previous.baseline && previous.revision !== panel._result?.revision)) {
     panel._functionRepairDraft = initial || {
-      agent:panel._agentId, text:editableToolsText(repairMetadata(panel)?.tools ?? panel._result?.tools),
-      baseline:editableToolsText(repairMetadata(panel)?.tools ?? panel._result?.tools), revision:panel._result?.revision,
+      agent:panel._agentId, text:editableToolsText(repairMetadata(panel)?.tools_yaml ?? panel._result?.tools_yaml ?? repairMetadata(panel)?.tools ?? panel._result?.tools),
+      baseline:editableToolsText(repairMetadata(panel)?.tools_yaml ?? panel._result?.tools_yaml ?? repairMetadata(panel)?.tools ?? panel._result?.tools), revision:panel._result?.revision,
     };
   }
   const draft = panel._functionRepairDraft;

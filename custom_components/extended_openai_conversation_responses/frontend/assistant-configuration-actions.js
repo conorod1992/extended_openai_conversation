@@ -12,6 +12,25 @@ export function invalidateImportPreview(panel, applyButton, summary) {
   if (summary) summary.textContent = "Validate the document to preview it.";
 }
 
+// A lost import reply may already have created an assistant. Keep the source
+// text, but require an authoritative catalogue read before another preview can
+// authorize a new write. A new assistant affects the global catalogue, so this
+// payload-free barrier survives draft, selection and authentication changes.
+export async function refreshUncertainConfigurationImport(panel) {
+  const recovery = panel._eocImportRecovery;
+  if (!recovery) return;
+  const owner = captureConfigurationOwner(panel);
+  const receipt = await panel._loadAgents(panel._agentId, owner, captureCatalogSelectionIntent(panel), {preserveAuthoringOnFailure:true});
+  if (panel._error) throw new Error(panel._error);
+  if (!receipt || receipt.sequence !== panel._eocCatalogReadSequence
+      || receipt.userId !== owner.userId || !configurationSubmissionIsCurrent(panel, owner)) {
+    throw new Error("The assistant list could not be refreshed. Keep the import source and validate again before another import.");
+  }
+  if (panel._eocImportRecovery === recovery) {
+    panel._eocImportRecovery = null;
+  }
+}
+
 export function renderConfigurationActions(panel, sections = panel._configSections || []) {
   const cleanOnly = panel._configDirty ? "disabled title=\"Save or revert the shared draft first\"" : "";
   const includesBackup = sections.includes("backup");
@@ -55,7 +74,7 @@ export async function applyConfigurationImport(panel, root) {
   const mode = root.querySelector('input[name="import-mode"]:checked').value;
   const source = input.value, revision = panel._importRevision;
   const intent = captureCatalogSelectionIntent(panel);
-  const matches = () => configurationSubmissionIsCurrent(panel, intent.owner)
+  const matches = () => !panel._eocImportRecovery && configurationSubmissionIsCurrent(panel, intent.owner)
     && panel._importDocument === source && input.value === source
     && panel._importMode === mode && panel._configData?.revision === revision;
   if (!source || !matches()) {
@@ -70,7 +89,12 @@ export async function applyConfigurationImport(panel, root) {
   try {
     const result = await panel._call("configuration", "import", {document:source, mode, confirm:mode === "current", ...(mode === "current" ? {revision} : {})});
     requireMutationAcknowledgement(result?.subentry_id && result.status === (mode === "current" ? "updated" : "created"), "importing the configuration");
-    if (!configurationSubmissionIsCurrent(panel, intent.owner)) return;
+    if (!configurationSubmissionIsCurrent(panel, intent.owner)) {
+      // A confirmed create still changes the catalogue when its former editor
+      // can no longer consume the preview or display the new identity.
+      panel._eocImportRecovery = {};
+      return;
+    }
     panel._importDocument = null;
     panel._importRevision = null;
     let acknowledgementOwner = intent.owner;
@@ -85,9 +109,22 @@ export async function applyConfigurationImport(panel, root) {
       await panel._loadAgents(panel._agentId, acknowledgementOwner, loadIntent);
     }, result);
   } catch (err) {
-    if (configurationSubmissionIsCurrent(panel, intent.owner)) panel._toast(`Unable to import: ${err.message || String(err)}`, true);
+    const requiresRecovery = ["uncertain", "committed"].includes(err?.mutationOutcome);
+    // The effect outlives its presentation owner. Retain no old source or
+    // authority, only the requirement for a new owned catalogue read.
+    if (requiresRecovery) panel._eocImportRecovery = {};
+    if (configurationSubmissionIsCurrent(panel, intent.owner)) {
+      if (requiresRecovery) {
+        if (panel._importDocument === source && panel._importRevision === revision) {
+          invalidateImportPreview(panel, button, root.querySelector("#import-summary"));
+        }
+        const summary = root.querySelector("#import-summary");
+        if (summary && input.value === source) summary.textContent = "The import may already have been applied. Validate & preview again to refresh the assistant list before another import.";
+      }
+      panel._toast(`Unable to import: ${err.message || String(err)}`, true);
+    }
   } finally {
     panel._eocImportPending = false;
-    button.disabled = !panel._importDocument;
+    button.disabled = !panel._importDocument || Boolean(panel._eocImportRecovery);
   }
 }

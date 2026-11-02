@@ -235,6 +235,13 @@ jobs:
       - name: Install local Playwright test runner
         run: npm install --no-save --package-lock=false --no-audit --no-fund @playwright/test@1.63.0
 
+      # Keep the fast unit fixtures out of the genuine-HA process.
+      - name: Verify Python-to-JavaScript mutation acknowledgement contracts
+        if: matrix.shard == 'management-shell-refresh'
+        env:
+          RUN_REAL_HA_BROWSER: "1"
+        run: pytest tests/test_broadcast_wire_contract.py tests/test_management_wire_contracts.py -q --timeout=30
+
       - name: Run browser against genuine HA management backend, frontend shell, and live runtime
         env:
           RUN_REAL_HA_BROWSER: "1"

@@ -29,6 +29,7 @@ from ..execution_outcomes import (
     execution_completed,
     execution_started,
     owns_execution_receipts,
+    owns_read_only_execution_receipts,
 )
 from ..function_execution import backend_failure
 from ..operation_settlement import (
@@ -300,6 +301,7 @@ class ReadFileFunction(FileFunction):
             return backend_failure(str(err), err)
         return {"content": content, "size": file_size}
 
+    @owns_read_only_execution_receipts
     async def execute(
         self,
         hass: HomeAssistant,

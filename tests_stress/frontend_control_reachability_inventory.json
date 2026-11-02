@@ -84,6 +84,12 @@
   },
   "conditional_controls": [
     {
+      "source": "request-rules-ui-core.js",
+      "scenario": "Failed lazy Sharing initialization exposes a retry while subsequent disclosure toggles preserve authored state",
+      "selectors": ["[data-retry-rule-sharing]"],
+      "browser_spec": "tests_browser/request-rule-sharing-retained.spec.mjs"
+    },
+    {
       "source": "management-actions.js",
       "scenario": "Configuration validation errors include an actionable off-route summary",
       "selectors": ["[data-config-error]"],

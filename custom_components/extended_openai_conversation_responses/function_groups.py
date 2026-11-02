@@ -254,9 +254,10 @@ def _available_group_sets(
     function_tools_supported: bool,
     group_loader_supported: bool,
     tool_available: ToolAvailabilityPredicate | None,
+    runtime: ToolRuntimeAvailability | None = None,
 ) -> tuple[set[str], dict[str, dict[str, Any]], set[str]]:
     """Resolve executable members plus reachable on-demand and always groups."""
-    runtime = _effective_runtime(
+    runtime = runtime or _effective_runtime(
         function_tools_supported, group_loader_supported, tool_available
     )
     if configured_tools is None:
@@ -333,6 +334,7 @@ def assemble_function_tools(
     function_tools_supported: bool = True,
     group_loader_supported: bool = True,
     tool_available: ToolAvailabilityPredicate | None = None,
+    runtime: ToolRuntimeAvailability | None = None,
 ) -> FunctionToolAssembly:
     """Centralize the effective configured tool set for one provider request."""
     membership = {
@@ -344,6 +346,7 @@ def assemble_function_tools(
         function_tools_supported=function_tools_supported,
         group_loader_supported=group_loader_supported,
         tool_available=tool_available,
+        runtime=runtime,
     )
 
     # Never resurrect an old loaded state after the group becomes unavailable.

@@ -480,7 +480,14 @@ async def test_private_followup_after_knowledge_restore(
         hass, **{CONF_ARCHIVE_ENABLED: True, CONF_CONVERSATION_CONTINUITY: mode}
     )
     sent = _provider(
-        monkeypatch, agent, ["Before restore reply", "Retained before reply", "Private after restore reply", "Retained after reply"]
+        monkeypatch,
+        agent,
+        [
+            "Before restore reply",
+            "Retained before reply",
+            "Private after restore reply",
+            "Retained after reply",
+        ],
     )
 
     retained_user = MockUser(id="restore-retained-owner")
@@ -540,11 +547,14 @@ async def test_private_followup_after_knowledge_restore(
         assert "Before restore content" not in json.dumps(sent[-1])
         assert "Before restore reply" not in json.dumps(sent[-1])
 
-    retained_after = await say("Retained followup", retained_before.conversation_id, retained_user)
+    retained_after = await say(
+        "Retained followup", retained_before.conversation_id, retained_user
+    )
     assert retained_after.response.error_code is None
-    preserves = not rollback or mode == CONVERSATION_CONTINUITY_HA_DEFAULT
-    assert (retained_after.conversation_id == retained_before.conversation_id) == preserves
-    assert ("Retained history witness" in json.dumps(sent[-1])) == preserves
+    # Knowledge-only success and same-agent rollback both preserve the verified
+    # retained bindings. Privacy identities still discard their provider context.
+    assert retained_after.conversation_id == retained_before.conversation_id
+    assert "Retained history witness" in json.dumps(sent[-1])
     assert "Before restore content" not in json.dumps(sent[-1])
     assert len(sent) == 4
     assert (await agent._knowledge.async_backup_data())["sources"] == []
