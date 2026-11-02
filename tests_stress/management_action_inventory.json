@@ -213,10 +213,13 @@
         "delete_one",
         "get",
         "save",
+        "save_groups",
         "save_one"
       ],
       "evidence": [
-        "tests/test_function_repair_configuration_contract.py"
+        "tests/test_function_repair_configuration_contract.py",
+        "tests/test_function_group_collection_repair.py",
+        "tests/test_group_collection_wire_review.py"
       ],
       "semantic_classes": {
         "configuration_get": "read_only",
@@ -225,7 +228,8 @@
         "delete_one": "destructive_mutation",
         "get": "read_only",
         "save": "durable_mutation",
-        "save_one": "durable_mutation"
+        "save_one": "durable_mutation",
+        "save_groups": "durable_mutation"
       },
       "authorization_classes": {
         "configuration_get": "admin_only",
@@ -234,7 +238,8 @@
         "delete_one": "admin_only",
         "get": "admin_only",
         "save": "admin_only",
-        "save_one": "admin_only"
+        "save_one": "admin_only",
+        "save_groups": "admin_only"
       },
       "behavioral_evidence": {
         "configuration_get": "tests/test_function_repair_configuration_contract.py::test_function_repair_configuration_get_defers_live_metadata",
@@ -243,7 +248,8 @@
         "delete_one": "tests/test_management_loading_performance.py::test_delete_quarantined_tools_immediately_restores_normal_get",
         "get": "tests/test_management_function_repair.py::test_function_repair_get_returns_only_invalid_tool_metadata",
         "save": "tests/test_management_function_repair.py::test_function_repair_save_replaces_invalid_collection",
-        "save_one": "tests/test_management_function_repair.py::test_function_repair_save_one_replaces_only_selected_invalid_tool"
+        "save_one": "tests/test_management_function_repair.py::test_function_repair_save_one_replaces_only_selected_invalid_tool",
+        "save_groups": "tests/test_group_collection_wire_review.py::test_group_repair_wire_distinguishes_no_write_and_committed_revision_failure"
       },
       "durability_evidence": {
         "configuration_save": {
@@ -265,6 +271,11 @@
           "boundary": "authoritative_readback",
           "evidence": "tests/test_management_function_repair.py::test_function_repair_save_one_replaces_only_selected_invalid_tool",
           "outcome": "Canonical stored tools retain the valid sibling and replace only the selected quarantined tool."
+        },
+        "save_groups": {
+          "boundary": "authoritative_readback",
+          "evidence": "tests/test_function_group_collection_repair.py::test_serialized_restore_exposes_complete_group_repair_then_runtime_recovers",
+          "outcome": "After serialized restore, the repaired complete Group collection validates at runtime while raw Functions and unrelated configuration remain unchanged."
         }
       }
     },

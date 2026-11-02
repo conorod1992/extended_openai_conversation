@@ -97,6 +97,14 @@
     },
     "groups": {
       "required": false,
+      "kind": "union",
+      "forms": [
+        "string",
+        "array"
+      ]
+    },
+    "guest_allowed_group_ids": {
+      "required": false,
       "kind": "array"
     },
     "id": {
@@ -182,6 +190,10 @@
     "review_token": {
       "required": false,
       "kind": "string"
+    },
+    "reviewed_custom": {
+      "required": false,
+      "kind": "boolean"
     },
     "revision": {
       "required": false,
@@ -317,10 +329,6 @@
     "yaml": {
       "required": false,
       "kind": "string"
-    },
-    "reviewed_custom": {
-      "required": false,
-      "kind": "boolean"
     }
   },
   "backup_transfer": {
