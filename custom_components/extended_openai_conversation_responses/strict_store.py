@@ -107,6 +107,11 @@ class PropagatingWriteStore(RecoveryGuardedStore):
 
     _corruption_unavailable = False
 
+    @property
+    def corruption_unavailable(self) -> bool:
+        """Report a native read rejection without permitting its barrier to be reset."""
+        return self._corruption_unavailable
+
     async def _async_load_data(self) -> Any:
         """Retain HA's raw payload contract; managers validate record shapes."""
         result = await super()._async_load_data()

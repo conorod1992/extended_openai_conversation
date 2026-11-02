@@ -10,7 +10,9 @@ from datetime import date, datetime, time, timedelta, tzinfo
 from heapq import heappush, heapreplace
 import json
 import logging
+from pathlib import Path
 import re
+import stat
 import sys
 from threading import RLock
 from typing import Any, Protocol
@@ -124,6 +126,21 @@ class ArchiveStorage(Protocol):
     ) -> None: ...
 
 
+def _stored_archive_partitions(metadata_path: str, prefix: str) -> set[str]:
+    """Inventory exact owned monthly files when damaged metadata lost its index."""
+    stem = prefix + ".turns."
+    result: set[str] = set()
+    for path in Path(metadata_path).parent.iterdir():
+        if not path.name.startswith(stem):
+            continue
+        month = path.name[len(stem) :]
+        if re.fullmatch(r"\d{4}-(?:0[1-9]|1[0-2])", month) and stat.S_ISREG(
+            path.stat(follow_symlinks=False).st_mode
+        ):
+            result.add(month)
+    return result
+
+
 class HomeAssistantArchiveStorage:
     """Small metadata store plus independent monthly transcript stores."""
 
@@ -199,7 +216,19 @@ class HomeAssistantArchiveStorage:
             )
 
         session_map, turn_map, bindings = await asyncio.to_thread(prepare)
-        old = await self.async_load_metadata()
+        writer = self
+        discovered: set[str] = set()
+        try:
+            old = await self.async_load_metadata()
+        except StorageRepairRequired:
+            # A validated full-agent journal owns replacement here. Keep HA's
+            # corruption evidence and its ordinary write barrier intact; only
+            # this correctly bound fresh writer may stage the recovery intent.
+            old = None
+            discovered = await asyncio.to_thread(
+                _stored_archive_partitions, self._metadata.path, self._prefix
+            )
+            writer = HomeAssistantArchiveStorage(self._hass, *self._agent_identity)
         old_names: list[Any] = []
         if isinstance(old, dict):
             if isinstance(old.get("partitions"), list):
@@ -207,11 +236,16 @@ class HomeAssistantArchiveStorage:
             if isinstance(old.get("pending_partitions"), dict):
                 old_names.extend(old["pending_partitions"])
         partitions = ConversationArchive._partitions_for_turns(turn_map)
-        changed = partitions | {
-            name
-            for name in old_names
-            if isinstance(name, str) and re.fullmatch(r"\d{4}-(?:0[1-9]|1[0-2])", name)
-        }
+        changed = (
+            partitions
+            | discovered
+            | {
+                name
+                for name in old_names
+                if isinstance(name, str)
+                and re.fullmatch(r"\d{4}-(?:0[1-9]|1[0-2])", name)
+            }
+        )
         pending = {
             name: ConversationArchive._partition_payload_for_state(name, turn_map)
             for name in sorted(changed)
@@ -219,7 +253,7 @@ class HomeAssistantArchiveStorage:
         # Old indexed months receive empty payloads if absent from the selected
         # snapshot. Failed writes leave the authoritative full-agent journal for
         # retry; normal Archive initialization validates and replays this intent.
-        await self.async_save_metadata(
+        await writer.async_save_metadata(
             ConversationArchive._metadata_payload_for_state(
                 session_map, bindings, partitions, pending
             )

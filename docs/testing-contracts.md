@@ -14,6 +14,8 @@ An acknowledged repair may leave later edits in its editor. Both complete Functi
 
 Archive turn order survives a backwards wall-clock correction across a monthly storage boundary. Optional per-session sequences preserve that order through cold reload, backup replacement and restore-journal recovery. Legacy reads retain their existing order without a storage rewrite; an append upgrades every affected month in the same journal. Invalid, duplicate or mixed sequences retain the original storage evidence and block destructive writes. Sequence gaps remain valid and are not renumbered by pagination or replacement.
 
+A validated full-agent journal authorizes recovery of rejected native category stores; corrupt data alone does not. Target and rollback tests preserve quarantine evidence, reload through ordinary managers, and retain the journal across failed writes and retries. Archive recovery inventories only exact owned monthly files. Usage recovery reconciles previously rejected handles through native reads, while healthy legacy totals mirrors retain their existing best-effort behavior.
+
 Read results carry meaning independently of whether they contain records. Initial catalogue pending, failed and successful-empty states must render distinctly, with a deliberate catalogue retry and no retry storm from Home Assistant updates. Relative Usage periods use Home Assistant's local calendar rather than the latest activity or a retained summary date. Diagnostics share canonical configuration representation parsing and isolate failures between sections.
 
 Mobile dialog action reachability is checked geometrically after ordinary scrolling. Programmatic focus, locator clicks and scroll-into-view behavior alone do not establish that a user can reach a clipped footer.
@@ -168,6 +170,10 @@ while preserving input authored during acknowledgement. A later independent
 rejection must still publish a new error, and the final retry must save exactly
 the retained values. The same source and bundle journey covers both Memory
 editors and Knowledge.
+Admission guards also prove that required-field client validation preserves the
+current rejection without dispatch, and that unresolved Long-term Memory and
+Knowledge writes retain their error and block another transport call even if
+the Save button is forcibly re-enabled in the test.
 
 Broadcast retry tests drop the actual queue acknowledgement, retry its immutable
 operation identity, and assert a single admission. They cover payload/caller

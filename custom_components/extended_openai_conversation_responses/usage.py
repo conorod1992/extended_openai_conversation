@@ -1450,6 +1450,98 @@ def _saved_retention(
     }
 
 
+def _durable_usage_stores(
+    hass: HomeAssistant, entry_id: str, subentry_id: str
+) -> tuple[_UsageStore, _UsageStore, _UsageStore]:
+    """Construct the same correctly bound native stores for load and recovery."""
+    prefix = f"{STORAGE_KEY_PREFIX}.{entry_id}.{subentry_id}"
+    return (
+        _UsageStore(hass, 1, prefix, atomic_writes=True).bind_agent(
+            entry_id, subentry_id
+        ),
+        _UsageStore(
+            hass, STORAGE_VERSION, f"{prefix}.daily", atomic_writes=True
+        ).bind_agent(entry_id, subentry_id),
+        _UsageStore(
+            hass,
+            STORAGE_VERSION,
+            f"{prefix}.details",
+            private=True,
+            atomic_writes=True,
+            serialize_in_event_loop=False,
+        ).bind_agent(entry_id, subentry_id),
+    )
+
+
+async def async_verify_rejected_usage_stores(
+    hass: HomeAssistant, entry_id: str, subentry_id: str
+) -> None:
+    """Recheck only native handles already rejected during this process's recovery."""
+    gate = get_agent_maintenance_gate(hass, entry_id, subentry_id)
+    if not gate.owns_exclusive() or not gate.recovery_required:
+        raise RuntimeError("Usage recovery requires exclusive quarantined maintenance")
+    gate.require_available()
+    manager = hass.data.get(_USAGE_MANAGERS, {}).get((entry_id, subentry_id))
+    if manager is not None:
+        for store in (
+            manager._storage,
+            manager._daily_storage,
+            manager._detail_storage,
+        ):
+            if (
+                isinstance(store, PropagatingWriteStore)
+                and store.corruption_unavailable
+            ):
+                await store.async_load()
+
+
+async def async_stage_usage_journal_recovery(
+    hass: HomeAssistant,
+    entry_id: str,
+    subentry_id: str,
+    totals: UsageTotals,
+    daily: dict[str, dict[str, Any]],
+    requests: list[UsageRequest],
+    runs: list[UsageRun],
+) -> None:
+    """Bootstrap native Usage stores only from a validated full-agent journal."""
+    gate = get_agent_maintenance_gate(hass, entry_id, subentry_id)
+    if not gate.owns_exclusive() or not gate.recovery_required:
+        raise RuntimeError("Usage recovery requires exclusive quarantined maintenance")
+    gate.require_available()
+
+    def prepare() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        valid_totals, valid_daily, valid_requests, valid_runs = (
+            UsageManager.validate_backup_data(
+                {
+                    "totals": asdict(totals),
+                    "daily": daily,
+                    **_serialize_usage_details(requests, runs),
+                },
+                subentry_id,
+            )
+        )
+        totals_payload = asdict(valid_totals)
+        return (
+            totals_payload,
+            {"totals": totals_payload, "days": valid_daily},
+            _serialize_usage_details(valid_requests, valid_runs),
+        )
+
+    totals_payload, aggregate, details = await asyncio.to_thread(prepare)
+    totals_store, daily_store, detail_store = _durable_usage_stores(
+        hass, entry_id, subentry_id
+    )
+    # The full-agent journal retains authority until every native write and the
+    # ordinary reload succeed. Unlike the legacy mirror path, none may be ignored.
+    await daily_store.async_save(aggregate)
+    await totals_store.async_save(totals_payload)
+    await detail_store.async_save(details)
+    # Canonical daily aggregates can bypass a previously rejected legacy mirror
+    # during normal initialization. Heal that handle only through a real read.
+    await async_verify_rejected_usage_stores(hass, entry_id, subentry_id)
+
+
 async def async_get_durable_usage(
     hass: HomeAssistant, entry_id: str, subentry_id: str
 ) -> UsageManager:
@@ -1463,25 +1555,13 @@ async def async_get_durable_usage(
         key = (entry_id, subentry_id)
         manager = managers.get(key)
         if manager is None:
-            prefix = f"{STORAGE_KEY_PREFIX}.{entry_id}.{subentry_id}"
+            totals_store, daily_store, detail_store = _durable_usage_stores(
+                hass, entry_id, subentry_id
+            )
             manager = UsageManager(
-                _UsageStore(hass, 1, prefix, atomic_writes=True).bind_agent(
-                    entry_id, subentry_id
-                ),
-                _UsageStore(
-                    hass,
-                    STORAGE_VERSION,
-                    f"{prefix}.daily",
-                    atomic_writes=True,
-                ).bind_agent(entry_id, subentry_id),
-                _UsageStore(
-                    hass,
-                    STORAGE_VERSION,
-                    f"{prefix}.details",
-                    private=True,
-                    atomic_writes=True,
-                    serialize_in_event_loop=False,
-                ).bind_agent(entry_id, subentry_id),
+                totals_store,
+                daily_store,
+                detail_store,
                 agent_subentry_id=subentry_id,
                 **_saved_retention(hass, entry_id, subentry_id),
             )

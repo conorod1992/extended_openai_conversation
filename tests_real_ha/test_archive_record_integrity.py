@@ -2,15 +2,23 @@
 
 from copy import deepcopy
 from dataclasses import asdict
+from pathlib import Path
 import unicodedata
 
 import pytest
 
+from custom_components.extended_openai_conversation_responses.agent_maintenance import (
+    get_agent_maintenance_gate,
+)
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_ARCHIVE_ENABLED,
 )
 from custom_components.extended_openai_conversation_responses.conversation_archive import (
     ConversationArchive,
+    HomeAssistantArchiveStorage,
+)
+from custom_components.extended_openai_conversation_responses.persistence_hardening import (
+    StorageRepairRequired,
 )
 from tests.test_conversation_archive import _session, _turn
 from tests_real_ha.test_cross_feature_acceptance import _agent
@@ -69,3 +77,57 @@ async def test_native_archive_salvages_records_repairs_counts_and_reloads_unicod
         await storage.async_load_metadata(),
         await storage.async_load_partition("2026-09"),
     ) == original
+
+
+@pytest.mark.usefixtures("real_store_io")
+async def test_native_archive_quarantine_can_be_replaced_under_journal_authority(hass):
+    storage = HomeAssistantArchiveStorage(hass, "archive-entry", "archive-agent")
+    await storage.async_save_partition(
+        "2026-08",
+        {
+            "turns": [
+                asdict(
+                    _turn(
+                        timestamp="2026-08-01T10:00:00+00:00",
+                        user_text="Unselected old content",
+                    )
+                )
+            ]
+        },
+    )
+    await storage.async_save_metadata({"partitions": ["2026-08"]})
+    metadata = Path(storage._metadata.path)
+    rejected_bytes = b"{unreadable archive metadata"
+    await hass.async_add_executor_job(metadata.write_bytes, rejected_bytes)
+    # Let HA itself quarantine invalid JSON before EOAI recognizes its evidence.
+    with pytest.raises(StorageRepairRequired):
+        await storage.async_load_metadata()
+
+    def evidence():
+        return {
+            path.name: path.read_bytes()
+            for path in metadata.parent.glob(metadata.name + ".corrupt.*")
+        }
+
+    rejected = await hass.async_add_executor_job(evidence)
+    assert list(rejected.values()) == [rejected_bytes]
+    gate = get_agent_maintenance_gate(hass, "archive-entry", "archive-agent")
+    async with gate.exclusive():
+        gate.recovery_required = True
+        with gate.recovery_work():
+            await storage.async_stage_journal_recovery(
+                [_session()], [_turn(user_text="Selected journal content")], {}
+            )
+        gate.recovery_required = False
+
+    fresh_storage = HomeAssistantArchiveStorage(hass, "archive-entry", "archive-agent")
+    fresh = ConversationArchive(fresh_storage, "archive-agent")
+    await fresh.async_initialize()
+    result = await fresh.async_get("user:alice", "session-1")
+    assert [turn["user_text"] for turn in result["turns"]] == [
+        "Selected journal content"
+    ]
+    assert [turn["sequence"] for turn in result["turns"]] == [0]
+    assert await fresh_storage.async_load_partition("2026-08") == {"turns": []}
+    assert "pending_partitions" not in await fresh_storage.async_load_metadata()
+    assert await hass.async_add_executor_job(evidence) == rejected

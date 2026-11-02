@@ -362,17 +362,62 @@ async def _recovery_managers(
     """
     if not get_agent_maintenance_gate(hass, entry_id, subentry_id).owns_exclusive():
         raise RuntimeError("Recovery participants require exclusive maintenance")
+    from .usage import async_verify_rejected_usage_stores
+
     try:
-        return await _durable_managers(hass, entry_id, subentry_id)
+        managers = await _durable_managers(hass, entry_id, subentry_id)
+        await async_verify_rejected_usage_stores(hass, entry_id, subentry_id)
+        return managers
     except ValueError as initial_error:
         from .conversation_archive import HomeAssistantArchiveStorage, async_get_archive
+        from .guest_mode import (
+            async_get_guest_mode,
+            async_stage_guest_mode_journal_recovery,
+        )
         from .knowledge import HomeAssistantKnowledgeStorage, async_get_knowledge
+        from .memory import (
+            HomeAssistantMemoryStorage,
+            PersistentMemory,
+            _record_as_storage_dict,
+            async_get_memory,
+        )
+        from .persistence_hardening import StorageRepairRequired
+        from .request_rules import (
+            async_get_request_rules,
+            async_stage_request_rules_journal_recovery,
+        )
         from .temporary_memory import (
             _temporary_memory_store,
             async_get_temporary_memory,
         )
+        from .usage import async_get_durable_usage, async_stage_usage_journal_recovery
+
+        async def recovery_usage(
+            hass: HomeAssistant, entry_id: str, subentry_id: str
+        ) -> None:
+            await async_get_durable_usage(hass, entry_id, subentry_id)
+            await async_verify_rejected_usage_stores(hass, entry_id, subentry_id)
 
         repaired = False
+        try:
+            await async_get_memory(hass, entry_id, subentry_id)
+        except StorageRepairRequired:
+
+            def memory_payload() -> dict[str, Any]:
+                payload = {
+                    "memories": [
+                        _record_as_storage_dict(record) for record in selected.memories
+                    ]
+                }
+                records = PersistentMemory.validate_backup_data(payload)
+                return {
+                    "memories": [_record_as_storage_dict(record) for record in records]
+                }
+
+            await HomeAssistantMemoryStorage(hass, entry_id, subentry_id).async_save(
+                await asyncio.to_thread(memory_payload)
+            )
+            repaired = True
         for getter, storage_factory, field, records in (
             (
                 async_get_temporary_memory,
@@ -410,6 +455,37 @@ async def _recovery_managers(
                 selected.archive_active,
             )
             repaired = True
+        for recovery_getter, stage in (
+            (
+                async_get_guest_mode,
+                lambda: async_stage_guest_mode_journal_recovery(
+                    hass, entry_id, subentry_id, selected.guest_mode_schedule
+                ),
+            ),
+            (
+                async_get_request_rules,
+                lambda: async_stage_request_rules_journal_recovery(
+                    hass, entry_id, subentry_id, selected.request_rules
+                ),
+            ),
+            (
+                recovery_usage,
+                lambda: async_stage_usage_journal_recovery(
+                    hass,
+                    entry_id,
+                    subentry_id,
+                    selected.usage_totals,
+                    selected.usage_daily,
+                    selected.usage_requests,
+                    selected.usage_runs,
+                ),
+            ),
+        ):
+            try:
+                await recovery_getter(hass, entry_id, subentry_id)
+            except StorageRepairRequired:
+                await stage()
+                repaired = True
         if not repaired:
             raise initial_error
         return await _durable_managers(hass, entry_id, subentry_id)
