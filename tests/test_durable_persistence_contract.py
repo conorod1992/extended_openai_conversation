@@ -12,19 +12,60 @@ INTEGRATION = ROOT / "custom_components" / "extended_openai_conversation_respons
 CONTRACT = ROOT / "ci" / "durable_persistence_contract.json"
 
 
+def _source_constructions(source: str) -> Counter[str]:
+    tree = ast.parse(source)
+    aliases = {
+        imported.asname: imported.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        for imported in node.names
+        if imported.asname and imported.name.endswith("Store")
+    }
+    result: Counter[str] = Counter()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        function = node.func
+        if isinstance(function, ast.Subscript):
+            function = function.value
+        if isinstance(function, ast.Name):
+            name = aliases.get(function.id, function.id)
+        elif isinstance(function, ast.Attribute):
+            name = function.attr
+        else:
+            continue
+        if name.endswith("Store"):
+            result[name] += 1
+    return result
+
+
 def _store_constructions() -> Counter[tuple[str, str]]:
     result: Counter[tuple[str, str]] = Counter()
     for path in INTEGRATION.glob("*.py"):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            function = node.func
-            if isinstance(function, ast.Subscript):
-                function = function.value
-            if isinstance(function, ast.Name) and function.id.endswith("Store"):
-                result[(path.name, function.id)] += 1
+        result.update({
+            (path.name, name): count
+            for name, count in _source_constructions(
+                path.read_text(encoding="utf-8")
+            ).items()
+        })
     return result
+
+
+def test_import_spelling_cannot_hide_a_new_persistence_writer() -> None:
+    for source in (
+        "from homeassistant.helpers.storage import Store as Disk\nDisk(hass, 1, 'key')",
+        "from homeassistant.helpers import storage as disk\ndisk.Store[dict](hass, 1, 'key')",
+        "from .strict_store import PropagatingWriteStore as Durable\nDurable(hass, 1, 'key')",
+    ):
+        # An unreviewed site in a new module must change the real inventory,
+        # regardless of which supported import spelling the author chooses.
+        actual = _store_constructions()
+        actual.update({
+            ("new_writer.py", name): count
+            for name, count in _source_constructions(source).items()
+        })
+        assert actual != _store_constructions()
+        assert sum(_source_constructions(source).values()) == 1
 
 
 def test_every_store_construction_has_one_reviewed_durability_owner() -> None:

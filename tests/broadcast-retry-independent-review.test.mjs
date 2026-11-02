@@ -101,6 +101,31 @@ test("an authentication round trip cannot silently turn an uncertain retry into 
   assert.equal(panel._broadcastMessage, "Dinner");
 });
 
+test("a late admitted result across an authentication round trip cannot rearm the retained message", async () => {
+  const requests = [];
+  let release;
+  const pending = new Promise(resolve => { release = resolve; });
+  const {panel, click, confirmations} = await composer(async request => {
+    requests.push(request);
+    return pending;
+  });
+  const sending = click();
+  for (let turn = 0; turn < 10 && !requests.length; turn++) await Promise.resolve();
+  assert.equal(requests.length, 1);
+  const original = panel._broadcastAttempt;
+  panel.hass.user.id = "other";
+  panel._eocAuthenticationGeneration = 1;
+  panel.hass.user.id = "owner";
+  panel._eocAuthenticationGeneration = 2;
+  release({id:"admitted-before-account-change", targets:[target]});
+  await sending;
+  assert.equal(panel._broadcastMessage, "Dinner", "old authentication cannot retire the retained authoring draft");
+  await click();
+  assert.equal(confirmations.length, 1, "the retained message needs explicit new-send intent after its old admission");
+  assert.equal(requests.length, 1, "declining must not repeat the spoken announcement");
+  assert.equal(panel._broadcastAttempt.payload.message, original.payload.message);
+});
+
 test("a first send from an idle page obtains its own current server retry window", async () => {
   const requests = [];
   const {panel, click} = await composer(async request => {

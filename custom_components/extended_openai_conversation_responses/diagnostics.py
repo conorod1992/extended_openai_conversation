@@ -14,6 +14,7 @@ from .agent_config import (
     validate_function_groups,
     validate_function_tools,
 )
+from .agent_maintenance import get_agent_maintenance_gate
 from .const import (
     CONF_API_MODE,
     CONF_API_PROVIDER,
@@ -51,7 +52,9 @@ from .knowledge import async_get_knowledge
 from .memory import async_get_memory, get_memory_mode
 from .model_catalog import BUNDLED_CATALOG
 from .model_catalog_manager import DATA_MANAGER
+from .persistence_hardening import StorageRepairRequired
 from .request import build_provider_request_snapshot, conversation_tools_required
+from .storage_recovery_diagnostics import storage_recovery_snapshot
 from .temporary_memory import async_get_temporary_memory
 from .usage import async_get_usage
 
@@ -59,6 +62,14 @@ from .usage import async_get_usage
 def _configured_function_tools(data: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Parse configured tools with the same missing-value fallback as execution."""
     return validate_function_tools(parse_configured_function_tools(data))
+
+
+def _require_readable_store(
+    category: str, recovery: dict[str, Any] | None, pending: bool
+) -> None:
+    """Do not initialize a rejected store merely to download diagnostics."""
+    if pending or (recovery and recovery["stores"][category]["unavailable_stores"]):
+        raise StorageRepairRequired(category)
 
 
 async def async_get_config_entry_diagnostics(
@@ -124,6 +135,22 @@ async def async_get_config_entry_diagnostics(
         diagnostics["optional_subsystems"] = {
             key: dict(value) for key, value in subsystem_status.items()
         }
+        recovery = None
+        try:
+            recovery = await hass.async_add_executor_job(
+                storage_recovery_snapshot,
+                hass.config.path(".storage"),
+                entry.entry_id,
+                subentry.subentry_id,
+            )
+            diagnostics["storage_recovery"] = recovery
+        except OSError as err:
+            diagnostics["storage_recovery_error"] = type(err).__name__
+        recovery_pending = get_agent_maintenance_gate(
+            hass, entry.entry_id, subentry.subentry_id
+        ).recovery_required
+        diagnostics["restore_recovery_pending"] = recovery_pending
+
         try:
             diagnostics.update(
                 async_get_continuity(hass, entry.entry_id, subentry.subentry_id).stats()
@@ -164,6 +191,7 @@ async def async_get_config_entry_diagnostics(
         except Exception as err:
             diagnostics["function_group_runtime_error"] = type(err).__name__
         try:
+            _require_readable_store("guest_mode", recovery, recovery_pending)
             guest_mode = await async_get_guest_mode(
                 hass, entry.entry_id, subentry.subentry_id
             )
@@ -180,6 +208,7 @@ async def async_get_config_entry_diagnostics(
             except Exception as err:
                 diagnostics["guest_mode"]["policy_error"] = type(err).__name__
         try:
+            _require_readable_store("temporary_memory", recovery, recovery_pending)
             if subsystem_status.get("temporary_memory", {}).get("status") == "failed":
                 raise RuntimeError("disabled after initialization failure")
             temporary = await async_get_temporary_memory(
@@ -189,6 +218,7 @@ async def async_get_config_entry_diagnostics(
         except Exception as err:
             diagnostics["temporary_memory_storage_error"] = type(err).__name__
         try:
+            _require_readable_store("persistent_memory", recovery, recovery_pending)
             if subsystem_status.get("persistent_memory", {}).get("status") == "failed":
                 raise RuntimeError("disabled after initialization failure")
             memory = await async_get_memory(hass, entry.entry_id, subentry.subentry_id)
@@ -196,6 +226,7 @@ async def async_get_config_entry_diagnostics(
         except Exception as err:
             diagnostics["storage_error"] = type(err).__name__
         try:
+            _require_readable_store("knowledge", recovery, recovery_pending)
             if subsystem_status.get("knowledge", {}).get("status") == "failed":
                 raise RuntimeError("disabled after initialization failure")
             knowledge = await async_get_knowledge(
@@ -205,6 +236,7 @@ async def async_get_config_entry_diagnostics(
         except Exception as err:
             diagnostics["knowledge_storage_error"] = type(err).__name__
         try:
+            _require_readable_store("archive", recovery, recovery_pending)
             if subsystem_status.get("archive", {}).get("status") == "failed":
                 raise RuntimeError("disabled after initialization failure")
             archive = await async_get_archive(
@@ -214,6 +246,7 @@ async def async_get_config_entry_diagnostics(
         except Exception as err:
             diagnostics["archive_storage_error"] = type(err).__name__
         try:
+            _require_readable_store("usage", recovery, recovery_pending)
             usage = await async_get_usage(hass, entry.entry_id, subentry.subentry_id)
             diagnostics["usage"] = usage.as_dict()
             diagnostics["usage_persistence"] = usage.persistence_status()

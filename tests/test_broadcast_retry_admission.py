@@ -69,6 +69,37 @@ async def test_live_capacity_never_evicts_an_accepted_receipt(admission, monkeyp
     assert await send(manager, key) == original
 
 
+async def test_capacity_rejection_reports_wait_then_releases_only_expired_receipts(
+    admission, monkeypatch
+):
+    manager, *_ = admission
+    monkeypatch.setattr(intercom, "MAX_RETRY_ADMISSIONS", 2)
+    monkeypatch.setattr(intercom.time, "monotonic", lambda: 1000.2)
+    first_key = operation(manager)
+    first = await send(manager, first_key)
+    monkeypatch.setattr(intercom.time, "monotonic", lambda: 1100.2)
+    second_key = operation(manager, "b")
+    second = await send(manager, second_key)
+    with pytest.raises(intercom.BroadcastRetryCapacity, match="Retry in 500 seconds"):
+        await send(manager, operation(manager, "c"))
+    assert len(manager._retry_admissions) == 2
+    assert len(manager.history()) == 2
+    assert await send(manager, first_key) == first
+    assert await send(manager, second_key) == second
+
+    monkeypatch.setattr(intercom.time, "monotonic", lambda: 1599.9)
+    with pytest.raises(intercom.BroadcastRetryCapacity, match="Retry in 1 second;"):
+        await send(manager, operation(manager, "c"))
+    monkeypatch.setattr(intercom.time, "monotonic", lambda: 1600)
+    third = await send(manager, operation(manager, "c"))
+    assert third["id"] not in {first["id"], second["id"]}
+    assert len(manager._retry_admissions) == 2
+    assert await send(manager, second_key) == second
+    with pytest.raises(intercom.BroadcastRetryExpired):
+        await send(manager, first_key)
+    assert len(manager.history()) == 3
+
+
 async def test_expired_or_restarted_attempt_cannot_become_new_admission(hass, admission, monkeypatch):
     manager, *_ = admission
     monkeypatch.setattr(intercom.time, "monotonic", lambda: 1000)
@@ -76,10 +107,10 @@ async def test_expired_or_restarted_attempt_cannot_become_new_admission(hass, ad
     await send(manager, key)
     monkeypatch.setattr(intercom.time, "monotonic", lambda: 1601)
     manager._retry_admissions.clear()
-    with pytest.raises(intercom.BroadcastRetryExpired):
+    with pytest.raises(intercom.BroadcastRetryExpired, match="retry window ended"):
         await send(manager, key)
     other = intercom.IntercomManager(hass)
-    with pytest.raises(intercom.BroadcastRetryExpired):
+    with pytest.raises(intercom.BroadcastRetryExpired, match="recent history is no longer available"):
         await send(other, operation(manager))
     assert len(manager.history()) == 1
 

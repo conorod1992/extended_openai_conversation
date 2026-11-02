@@ -29,6 +29,8 @@
       "tests_browser/backup-transfer-lifecycle.stress.mjs::chromium::backup-transfer-lifecycle.stress.mjs::Backup export modes validate selection, preserve settings and reset on reopen",
       "tests_browser/backup-transfer-lifecycle.stress.mjs::chromium::backup-transfer-lifecycle.stress.mjs::Restore rejects corrupt input, supports cancel and requires file reselection after failure",
       "tests_browser/backup-transfer-lifecycle.stress.mjs::chromium::backup-transfer-lifecycle.stress.mjs::Restore selection preview follows the latest section choice and successful restore reloads",
+      "tests_browser/broadcast-retry.spec.mjs::chromium::broadcast-retry.spec.mjs::Broadcast retains admitted send ownership across account changes (bundle)",
+      "tests_browser/broadcast-retry.spec.mjs::chromium::broadcast-retry.spec.mjs::Broadcast retains admitted send ownership across account changes (source)",
       "tests_browser/broadcast-retry.spec.mjs::chromium::broadcast-retry.spec.mjs::Broadcast retains an uncertain operation across refresh and requires a new-send confirmation for edits",
       "tests_browser/broadcast-retry.spec.mjs::chromium::broadcast-retry.spec.mjs::Broadcast retains an uncertain operation across refresh and retries the same admission",
       "tests_browser/browser-lifecycle-resilience.stress.mjs::chromium::browser-lifecycle-resilience.stress.mjs::clipboard denial reports a recoverable error without breaking the preview",

@@ -142,6 +142,12 @@ Damaged retained-data stores can be blocked for repair rather than silently repl
 
 For recovery into a clean assistant when the affected assistant cannot initialize, see [Backup & Restore](features/backup-restore.md). An agent backup restores only the sections it contains; it cannot replace a full Home Assistant backup.
 
+Download the integration diagnostics from its entry in **Settings → Devices & services**. Each conversation assistant includes a `storage_recovery` report with counts of active stores, preserved corruption files, unavailable stores and whether a local restore journal is present. This part of the report inspects file names and types without opening or modifying their contents, and omits private file names and paths. Known quarantined stores and stores blocked by pending restore recovery are not initialized to collect their statistics; healthy sections remain available.
+
+`content_validated: false` is deliberate: the report cannot establish that an existing file or journal is usable. Preserved corruption files may remain after a successful repair; they are not alone evidence of a current failure. Missing files without preserved evidence may simply mean a feature has never been used. A failed directory inspection is reported separately rather than treated as an empty, healthy store.
+
+Preserve the original files, any local recovery journal and your backups. If no usable journal exists, diagnostics cannot reconstruct missing records or authorize replacing a damaged store. Recover a known-good private backup into a clean assistant and verify its selected sections before moving use to it. If no suitable backup exists, seek administrator repair with Home Assistant stopped and retain a private copy of the original data. Do not copy a journal from another assistant or delete corruption files to bypass the repair barrier.
+
 ## Enable debug logging
 
 Use **Settings → Devices & services → Extended OpenAI Conversation → Enable debug logging**, reproduce the issue, then disable debug logging to download the log. Review it before sharing; Home Assistant does not guarantee automatic redaction.

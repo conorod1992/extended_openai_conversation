@@ -20,6 +20,9 @@ from custom_components.extended_openai_conversation_responses.conversation_archi
 from custom_components.extended_openai_conversation_responses.persistence_hardening import (
     StorageRepairRequired,
 )
+from custom_components.extended_openai_conversation_responses.storage_recovery_diagnostics import (
+    storage_recovery_snapshot,
+)
 from tests.test_conversation_archive import _session, _turn
 from tests_real_ha.test_cross_feature_acceptance import _agent
 from tests_stress.test_os_storage_faults import real_store_io  # noqa: F401
@@ -111,6 +114,12 @@ async def test_native_archive_quarantine_can_be_replaced_under_journal_authority
 
     rejected = await hass.async_add_executor_job(evidence)
     assert list(rejected.values()) == [rejected_bytes]
+    report = await hass.async_add_executor_job(
+        storage_recovery_snapshot, str(metadata.parent), "archive-entry", "archive-agent"
+    )
+    assert report["stores"]["archive"]["unavailable_stores"] == 1
+    assert report["restore_journal"]["state"] == "absent"
+    assert await hass.async_add_executor_job(evidence) == rejected
     gate = get_agent_maintenance_gate(hass, "archive-entry", "archive-agent")
     async with gate.exclusive():
         gate.recovery_required = True
@@ -130,4 +139,9 @@ async def test_native_archive_quarantine_can_be_replaced_under_journal_authority
     assert [turn["sequence"] for turn in result["turns"]] == [0]
     assert await fresh_storage.async_load_partition("2026-08") == {"turns": []}
     assert "pending_partitions" not in await fresh_storage.async_load_metadata()
+    report = await hass.async_add_executor_job(
+        storage_recovery_snapshot, str(metadata.parent), "archive-entry", "archive-agent"
+    )
+    assert report["stores"]["archive"]["unavailable_stores"] == 0
+    assert report["stores"]["archive"]["preserved_corrupt_files"] == 1
     assert await hass.async_add_executor_job(evidence) == rejected

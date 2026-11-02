@@ -7,6 +7,7 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+import math
 import re
 import time
 from typing import Any, TypedDict, cast
@@ -73,6 +74,12 @@ class BroadcastRetryExpired(BroadcastRetryError):
     """The original admission may have happened in a retired retry window."""
 
     code = "broadcast_retry_expired"
+
+
+class BroadcastRetryCapacity(BroadcastRetryError):
+    """This new admission was rejected without retiring any live retry receipt."""
+
+    code = "broadcast_retry_capacity"
 
 
 @dataclass(slots=True)
@@ -395,9 +402,15 @@ class IntercomManager:
         if match is None:
             raise HomeAssistantError("Invalid Broadcast operation identifier")
         deadline = int(match[2])
-        if match[1] != self._retry_epoch or deadline <= now:
+        if match[1] != self._retry_epoch:
             raise BroadcastRetryExpired(
-                "The Broadcast retry window ended or the server restarted. Check delivery history before intentionally sending again."
+                "Broadcast restarted and its recent history is no longer available. "
+                "This retry was not queued, but the earlier announcement may already "
+                "have played. Confirm before sending as new."
+            )
+        if deadline <= now:
+            raise BroadcastRetryExpired(
+                "The Broadcast retry window ended. Check delivery history before intentionally sending again."
             )
         if deadline > now + RETRY_WINDOW_SECONDS:
             raise HomeAssistantError("Invalid Broadcast retry window")
@@ -440,8 +453,17 @@ class IntercomManager:
                     "targets": list(record.admission["targets"]),
                 }
             if len(self._retry_admissions) >= MAX_RETRY_ADMISSIONS:
-                raise HomeAssistantError(
-                    "Broadcast retry capacity reached; wait before sending a new announcement"
+                wait = max(
+                    1,
+                    math.ceil(
+                        min(item.deadline for item in self._retry_admissions.values())
+                        - now
+                    ),
+                )
+                raise BroadcastRetryCapacity(
+                    "Broadcast retry capacity reached. This send was not queued. "
+                    f"Retry in {wait} second{'s' if wait != 1 else ''}; "
+                    "earlier attempts remain protected."
                 )
             record = _RetryAdmission(deadline, payload)
             self._retry_admissions[key] = record
