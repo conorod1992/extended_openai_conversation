@@ -238,7 +238,9 @@ async def test_broadcast_admission_retires_composer_without_duplicate_delivery(
             failure_label="Playwright genuine-HA Broadcast acknowledgement failed",
         )
         await hass.async_block_till_done()
-        expected = ["Dinner source", "Dinner bundle"]
+        # The retry journey dispatches twice but admits and delivers exactly one
+        # witness, followed by the source/bundle acknowledgement journeys.
+        expected = ["Retry witness", "Dinner source", "Dinner bundle"]
         assert announcements == [
             {"message": message, "entity_id": "assist_satellite.kitchen"}
             for message in expected

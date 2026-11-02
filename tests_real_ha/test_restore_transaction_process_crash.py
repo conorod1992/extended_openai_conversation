@@ -456,9 +456,10 @@ def test_restore_transaction_converges_after_process_kills(
     if interrupt_recovery:
         _kill_at(config_dir, "interrupt-recovery", cut, "recovery-paused")
     _run(config_dir, "verify", cut)
-    # First verify replays recovery; this independent startup reads the committed
-    # quarantined configuration before recovery has any opportunity to alter it.
-    _run(config_dir, "verify", cut)
+    if cut == "committed" and not interrupt_recovery:
+        # Only committed recovery retains the imported quarantine. This second
+        # fresh startup reads that configuration before recovery can alter it.
+        _run(config_dir, "verify", cut)
     assert config.read_text(encoding="utf-8") == configuration
 
 
