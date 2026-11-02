@@ -258,8 +258,8 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
   }
 
   async _copyRun(debugId) {
-    const revision = this._revision, connection = this._hass, agent = this._agent;
-    const current = () => this.isConnected && revision === this._revision && connection === this._hass && agent === this._agent;
+    const revision = this._revision, authentication = this._authenticationGeneration, agent = this._agent;
+    const current = () => this.isConnected && revision === this._revision && authentication === this._authenticationGeneration && agent === this._agent;
     try {
       const result = await this._getRun(debugId, 0);
       if (!current()) return;
@@ -272,8 +272,8 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
   }
 
   async _copyText(text) {
-    const revision = this._revision, connection = this._hass;
-    await copyTextToClipboard(text, undefined, undefined, () => this.isConnected && revision === this._revision && connection === this._hass);
+    const revision = this._revision, authentication = this._authenticationGeneration;
+    await copyTextToClipboard(text, undefined, undefined, () => this.isConnected && revision === this._revision && authentication === this._authenticationGeneration);
   }
 
   _formatDate(value) {

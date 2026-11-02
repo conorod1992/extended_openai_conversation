@@ -108,3 +108,20 @@ test("Debug keeps queued same-user actions across ordinary HA updates", async ()
   assert.deepEqual(calls.filter(message => message.action === "configure").map(message => message.enabled), [true, false]);
   assert.equal(host._status.enabled, false);
 });
+
+test("Debug Copy survives a routine same-user HA payload replacement", async () => {
+  const host = panel(), held = deferred(), copied = [], toasts = [];
+  host.style = {};
+  host.isConnected = true;
+  host._loadAgents = async () => {};
+  host.hass = {user:{id:"original"}};
+  host._getRun = () => held.promise;
+  host._copyText = text => copied.push(text);
+  host._toast = text => toasts.push(text);
+  const pending = host._copyRun("private-run");
+  host.hass = {...host._hass, user:{id:"original"}, states:{updated:true}};
+  held.resolve({copy_text:"original user's requested trace"});
+  await pending;
+  assert.deepEqual(copied, ["original user's requested trace"]);
+  assert.deepEqual(toasts, ["Entire debug log copied"]);
+});
