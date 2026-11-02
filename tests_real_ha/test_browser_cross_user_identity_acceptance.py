@@ -12,7 +12,9 @@ from aiohttp import web
 import pytest
 from pytest_homeassistant_custom_component.common import CLIENT_ID, MockUser
 
-from custom_components.extended_openai_conversation_responses.memory import async_get_memory
+from custom_components.extended_openai_conversation_responses.memory import (
+    async_get_memory,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.setup import async_setup_component
 from tests_real_ha.test_browser_backend_acceptance import (
