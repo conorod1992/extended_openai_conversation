@@ -33,9 +33,13 @@ async def test_startup_reconciles_disabled_parent_without_tracking(hass, tmp_pat
     root.mkdir()
     removed = [f"{DOMAIN}.{section}.entry.removed{suffix}" for section, suffix in [
         ("memory", ""), ("memory", ".embeddings"), ("archive", ".turns.2026-10"),
-        ("knowledge", ""), ("restore_transaction", ""),
+        ("knowledge", ""), ("usage", ""), ("restore_transaction", ""),
     ]]
-    retained = [f"{DOMAIN}.memory.entry.kept", f"{DOMAIN}.memory.entry.removed_other", f"{DOMAIN}.memory.other.removed"]
+    retained = [
+        f"{DOMAIN}.memory.entry.kept", f"{DOMAIN}.usage.entry.kept",
+        f"{DOMAIN}.memory.entry.removed_other", f"{DOMAIN}.memory.other.removed",
+        f"{DOMAIN}.usage.other.removed", f"{DOMAIN}.broadcast", f"{DOMAIN}.quiet_hours",
+    ]
     for name in removed + retained:
         (root / name).write_text("private data", encoding="utf-8")
     async def remove(store):

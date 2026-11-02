@@ -30,23 +30,17 @@ async def test_subentry_removal_purges_private_stores_then_last_entry_stops_glob
     removed = _subentry_by_title(entry, "Conversation A")
     remaining = _subentry_by_title(entry, "Conversation B")
     sections = (
-        "memory",
-        "temporary_memory",
-        "knowledge",
-        "archive",
-        "usage",
-        "guest_mode",
-        "request_rules",
+        ("memory", ""),
+        ("memory", ".embeddings"),
+        ("temporary_memory", ""),
+        ("knowledge", ""),
+        ("archive", ".turns.2026-09"),
+        ("usage", ""),
+        ("guest_mode", ""),
+        ("request_rules", ""),
     )
     owned = []
-    for section in sections:
-        suffix = (
-            ".turns.2026-09"
-            if section == "archive"
-            else ".embeddings"
-            if section == "memory"
-            else ""
-        )
+    for section, suffix in sections:
         store = Store(
             hass,
             1,
@@ -62,6 +56,8 @@ async def test_subentry_removal_purges_private_stores_then_last_entry_stops_glob
         private=True,
     )
     await sibling.async_save({"private": "keep sibling"})
+    assert all(path.is_file() for path in owned)
+    assert Path(sibling.path).is_file()
     if provider_state == "unloaded":
         assert await hass.config_entries.async_unload(entry.entry_id)
     elif provider_state == "disabled":
