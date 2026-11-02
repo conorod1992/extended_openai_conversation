@@ -127,7 +127,8 @@ failures still propagate. The native process-crash journey also checks quarantin
 and healthy-sibling operation after recovery and another clean restart.
 
 Mutation wire tests serialize actual backend results and feed them to production
-JavaScript acknowledgement consumers. Rejection requires evidence that no write
+JavaScript acknowledgement consumers, including Function, Group and Rule deletion.
+Rejection requires evidence that no write
 committed; missing/malformed responses and transport loss remain uncertain.
 Confirmed commitment retires only its submitted draft before presentation and
 refresh, including committed responses carrying warnings or partial outcomes.
@@ -141,9 +142,12 @@ operation identity, and assert a single admission. They cover payload/caller
 binding, bounded capacity without eviction of live receipts, expiry and server
 replacement, authorization changes, cancellation, and failures after insertion.
 Uncertain attempts survive snapshot refresh; edits and revoked authentication
-lifetimes require explicit new-send confirmation. Real-browser disclosure/rebind
+lifetimes require explicit new-send confirmation. Fresh sends obtain a current
+server retry window without renewing an uncertain predecessor; failed preparation
+does not count as a dispatched send. Real-browser disclosure/rebind
 journeys preserve Rule Sharing files, review and export choices, and initialization
-failure remains retryable. These journeys are registered in the nightly browser
+failure remains retryable. Already-open mounted disclosures initialize without
+needing another toggle. These journeys are registered in the nightly browser
 execution inventory in addition to PR smoke collection.
 
 PR lint runs the nightly selection and execution-catalog guards without Home

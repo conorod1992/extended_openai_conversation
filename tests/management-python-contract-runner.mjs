@@ -10,6 +10,7 @@ import {routeAssetPromise} from "../custom_components/extended_openai_conversati
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
 const probe = JSON.parse(input);
+const collectionFamily = probe.family.split("_")[0];
 const panel = new Panel();
 const controls = new Map();
 const clone = value => structuredClone(value);
@@ -87,7 +88,7 @@ if (probe.family === "import") {
     "only a complete deletion acknowledgement removes the visible memory");
   if (probe.outcome !== "committed") assert.match(panel.toasts.at(-1).message, /Unable to delete memory/);
 } else {
-  if (probe.family === "rule") {
+  if (collectionFamily === "rule") {
     panel._page = "capabilities"; panel._subsection = "request-rules";
     panel._result = clone(probe.rules);
   }
@@ -101,7 +102,7 @@ if (probe.family === "import") {
     assert.equal(error?.mutationOutcome, probe.outcome === "lost" ? "uncertain" : "committed");
     assert.deepEqual(panel._configData, baseline, "no missing response becomes a saved configuration baseline");
     assert.deepEqual(panel._draft, authored, "unknown outcomes retain authored values");
-    if (["function", "group", "rule"].includes(probe.family)) {
+    if (["function", "group", "rule"].includes(collectionFamily)) {
       await assert.rejects(panel._call(probe.section, probe.action, probe.payload), failure => failure.mutationOutcome === "uncertain");
       assert.equal(sends, 1, "the production mutation lane blocks a second write pending recovery");
     }
@@ -113,19 +114,20 @@ if (probe.family === "import") {
     assert.deepEqual(panel._draft, authored);
   } else {
     assert.equal(error, undefined);
-    if (["function", "group"].includes(probe.family)) {
+    if (["function", "group"].includes(collectionFamily)) {
       assert.equal(synchronizePersistedFunctions(panel, response, owner), true);
       assert.deepEqual(panel._configData.config.function_groups, response.function_groups);
       assert.deepEqual(panel._configData.config.functions, response.functions);
       assert.equal(panel._configData.revision, response.revision);
+      if (probe.family.endsWith("_delete")) assert.deepEqual(panel._configData.config[collectionFamily === "function" ? "functions" : "function_groups"], []);
     } else if (probe.family === "configuration") {
       assert.equal(await completeConfigurationAcknowledgement(panel, response, owner, {message:"Changes saved"}), true);
       assert.equal(panel._configData.config.max_tokens, 723);
       assert.equal(panel._draft.max_tokens, 723);
-    } else if (probe.family === "rule") {
-      assert.equal(applyRequestRuleMutation(panel, probe.action, response), true);
-      assert.equal(panel._result.rules.length, 1);
-      assert.equal(panel._result.rules[0].id, response.rule.id);
+    } else if (collectionFamily === "rule") {
+      assert.equal(applyRequestRuleMutation(panel, probe.action, response, {ruleId:probe.payload.rule_id}), true);
+      assert.equal(panel._result.rules.length, probe.action === "delete" ? 0 : 1);
+      if (probe.action !== "delete") assert.equal(panel._result.rules[0].id, response.rule.id);
       assert.equal(panel._eocRequestRuleRevision.value, response.revision);
     } else assert.equal(response.status, "restored");
     assert.equal(await presentAcknowledgedMutation(panel, owner, "Changes saved", () => { throw Error("Optional display refresh witness"); }, response), true);

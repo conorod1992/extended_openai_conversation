@@ -11,9 +11,10 @@ for (const changed of [false, true]) test(`Broadcast retains an uncertain operat
     const original = host._hass.callWS.bind(host._hass);
     host._retryRequests = [];
     host._retryAdmissions = new Map();
+    host._retrySnapshotReads = 0;
     host._hass.callWS = async request => {
       if (!request.type?.endsWith("/broadcast")) return original(request);
-      if (request.action === "snapshot") return {enabled:true, can_manage:true, retry_token:`${"a".repeat(32)}:1234`, catalog:{satellites:[{id:"assist_satellite.kitchen", name:"Kitchen", state:"idle"}], areas:[]}, history:[], pending:[]};
+      if (request.action === "snapshot") return {enabled:true, can_manage:true, retry_token:`${"a".repeat(32)}:${1234 + ++host._retrySnapshotReads}`, catalog:{satellites:[{id:"assist_satellite.kitchen", name:"Kitchen", state:"idle"}], areas:[]}, history:[], pending:[]};
       if (request.action === "send") {
         host._retryRequests.push(request);
         if (host._retryAdmissions.has(request.operation_id)) return host._retryAdmissions.get(request.operation_id);
@@ -30,6 +31,7 @@ for (const changed of [false, true]) test(`Broadcast retains an uncertain operat
   await panel.locator("#broadcast-message").fill("Dinner");
   await panel.locator("#broadcast-send").click();
   await expect(panel.locator("#broadcast-message")).toHaveValue("Dinner");
+  expect(await panel.evaluate(host => host._retryRequests[0].operation_id.split(":")[1])).toBe("1236");
   await panel.locator("#broadcast-refresh").click();
   if (changed) await panel.locator("#broadcast-message").fill("New message");
   await panel.locator("#broadcast-send").click();

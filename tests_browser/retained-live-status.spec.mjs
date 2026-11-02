@@ -140,7 +140,7 @@ test("Whole-home Broadcast omits retained specific selections", async ({page}) =
     const original = host._hass.callWS;
     host._hass = {...host._hass, callWS: async message => {
       if (message.type?.endsWith("/broadcast") && message.action === "snapshot") return {
-        enabled: true, can_manage: true, catalog: {satellites: [{id: "assist_satellite.hall", name: "Hall"}], areas: []},
+        enabled: true, can_manage: true, retry_token:"fixture-window", catalog: {satellites: [{id: "assist_satellite.hall", name: "Hall"}], areas: []},
         history: [], pending: [],
       };
       if (message.type?.endsWith("/broadcast") && message.action === "send") {

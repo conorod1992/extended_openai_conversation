@@ -343,6 +343,7 @@ export function bindRequestRulesCore(panel,{openEditor,activateSafeTester,activa
   const root=panel.shadowRoot,list=root.querySelector(".rule-list"); prepareRequestRulesCollection(panel);
   const sharing=root.querySelector("#rule-sharing");
   bindOwnedEvent(sharing,"toggle","rule-sharing",()=>{if(sharing.open)void initializeRuleSharing(panel,sharing);});
+  if(sharing?.open)void initializeRuleSharing(panel,sharing);
   setFuzzyState(root,"rules-default"); bindOwnedEvent(root.querySelector("#rules-default-fuzzy"),"change","rule-default-fuzzy",()=>setFuzzyState(root,"rules-default"));
   bindWordingEditor(panel);
   const filter=root.querySelector("#rule-group-filter");

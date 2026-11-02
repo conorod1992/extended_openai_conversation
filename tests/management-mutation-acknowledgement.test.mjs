@@ -349,7 +349,7 @@ for (const shape of ["nested", "bare"]) {
       control("#broadcast-send");
       control("#broadcast-enabled");
       let writes = 0;
-      const state = {enabled:true, can_manage:true, catalog:{satellites:[{id:"satellite.kitchen", name:"Kitchen"}]}, history:[], pending:[]};
+      const state = {enabled:true, can_manage:true, retry_token:"server-window", catalog:{satellites:[{id:"satellite.kitchen", name:"Kitchen"}]}, history:[], pending:[]};
       panel._hass.callWS = async request => {
         if (request.action === "snapshot") return state;
         writes++;
@@ -374,7 +374,7 @@ for (const newer of [false,true]) test(`Broadcast consumes only its submitted dr
   panel._e=String;panel._titleCase=String;
   control("#broadcast-card");const button=control("#broadcast-send");control("#broadcast-enabled");
   const composer=control("#broadcast-message");composer.value="Dinner";
-  const state={enabled:true,can_manage:true,catalog:{satellites:[{id:"satellite.kitchen",name:"Kitchen"}]},history:[],pending:[]};
+  const state={enabled:true,can_manage:true,retry_token:"server-window",catalog:{satellites:[{id:"satellite.kitchen",name:"Kitchen"}]},history:[],pending:[]};
   const sent=[];
   panel._hass.callWS=async request=>{
     if(request.action==="snapshot")return state;
@@ -399,11 +399,11 @@ async function broadcastAdmissionWitness(bind = bindBroadcast, {refreshFails = f
   control("#broadcast-card"); control("#broadcast-enabled");
   const button = control("#broadcast-send"), composer = control("#broadcast-message");
   composer.value = "Dinner";
-  const state = {enabled:true, can_manage:true, catalog:{satellites:[{id:"assist_satellite.kitchen", name:"Kitchen"}]}, history:[], pending:[]};
+  const state = {enabled:true, can_manage:true, retry_token:"server-window", catalog:{satellites:[{id:"assist_satellite.kitchen", name:"Kitchen"}]}, history:[], pending:[]};
   const admitted = [];
   panel._hass.callWS = async request => {
     if (request.action === "snapshot") {
-      if (refreshFails) throw Error("history unavailable");
+      if (refreshFails && admitted.length) throw Error("history unavailable");
       return state;
     }
     // Match BroadcastMessage.as_dict(): admission identity and concrete targets,
@@ -438,7 +438,7 @@ test("Broadcast acknowledgement cannot retire a draft after an authentication ro
   panel._e = String; panel._titleCase = String;
   control("#broadcast-card"); control("#broadcast-enabled");
   const button = control("#broadcast-send"), composer = control("#broadcast-message"); composer.value = "Dinner";
-  const state = {enabled:true, can_manage:true, catalog:{satellites:[{id:"assist_satellite.kitchen",name:"Kitchen"}]},history:[],pending:[]};
+  const state = {enabled:true, can_manage:true, retry_token:"server-window", catalog:{satellites:[{id:"assist_satellite.kitchen",name:"Kitchen"}]},history:[],pending:[]};
   panel._hass.callWS = async request => {
     if (request.action === "snapshot") return state;
     authenticationRoundTrip(panel);
@@ -458,8 +458,8 @@ for (const response of [{}, {status:"queued"}, {id:"",targets:["assist_satellite
     panel._e = String; panel._titleCase = String;
     control("#broadcast-card"); control("#broadcast-enabled");
     const button = control("#broadcast-send");
-    const state = {enabled:true,can_manage:true,catalog:{satellites:[{id:"assist_satellite.kitchen",name:"Kitchen"}]},history:[],pending:[]};
-    panel._hass.callWS = async () => response;
+    const state = {enabled:true,can_manage:true,retry_token:"server-window",catalog:{satellites:[{id:"assist_satellite.kitchen",name:"Kitchen"}]},history:[],pending:[]};
+    panel._hass.callWS = async request => request.action === "snapshot" ? state : response;
     await bindBroadcast(panel, Promise.resolve(state));
     await button.click({currentTarget:button});
     assert.equal(panel._broadcastMessage, "Dinner");

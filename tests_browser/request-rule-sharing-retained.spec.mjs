@@ -122,5 +122,18 @@ test("repeated Request Rules binding keeps one wording-add and one create-rule a
   await expect(panel.locator(".wording-group")).toHaveCount(before + 1);
   await panel.locator("#rule-add").click();
   expect(await page.evaluate(() => window.ruleCreateActivations)).toBe(1);
+  // An open disclosure can be restored/replaced before its lazy feature binds.
+  // Its earlier toggle event must not be the only initialization opportunity.
+  await panel.evaluate(async host => {
+    const previous = host.shadowRoot.querySelector("#rule-sharing");
+    const mounted = previous.cloneNode(true);
+    const toggled = new Promise(resolve => mounted.addEventListener("toggle", resolve, {once:true}));
+    mounted.open = true;
+    await toggled;
+    previous.replaceWith(mounted);
+    const {bindRequestRulesCore} = await import("/custom_components/extended_openai_conversation_responses/frontend/request-rules-ui-core.js");
+    bindRequestRulesCore(host);
+  });
+  await expect(panel.locator("#rule-pack-file")).toBeVisible();
   await expectHarnessClean(page, errors);
 });

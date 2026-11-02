@@ -101,7 +101,18 @@ def routing_rule():
 
 
 @pytest.mark.parametrize(
-    "family", ["function", "group", "rule", "configuration", "import", "memory_delete"]
+    "family",
+    [
+        "function",
+        "function_delete",
+        "group",
+        "group_delete",
+        "rule",
+        "rule_delete",
+        "configuration",
+        "import",
+        "memory_delete",
+    ],
 )
 @pytest.mark.parametrize("outcome", ["committed", "rejected", "lost"])
 async def test_management_producers_reach_owned_js_consumers(
@@ -113,6 +124,17 @@ async def test_management_producers_reach_owned_js_consumers(
     rules = RequestRules(rules_store)
     await rules.async_initialize()
     monkeypatch.setattr(ui, "async_get_request_rules", AsyncMock(return_value=rules))
+    if family == "function_delete":
+        subentry.data = {**subentry.data, "functions": json.dumps([_tool("wire_tool")])}
+    elif family == "group_delete":
+        subentry.data = {
+            **subentry.data,
+            "function_groups": [_group("wire_group", [], "always")],
+        }
+    elif family == "rule_delete":
+        await rules.async_create(routing_rule())
+    before_rules = rules.snapshot()
+    previous_rule_saves = rules_store.saves
     baseline = configuration_snapshot(subentry)
     previous = deepcopy(subentry.data)
     created = []
@@ -127,8 +149,11 @@ async def test_management_producers_reach_owned_js_consumers(
     payload = {"revision": "obsolete" if outcome == "rejected" else revision}
     section, action = {
         "function": ("tools", "save"),
+        "function_delete": ("tools", "delete"),
         "group": ("tools", "save_group"),
+        "group_delete": ("tools", "delete_group"),
         "rule": ("request_rules", "create"),
+        "rule_delete": ("request_rules", "delete"),
         "configuration": ("configuration", "save"),
         "import": ("configuration", "import"),
         "memory_delete": ("memories", "delete"),
@@ -138,11 +163,21 @@ async def test_management_producers_reach_owned_js_consumers(
     before_memories = []
     if family == "function":
         payload["tool"] = _tool("wire_tool")
+    elif family == "function_delete":
+        payload.update(name="wire_tool", confirm=True)
     elif family == "group":
         payload["group"] = _group("wire_group", [], "always")
+    elif family == "group_delete":
+        payload.update(group_id="wire_group", confirm=True)
     elif family == "rule":
         payload = {
             "rule": routing_rule(),
+            "revision": "obsolete" if outcome == "rejected" else rules.revision(),
+        }
+    elif family == "rule_delete":
+        payload = {
+            "rule_id": before_rules["rules"][0]["id"],
+            "confirm": True,
             "revision": "obsolete" if outcome == "rejected" else rules.revision(),
         }
     elif family == "configuration":
@@ -184,18 +219,34 @@ async def test_management_producers_reach_owned_js_consumers(
     envelope = await exchange(hass, management_message(section, action, **payload))
     committed = outcome != "rejected"
     assert envelope["success"] is committed, envelope
-    if family in {"function", "group", "configuration"}:
+    if family in {
+        "function",
+        "function_delete",
+        "group",
+        "group_delete",
+        "configuration",
+    }:
         assert (subentry.data != previous) is committed
         if committed:
             hass.config_entries.async_update_subentry.assert_called_once()
         else:
             hass.config_entries.async_update_subentry.assert_not_called()
-    elif family == "rule":
+        if committed and family.endswith("_delete"):
+            snapshot = configuration_snapshot(subentry)["config"]
+            assert (
+                snapshot[
+                    "functions" if family == "function_delete" else "function_groups"
+                ]
+                == []
+            )
+    elif family in {"rule", "rule_delete"}:
         # Reload the manager from its retained Store, not just its RAM snapshot.
         fresh = RequestRules(rules_store)
         await fresh.async_initialize()
-        assert len(fresh.snapshot()["rules"]) == int(committed)
-        assert rules_store.saves == int(committed)
+        assert len(fresh.snapshot()["rules"]) == (
+            int(not committed) if family == "rule_delete" else int(committed)
+        )
+        assert rules_store.saves - previous_rule_saves == int(committed)
         hass.config_entries.async_update_subentry.assert_not_called()
     elif family == "import":
         assert len(created) == int(committed)
@@ -222,13 +273,7 @@ async def test_management_producers_reach_owned_js_consumers(
             "envelope": envelope,
             "before": baseline,
             "before_memories": before_memories,
-            "rules": {
-                "rules": [],
-                "groups": [],
-                "defaults": {},
-                "wording_groups": [],
-                "revision": 0,
-            },
+            "rules": before_rules,
         }
     )
 

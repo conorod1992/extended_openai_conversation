@@ -100,3 +100,65 @@ test("an authentication round trip cannot silently turn an uncertain retry into 
   assert.equal(requests.length, 1, "declining a new send preserves the original ambiguity");
   assert.equal(panel._broadcastMessage, "Dinner");
 });
+
+test("a first send from an idle page obtains its own current server retry window", async () => {
+  const requests = [];
+  const {panel, click} = await composer(async request => {
+    requests.push(request);
+    return {id:"fresh-admission", targets:[target]};
+  });
+  const fresh = `${"b".repeat(32)}:200000`;
+  const send = panel._hass.callWS;
+  let reads = 0;
+  panel._hass.callWS = request => {
+    if (request.action === "snapshot") { reads++; return {retry_token:fresh}; }
+    return send(request);
+  };
+  await click();
+  assert.equal(reads, 2, "new admission refreshes its token, then committed presentation refreshes history");
+  assert.equal(requests.length, 1);
+  assert.ok(requests[0].operation_id.startsWith(`${fresh}:`), "the page's original token must not authorize a fresh send");
+});
+
+for (const fault of ["offline", "missing token", "edited while reading"]) {
+  test(`a fresh Broadcast cannot dispatch after ${fault}`, async () => {
+    const requests = [];
+    const {panel, click} = await composer(async request => {
+      requests.push(request);
+      return {id:"unexpected", targets:[target]};
+    });
+    const send = panel._hass.callWS;
+    panel._hass.callWS = async request => {
+      if (request.action !== "snapshot") return send(request);
+      if (fault === "offline") throw Error("Snapshot unavailable");
+      if (fault === "edited while reading") panel._broadcastDraftRevision = 1;
+      return fault === "missing token" ? {} : {retry_token:token};
+    };
+    await click();
+    assert.equal(requests.length, 0, "no mutation was dispatched");
+    assert.equal(panel._broadcastMessage, "Dinner");
+    assert.ok(!panel._broadcastAttempt, "a read failure cannot fabricate an uncertain admission");
+  });
+}
+
+test("a rejected preparation read for a confirmed new send cannot settle its predecessor", async () => {
+  const requests = [];
+  const {panel, click} = await composer(async request => {
+    requests.push(request);
+    throw Error("Original admission reply lost");
+  });
+  await click();
+  const original = panel._broadcastAttempt;
+  panel._broadcastMessage = "Changed message";
+  panel._broadcastDraftRevision = 1;
+  panel._confirm = async () => true;
+  const send = panel._hass.callWS;
+  panel._hass.callWS = request => {
+    if (request.action === "snapshot") throw {code:"invalid_request", message:"Read refused"};
+    return send(request);
+  };
+  await click();
+  assert.equal(panel._broadcastAttempt, original);
+  assert.equal(original.uncertain, true);
+  assert.equal(requests.length, 1, "preparing new intent neither sends it nor certifies the earlier admission");
+});

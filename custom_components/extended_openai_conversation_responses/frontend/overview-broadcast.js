@@ -155,25 +155,36 @@ function bindBroadcastControls(panel, snapshot) {
     button.disabled = true;
     let attempt;
     let retrying = false;
+    let dispatched = false;
     try {
       const payload = {message, whole_home:wholeHome, entity_ids:wholeHome ? [] : selected};
-      attempt = broadcastAttempt(panel, submission, payload, (panel._eocBroadcastSnapshot || snapshot)?.retry_token);
-      if (attempt.blocked || !sameBroadcastPayload(attempt.payload, payload)) {
+      if (panel._broadcastAttempt) attempt = broadcastAttempt(panel, submission, payload, null);
+      const replace = !attempt || attempt.blocked || !sameBroadcastPayload(attempt.payload, payload);
+      const ownsSubmission = () => {
+        const current = captureConfigurationOwner(panel);
+        return current.userId === submission.userId && current.authenticationGeneration === submission.authenticationGeneration
+          && (panel._broadcastDraftRevision || 0) === draftRevision
+          && (panel._broadcastAttempt || null) === (attempt || null)
+          && panel.isConnected !== false && panel._viewKey?.() === "overview";
+      };
+      if (attempt && replace) {
         if (!await panel._confirm("Send a new Broadcast?", "The previous send may already have been queued or delivered. Check recent broadcasts before sending again. A new send can repeat the announcement.", "Send as new")) return;
         // Confirmation yields. Never send later edits or a different user's work.
-        const current = captureConfigurationOwner(panel);
-        if (current.userId !== submission.userId || current.authenticationGeneration !== submission.authenticationGeneration
-            || (panel._broadcastDraftRevision || 0) !== draftRevision
-            || panel._broadcastAttempt !== attempt) return;
-        if (!await loadBroadcast(panel)) return;
-        const refreshed = captureConfigurationOwner(panel);
-        if (refreshed.userId !== submission.userId || refreshed.authenticationGeneration !== submission.authenticationGeneration
-            || (panel._broadcastDraftRevision || 0) !== draftRevision || panel._broadcastAttempt !== attempt) return;
+        if (!ownsSubmission()) return;
+      }
+      if (replace) {
+        // A page may be idle for longer than the retry window. Fresh intent gets
+        // server-clock freshness now; uncertain retries retain their old token.
+        // Read without replacing the composer or treating read failure as a send.
+        const fresh = await panel._hass.callWS({type:WS_BROADCAST, action:"snapshot"});
+        if (!ownsSubmission()) return;
+        if (typeof fresh?.retry_token !== "string" || !fresh.retry_token) throw Error("Broadcast could not be prepared. Refresh devices before sending.");
         retireBroadcastAttempt(panel, attempt);
-        attempt = broadcastAttempt(panel, submission, payload, panel._eocBroadcastSnapshot?.retry_token);
+        attempt = broadcastAttempt(panel, submission, payload, fresh.retry_token);
       }
       retrying = attempt.uncertain;
       attempt.uncertain = true;
+      dispatched = true;
       const response = await callMutation(() => panel._hass.callWS({
         type: WS_BROADCAST,
         action: "send",
@@ -186,7 +197,7 @@ function bindBroadcastControls(panel, snapshot) {
         if (!await loadBroadcast(panel)) throw Error("Broadcast history could not be refreshed.");
       }, result);
     } catch (err) {
-      if (attempt) {
+      if (attempt && dispatched) {
         if (err.code === "invalid_request" || err.mutationOutcome === "rejected") {
           if (retrying) attempt.blocked = true;
           else retireBroadcastAttempt(panel, attempt);
