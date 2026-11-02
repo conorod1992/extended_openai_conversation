@@ -12,6 +12,8 @@ Voice recovery must invalidate hydrated controls when the retained row projectio
 
 An acknowledged repair may leave later edits in its editor. Both complete Function and Group repair support revision-bound follow-up saves after the first write clears quarantine. Bulk Function repair preserves an available selected Skill loader; ambiguous unusable source can still be repaired to an explicitly disabled loader without enabling it.
 
+Archive turn order survives a backwards wall-clock correction across a monthly storage boundary. Optional per-session sequences preserve that order through cold reload, backup replacement and restore-journal recovery. Legacy reads retain their existing order without a storage rewrite; an append upgrades every affected month in the same journal. Invalid, duplicate or mixed sequences retain the original storage evidence and block destructive writes. Sequence gaps remain valid and are not renumbered by pagination or replacement.
+
 Read results carry meaning independently of whether they contain records. Initial catalogue pending, failed and successful-empty states must render distinctly, with a deliberate catalogue retry and no retry storm from Home Assistant updates. Relative Usage periods use Home Assistant's local calendar rather than the latest activity or a retained summary date. Diagnostics share canonical configuration representation parsing and isolate failures between sections.
 
 Mobile dialog action reachability is checked geometrically after ordinary scrolling. Programmatic focus, locator clicks and scroll-into-view behavior alone do not establish that a user can reach a clipped footer.
@@ -150,6 +152,15 @@ An uncertain configuration import consumes its preview but retains source text;
 another preview requires an authoritative assistant-list refresh. These checks
 extend existing owner and acknowledgement helpers rather than adding a global
 transaction coordinator.
+
+Short-term Memory editor checks hold a committed update's reply while more
+content, category and expiry changes are authored. The acknowledgement advances
+only the submitted baseline; later input remains available for a second Save or
+explicit Discard. Source and shipped-bundle journeys also cover an unchanged
+editor closing normally, a replaced editor retaining its own draft, and expiry
+conversion in a Home Assistant timezone distinct from UTC. Held Voice user
+catalogues are tested across discard and panel recovery for both successful and
+failed replies, including a newer explicit user clear.
 
 Broadcast retry tests drop the actual queue acknowledgement, retry its immutable
 operation identity, and assert a single admission. They cover payload/caller
