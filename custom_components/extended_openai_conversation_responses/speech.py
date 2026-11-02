@@ -407,11 +407,36 @@ class StreamingSpeechSanitizer:
                         nested = StreamingSpeechSanitizer(urls=False)
                         nested._line_start = False
                         nested._format_depth = self._format_depth + 1
+                        nested._strong_open = self._strong_open
                         body = nested._format(body, final=True)
+                        self._strong_open = nested._strong_open
                     output.append(body)
                     index = end + 1
                     continue
             if pair in _FORMAT_MARKERS:
+                if (
+                    pair == "**"
+                    and not self._strong_open
+                    and (previous.isalnum() or previous in ")]")
+                ):
+                    after = self._format_buffer[index + 2 : index + 3]
+                    if not after and not final:
+                        break
+                    if after.isdigit() or after in {"+", "-", "("}:
+                        closer = re.match(
+                            r"[+-]?\d+(?:\.\d+)?\*\*(?=$|[\s.,;:!?])",
+                            self._format_buffer[index + 2 :],
+                        )
+                        if not final and (
+                            closer is None
+                            or index + 2 + closer.end() == len(self._format_buffer)
+                        ):
+                            unresolved_emphasis = True
+                            break
+                        if closer is None:
+                            output.append(pair)
+                            index += 2
+                            continue
                 if (
                     pair == "**"
                     and not self._strong_open

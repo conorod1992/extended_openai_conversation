@@ -61,7 +61,7 @@ def test_security_contract_is_identical_in_backend_and_interface():
         Path(__file__).parents[1]
         / "custom_components/extended_openai_conversation_responses/frontend/sharing-review.js"
     )
-    first_line = path.read_text(encoding="utf8").splitlines()[0]
+    first_line = next(line for line in path.read_text(encoding="utf8").splitlines() if line.startswith("export const SHARING_CONTRACT = "))
     assert (
         json.loads(first_line.split(" = ", 1)[1].removesuffix(";")) == SECURITY_CONTRACT
     )
