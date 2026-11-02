@@ -1,5 +1,5 @@
 import {expect, test} from "@playwright/test";
-import {fixtureUrl, trackPageErrors, expectHarnessClean} from "./browser-helpers.mjs";
+import {fixtureUrl, trackPageErrors, expectHarnessClean, mountFreshAccountPanel} from "./browser-helpers.mjs";
 
 const repairedTool = name => ({
   spec:{name, description:`Corrected ${name}`, parameters:{type:"object", properties:{
@@ -694,14 +694,12 @@ for (const bundled of [false, true]) test(`repair card bindings require their us
     };
     host.hass = {...host.hass, user:{id:"another-admin", is_admin:true}};
   });
-  await panel.locator('.delete-invalid-tool[data-repair-index="0"]').click();
+  await expect(panel.getByRole("button", {name:"Reload settings", exact:true})).toBeVisible();
+  await expect(panel.locator('.delete-invalid-tool[data-repair-index="0"]')).toHaveCount(0);
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   await expect(panel.locator("#confirm-dialog")).not.toBeVisible();
   expect(await page.evaluate(() => repairOwnership.deletes)).toEqual([]);
-  await panel.evaluate(host => {
-    host._invalidateCleanConfiguration(host._agentId);
-    return host._loadSection(true);
-  });
+  await mountFreshAccountPanel(panel);
   await panel.locator('.delete-invalid-tool[data-repair-index="0"]').click();
   await panel.locator("#confirm-accept").click();
   await expect(panel.locator("#toast")).toContainText("Function Tool deleted");

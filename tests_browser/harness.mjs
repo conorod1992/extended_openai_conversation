@@ -31,7 +31,7 @@ const hass = {
     if (message.type === backupTransferType) return backupTransfer(message);
     if (message.type === requestDebugType) return backend.debugCall(message);
     if (message.type === broadcastType) {
-      if (message.action === "snapshot") return {enabled: broadcast.enabled, can_manage: isAdmin, catalog: {satellites: [], areas: []}, history: structuredClone(broadcast.history)};
+      if (message.action === "snapshot") return {enabled: broadcast.enabled, can_manage: isAdmin, retry_token:"fixture-window", catalog: {satellites: [], areas: []}, history: structuredClone(broadcast.history)};
       if (message.action === "set_enabled") {
         if (!isAdmin || typeof message.enabled !== "boolean") throw new Error("Invalid EOAI Broadcast setting request");
         broadcast.enabled = message.enabled;

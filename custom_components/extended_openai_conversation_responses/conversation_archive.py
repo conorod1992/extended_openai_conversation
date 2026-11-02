@@ -10,7 +10,9 @@ from datetime import date, datetime, time, timedelta, tzinfo
 from heapq import heappush, heapreplace
 import json
 import logging
+from pathlib import Path
 import re
+import stat
 import sys
 from threading import RLock
 from typing import Any, Protocol
@@ -110,6 +112,7 @@ class ArchiveTurn:
     user_text: str
     assistant_text: str
     successful: bool
+    sequence: int | None = None
 
 
 class ArchiveStorage(Protocol):
@@ -121,6 +124,21 @@ class ArchiveStorage(Protocol):
     async def async_save_partition(
         self, partition: str, data: dict[str, Any]
     ) -> None: ...
+
+
+def _stored_archive_partitions(metadata_path: str, prefix: str) -> set[str]:
+    """Inventory exact owned monthly files when damaged metadata lost its index."""
+    stem = prefix + ".turns."
+    result: set[str] = set()
+    for path in Path(metadata_path).parent.iterdir():
+        if not path.name.startswith(stem):
+            continue
+        month = path.name[len(stem) :]
+        if re.fullmatch(r"\d{4}-(?:0[1-9]|1[0-2])", month) and stat.S_ISREG(
+            path.stat(follow_symlinks=False).st_mode
+        ):
+            result.add(month)
+    return result
 
 
 class HomeAssistantArchiveStorage:
@@ -190,9 +208,7 @@ class HomeAssistantArchiveStorage:
             bindings = ConversationArchive.validate_recovery_bindings(
                 active or {}, checked_sessions
             )
-            turn_map: dict[str, list[ArchiveTurn]] = defaultdict(list)
-            for turn in checked_turns:
-                turn_map[turn.session_id].append(turn)
+            turn_map = _replacement_turn_map(checked_turns)
             return (
                 {session.session_id: session for session in checked_sessions},
                 turn_map,
@@ -200,7 +216,19 @@ class HomeAssistantArchiveStorage:
             )
 
         session_map, turn_map, bindings = await asyncio.to_thread(prepare)
-        old = await self.async_load_metadata()
+        writer = self
+        discovered: set[str] = set()
+        try:
+            old = await self.async_load_metadata()
+        except StorageRepairRequired:
+            # A validated full-agent journal owns replacement here. Keep HA's
+            # corruption evidence and its ordinary write barrier intact; only
+            # this correctly bound fresh writer may stage the recovery intent.
+            old = None
+            discovered = await asyncio.to_thread(
+                _stored_archive_partitions, self._metadata.path, self._prefix
+            )
+            writer = HomeAssistantArchiveStorage(self._hass, *self._agent_identity)
         old_names: list[Any] = []
         if isinstance(old, dict):
             if isinstance(old.get("partitions"), list):
@@ -208,11 +236,16 @@ class HomeAssistantArchiveStorage:
             if isinstance(old.get("pending_partitions"), dict):
                 old_names.extend(old["pending_partitions"])
         partitions = ConversationArchive._partitions_for_turns(turn_map)
-        changed = partitions | {
-            name
-            for name in old_names
-            if isinstance(name, str) and re.fullmatch(r"\d{4}-(?:0[1-9]|1[0-2])", name)
-        }
+        changed = (
+            partitions
+            | discovered
+            | {
+                name
+                for name in old_names
+                if isinstance(name, str)
+                and re.fullmatch(r"\d{4}-(?:0[1-9]|1[0-2])", name)
+            }
+        )
         pending = {
             name: ConversationArchive._partition_payload_for_state(name, turn_map)
             for name in sorted(changed)
@@ -220,7 +253,7 @@ class HomeAssistantArchiveStorage:
         # Old indexed months receive empty payloads if absent from the selected
         # snapshot. Failed writes leave the authoritative full-agent journal for
         # retry; normal Archive initialization validates and replays this intent.
-        await self.async_save_metadata(
+        await writer.async_save_metadata(
             ConversationArchive._metadata_payload_for_state(
                 session_map, bindings, partitions, pending
             )
@@ -370,6 +403,14 @@ class ConversationArchive:
                     seen_turn_ids.add(turn.turn_id)
                     staged_turns[turn.session_id].append(turn)
             for session_id, session in staged_sessions.items():
+                try:
+                    staged_turns[session_id] = _ordered_session_turns(
+                        staged_turns[session_id]
+                    )
+                except ValueError:
+                    # Preserve ambiguous ordering evidence and block later writes.
+                    repair_required = True
+                    _LOGGER.warning("Conversation archive turn order needs repair")
                 if session.turn_count != len(staged_turns[session_id]):
                     staged_sessions[session_id] = replace(
                         session, turn_count=len(staged_turns[session_id])
@@ -593,6 +634,26 @@ class ConversationArchive:
                 return None
             if session.retention_state != "retained":
                 return None
+            previous_turns = self._turns.get(session_id, [])
+            upgraded_legacy = bool(previous_turns) and all(
+                turn.sequence is None for turn in previous_turns
+            )
+            if upgraded_legacy:
+                previous_turns = [
+                    replace(turn, sequence=index)
+                    for index, turn in enumerate(previous_turns)
+                ]
+            next_sequence = (
+                max(
+                    (
+                        turn.sequence
+                        for turn in previous_turns
+                        if turn.sequence is not None
+                    ),
+                    default=-1,
+                )
+                + 1
+            )
             turn = ArchiveTurn(
                 turn_id=uuid4().hex,
                 session_id=session_id,
@@ -601,6 +662,7 @@ class ConversationArchive:
                 user_text=user_text,
                 assistant_text=assistant_text,
                 successful=successful,
+                sequence=next_sequence,
             )
             sessions = dict(self._sessions)
             sessions[session_id] = ArchiveSession(
@@ -613,12 +675,17 @@ class ConversationArchive:
                 }
             )
             turns = dict(self._turns)
-            turns[session_id] = [*self._turns.get(session_id, ()), turn]
+            turns[session_id] = [*previous_turns, turn]
             await self._async_commit_state_locked(
                 sessions=sessions,
                 turns=turns,
                 active=dict(self._active),
-                changed_partitions={timestamp[:7]},
+                changed_partitions={timestamp[:7]}
+                | (
+                    self._changed_partitions(previous_turns)
+                    if upgraded_legacy
+                    else set()
+                ),
             )
             return turn
 
@@ -811,7 +878,7 @@ class ConversationArchive:
             ) -> dict[str, Any]:
                 user_end = min(len(turn.user_text), offset + length)
                 return {
-                    **asdict(turn),
+                    **_turn_payload(turn),
                     "user_text": turn.user_text[
                         min(offset, len(turn.user_text)) : user_end
                     ],
@@ -1131,6 +1198,7 @@ class ConversationArchive:
         turns: list[ArchiveTurn] = []
         turn_ids: set[str] = set()
         per_session: dict[str, int] = defaultdict(int)
+        session_turns: dict[str, list[ArchiveTurn]] = defaultdict(list)
         private_session_ids = {
             session.session_id
             for session in sessions
@@ -1154,12 +1222,15 @@ class ConversationArchive:
                 raise ValueError("archive turn metadata is invalid")
             turn_ids.add(turn.turn_id)
             per_session[turn.session_id] += 1
+            session_turns[turn.session_id].append(turn)
             turns.append(turn)
         if any(
             session.turn_count != per_session[session.session_id]
             for session in sessions
         ):
             raise ValueError("archive turn counts do not match session metadata")
+        for items in session_turns.values():
+            _ordered_session_turns(items)
         return sessions, turns
 
     async def async_replace_backup(
@@ -1190,9 +1261,7 @@ class ConversationArchive:
                 else session
                 for session in sessions
             }
-            turn_map: dict[str, list[ArchiveTurn]] = defaultdict(list)
-            for turn in turns:
-                turn_map[turn.session_id].append(turn)
+            turn_map = _replacement_turn_map(turns)
             new_partitions = {turn.timestamp[:7] for turn in turns}
             await self._async_commit_state_locked(
                 sessions=session_map,
@@ -1283,7 +1352,7 @@ class ConversationArchive:
     ) -> dict[str, Any]:
         return {
             "turns": [
-                asdict(turn)
+                _turn_payload(turn)
                 for session_turns in turns.values()
                 for turn in session_turns
                 if turn.timestamp.startswith(partition)
@@ -1772,6 +1841,14 @@ def _validated_turn(raw: Any) -> ArchiveTurn:
         )
         or (turn.run_id is not None and not isinstance(turn.run_id, str))
         or not isinstance(turn.successful, bool)
+        or (
+            turn.sequence is not None
+            and (
+                not isinstance(turn.sequence, int)
+                or isinstance(turn.sequence, bool)
+                or turn.sequence < 0
+            )
+        )
         or not turn.turn_id
         or len(turn.turn_id) > 128
         or len(turn.user_text) > MAX_TEXT_LENGTH
@@ -1950,11 +2027,44 @@ def _session_payload(session: ArchiveSession) -> dict[str, Any]:
     return payload
 
 
+def _turn_payload(turn: ArchiveTurn) -> dict[str, Any]:
+    """Keep legacy snapshots unchanged until an owned write establishes order."""
+    payload = asdict(turn)
+    if turn.sequence is None:
+        payload.pop("sequence")
+    return payload
+
+
+def _ordered_session_turns(turns: list[ArchiveTurn]) -> list[ArchiveTurn]:
+    """Use explicit conversation order, retaining unknown legacy loader order."""
+    sequenced = [turn.sequence for turn in turns if turn.sequence is not None]
+    if not sequenced:
+        return turns
+    if len(sequenced) != len(turns) or len(set(sequenced)) != len(sequenced):
+        raise ValueError("archive turn sequence is ambiguous")
+    return sorted(
+        turns, key=lambda turn: turn.sequence if turn.sequence is not None else -1
+    )
+
+
+def _replacement_turn_map(turns: list[ArchiveTurn]) -> dict[str, list[ArchiveTurn]]:
+    """A replacement snapshot's per-session list order establishes legacy order."""
+    grouped: dict[str, list[ArchiveTurn]] = defaultdict(list)
+    for turn in turns:
+        grouped[turn.session_id].append(turn)
+    return {
+        session_id: _ordered_session_turns(items)
+        if any(turn.sequence is not None for turn in items)
+        else [replace(turn, sequence=index) for index, turn in enumerate(items)]
+        for session_id, items in grouped.items()
+    }
+
+
 def _archive_payload(
     sessions: list[ArchiveSession], turns: list[ArchiveTurn]
 ) -> dict[str, Any]:
     """Serialize immutable records without touching live manager collections."""
     return {
         "sessions": [_session_payload(item) for item in sessions],
-        "turns": [asdict(item) for item in turns],
+        "turns": [_turn_payload(item) for item in turns],
     }

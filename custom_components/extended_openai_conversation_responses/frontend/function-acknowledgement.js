@@ -9,11 +9,14 @@ const pending = new WeakMap();
 const key = owner => JSON.stringify([owner.entryId, owner.agentId, owner.userId, owner.authenticationGeneration]);
 /** @param {object} panel @param {FunctionOwner} owner */
 export const functionUncertainty = (panel, owner = captureConfigurationOwner(panel)) => pending.get(panel)?.get(key(owner));
-/** @param {{valid?: boolean, revision?: unknown, functions?: unknown, function_groups?: unknown} | null | undefined} result */
-export function requireFunctionAcknowledgement(result) {
+/** @param {{valid?: boolean, revision?: unknown, functions?: unknown, function_groups?: unknown,
+ * config?: {functions?: unknown, function_groups?: unknown}} | null | undefined} result
+ * @param {boolean} [groupRepair] */
+export function requireFunctionAcknowledgement(result, groupRepair = false) {
   if (result?.valid === false) return;
   requireMutationAcknowledgement(typeof result?.revision === "string" && result.revision.length > 0
-    && Array.isArray(result.functions) && Array.isArray(result.function_groups), "saving Function configuration");
+    && (groupRepair ? Array.isArray(result.config?.functions) && Array.isArray(result.config?.function_groups)
+      : Array.isArray(result.functions)) && Array.isArray(result.function_groups), "saving Function configuration");
 }
 /** @param {FunctionPanel} panel @param {FunctionOwner} owner @param {{mutationOutcome?: unknown} | null | undefined} error */
 export function markFunctionUncertainty(panel, owner, error) {

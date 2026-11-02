@@ -1,0 +1,34 @@
+[
+  {"id": "omitted-legacy", "config": {}, "effective": "defaults"},
+  {"id": "null-legacy", "config": {"functions": null}, "effective": "defaults"},
+  {"id": "raw-empty-legacy", "config": {"functions": []}, "effective": "defaults"},
+  {"id": "empty-text-legacy", "config": {"functions": ""}, "effective": "defaults"},
+  {"id": "serialized-empty-json", "config": {"functions": "[]"}, "effective": "empty"},
+  {"id": "serialized-empty-yaml", "config": {"functions": "# Explicitly no configured tools\n[]\n"}, "effective": "empty"},
+  {"id": "serialized-null-yaml", "config": {"functions": "null\n"}, "effective": "empty"},
+  {
+    "id": "quarantined-native-list",
+    "config": {"functions": "- spec:\n    name: unavailable_native\n    description: Retained for repair\n    parameters: {type: object, properties: {}}\n  function: {type: native, name: []}\n  enabled: false\n"},
+    "effective": "quarantined"
+  },
+  {
+    "id": "quarantined-native-mapping",
+    "config": {"functions": "- spec:\n    name: unavailable_native\n    description: Retained for repair\n    parameters: {type: object, properties: {}}\n  function: {type: native, name: {old_name: unavailable}}\n  enabled: false\n"},
+    "effective": "quarantined"
+  },
+  {
+    "id": "quarantined-native-unknown",
+    "config": {"functions": "- spec:\n    name: unavailable_native\n    description: Retained for repair\n    parameters: {type: object, properties: {}}\n  function: {type: native, name: unavailable_legacy_function}\n  enabled: false\n"},
+    "effective": "quarantined"
+  },
+  {
+    "id": "quarantined-provider-schema-date",
+    "config": {"functions": "- spec:\n    name: unavailable_schema\n    description: Retained for repair\n    parameters:\n      type: object\n      properties: {day: {type: string, default: 2026-10-17}}\n  function: {type: template, value_template: '{{ day }}'}\n  enabled: false\n"},
+    "effective": "quarantined"
+  },
+  {
+    "id": "disabled-typed-backend",
+    "config": {"functions": "- spec:\n    name: disabled_reminder\n    description: Keep typed backend configuration and disabled state\n    parameters: {type: object, properties: {}}\n  function:\n    type: script\n    variables: {day: 2026-10-17, factor: 1.0e-06, literal: '1e-06'}\n    sequence: [{stop: Done}]\n  enabled: false\n"},
+    "effective": "disabled"
+  }
+]

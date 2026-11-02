@@ -1,4 +1,6 @@
-import {initializeVoiceUserPicker, voiceUserCatalogue} from "./voice-user-picker.js";
+import {initializeVoiceUserPicker, voiceUserCatalogue, voiceUserPickerValue} from "./voice-user-picker.js";
+import {voiceMappingDraft, newVoiceMappingRow, updateVoiceMappingRows, voiceMappingDraftError, voiceMappingRowIsCurrent} from "./voice-mapping-draft.js";
+import {captureConfigurationOwner, configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
 const SHARED_SCOPE = "shared:household";
 const UNRETAINED_SCOPE = "unretained";
 
@@ -68,10 +70,10 @@ function nativeUserPicker(panel,id,value,cssClass="") {
   return `<ha-user-picker id="${e(panel,id)}" class="voice-native-picker ${e(panel,cssClass)}" data-user-picker data-initial-value="${e(panel,rawUserId(value))}"></ha-user-picker>`;
 }
 
-function mappingRow(panel,deviceId="",owner=UNRETAINED_SCOPE) {
+function mappingRow(panel, {id, deviceId="", owner=UNRETAINED_SCOPE, satellite="", lookup=""} = newVoiceMappingRow()) {
   const normalized = normalizedOwner(owner);
-  return `<article class="voice-mapping-row" data-voice-mapping-row>
-    <div><label>Assist satellite</label><ha-entity-picker class="voice-native-picker voice-satellite-picker" data-initial-device-id="${e(panel,deviceId)}"></ha-entity-picker><input type="hidden" class="voice-device-id" value="${e(panel,deviceId)}"><small class="voice-picker-warning voice-satellite-warning" hidden></small></div>
+  return `<article class="voice-mapping-row" data-voice-mapping-row data-voice-row-id="${e(panel,id)}" data-voice-lookup="${e(panel,lookup)}">
+    <div><label>Assist satellite</label><ha-entity-picker class="voice-native-picker voice-satellite-picker" data-initial-device-id="${e(panel,deviceId)}" data-initial-entity="${e(panel,satellite)}"></ha-entity-picker><input type="hidden" class="voice-device-id" value="${e(panel,deviceId)}"><small class="voice-picker-warning voice-satellite-warning" hidden></small></div>
     <div><label>Use retained data for<select class="voice-owner-type"><option value="unretained" ${normalized.type === "unretained" ? "selected" : ""}>${OWNER_TYPES.unretained}</option><option value="shared" ${normalized.type === "shared" ? "selected" : ""}>${OWNER_TYPES.shared}</option><option value="user" ${normalized.type === "user" ? "selected" : ""}>${OWNER_TYPES.user}</option></select></label><div class="voice-owner-user" ${normalized.type === "user" ? "" : "hidden"}>${nativeUserPicker(panel,"",normalized.id,"voice-owner-user-picker")}</div><input type="hidden" class="voice-mapping-owner" value="${e(panel,normalized.stored)}"><small class="voice-picker-warning voice-owner-warning" hidden></small></div>
     <button type="button" class="danger remove-voice-mapping">Remove</button>
   </article>`;
@@ -79,8 +81,8 @@ function mappingRow(panel,deviceId="",owner=UNRETAINED_SCOPE) {
 
 // Loaded only after the policy core has painted and device assignment is active.
 export function renderVoiceMappings(panel) {
-  const entries = mappingEntries(panel?._draft || panel?._result?.config || {});
-  return `<section id="voice-mappings" class="supporting-panel voice-mappings-card" data-voice-mappings-card data-setting><div class="section-heading"><div><h2>Voice device assignments</h2><p>Assign an Assist satellite to one Home Assistant user, the shared household, or no saved personal data.</p></div><button type="button" class="secondary" id="add-voice-mapping">+ Add assignment</button></div><div id="voice-mapping-list" class="voice-mapping-list">${entries.length ? entries.map(([deviceId,owner]) => mappingRow(panel,deviceId,owner)).join("") : '<div class="voice-mapping-empty">No device assignments saved. If device mapping is selected above, the setting for unassigned voice devices will be used.</div>'}</div><span class="field-error" data-error="voice_device_mappings"></span></section>`;
+  const entries = voiceMappingDraft(panel).rows;
+  return `<section id="voice-mappings" class="supporting-panel voice-mappings-card" data-voice-mappings-card data-setting><div class="section-heading"><div><h2>Voice device assignments</h2><p>Assign an Assist satellite to one Home Assistant user, the shared household, or no saved personal data.</p></div><button type="button" class="secondary" id="add-voice-mapping">+ Add assignment</button></div><div id="voice-mapping-list" class="voice-mapping-list">${entries.length ? entries.map(row => mappingRow(panel,row)).join("") : '<div class="voice-mapping-empty">No device assignments saved. If device mapping is selected above, the setting for unassigned voice devices will be used.</div>'}</div><span class="field-error" data-error="voice_device_mappings"></span></section>`;
 }
 
 export function voiceIdentitySummary(config={},users=[]) {
@@ -100,14 +102,14 @@ export function voiceIdentitySummary(config={},users=[]) {
 
 export function renderVoiceIdentity(panel) {
   const config = panel?._draft || panel?._result?.config || {};
-  const entries = mappingEntries(config);
+  const entries = voiceMappingDraft(panel).rows;
   const selectedUser = String(config.voice_default_user_id || "");
   return `<div class="config-section-heading"><p class="eyebrow">Voice & identity</p><p>Choose whose memories and conversation history may be used when Home Assistant does not identify the speaker.</p></div>
     <div class="voice-identity-flow"><div class="voice-flow-step"><strong>1 · Signed-in identity wins</strong><small>If Home Assistant supplies an authenticated user, that user's personal scope is used regardless of the settings below.</small></div><div class="voice-flow-step"><strong>2 · Otherwise use the voice policy</strong><small>Unidentified requests can use no saved personal data, shared household data, a default user, or a device assignment.</small></div><div class="voice-flow-step"><strong>3 · No identity guessing</strong><small>Device assignments use Home Assistant's source device ID only; room, presence, Bluetooth, and camera data are not used to guess a speaker.</small></div></div>
     <div class="notice"><strong>Current unidentified voice behavior</strong><p id="voice-current-summary">${e(panel,voiceIdentitySummary(config,voiceUsers(panel)))}</p></div>
     <div class="voice-policy-grid"><section class="supporting-panel voice-policy-card"><h2>Unidentified voice requests</h2><p>Applies only when Home Assistant has not already attached a user to the request.</p>${policySelect(panel,"voice_scope_policy","Use saved data from",String(config.voice_scope_policy || "unretained"),"Choose the data owner for unidentified voice requests.")}</section><section class="supporting-panel voice-policy-card" data-voice-fallback-card><h2>When a voice device is not assigned</h2><p>Used only when device assignment is selected and the source device has no saved assignment.</p>${policySelect(panel,"voice_unmapped_policy","If the device is not assigned",String(config.voice_unmapped_policy || "unretained"),"Choose the safe fallback for an unidentified device.",true)}</section></div>
     <section class="supporting-panel voice-default-card" data-voice-default-card><h2>Default voice user</h2><p>Used only when an unidentified-voice policy explicitly chooses the default user.</p><div class="setting" data-field="voice_default_user_id" data-setting><label>Home Assistant user</label>${nativeUserPicker(panel,"config-voice_default_user_picker",selectedUser)}<input type="hidden" id="config-voice_default_user_id" data-config="voice_default_user_id" value="${e(panel,selectedUser)}"><small>Choose from Home Assistant's user list. The user ID is stored internally.</small><span class="field-error" data-error="voice_default_user_id"></span></div></section>
-    <section id="voice-mappings" class="supporting-panel voice-mappings-card" data-voice-mappings-card data-setting><div class="section-heading"><div><h2>Voice device assignments</h2><p>Assign an Assist satellite to one Home Assistant user, the shared household, or no saved personal data.</p></div><button type="button" class="secondary" id="add-voice-mapping">+ Add assignment</button></div><div id="voice-mapping-list" class="voice-mapping-list">${entries.length ? entries.map(([deviceId,owner]) => mappingRow(panel,deviceId,owner)).join("") : '<div class="voice-mapping-empty">No device assignments saved. If device mapping is selected above, the setting for unassigned voice devices will be used.</div>'}</div><span class="field-error" data-error="voice_device_mappings"></span></section>`;
+    <section id="voice-mappings" class="supporting-panel voice-mappings-card" data-voice-mappings-card data-setting><div class="section-heading"><div><h2>Voice device assignments</h2><p>Assign an Assist satellite to one Home Assistant user, the shared household, or no saved personal data.</p></div><button type="button" class="secondary" id="add-voice-mapping">+ Add assignment</button></div><div id="voice-mapping-list" class="voice-mapping-list">${entries.length ? entries.map(row => mappingRow(panel,row)).join("") : '<div class="voice-mapping-empty">No device assignments saved. If device mapping is selected above, the setting for unassigned voice devices will be used.</div>'}</div><span class="field-error" data-error="voice_device_mappings"></span></section>`;
 }
 
 function setWarning(element,message="") {
@@ -157,18 +159,17 @@ function configureEntityPicker(panel,picker,value="") {
   picker.allowCustomEntity = false;
 }
 
+function readRows(root) {
+  return [...root.querySelectorAll("[data-voice-mapping-row]")].map(row => ({
+    id:row.dataset.voiceRowId,
+    deviceId:row.querySelector(".voice-device-id")?.value.trim() || "",
+    owner:row.querySelector(".voice-mapping-owner")?.value || UNRETAINED_SCOPE,
+    satellite:row.querySelector(".voice-satellite-picker")?.value || "",
+    lookup:row.dataset.voiceLookup || "",
+  }));
+}
 function rowsToMapping(root) {
-  const mapping = {};
-  let duplicate = null;
-  let lookup = null;
-  root.querySelectorAll("[data-voice-mapping-row]").forEach((row) => {
-    lookup ||= row.dataset.voiceLookup;
-    const deviceId = row.querySelector(".voice-device-id")?.value.trim() || "";
-    if (!deviceId) return;
-    if (Object.prototype.hasOwnProperty.call(mapping,deviceId)) duplicate ||= deviceId;
-    mapping[deviceId] = row.querySelector(".voice-mapping-owner")?.value || UNRETAINED_SCOPE;
-  });
-  return {mapping,duplicate,lookup};
+  return {mapping:Object.fromEntries(readRows(root).filter(row => row.deviceId).map(row => [row.deviceId,row.owner]))};
 }
 
 function currentConfig(panel) {
@@ -200,13 +201,10 @@ function syncMappings(panel) {
   const root = panel.shadowRoot;
   const card = root.querySelector("#voice-mappings");
   if (!card) return;
-  const {mapping,duplicate,lookup} = rowsToMapping(root);
+  const validated = updateVoiceMappingRows(panel, readRows(root));
   const error = root.querySelector('[data-error="voice_device_mappings"]');
-  const lookupError = lookup === "pending" ? "Wait for the Assist satellite device lookup to finish."
-    : lookup ? "Select an available Assist satellite before saving." : "";
-  if (error) error.textContent = lookupError || (duplicate ? `This Assist satellite is assigned more than once.` : "");
-  card.value = lookupError ? JSON.stringify(lookupError)
-    : duplicate ? JSON.stringify(`duplicate device id: ${duplicate}`) : JSON.stringify(mapping,null,2);
+  if (error) error.textContent = validated.error;
+  card.value = JSON.stringify(panel._draft?.voice_device_mappings || {},null,2);
   card.dispatchEvent(new Event("input",{bubbles:true}));
   updateDependencies(panel);
 }
@@ -232,7 +230,7 @@ function syncOwner(row) {
     hidden.value = UNRETAINED_SCOPE;
     setWarning(warning);
   } else {
-    const userId = rawUserId(picker?.value || "");
+    const userId = rawUserId(voiceUserPickerValue(picker) || "");
     if (userId) {
       hidden.value = `user:${userId}`;
       setWarning(warning);
@@ -248,13 +246,15 @@ async function bindSatellitePicker(panel,row) {
   const hidden = row.querySelector(".voice-device-id");
   const warning = row.querySelector(".voice-satellite-warning");
   if (!picker || !hidden) return;
-  configureEntityPicker(panel,picker);
+  configureEntityPicker(panel,picker,picker.dataset.initialEntity || "");
+  const rowCurrent = () => row.isConnected && voiceMappingRowIsCurrent(panel,row.dataset.voiceRowId);
   const storedDeviceId = hidden.value.trim();
   const agentId = panel._agentId;
   picker.addEventListener("value-changed",async (event) => {
-    const selection = {};
+    if (!rowCurrent()) return;
+    const selection = {owner:captureConfigurationOwner(panel)};
     picker.__voiceSelection = selection;
-    const selectedEntity = String(event?.detail?.value || picker.value || "");
+    const selectedEntity = String(event?.detail?.value ?? picker.value ?? "");
     picker.value = selectedEntity;
     // Do not let a pending or failed lookup save the previous device under a
     // newly selected satellite. Preserve all other rows.
@@ -267,7 +267,7 @@ async function bindSatellitePicker(panel,row) {
       return;
     }
     const entry = await selectedEntityRegistryEntry(panel,selectedEntity);
-    if (!row.isConnected || panel._agentId !== agentId || panel._viewKey?.() !== "assistant/voice"
+    if (!rowCurrent() || !configurationSubmissionIsCurrent(panel,selection.owner) || panel._agentId !== agentId || panel._viewKey?.() !== "assistant/voice"
         || picker.__voiceSelection !== selection) return;
     const deviceId = entry?.entity_id === selectedEntity ? String(entry.device_id || "") : "";
     if (!deviceId) {
@@ -281,8 +281,13 @@ async function bindSatellitePicker(panel,row) {
     setWarning(warning);
     syncMappings(panel);
   });
+  if (row.dataset.voiceLookup) {
+    if (row.dataset.voiceLookup === "pending") picker.dispatchEvent(new CustomEvent("value-changed",{detail:{value:picker.value}}));
+    else setWarning(warning,"Select an available Assist satellite before saving.");
+    return;
+  }
   const entries = await entityRegistry(panel);
-  if (picker.__voiceSelection || !row.isConnected || panel._agentId !== agentId || panel._viewKey?.() !== "assistant/voice") return;
+  if (picker.__voiceSelection || !rowCurrent() || panel._agentId !== agentId || panel._viewKey?.() !== "assistant/voice") return;
   const entityId = satelliteForDeviceId(entries,storedDeviceId);
   if (entityId) {
     picker.value = entityId;
@@ -303,16 +308,19 @@ function bindRows(panel) {
     configureUserPicker(panel,ownerPicker,normalized.id || "");
     bindSatellitePicker(panel,row);
     row.querySelector(".voice-owner-type")?.addEventListener("change",() => {
+      if (!row.isConnected || !voiceMappingRowIsCurrent(panel,row.dataset.voiceRowId)) return;
       updateOwnerPicker(row,true);
       syncOwner(row);
       syncMappings(panel);
     });
     ownerPicker?.addEventListener("value-changed",(event) => {
+      if (!row.isConnected || !voiceMappingRowIsCurrent(panel,row.dataset.voiceRowId)) return;
       ownerPicker.value = rawUserId(event?.detail?.value || "");
       syncOwner(row);
       syncMappings(panel);
     });
     row.querySelector(".remove-voice-mapping")?.addEventListener("click",() => {
+      if (!row.isConnected || !voiceMappingRowIsCurrent(panel,row.dataset.voiceRowId)) return;
       row.remove();
       if (!root.querySelector("[data-voice-mapping-row]")) root.querySelector("#voice-mapping-list").innerHTML = '<div class="voice-mapping-empty">No device assignments saved. If device mapping is selected above, the setting for unassigned voice devices will be used.</div>';
       syncMappings(panel);
@@ -323,6 +331,7 @@ function bindRows(panel) {
 
 export function bindVoiceIdentity(panel) {
   const root = panel.shadowRoot;
+  const mappingDraft = voiceMappingDraft(panel);
   const mappings = root.querySelector("#voice-mappings");
   if (mappings) mappings.value = JSON.stringify(rowsToMapping(root).mapping,null,2);
   const defaultPicker = root.querySelector("#config-voice_default_user_picker");
@@ -341,31 +350,38 @@ export function bindVoiceIdentity(panel) {
   root.querySelector('[data-config="voice_scope_policy"]')?.addEventListener("change",() => updateDependencies(panel));
   root.querySelector('[data-config="voice_unmapped_policy"]')?.addEventListener("change",() => updateDependencies(panel));
   root.querySelector("#add-voice-mapping")?.addEventListener("click",() => {
+    if (voiceMappingDraft(panel) !== mappingDraft) return;
     const list = root.querySelector("#voice-mapping-list");
     list.querySelector(".voice-mapping-empty")?.remove();
     list.insertAdjacentHTML("beforeend",mappingRow(panel));
     bindRows(panel);
-    updateDependencies(panel);
+    syncMappings(panel);
     list.querySelector("[data-voice-mapping-row]:last-child .voice-satellite-picker")?.focus?.();
   });
   bindRows(panel);
+  const error = root.querySelector('[data-error="voice_device_mappings"]');
+  if (error) error.textContent = voiceMappingDraftError(panel);
   updateDependencies(panel);
 }
 
 export function bindVoiceMappings(panel) {
   const root = panel.shadowRoot;
+  const mappingDraft = voiceMappingDraft(panel);
   const mappings = root.querySelector("#voice-mappings");
   if (!mappings) return;
   mappings.value = JSON.stringify(rowsToMapping(root).mapping, null, 2);
   root.querySelector("#add-voice-mapping")?.addEventListener("click", () => {
+    if (voiceMappingDraft(panel) !== mappingDraft) return;
     const list = root.querySelector("#voice-mapping-list");
     list.querySelector(".voice-mapping-empty")?.remove();
     list.insertAdjacentHTML("beforeend", mappingRow(panel));
     bindRows(panel);
-    updateDependencies(panel);
+    syncMappings(panel);
     list.querySelector("[data-voice-mapping-row]:last-child .voice-satellite-picker")?.focus?.();
   });
   bindRows(panel);
+  const error = root.querySelector('[data-error="voice_device_mappings"]');
+  if (error) error.textContent = voiceMappingDraftError(panel);
   updateDependencies(panel);
 }
 

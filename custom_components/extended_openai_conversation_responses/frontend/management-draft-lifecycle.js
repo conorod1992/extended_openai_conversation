@@ -4,6 +4,7 @@ import {recoverDisconnectedEditor, showRecoveredDraftCopy} from "./management-st
 import {mergeConfigurationRead, configurationDraftBaseline} from "./configuration-acknowledgement.js";
 import {planConfigurationRecovery, combineRecoveredConfiguration, recoveredConfigurationChanges} from "./configuration-draft-recovery.js";
 import {hasPageSaveAcknowledgement} from "./page-save-acknowledgement.js";
+import {transferVoiceMappingDraft} from "./voice-mapping-draft.js";
 
 // HA destroys custom panels during navigation and background suspension. Keep
 // the owning instance in document memory, never in persistent browser storage.
@@ -40,7 +41,7 @@ function synchronizeUnloadGuard() {
 }
 
 function owner(panel) {
-  const user = panel.hass?.user?.id;
+  const user = panel._eocPresentationOwnerId ?? panel.hass?.user?.id;
   const agent = panel._selectedAgent?.();
   return user && agent?.entry_id && agent?.subentry_id
     ? JSON.stringify([user, agent.entry_id, agent.subentry_id]) : null;
@@ -58,6 +59,7 @@ export function retainPanelDrafts(panel) {
 }
 
 export function restorePanelDrafts(panel) {
+  if (panel._eocPresentationBlocked) return;
   const key = owner(panel), sources = retained.get(key);
   const previousCopy = recoveryConfigurationCopies.get(panel);
   if (previousCopy && (!previousCopy.source._configDirty || owner(previousCopy.source) !== key)) recoveryConfigurationCopies.delete(panel);
@@ -143,6 +145,7 @@ function restoreDraftSource(panel, source, key) {
       if (source._eocPendingModelPreparation) source._eocPendingModelPreparation.transferTo?.(panel);
       else source._eocModelIntent?.transferTo?.(source, panel);
     }
+    transferVoiceMappingDraft(panel, source);
     panel._syncConfigDirty();
     source._setConfigDirty(false);
     if (recoveryConfigurationCopies.get(panel)?.source === source) recoveryConfigurationCopies.delete(panel);

@@ -1,4 +1,5 @@
 import {same, clone} from "./unsaved-state.js";
+import {voiceMappingDraftDirty} from "./voice-mapping-draft.js";
 
 export const CONFIGURATION_CONTROLS = "[data-config],[data-memory-config],#voice-mappings,[data-local-intent-exclusion],.regex-pattern,.regex-replacement";
 export const skillNamesFromText = (value) => String(value || "").split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
@@ -25,8 +26,10 @@ export function configKeyForControl(control) {
 export function configurationControlValue(control) {
   const key = control.dataset?.config || control.dataset?.memoryConfig;
   if (control.id === "voice-mappings") {
-    try { return JSON.parse(control.value || "{}"); }
-    catch (_) { return control.value; }
+    try {
+      const value = JSON.parse(control.value || "{}");
+      return value && typeof value === "object" && !Array.isArray(value) ? value : undefined;
+    } catch (_) { return undefined; }
   }
   if (control.dataset?.type === "boolean" || control.type === "checkbox") return Boolean(control.checked);
   if (control.dataset?.type === "number") return Number(control.value);
@@ -63,11 +66,15 @@ export function applyConfigurationControl(panel, control) {
     return {key, changed};
   }
   if (!key) return null;
+  if (key === "voice_device_mappings" && value === undefined) return {key, changed:voiceMappingDraftDirty(panel)};
   const target = key === "__title" ? panel : panel._draft;
   const property = key === "__title" ? "_draftTitle" : key;
   const changed = !same(target[property], value);
   if (changed) target[property] = value;
-  return {key, changed};
+  // Correcting an invalid row can restore the baseline without changing the
+  // canonical map. Revisit its previous dirty key so that edit becomes clean.
+  return {key, changed:changed || (key === "voice_device_mappings"
+    && (voiceMappingDraftDirty(panel) || Boolean(panel._eocDirtyConfigKeys?.has(key))))};
 }
 
 export function readConfigurationDraft(panel) {

@@ -228,12 +228,10 @@ function breakdownList(panel, title, values) {
   }).join("")}</div>` : `<p class="usage-diagnostic-empty">No recorded data in this period.</p>`}</section>`;
 }
 
-function resultToday(result, panel) {
-  const configured = String(result?.summary?.today?.date || "");
-  if (dateParts(configured)) return configured;
-  const rows = result?.days?.days || [];
-  const lastStored = String(rows.at(-1)?.date || "");
-  if (dateParts(lastStored)) return lastStored;
+function usageCalendarToday(panel) {
+  // Relative periods use HA's current local calendar. Activity rows and retained
+  // summary reads describe usage; neither can establish today's date or the
+  // bounds of a subsequent read after a failed or delayed refresh.
   return localUsageDateKey(new Date(), panel?._hass?.config?.time_zone);
 }
 
@@ -260,7 +258,7 @@ export function renderUsageDiagnostics(panel, result = {}) {
   const history = selectUsageHistory(
     result.days?.days || [],
     panel._usageHistoryWindow || DEFAULT_USAGE_WINDOW,
-    resultToday(result, panel),
+    usageCalendarToday(panel),
   );
   const summary = history.summary;
   const dailyState = usageDependency(result, "days", "Daily usage");
@@ -390,7 +388,7 @@ export function reconcileUsageSecondary(panel, key) {
 }
 
 export function renderUsagePage(panel, result = {}) {
-  const today = resultToday(result, panel);
+  const today = usageCalendarToday(panel);
   const history = selectUsageHistory(result.days?.days || [], panel._usageHistoryWindow || DEFAULT_USAGE_WINDOW, today);
   const summary = history.summary;
   const dailyState = usageDependency(result, "days", "Daily usage");
@@ -442,7 +440,7 @@ export function bindUsageDiagnostics(panel) {
     const generation = panel._usageWindowGeneration = (panel._usageWindowGeneration || 0) + 1;
     event.target.disabled = true;
     try {
-      const days = await loadUsageWindow(panel, next, resultToday(panel._result || {}, panel));
+      const days = await loadUsageWindow(panel, next, usageCalendarToday(panel));
       if (generation !== panel._usageWindowGeneration || panel._agentId !== agentId || panel._viewKey?.() !== "usage-maintenance/usage") return;
       panel._usageHistoryWindow = next;
       panel._result = {...(panel._result || {}), days};

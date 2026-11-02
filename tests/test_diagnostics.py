@@ -1,8 +1,6 @@
 """Tests for non-sensitive integration diagnostics."""
 
 from types import SimpleNamespace
-
-from custom_components.extended_openai_conversation_responses.agent_configuration import MemoryEmbeddingProvider
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,6 +8,9 @@ import pytest
 from custom_components.extended_openai_conversation_responses import (
     conversation as conversation_module,
     diagnostics as diagnostics_module,
+)
+from custom_components.extended_openai_conversation_responses.agent_configuration import (
+    MemoryEmbeddingProvider,
 )
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_ARCHIVE_ENABLED,
@@ -37,7 +38,6 @@ from custom_components.extended_openai_conversation_responses.diagnostics import
     _configured_function_tools,
     async_get_config_entry_diagnostics,
 )
-
 
 
 async def test_missing_function_config_uses_execution_default(hass) -> None:
@@ -108,21 +108,19 @@ async def test_conversation_platform_adds_only_conversation_subentries(
     other_subentry = SimpleNamespace(subentry_type="ai_task", subentry_id="task")
     entry = SimpleNamespace(
         entry_id="entry",
-        subentries={"task": other_subentry, "agent": conversation_subentry}
+        subentries={"task": other_subentry, "agent": conversation_subentry},
     )
     created_entity = object()
     constructor = MagicMock(return_value=created_entity)
     add_entities = MagicMock()
-    monkeypatch.setattr(
-        conversation_module, "ExtendedOpenAIAgentEntity", constructor
-    )
+    monkeypatch.setattr(conversation_module, "ExtendedOpenAIAgentEntity", constructor)
 
-    await conversation_module.async_setup_entry(SimpleNamespace(data={}), entry, add_entities)
+    await conversation_module.async_setup_entry(
+        SimpleNamespace(data={}), entry, add_entities
+    )
 
     constructor.assert_called_once_with(entry, conversation_subentry)
-    add_entities.assert_called_once_with(
-        [created_entity], config_subentry_id="agent"
-    )
+    add_entities.assert_called_once_with([created_entity], config_subentry_id="agent")
 
 
 def _startup_entity(hass, data: dict) -> ExtendedOpenAIAgentEntity:
@@ -195,7 +193,11 @@ def _patch_startup_dependencies(
         "async_get_instance",
         AsyncMock(return_value=dependencies.skill_manager),
     )
-    monkeypatch.setattr(conversation_module, "async_track_time_interval", MagicMock(return_value=lambda: None))
+    monkeypatch.setattr(
+        conversation_module,
+        "async_track_time_interval",
+        MagicMock(return_value=lambda: None),
+    )
     for name, value in patches.items():
         monkeypatch.setattr(conversation_module, name, value)
     return dependencies
@@ -240,9 +242,16 @@ async def test_agent_startup_initializes_enabled_conversation_subsystems(
     dependencies.archive.async_prune.assert_awaited_once_with(21)
     assert dependencies.memory.set_embedding_provider.call_count == 2
     dependencies.memory.set_embedding_provider.assert_called_with(
-        MemoryEmbeddingProvider(entity._async_create_embeddings, "text-embedding-test"), "text-embedding-test", space_id=dependencies.memory.set_embedding_provider.call_args.kwargs["space_id"]
+        MemoryEmbeddingProvider(entity._async_create_embeddings, "text-embedding-test"),
+        "text-embedding-test",
+        space_id=dependencies.memory.set_embedding_provider.call_args.kwargs[
+            "space_id"
+        ],
     )
-    assert len(dependencies.memory.set_embedding_provider.call_args.kwargs["space_id"]) == 64
+    assert (
+        len(dependencies.memory.set_embedding_provider.call_args.kwargs["space_id"])
+        == 64
+    )
     statuses = hass.data[SUBSYSTEM_STATUS_KEY][("entry", "agent")]
     assert statuses == {
         "temporary_memory": {"configured": True, "status": "healthy"},
@@ -376,7 +385,9 @@ async def test_config_entry_diagnostics_projects_populated_runtime_without_secre
     }
     guest_mode = SimpleNamespace(status=lambda: {"enabled": False})
     guest_policy = SimpleNamespace(as_diagnostics=lambda: {"mode": "disabled"})
-    usage = SimpleNamespace(as_dict=lambda: {"requests": 7}, persistence_status=lambda: {"mode": "durable"})
+    usage = SimpleNamespace(
+        as_dict=lambda: {"requests": 7}, persistence_status=lambda: {"mode": "durable"}
+    )
 
     with (
         patch.object(
@@ -450,15 +461,17 @@ async def test_config_entry_diagnostics_isolates_independent_collector_failure(
     entry = _diagnostics_entry()
     guest_mode = SimpleNamespace(status=lambda: {"enabled": False})
     guest_policy = SimpleNamespace(as_diagnostics=lambda: {})
-    usage = SimpleNamespace(as_dict=lambda: {"requests": 9}, persistence_status=lambda: {"mode": "durable"})
+    usage = SimpleNamespace(
+        as_dict=lambda: {"requests": 9}, persistence_status=lambda: {"mode": "durable"}
+    )
 
     with (
-        patch.object(
-            diagnostics_module, "async_get_continuity", return_value=_stats()
-        ),
+        patch.object(diagnostics_module, "async_get_continuity", return_value=_stats()),
         patch.object(diagnostics_module, "_configured_function_tools", return_value=[]),
         patch.object(diagnostics_module, "validate_function_groups", return_value=[]),
-        patch.object(diagnostics_module, "get_function_group_runtime", return_value=None),
+        patch.object(
+            diagnostics_module, "get_function_group_runtime", return_value=None
+        ),
         patch.object(
             diagnostics_module,
             "async_get_guest_mode",
@@ -579,9 +592,7 @@ async def test_diagnostics_routes_with_conversation_tool_requirement(
         structured_outputs=True,
     )
     build = MagicMock(return_value=snapshot)
-    monkeypatch.setattr(
-        diagnostics_module, "build_provider_request_snapshot", build
-    )
+    monkeypatch.setattr(diagnostics_module, "build_provider_request_snapshot", build)
 
     await async_get_config_entry_diagnostics(
         hass, _entry(_conversation_subentry(data=data))
@@ -618,14 +629,14 @@ async def test_function_configuration_failure_is_reported_and_collectors_continu
     )
 
     agent = result["conversation_agents"][0]
-    assert agent["function_group_configuration_error"] == "ValueError"
-    assert "guest_mode" not in agent
+    assert agent["function_tool_configuration_error"] == "ValueError"
+    assert agent["guest_mode"] == {"status": {}, "policy_error": "ValueError"}
     assert agent["temporary_memory_items"] == 1
     assert agent["memory_items"] == 2
     assert agent["knowledge_items"] == 3
     assert agent["archive"] == {"archive_items": 4}
     assert agent["usage"] == {"requests": 5}
-    collectors.guest.assert_not_awaited()
+    collectors.guest.assert_awaited_once()
 
 
 async def test_failed_optional_stores_are_not_reopened_by_diagnostics(

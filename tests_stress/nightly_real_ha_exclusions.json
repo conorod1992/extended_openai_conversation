@@ -5,6 +5,7 @@
     "tests_real_ha/test_acceptance_seams.py",
     "tests_real_ha/test_agent_probe_contract.py",
     "tests_real_ha/test_ai_task_composition_remediation.py",
+    "tests_real_ha/test_archive_order_clock_review.py",
     "tests_real_ha/test_archive_record_integrity.py",
     "tests_real_ha/test_assist_continuity_progress.py",
     "tests_real_ha/test_backup_restore_atomicity.py",
@@ -125,6 +126,7 @@
     },
     "tests_real_ha/test_browser_backend_acceptance.py": {
       "nodes": [
+        "test_broadcast_admission_retires_composer_without_duplicate_delivery",
         "test_shipped_browser_frontend_talks_to_real_management_websocket",
         "test_shipped_frontend_treats_hostile_knowledge_and_memory_as_text"
       ],
@@ -577,6 +579,12 @@
       "job": "stable",
       "selector": "tests_real_ha/",
       "reason": "test_user_permission_acceptance runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
+    },
+    "tests_real_ha/test_archive_order_clock_review.py": {
+      "workflow": "real-ha.yml",
+      "job": "stable",
+      "selector": "tests_real_ha/",
+      "reason": "Native Archive ordering and historical snapshot reload execute in genuine HA acceptance on PRs and Full validation; Enhanced retains its separate persistence campaigns."
     },
     "tests_real_ha/test_archive_record_integrity.py": {
       "workflow": "real-ha.yml",

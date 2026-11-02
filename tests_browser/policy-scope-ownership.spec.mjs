@@ -32,13 +32,25 @@ for(const bundled of [false,true]) for(const policy of policies) for(const owner
     await panel.locator("#save-page").click();
     await expect.poll(() => page.evaluate(() => typeof window.finishPolicySave)).toBe("function");
     await panel.evaluate(async (host,{policy,owner}) => {
-      if(owner === "user") host.hass={...host.hass,user:{id:"new-owner",is_admin:true}};
+      if(owner === "user") {
+        host.hass={...host.hass,user:{id:"new-owner",is_admin:true}};
+        if (!host.shadowRoot.querySelector("[data-eoc-authentication-notice]")) throw Error("Previous account presentation remained mounted");
+        // Opening settings for another account mounts a fresh authoring owner.
+        // The old dispatched save still settles on its retained source.
+        const fresh = document.createElement("extended-openai-management-panel");
+        fresh.hass = host.hass;
+        host.remove();
+        document.body.append(fresh);
+        browserHarness.panel = fresh;
+        return;
+      }
       if(owner === "entry") host._selectedAgent().entry_id="new-provider-entry";
       if(owner === "session") host._clearConfigDraft();
       await host._loadSection(true);
       window.targetPolicyScope=host._unsavedState.scopes.get(policy.view);
     },{policy,owner});
     await expect(panel.locator(policy.selector)).toHaveCount(1);
+    await panel.evaluate((host,policy) => { window.targetPolicyScope=host._unsavedState.scopes.get(policy.view); },policy);
     if(policy.section === "request_rules") {
       const details=panel.locator(".rule-settings details").first();
       if(!await details.evaluate(node => node.open)) await details.locator("summary").click();

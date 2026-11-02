@@ -70,7 +70,7 @@ SCHEDULED_CERTIFICATION_WORKFLOWS = {
     "official-ha-container.yml",
     *SPECIALIST_CERTIFICATION_WORKFLOWS,
 }
-UPGRADE_EPOCHS = ("latest", "6.8.2", "6.7.0", "6.5.0", "6.3.1", "6.2.0")
+UPGRADE_EPOCHS = ("latest", "6.8.3", "6.8.2", "6.7.0", "6.5.0", "6.3.1", "6.2.0")
 SUPPORTED_SDK_LANES = ("2.21.0", "2.45.0", "3.10.0", "3.26.0")
 ADVISORY_SDK_LANE = "latest-3x-early-warning"
 HEAVY_CAMPAIGNS = (

@@ -1331,6 +1331,10 @@ async def test_native_year_statistics_preserves_real_recorder_aggregate(
     )
     start = datetime(2024, 1, 1, tzinfo=UTC)
     statistic_id = "sensor.annual_acceptance"
+    # Native reads revalidate the real Assist-visible set rather than trusting
+    # the synthetic admitted list passed to the backend below.
+    hass.states.async_set(statistic_id, "recorded")
+    async_expose_entity(hass, "conversation", statistic_id, True)
     metadata = {
         "statistic_id": statistic_id,
         "source": "recorder",

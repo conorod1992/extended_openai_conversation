@@ -36,8 +36,14 @@ const loadingPanel = {
 };
 assert.equal(module.showInitialLoading(loadingPanel), true);
 assert.match(loadingMain.innerHTML, /Loading/);
+assert.equal(loadingPanel._eocMainMarkup, loadingMain.innerHTML,
+  "a successful empty catalogue must differ from the actual initial loading markup");
 assert.equal(loadingMain.attributes["aria-busy"], "true");
 assert.equal("eocInitialLoading" in loadingMain.dataset, true);
+loadingPanel._error = "Catalogue failed";
+loadingMain.innerHTML = '<section role="alert">Catalogue failed</section>';
+assert.equal(module.showInitialLoading(loadingPanel), false);
+assert.match(loadingMain.innerHTML, /Catalogue failed/);
 
 const emptyMain = {
   innerHTML: '<div class="empty">No conversation agents configured.</div>',

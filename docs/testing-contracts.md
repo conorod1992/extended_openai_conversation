@@ -2,6 +2,26 @@
 
 Feature regressions remain useful, but this layer compares production entry points against shared guarantees. A new writer or action route should be added to the relevant matrix rather than receiving only a happy-path test.
 
+Recovery must include a usable repair operation, not only preservation and a diagnostic. Restored malformed Group identities require revision-bound collection repair; duplicate identity references require an explicit choice. Repairs validate the complete replacement and preserve unrelated raw Functions and configuration. Retained inactive Request Rules must not block unrelated pack imports, while incoming rules remain strictly validated and disabled by default.
+
+Migration candidates must be assessed against their original values. YAML aliases may share schemas between stock, custom and quarantined definitions: a migration detaches the provider schema it owns before modifying it, so unrelated definitions and backend payloads retain their values. Repeated startup must be idempotent after persisted reload.
+
+Editor authoring state, validated configuration and validation errors have separate ownership. Invalid Voice assignment rows must survive same-assistant navigation and remain correctable; an error must never replace the mapping object. Save admission must reject invalid retained rows even outside the Voice route, and Discard must retire their authoring state.
+
+Voice recovery must invalidate hydrated controls when the retained row projection changes even if its valid mapping object stays unchanged. Native picker display initialization must not clear the selected user's semantic value while the user catalogue loads; explicit selection and clear events remain authoritative before and after hydration.
+
+An acknowledged repair may leave later edits in its editor. Both complete Function and Group repair support revision-bound follow-up saves after the first write clears quarantine. Bulk Function repair preserves an available selected Skill loader; ambiguous unusable source can still be repaired to an explicitly disabled loader without enabling it.
+
+Archive turn order survives a backwards wall-clock correction across a monthly storage boundary. Optional per-session sequences preserve that order through cold reload, backup replacement and restore-journal recovery. Legacy reads retain their existing order without a storage rewrite; an append upgrades every affected month in the same journal. Invalid, duplicate or mixed sequences retain the original storage evidence and block destructive writes. Sequence gaps remain valid and are not renumbered by pagination or replacement.
+
+A validated full-agent journal authorizes recovery of rejected native category stores; corrupt data alone does not. Target and rollback tests preserve quarantine evidence, reload through ordinary managers, and retain the journal across failed writes and retries. Archive recovery inventories only exact owned monthly files. Usage recovery reconciles previously rejected handles through native reads, while healthy legacy totals mirrors retain their existing best-effort behavior.
+
+Combined recovery cases quarantine every native category together, interrupt the final bootstrap write, then retry with warm or cold manager state. They compare every restored category and the saved retention policy against the selected journal generation, including a subsequent Usage reload under that policy.
+
+Read results carry meaning independently of whether they contain records. Initial catalogue pending, failed and successful-empty states must render distinctly, with a deliberate catalogue retry and no retry storm from Home Assistant updates. Relative Usage periods use Home Assistant's local calendar rather than the latest activity or a retained summary date. Diagnostics share canonical configuration representation parsing and isolate failures between sections.
+
+Mobile dialog action reachability is checked geometrically after ordinary scrolling. Programmatic focus, locator clicks and scroll-into-view behavior alone do not establish that a user can reach a clipped footer.
+
 ## Entry-point matrix
 
 | Guarantee | Routes | Evidence |
@@ -33,6 +53,23 @@ Delayed execution combines missing-agent retry, durable record reconstruction an
 The nightly `memory-knowledge` campaign adds 300 operations (1,200 at heavy intensity) with the existing recorded stress seed and evidence ledger. The new case is part of the mandatory execution contract, so dropping its workflow selector fails certification. Existing selective restore, metadata refresh, same-title deletion/recreation, in-flight removal and child-process crash/restart tests remain in the genuine HA lifecycle suites; this layer supplements rather than duplicates those expensive scenarios.
 
 ## Provider boundary and test sensitivity
+
+`tests/test_runtime_readiness.py` asserts that an accepted save reaches the actual
+initial provider request. It covers provider/API combinations, the Azure Chat
+tool boundary, Conditional finalization, Group loading, generated and provider-owned
+tools, YAML schema values, quarantined legacy definitions, availability mutations,
+imports, duplication and restoration. A genuine HA Script/service probe preserves
+typed YAML values in backend payloads while provider-facing schemas require JSON.
+
+`request.validate_runtime_readiness` is the pure mutation-boundary contract layered
+on existing configuration preparation. It reuses request capability resolution,
+Function Group assembly, integration tool generation, finalizer insertion and the
+runtime tool-count guard. It checks the guaranteed initial request with no loaded
+Groups or request-specific discovery, installed Skills, retained-data scopes or
+Knowledge catalogue. Those dynamic capabilities remain subject to runtime checks.
+Repair-owned definitions use the same usable projection as runtime; their raw
+payloads remain available for repair. New restores validate before journal creation;
+replaying an existing recovery journal retains its original recovery contract.
 
 `tests_real_ha/test_provider_boundary_contracts.py` keeps HA dispatch and the real OpenAI SDK. A strict HTTP fixture checks serialized Chat Completions and Responses histories against an independent call/result oracle. It rejects incomplete, duplicate and orphan exchanges and unsupported Function schemas, and requires attachment bytes in every historical request. Violations are recorded separately so an integration error handler cannot hide a failed protocol assertion.
 
@@ -99,6 +136,60 @@ acceptance is required by these deterministic checks.
 
 ## PR regressions and Enhanced certification scope
 
+The Function representation corpus in `tests/fixtures/function_configuration_representations.json`
+is shared by dependency, migration, serialized restore and journal-recovery checks.
+It distinguishes legacy raw empty values from explicitly empty serialized
+collections, preserves typed backend values and disabled definitions, and retains
+quarantined siblings unchanged. Repeated startup must be idempotent, keep healthy
+siblings usable, and never silently enable an unavailable capability. Unsupported
+data does not authorize replacement; unrelated programming, I/O and cancellation
+failures still propagate. The native process-crash journey also checks quarantine
+and healthy-sibling operation after recovery and another clean restart.
+
+Mutation wire tests serialize actual backend results and feed them to production
+JavaScript acknowledgement consumers, including Function, Group and Rule deletion.
+Rejection requires evidence that no write
+committed; missing/malformed responses and transport loss remain uncertain.
+Confirmed commitment retires only its submitted draft before presentation and
+refresh, including committed responses carrying warnings or partial outcomes.
+An uncertain configuration import consumes its preview but retains source text;
+another preview requires an authoritative assistant-list refresh. These checks
+extend existing owner and acknowledgement helpers rather than adding a global
+transaction coordinator.
+
+Short-term Memory editor checks hold a committed update's reply while more
+content, category and expiry changes are authored. The acknowledgement advances
+only the submitted baseline; later input remains available for a second Save or
+explicit Discard. Source and shipped-bundle journeys also cover an unchanged
+editor closing normally, a replaced editor retaining its own draft, and expiry
+conversion in a Home Assistant timezone distinct from UTC. Held Voice user
+catalogues are tested across discard and panel recovery for both successful and
+failed replies, including a newer explicit user clear.
+
+Retained data-editor retry checks require a rejected write to leave backend
+records unchanged, then verify a corrected save retires its old error alert
+while preserving input authored during acknowledgement. A later independent
+rejection must still publish a new error, and the final retry must save exactly
+the retained values. The same source and bundle journey covers both Memory
+editors and Knowledge.
+Admission guards also prove that required-field client validation preserves the
+current rejection without dispatch, and that unresolved Long-term Memory and
+Knowledge writes retain their error and block another transport call even if
+the Save button is forcibly re-enabled in the test.
+
+Broadcast retry tests drop the actual queue acknowledgement, retry its immutable
+operation identity, and assert a single admission. They cover payload/caller
+binding, bounded capacity without eviction of live receipts, expiry and server
+replacement, authorization changes, cancellation, and failures after insertion.
+Uncertain attempts survive snapshot refresh; edits and revoked authentication
+lifetimes require explicit new-send confirmation. Fresh sends obtain a current
+server retry window without renewing an uncertain predecessor; failed preparation
+does not count as a dispatched send. Real-browser disclosure/rebind
+journeys preserve Rule Sharing files, review and export choices, and initialization
+failure remains retryable. Already-open mounted disclosures initialize without
+needing another toggle. These journeys are registered in the nightly browser
+execution inventory in addition to PR smoke collection.
+
 PR lint runs the nightly selection and execution-catalog guards without Home
 Assistant fixtures. A new real-HA file must be selected by Enhanced or explicitly
 assigned to an existing genuine-HA acceptance job in
@@ -117,3 +208,24 @@ intensity scope. `passed` means the selected scope passed. Only a successful run
 selecting all campaigns at both normal and heavy intensities sets
 `full_programme_passed`; a campaign-only green run cannot certify the full
 programme. Scheduled long-lifetime heavy execution remains in its dedicated lane.
+
+Management authentication regressions cover a retained panel receiving a different
+HA user, including mutation of the same `hass.user` object and A/B/A transitions.
+The mounted editor remains owned by its first known account: its content and
+dialogs leave the document while another account is active, with a reload action
+to open a fresh panel for that account. Returning to the original account preserves
+its authored nodes and drafts, but cannot revive retired reads or live watches.
+Nested editors and confirmations also regain their native modal ordering and
+focus after the original account returns; restoring an `open` attribute alone
+does not restore the browser's top layer.
+Live status resumes with fresh authentication ownership and the original
+remaining polling budget; paused replies cannot publish after resumption.
+Broadcast reads carry their authentication generation from request creation,
+including when their feature module binds only after the account round trip.
+
+Native history, statistics and Energy regressions check current Assist/HA READ
+visibility at the read boundary, including nested Composite children and an
+earlier child or Energy manager load that yields before exposure is revoked.
+Current visibility narrows the originally admitted Guest/caller scope; it never
+widens it. The browser resilience slow-read witness waits for the actual delayed
+Memory response and usable collection, since the route heading may paint earlier.

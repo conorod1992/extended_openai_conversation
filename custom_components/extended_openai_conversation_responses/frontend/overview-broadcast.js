@@ -1,5 +1,8 @@
-import {callMutation, captureConfigurationOwner, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
+import {callMutation, captureConfigurationOwner, presentAcknowledgedMutation, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
+import {acknowledgeBroadcast} from "./broadcast-acknowledgement.js";
+import {broadcastAttempt, sameBroadcastPayload, retireBroadcastAttempt} from "./broadcast-retry.js";
 import {watchLiveStatus, stopLiveStatus} from "./management-live-status.js";
+import {captureAuthentication, authenticationReadIsCurrent} from "./authentication-presentation.js";
 const ROUTE_STYLE = `/* Overview Broadcast */
 #broadcast-card{background:color-mix(in srgb,var(--secondary-background-color) 20%,var(--card-background-color));border-color:color-mix(in srgb,var(--divider-color) 72%,var(--secondary-text-color))}
 .broadcast-toggle-row{display:flex;justify-content:space-between;gap:18px;align-items:center;padding:16px 0;border-bottom:1px solid var(--divider-color)}
@@ -90,6 +93,7 @@ function broadcastMarkup(panel, snapshot) {
             }).join("") || `<p class="empty">No announcement-capable Assist satellites are available.</p>`}
           </div></div>`}
         </fieldset>
+        <p id="broadcast-retry-status" role="status" ${panel._broadcastAttempt?.uncertain || panel._broadcastAttempt?.blocked ? "" : "hidden"}>An earlier send may already have been queued. Retry unchanged while its original ten-minute window is available. Sending as new can repeat an announcement. Recent history is cleared on restart, and the earlier announcement may already have played.</p>
         <div class="actions broadcast-actions"><button id="broadcast-refresh" type="button" class="secondary compact-button">Refresh devices</button><button id="broadcast-send" type="button" ${!satellites.length || panel._broadcastSending ? "disabled" : ""}>Send broadcast</button></div>
       </div>` : ""}
     <div class="broadcast-history">
@@ -125,6 +129,7 @@ function bindBroadcastControls(panel, snapshot) {
   root.querySelectorAll('input[name="broadcast-destination"]').forEach((input) => input.addEventListener("change", (event) => {
     if (!event.target.checked) return;
     panel._broadcastWholeHome = event.target.value === "whole";
+    panel._broadcastDraftRevision = (panel._broadcastDraftRevision || 0) + 1;
     const host = root.querySelector("#broadcast-card");
     const latest = panel._eocBroadcastSnapshot || snapshot;
     if (host) host.innerHTML = broadcastMarkup(panel, latest);
@@ -134,6 +139,7 @@ function bindBroadcastControls(panel, snapshot) {
     panel._broadcastSelected ||= new Set();
     if (event.target.checked) panel._broadcastSelected.add(event.target.dataset.broadcastEntity);
     else panel._broadcastSelected.delete(event.target.dataset.broadcastEntity);
+    panel._broadcastDraftRevision = (panel._broadcastDraftRevision || 0) + 1;
     event.target.closest(".broadcast-target")?.classList.toggle("is-selected", event.target.checked);
   }));
   root.querySelector("#broadcast-refresh")?.addEventListener("click", () => loadBroadcast(panel));
@@ -142,6 +148,7 @@ function bindBroadcastControls(panel, snapshot) {
     const button = event.currentTarget;
     const draftRevision = panel._broadcastDraftRevision || 0;
     const submission = captureConfigurationOwner(panel);
+    const authenticated = captureAuthentication(panel);
     const message = String(panel._broadcastMessage || "").trim();
     const selected = [...(panel._broadcastSelected || new Set())];
     const wholeHome = Boolean(panel._broadcastWholeHome);
@@ -149,31 +156,64 @@ function bindBroadcastControls(panel, snapshot) {
     if (!wholeHome && !selected.length) return panel._toast("Choose at least one Assist satellite or Whole home.", true);
     panel._broadcastSending = true;
     button.disabled = true;
+    let attempt;
+    let retrying = false;
+    let dispatched = false;
     try {
-      const result = await callMutation(() => panel._hass.callWS({
+      const payload = {message, whole_home:wholeHome, entity_ids:wholeHome ? [] : selected};
+      if (panel._broadcastAttempt) attempt = broadcastAttempt(panel, submission, payload, null);
+      const replace = !attempt || attempt.blocked || !sameBroadcastPayload(attempt.payload, payload);
+      const ownsSubmission = () => {
+        return authenticated()
+          && (panel._broadcastDraftRevision || 0) === draftRevision
+          && (panel._broadcastAttempt || null) === (attempt || null)
+          && panel.isConnected !== false && panel._viewKey?.() === "overview";
+      };
+      if (attempt && replace) {
+        if (!await panel._confirm("Send a new Broadcast?", "The previous send may already have been queued or delivered. Check recent broadcasts before sending again. A new send can repeat the announcement.", "Send as new")) return;
+        // Confirmation yields. Never send later edits or a different user's work.
+        if (!ownsSubmission()) return;
+      }
+      if (replace) {
+        // A page may be idle for longer than the retry window. Fresh intent gets
+        // server-clock freshness now; uncertain retries retain their old token.
+        // Read without replacing the composer or treating read failure as a send.
+        const fresh = await panel._hass.callWS({type:WS_BROADCAST, action:"snapshot"});
+        if (!ownsSubmission()) return;
+        if (typeof fresh?.retry_token !== "string" || !fresh.retry_token) throw Error("Broadcast could not be prepared. Refresh devices before sending.");
+        retireBroadcastAttempt(panel, attempt);
+        attempt = broadcastAttempt(panel, submission, payload, fresh.retry_token);
+      }
+      retrying = attempt.uncertain;
+      attempt.uncertain = true;
+      dispatched = true;
+      const response = await callMutation(() => panel._hass.callWS({
         type: WS_BROADCAST,
         action: "send",
-        message,
-        whole_home: wholeHome,
-        entity_ids: wholeHome ? [] : selected,
+        ...attempt.payload,
+        ...(attempt.operationId ? {operation_id:attempt.operationId} : {}),
       }));
-      requireMutationAcknowledgement(typeof result?.status === "string", "queuing Broadcast");
-      const current = captureConfigurationOwner(panel);
-      if (current.userId === submission.userId && current.authenticationGeneration === submission.authenticationGeneration
-          && (panel._broadcastDraftRevision || 0) === draftRevision) {
-        panel._broadcastMessage = "";
-        processMutationResponse(result, () => {
-          const composer = panel.shadowRoot.querySelector("#broadcast-message");
-          if (composer && composer.value.trim() === message) composer.value = "";
-        });
-      }
+      const result = acknowledgeBroadcast(panel, submission, message, draftRevision, response);
+      // A stale authentication cannot clear its retained draft. Keep new-send
+      // confirmation coupled to it rather than silently rearming that message.
+      if (authenticated()) retireBroadcastAttempt(panel, attempt);
+      else attempt.blocked = true;
       await presentAcknowledgedMutation(panel, submission, "Broadcast queued", async () => {
         if (!await loadBroadcast(panel)) throw Error("Broadcast history could not be refreshed.");
       }, result);
     } catch (err) {
+      if (attempt && dispatched) {
+        if (["invalid_request", "broadcast_retry_capacity"].includes(err.code) || err.mutationOutcome === "rejected") {
+          if (retrying) attempt.blocked = true;
+          else retireBroadcastAttempt(panel, attempt);
+        }
+        else if (!attempt.operationId || ["broadcast_retry_expired", "broadcast_retry_uncertain"].includes(err.code)) attempt.blocked = true;
+      }
       panel._toast(`Unable to send Broadcast: ${err.message || String(err)}`, true);
     } finally {
       panel._broadcastSending = false;
+      const notice = panel.shadowRoot.querySelector("#broadcast-retry-status");
+      if (notice) notice.hidden = !(panel._broadcastAttempt?.uncertain || panel._broadcastAttempt?.blocked);
       const currentButton = panel.shadowRoot.querySelector("#broadcast-send");
       if (currentButton) currentButton.disabled = !(panel._eocBroadcastSnapshot?.catalog?.satellites || []).length;
     }
@@ -223,23 +263,26 @@ function applyBroadcastError(panel, err) {
 }
 
 async function loadBroadcast(panel) {
+  const current = captureAuthentication(panel);
   const token = panel._eocBroadcastReadToken = (panel._eocBroadcastReadToken || 0) + 1;
   try {
     const snapshot = await panel._hass.callWS({type: WS_BROADCAST, action: "snapshot"});
-    if (panel._eocBroadcastReadToken === token) applyBroadcastSnapshot(panel, snapshot);
+    if (current() && panel._eocBroadcastReadToken === token) applyBroadcastSnapshot(panel, snapshot);
     return true;
   } catch (err) {
-    if (panel._eocBroadcastReadToken === token) applyBroadcastError(panel, err);
+    if (current() && panel._eocBroadcastReadToken === token) applyBroadcastError(panel, err);
     return false;
   }
 }
 
 export function bindBroadcast(panel, broadcastPromise) {
+  const authCurrent = captureAuthentication(panel);
+  const current = () => authCurrent() && authenticationReadIsCurrent(broadcastPromise);
   ensureRouteStyle(panel);
   const token = panel._eocBroadcastReadToken = (panel._eocBroadcastReadToken || 0) + 1;
   return Promise.resolve(broadcastPromise)
-    .then((snapshot) => { if (panel._eocBroadcastReadToken === token) applyBroadcastSnapshot(panel, snapshot); })
-    .catch((err) => { if (panel._eocBroadcastReadToken === token) applyBroadcastError(panel, err); })
+    .then((snapshot) => { if (current() && panel._eocBroadcastReadToken === token) applyBroadcastSnapshot(panel, snapshot); })
+    .catch((err) => { if (current() && panel._eocBroadcastReadToken === token) applyBroadcastError(panel, err); })
     .finally(() => {
       if (panel._eocOverviewBroadcastPromise === broadcastPromise) panel._eocOverviewBroadcastPromise = null;
     });

@@ -138,7 +138,8 @@ async def test_category_restore_remains_responsive(
     # Assert exact content, not just restore success or record counts.
     assert await archive.async_backup_data() == {
         "sessions": [asdict(s) for s in sessions],
-        "turns": [asdict(t) for t in records],
+        # The owned snapshot replacement establishes explicit per-session order.
+        "turns": [asdict(replace(t, sequence=i)) for i, t in enumerate(records)],
     }
     assert await knowledge.async_backup_data() == expected_knowledge
     assert await memory.async_backup_data() == expected_memories

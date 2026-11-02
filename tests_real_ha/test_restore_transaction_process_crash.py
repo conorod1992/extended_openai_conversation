@@ -14,7 +14,12 @@ from types import MappingProxyType
 from unittest.mock import patch
 
 import pytest
+import yaml
 
+from tests.function_configuration_corpus import (
+    FUNCTION_CONFIGURATION_CASES,
+    corpus_config,
+)
 from tests_real_ha.process_harness import child_process_env, run_python_child
 from tests_real_ha.test_immediate_tool_process_crash import (
     DOMAIN,
@@ -30,6 +35,69 @@ _OWNER = "restore-process-owner"
 _TARGET = "restore-target"
 _PREVIOUS = "restore-previous"
 _SIBLING = "unrelated-agent"
+
+
+def _quarantined_configuration():
+    """Reuse the same source shapes as the unit migration/recovery corpus."""
+    invalid = next(
+        case
+        for case in FUNCTION_CONFIGURATION_CASES
+        if case["id"] == "quarantined-native-list"
+    )
+    disabled = next(
+        case for case in FUNCTION_CONFIGURATION_CASES if case["effective"] == "disabled"
+    )
+    source = corpus_config(invalid)
+    source["functions"] += disabled["config"]["functions"]
+    return source
+
+
+async def _prove_healthy_sibling_turn(hass, entry):
+    from homeassistant.components import conversation
+    from homeassistant.core import Context
+
+    sibling = next(
+        agent
+        for agent in hass.data[conversation.DATA_COMPONENT].entities
+        if getattr(getattr(agent, "subentry", None), "title", None) == _SIBLING
+    )
+    markers = []
+
+    async def record_service(call):
+        markers.append(call.data["message"])
+
+    hass.services.async_register("recovery_probe", "record", record_service)
+    if not any(
+        rule["name"] == "Restored quarantine sibling"
+        for rule in sibling._request_rules.snapshot()["rules"]
+    ):
+        await sibling._request_rules.async_create(
+            {
+                "name": "Restored quarantine sibling",
+                "enabled": True,
+                "phrases": ["prove restored quarantine sibling"],
+                "match_type": "equals",
+                "action_type": "local_action",
+                "action": {
+                    "actions": [
+                        {
+                            "action": "recovery_probe.record",
+                            "data": {"message": "HEALTHY"},
+                        }
+                    ]
+                },
+            }
+        )
+    result = await conversation.async_converse(
+        hass=hass,
+        text="prove restored quarantine sibling",
+        conversation_id=None,
+        context=Context(),
+        language="en",
+        agent_id=sibling.entity_id,
+    )
+    assert result.response.error_code is None
+    assert markers == ["HEALTHY"]
 
 
 async def _state(hass, entry, *, title: str | None = None):
@@ -52,7 +120,9 @@ async def _state(hass, entry, *, title: str | None = None):
 
 async def _seed(hass, entry, config_dir: Path) -> None:
     from custom_components.extended_openai_conversation_responses import backup
-    from custom_components.extended_openai_conversation_responses.private_backup import encode_document
+    from custom_components.extended_openai_conversation_responses.private_backup import (
+        encode_document,
+    )
     from homeassistant.config_entries import ConfigSubentry
 
     subentry, memory, knowledge = await _state(hass, entry)
@@ -70,7 +140,13 @@ async def _seed(hass, entry, config_dir: Path) -> None:
     await memory.async_add(_OWNER, _TARGET, "test", "explicit")
     await knowledge.async_create(_TARGET, "", _TARGET)
     target = await backup.async_collect_backup_snapshot(hass, entry, subentry)
-    (config_dir / "target-backup.json").write_text(json.dumps(encode_document(target)), encoding="utf-8")
+    # A serialized private backup may legitimately retain invalid definitions for
+    # repair. Recovery and the following fresh-process migration must preserve
+    # them without preventing another assistant from handling a real request.
+    target["agent"]["config"].update(_quarantined_configuration())
+    (config_dir / "target-backup.json").write_text(
+        json.dumps(encode_document(target)), encoding="utf-8"
+    )
     for record in await memory.async_list(_OWNER):
         await memory.async_delete(_OWNER, [record.memory_id])
     for source in await knowledge.async_list():
@@ -134,6 +210,21 @@ async def _child(config_dir: Path, phase: str, cut: str) -> None:
                 _SIBLING,
             )
             subentry, _, _ = await _state(hass, entry)
+            if cut == "committed":
+                from custom_components.extended_openai_conversation_responses.function_configuration_repair import (
+                    function_configuration_repair_state,
+                )
+
+                source = _quarantined_configuration()
+                for key, value in source.items():
+                    assert subentry.data[key] == value
+                repair = function_configuration_repair_state(dict(subentry.data))
+                assert repair is not None and len(repair.invalid) == 1
+                assert (
+                    repair.invalid[0]["tool"] == yaml.safe_load(source["functions"])[0]
+                )
+                assert len(repair.valid) == 1 and repair.valid[0]["enabled"] is False
+            await _prove_healthy_sibling_turn(hass, entry)
             journal = restore_recovery._journal_store(
                 hass, entry.entry_id, subentry.subentry_id
             )
@@ -365,6 +456,10 @@ def test_restore_transaction_converges_after_process_kills(
     if interrupt_recovery:
         _kill_at(config_dir, "interrupt-recovery", cut, "recovery-paused")
     _run(config_dir, "verify", cut)
+    if cut == "committed" and not interrupt_recovery:
+        # Only committed recovery retains the imported quarantine. This second
+        # fresh startup reads that configuration before recovery can alter it.
+        _run(config_dir, "verify", cut)
     assert config.read_text(encoding="utf-8") == configuration
 
 

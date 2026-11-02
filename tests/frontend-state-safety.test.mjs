@@ -83,7 +83,7 @@ upgradedPanel.connectedCallback();
 assert.equal(Object.hasOwn(upgradedPanel, "hass"), false);
 assert.equal(Object.hasOwn(upgradedPanel, "route"), false);
 assert.equal(hassReplays, 1);
-assert.equal(routeRenders, 1);
+assert.equal(routeRenders, 2, "catalogue pending state and upgraded route each render, without duplicating the read");
 assert.deepEqual(upgradedPanel._hass, {connected: true});
 assert.deepEqual(upgradedPanel._route, {path: "/extended-openai/overview"});
 assert.equal(windowListeners.has("beforeunload"), true);

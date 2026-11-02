@@ -9,6 +9,7 @@ import voluptuous as vol
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv, llm
 
+from ..execution_outcomes import owns_read_only_execution_receipts
 from ..template_diagnostics import private_template_diagnostics
 from .base import Function
 
@@ -25,6 +26,7 @@ class TemplateFunction(Function):
             )
         )
 
+    @owns_read_only_execution_receipts
     @private_template_diagnostics
     async def execute(
         self,

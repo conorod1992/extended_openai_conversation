@@ -16,6 +16,7 @@ from homeassistant.exceptions import HomeAssistantError
 
 from .agent_config import (
     merge_agent_config,
+    normalized_function_call_budget,
     project_agent_config_fields,
     project_agent_config_updates,
     validate_function_groups,
@@ -24,18 +25,16 @@ from .agent_config import (
 from .const import (
     CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
-    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     CONF_SKILLS,
     DEFAULT_CONF_FUNCTION_TOOLS,
     DEFAULT_FUNCTION_GROUPS,
-    DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
 )
 from .function_configuration_repair import (
     FunctionConfigurationRepairState,
     editable_function_tools,
     function_configuration_repair_state,
 )
-from .skill_availability import skill_loader_status
+from .skill_availability import preserves_skill_loader_availability, skill_loader_status
 from .yaml_serialization import dump_yaml
 
 
@@ -323,21 +322,24 @@ def prepare_quarantined_function_configuration(
         raw.get(CONF_SKILLS, []) or [],
         state.valid,
         state.groups,
-        max_function_calls=raw.get(
-            CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-            DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-        ),
+        max_function_calls=normalized_function_call_budget(raw)
+        if raw.get(CONF_SKILLS)
+        else None,
     )
     after = skill_loader_status(
         persisted.get(CONF_SKILLS, []) or [],
         tools,
         response_groups,
-        max_function_calls=persisted.get(
-            CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-            DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-        ),
+        max_function_calls=normalized_function_call_budget(persisted)
+        if persisted.get(CONF_SKILLS)
+        else None,
     )
-    if not after.available and (before.available or before.reason != after.reason):
+    if not preserves_skill_loader_availability(
+        before,
+        after,
+        raw.get(CONF_SKILLS, []) or [],
+        persisted.get(CONF_SKILLS, []) or [],
+    ):
         raise HomeAssistantError(after.reason or "selected Skills are not loadable")
     return PreparedFunctionConfiguration(
         persisted, deepcopy(tools), deepcopy(response_groups), next_state

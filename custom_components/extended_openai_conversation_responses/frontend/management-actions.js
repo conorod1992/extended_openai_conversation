@@ -4,6 +4,7 @@ import {requireMutationAcknowledgement, captureConfigurationDraftOwner, captureC
 import {CONFIG_OWNER_BY_KEY} from "./management-config-owners.js";
 import {SETTING_LOOKUP} from "./management-setting-lookup.js";
 import {focusManagementSetting} from "./frontend-navigation.js";
+import {voiceMappingDraftError} from "./voice-mapping-draft.js";
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
 function fieldErrorKey(key) {
@@ -127,6 +128,12 @@ export async function saveConfigurationAcrossRestart(panel, payload, submitted, 
 
 async function saveConfiguration(panel, button) {
   if (!panel._draft || !panel._selectedAgent?.() || panel._configurationSaving) return;
+  const mappingError = voiceMappingDraftError(panel);
+  if (mappingError) {
+    showErrors(panel, {voice_device_mappings:mappingError});
+    panel._toast?.(mappingError, true);
+    return;
+  }
   if ((panel._eocAcknowledgedConfiguration || panel._eocRestoredConfiguration) && panel._configDataStale) {
     const owner = captureConfigurationOwner(panel), visit = panel._loadToken;
     try { await panel._loadConfigDraft({preserveResult:true}); }

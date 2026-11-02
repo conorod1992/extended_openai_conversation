@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+import math
 import re
-from typing import Any, cast
+import time
+from typing import Any, TypedDict, cast
 from uuid import uuid4
 
 from homeassistant.const import ATTR_FRIENDLY_NAME, ATTR_SUPPORTED_FEATURES
@@ -40,6 +43,8 @@ DEFAULT_TTL_SECONDS = 120
 IDLE_STABILITY_SECONDS = 0.5
 ANNOUNCE_TIMEOUT_SECONDS = 120
 MAX_ANNOUNCE_TIMEOUT_SECONDS = 900
+RETRY_WINDOW_SECONDS = 600
+MAX_RETRY_ADMISSIONS = 512
 # Matches Home Assistant's AssistSatelliteEntityFeature.ANNOUNCE without importing
 # the Assist Satellite entity module (which eagerly imports the TTS/media stack).
 ANNOUNCE_FEATURE = 1
@@ -50,6 +55,55 @@ def _announcement_timeout_seconds(message: str) -> float:
     return min(
         MAX_ANNOUNCE_TIMEOUT_SECONDS, ANNOUNCE_TIMEOUT_SECONDS + len(message) / 8
     )
+
+
+class BroadcastAdmission(TypedDict):
+    """Queue-admission evidence; delivery is reported separately."""
+
+    id: str
+    targets: list[str]
+
+
+class BroadcastRetryError(HomeAssistantError):
+    """A retry cannot safely be admitted as a new announcement."""
+
+    code = "broadcast_retry_uncertain"
+
+
+class BroadcastRetryExpired(BroadcastRetryError):
+    """The original admission may have happened in a retired retry window."""
+
+    code = "broadcast_retry_expired"
+
+
+class BroadcastRetryCapacity(BroadcastRetryError):
+    """This new admission was rejected without retiring any live retry receipt."""
+
+    code = "broadcast_retry_capacity"
+
+
+@dataclass(slots=True)
+class _RetryAdmission:
+    deadline: int
+    payload: tuple[str, bool, tuple[str, ...]]
+    admission: BroadcastAdmission | None = None
+    started: bool = False
+
+
+class DeliverySnapshot(TypedDict):
+    status: str
+    detail: str | None
+    updated_at: str
+
+
+class BroadcastMessageSnapshot(BroadcastAdmission):
+    message: str
+    created_at: str
+    expires_at: str
+    source: str
+    origin_entity_id: str | None
+    origin_device_id: str | None
+    deliveries: dict[str, DeliverySnapshot]
 
 
 @dataclass(slots=True)
@@ -78,7 +132,7 @@ class BroadcastMessage:
     deliveries: dict[str, Delivery]
     context: Context | None = field(default=None, repr=False, compare=False)
 
-    def as_dict(self) -> dict[str, Any]:
+    def as_dict(self) -> BroadcastMessageSnapshot:
         return {
             "id": self.id,
             "message": self.message,
@@ -133,6 +187,9 @@ class IntercomManager:
         self._expiry_by_message: dict[str, Any] = {}
         self._loaded = False
         self._state_lock = asyncio.Lock()
+        self._retry_epoch = uuid4().hex
+        self._retry_lock = asyncio.Lock()
+        self._retry_admissions: dict[tuple[str, str], _RetryAdmission] = {}
         self._refresh_state_listener()
 
     async def async_initialize(self) -> None:
@@ -320,6 +377,125 @@ class IntercomManager:
                 result.append(state.entity_id)
         return sorted(set(result))
 
+    def retry_token(self) -> str:
+        """Issue server-clock freshness; browser clocks never authorize retries."""
+        return f"{self._retry_epoch}:{int(time.monotonic()) + RETRY_WINDOW_SECONDS}"
+
+    async def async_send_once(
+        self,
+        message: str,
+        *,
+        operation_id: str,
+        whole_home: bool,
+        entity_ids: list[str],
+        context: Context,
+    ) -> BroadcastAdmission:
+        """Deduplicate one authenticated UI admission within its original window.
+
+        The full operation identity includes server epoch, deadline and client UUID.
+        Never evict a live receipt to make room: that would make retry unsafe.
+        """
+        match = re.fullmatch(
+            r"([0-9a-f]{32}):([0-9]{1,12}):([0-9a-f]{32})", operation_id
+        )
+        now = time.monotonic()
+        if match is None:
+            raise HomeAssistantError("Invalid Broadcast operation identifier")
+        deadline = int(match[2])
+        if match[1] != self._retry_epoch:
+            raise BroadcastRetryExpired(
+                "Broadcast restarted and its recent history is no longer available. "
+                "This retry was not queued, but the earlier announcement may already "
+                "have played. Confirm before sending as new."
+            )
+        if deadline <= now:
+            raise BroadcastRetryExpired(
+                "The Broadcast retry window ended. Check delivery history before intentionally sending again."
+            )
+        if deadline > now + RETRY_WINDOW_SECONDS:
+            raise HomeAssistantError("Invalid Broadcast retry window")
+        if not context.user_id:
+            raise HomeAssistantError("Broadcast retry requires an authenticated user")
+        if len(entity_ids) > MAX_BROADCAST_TARGETS or any(
+            len(entity_id) > 255 for entity_id in entity_ids
+        ):
+            raise HomeAssistantError("Broadcast retry destination limit reached")
+        payload = (message.strip(), whole_home, tuple(sorted(set(entity_ids))))
+        key = (context.user_id, operation_id)
+        async with self._retry_lock:
+            now = time.monotonic()
+            if deadline <= now or self._closed:
+                raise BroadcastRetryExpired(
+                    "The Broadcast retry window is no longer available"
+                )
+            self._retry_admissions = {
+                key: record
+                for key, record in self._retry_admissions.items()
+                if record.deadline > now
+            }
+            record = self._retry_admissions.get(key)
+            if record is not None:
+                if record.payload != payload:
+                    raise HomeAssistantError(
+                        "Broadcast operation identifier was reused with different content or destinations"
+                    )
+                if record.admission is None:
+                    raise BroadcastRetryError(
+                        "The earlier Broadcast outcome is uncertain. Check delivery history before intentionally sending again."
+                    )
+                from .ha_permissions import async_require_control_permission
+
+                await async_require_control_permission(
+                    self.hass, record.admission["targets"], context=context
+                )
+                return {
+                    "id": record.admission["id"],
+                    "targets": list(record.admission["targets"]),
+                }
+            if len(self._retry_admissions) >= MAX_RETRY_ADMISSIONS:
+                wait = max(
+                    1,
+                    math.ceil(
+                        min(item.deadline for item in self._retry_admissions.values())
+                        - now
+                    ),
+                )
+                raise BroadcastRetryCapacity(
+                    "Broadcast retry capacity reached. This send was not queued. "
+                    f"Retry in {wait} second{'s' if wait != 1 else ''}; "
+                    "earlier attempts remain protected."
+                )
+            record = _RetryAdmission(deadline, payload)
+            self._retry_admissions[key] = record
+
+            def started() -> None:
+                if deadline <= time.monotonic():
+                    raise BroadcastRetryExpired(
+                        "The Broadcast retry window ended before admission"
+                    )
+                record.started = True
+
+            try:
+                result = await self.async_send(
+                    message,
+                    whole_home=whole_home,
+                    entity_ids=entity_ids,
+                    context=context,
+                    source="frontend",
+                    _admission_started=started,
+                )
+            except BaseException as err:
+                if not record.started:
+                    self._retry_admissions.pop(key, None)
+                    raise
+                if isinstance(err, asyncio.CancelledError):
+                    raise
+                raise BroadcastRetryError(
+                    "Broadcast admission could not be confirmed. Check delivery history before intentionally sending again."
+                ) from err
+            record.admission = {"id": result["id"], "targets": list(result["targets"])}
+            return {"id": result["id"], "targets": list(result["targets"])}
+
     async def async_send(
         self,
         message: str,
@@ -335,7 +511,8 @@ class IntercomManager:
         source: str = "manual",
         ttl_seconds: int = DEFAULT_TTL_SECONDS,
         context: Context | None = None,
-    ) -> dict[str, Any]:
+        _admission_started: Callable[[], None] | None = None,
+    ) -> BroadcastMessageSnapshot:
         if not self._enabled:
             raise HomeAssistantError(
                 "Broadcast is disabled. Enable it from the Extended OpenAI Overview."
@@ -426,6 +603,8 @@ class IntercomManager:
                 "ttl_seconds": bounded_ttl,
             },
         )
+        if _admission_started is not None:
+            _admission_started()
         self._history.appendleft(item)
         for entity_id in targets:
             state = self.hass.states.get(entity_id)
@@ -607,10 +786,10 @@ class IntercomManager:
             if not queue:
                 self._queues.pop(entity_id, None)
 
-    def history(self) -> list[dict[str, Any]]:
+    def history(self) -> list[BroadcastMessageSnapshot]:
         return [item.as_dict() for item in self._history]
 
-    def pending(self) -> list[dict[str, Any]]:
+    def pending(self) -> list[BroadcastMessageSnapshot]:
         """Return active deliveries independently of the bounded recent history."""
         messages = {
             item.id: item

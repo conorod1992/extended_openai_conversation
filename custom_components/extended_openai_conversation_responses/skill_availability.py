@@ -21,6 +21,27 @@ class SkillLoaderStatus:
     group_id: str | None = None
     on_demand: bool = False
     loadable_skills: tuple[str, ...] = ()
+    blockers: tuple[str, ...] = ()
+
+
+def preserves_skill_loader_availability(
+    before: SkillLoaderStatus,
+    after: SkillLoaderStatus,
+    selected_before: Iterable[str],
+    selected_after: Iterable[str],
+) -> bool:
+    """Allow repairs/other edits to retain an existing inactive selection.
+
+    Never break a working loader, add newly unusable Skills, or introduce a
+    different dependency failure. Only explicit edits may enable capabilities.
+    """
+    return after.available or (
+        not before.available
+        and set(after.blockers or (after.reason,)).issubset(
+            before.blockers or (before.reason,)
+        )
+        and set(selected_after).issubset(selected_before)
+    )
 
 
 def is_canonical_skill_loader(tool: dict[str, Any]) -> bool:
@@ -78,42 +99,42 @@ def skill_loader_status(
     """
     if not selected_skills:
         return SkillLoaderStatus(available=True)
+    # Track all structural blockers so an edit cannot hide a new problem behind
+    # the first diagnostic, and a partial repair can safely remove one blocker.
+    blockers: list[str] = []
     if max_function_calls is not None and max_function_calls <= 0:
-        return SkillLoaderStatus(
-            available=False,
-            reason="selected Skills require at least one Function Tool call per request",
+        blockers.append(
+            "selected Skills require at least one Function Tool call per request"
         )
 
     loader = next((tool for tool in tools if is_canonical_skill_loader(tool)), None)
     if loader is None:
-        return SkillLoaderStatus(
-            available=False,
-            reason="selected Skills require the built-in `load_skill` Function Tool",
+        blockers.append(
+            "selected Skills require the built-in `load_skill` Function Tool"
         )
-    if loader.get("enabled", True) is not True:
-        return SkillLoaderStatus(
-            available=False,
-            reason="the built-in `load_skill` Function Tool is disabled",
-        )
+    elif loader.get("enabled", True) is not True:
+        blockers.append("the built-in `load_skill` Function Tool is disabled")
 
-    group = function_group_for_tool(SKILL_LOADER_TOOL_NAME, groups)
-    if group is None:
-        return SkillLoaderStatus(available=True)
-    group_id = str(group.get("id", ""))
-    if not function_group_enabled(group):
+    group = function_group_for_tool(SKILL_LOADER_TOOL_NAME, groups) if loader else None
+    group_id = str(group.get("id", "")) if group else None
+    if group is not None and not function_group_enabled(group):
+        blockers.append(
+            "the Function Group containing `load_skill` is disabled"
+            + (f" (`{group_id}`)" if group_id else "")
+        )
+    if blockers:
         return SkillLoaderStatus(
             available=False,
-            reason=(
-                "the Function Group containing `load_skill` is disabled"
-                + (f" (`{group_id}`)" if group_id else "")
-            ),
+            reason=blockers[0],
             group_id=group_id or None,
+            blockers=tuple(blockers),
         )
 
     return SkillLoaderStatus(
         available=True,
         group_id=group_id or None,
-        on_demand=group.get("loading_mode") == FUNCTION_GROUP_LOADING_ON_DEMAND,
+        on_demand=group is not None
+        and group.get("loading_mode") == FUNCTION_GROUP_LOADING_ON_DEMAND,
     )
 
 

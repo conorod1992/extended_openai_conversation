@@ -142,6 +142,22 @@ def script_selector_fields(value: Any) -> dict[int, frozenset[str]]:
     result: dict[int, frozenset[str]] = {}
     selector_keys = frozenset({"entity_id", "zone", "device_id"})
 
+    def triggers(config: Any) -> None:
+        if isinstance(config, list):
+            for item in config:
+                triggers(item)
+        elif isinstance(config, Mapping):
+            # HA flattens a mapping containing only `triggers` into its list.
+            if set(config) == {"triggers"}:
+                triggers(config["triggers"])
+                return
+            result[id(config)] = selector_keys
+            # Options are trigger configuration, but their data/variables and
+            # other arbitrary nested mappings remain opaque payloads.
+            options = config.get("options")
+            if isinstance(options, Mapping):
+                result[id(options)] = selector_keys
+
     def conditions(config: Any) -> None:
         if isinstance(config, list):
             for item in config:
@@ -175,13 +191,7 @@ def script_selector_fields(value: Any) -> dict[int, frozenset[str]]:
         if isinstance(repeat, Mapping):
             for key in ("while", "until"):
                 conditions(repeat.get(key, []))
-        triggers = action.get("wait_for_trigger", [])
-        if isinstance(triggers, Mapping):
-            triggers = [triggers]
-        if isinstance(triggers, list):
-            for trigger in triggers:
-                if isinstance(trigger, Mapping):
-                    result[id(trigger)] = selector_keys
+        triggers(action.get("wait_for_trigger", []))
     return result
 
 

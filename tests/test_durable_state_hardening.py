@@ -441,12 +441,13 @@ async def test_replace_backup_rebuilds_partitions_and_clears_active_state() -> N
 
     await archive.async_replace_backup([replacement], [replacement_turn])
 
+    expected_turn = replace(replacement_turn, sequence=0)
     assert set(archive._sessions) == {"replacement"}
-    assert archive._turns == {"replacement": [replacement_turn]}
+    assert archive._turns == {"replacement": [expected_turn]}
     assert archive._active == {}
     assert archive._partitions == {"2026-04"}
     assert storage.partitions["2026-01"] == {"turns": []}
-    assert storage.partitions["2026-04"] == {"turns": [asdict(replacement_turn)]}
+    assert storage.partitions["2026-04"] == {"turns": [asdict(expected_turn)]}
 
 
 @pytest.mark.asyncio

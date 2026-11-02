@@ -65,6 +65,28 @@ VALUES = [
 ]
 
 
+def _same_typed_value(actual, expected):
+    assert type(actual) is type(expected)
+    if isinstance(expected, dict):
+        assert len(actual) == len(expected)
+        for key, value in expected.items():
+            matches = [
+                item for item in actual if type(item) is type(key) and item == key
+            ]
+            assert len(matches) == 1
+            _same_typed_value(actual[matches[0]], value)
+    elif isinstance(expected, list):
+        assert len(actual) == len(expected)
+        for item, value in zip(actual, expected, strict=True):
+            _same_typed_value(item, value)
+    elif isinstance(expected, set):
+        assert {(type(item), item) for item in actual} == {
+            (type(item), item) for item in expected
+        }
+    else:
+        assert actual == expected
+
+
 @pytest.mark.parametrize(
     "value",
     VALUES,
@@ -167,7 +189,8 @@ async def test_save_json_editor_and_full_configuration_roundtrip(
 
 
 @pytest.mark.parametrize("value", VALUES)
-async def test_export_uses_lossless_yaml_for_non_json_values(hass, value):
+@pytest.mark.parametrize("entrypoint", ["document", "json", "yaml"])
+async def test_export_uses_lossless_yaml_for_non_json_values(hass, value, entrypoint):
     from custom_components.extended_openai_conversation_responses import backup
 
     original = _tool(value)
@@ -186,12 +209,87 @@ async def test_export_uses_lossless_yaml_for_non_json_values(hass, value):
     document = json.loads(json.dumps(legacy_agent_export(subentry)))
     response = _wire({"document": document, "json": json.dumps(document)})
     assert response["document"] == json.loads(response["json"])
-    document = response["document"]
+    document = {
+        "document": response["document"],
+        "json": response["json"],
+        "yaml": yaml.safe_dump(response["document"]),
+    }[entrypoint]
     restored = ui._parse_import_document(document, destination=subentry)
     assert (
         yaml.safe_load(restored["config"]["functions"])[0]["function"]
         == original["function"]
     )
+    _same_typed_value(
+        yaml.safe_load(restored["config"]["functions"])[0]["function"]["variables"][
+            "marker"
+        ],
+        value,
+    )
+    before_runtime = agent_config.configured_function_tools_from_data(subentry.data)[0][
+        "function"
+    ]["variables"].async_render(hass, {})
+    after_runtime = agent_config.configured_function_tools_from_data(
+        restored["config"]
+    )[0]["function"]["variables"].async_render(hass, {})
+    _same_typed_value(after_runtime, before_runtime)
+
+
+@pytest.mark.parametrize(
+    "value,public",
+    [(value, False) for value in VALUES if value is not VALUES[5]]
+    + [
+        (value, True) for value in [VALUES[5], 0.000001, True, 1, None, {}, [], "1e-06"]
+    ],
+)
+@pytest.mark.parametrize("entrypoint", ["document", "json", "yaml"])
+async def test_current_export_text_preserves_typed_runtime_values(
+    hass, management_agent, management_message, value, public, entrypoint
+):
+    _, subentry = management_agent
+    subentry.data = {"functions": yaml.safe_dump([_tool(value)])}
+    runtime_before = agent_config.configured_function_tools_from_data(subentry.data)[0][
+        "function"
+    ]["variables"].async_render(hass, {})
+    exported = await ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        management_message("configuration", "export", reviewed_custom=True),
+    )
+    document = {
+        "document": exported["document"],
+        "json": exported["json"],
+        "yaml": yaml.safe_dump(exported["document"]),
+    }[entrypoint]
+    restored = ui._parse_import_document(document, destination=subentry)
+    if not public:
+        # Public sharing deliberately omits opaque typed YAML; legacy/private
+        # codecs preserve it. Importing text must not bypass that policy.
+        assert exported["document"]["config"]["functions"] == []
+        assert exported["document"]["security"]["omitted"]
+        assert yaml.safe_load(restored["config"]["functions"]) == []
+        return
+    stored = yaml.safe_load(restored["config"]["functions"])[0]
+    _same_typed_value(stored["function"]["variables"]["marker"], value)
+    runtime_after = agent_config.configured_function_tools_from_data(
+        restored["config"]
+    )[0]["function"]["variables"].async_render(hass, {})
+    _same_typed_value(runtime_after, runtime_before)
+
+
+async def test_text_corpus_detects_yaml_only_json_import(
+    hass, management_agent, management_message, monkeypatch
+):
+    original = ui._parse_import_document
+    monkeypatch.setattr(
+        ui,
+        "_parse_import_document",
+        lambda value, **kwargs: original(yaml.safe_load(value), **kwargs),
+    )
+    with pytest.raises(AssertionError):
+        await test_current_export_text_preserves_typed_runtime_values(
+            hass, management_agent, management_message, 0.000001, True, "json"
+        )
 
 
 async def test_yaml_set_exports_redact_recognizable_credentials_and_recover(hass):

@@ -69,6 +69,8 @@ If the panel reports **Restore recovery is pending** or that completion is pendi
 
 ## Damaged saved data
 
+The integration's diagnostic download includes a content-free storage recovery report and guidance for cases without a usable journal. See [Retained data or settings cannot be loaded](../troubleshooting.md#retained-data-or-settings-cannot-be-loaded). File presence is not proof of valid contents; the report neither reconstructs records nor changes recovery authority.
+
 Persistent Memory, Knowledge and Request Rules preserve malformed, duplicate and over-limit records in their original store. Valid records remain readable where loading permits it, but edits and full backups are rejected when they would discard the damaged material. Harmless normalization of valid legacy records continues. Persistent Memory still removes records rejected by its privacy policy while preserving unrelated damage.
 
 The error reports that storage needs repair. Keep the original store private; an administrator can repair it with Home Assistant stopped, or restore a validated backup into a clean assistant. Ordinary restore into a damaged destination can also be blocked because it cannot capture a complete rollback snapshot. An existing validated restore journal can still replace a readable damaged collection; its write must succeed before that collection accepts ordinary edits again. Initialization-blocked recovery is limited to validated existing journals, as described below.

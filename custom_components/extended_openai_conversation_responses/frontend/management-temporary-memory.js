@@ -177,16 +177,20 @@ async function closeTemporaryMemory(panel, force = false) {
 async function saveTemporaryMemory(panel) {
   const draft = panel._temporaryMemoryDraft;
   if (!draft || panel._temporaryMemorySaving) return;
+  const dialog = panel.shadowRoot.querySelector("#temporary-memory-dialog");
+  const ownsEditor = () => dialog?.open && panel.shadowRoot.querySelector("#temporary-memory-dialog") === dialog
+    && panel._temporaryMemoryDraft === draft;
   const content = panel.shadowRoot.querySelector("#temporary-memory-content")?.value ?? "";
   const category = panel.shadowRoot.querySelector("#temporary-memory-category")?.value ?? "";
   const expiresAt = panel.shadowRoot.querySelector("#temporary-memory-expiry")?.value ?? "";
   const error = panel.shadowRoot.querySelector("#temporary-memory-error");
   const owner = panel._retainedMutationOwner();
-    const submission = captureConfigurationOwner(panel);
+  const submission = captureConfigurationOwner(panel);
   if (!content.trim() || !category.trim() || !expiresAt.trim()) {
     error.textContent = "Memory, category, and expiry are required.";
     return;
   }
+  error.textContent = "";
   panel._temporaryMemorySaving = true;
   const save = panel.shadowRoot.querySelector("#temporary-memory-save");
   panel._setSaving(save, true);
@@ -202,17 +206,23 @@ async function saveTemporaryMemory(panel) {
     });
     if (!configurationSubmissionIsCurrent(panel, submission) || !panel._ownsRetainedMutation(owner)) return;
     requireMutationAcknowledgement(response?.memory?.memory_id, "saving the temporary memory");
+    if (!ownsEditor()) {
+      panel._revalidateAcknowledgedCollection(owner);
+      return;
+    }
     // Advance the saved editor state before rendering or closing the modal.
     panel._temporaryMemoryDraft = {...draft, ...response.memory, content, category, expires_at:expiresAt, original_expiry:response.memory.expires_at};
     return await presentAcknowledgedMutation(panel, submission, "Short-term memory updated", async () => {
       panel._result = {...panel._result, memories: (panel._result.memories || []).map(item =>
         item.memory_id === response.memory.memory_id ? response.memory : item)};
-      await closeTemporaryMemory(panel, true);
+      // The submitted values become the comparison baseline. Input entered
+      // while the write was pending belongs to the next Save or Discard.
+      if (!temporaryMemoryDirty(panel)) await closeTemporaryMemory(panel, true);
       panel._patchScopeCount(owner.scope, "temporary_memory_count", 0);
       panel._render();
     }, response);
   } catch (err) {
-    if (panel._ownsRetainedMutation(owner)) error.textContent = err.message || String(err);
+    if (ownsEditor() && panel._ownsRetainedMutation(owner)) error.textContent = err.message || String(err);
   } finally { panel._temporaryMemorySaving = false; panel._setSaving(save, false); }
 }
 

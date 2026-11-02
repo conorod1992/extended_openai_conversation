@@ -11,7 +11,7 @@ const cases = [
   [{dataset:{config:"prompt"}, value:"  exact prompt\n"}, "  exact prompt\n"],
   [{dataset:{config:"__title"}, value:"New title"}, "New title"],
   [{dataset:{}, id:"voice-mappings", value:'{"device":"user"}'}, {device:"user"}],
-  [{dataset:{}, id:"voice-mappings", value:'{unfinished'}, '{unfinished'],
+  [{dataset:{}, id:"voice-mappings", value:'{unfinished'}, undefined],
 ];
 for (const [control, expected] of cases) {
   assert.deepEqual(configurationControlValue(control), expected);
@@ -19,12 +19,19 @@ for (const [control, expected] of cases) {
   const incremental = {_draft:structuredClone(initial), _draftTitle:"Old"};
   const full = {_draft:structuredClone(initial), _draftTitle:"Old", shadowRoot:{querySelector:() => null, querySelectorAll:(selector) => { assert.equal(selector, CONFIGURATION_CONTROLS); return [control]; }}};
   const original = incremental._draft;
-  assert.equal(applyConfigurationControl(incremental, control).changed, true);
+  assert.equal(applyConfigurationControl(incremental, control).changed, expected !== undefined);
   assert.equal(applyConfigurationControl(incremental, control).changed, false, "input + change must not assign twice");
   readConfigurationDraft(full);
   assert.equal(incremental._draft, original);
   assert.deepEqual(incremental._draft, full._draft);
   assert.equal(incremental._draftTitle, full._draftTitle);
+}
+
+for(const value of ['{unfinished', '"diagnostic text"', '[]', '42', 'null']) {
+  const canonical={office:"user:owner",living:"shared:household"};
+  const panel={_draft:{voice_device_mappings:structuredClone(canonical)}};
+  assert.equal(applyConfigurationControl(panel,{id:"voice-mappings",dataset:{},value}).changed,false);
+  assert.deepEqual(panel._draft.voice_device_mappings,canonical,"diagnostics and invalid JSON never replace the persisted mapping draft");
 }
 
 const exclusions = {_draft:{local_intent_exclusions:["B","A"]}, _configData:{config:{local_intent_exclusions:["B","A"]}}};

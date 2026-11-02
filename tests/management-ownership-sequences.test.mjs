@@ -120,12 +120,15 @@ for (const [name, transition] of Object.entries(transitions)) {
     if (name === "assistant") {
       panel._configData=state.snapshot(agentB); panel._draft=structuredClone(panel._configData.config); panel._draftAgentId=agentB;
     }
-    const next=panel._call("tools", "set_enabled", command);
+    // A different account gets a fresh panel; the mounted authoring session
+    // cannot be adopted by that account. Other ownership changes stay in place.
+    const current = name === "user" ? create(panel._agentId, panel.hass.user.id) : panel;
+    const next=current._call("tools", "set_enabled", command);
     barrier.resolve();
     await assert.rejects(old, /changed|owner|draft/i);
     await next;
     assert.equal(state.writes.length, 1, "only the current owner's operation reaches the adapter");
-    retire(panel);
+    retire(panel, current);
   });
 }
 

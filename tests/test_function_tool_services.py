@@ -84,7 +84,7 @@ async def test_function_state_services_preserve_unrelated_configuration_and_gues
         subentry_id="agent-1", subentry_type="conversation", data=deepcopy(original)
     )
     entry = SimpleNamespace(
-        entry_id="entry-1", domain=DOMAIN, subentries={"agent-1": subentry}
+        entry_id="entry-1", domain=DOMAIN, subentries={"agent-1": subentry}, data={}
     )
     hass.config_entries.async_get_entry.return_value = entry
     registry = SimpleNamespace(async_get=lambda _: None)
@@ -144,6 +144,7 @@ async def test_enable_disable_actions_update_one_or_multiple_tools(
     entry = SimpleNamespace(
         entry_id="entry-1",
         domain=DOMAIN,
+        data={},
         subentries={"agent-1": subentry},
     )
     hass.config_entries.async_get_entry.return_value = entry
@@ -215,6 +216,7 @@ async def test_group_actions_do_not_change_member_tool_state(hass, monkeypatch) 
     entry = SimpleNamespace(
         entry_id="entry-1",
         domain=DOMAIN,
+        data={},
         subentries={"agent-1": subentry},
     )
     hass.config_entries.async_get_entry.return_value = entry

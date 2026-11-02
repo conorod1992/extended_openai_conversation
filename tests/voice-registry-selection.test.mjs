@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import {bindVoiceMappings} from "../custom_components/extended_openai_conversation_responses/frontend/voice-identity-ui.js";
+import {voiceMappingDraft, voiceMappingDraftError} from "../custom_components/extended_openai_conversation_responses/frontend/voice-mapping-draft.js";
 import {deferred, TestEventTarget} from "./frontend-test-helpers.mjs";
 
 function harness(firstFails = false, hydration = null) {
   const ready = deferred();
-  const picker = new TestEventTarget();
+  const picker = new TestEventTarget(); picker.dataset={};
   const addListener = picker.addEventListener.bind(picker);
   picker.addEventListener = (type, listener) => {addListener(type, listener); ready.resolve();};
   picker.select = value => {
@@ -19,7 +20,7 @@ function harness(firstFails = false, hydration = null) {
   const card = new TestEventTarget();
   const error = {};
   const calls = [], responses = [];
-  const panel = {_agentId:"voice-agent", _viewKey:() => "assistant/voice", _draft:{voice_scope_policy:"device_mapping"},
+  const panel = {_agentId:"voice-agent", _viewKey:() => "assistant/voice", _draft:{voice_scope_policy:"device_mapping", voice_device_mappings:{"device-office":"user:office-owner"}},
     hass:{callWS(message) {
       calls.push(message);
       assert.equal(message.type, calls.length === 1 ? "config/entity_registry/list" : "config/entity_registry/get");
@@ -34,6 +35,7 @@ function harness(firstFails = false, hydration = null) {
       querySelectorAll(selector) {return selector === "[data-voice-mapping-row]" ? [row] : [];},
     },
   };
+  row.dataset.voiceRowId=voiceMappingDraft(panel).rows[0].id;
   bindVoiceMappings(panel);
   return {panel, picker, hidden, owner, warning, card, error, calls, responses, ready:ready.promise};
 }
@@ -45,7 +47,8 @@ for (const fails of [false, true]) {
   await Promise.resolve(); await Promise.resolve();
   assert.equal(h.calls.length, 2, "selection fetches again after warm-up or outage");
   assert.deepEqual(h.calls[1], {type:"config/entity_registry/get", entity_id:"assist_satellite.kitchen"});
-  assert.equal(typeof JSON.parse(h.card.value), "string", "pending lookup cannot submit an old association");
+  assert.deepEqual(JSON.parse(h.card.value), {"device-office":"user:office-owner"});
+  assert.match(voiceMappingDraftError(h.panel), /Wait/);
   assert.equal(h.hidden.value, "device-office", "the committed value is retained while lookup settles");
   h.responses[0].resolve({entity_id:"assist_satellite.kitchen", device_id:"device-replacement"});
   await selected;
@@ -94,7 +97,8 @@ for (const fails of [false, true]) {
   const failed = h.picker.select("assist_satellite.kitchen");
   await Promise.resolve(); await Promise.resolve();
   h.responses[0].reject(new Error("Registry unavailable")); await failed;
-  assert.equal(typeof JSON.parse(h.card.value), "string");
+  assert.deepEqual(JSON.parse(h.card.value), {"device-office":"user:office-owner"});
+  assert.match(voiceMappingDraftError(h.panel), /available/);
   assert.match(h.error.textContent, /available/);
   const retry = h.picker.select("assist_satellite.kitchen");
   await Promise.resolve(); await Promise.resolve();
@@ -111,7 +115,8 @@ for (const entry of [null, {}, {entity_id:"assist_satellite.kitchen", device_id:
   await Promise.resolve(); await Promise.resolve();
   h.responses[0].resolve(entry); await selected;
   assert.equal(h.hidden.value, "device-office");
-  assert.equal(typeof JSON.parse(h.card.value), "string");
+  assert.deepEqual(JSON.parse(h.card.value), {"device-office":"user:office-owner"});
+  assert.match(voiceMappingDraftError(h.panel), /available/);
   assert.match(h.error.textContent, /available/);
 }
 
@@ -125,7 +130,8 @@ for (const entry of [null, {}, {entity_id:"assist_satellite.kitchen", device_id:
   h.responses[0].resolve({entity_id:"assist_satellite.kitchen", device_id:"stale-device"});
   await selected;
   assert.equal(h.hidden.value, "");
-  assert.deepEqual(JSON.parse(h.card.value), {});
+  assert.deepEqual(JSON.parse(h.card.value), {"device-office":"user:office-owner"});
+  assert.match(voiceMappingDraftError(h.panel), /empty assignment/);
 }
 
 // A response cannot change a detached row or a panel that has changed ownership.

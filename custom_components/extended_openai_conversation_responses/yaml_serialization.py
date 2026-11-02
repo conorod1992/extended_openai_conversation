@@ -1,9 +1,23 @@
 """Safe, readable YAML that preserves scalar values through parsing."""
 
+import json
 from typing import Any
 
 import yaml
 from yaml.nodes import ScalarNode
+
+
+def load_yaml_or_json(value: str) -> Any:
+    """Decode JSON with JSON scalar semantics, otherwise use safe YAML.
+
+    PyYAML's YAML 1.1 resolver treats JSON exponent floats such as 1e-06 as
+    strings. Do not send valid JSON through that resolver or change global YAML
+    behavior: authored YAML scalars, quoted strings and safe tags stay intact.
+    """
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return yaml.safe_load(value)
 
 
 class _LosslessSafeDumper(yaml.SafeDumper):

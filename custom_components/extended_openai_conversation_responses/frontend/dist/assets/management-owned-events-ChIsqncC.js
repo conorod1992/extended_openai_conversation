@@ -1,0 +1,1 @@
+var e=new WeakMap;function t(t,n,r,i){if(!t)return;let a=e.get(t);a||e.set(t,a=new Map);let o=`${r}:${n}`;a.get(o)?.abort();let s=new AbortController;a.set(o,s),t.addEventListener(n,i,{signal:s.signal})}export{t};

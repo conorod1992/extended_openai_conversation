@@ -2,7 +2,7 @@ test("Overview snapshot is usable while the full implementation is still loading
   const errors = trackPageErrors(page);
   let release;
   const requested = new Promise((resolve) => {
-    page.route("**/overview-page-impl.js", async (route) => {
+    page.route("**/overview-page-impl*.js", async (route) => {
       await new Promise((unblock) => {
         release = unblock;
         resolve();
@@ -40,7 +40,7 @@ test("Overview is usable while Broadcast implementation is still loading", async
   const errors = trackPageErrors(page);
   let release;
   const requested = new Promise((resolve) => {
-    page.route("**/overview-broadcast.js", async (route) => {
+    page.route("**/overview-broadcast*.js", async (route) => {
       await new Promise((unblock) => {
         release = unblock;
         resolve();
@@ -73,7 +73,7 @@ test("leaving Overview while Broadcast loads prevents stale hydration", async ({
   const errors = trackPageErrors(page);
   let release;
   const requested = new Promise((resolve) => {
-    page.route("**/overview-broadcast.js", async (route) => {
+    page.route("**/overview-broadcast*.js", async (route) => {
       await new Promise((unblock) => {
         release = unblock;
         resolve();

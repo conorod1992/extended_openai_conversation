@@ -17,6 +17,103 @@ from tests.test_group_repair_command_contracts import message
 from tests.test_ha_llm_tools import reference
 
 
+@pytest.mark.parametrize(
+    "section,action",
+    [
+        ("configuration", "get"),
+        ("function_repair", "configuration_get"),
+        ("function_repair", "get"),
+    ],
+)
+async def test_collection_repair_editor_retains_typed_variables(
+    hass,
+    management_agent,
+    management_message,
+    monkeypatch,
+    section,
+    action,
+):
+    from datetime import date
+    import json
+    import subprocess
+    from pathlib import Path
+    from custom_components.extended_openai_conversation_responses.function_yaml import (
+        management_function_response,
+        decode_management_function_request,
+    )
+    from custom_components.extended_openai_conversation_responses.request_rules import (
+        RequestRules,
+    )
+    from tests.test_request_rules import MemoryStore
+    from custom_components.extended_openai_conversation_responses.management_function_repair import (
+        discard_persisted_config_projection,
+    )
+
+    rules = RequestRules(MemoryStore())
+    await rules.async_initialize()
+    monkeypatch.setattr(ui, "async_get_request_rules", AsyncMock(return_value=rules))
+    _, subentry = management_agent
+    variables = {
+        "lookup": {7: "numeric", "7": "literal"},
+        "large": 9007199254740993,
+        "date": date(2026, 11, 1),
+        "literal": {"__eoai_management_yaml_v1__": "7"},
+        "small": 0.000001,
+        "text": "1e-06",
+    }
+    tool = {
+        "spec": {"name": "typed", "parameters": {"type": "object", "properties": {}}},
+        "function": {
+            "type": "script",
+            "variables": variables,
+            "sequence": [{"stop": "Done"}],
+        },
+    }
+    subentry.data = {
+        **subentry.data,
+        "functions": yaml.safe_dump([tool, deepcopy(tool)]),
+        "function_groups": [],
+    }
+    read = await ui.async_management_command(
+        hass, "admin", True, management_message(section, action)
+    )
+    if "function_repair" in read:
+        assert read["function_repair"]["isolatable"] is False
+    else:
+        assert "duplicate" in read["validation_error"]
+    wire = management_function_response(read, section=section)
+    script = """import {renderFallbackRepair} from './custom_components/extended_openai_conversation_responses/frontend/management-function-repair.js';
+    let raw=''; for await (const chunk of process.stdin) raw+=chunk;
+    const panel={_agentId:'agent',_result:JSON.parse(raw)};
+    renderFallbackRepair(panel,{message:'repair'});
+    process.stdout.write(panel._functionRepairDraft.text.replace('name: typed','name: renamed').replace('"name": "typed"','"name": "renamed"'));
+    """
+    rendered = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        input=json.dumps(wire),
+        text=True,
+        capture_output=True,
+        check=True,
+        cwd=Path(__file__).resolve().parents[1],
+    )
+    request = decode_management_function_request(
+        management_message(
+            "function_repair", "save", tools=rendered.stdout, revision=read["revision"]
+        )
+    )
+    await ui.async_management_command(hass, "admin", True, request)
+    discard_persisted_config_projection(subentry)
+    reloaded = await ui.async_management_command(
+        hass, "admin", True, management_message("configuration", "get")
+    )
+    for saved in reloaded["config"]["functions"]:
+        assert saved["function"]["variables"] == variables
+    assert [t["spec"]["name"] for t in reloaded["config"]["functions"]] == [
+        "renamed",
+        "typed",
+    ]
+
+
 @pytest.fixture(params=[False, True])
 def collection_agent(duplicate_assignment_agent, request):
     hass, entry, subentry = duplicate_assignment_agent

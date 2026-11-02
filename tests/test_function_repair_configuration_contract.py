@@ -339,7 +339,11 @@ async def test_shared_configuration_response_contract_covers_normal_and_repair_a
     monkeypatch.setattr(
         guidance,
         "configuration_guidance_snapshot",
-        lambda entry_data, config: {"entry": entry_data, "config": config},
+        lambda entry_data, config, *, decoded_functions: {
+            "entry": entry_data,
+            "config": config,
+            "decoded_functions": decoded_functions,
+        },
     )
     monkeypatch.setattr(
         guidance,
@@ -373,6 +377,7 @@ async def test_shared_configuration_response_contract_covers_normal_and_repair_a
 
     assert result["preserved"] is True
     assert result["configuration_guidance"]["config"] == {"marker": action}
+    assert result["configuration_guidance"]["decoded_functions"] is True
     if catalog_expected:
         assert result["exposed_attribute_catalog"]["entities"] == [
             {"config": {"marker": action}}

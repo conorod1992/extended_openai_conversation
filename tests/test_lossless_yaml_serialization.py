@@ -1,6 +1,7 @@
 """The shared emitter preserves data without making ordinary Unicode unreadable."""
 
 from datetime import date
+import json
 
 from hypothesis import given, settings, strategies as st
 import pytest
@@ -8,7 +9,21 @@ import yaml
 
 from custom_components.extended_openai_conversation_responses.yaml_serialization import (
     dump_yaml,
+    load_yaml_or_json,
 )
+
+
+def test_function_documents_keep_their_format_scalar_semantics():
+    document = {"number": 0.000001, "large": 1e20, "literal": "1e-06"}
+    assert load_yaml_or_json(json.dumps(document)) == document
+    assert load_yaml_or_json(dump_yaml(document)) == document
+    # Authored YAML retains PyYAML's safe scalar/tag vocabulary.
+    assert load_yaml_or_json("value: 1e-06\ndate: 2026-10-17") == {
+        "value": "1e-06",
+        "date": date(2026, 10, 17),
+    }
+    with pytest.raises(yaml.YAMLError):
+        load_yaml_or_json("!!python/object/apply:os.system ['false']")
 
 
 @given(st.text(alphabet=st.characters(codec="utf-8"), max_size=256))

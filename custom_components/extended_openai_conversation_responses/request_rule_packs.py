@@ -251,7 +251,9 @@ async def async_append_rule_pack(
                 "order": len(manager._rules) + index,
             }
             new_rules.append(validate_rule(candidate))
-        _validate_total_pattern_states([*manager._rules, *new_rules])
+        _validate_total_pattern_states(
+            [*manager._rules, *new_rules], inactive_rule_ids=manager._diagnostics
+        )
         manager._groups = merged_groups
         manager._rules.extend(new_rules)
         manager._sort_and_compile()

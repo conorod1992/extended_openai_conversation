@@ -121,6 +121,17 @@ export function webSearchDetailConsequence(config = {}, guidance = {}) {
   };
 }
 
+export function skillLoaderConflict(config = {}, guidance = {}) {
+  const status = guidance.skills;
+  if (!config.skills?.length || status?.available !== false) return null;
+  return {
+    kind: "warning",
+    title: "Selected Skills are inactive",
+    text: `${status.message || "The Skill loader is unavailable."} ${status.repair || "Review the load_skill Function Tool or clear the Skill selection."}`,
+    action: {label:"Review Function Tools", page:"capabilities", subsection:"functions"},
+  };
+}
+
 export function modelParameterGuidance(key, capabilities = {}) {
   const spec = MODEL_PARAMETERS.find((item) => item.key === key);
   if (!spec || capabilities[spec.capability] !== false) return null;
@@ -227,6 +238,8 @@ function decorateProviderGuidance(panel) {
   const webDetail = root.querySelector('[data-field="web_search_context"]');
   const consequence = webSearchDetailConsequence(config, runtime);
   placeGuidance(panel, webDetail, "beforeend", consequence, "web-search-detail");
+  placeGuidance(panel, root.querySelector('[data-field="skills"]'), "beforeend",
+    skillLoaderConflict(config, runtime), "skills-loader-conflict");
 }
 
 function decorateModelParameters(panel) {
@@ -291,7 +304,7 @@ export function enhanceConfigurationGuidance(panel) {
   enhanceGroup(panel, "model", [MODEL_PARAMETERS.map((spec) => config[spec.key]), capabilities, panel._result?.options || panel._configData?.options], decorateModelParameters);
   enhanceGroup(panel, "dependencies", [config.conversation_continuity, config.web_search, config.archive_enabled, config.speech_processing_enabled, config.local_intents_enabled, panel._result?.local_handling || panel._configData?.local_handling], decorateDependencies);
   enhanceGroup(panel, "memory", [config.memory_retrieval_mode], decorateMemory);
-  enhanceGroup(panel, "provider", [config.api_mode, config.web_search, config.web_search_context, activeRuntimeGuidance(panel)], decorateProviderGuidance);
+  enhanceGroup(panel, "provider", [config.api_mode, config.web_search, config.web_search_context, config.skills, activeRuntimeGuidance(panel)], decorateProviderGuidance);
   enhanceGroup(panel, "search", [capabilities, panel._eocSearchResultsRevision], decorateSearchAvailability);
   bindGuidanceRoutes(panel);
 }
@@ -317,7 +330,7 @@ function refreshRuntimeGuidance(panel) {
 }
 
 export function configurationGuidanceChanged(panel, key, committed = false) {
-  if (["conversation_continuity", "web_search", "archive_enabled", "speech_processing_enabled", "local_intents_enabled", "memory_retrieval_mode", "api_mode", "web_search_context", ...MODEL_PARAMETERS.map((spec) => spec.key)].includes(key)) queueEnhance(panel);
+  if (["conversation_continuity", "web_search", "archive_enabled", "speech_processing_enabled", "local_intents_enabled", "memory_retrieval_mode", "api_mode", "web_search_context", "skills", ...MODEL_PARAMETERS.map((spec) => spec.key)].includes(key)) queueEnhance(panel);
   if (key === "api_mode" && committed) refreshRuntimeGuidance(panel);
 }
 

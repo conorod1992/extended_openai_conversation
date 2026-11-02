@@ -3292,11 +3292,9 @@ def validate_routed_request_options(
     options: Mapping[str, Any], entry_data: Mapping[str, Any]
 ) -> None:
     """Validate the complete Conversation request selected by a route."""
-    from .request import build_provider_request_snapshot, conversation_tools_required
+    from .request import validate_runtime_readiness
 
-    build_provider_request_snapshot(
-        options, entry_data, tools_required=conversation_tools_required(options)
-    )
+    validate_runtime_readiness(options, entry_data)
 
 
 def validate_rule_model_request(
@@ -4149,6 +4147,31 @@ _MANAGERS = "extended_openai_conversation_responses.request_rule_managers"
 _RUNTIMES = "extended_openai_conversation_responses.request_rule_runtimes"
 
 
+def _request_rule_store(
+    hass: HomeAssistant, entry_id: str, subentry_id: str
+) -> RequestRuleStore:
+    """Construct the native rule store for ordinary load and journal recovery."""
+    return RequestRuleStore(
+        hass,
+        STORAGE_VERSION,
+        f"{STORAGE_KEY_PREFIX}.{entry_id}.{subentry_id}",
+    ).bind_agent(entry_id, subentry_id)
+
+
+async def async_stage_request_rules_journal_recovery(
+    hass: HomeAssistant, entry_id: str, subentry_id: str, value: Any
+) -> None:
+    """Bootstrap rejected storage while retaining unsupported rules for repair."""
+    gate = get_agent_maintenance_gate(hass, entry_id, subentry_id)
+    if not gate.owns_exclusive() or not gate.recovery_required:
+        raise RuntimeError(
+            "Request Rules recovery requires exclusive quarantined maintenance"
+        )
+    gate.require_available()
+    prepared = await asyncio.to_thread(RequestRules.validate_backup_data, value)
+    await _request_rule_store(hass, entry_id, subentry_id).async_save(prepared)
+
+
 async def async_get_request_rules(
     hass: HomeAssistant, entry_id: str, subentry_id: str
 ) -> RequestRules:
@@ -4172,11 +4195,7 @@ async def async_get_request_rules(
 
         if key not in managers:
             managers[key] = RequestRules(
-                RequestRuleStore(
-                    hass,
-                    STORAGE_VERSION,
-                    f"{STORAGE_KEY_PREFIX}.{entry_id}.{subentry_id}",
-                ).bind_agent(entry_id, subentry_id),
+                _request_rule_store(hass, entry_id, subentry_id),
                 on_change=reconcile_lifecycle,
             )
         manager = cast(RequestRules, managers[key])

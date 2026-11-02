@@ -21,6 +21,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv, llm
 from homeassistant.helpers.template import Template
 
+from ..execution_outcomes import owns_read_only_execution_receipts
 from .base import Function
 
 _LOGGER = logging.getLogger(__name__)
@@ -329,6 +330,7 @@ class SqliteFunction(Function):
     def set_url_read_only(self, url: str) -> str:
         return _read_only_sqlite_uri(url)
 
+    @owns_read_only_execution_receipts
     async def execute(
         self,
         hass: HomeAssistant,
@@ -337,6 +339,7 @@ class SqliteFunction(Function):
         llm_context: llm.LLMContext | None,
         exposed_entities: list[dict[str, Any]],
     ) -> dict[str, Any] | list[dict[str, Any]]:
+        # This implementation enforces read-only I/O and has no effect to receipt.
         db_url = self.set_url_read_only(
             function_config.get("db_url", self.get_default_db_url(hass))
         )

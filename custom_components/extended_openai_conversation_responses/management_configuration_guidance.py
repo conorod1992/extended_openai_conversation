@@ -14,12 +14,18 @@ from .const import (
     CONF_API_MODE,
     CONF_API_PROVIDER,
     CONF_BASE_URL,
+    CONF_FUNCTION_GROUPS,
+    CONF_FUNCTION_TOOLS,
+    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+    CONF_SKILLS,
     CONF_WEB_SEARCH,
     DEFAULT_API_MODE,
+    DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
 )
 from .exposed_attributes import exposed_attribute_catalog
 from .helpers import supports_openai_hosted_tools
 from .request import build_provider_request_snapshot
+from .skill_availability import skill_loader_status
 
 _CONFIGURATION_ACTIONS = {"get", "validate", "update", "save"}
 _FUNCTION_REPAIR_CONFIGURATION_ACTIONS = {
@@ -30,7 +36,10 @@ _FUNCTION_REPAIR_CONFIGURATION_ACTIONS = {
 
 
 def configuration_guidance_snapshot(
-    entry_data: Mapping[str, Any], options: Mapping[str, Any]
+    entry_data: Mapping[str, Any],
+    options: Mapping[str, Any],
+    *,
+    decoded_functions: bool = False,
 ) -> dict[str, Any]:
     """Return runtime-derived configuration facts without making provider calls."""
     configured_api_mode = str(options.get(CONF_API_MODE, DEFAULT_API_MODE))
@@ -66,7 +75,7 @@ def configuration_guidance_snapshot(
     else:
         reason = "unavailable"
 
-    return {
+    guidance = {
         "effective_api_mode": effective_api_mode,
         "web_search": {
             "available": web_search_available,
@@ -75,6 +84,49 @@ def configuration_guidance_snapshot(
             "hosted_tools_supported": hosted_tools_supported,
         },
     }
+    if options.get(CONF_SKILLS):
+        from .agent_config import (
+            configured_function_tools_from_data,
+            validate_function_groups,
+            validate_function_tools,
+        )
+
+        try:
+            # Configuration responses contain decoded collections. An empty list
+            # there is explicit, unlike a legacy falsy persisted Functions field.
+            tools = (
+                validate_function_tools(options.get(CONF_FUNCTION_TOOLS))
+                if decoded_functions
+                else configured_function_tools_from_data(options)
+            )
+            groups = validate_function_groups(
+                options.get(CONF_FUNCTION_GROUPS, []), tools
+            )
+            status = skill_loader_status(
+                options[CONF_SKILLS],
+                tools,
+                groups,
+                max_function_calls=options.get(
+                    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+                    DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
+                ),
+            )
+            available, message = status.available, status.reason
+        except HomeAssistantError:
+            available, message = (
+                False,
+                "Repair unavailable Function Tools before loading selected Skills",
+            )
+        guidance["skills"] = {
+            "available": available,
+            "message": message,
+            "repair": (
+                "Restore or enable the built-in load_skill Function Tool and its group, "
+                "and allow at least one tool call per request; or clear the Skill selection. "
+                "Existing settings are retained until you explicitly change them."
+            ),
+        }
+    return guidance
 
 
 def decorate_configuration_result(
@@ -91,7 +143,9 @@ def decorate_configuration_result(
 
     decorated = {
         **result,
-        "configuration_guidance": configuration_guidance_snapshot(entry_data, config),
+        "configuration_guidance": configuration_guidance_snapshot(
+            entry_data, config, decoded_functions=True
+        ),
     }
     if action in {"update", "save"}:
         decorated["exposed_attribute_catalog"] = exposed_attribute_catalog(hass, config)

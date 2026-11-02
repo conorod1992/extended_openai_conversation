@@ -12,6 +12,15 @@ class Handler(SimpleHTTPRequestHandler):
         ".js": "text/javascript",
     }
 
+    def do_GET(self) -> None:
+        # Some supported browsers request this automatically for fixture pages.
+        # Keep an optional browser resource out of the application error signal.
+        if self.path == "/favicon.ico":
+            self.send_response(204)
+            self.end_headers()
+            return
+        super().do_GET()
+
     def log_message(self, _format: str, *_args: object) -> None:
         # Hundreds of module requests can fill a captured web-server pipe and
         # stall the fixture during a long browser run.

@@ -1,3 +1,4 @@
+import {requiresGroupCollectionRepair, renderGroupCollectionRepair, bindGroupCollectionRepair} from "./function-group-collection-repair.js";
 import {UnsavedState} from "./unsaved-state.js";
 import {captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, completeConfigurationAcknowledgement} from "./configuration-acknowledgement.js";
 import {getToolYamlEditor, captureToolEditorOwner, captureToolEditorOperation, acknowledgeToolEditor} from "./tool-yaml-editor-adapter.js";
@@ -8,7 +9,7 @@ function repairIssue(panel) {
     // Direct Functions visits may precede the Overview health read. The loaded
     // configuration is authoritative, including when an earlier issue was fixed.
     const repair = repairMetadata(panel);
-    if (!repair) return hasRepairDraft(panel)
+    if (!repair) return (hasRepairDraft(panel) || requiresGroupCollectionRepair(panel))
       ? {field:"functions", message:"Review your unsaved Function Tools changes.", repairable:true}
       : null;
     return {
@@ -42,7 +43,7 @@ function editableToolsText(tools) {
 function repairMetadata(panel) {
   const repair = panel._result?.function_repair;
   if (!repair) return null;
-  return repair.validation_error || repair.invalid_count > 0 || repair.invalid_tools?.length
+  return repair.validation_error || repair.invalid_count > 0 || repair.invalid_tools?.length || repair.group_collection_repair
     ? repair
     : null;
 }
@@ -80,8 +81,8 @@ function ownRepairDraft(panel, initial = null) {
   if (initial || !previous || previous.agent !== panel._agentId
       || (previous.text === previous.baseline && previous.revision !== panel._result?.revision)) {
     panel._functionRepairDraft = initial || {
-      agent:panel._agentId, text:editableToolsText(repairMetadata(panel)?.tools ?? panel._result?.tools),
-      baseline:editableToolsText(repairMetadata(panel)?.tools ?? panel._result?.tools), revision:panel._result?.revision,
+      agent:panel._agentId, text:editableToolsText(repairMetadata(panel)?.tools_yaml ?? panel._result?.tools_yaml ?? repairMetadata(panel)?.tools ?? panel._result?.tools),
+      baseline:editableToolsText(repairMetadata(panel)?.tools_yaml ?? panel._result?.tools_yaml ?? repairMetadata(panel)?.tools ?? panel._result?.tools), revision:panel._result?.revision,
     };
   }
   const draft = panel._functionRepairDraft;
@@ -130,8 +131,9 @@ function requiresToolRepairFallback(panel) {
 
 function renderFunctionRepairCards(panel) {
   const repair = repairMetadata(panel);
-  if (!repair) return "";
+  if (!repair) return renderGroupCollectionRepair(panel);
   const usableIds = new Set((panel._result?.config?.function_groups || []).map(group => group.id));
+  const collection = renderGroupCollectionRepair(panel);
   const raw = Array.isArray(repair.persisted_groups) ? repair.persisted_groups : [];
   const issues = Array.isArray(repair.group_issues) ? repair.group_issues : [];
   const groups = raw.filter((group, index) => group && typeof group.id === "string"
@@ -144,7 +146,7 @@ function renderFunctionRepairCards(panel) {
       <div class="function-group-heading"><div><h3>${escapeHtml(panel, label)}</h3><span class="status-pill status-off">Needs repair</span><p>This saved Function Group is unavailable or has unavailable members. Edit it to save a valid definition, or delete it. Saving a repair removes unavailable members from this Group.</p></div>
       <div class="actions"><button type="button" class="secondary edit-group" data-group-id="${escapeHtml(panel, group.id)}">Edit</button><button type="button" class="danger delete-group" data-group-id="${escapeHtml(panel, group.id)}">Delete</button></div></div></article>`;
   }).join("");
-  return tools || cards ? `<div class="function-repair-attention" style="display:grid;gap:18px">${tools}${cards}</div>` : "";
+  return tools || cards || collection ? `<div class="function-repair-attention" style="display:grid;gap:18px">${collection}${tools}${cards}</div>` : "";
 }
 
 async function openInvalidToolEditor(panel, item, revision = panel._result?.revision) {
@@ -409,6 +411,7 @@ export {
 
 export function bindFunctionRepair(panel) {
   if (!repairIssue(panel) || !functionRepairView(panel)) return;
+  bindGroupCollectionRepair(panel);
   if (requiresToolRepairFallback(panel)) bindFallbackRepair(panel);
   else bindIsolatedRepair(panel);
 }

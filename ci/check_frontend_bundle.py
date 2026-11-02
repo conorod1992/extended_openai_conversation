@@ -8,7 +8,14 @@ from pathlib import Path
 DIST = Path("custom_components/extended_openai_conversation_responses/frontend/dist")
 # 2026-09-27 baseline: 675,482 JS bytes, 48,540 CSS bytes, 91,651 entry bytes.
 # These ceilings allow roughly 25-35% growth before flagging a review.
-CEILINGS = {"javascript": 850_000, "css": 65_000, "management_entry": 120_000}
+# 2026-11-02 review: admission retry and import recovery add about 3.7 KiB
+# to the 849,603-byte pre-change JS bundle (under 0.5%). Keep finite headroom
+# for this scoped feature; entry and CSS budgets remain unchanged.
+# The subsequent eight-fix review adds about 10 KiB (1.2%) for retained Voice
+# authoring and complete Group repair. Allow that reviewed feature growth with
+# finite headroom; do not relax the separate entry or CSS ceilings.
+# Reviewed private-publication ownership guards add about 1.2 KiB.
+CEILINGS = {"javascript": 871_500, "css": 65_000, "management_entry": 120_000}
 
 
 def measure(dist: Path) -> dict[str, int]:

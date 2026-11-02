@@ -9,6 +9,31 @@ import pytest
 from tests_real_ha import test_release_upgrade_acceptance as upgrade
 
 
+@pytest.mark.parametrize("historical", [True, False])
+def test_release_model_customization_survives_candidate_save_and_request(historical):
+    from custom_components.extended_openai_conversation_responses import const, helpers
+    from custom_components.extended_openai_conversation_responses.agent_config import (
+        merge_agent_config,
+        normalize_agent_config,
+    )
+    from custom_components.extended_openai_conversation_responses.request import (
+        build_provider_request_snapshot,
+    )
+
+    # Releases through 6.7.0 defaulted to flex. Keep that historical starting
+    # point while applying precisely the settings used by the real HA journey.
+    data = {"service_tier": "flex", "functions": [], "api_mode": "chat_completions"}
+    settings = upgrade._released_model_settings(
+        const, SimpleNamespace() if historical else helpers
+    )
+    data.update({getattr(const, name): value for name, value in settings})
+    normalized = normalize_agent_config(data)
+    saved = merge_agent_config(normalized, {"max_tokens": 640})
+    assert saved["service_tier"] == "default"
+    request = build_provider_request_snapshot(saved, {}, tools_required=True)
+    assert request.api_mode == "chat_completions"
+
+
 async def test_upgrade_browser_bridge_supports_catalogue_status():
     from custom_components.extended_openai_conversation_responses.model_catalog_manager import (
         DATA_MANAGER,

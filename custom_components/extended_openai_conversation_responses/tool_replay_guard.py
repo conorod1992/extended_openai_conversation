@@ -393,7 +393,10 @@ def _needs_tool_wide_guard(entity: Any, call: llm.ToolInput) -> bool:
     """Precise identities protect themselves even when their outcome is unknown."""
     receipts = getattr(entity, "_execution_effect_receipts", {}).get(id(call), ())
     return not receipts or any(
-        item.outcome != "rejected"
+        # A failed read after an earlier effect must preserve the composite's
+        # conservative changed-argument guard. Standalone read failures have
+        # outcome "rejected" and are not retained as unresolved calls.
+        (item.outcome != "rejected" or item.kind == "read_failure")
         and (item.kind not in _PRECISE_EFFECT_KINDS or item.signature == "*")
         for item in receipts
     )

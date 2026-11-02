@@ -26,6 +26,7 @@ from .agent_config import (
     agent_retention_snapshot,
     configured_function_tool_metadata_from_data,
     function_tool_enabled,
+    normalized_function_call_budget,
     parse_configured_function_tools,
     project_agent_config_updates,
     validate_function_groups,
@@ -34,6 +35,8 @@ from .agent_config import (
 from .const import (
     CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
+    CONF_GUEST_ALLOWED_GROUP_IDS,
+    CONF_SKILLS,
     CONF_USAGE_REQUEST_RETENTION_DAYS,
     CONF_USAGE_RUN_RETENTION_DAYS,
     DEFAULT_FUNCTION_GROUPS,
@@ -53,7 +56,8 @@ from .live_subentry_updates import update_configuration_subentry, update_live_su
 from .model_catalog import catalog_generation
 from .mutation_outcomes import mark_mutation_failure
 from .request import canonical_json
-from .yaml_serialization import dump_yaml
+from .skill_availability import preserves_skill_loader_availability, skill_loader_status
+from .yaml_serialization import dump_yaml, load_yaml_or_json
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -571,6 +575,7 @@ def _safe_configuration_payload(
             "isolatable": bool(invalid),
             "tools_valid": not invalid and function_tools_issue(persisted)[1] is None,
             "tools": editable_function_tools(persisted) if not invalid else None,
+            **group_collection_repair_metadata(persisted),
         },
     }
 
@@ -642,6 +647,7 @@ def safe_configuration_payload(
                 "tools": editable_function_tools(dict(subentry.data))
                 if not state.invalid
                 else None,
+                **group_collection_repair_metadata(dict(projection.data)),
             },
         }
     return _safe_configuration_payload(
@@ -665,6 +671,156 @@ def _function_fields_unchanged(
         if key in updates and updates[key] != safe_config.get(key):
             return False
     return True
+
+
+def group_collection_repair_metadata(options: dict[str, Any]) -> dict[str, Any]:
+    """Expose the complete source when Group identities cannot address each row."""
+    raw = options.get(CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS))
+    ids = (
+        [group.get("id") if isinstance(group, dict) else None for group in raw]
+        if isinstance(raw, list)
+        else []
+    )
+    addressable = isinstance(raw, list) and all(
+        isinstance(value, str) and value for value in ids
+    )
+    if addressable:
+        addressable = len(ids) == len(set(ids))
+    return {
+        "group_collection_repair": not addressable,
+        "groups_yaml": dump_yaml(raw, sort_keys=False),
+        "guest_allowed_group_ids": deepcopy(
+            options.get(CONF_GUEST_ALLOWED_GROUP_IDS, [])
+        ),
+    }
+
+
+def _healthy_function_configuration_state(
+    options: Any,
+) -> FunctionConfigurationRepairState:
+    """Keep a recovery editor usable after its first repair becomes healthy."""
+    tools = validate_function_tools(parse_configured_function_tools(options))
+    raw_groups = options.get(CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS))
+    return FunctionConfigurationRepairState(
+        tools, [], "", validate_function_groups(raw_groups, tools), [], raw_groups
+    )
+
+
+async def _async_save_group_collection(
+    hass: HomeAssistant,
+    entry: Any,
+    subentry: Any,
+    state: FunctionConfigurationRepairState | None,
+    message: dict[str, Any],
+) -> dict[str, Any]:
+    """Replace a reviewed Group collection without rewriting Functions or guessing references."""
+    from . import management_loading_performance, management_ui
+
+    require_repair_revision(subentry, message.get("revision"))
+    operation_revision = repair_revision(subentry)
+    if state is None:
+        # An acknowledgement may leave newer collection edits in this editor
+        # after the first repair made the persisted configuration healthy.
+        state = _healthy_function_configuration_state(subentry.data)
+    if not state.field_updates_allowed:
+        raise HomeAssistantError(
+            "Repair the malformed Function Tool collection before replacing Function Groups"
+        )
+    candidate = message.get("groups")
+    if isinstance(candidate, str):
+        try:
+            candidate = load_yaml_or_json(candidate)
+        except yaml.YAMLError as err:
+            raise HomeAssistantError("Function Groups must be valid YAML/JSON") from err
+    if not isinstance(candidate, list):
+        raise HomeAssistantError("Function Groups must be a complete list")
+    # Invalid Functions remain repair-owned, but a uniquely named retained
+    # Function may keep its Group membership while its implementation is repaired.
+    references = [
+        *state.valid,
+        *(
+            {"spec": {"name": item["name"]}}
+            for item in state.invalid
+            if isinstance(item.get("name"), str) and item["name"]
+        ),
+    ]
+    groups = validate_function_groups(candidate, references)
+    raw = dict(subentry.data)
+    persisted = {**raw, CONF_FUNCTION_GROUPS: groups}
+    existing_references = raw.get(CONF_GUEST_ALLOWED_GROUP_IDS, [])
+    if not isinstance(existing_references, list) or not all(
+        isinstance(value, str) for value in existing_references
+    ):
+        if CONF_GUEST_ALLOWED_GROUP_IDS not in message:
+            raise HomeAssistantError(
+                "Explicit Guest Group references are required to repair malformed saved references"
+            )
+        existing_references = []
+    previous = raw.get(CONF_FUNCTION_GROUPS, [])
+    counts: dict[str, int] = {}
+    for group in previous if isinstance(previous, list) else []:
+        if isinstance(group, dict) and isinstance(group.get("id"), str):
+            counts[group["id"]] = counts.get(group["id"], 0) + 1
+    group_ids = {group["id"] for group in groups}
+    unresolved = any(
+        counts.get(value) != 1 or value not in group_ids
+        for value in existing_references
+    )
+    if unresolved and CONF_GUEST_ALLOWED_GROUP_IDS not in message:
+        raise HomeAssistantError(
+            "Explicit Guest Group references are required to resolve removed or ambiguous Group identifiers"
+        )
+    if CONF_GUEST_ALLOWED_GROUP_IDS in message:
+        selected = message[CONF_GUEST_ALLOWED_GROUP_IDS]
+        if (
+            not isinstance(selected, list)
+            or not all(isinstance(value, str) and value for value in selected)
+            or len(selected) != len(set(selected))
+        ):
+            raise HomeAssistantError(
+                "Guest Group references must be a list of unique Group identifiers"
+            )
+        if set(selected) - group_ids:
+            raise HomeAssistantError(
+                "Guest Group references contain an unknown Function Group"
+            )
+        persisted[CONF_GUEST_ALLOWED_GROUP_IDS] = deepcopy(selected)
+    after = function_configuration_repair_state(persisted)
+    after_groups = after.groups if after is not None else groups
+    skills = raw.get(CONF_SKILLS, []) or []
+    budget = normalized_function_call_budget(raw) if skills else None
+    before_loader = skill_loader_status(
+        skills, state.valid, state.groups, max_function_calls=budget
+    )
+    after_loader = skill_loader_status(
+        skills, state.valid, after_groups, max_function_calls=budget
+    )
+    if not preserves_skill_loader_availability(
+        before_loader, after_loader, skills, skills
+    ):
+        raise HomeAssistantError(
+            after_loader.reason or "Selected Skills are not loadable"
+        )
+    await management_ui._async_validate_configuration_request(
+        hass, entry, subentry, safe_function_configuration(persisted)
+    )
+    await management_ui._async_validate_configuration_dependencies(
+        hass, entry, subentry, persisted
+    )
+    require_repair_revision(subentry, operation_revision)
+    payload = _safe_configuration_payload(
+        hass,
+        management_ui,
+        management_loading_performance,
+        entry,
+        subentry,
+        data=persisted,
+    )
+    payload.update({"valid": True, "errors": {}, "function_groups": deepcopy(groups)})
+    update_live_subentry(hass, entry, subentry, data=persisted)
+    adopt_saved_configuration_revision(subentry, persisted, payload)
+    payload.update(_saved_agent_metadata(hass, entry, subentry, config=persisted))
+    return payload
 
 
 def _prepare_raw_tools(
@@ -736,11 +892,15 @@ async def async_function_repair(
         raise HomeAssistantError("entry_id and subentry_id are required")
     entry, subentry = management_ui.entry_and_agent(hass, entry_id, subentry_id)
     state = function_configuration_repair_state(dict(subentry.data))
+    action = message.get("action")
+    if action == "save_groups":
+        return await _async_save_group_collection(hass, entry, subentry, state, message)
     if state is None:
-        raise HomeAssistantError("Function Tools do not require repair")
+        if action != "save":
+            raise HomeAssistantError("Function Tools do not require repair")
+        state = _healthy_function_configuration_state(subentry.data)
     issue = state.issue
 
-    action = message.get("action")
     if action == "configuration_get":
         return _safe_configuration_payload(
             hass, management_ui, management_loading_performance, entry, subentry
@@ -866,6 +1026,7 @@ async def async_function_repair(
             "group_issues": repair["group_issues"],
             "validation_error": issue,
             "revision": payload["revision"],
+            **group_collection_repair_metadata(dict(subentry.data)),
         }
 
     if action in {"save_one", "delete_one"}:
@@ -1016,6 +1177,32 @@ async def async_function_repair(
 
     persisted = dict(subentry.data)
     persisted[CONF_FUNCTION_TOOLS] = dump_yaml(validated_tools, sort_keys=False)
+    after = function_configuration_repair_state(persisted)
+    after_groups = (
+        after.groups
+        if after is not None
+        else validate_function_groups(
+            persisted.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS),
+            validated_tools,
+        )
+    )
+    skills = persisted.get(CONF_SKILLS, []) or []
+    budget = normalized_function_call_budget(persisted) if skills else None
+    before_loader = skill_loader_status(
+        skills, state.valid, state.groups, max_function_calls=budget
+    )
+    after_loader = skill_loader_status(
+        skills, validated_tools, after_groups, max_function_calls=budget
+    )
+    # A collection-wide failure exposes no usable Tools. Its explicit repair
+    # may retain an inactive selection without forcing a loader to be enabled.
+    # Healthy/isolatable baselines still cannot lose a working dependency.
+    if state.field_updates_allowed and not preserves_skill_loader_availability(
+        before_loader, after_loader, skills, skills
+    ):
+        raise HomeAssistantError(
+            after_loader.reason or "Selected Skills are not loadable"
+        )
     await management_ui._async_validate_configuration_request(
         hass, entry, subentry, safe_function_configuration(persisted)
     )

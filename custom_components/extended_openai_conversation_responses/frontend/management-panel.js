@@ -1,11 +1,13 @@
 import {functionUncertainty, requireFunctionAcknowledgement, markFunctionUncertainty, settleFunctionRead} from "./function-acknowledgement.js";
 import {clearRequestRuleUncertainty, requestRuleUncertainty, requireRequestRuleAcknowledgement, markUncertainRuleMutation} from "./request-rule-acknowledgement.js";
 import {mutationEffects} from "./management-mutation-effects.js";
+import {clearVoiceMappingDraft} from "./voice-mapping-draft.js";
 import {observeCatalogGeneration} from "./model-catalog.js";
 import {invalidateUsageWindows} from "./usage-cache.js";
 import {scheduleWallTime, scheduleInstant} from "./schedule-time.js";
 import {beginOperation} from "./operation-ownership.js";
-import {stopLiveStatus, watchTimedFeatureStatus} from "./management-live-status.js";
+import {updateAuthenticationPresentation} from "./authentication-presentation.js";
+import {stopLiveStatus, pauseLiveStatus, resumeLiveStatus, watchTimedFeatureStatus} from "./management-live-status.js";
 import {bindConfigurationClarity, enhanceConfigurationClarity} from "./management-draft-navigation.js";
 import {formatManagementTimestamp, prepareMemoryBrowser, ensureTemporaryScope, storeRuntimeGuidance} from "./management-data-state.js";
 import {enhanceConfirmationScope} from "./management-confirmation-scope.js";
@@ -320,8 +322,17 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       ++this._loadToken;
       this._eocCatalogReadSequence = (this._eocCatalogReadSequence || 0) + 1;
       this._eocModelChangeToken = (this._eocModelChangeToken || 0) + 1;
+      this._eocViewAssetToken = (this._eocViewAssetToken || 0) + 1;
+      this._eocBroadcastReadToken = (this._eocBroadcastReadToken || 0) + 1;
+      this._eocOverviewBroadcastPromise = null;
+      pauseLiveStatus(this);
+      stopDraftRecovery(this);
+      getRouteFeature("usage-maintenance/diagnostics")?.stopDiagnosticsWatch(this);
     }
+    const wasBlocked = this._eocPresentationBlocked;
     this._hass = value;
+    updateAuthenticationPresentation(this, previousUser);
+    if (wasBlocked && !this._eocPresentationBlocked) resumeLiveStatus(this);
     this.style.colorScheme = value.themes?.darkMode ? "dark" : "light";
     this.shadowRoot?.querySelectorAll("ha-selector, ha-entity-picker, ha-user-picker, ha-yaml-editor").forEach(element => { element.hass = value; });
     this._loadInitialAgents();
@@ -330,15 +341,18 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   _loadInitialAgents(retry = false) {
     // HA can assign hass before appending an already-defined custom panel.
     // Schedule cold work only once connected; publication remains owner-gated.
-    if (this.isConnected === false || !this._hass) return;
+    if (this.isConnected === false || !this._hass || this._eocPresentationBlocked) return;
     const user = this._hass.user?.id;
     const previous = this._eocCatalogBootstrap;
     const resolved = previous?.pending && previous.user == null && user != null;
     if (this._data && !retry && !resolved) return;
-    if (previous && previous.user === user) return;
+    if (previous && previous.user === user && (!retry || previous.pending)) return;
     this._interruptInitialAgents();
     const attempt = {user, pending:true};
     this._eocCatalogBootstrap = attempt;
+    this._error = null;
+    this._busy = true;
+    this._render();
     // A newly available user requires a new owned read, never adoption of the
     // old unknown-user result. Keep this attempt after failure as well: normal
     // HA state updates must not become an unbounded catalog retry loop.
@@ -516,6 +530,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _clearConfigDraft() {
+    clearVoiceMappingDraft(this);
     this._eocDraftGeneration = (this._eocDraftGeneration || 0) + 1;
     // Model work belongs to this draft owner. A new assistant or explicitly
     // replaced configuration must not inherit its intent or choice revision.
@@ -741,6 +756,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _canAccessView(page, subsection = null) {
+    if (this._eocPresentationBlocked) return false;
     if (page === "data-memory" && subsection === "memory-settings" && this._data?.is_admin === false) return false;
     if (this._data?.is_admin === false && isRestrictedManagementView(page, subsection)) return false;
     if (page === "usage-maintenance" && subsection === "request-debug") return this._data?.is_admin === true;
@@ -779,6 +795,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   async _call(section, action, extra = {}) {
+    if (this._eocPresentationBlocked) throw new Error("Home Assistant account changed. Reload settings for this account.");
     if (section === "usage" && action === "daily" && !extra.start_date && !extra.end_date) {
       const {loadUsageDaily} = await import("./usage-data.js");
       return loadUsageDaily(this, extra);
@@ -934,7 +951,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       if (ruleMutation && requestRuleUncertainty(this, owner)) throw requestRuleUncertainty(this, owner);
       result = await this._callCore(section, action, extra, mutationTrace);
       if (ruleMutation) requireRequestRuleAcknowledgement(action, result, extra.rule_id);
-      if (toolMutation) requireFunctionAcknowledgement(result);
+      if (toolMutation) requireFunctionAcknowledgement(result, section === "function_repair" && action === "save_groups");
       processMutationResponse(result, () => this._applyToolRevision(section, action, result, owner));
       if (
         ruleMutation
@@ -1174,15 +1191,19 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     return this._serviceCatalogPromise;
   }
 
-  async _loadAgents(selectedId = null, owner = null, selectionIntent = null) {
+  async _loadAgents(selectedId = null, owner = null, selectionIntent = null, {preserveAuthoringOnFailure = false} = {}) {
     const context=captureCatalogLoad(this,owner,selectionIntent);
     this._markColdLifecycle("agents-start");
     try {
       await loadAgentsWithOverviewPrefetch(this, selectedId, owner, context);
       restorePanelDrafts(this);
       this._markColdLifecycle("agents-complete", {status: "fulfilled"});
+      return context.acceptedRead || null;
     } catch (err) {
       this._markColdLifecycle("agents-complete", {status: "rejected"});
+      // Import recovery keeps an unsubmitted source visible while its next
+      // preview remains blocked. Let that caller present the failed read.
+      if (preserveAuthoringOnFailure) throw err;
       if (!catalogFailureIsCurrent(this,context)) return;
       // Failed catalogue reads cannot validate the owner of a mounted editor.
       // Close it so the failure can render and stale drafts cannot be submitted.
@@ -1192,6 +1213,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._busy = false;
       this._error = err.message || String(err);
       this._render();
+      return null;
     }
   }
 
@@ -1223,6 +1245,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   async _loadSection(silent = false) {
+    if (this._eocPresentationBlocked) return;
     // Same-scope Memory refreshes keep their read-only collection on screen.
     // Scope/agent/kind changes still take the normal loading/replacement path.
     if (this._viewKey() === "data-memory/memories" && getRouteFeature("data-memory/memories")?.hasMemoryCollection(this)) silent = true;
@@ -1235,7 +1258,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   async _loadSectionData(silent = false) {
-    if (!this._selectedAgent()) return this._render();
+    if (!this._selectedAgent()) {
+      this._busy = false;
+      return this._render();
+    }
     const view = this._viewKey();
     const loadToken = ++this._loadToken;
     const owner = captureConfigurationOwner(this);
@@ -1839,6 +1865,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _render(...args) {
+    if (this._eocPresentationBlocked) return;
     this._markColdLifecycle("first-render-start");
     getRouteFeature("usage-maintenance/diagnostics")?.stopDiagnosticsWatch(this);
     const view = this._viewKey?.() || null;
@@ -1883,6 +1910,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _renderContent() {
+    if (this._eocPresentationBlocked) return;
     const view = this._viewKey();
     const ownsPageDraft = ["capabilities/guest-mode", "capabilities/quiet-hours", "capabilities/request-rules"].includes(view);
     if (ownsPageDraft) initializePageDraft(this);
@@ -1927,7 +1955,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const navigation = NAVIGATION.filter((item) => this._canAccessView(item.id));
     const local = this._visibleSubsections();
     const currentSection = local.find((item) => item.id === this._subsection);
-    this._eocMainMarkup = !agent ? this._empty("No conversation agents configured.") : this._busy ? this._loadingContent(agent) : this._error ? this._routeError(this._error) : this._content(agent);
+    this._eocMainMarkup = this._error ? this._routeError(this._error) : !agent ? this._empty("No conversation agents configured.") : this._busy ? this._loadingContent(agent) : this._content(agent);
     const configurationActions = agent && !this._busy && !this._error ? this._configurationActions() : "";
     this._eocDialogMarkup = this._dialogs();
     this._eocRenderedRoute = `${this._agentId}|${this._viewKey()}`;
@@ -2294,7 +2322,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       q("#list-search")?.addEventListener("input", (event) => { this._query = event.target.value; this._updateVisibleList(); });
     }
     const view = this._viewKey();
-    q("#retry-route")?.addEventListener("click", () => { void this._loadSection(); });
+    q("#retry-route")?.addEventListener("click", () => {
+      if (this._data === null) this._loadInitialAgents(true);
+      else void this._loadSection();
+    });
     if (view === "data-memory/knowledge") getRouteFeature(view)?.bindKnowledge(this);
     if (view === "data-memory/conversations") getRouteFeature(view)?.bindConversationActions(this);
     if (view === "data-memory/conversations") {
@@ -2575,6 +2606,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       // its operation, dialog or owner. Its save still needs acknowledgement.
       && this._ownsRetainedMutation(owner, {allowRefresh:true});
     let uncertain = false;
+    this._setDialogError("knowledge", "");
     this._setSaving(button, true);
     try {
       const response = await this._call("knowledge", editing ? "update" : "create", { ...(editing ? { source_id: this._editingSource.source_id, expected_revision: this._editingSource.updated_at } : {}), ...values });
@@ -2653,6 +2685,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       .map(control => ({control, disabled:control.disabled}));
     const unlock = () => { for (const {control, disabled} of locked) control.disabled = disabled; };
     for (const {control} of locked) control.disabled = true;
+    this._setDialogError("memory", "");
     this._setSaving(button, true);
     try {
       if (this._memoryEditorAgent !== this._agentId || this._memoryEditorScope !== this._scopeId) throw new Error("The selected agent or scope changed. Close and reopen this editor.");
@@ -2922,6 +2955,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _toast(message, error = false) {
+    if (this._eocPresentationBlocked) return;
     const toast = this.shadowRoot.querySelector("#toast");
     if (!toast) return;
     toast.textContent = message;

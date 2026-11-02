@@ -134,6 +134,48 @@ _SUPPORTED_SCHEMA_KEYWORDS = (
 _LEGACY_DELAY_FIELDS = frozenset({"hours", "minutes", "seconds"})
 
 
+def validate_provider_spec(spec: Mapping[str, Any], path: str = "spec") -> None:
+    """Require JSON values in provider metadata, independently of schema vocabulary.
+
+    YAML dates/sets and non-finite numbers are useful in backend payloads, but
+    cannot travel in a provider's JSON schema. Inspect annotations and unknown
+    keywords too, without coercing them or echoing their potentially large values.
+    """
+    ancestors: set[int] = set()
+
+    def visit(value: Any, location: str) -> None:
+        if isinstance(value, (dict, list)):
+            if id(value) in ancestors:
+                raise _schema_error(f"{location} contains a cyclic value")
+            ancestors.add(id(value))
+            try:
+                if isinstance(value, dict):
+                    for key, child in value.items():
+                        if not isinstance(key, str):
+                            raise _schema_error(f"{location} must have string keys")
+                        visit(key, f"{location} [key]")
+                        visit(child, f"{location}.{key}")
+                else:
+                    for index, child in enumerate(value):
+                        visit(child, f"{location}[{index}]")
+            finally:
+                ancestors.remove(id(value))
+        elif isinstance(value, str):
+            try:
+                value.encode("utf-8")
+            except UnicodeEncodeError as err:
+                raise _schema_error(f"{location} must be valid Unicode") from err
+        elif isinstance(value, float):
+            if not math.isfinite(value):
+                raise _schema_error(f"{location} must be a finite JSON number")
+        elif value is not None and not isinstance(value, (bool, int)):
+            raise _schema_error(
+                f"{location} must be a JSON value (got {type(value).__name__})"
+            )
+
+    visit(spec, path)
+
+
 def validate_function_schema(schema: Mapping[str, Any]) -> tuple[str, ...]:
     """Validate enforceable schema structure and report compatibility warnings.
 

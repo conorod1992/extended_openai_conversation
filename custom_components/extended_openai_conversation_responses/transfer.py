@@ -1600,7 +1600,17 @@ async def async_restore_transfer(
         # Exclusivity already covers the destination snapshot. Call the journaled
         # inner restore directly: the public backup wrapper would reacquire this
         # non-reentrant gate. Lock order remains maintenance gate -> backup lock.
-        result = await async_restore_backup_recoverably(hass, entry, subentry, target)
+        result = await async_restore_backup_recoverably(
+            hass,
+            entry,
+            subentry,
+            target,
+            **(
+                {"provider_data": provider_connection}
+                if provider_connection is not None
+                else {}
+            ),
+        )
         if provider_connection is not None:
             from .provider_credentials import restore_private_provider_connection
 

@@ -1,4 +1,5 @@
 import {clone, same, mergeAcknowledgedDraft} from "./unsaved-state.js";
+import {captureVoiceMappingDraft, discardVoiceMappingDraft, acknowledgeVoiceMappingDraft} from "./voice-mapping-draft.js";
 
 import {callMutation, processMutationResponse, requireMutationAcknowledgement, mutationResponseError} from "./mutation-response.js";
 export {callMutation, processMutationResponse, requireMutationAcknowledgement};
@@ -27,6 +28,7 @@ export function captureConfigurationSubmission(panel) {
     modelDefaultsRevision:panel._eocModelIntent?.reasoningDefaultRevision || 0,
     baseline:clone(panel._configData?.config || {}),
     draft:clone(panel._draft || {}), title:panel._draftTitle,
+    voiceMappingRows:captureVoiceMappingDraft(panel),
   };
 }
 
@@ -84,6 +86,7 @@ export function discardConfigurationDraft(panel) {
   panel._eocConfigurationErrors = null;
   panel._draft = clone(baseline.config);
   panel._draftTitle = baseline.title;
+  discardVoiceMappingDraft(panel, baseline.config.voice_device_mappings);
   const replacement = panel._eocRestoredConfiguration;
   if (replacement && configurationSubmissionIsCurrent(panel, replacement)) {
     // The replacement's saved values are still unknown. Reset its comparison
@@ -194,6 +197,7 @@ function retainConfigurationAcknowledgement(panel, saved, submission) {
 // their own fields, leaving unrelated persisted values and local edits alone.
 export function reconcileConfigurationAcknowledgement(panel, saved, submission, {fields, metadata = []} = {}) {
   if (!configurationSubmissionIsCurrent(panel, submission) || saved?.valid === false || !saved?.config) return false;
+  acknowledgeVoiceMappingDraft(panel, saved, submission, fields);
   if (!fields) retainConfigurationAcknowledgement(panel, saved, submission);
   if (configurationReadOvertookSubmission(panel, submission)) {
     // A response describes the commit it acknowledges, not necessarily the

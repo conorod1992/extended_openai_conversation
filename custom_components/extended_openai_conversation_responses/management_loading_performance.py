@@ -7,8 +7,6 @@ from collections.abc import Awaitable
 from time import perf_counter
 from typing import Any, TypeVar
 
-import yaml
-
 from homeassistant.core import HomeAssistant
 
 from .agent_config import (
@@ -46,6 +44,7 @@ from .management_setup_health import add_setup_health, build_setup_health_facts
 from .memory import async_get_memory, get_memory_mode
 from .temporary_memory import async_get_temporary_memory
 from .usage import async_get_usage
+from .yaml_serialization import load_yaml_or_json
 
 _T = TypeVar("_T")
 
@@ -561,7 +560,7 @@ def _snapshot_normalized_configuration(
     if validated:
         function_tools = [] if configured is None else configured
         if isinstance(function_tools, str):
-            function_tools = yaml.safe_load(function_tools) or []
+            function_tools = load_yaml_or_json(function_tools) or []
     else:
         function_tools = validate_function_tools(configured)
     snapshot[CONF_FUNCTION_TOOLS] = function_tools

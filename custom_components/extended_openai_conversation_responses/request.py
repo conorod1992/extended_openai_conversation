@@ -105,6 +105,33 @@ def provider_tool_limit(provider: str | None, api_mode: str) -> int | None:
     )
 
 
+def validate_provider_tool_count(
+    count: int, provider: str | None, api_mode: str
+) -> None:
+    """Enforce the same provider constraint before saves and live dispatch."""
+    limit = provider_tool_limit(provider, api_mode)
+    if limit is not None and count > limit:
+        raise HomeAssistantError(f"Provider request exceeds the {limit}-tool limit")
+
+
+def request_function_tools(
+    function_tools: list[dict[str, Any]], *, conditional_continue: bool
+) -> list[dict[str, Any]]:
+    """Add the finalizer at the shared provider boundary, after feature assembly."""
+    if conditional_continue and any(
+        tool["spec"]["name"] == CONTINUE_CONVERSATION_TOOL_NAME
+        for tool in function_tools
+    ):
+        raise HomeAssistantError(
+            f"Function tool name `{CONTINUE_CONVERSATION_TOOL_NAME}` is "
+            "reserved for Conditional continue conversation mode"
+        )
+    return [
+        *function_tools,
+        *([CONTINUE_CONVERSATION_TOOL] if conditional_continue else []),
+    ]
+
+
 START_FRESH_CONVERSATION_TOOL = {
     "spec": {
         "name": START_FRESH_CONVERSATION_TOOL_NAME,
@@ -466,6 +493,7 @@ def assemble_integration_function_tools(
     knowledge_available: bool,
     archive_available: bool = True,
     guest_policy: GuestCapabilityPolicy | None = None,
+    lifecycle_active: bool | None = None,
 ) -> list[dict[str, Any]]:
     """Assemble non-configured tools from the same feature/scope decisions."""
     result: list[dict[str, Any]] = []
@@ -480,7 +508,11 @@ def assemble_integration_function_tools(
             "Reserved conversation lifecycle tool name configured: "
             f"{START_FRESH_CONVERSATION_TOOL_NAME}"
         )
-    if conversation_lifecycle_active():
+    if (
+        conversation_lifecycle_active()
+        if lifecycle_active is None
+        else lifecycle_active
+    ):
         result.append(START_FRESH_CONVERSATION_TOOL)
     if capabilities.persistent_memory:
         conflicts = configured_names & MEMORY_TOOL_NAMES
@@ -551,3 +583,80 @@ def assemble_integration_function_tools(
             )
         result.append(guest_mode_restrict_tool())
     return result
+
+
+def validate_runtime_readiness(
+    options: Mapping[str, Any], entry_data: Mapping[str, Any]
+) -> ProviderRequestSnapshot:
+    """Validate the deterministic, guaranteed initial Conversation request.
+
+    Uses the production assemblers with no loaded groups, external HA-tool
+    discovery, installed Skills, retained-data scope, or Knowledge catalogue.
+    Those request-time capabilities can still exceed a limit later; the runtime
+    and Group loader retain their own checks. Existing damaged definitions use
+    the established repair projection, never a rewritten persistence payload.
+    """
+    from .agent_config import (
+        configured_function_tools_from_data,
+        validate_function_groups,
+    )
+    from .const import CONF_CONTINUE_CONVERSATION, CONTINUE_CONVERSATION_CONDITIONAL
+    from .function_configuration_repair import function_configuration_repair_state
+    from .function_groups import ToolRuntimeAvailability, assemble_function_tools
+    from .skill_availability import is_canonical_skill_loader
+
+    snapshot = build_provider_request_snapshot(
+        options, entry_data, tools_required=conversation_tools_required(options)
+    )
+    # Unbounded providers need no catalogue traversal at mutation boundaries.
+    if (
+        provider_tool_limit(entry_data.get(CONF_API_PROVIDER), snapshot.api_mode)
+        is None
+    ):
+        return snapshot
+    state = function_configuration_repair_state(dict(options))
+    configured = state.valid if state else configured_function_tools_from_data(options)
+    groups = (
+        state.groups
+        if state
+        else validate_function_groups(options.get(CONF_FUNCTION_GROUPS, []), configured)
+    )
+    budget_available = function_call_budget_available(options)
+
+    def guaranteed(tool: dict[str, Any]) -> bool:
+        function_type = tool.get("function", {}).get("type")
+        return function_type != "ha_llm" and not is_canonical_skill_loader(tool)
+
+    assembly = assemble_function_tools(
+        configured,
+        groups,
+        set(),
+        runtime=ToolRuntimeAvailability(
+            function_tools_supported=budget_available,
+            group_loader_supported=budget_available,
+            tool_available=guaranteed,
+        ),
+    )
+    tools = list(assembly.tools)
+    if budget_available:
+        tools.extend(
+            assemble_integration_function_tools(
+                options,
+                {tool["spec"]["name"] for tool in configured},
+                memory_scope_available=False,
+                temporary_scope_available=False,
+                knowledge_available=False,
+                lifecycle_active=True,
+            )
+        )
+    tools = request_function_tools(
+        tools,
+        conditional_continue=options.get(CONF_CONTINUE_CONVERSATION)
+        == CONTINUE_CONVERSATION_CONDITIONAL,
+    )
+    validate_provider_tool_count(
+        len(tools) + len(snapshot.provider_tools),
+        entry_data.get(CONF_API_PROVIDER),
+        snapshot.api_mode,
+    )
+    return snapshot

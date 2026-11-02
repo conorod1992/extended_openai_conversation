@@ -79,7 +79,11 @@ from .provider_errors import (
     provider_user_message,
     request_reauthentication,
 )
-from .request import auxiliary_output_token_limit, request_model_capabilities
+from .request import (
+    auxiliary_output_token_limit,
+    request_model_capabilities,
+    validate_runtime_readiness,
+)
 from .request_rules import async_call_active_function
 from .resource_limits import MAX_ATTACHMENT_COUNT, read_bounded_local_file
 from .skill_resource_limits import (
@@ -270,6 +274,7 @@ async def async_set_function_tools_enabled(
         persisted = function_mutations.prepare_function_tools_enabled(
             subentry.data, function_names, enabled
         )
+        validate_runtime_readiness(persisted, entry.data)
         update_live_subentry(hass, entry, subentry, data=persisted)
 
 
@@ -290,6 +295,7 @@ async def async_set_function_groups_enabled(
         persisted = function_mutations.prepare_function_groups_enabled(
             subentry.data, group_ids, enabled
         )
+        validate_runtime_readiness(persisted, entry.data)
         update_live_subentry(hass, entry, subentry, data=persisted)
 
 

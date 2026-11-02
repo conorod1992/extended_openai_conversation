@@ -1,3 +1,4 @@
+import {captureAuthentication} from "./authentication-presentation.js";
 export const SHARING_CONTRACT = "Shareable exports exclude designated credentials and unclassified custom content by default, and check included content for recognized secret patterns. Custom content you choose to include may still contain secrets. Review the summary and file before sharing, especially Function Tools, scripts and templates.";
 
 export function sharingSummary(security = {}) {
@@ -6,6 +7,8 @@ export function sharingSummary(security = {}) {
 }
 
 function modal(panel, markup, bind) {
+  const current = captureAuthentication(panel);
+  if (!current()) return Promise.resolve(false);
   const dialog = document.createElement("dialog");
   dialog.className = "editor-dialog";
   dialog.setAttribute("aria-label", "Review sharing export");
@@ -16,8 +19,11 @@ function modal(panel, markup, bind) {
     const finish = (value) => {
       if (done) return;
       done = true;
-      dialog.close(); dialog.remove(); resolve(value);
+      panel.removeEventListener?.("eoc-authentication-retired", retired);
+      dialog.close(); dialog.remove(); resolve(current() && value);
     };
+    const retired = () => finish(false);
+    panel.addEventListener?.("eoc-authentication-retired", retired);
     dialog.addEventListener("cancel", (event) => { event.preventDefault(); finish(false); });
     dialog.addEventListener("close", () => finish(false));
     bind(dialog, finish);
@@ -42,14 +48,15 @@ export function reviewSharingExport(panel, result) {
 }
 
 export async function downloadConfigurationSharing(panel) {
+  const current = captureAuthentication(panel);
   const choice = await modal(panel, `<div class="dialog-header"><h2>Export saved configuration</h2></div><div class="dialog-body"><p>Restricted sharing omits custom content. Reviewed sharing can include custom tools and templates; you must inspect the resulting file for secrets. Saved configuration is unchanged.</p></div><div class="dialog-actions"><button type="button" data-cancel>Cancel</button><button type="button" data-restricted>Restricted setup</button><button type="button" data-custom>Include custom content</button></div>`, (dialog, finish) => {
     dialog.querySelector("[data-cancel]").addEventListener("click", () => finish(false));
     dialog.querySelector("[data-restricted]").addEventListener("click", () => finish("restricted"));
     dialog.querySelector("[data-custom]").addEventListener("click", () => finish("custom"));
   });
-  if (!choice) return;
+  if (!choice || !current()) return;
   const result = await panel._call("configuration", "export", {reviewed_custom: choice === "custom"});
-  if (!await reviewSharingExport(panel, result)) return;
+  if (!current() || !await reviewSharingExport(panel, result) || !current()) return;
   const url = URL.createObjectURL(new Blob([result.json], {type: "application/json"}));
   try {
     const link = document.createElement("a");

@@ -2,6 +2,19 @@ import {expect} from "@playwright/test";
 
 export const fixtureUrl = (route, extra = "") => `/tests_browser/fixture.html?route=${route}${extra}${process.env.SHIPPED_BUNDLE === "1" ? "&bundle=1" : ""}`;
 
+// Account changes open a fresh authoring session; keep the old detached source
+// alive so held acknowledgements still exercise their real ownership guards.
+export async function mountFreshAccountPanel(panel) {
+  await panel.evaluate(host => {
+    const parent = host.parentElement;
+    const fresh = document.createElement("extended-openai-management-panel");
+    fresh.hass = host.hass;
+    host.remove();
+    parent.append(fresh);
+    browserHarness.panel = fresh;
+  });
+}
+
 export async function acceptSharingReview(panel) {
   const download = panel.locator("[data-download]");
   await expect(download).toBeVisible();

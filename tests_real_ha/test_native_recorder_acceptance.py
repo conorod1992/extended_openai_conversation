@@ -134,10 +134,6 @@ async def test_native_history_reads_real_recorder_and_serializes_tool_result(
 async def test_native_history_preserves_entity_and_exposure_boundaries(
     hass, tmp_path, boundary
 ):
-    from custom_components.extended_openai_conversation_responses.exceptions import (
-        EntityNotFound,
-    )
-
     assert await async_setup_component(
         hass,
         "recorder",
@@ -150,7 +146,9 @@ async def test_native_history_preserves_entity_and_exposure_boundaries(
         hass.states.async_remove("sensor.recorder_acceptance")
     else:
         hass.states.async_set("sensor.recorder_acceptance", "unavailable")
-    with pytest.raises(EntityNotFound if boundary == "missing" else EntityNotExposed):
+    # Missing states also leave the live Assist-visible set. An old admitted
+    # list must not authorize Recorder access after that boundary closes.
+    with pytest.raises(EntityNotExposed):
         await NativeFunction().get_history(
             hass,
             {},
@@ -169,6 +167,8 @@ async def test_native_statistics_reads_real_recorder_and_enforces_exposure(
         "recorder",
         {"recorder": {"db_url": f"sqlite:///{tmp_path / 'statistics.db'}"}},
     )
+    hass.states.async_set("sensor.recorder_acceptance", "recorded")
+    async_expose_entity(hass, conversation.DOMAIN, "sensor.recorder_acceptance", True)
     start = dt_util.utcnow().replace(minute=0, second=0, microsecond=0) - timedelta(
         hours=2
     )

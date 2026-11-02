@@ -40,3 +40,23 @@ for(const bundle of [false,true]) test(`debug uses shared clipboard (${bundle})`
     return value;
   })).toBe("Debug regression");
 });
+
+for (const bundle of [false, true]) for (const retired of [false, true]) test(`debug clipboard fallback uses authentication lifetime (${bundle}, ${retired})`, async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("usage-maintenance/request-debug", bundle ? "&bundle=1" : ""));
+  const debug = page.locator("extended-openai-debug-panel");
+  await expect(debug.locator("#enabled")).toBeVisible();
+  const result = await debug.evaluate(async (host, retired) => {
+    host.hass = {...host._hass, user:{id:"clipboard-owner", is_admin:true}};
+    let reject;
+    const copied = [];
+    Object.defineProperty(navigator, "clipboard", {configurable:true, value:{writeText:() => new Promise((_, no) => { reject = no; })}});
+    document.execCommand = () => { copied.push(document.querySelector("textarea[readonly]").value); return true; };
+    const outcome = host._copyText("private requested trace").then(() => "copied", () => "retired");
+    host.hass = {...host._hass, user:{id:retired ? "replacement-account" : "clipboard-owner", is_admin:true}};
+    reject(Error("native clipboard denied"));
+    return {outcome:await outcome, copied, temporary:!!document.querySelector("textarea[readonly]")};
+  }, retired);
+  expect(result).toEqual({outcome:retired ? "retired" : "copied", copied:retired ? [] : ["private requested trace"], temporary:false});
+  await expectHarnessClean(page, errors);
+});

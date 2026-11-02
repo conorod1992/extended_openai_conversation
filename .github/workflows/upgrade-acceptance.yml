@@ -30,7 +30,7 @@ jobs:
         # Reviewed migration epochs. Keep release-created state at each boundary.
         # 6.2.0 is the oldest coherent tagged Responses payload in this fork.
         # 6.7.0 precedes coalesced Usage persistence and Archive lifecycle changes.
-        from_version: ${{ fromJSON(((github.event_name == 'schedule' && github.event.schedule == '17 3 * * 0') || inputs.from_version == 'all') && '["latest","6.8.2","6.7.0","6.5.0","6.3.1","6.2.0"]' || format('["{0}"]', inputs.from_version || 'latest')) }}
+        from_version: ${{ fromJSON(((github.event_name == 'schedule' && github.event.schedule == '17 3 * * 0') || inputs.from_version == 'all') && '["latest","6.8.3","6.8.2","6.7.0","6.5.0","6.3.1","6.2.0"]' || format('["{0}"]', inputs.from_version || 'latest')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     container:

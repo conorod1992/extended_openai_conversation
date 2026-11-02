@@ -550,6 +550,24 @@ class GuestModeManager:
                 _LOGGER.warning("Guest Mode listener failed (%s)", type(err).__name__)
 
 
+async def async_stage_guest_mode_journal_recovery(
+    hass: HomeAssistant,
+    entry_id: str,
+    subentry_id: str,
+    schedule: GuestModeSchedule | None,
+) -> None:
+    """Bootstrap a rejected schedule from validated full-agent recovery state."""
+    gate = get_agent_maintenance_gate(hass, entry_id, subentry_id)
+    if not gate.owns_exclusive() or not gate.recovery_required:
+        raise RuntimeError(
+            "Guest Mode recovery requires exclusive quarantined maintenance"
+        )
+    gate.require_available()
+    payload = {"schedule": asdict(schedule) if schedule is not None else None}
+    GuestModeManager.validate_backup_data(payload)
+    await GuestModeManager(hass, entry_id, subentry_id)._store.async_save(payload)
+
+
 async def async_get_guest_mode(
     hass: HomeAssistant, entry_id: str, subentry_id: str
 ) -> GuestModeManager:

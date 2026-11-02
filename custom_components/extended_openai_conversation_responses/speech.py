@@ -21,7 +21,6 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-_EMPTY_PARENS = re.compile(r"\(\s*\)")
 _SPACE_BEFORE_PUNCTUATION = re.compile(r"\s+([,.;:!?])")
 _WHITESPACE = re.compile(r"[ \t\f\v]+")
 _BLANK_LINES = re.compile(r"\n\s*\n+")
@@ -32,6 +31,7 @@ _WWW_ADDRESS = re.compile(
     re.IGNORECASE,
 )
 _FORMAT_MARKERS = ("**", "__", "~~")
+_EMPHASIS_TOKENS = {"*": re.compile(r"`+|\*"), "_": re.compile(r"`+|_")}
 
 DEFAULT_STREAMING_BUFFER_LIMIT = 4096
 COMPLETED_SPEECH_EXECUTOR_THRESHOLD = 4096
@@ -65,6 +65,9 @@ class StreamingSpeechSanitizer:
         self._format_buffer = ""
         self._format_previous = ""
         self._format_depth = 0
+        self._link_code = 0
+        self._format_code = 0
+        self._strong_open = False
         self._line_start = True
         self._needs_separator = False
         self._last_output = ""
@@ -140,6 +143,24 @@ class StreamingSpeechSanitizer:
 
         while index < len(text):
             char = text[index]
+            if self.markdown and char == "`":
+                end = index
+                while end < len(text) and text[end] == "`":
+                    end += 1
+                if end == len(text) and not final:
+                    break
+                count = end - index
+                if not self._link_code:
+                    self._link_code = count
+                elif count == self._link_code:
+                    self._link_code = 0
+                self._emit(output, text[index:end])
+                index = end
+                continue
+            if self._link_code:
+                self._emit(output, char)
+                index += 1
+                continue
 
             if self.markdown and char == "(":
                 link_start = index + 1
@@ -279,6 +300,28 @@ class StreamingSpeechSanitizer:
         unresolved_emphasis = False
 
         while index < len(self._format_buffer):
+            if self._format_buffer[index] == "`":
+                end = index
+                while (
+                    end < len(self._format_buffer) and self._format_buffer[end] == "`"
+                ):
+                    end += 1
+                if end == len(self._format_buffer) and not final:
+                    break
+                count = end - index
+                if not self._format_code:
+                    self._format_code = count
+                elif count == self._format_code:
+                    self._format_code = 0
+                else:
+                    output.append(self._format_buffer[index:end])
+                index = end
+                self._line_start = False
+                continue
+            if self._format_code:
+                output.append(self._format_buffer[index])
+                index += 1
+                continue
             if self._line_start:
                 action, count = self._line_prefix(self._format_buffer, final, index)
                 if action == "incomplete":
@@ -334,11 +377,21 @@ class StreamingSpeechSanitizer:
                 # Buffer a possible emphasis span until its matching delimiter.
                 # Word-internal underscores, arithmetic and unmatched markers
                 # remain prose; the existing bounded buffer also applies here.
-                end = index + 1
-                while True:
-                    end = self._format_buffer.find(char, end + 1)
-                    if end < 0:
-                        break
+                end = -1
+                code = 0
+                for token in _EMPHASIS_TOKENS[char].finditer(
+                    self._format_buffer, index + 1
+                ):
+                    if token[0].startswith("`"):
+                        count = len(token[0])
+                        if not code:
+                            code = count
+                        elif count == code:
+                            code = 0
+                        continue
+                    if code:
+                        continue
+                    end = token.start()
                     after = self._format_buffer[end + 1 : end + 2]
                     combined_close = self._format_buffer[
                         max(index + 1, end - 2) : end
@@ -349,11 +402,13 @@ class StreamingSpeechSanitizer:
                         or after == char
                     ):
                         # A nested strong delimiter cannot close single emphasis.
+                        end = -1
                         continue
                     if not self._format_buffer[end - 1].isspace() and (
                         not after or (not after.isalnum() and after != char)
                     ):
                         break
+                    end = -1
                 if end < 0 or (end == len(self._format_buffer) - 1 and not final):
                     if not final:
                         unresolved_emphasis = True
@@ -364,11 +419,48 @@ class StreamingSpeechSanitizer:
                         nested = StreamingSpeechSanitizer(urls=False)
                         nested._line_start = False
                         nested._format_depth = self._format_depth + 1
+                        nested._strong_open = self._strong_open
                         body = nested._format(body, final=True)
+                        self._strong_open = nested._strong_open
                     output.append(body)
                     index = end + 1
                     continue
             if pair in _FORMAT_MARKERS:
+                if (
+                    pair == "**"
+                    and not self._strong_open
+                    and (previous.isalnum() or previous in (")", "]"))
+                ):
+                    after = self._format_buffer[index + 2 : index + 3]
+                    if not after and not final:
+                        break
+                    if after.isdigit() or after in {"+", "-", "("}:
+                        closer = re.match(
+                            r"[+-]?\d+(?:\.\d+)?\*\*(?=$|[\s.,;:!?])",
+                            self._format_buffer[index + 2 :],
+                        )
+                        if not final and (
+                            closer is None
+                            or index + 2 + closer.end() == len(self._format_buffer)
+                        ):
+                            unresolved_emphasis = True
+                            break
+                        if closer is None:
+                            output.append(pair)
+                            index += 2
+                            continue
+                if (
+                    pair == "**"
+                    and not self._strong_open
+                    and (previous.isalnum() or previous in (")", "]"))
+                    and self._format_buffer.find("**", index + 2) < 0
+                ):
+                    if not final:
+                        unresolved_emphasis = True
+                        break
+                    output.append(pair)
+                    index += 2
+                    continue
                 if (
                     previous.isspace()
                     and self._format_buffer[index + 2 : index + 3].isspace()
@@ -391,6 +483,8 @@ class StreamingSpeechSanitizer:
                     or index + 2 == len(self._format_buffer)
                     or not self._format_buffer[index + 2].isalnum()
                 ):
+                    if pair == "**":
+                        self._strong_open = not self._strong_open
                     index += 2
                     continue
             if not final and index == len(self._format_buffer) - 1 and char in "*_~":
@@ -574,7 +668,8 @@ def _built_in_cleanup(text: str, *, markdown: bool, urls: bool) -> str:
 
 
 def _final_whitespace_cleanup(text: str) -> str:
-    text = _EMPTY_PARENS.sub("", text)
+    # Parentheses can be literal speech content (including a code-span call()).
+    # Link suppression already removes the enclosing citation parentheses.
     text = _SPACE_BEFORE_PUNCTUATION.sub(r"\1", text)
     text = _WHITESPACE.sub(" ", text)
     text = _BLANK_LINES.sub("\n", text)

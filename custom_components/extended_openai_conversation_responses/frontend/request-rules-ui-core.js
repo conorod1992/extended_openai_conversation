@@ -5,6 +5,7 @@ import {adoptKeyedElements, elementFromMarkup, keyedElement, placeChildren, prun
 import {requestRuleEmptyContent, updateRequestRuleEmptyState} from "./request-rule-empty-state.js";
 import {captureConfigurationOwner, configurationSubmissionIsCurrent, presentAcknowledgedMutation} from "./configuration-acknowledgement.js";
 import {beginOperation, invalidateOperation} from "./operation-ownership.js";
+import {bindOwnedEvent} from "./management-owned-events.js";
 
 const sharingGroupOptions = new WeakMap();
 export function refreshRuleSharingGroups(panel) {
@@ -305,22 +306,51 @@ export function applyRequestRuleMutation(panel, action, result, context={}) {
 const setFuzzyState=(root,prefix)=>{const toggle=root.querySelector(`#${prefix}-fuzzy`),select=root.querySelector(`#${prefix}-threshold`);if(!toggle||!select)return;select.disabled=!toggle.checked;select.closest(".fuzzy-sensitivity")?.classList.toggle("is-disabled",!toggle.checked);};
 function bindWordingEditor(panel){
   const root=panel.shadowRoot;
-  const bindRemove=()=>root.querySelectorAll(".wording-remove").forEach(button=>{if(button.dataset.eocBound)return;button.dataset.eocBound="";button.addEventListener("click",()=>button.closest(".wording-group")?.remove());});
+  const bindRemove=()=>root.querySelectorAll(".wording-remove").forEach(button=>bindOwnedEvent(button,"click","wording-remove",()=>button.closest(".wording-group")?.remove()));
   bindRemove();
   const add=root.querySelector("#wording-add");
-  if(add && !add.dataset.eocBound){add.dataset.eocBound="";add.addEventListener("click",()=>{const wrapper=document.createElement("div");wrapper.className="wording-group";wrapper.innerHTML='<label>Main phrase<input class="wording-canonical" maxlength="100"></label><label>Other ways to say it<input class="wording-alternatives" placeholder="Comma-separated alternatives"></label><button type="button" class="icon wording-remove" aria-label="Remove wording alternative">×</button>';root.querySelector("#wording-groups")?.append(wrapper);bindRemove();});}
+  bindOwnedEvent(add,"click","wording-add",()=>{const wrapper=document.createElement("div");wrapper.className="wording-group";wrapper.innerHTML='<label>Main phrase<input class="wording-canonical" maxlength="100"></label><label>Other ways to say it<input class="wording-alternatives" placeholder="Comma-separated alternatives"></label><button type="button" class="icon wording-remove" aria-label="Remove wording alternative">×</button>';root.querySelector("#wording-groups")?.append(wrapper);bindRemove();});
+}
+
+const sharingInitializations = new WeakMap();
+async function initializeRuleSharing(panel, sharing) {
+  let state = sharingInitializations.get(sharing);
+  if (!state) sharingInitializations.set(sharing, state = {ready:false, pending:null});
+  if (state.ready || state.pending) return state.pending;
+  const content = sharing.querySelector("#rule-sharing-content");
+  state.pending = import("./request-rule-sharing-ui.js").then(({bindRuleSharing}) => {
+    // A detached disclosure has no presentation owner. A later visit gets its
+    // own initialization and must not receive the old controls or authored data.
+    if (!sharing.isConnected) return;
+    bindRuleSharing(panel, sharing);
+    state.ready = true;
+  }).catch(error => {
+    if (!sharing.isConnected || !content) return;
+    content.replaceChildren();
+    const status = content.ownerDocument.createElement("p");
+    status.setAttribute("role", "alert");
+    status.textContent = `Unable to load Rule Sharing: ${error.message || String(error)}`;
+    const retry = content.ownerDocument.createElement("button");
+    retry.type = "button"; retry.className = "secondary";
+    retry.dataset.retryRuleSharing = "";
+    retry.textContent = "Retry Rule Sharing";
+    bindOwnedEvent(retry, "click", "rule-sharing-retry", () => { void initializeRuleSharing(panel, sharing); });
+    content.append(status, retry);
+  }).finally(() => { state.pending = null; });
+  return state.pending;
 }
 export function bindRequestRulesCore(panel,{openEditor,activateSafeTester,activateLiveTester}={}) {
   const root=panel.shadowRoot,list=root.querySelector(".rule-list"); prepareRequestRulesCollection(panel);
   const sharing=root.querySelector("#rule-sharing");
-  if(sharing&&!sharing.dataset.eocBound){sharing.dataset.eocBound="";sharing.addEventListener("toggle",()=>{if(sharing.open&&!sharing.dataset.eocLoaded){sharing.dataset.eocLoaded="";void import("./request-rule-sharing-ui.js").then(({bindRuleSharing})=>bindRuleSharing(panel,sharing));}});}
-  setFuzzyState(root,"rules-default"); root.querySelector("#rules-default-fuzzy")?.addEventListener("change",()=>setFuzzyState(root,"rules-default"),{once:false});
+  bindOwnedEvent(sharing,"toggle","rule-sharing",()=>{if(sharing.open)void initializeRuleSharing(panel,sharing);});
+  if(sharing?.open)void initializeRuleSharing(panel,sharing);
+  setFuzzyState(root,"rules-default"); bindOwnedEvent(root.querySelector("#rules-default-fuzzy"),"change","rule-default-fuzzy",()=>setFuzzyState(root,"rules-default"));
   bindWordingEditor(panel);
   const filter=root.querySelector("#rule-group-filter");
-  if(filter&&!filter.dataset.eocBound){filter.dataset.eocBound="";filter.addEventListener("change",()=>{panel._ruleGroupFilter=filter.value;reconcileRequestRules(panel);root.querySelector("#rule-search")?.dispatchEvent(new Event("input",{bubbles:true}));});}
+  bindOwnedEvent(filter,"change","rule-group-filter",()=>{panel._ruleGroupFilter=filter.value;reconcileRequestRules(panel);root.querySelector("#rule-search")?.dispatchEvent(new Event("input",{bubbles:true}));});
   const groupManager=root.querySelector(".rule-groups");
-  if(groupManager && !groupManager.dataset.eocBound){
-    groupManager.dataset.eocBound="";
+  if(groupManager && groupManager.dataset.eocBound === undefined){
+    groupManager.dataset.eocBound="1";
     const opener=root.querySelector("#rule-groups-manage");
     opener?.addEventListener("click",()=>{
       invalidateOperation(groupManager,"request-rule-mutation");
@@ -371,8 +401,8 @@ export function bindRequestRulesCore(panel,{openEditor,activateSafeTester,activa
       }finally{if(operation.ownsControls()){delete groupManager.dataset.eocMutationPending;button.disabled=false;}}
     });
   }
-  if(list && !list.dataset.eocRuleCoreBound){
-    list.dataset.eocRuleCoreBound="";
+  if(list && list.dataset.eocRuleCoreBound === undefined){
+    list.dataset.eocRuleCoreBound="1";
     let dragging=null;
     // A disclosure of ordinary buttons uses native Enter/Space and Tab behavior.
     // Escape, outside clicks and completed actions dismiss it without losing focus.
@@ -470,7 +500,7 @@ export function bindRequestRulesCore(panel,{openEditor,activateSafeTester,activa
       finally{if(operation.ownsControls())input.disabled=false;}
     });
   }
-  const add=root.querySelector("#rule-add");if(add&&!add.dataset.eocRuleCoreBound){add.dataset.eocRuleCoreBound="";add.addEventListener("click",()=>{void openEditor?.(null);});}
+  const add=root.querySelector("#rule-add");bindOwnedEvent(add,"click","rule-add",()=>{void openEditor?.(null);});
   const safe=root.querySelector("#rule-match-tester");
   if(safe&&!safe.dataset.eocLazyBound){
     safe.dataset.eocLazyBound="1";
@@ -485,5 +515,5 @@ export function bindRequestRulesCore(panel,{openEditor,activateSafeTester,activa
       }).catch(error=>{const output=root.querySelector("#rule-match-test-result");if(output)output.textContent=error.message||String(error);});
     },{capture:true});
   }
-  const live=root.querySelector("#eoc-rule-live-test");if(live&&!live.dataset.eocLazyBound){live.dataset.eocLazyBound="";live.addEventListener("toggle",()=>{if(live.open)void activateLiveTester?.();},{once:true});}
+  const live=root.querySelector("#eoc-rule-live-test");bindOwnedEvent(live,"toggle","rule-live-loader",()=>{if(live.open)void activateLiveTester?.();});
 }

@@ -56,7 +56,7 @@ for(const bundled of [false,true]) {
     await expectHarnessClean(page,errors);
   });
 
-  test(`failed cold read does not retry on hass updates but reconnect starts a fresh attempt (${bundled ? "bundle" : "source"})`,async ({page}) => {
+  test(`failed cold read offers explicit retry without automatic retry storms (${bundled ? "bundle" : "source"})`,async ({page}) => {
     const errors=trackPageErrors(page),panel=await openVoice(page,bundled);
     await panel.evaluate(old => {
       const parent=old.parentElement,original=old.hass.callWS.bind(old.hass);
@@ -68,12 +68,33 @@ for(const bundled of [false,true]) {
       const next=document.createElement("extended-openai-management-panel");parent.append(next);next.hass=hass;
     });
     await expect.poll(() => panel.evaluate(host => host._error)).toBe("Controlled cold catalog failure");
+    await expect(panel.locator(".route-error-state")).toContainText("Controlled cold catalog failure");
+    await expect(panel.locator(".loading")).toHaveCount(0);
     await panel.evaluate(async host => {for(let index=0;index<3;index++){host.hass={...host.hass};await new Promise(requestAnimationFrame);}});
     expect(await page.evaluate(() => coldCatalog.reads)).toBe(1);
+    await panel.locator("#retry-route").click();
+    await expect.poll(() => panel.evaluate(host => host._selectedAgent()?.subentry_id)).toBe("agent-1");
+    await expect.poll(() => panel.evaluate(host => host._busy)).toBe(false);
+    expect(await page.evaluate(() => coldCatalog.reads)).toBe(2);
+    await expect(panel.locator(".route-error-state")).toHaveCount(0);
     await panel.evaluate(host => {const parent=host.parentElement;host.remove();parent.append(host);});
     await expect.poll(() => panel.evaluate(host => host._selectedAgent()?.subentry_id)).toBe("agent-1");
     await expect.poll(() => panel.evaluate(host => host._busy)).toBe(false);
     expect(await page.evaluate(() => coldCatalog.reads)).toBe(2);
+    // A successful empty catalogue is distinct from a failed or pending read.
+    await panel.evaluate(old => {
+      const parent=old.parentElement,original=old.hass.callWS.bind(old.hass);
+      const hass={...old.hass,callWS:async request => {
+        const response=await original(request);
+        return request.action === "agents" && !request.section ? {...response,agents:[]} : response;
+      }};
+      old.remove();
+      const next=document.createElement("extended-openai-management-panel");parent.append(next);next.hass=hass;
+    });
+    await expect(panel.locator("main")).toContainText("No conversation agents configured.");
+    await expect.poll(() => panel.evaluate(host => host._busy)).toBe(false);
+    await expect(panel.locator("main")).not.toHaveAttribute("aria-busy", "true");
+    await expect(panel.locator(".loading,.route-error-state")).toHaveCount(0);
     await expectHarnessClean(page,errors);
   });
 

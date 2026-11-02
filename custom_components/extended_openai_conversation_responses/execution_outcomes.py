@@ -18,6 +18,7 @@ from .template_diagnostics import private_template_diagnostics
 _MAX_EFFECT_RECEIPTS = 4096
 _MAX_RETAINED_EFFECT_RECEIPTS = 4096
 _RECEIPT_OWNER_ATTRIBUTE = "_eoai_owns_execution_receipts"
+_READ_ONLY_OWNER_ATTRIBUTE = "_eoai_read_only_receipt_owner"
 
 
 @dataclass(slots=True)
@@ -358,6 +359,15 @@ def owns_execution_receipts[**P, ResultT](
     return function
 
 
+def owns_read_only_execution_receipts[**P, ResultT](
+    function: Callable[P, Coroutine[Any, Any, ResultT]],
+) -> Callable[P, Coroutine[Any, Any, ResultT]]:
+    """Declare effect-free I/O and identify failures within partial invocations."""
+    owns_execution_receipts(function)
+    setattr(function, _READ_ONLY_OWNER_ATTRIBUTE, function)
+    return function
+
+
 @private_template_diagnostics
 async def execute_backend(
     function: Any,
@@ -384,7 +394,15 @@ async def execute_backend(
                     item.outcome == "completed" for item in attempt.receipts[before:]
                 )
             ):
-                execution_refused()
+                if (
+                    owns_receipts
+                    and getattr(execute, _READ_ONLY_OWNER_ATTRIBUTE, None)
+                    is execute_owner
+                ):
+                    with execution_operation("read_failure", None):
+                        execution_refused()
+                else:
+                    execution_refused()
             from .public_errors import sanitize_backend_error
 
             public_error = sanitize_backend_error(error)
