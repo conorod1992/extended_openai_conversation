@@ -695,6 +695,17 @@ def group_collection_repair_metadata(options: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _healthy_function_configuration_state(
+    options: Any,
+) -> FunctionConfigurationRepairState:
+    """Keep a recovery editor usable after its first repair becomes healthy."""
+    tools = validate_function_tools(parse_configured_function_tools(options))
+    raw_groups = options.get(CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS))
+    return FunctionConfigurationRepairState(
+        tools, [], "", validate_function_groups(raw_groups, tools), [], raw_groups
+    )
+
+
 async def _async_save_group_collection(
     hass: HomeAssistant,
     entry: Any,
@@ -710,13 +721,7 @@ async def _async_save_group_collection(
     if state is None:
         # An acknowledgement may leave newer collection edits in this editor
         # after the first repair made the persisted configuration healthy.
-        tools = validate_function_tools(parse_configured_function_tools(subentry.data))
-        raw_groups = subentry.data.get(
-            CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS)
-        )
-        state = FunctionConfigurationRepairState(
-            tools, [], "", validate_function_groups(raw_groups, tools), [], raw_groups
-        )
+        state = _healthy_function_configuration_state(subentry.data)
     if not state.field_updates_allowed:
         raise HomeAssistantError(
             "Repair the malformed Function Tool collection before replacing Function Groups"
@@ -891,7 +896,9 @@ async def async_function_repair(
     if action == "save_groups":
         return await _async_save_group_collection(hass, entry, subentry, state, message)
     if state is None:
-        raise HomeAssistantError("Function Tools do not require repair")
+        if action != "save":
+            raise HomeAssistantError("Function Tools do not require repair")
+        state = _healthy_function_configuration_state(subentry.data)
     issue = state.issue
 
     if action == "configuration_get":
@@ -1170,6 +1177,32 @@ async def async_function_repair(
 
     persisted = dict(subentry.data)
     persisted[CONF_FUNCTION_TOOLS] = dump_yaml(validated_tools, sort_keys=False)
+    after = function_configuration_repair_state(persisted)
+    after_groups = (
+        after.groups
+        if after is not None
+        else validate_function_groups(
+            persisted.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS),
+            validated_tools,
+        )
+    )
+    skills = persisted.get(CONF_SKILLS, []) or []
+    budget = normalized_function_call_budget(persisted) if skills else None
+    before_loader = skill_loader_status(
+        skills, state.valid, state.groups, max_function_calls=budget
+    )
+    after_loader = skill_loader_status(
+        skills, validated_tools, after_groups, max_function_calls=budget
+    )
+    # A collection-wide failure exposes no usable Tools. Its explicit repair
+    # may retain an inactive selection without forcing a loader to be enabled.
+    # Healthy/isolatable baselines still cannot lose a working dependency.
+    if state.field_updates_allowed and not preserves_skill_loader_availability(
+        before_loader, after_loader, skills, skills
+    ):
+        raise HomeAssistantError(
+            after_loader.reason or "Selected Skills are not loadable"
+        )
     await management_ui._async_validate_configuration_request(
         hass, entry, subentry, safe_function_configuration(persisted)
     )

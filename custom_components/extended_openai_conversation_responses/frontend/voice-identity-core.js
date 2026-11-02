@@ -1,4 +1,5 @@
 import {initializeVoiceUserPicker, voiceUserCatalogue} from "./voice-user-picker.js";
+import {captureVoiceMappingDraft} from "./voice-mapping-draft.js";
 const escape = (panel, value) => panel._e(String(value ?? ""));
 const rawUserId = (value) => String(value || "").replace(/^user:/, "");
 const policyLabels = {
@@ -36,6 +37,10 @@ function policySelect(panel, key, label, value, help, fallback = false) {
 
 export function renderVoiceIdentityCore(panel) {
   const config = panel?._draft || panel?._result?.config || {};
+  // Recovery can replace invalid authoring rows while their valid persistence
+  // map stays unchanged. Rebuild the lazy surface for that row projection too.
+  const mappingRows = captureVoiceMappingDraft(panel) || Object.entries(config.voice_device_mappings || {})
+    .map(([deviceId,owner]) => ({deviceId,owner}));
   const selectedUser = String(config.voice_default_user_id || "");
   const mapping = config.voice_scope_policy === "device_mapping";
   const defaultActive = config.voice_scope_policy === "default_user" || (mapping && config.voice_unmapped_policy === "default_user");
@@ -47,7 +52,7 @@ export function renderVoiceIdentityCore(panel) {
     <div class="voice-policy-grid" data-voice-policy-grid><section class="supporting-panel voice-policy-card"><h2>Unidentified voice requests</h2>${policySelect(panel, "voice_scope_policy", "Use saved data from", String(config.voice_scope_policy || "unretained"), "Choose the data owner for unidentified voice requests.")}</section>${mapping ? fallbackCard : ""}</div>
     <div data-voice-default-host>${defaultActive ? defaultCard : ""}</div>
     <details class="eoc-details-base voice-inactive-settings" data-voice-inactive-settings ${mapping && defaultActive ? "hidden" : ""}><summary>Saved inactive voice settings</summary><p class="help">These saved values are retained, but are used only when the voice policy above selects them.</p><div data-voice-inactive-host>${mapping ? "" : fallbackCard}${defaultActive ? "" : defaultCard}</div></details>
-    <div data-voice-mapping-feature data-voice-mapping-value="${escape(panel,JSON.stringify(config.voice_device_mappings || {}))}" ${mapping ? 'style="min-height:96px"' : ""}>${mapping ? '<section class="supporting-panel voice-mappings-card"><h2>Voice device assignments</h2><p class="help">Loading saved assignments…</p></section>' : ""}</div>`;
+    <div data-voice-mapping-feature data-voice-mapping-value="${escape(panel,JSON.stringify(config.voice_device_mappings || {}))}" data-voice-mapping-rows="${escape(panel,JSON.stringify(mappingRows))}" ${mapping ? 'style="min-height:96px"' : ""}>${mapping ? '<section class="supporting-panel voice-mappings-card"><h2>Voice device assignments</h2><p class="help">Loading saved assignments…</p></section>' : ""}</div>`;
 }
 
 export function updatePolicy(panel) {

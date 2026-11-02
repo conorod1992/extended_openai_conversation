@@ -3378,7 +3378,9 @@
       "tests_browser/voice-mapping-fresh-read-review.spec.mjs::chromium::voice-mapping-fresh-read-review.spec.mjs::fresh configuration read updates clean hydrated Voice assignments",
       "tests_browser/voice-mapping-retained.spec.mjs::chromium::voice-mapping-retained.spec.mjs::duplicate Voice rows survive route changes and remount until corrected without losing another mapping",
       "tests_browser/voice-mapping-retained.spec.mjs::chromium::voice-mapping-retained.spec.mjs::empty and pending Voice rows stay dirty off route and Discard retires late registry completions",
-      "tests_browser/voice-mapping-retained.spec.mjs::chromium::voice-mapping-retained.spec.mjs::failed Voice lookup remains editable after navigation and remount and blocks global Save"
+      "tests_browser/voice-mapping-retained.spec.mjs::chromium::voice-mapping-retained.spec.mjs::failed Voice lookup remains editable after navigation and remount and blocks global Save",
+      "tests_browser/voice-recovery-hourly-review.spec.mjs::chromium::voice-recovery-hourly-review.spec.mjs::Voice recovery publishes invalid rows into an already edited replacement panel",
+      "tests_browser/voice-user-owner-hydration-review.spec.mjs::chromium::voice-user-owner-hydration-review.spec.mjs::delayed user catalogue keeps the displayed Voice owner and committed mapping consistent"
     ],
     "browser-firefox": [
       "tests_browser/abnormal-frontend-resilience.stress.mjs::firefox::abnormal-frontend-resilience.stress.mjs::IME composition interrupted by blur preserves one exact value without duplicate mutation",

@@ -8,6 +8,10 @@ Migration candidates must be assessed against their original values. YAML aliase
 
 Editor authoring state, validated configuration and validation errors have separate ownership. Invalid Voice assignment rows must survive same-assistant navigation and remain correctable; an error must never replace the mapping object. Save admission must reject invalid retained rows even outside the Voice route, and Discard must retire their authoring state.
 
+Voice recovery must invalidate hydrated controls when the retained row projection changes even if its valid mapping object stays unchanged. Native picker display initialization must not clear the selected user's semantic value while the user catalogue loads; explicit selection and clear events remain authoritative before and after hydration.
+
+An acknowledged repair may leave later edits in its editor. Both complete Function and Group repair support revision-bound follow-up saves after the first write clears quarantine. Bulk Function repair preserves an available selected Skill loader; ambiguous unusable source can still be repaired to an explicitly disabled loader without enabling it.
+
 Read results carry meaning independently of whether they contain records. Initial catalogue pending, failed and successful-empty states must render distinctly, with a deliberate catalogue retry and no retry storm from Home Assistant updates. Relative Usage periods use Home Assistant's local calendar rather than the latest activity or a retained summary date. Diagnostics share canonical configuration representation parsing and isolate failures between sections.
 
 Mobile dialog action reachability is checked geometrically after ordinary scrolling. Programmatic focus, locator clicks and scroll-into-view behavior alone do not establish that a user can reach a clipped footer.

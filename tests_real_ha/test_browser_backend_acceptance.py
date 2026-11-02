@@ -389,6 +389,9 @@ async def test_bulk_function_repair_acknowledgement_survives_failed_reads(
         "bulk_repaired_tool"
     ]
     assert persisted["config"]["prompt"] == "Saved prompt before bulk repair"
+    assert persisted["config"]["functions"][0]["spec"]["description"] == (
+        "A later edit saved after quarantine cleared"
+    )
     assert "function_repair" not in persisted
 
 

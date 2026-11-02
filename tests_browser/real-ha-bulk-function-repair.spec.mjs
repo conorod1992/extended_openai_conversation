@@ -38,12 +38,17 @@ test("bulk repair acknowledges genuine HA state without depending on post-save r
       if (message.section === "function_repair" && message.action === "save") {
         probe.mutations++;
         probe.saved = structuredClone(result);
+        await new Promise(resolve => {probe.releaseFirstAcknowledgement = resolve;});
       }
       return result;
     };
   }, failCatalogue);
   await panel.locator("#function-repair-editor").fill(JSON.stringify([tool], null, 2));
   await panel.locator("#function-repair-save").click();
+  await page.waitForFunction(() => window.bulkRepairProbe.releaseFirstAcknowledgement);
+  const later = "- spec: [newer raw edits made before the first acknowledgement";
+  await panel.locator("#function-repair-editor").fill(later);
+  await page.evaluate(() => window.bulkRepairProbe.releaseFirstAcknowledgement());
   await expect(panel.locator("#toast")).toContainText("Function Tools repaired");
   await expect(panel.locator("#toast")).not.toContainText("Unable to repair");
   if (failCatalogue) await expect(panel.locator("#toast")).toContainText("could not be refreshed");
@@ -67,16 +72,43 @@ test("bulk repair acknowledges genuine HA state without depending on post-save r
   expect(acknowledged.draftTitle).toBe("Unsaved title survives repair");
   expect(acknowledged.catalogueFailures).toBe(failCatalogue ? 1 : 0);
 
+  // The first write cleared quarantine. Its still-authored fallback editor must
+  // remain usable after optional read failures and submit a second real write.
+  await page.evaluate(async () => {
+    const {panel,hass} = window.browserHarness,probe = window.bulkRepairProbe;
+    hass.callWS = async message => {
+      const result = await probe.original(message);
+      if(message.section === "function_repair" && message.action === "save") {
+        probe.mutations++;
+        probe.saved = structuredClone(result);
+      }
+      return result;
+    };
+    await panel._loadAgents();
+  });
+  await expect(panel.locator("#function-repair-editor")).toHaveValue(later);
+  await expect(panel.locator("#function-repair-save")).toBeEnabled();
+  const followup = {...tool,spec:{...tool.spec,description:"A later edit saved after quarantine cleared"}};
+  await panel.locator("#function-repair-editor").fill(JSON.stringify([followup],null,2));
+  await panel.locator("#function-repair-save").click();
+  await expect.poll(() => page.evaluate(() => window.bulkRepairProbe.mutations)).toBe(2);
+  await expect(panel.locator("#function-repair-editor")).toHaveCount(0);
+  const second = await page.evaluate(() => window.bulkRepairProbe.saved);
+  expect(second.config.functions).toEqual([followup]);
+  expect(second.revision).not.toBe(acknowledged.saved.revision);
+  expect(await panel.evaluate(host => host._draft.prompt)).toBe("Unsaved prompt survives repair");
+  expect(await panel.evaluate(host => host._draftTitle)).toBe("Unsaved title survives repair");
+
   // A fresh document verifies persisted HA state independently of the response
   // and discards the fault injection without replaying the repair.
   await page.goto(fixture);
   await expect(panel.getByRole("heading", {name:tool.spec.name, exact:true})).toBeVisible();
   await expect(panel.locator("#function-repair-editor")).toHaveCount(0);
   const fresh = await panel.evaluate(host => host._call("configuration", "get"));
-  expect(fresh.config.functions).toEqual([tool]);
+  expect(fresh.config.functions).toEqual([followup]);
   expect(fresh.config.prompt).toBe("Saved prompt before bulk repair");
-  expect(fresh.revision).toBe(acknowledged.saved.revision);
+  expect(fresh.revision).toBe(second.revision);
   expect(fresh.function_repair).toBeUndefined();
-  expect(await page.evaluate(() => window.browserHarness.calls.filter(call => call.section === "function_repair" && call.action === "save").length)).toBe(1);
+  expect(await page.evaluate(() => window.browserHarness.calls.filter(call => call.section === "function_repair" && call.action === "save").length)).toBe(2);
   await expectHarnessClean(page, errors);
 });

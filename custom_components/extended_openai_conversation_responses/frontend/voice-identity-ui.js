@@ -1,4 +1,4 @@
-import {initializeVoiceUserPicker, voiceUserCatalogue} from "./voice-user-picker.js";
+import {initializeVoiceUserPicker, voiceUserCatalogue, voiceUserPickerValue} from "./voice-user-picker.js";
 import {voiceMappingDraft, newVoiceMappingRow, updateVoiceMappingRows, voiceMappingDraftError, voiceMappingRowIsCurrent} from "./voice-mapping-draft.js";
 import {captureConfigurationOwner, configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
 const SHARED_SCOPE = "shared:household";
@@ -230,7 +230,7 @@ function syncOwner(row) {
     hidden.value = UNRETAINED_SCOPE;
     setWarning(warning);
   } else {
-    const userId = rawUserId(picker?.value || "");
+    const userId = rawUserId(voiceUserPickerValue(picker) || "");
     if (userId) {
       hidden.value = `user:${userId}`;
       setWarning(warning);
