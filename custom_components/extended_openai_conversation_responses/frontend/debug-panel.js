@@ -18,6 +18,7 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
     this._error = "";
     this._toastTimer = null;
     this._revision = 0;
+    this._authenticationGeneration = 0;
     this._readToken = 0;
     this._agentLoadToken = 0;
     this._mutationTail = Promise.resolve();
@@ -29,6 +30,7 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
     this._observedUserId = value.user?.id;
     this._hass = value;
     if (changed) {
+      this._authenticationGeneration++;
       this._revision++;
       this._agents = []; this._agent = null; this._status = null; this._runs = []; this._error = "";
       this._render();
@@ -136,9 +138,12 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
 
   _mutate(action, extra, agent = this._agent) {
     if (!agent) return Promise.resolve();
+    const authentication = this._authenticationGeneration;
     const revision = ++this._revision;
     const current = () => revision === this._revision && agent === this._agent;
     const operation = this._mutationTail.then(async () => {
+      // Queued work belongs to the account that requested it, including A-B-A.
+      if (authentication !== this._authenticationGeneration) return;
       try {
         const result = await this._call(action, extra, agent);
         requireMutationAcknowledgement(action === "clear" ? Number.isInteger(result?.deleted) && result.deleted >= 0 : typeof result?.enabled === "boolean", "updating debugging");
@@ -254,14 +259,15 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
 
   async _copyRun(debugId) {
     const revision = this._revision, connection = this._hass, agent = this._agent;
+    const current = () => this.isConnected && revision === this._revision && connection === this._hass && agent === this._agent;
     try {
       const result = await this._getRun(debugId, 0);
-      if (!this.isConnected || revision !== this._revision || connection !== this._hass || agent !== this._agent) return;
+      if (!current()) return;
       const embedded = this.hasAttribute("embedded");
       await this._copyText(embedded ? debugPageText(result.trace) : result.copy_text);
-      this._toast(embedded ? "First debug page copied" : "Entire debug log copied");
+      if (current()) this._toast(embedded ? "First debug page copied" : "Entire debug log copied");
     } catch (err) {
-      this._toast(`Unable to copy debug log: ${err.message || String(err)}`, true);
+      if (current()) this._toast(`Unable to copy debug log: ${err.message || String(err)}`, true);
     }
   }
 

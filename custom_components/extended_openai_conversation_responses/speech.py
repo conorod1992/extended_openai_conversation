@@ -21,7 +21,6 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-_EMPTY_PARENS = re.compile(r"\(\s*\)")
 _SPACE_BEFORE_PUNCTUATION = re.compile(r"\s+([,.;:!?])")
 _WHITESPACE = re.compile(r"[ \t\f\v]+")
 _BLANK_LINES = re.compile(r"\n\s*\n+")
@@ -32,6 +31,7 @@ _WWW_ADDRESS = re.compile(
     re.IGNORECASE,
 )
 _FORMAT_MARKERS = ("**", "__", "~~")
+_EMPHASIS_TOKENS = {"*": re.compile(r"`+|\*"), "_": re.compile(r"`+|_")}
 
 DEFAULT_STREAMING_BUFFER_LIMIT = 4096
 COMPLETED_SPEECH_EXECUTOR_THRESHOLD = 4096
@@ -377,11 +377,21 @@ class StreamingSpeechSanitizer:
                 # Buffer a possible emphasis span until its matching delimiter.
                 # Word-internal underscores, arithmetic and unmatched markers
                 # remain prose; the existing bounded buffer also applies here.
-                end = index + 1
-                while True:
-                    end = self._format_buffer.find(char, end + 1)
-                    if end < 0:
-                        break
+                end = -1
+                code = 0
+                for token in _EMPHASIS_TOKENS[char].finditer(
+                    self._format_buffer, index + 1
+                ):
+                    if token[0].startswith("`"):
+                        count = len(token[0])
+                        if not code:
+                            code = count
+                        elif count == code:
+                            code = 0
+                        continue
+                    if code:
+                        continue
+                    end = token.start()
                     after = self._format_buffer[end + 1 : end + 2]
                     combined_close = self._format_buffer[
                         max(index + 1, end - 2) : end
@@ -392,11 +402,13 @@ class StreamingSpeechSanitizer:
                         or after == char
                     ):
                         # A nested strong delimiter cannot close single emphasis.
+                        end = -1
                         continue
                     if not self._format_buffer[end - 1].isspace() and (
                         not after or (not after.isalnum() and after != char)
                     ):
                         break
+                    end = -1
                 if end < 0 or (end == len(self._format_buffer) - 1 and not final):
                     if not final:
                         unresolved_emphasis = True
@@ -656,7 +668,8 @@ def _built_in_cleanup(text: str, *, markdown: bool, urls: bool) -> str:
 
 
 def _final_whitespace_cleanup(text: str) -> str:
-    text = _EMPTY_PARENS.sub("", text)
+    # Parentheses can be literal speech content (including a code-span call()).
+    # Link suppression already removes the enclosing citation parentheses.
     text = _SPACE_BEFORE_PUNCTUATION.sub(r"\1", text)
     text = _WHITESPACE.sub(" ", text)
     text = _BLANK_LINES.sub("\n", text)

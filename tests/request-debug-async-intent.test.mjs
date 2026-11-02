@@ -56,3 +56,55 @@ test("Debug optional storage access and quota failure preserve backend loading",
   await host._loadAgents();assert.equal(host._agent.subentry_id,"two");assert.equal(reads,2);
   delete globalThis.localStorage;
 });
+
+for (const aba of [false, true]) test(`Debug retires queued mutations on authentication change (ABA=${aba})`, async () => {
+  const host = panel(), held = deferred(), calls = [];
+  host.style = {};
+  host._loadAgents = async () => {};
+  host.hass = {user:{id:"original"}, callWS: async message => {
+    calls.push(message);
+    if (message.action === "configure" && message.enabled) return held.promise;
+    return {enabled:false, runs:[]};
+  }};
+  const first = host._configure({enabled:true});
+  await Promise.resolve();
+  const second = host._configure({enabled:false});
+  const shared = host._hass;
+  shared.user.id = "replacement";
+  host.hass = shared;
+  if (aba) { shared.user.id = "original"; host.hass = shared; }
+  held.resolve({enabled:true});
+  await Promise.all([first, second]);
+  assert.deepEqual(calls.map(message => message.action), ["configure"]);
+});
+
+test("Debug suppresses pending Copy errors after the owner retires", async () => {
+  const host = panel(), held = deferred(), toasts = [];
+  host._getRun = () => held.promise;
+  host._toast = text => toasts.push(text);
+  host.isConnected = true;
+  const pending = host._copyRun("private-run");
+  host._revision++;
+  held.reject(Error("original user's private diagnostic"));
+  await pending;
+  assert.deepEqual(toasts, []);
+});
+
+test("Debug keeps queued same-user actions across ordinary HA updates", async () => {
+  const host = panel(), held = deferred(), calls = [];
+  host.style = {};
+  host._loadAgents = async () => {};
+  host.hass = {user:{id:"original"}, callWS:async message => {
+    calls.push(message);
+    if (message.action === "configure" && message.enabled) return held.promise;
+    return {enabled:false, runs:[]};
+  }};
+  const first = host._configure({enabled:true});
+  await Promise.resolve();
+  const second = host._configure({enabled:false});
+  host.hass = {...host._hass, user:{id:"original"}};
+  held.resolve({enabled:true});
+  await Promise.all([first, second]);
+  assert.deepEqual(calls.filter(message => message.action === "configure").map(message => message.enabled), [true, false]);
+  assert.equal(host._status.enabled, false);
+});

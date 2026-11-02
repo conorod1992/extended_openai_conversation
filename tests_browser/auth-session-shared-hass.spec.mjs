@@ -170,3 +170,37 @@ for(const bundle of [false,true])test(`open sharing dialog retires across accoun
  await panel.evaluate(host=>{host.hass={...host.hass,user:{id:"original-owner",is_admin:true}};});
  await expect(panel.locator("[data-artifact]")).toHaveCount(0);
 });
+
+for (const bundle of [false, true]) for (const aba of [false, true]) test(`debug queue retires account-owned sends bundle=${bundle} aba=${aba}`, async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("usage-maintenance/request-debug", bundle ? "&bundle=1" : ""));
+  const debug = page.locator("extended-openai-debug-panel");
+  await expect(debug.locator("#enabled")).toBeEnabled();
+  await debug.evaluate(async host => {
+    host.hass = {...host._hass, user:{id:"original-debug-account", is_admin:true}};
+    const call = host._hass.callWS.bind(host._hass);
+    window.debugQueueOwner = {calls:[], originalId:host._hass.user.id};
+    host._hass.callWS = async message => {
+      const result = await call(message);
+      if (message.action !== "configure") return result;
+      debugQueueOwner.calls.push(message);
+      return new Promise(resolve => { debugQueueOwner.release = () => resolve(result); });
+    };
+    debugQueueOwner.first = host._configure({enabled:true});
+  });
+  await expect.poll(() => page.evaluate(() => debugQueueOwner.calls.length)).toBe(1);
+  await debug.evaluate((host, aba) => {
+    debugQueueOwner.second = host._configure({enabled:false});
+    const same = host._hass;
+    same.user.id = "replacement-debug-account";
+    host.hass = same;
+    if (aba) { same.user.id = debugQueueOwner.originalId; host.hass = same; }
+  }, aba);
+  await page.evaluate(async () => {
+    debugQueueOwner.release();
+    await Promise.all([debugQueueOwner.first, debugQueueOwner.second]);
+  });
+  expect(await page.evaluate(() => debugQueueOwner.calls.map(message => message.enabled))).toEqual([true]);
+  expect(await page.evaluate(() => browserHarness.getState().requestDebug.enabled)).toBe(true);
+  await expectHarnessClean(page, errors);
+});

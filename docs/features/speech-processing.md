@@ -14,6 +14,8 @@ The built-in cleanup can remove content that is useful on screen but awkward whe
 
 It works with Responses, Chat Completions and compatible providers. It also keeps track of text across streamed chunks, so a Markdown link or URL split across several pieces can still be removed before it is spoken.
 
+Inline code preserves literal operators and URLs while its backtick delimiters are removed, including when enclosed in emphasis. Final whitespace cleanup preserves parentheses such as `call()`. Configured replacement rules can deliberately change this content.
+
 Home Assistant currently uses the same progressive stream for live visual updates and TTS. This means the live on-screen stream also receives the speech-safe text, while the original model response is still retained for history and future conversation context.
 
 For Responses API replies, structured URL citation information is still retained with the original response even when the spoken version is cleaned.
