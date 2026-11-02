@@ -36,7 +36,12 @@ def run_pytest(core_root: Path, args: list[str]) -> int:
         sys.modules[f"pytest_homeassistant_custom_component{suffix}"] = (
             importlib.import_module(f"pytest_homeassistant{suffix}")
         )
-    return pytest.main(["-p", "no:homeassistant", *args], plugins=[native_plugin])
+    # Native plugin startup configures this path again. Pin its actual option,
+    # too, so pytest_configure cannot silently switch back to this repo's tests.
+    return pytest.main(
+        ["-p", "no:homeassistant", *args, "-o", f"ha_test_root={core_root / 'tests'}"],
+        plugins=[native_plugin],
+    )
 
 
 def main() -> int:
@@ -51,6 +56,11 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="eoai-dev-fixtures-") as temporary:
         core_root = Path(temporary) / "core"
         extract_source("home-assistant/core", sha, core_root)
+        plugin_source = core_root / "packages/pytest-homeassistant"
+        if not (plugin_source / "pyproject.toml").is_file():
+            raise RuntimeError(
+                f"Home Assistant Core {sha} does not provide its native pytest package"
+            )
         # Pin the already-installed Core version: helper installation must not
         # replace the immutable dev runtime with a published stable release.
         subprocess.run(
@@ -59,7 +69,7 @@ def main() -> int:
                 "-m",
                 "pip",
                 "install",
-                str(core_root / "packages/pytest-home-assistant"),
+                str(plugin_source),
                 f"homeassistant=={version('homeassistant')}",
             ],
             check=True,
