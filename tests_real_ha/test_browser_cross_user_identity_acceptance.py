@@ -14,6 +14,7 @@ from pytest_homeassistant_custom_component.common import CLIENT_ID, MockUser
 
 from custom_components.extended_openai_conversation_responses.memory import async_get_memory
 from homeassistant.core import HomeAssistant
+from homeassistant.setup import async_setup_component
 from tests_real_ha.test_browser_backend_acceptance import (
     _run_playwright,
     _start_ws_bridge,
@@ -179,6 +180,9 @@ async def test_cross_user_browser_identity_and_authorization_boundaries(
     hass_ws_client: Any,
 ) -> None:
     """Exercise identity handoff, live role mutation and cross-admin stale writes."""
+    # Query each real authenticated session via auth/current_user rather than
+    # treating a browser-supplied user object as proof of the server identity.
+    assert await async_setup_component(hass, "auth", {})
     entry = _entry("Cross-user browser boundaries")
     await _setup_entry(hass, entry)
 
