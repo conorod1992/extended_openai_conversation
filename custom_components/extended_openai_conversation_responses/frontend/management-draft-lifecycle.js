@@ -41,7 +41,7 @@ function synchronizeUnloadGuard() {
 }
 
 function owner(panel) {
-  const user = panel.hass?.user?.id;
+  const user = panel._eocPresentationOwnerId ?? panel.hass?.user?.id;
   const agent = panel._selectedAgent?.();
   return user && agent?.entry_id && agent?.subentry_id
     ? JSON.stringify([user, agent.entry_id, agent.subentry_id]) : null;
@@ -59,6 +59,7 @@ export function retainPanelDrafts(panel) {
 }
 
 export function restorePanelDrafts(panel) {
+  if (panel._eocPresentationBlocked) return;
   const key = owner(panel), sources = retained.get(key);
   const previousCopy = recoveryConfigurationCopies.get(panel);
   if (previousCopy && (!previousCopy.source._configDirty || owner(previousCopy.source) !== key)) recoveryConfigurationCopies.delete(panel);

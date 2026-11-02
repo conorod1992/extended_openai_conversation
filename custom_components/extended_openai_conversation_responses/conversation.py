@@ -2376,8 +2376,13 @@ class ExtendedOpenAIAgentEntity(
                     get_exposed_entities(self.hass), control=control
                 )
             try:
-                with ha_actions.action_target_revalidation(
-                    self._require_current_action_targets
+                from .native_read_scope import native_read_scope
+
+                with (
+                    ha_actions.action_target_revalidation(
+                        self._require_current_action_targets
+                    ),
+                    native_read_scope(self._get_exposed_entities),
                 ):
                     return await super()._execute_function_tool(
                         resolved_tool, tool_input, llm_context, guest_entities

@@ -1,4 +1,6 @@
 
+import {ownAuthenticationRead} from "./authentication-presentation.js";
+
 let implementation = null;
 let loadPromise = null;
 let healthClarityModule = null;
@@ -24,7 +26,7 @@ export async function ensureOverviewModule() {
 
 export function startOverviewBroadcastSnapshot(panel) {
   if (panel._eocOverviewBroadcastPromise) return panel._eocOverviewBroadcastPromise;
-  const promise = panel._hass.callWS({type: WS_BROADCAST, action: "snapshot"});
+  const promise = ownAuthenticationRead(panel, panel._hass.callWS({type: WS_BROADCAST, action: "snapshot"}));
   panel._eocOverviewBroadcastPromise = promise;
   return promise;
 }

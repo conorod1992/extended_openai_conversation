@@ -208,3 +208,19 @@ intensity scope. `passed` means the selected scope passed. Only a successful run
 selecting all campaigns at both normal and heavy intensities sets
 `full_programme_passed`; a campaign-only green run cannot certify the full
 programme. Scheduled long-lifetime heavy execution remains in its dedicated lane.
+
+Management authentication regressions cover a retained panel receiving a different
+HA user, including mutation of the same `hass.user` object and A/B/A transitions.
+The mounted editor remains owned by its first known account: its content and
+dialogs leave the document while another account is active, with a reload action
+to open a fresh panel for that account. Returning to the original account preserves
+its authored nodes and drafts, but cannot revive retired reads or live watches.
+Broadcast reads carry their authentication generation from request creation,
+including when their feature module binds only after the account round trip.
+
+Native history, statistics and Energy regressions check current Assist/HA READ
+visibility at the read boundary, including nested Composite children and an
+earlier child or Energy manager load that yields before exposure is revoked.
+Current visibility narrows the originally admitted Guest/caller scope; it never
+widens it. The browser resilience slow-read witness waits for the actual delayed
+Memory response and usable collection, since the route heading may paint earlier.

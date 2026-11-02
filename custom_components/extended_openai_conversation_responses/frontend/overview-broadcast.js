@@ -2,6 +2,7 @@ import {callMutation, captureConfigurationOwner, presentAcknowledgedMutation, re
 import {acknowledgeBroadcast} from "./broadcast-acknowledgement.js";
 import {broadcastAttempt, sameBroadcastPayload, retireBroadcastAttempt} from "./broadcast-retry.js";
 import {watchLiveStatus, stopLiveStatus} from "./management-live-status.js";
+import {captureAuthentication, authenticationReadIsCurrent} from "./authentication-presentation.js";
 const ROUTE_STYLE = `/* Overview Broadcast */
 #broadcast-card{background:color-mix(in srgb,var(--secondary-background-color) 20%,var(--card-background-color));border-color:color-mix(in srgb,var(--divider-color) 72%,var(--secondary-text-color))}
 .broadcast-toggle-row{display:flex;justify-content:space-between;gap:18px;align-items:center;padding:16px 0;border-bottom:1px solid var(--divider-color)}
@@ -256,23 +257,26 @@ function applyBroadcastError(panel, err) {
 }
 
 async function loadBroadcast(panel) {
+  const current = captureAuthentication(panel);
   const token = panel._eocBroadcastReadToken = (panel._eocBroadcastReadToken || 0) + 1;
   try {
     const snapshot = await panel._hass.callWS({type: WS_BROADCAST, action: "snapshot"});
-    if (panel._eocBroadcastReadToken === token) applyBroadcastSnapshot(panel, snapshot);
+    if (current() && panel._eocBroadcastReadToken === token) applyBroadcastSnapshot(panel, snapshot);
     return true;
   } catch (err) {
-    if (panel._eocBroadcastReadToken === token) applyBroadcastError(panel, err);
+    if (current() && panel._eocBroadcastReadToken === token) applyBroadcastError(panel, err);
     return false;
   }
 }
 
 export function bindBroadcast(panel, broadcastPromise) {
+  const authCurrent = captureAuthentication(panel);
+  const current = () => authCurrent() && authenticationReadIsCurrent(broadcastPromise);
   ensureRouteStyle(panel);
   const token = panel._eocBroadcastReadToken = (panel._eocBroadcastReadToken || 0) + 1;
   return Promise.resolve(broadcastPromise)
-    .then((snapshot) => { if (panel._eocBroadcastReadToken === token) applyBroadcastSnapshot(panel, snapshot); })
-    .catch((err) => { if (panel._eocBroadcastReadToken === token) applyBroadcastError(panel, err); })
+    .then((snapshot) => { if (current() && panel._eocBroadcastReadToken === token) applyBroadcastSnapshot(panel, snapshot); })
+    .catch((err) => { if (current() && panel._eocBroadcastReadToken === token) applyBroadcastError(panel, err); })
     .finally(() => {
       if (panel._eocOverviewBroadcastPromise === broadcastPromise) panel._eocOverviewBroadcastPromise = null;
     });

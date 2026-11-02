@@ -39,6 +39,7 @@ from ..ha_actions import (
 )
 from ..ha_permissions import entity_access_error, get_active_ha_context
 from ..intercom import async_get_intercom
+from ..native_read_scope import current_native_read_entities
 from ..operational_errors import log_handled_failure
 from ..recorder_budget import bounded_history, bounded_statistics
 from ..request_origin import get_request_satellite
@@ -614,7 +615,10 @@ class NativeFunction(Function):
         end_time = self.as_utc(end_time, start_time + one_day, "end_time not valid")
 
         self.validate_entity_ids(
-            hass, entity_ids, exposed_entities, require_available=False
+            hass,
+            entity_ids,
+            current_native_read_entities(hass, exposed_entities),
+            require_available=False,
         )
 
         try:
@@ -648,7 +652,7 @@ class NativeFunction(Function):
             return {}
         data = dict(energy_manager.data)
         hidden_entity_ids = _energy_entity_ids(data) - _exposed_entity_ids(
-            exposed_entities
+            current_native_read_entities(hass, exposed_entities)
         )
         if hidden_entity_ids:
             # Do not include the identifiers in the error: the entire purpose of
@@ -705,7 +709,9 @@ class NativeFunction(Function):
         # Recorder uses '<domain>:<statistic>' for integration-owned/external
         # statistic IDs. All other IDs are entity-backed and must remain inside
         # the same Assist/HA READ exposure boundary as current state/history.
-        exposed_entity_ids = _exposed_entity_ids(exposed_entities)
+        exposed_entity_ids = _exposed_entity_ids(
+            current_native_read_entities(hass, exposed_entities)
+        )
         unexposed = sorted(
             {
                 statistic_id

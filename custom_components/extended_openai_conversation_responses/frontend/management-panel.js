@@ -6,6 +6,7 @@ import {observeCatalogGeneration} from "./model-catalog.js";
 import {invalidateUsageWindows} from "./usage-cache.js";
 import {scheduleWallTime, scheduleInstant} from "./schedule-time.js";
 import {beginOperation} from "./operation-ownership.js";
+import {updateAuthenticationPresentation} from "./authentication-presentation.js";
 import {stopLiveStatus, watchTimedFeatureStatus} from "./management-live-status.js";
 import {bindConfigurationClarity, enhanceConfigurationClarity} from "./management-draft-navigation.js";
 import {formatManagementTimestamp, prepareMemoryBrowser, ensureTemporaryScope, storeRuntimeGuidance} from "./management-data-state.js";
@@ -321,8 +322,15 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       ++this._loadToken;
       this._eocCatalogReadSequence = (this._eocCatalogReadSequence || 0) + 1;
       this._eocModelChangeToken = (this._eocModelChangeToken || 0) + 1;
+      this._eocViewAssetToken = (this._eocViewAssetToken || 0) + 1;
+      this._eocBroadcastReadToken = (this._eocBroadcastReadToken || 0) + 1;
+      this._eocOverviewBroadcastPromise = null;
+      stopLiveStatus(this);
+      stopDraftRecovery(this);
+      getRouteFeature("usage-maintenance/diagnostics")?.stopDiagnosticsWatch(this);
     }
     this._hass = value;
+    updateAuthenticationPresentation(this, previousUser);
     this.style.colorScheme = value.themes?.darkMode ? "dark" : "light";
     this.shadowRoot?.querySelectorAll("ha-selector, ha-entity-picker, ha-user-picker, ha-yaml-editor").forEach(element => { element.hass = value; });
     this._loadInitialAgents();
@@ -331,7 +339,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   _loadInitialAgents(retry = false) {
     // HA can assign hass before appending an already-defined custom panel.
     // Schedule cold work only once connected; publication remains owner-gated.
-    if (this.isConnected === false || !this._hass) return;
+    if (this.isConnected === false || !this._hass || this._eocPresentationBlocked) return;
     const user = this._hass.user?.id;
     const previous = this._eocCatalogBootstrap;
     const resolved = previous?.pending && previous.user == null && user != null;
@@ -746,6 +754,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _canAccessView(page, subsection = null) {
+    if (this._eocPresentationBlocked) return false;
     if (page === "data-memory" && subsection === "memory-settings" && this._data?.is_admin === false) return false;
     if (this._data?.is_admin === false && isRestrictedManagementView(page, subsection)) return false;
     if (page === "usage-maintenance" && subsection === "request-debug") return this._data?.is_admin === true;
@@ -784,6 +793,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   async _call(section, action, extra = {}) {
+    if (this._eocPresentationBlocked) throw new Error("Home Assistant account changed. Reload settings for this account.");
     if (section === "usage" && action === "daily" && !extra.start_date && !extra.end_date) {
       const {loadUsageDaily} = await import("./usage-data.js");
       return loadUsageDaily(this, extra);
@@ -1233,6 +1243,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   async _loadSection(silent = false) {
+    if (this._eocPresentationBlocked) return;
     // Same-scope Memory refreshes keep their read-only collection on screen.
     // Scope/agent/kind changes still take the normal loading/replacement path.
     if (this._viewKey() === "data-memory/memories" && getRouteFeature("data-memory/memories")?.hasMemoryCollection(this)) silent = true;
@@ -1852,6 +1863,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _render(...args) {
+    if (this._eocPresentationBlocked) return;
     this._markColdLifecycle("first-render-start");
     getRouteFeature("usage-maintenance/diagnostics")?.stopDiagnosticsWatch(this);
     const view = this._viewKey?.() || null;
@@ -1896,6 +1908,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _renderContent() {
+    if (this._eocPresentationBlocked) return;
     const view = this._viewKey();
     const ownsPageDraft = ["capabilities/guest-mode", "capabilities/quiet-hours", "capabilities/request-rules"].includes(view);
     if (ownsPageDraft) initializePageDraft(this);
@@ -2940,6 +2953,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _toast(message, error = false) {
+    if (this._eocPresentationBlocked) return;
     const toast = this.shadowRoot.querySelector("#toast");
     if (!toast) return;
     toast.textContent = message;

@@ -1,3 +1,5 @@
+import {captureAuthentication} from "./authentication-presentation.js";
+
 const watches = new WeakMap();
 
 export function stopLiveStatus(panel, key = null) {
@@ -16,15 +18,15 @@ export function watchLiveStatus(panel, key, {view, delay, refresh, maxRefreshes 
   if (!entries) watches.set(panel, entries = new Map());
   const identity = `${panel._data?.entry_id || ""}|${panel._agentId || ""}|${view}`;
   const existing = entries.get(key);
-  if (existing?.identity === identity && !existing.stopped) return;
+  if (existing?.identity === identity && !existing.stopped && existing.authCurrent()) return;
   stopLiveStatus(panel, key);
-  const watch = {identity, stopped:false, timer:null, attempts:0};
+  const watch = {identity, stopped:false, timer:null, attempts:0, authCurrent:captureAuthentication(panel)};
   entries.set(key, watch);
   const stop = () => {
     if (entries.get(key) === watch) stopLiveStatus(panel, key);
     else {clearTimeout(watch.timer);watch.stopped = true;}
   };
-  const current = () => !watch.stopped && panel.isConnected !== false
+  const current = () => !watch.stopped && watch.authCurrent() && panel.isConnected !== false
     && panel._viewKey?.() === view
     && `${panel._data?.entry_id || ""}|${panel._agentId || ""}|${view}` === identity;
   const schedule = () => {

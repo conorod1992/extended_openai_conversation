@@ -1,6 +1,39 @@
 import {expect, test} from "@playwright/test";
 import {expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
+for (const bundled of [false, true]) {
+  test(`an account change removes the previous owner's presentation and preserves their draft (${bundled ? "bundle" : "source"})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    await page.goto(fixtureUrl("assistant/prompt-context", bundled ? "&bundle=1" : ""));
+    const panel = page.locator("extended-openai-management-panel");
+    await expect(panel.locator('[data-config="prompt"]')).toBeVisible();
+    await panel.evaluate(host => { host.hass = {...host.hass, user:{id:"presentation-owner", is_admin:true}}; });
+    await panel.locator('[data-config="prompt"]').fill("Private authored prompt belonging to the original account");
+    await panel.evaluate(host => {
+      window.authoredPresentation = {hass:host.hass, draft:host._draft, owner:host.hass.user.id};
+      host.hass.user.id = "restricted-other-account";
+      host.hass.user.is_admin = false;
+      host.hass = host.hass;
+    });
+    await expect(panel.getByRole("button", {name:"Reload settings", exact:true})).toBeVisible();
+    await expect(panel.locator('[data-config="prompt"]')).toHaveCount(0);
+    expect(await panel.evaluate(host => host._canAccessView("assistant", "basics"))).toBe(false);
+    expect(await panel.evaluate(host => host.shadowRoot.textContent)).not.toContain("Private authored prompt");
+    expect(await panel.evaluate(async host => {
+      try { await host._call("configuration", "get"); return "unexpected read"; }
+      catch (error) { return error.message; }
+    })).toMatch(/account changed/i);
+    await panel.evaluate(host => {
+      host.hass.user.id = authoredPresentation.owner;
+      host.hass.user.is_admin = true;
+      host.hass = host.hass;
+    });
+    await expect(panel.locator('[data-config="prompt"]')).toHaveValue("Private authored prompt belonging to the original account");
+    expect(await panel.evaluate(host => host._draft === authoredPresentation.draft)).toBe(true);
+    await expectHarnessClean(page, errors);
+  });
+}
+
 for (const bundled of [false, true]) for (const change of ["mutable user id ABA", "mutable logout return"]) {
   test(`shared hass ${change} retires native Rule lookup publication (${bundled ? "bundle" : "source"})`, async ({page}) => {
     const errors = trackPageErrors(page);

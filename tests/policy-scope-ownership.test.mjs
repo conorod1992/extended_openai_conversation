@@ -24,7 +24,9 @@ const policies = [
 
 function setup(policy, anonymous = false) {
   const harness=fixture(), panel=harness.create();
-  if(anonymous) panel.hass={...panel.hass,user:undefined};
+  // Model a cold unresolved identity, rather than logging a known fixture user
+  // out of an already-owned presentation.
+  if(anonymous) panel._hass={...panel.hass,user:undefined};
   [panel._page,panel._subsection]=policy.view.split("/");
   panel._result=structuredClone(policy.initial);panel._busy=false;
   initializePageDraft(panel);policy.edit(panel);

@@ -74,10 +74,21 @@ test("slow reads and a dropped read converge on real HA state", async ({page}) =
   await page.goto(fixture("assistant/basics"));
   await expect(title(page)).toBeVisible();
   await control(page, "owner", 900);
+  const delayedRead = page.waitForResponse(response => {
+    if (!response.url().startsWith(backendUrl) || response.request().method() !== "POST") return false;
+    const body = response.request().postDataJSON();
+    return body?.section === "memories" && body?.action === "list";
+  });
   const start = Date.now();
   await page.goto(fixture("data-memory/memories"));
   await expect(panel(page).getByRole("heading", {name: "Memories", exact: true})).toBeVisible();
+  // The route heading intentionally precedes its data. Certify the delayed HA
+  // read, then the usable collection, instead of timing the shell's first paint.
+  const response = await delayedRead;
+  expect(response.ok()).toBe(true);
+  await response.finished();
   expect(Date.now() - start).toBeGreaterThanOrEqual(800);
+  await expect(panel(page).locator("#add-memory")).toBeVisible();
   await control(page);
 
   let dropped = 0;
