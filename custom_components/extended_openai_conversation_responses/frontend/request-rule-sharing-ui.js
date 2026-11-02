@@ -1,3 +1,4 @@
+import {captureAuthentication} from "./authentication-presentation.js";
 import {captureConfigurationOwner, presentAcknowledgedMutation, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
 import {applyRulePackImportMutation, refreshRuleSharingGroups} from "./request-rules-ui-core.js";
 import {reviewSharingExport, SHARING_CONTRACT} from "./sharing-review.js";
@@ -30,10 +31,13 @@ export function bindRuleSharing(panel, host) {
   refreshRuleSharingGroups(panel);
   q("#rule-pack-selection").addEventListener("change",()=>{q("#rule-pack-group-label").hidden=q("#rule-pack-selection").value!=="group";});
   const exportSelected=async(ruleIds=null)=>{
+    const current=captureAuthentication(panel);
     const selection=q("#rule-pack-selection").value;
     try{
       const pack=await panel._call("request_rules","rule_pack_export",{selection,group_id:selection==="group"?(groupSelect.value||null):null,rule_ids:ruleIds,reviewed_custom:Boolean(q("#rule-pack-reviewed-custom")?.checked)});
+      if(!current())return;
       if(!await reviewSharingExport(panel,{json:JSON.stringify(pack,null,2),security:pack.security}))return;
+      if(!current())return;
       downloadPack(pack);setMessage(`${pack.rules.length} rules exported.`);
     }catch(err){setMessage(err.message||String(err));}
   };

@@ -722,3 +722,24 @@ def test_www_cleanup_preserves_ordinary_text(text) -> None:
     assert process_speech_text(text, _config()) == text
     for split in range(len(text) + 1):
         assert _stream([text[:split], text[split:]]) == text
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("2**3 = 8", "2**3 = 8"),
+    ("2**-3", "2**-3"),
+    ("x**y", "x**y"),
+    ("(2)**3", "(2)**3"),
+    ("word**bold**word", "wordboldword"),
+    ("2**3**2", "2**3**2"),
+    ("2**3 and **eight**", "2**3 and eight"),
+    ("`x**2 + __name__`", "x**2 + __name__"),
+    ("`https://example.com/a_b`", "https://example.com/a_b"),
+    ("``a ` b ** c``", "a ` b ** c"),
+    ("**eight** and 2**3", "eight and 2**3"),
+    ("2**3**", "23"),
+])
+def test_literal_operators_and_code_survive_all_stream_splits(text, expected):
+    assert process_speech_text(text, _config()) == expected
+    for split in range(len(text) + 1):
+        assert _stream([text[:split], text[split:]]).strip() == expected
+    assert _stream(list(text)).strip() == expected

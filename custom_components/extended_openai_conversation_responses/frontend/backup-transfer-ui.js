@@ -1,3 +1,4 @@
+import {captureAuthentication} from "./authentication-presentation.js";
 import {restoreScopeMarkup} from "./management-decision-guidance.js";
 import {TRANSFER_SECTIONS} from "./backup-transfer-shell.js";
 import {backupSummaryLines} from "./backup-summary.js";
@@ -84,29 +85,38 @@ async function defaultSaveBlob(blob, filename) {
 }
 
 export async function downloadSetupExport(panel, saveBlob = defaultSaveBlob, {reviewedCustom = false, review = false} = {}) {
+  const current = captureAuthentication(panel);
   const result = await callBackupTransfer(panel, "setup_export", reviewedCustom ? {reviewed_custom: true} : {});
+  if (!current()) return {...result, cancelled:true};
   if (!result?.json || !result?.filename) throw new Error("The server returned an invalid setup export");
   if (review && !await reviewSharingExport(panel, result)) return {...result, cancelled: true};
+  if (!current()) return {...result, cancelled:true};
   const blob = new Blob([result.json], {type: "application/json"});
   await saveBlob(blob, result.filename, result);
   return result;
 }
 
 export async function downloadArchiveBackup(panel, {mode = "full", sections = null} = {}, saveBlob = defaultSaveBlob) {
+  const current = captureAuthentication(panel);
+  const requireOwner = () => { if (!current()) throw Error("Export authentication changed; start a new export."); };
   const owner = selectedAgent(panel);
   let session = null;
   try {
     const data = {mode};
     if (sections != null) data.sections = sections;
+    requireOwner();
     const manifest = await callBackupTransfer(panel, "export_start", data, owner);
     session = transferSession(manifest.session_id, owner);
+    requireOwner();
     if (!session.session_id || !Number.isInteger(manifest.chunk_count) || manifest.chunk_count < 1 || !Number.isInteger(manifest.size) || manifest.size < 1) {
       throw new Error("The backup server returned an invalid transfer manifest");
     }
     const parts = [];
     let received = 0;
     for (let index = 0; index < manifest.chunk_count; index += 1) {
+      requireOwner();
       const chunk = await callBackupTransfer(panel, "export_chunk", {session_id: session.session_id, index}, session.owner);
+      requireOwner();
       if (chunk.session_id !== session.session_id || chunk.index !== index || chunk.offset !== received || !Number.isInteger(chunk.bytes) || chunk.bytes < 1) {
         throw new Error("The backup server returned an out-of-order chunk");
       }
@@ -120,6 +130,7 @@ export async function downloadArchiveBackup(panel, {mode = "full", sections = nu
     if (received !== manifest.size) throw new Error("The backup download is incomplete");
     const blob = new Blob(parts, {type: manifest.content_type || "application/zip"});
     if (blob.size !== manifest.size) throw new Error("The backup download is incomplete");
+    requireOwner();
     await saveBlob(blob, manifest.filename, manifest);
     return manifest;
   } finally {

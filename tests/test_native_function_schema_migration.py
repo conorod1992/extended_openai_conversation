@@ -329,3 +329,21 @@ def test_whole_tool_aliases_are_assessed_independently():
     assert changed is True
     assert migrated[0] == migrated[1] and migrated[0] is not migrated[1]
     assert "strict" not in tool["spec"]
+
+
+@pytest.mark.parametrize("native", [False, True])
+@pytest.mark.parametrize("damaged", [False, True])
+def test_representation_and_quarantined_sibling_migrate_independently(native, damaged):
+    tool = _tool("get_statistics", migration._LEGACY_PRESET_GET_STATISTICS_PARAMETERS)
+    values = [tool, 42] if damaged else [tool]
+    before = deepcopy(values)
+    source = values if native else yaml.safe_dump(values)
+    result, changed = migration.migrate_legacy_stock_native_function_tools_yaml(source)
+    assert changed
+    decoded = result if native else yaml.safe_load(result)
+    assert "week" in decoded[0]["spec"]["parameters"]["properties"]["period"]["enum"]
+    assert values == before
+    if damaged:
+        assert decoded[1] == 42
+    assert migration.migrate_legacy_stock_native_function_tools_yaml(result) == (result, False)
+    assert isinstance(result, list) == native

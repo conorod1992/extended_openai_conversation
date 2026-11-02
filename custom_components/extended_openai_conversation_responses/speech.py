@@ -65,6 +65,9 @@ class StreamingSpeechSanitizer:
         self._format_buffer = ""
         self._format_previous = ""
         self._format_depth = 0
+        self._link_code = 0
+        self._format_code = 0
+        self._strong_open = False
         self._line_start = True
         self._needs_separator = False
         self._last_output = ""
@@ -140,6 +143,24 @@ class StreamingSpeechSanitizer:
 
         while index < len(text):
             char = text[index]
+            if self.markdown and char == "`":
+                end = index
+                while end < len(text) and text[end] == "`":
+                    end += 1
+                if end == len(text) and not final:
+                    break
+                count = end - index
+                if not self._link_code:
+                    self._link_code = count
+                elif count == self._link_code:
+                    self._link_code = 0
+                self._emit(output, text[index:end])
+                index = end
+                continue
+            if self._link_code:
+                self._emit(output, char)
+                index += 1
+                continue
 
             if self.markdown and char == "(":
                 link_start = index + 1
@@ -279,6 +300,28 @@ class StreamingSpeechSanitizer:
         unresolved_emphasis = False
 
         while index < len(self._format_buffer):
+            if self._format_buffer[index] == "`":
+                end = index
+                while (
+                    end < len(self._format_buffer) and self._format_buffer[end] == "`"
+                ):
+                    end += 1
+                if end == len(self._format_buffer) and not final:
+                    break
+                count = end - index
+                if not self._format_code:
+                    self._format_code = count
+                elif count == self._format_code:
+                    self._format_code = 0
+                else:
+                    output.append(self._format_buffer[index:end])
+                index = end
+                self._line_start = False
+                continue
+            if self._format_code:
+                output.append(self._format_buffer[index])
+                index += 1
+                continue
             if self._line_start:
                 action, count = self._line_prefix(self._format_buffer, final, index)
                 if action == "incomplete":
@@ -370,6 +413,18 @@ class StreamingSpeechSanitizer:
                     continue
             if pair in _FORMAT_MARKERS:
                 if (
+                    pair == "**"
+                    and not self._strong_open
+                    and (previous.isalnum() or previous in ")]")
+                    and self._format_buffer.find("**", index + 2) < 0
+                ):
+                    if not final:
+                        unresolved_emphasis = True
+                        break
+                    output.append(pair)
+                    index += 2
+                    continue
+                if (
                     previous.isspace()
                     and self._format_buffer[index + 2 : index + 3].isspace()
                 ):
@@ -391,6 +446,8 @@ class StreamingSpeechSanitizer:
                     or index + 2 == len(self._format_buffer)
                     or not self._format_buffer[index + 2].isalnum()
                 ):
+                    if pair == "**":
+                        self._strong_open = not self._strong_open
                     index += 2
                     continue
             if not final and index == len(self._format_buffer) - 1 and char in "*_~":

@@ -1,6 +1,7 @@
 // @ts-check
-/** @param {string} text @param {Pick<Navigator, "clipboard"> | undefined} clipboardNavigator @param {Document | undefined} clipboardDocument */
-export async function copyTextToClipboard(text, clipboardNavigator = globalThis.navigator, clipboardDocument = globalThis.document) {
+/** @param {string} text @param {Pick<Navigator, "clipboard"> | undefined} clipboardNavigator @param {Document | undefined} clipboardDocument @param {() => boolean} current */
+export async function copyTextToClipboard(text, clipboardNavigator = globalThis.navigator, clipboardDocument = globalThis.document, current = () => true) {
+  if (!current()) throw Error("Copy ownership changed.");
   const writeText = clipboardNavigator?.clipboard?.writeText;
   if (typeof writeText === "function") {
     try {
@@ -10,6 +11,7 @@ export async function copyTextToClipboard(text, clipboardNavigator = globalThis.
       if (!clipboardDocument) throw err;
     }
   }
+  if (!current()) throw Error("Copy ownership changed.");
   if (!clipboardDocument?.body || typeof clipboardDocument.createElement !== "function" || typeof clipboardDocument.execCommand !== "function") {
     throw new Error("Clipboard access is unavailable in this browser context");
   }

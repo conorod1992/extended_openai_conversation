@@ -15,6 +15,7 @@ export function updateAuthenticationPresentation(panel, previousUser = null) {
   const root = panel.shadowRoot;
   if (!state || !root?.childNodes || typeof document === "undefined") return;
   if (blocked) {
+    panel.dispatchEvent?.(new Event("eoc-authentication-retired"));
     if (!state.nodes) {
       state.focus = root.activeElement;
       state.modals = [...root.querySelectorAll("dialog:modal")];

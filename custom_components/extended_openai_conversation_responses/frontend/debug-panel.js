@@ -25,7 +25,15 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
 
   set hass(value) {
     const first = !this._hass;
+    const changed = this._observedUserId !== undefined && this._observedUserId !== value.user?.id;
+    this._observedUserId = value.user?.id;
     this._hass = value;
+    if (changed) {
+      this._revision++;
+      this._agents = []; this._agent = null; this._status = null; this._runs = []; this._error = "";
+      this._render();
+      this._loadAgents();
+    }
     this.style.colorScheme = value.themes?.darkMode ? "dark" : "light";
     if (first) this._loadAgents();
   }
@@ -74,7 +82,7 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
         || readOptionalStorage("extended-openai-debug-agent");
       const agent = this._agents.find(item => item.subentry_id === saved) || this._agents[0];
       if (agent) await this._selectAgent(agent.subentry_id);
-      else { this._agent = null; this._status = null; this._runs = []; }
+      else { this._agent = null; this._status = null; this._runs = []; this._error = ""; }
     } catch (err) {
       if (token === this._agentLoadToken && revision === this._revision) this._error = err.message || String(err);
     } finally {
@@ -245,8 +253,10 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
   }
 
   async _copyRun(debugId) {
+    const revision = this._revision, connection = this._hass, agent = this._agent;
     try {
       const result = await this._getRun(debugId, 0);
+      if (!this.isConnected || revision !== this._revision || connection !== this._hass || agent !== this._agent) return;
       const embedded = this.hasAttribute("embedded");
       await this._copyText(embedded ? debugPageText(result.trace) : result.copy_text);
       this._toast(embedded ? "First debug page copied" : "Entire debug log copied");
@@ -256,7 +266,8 @@ export class ExtendedOpenAIDebugPanel extends HTMLElement {
   }
 
   async _copyText(text) {
-    await copyTextToClipboard(text);
+    const revision = this._revision, connection = this._hass;
+    await copyTextToClipboard(text, undefined, undefined, () => this.isConnected && revision === this._revision && connection === this._hass);
   }
 
   _formatDate(value) {

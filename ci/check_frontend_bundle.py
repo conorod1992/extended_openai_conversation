@@ -14,7 +14,8 @@ DIST = Path("custom_components/extended_openai_conversation_responses/frontend/d
 # The subsequent eight-fix review adds about 10 KiB (1.2%) for retained Voice
 # authoring and complete Group repair. Allow that reviewed feature growth with
 # finite headroom; do not relax the separate entry or CSS ceilings.
-CEILINGS = {"javascript": 870_000, "css": 65_000, "management_entry": 120_000}
+# Reviewed private-publication ownership guards add about 1.2 KiB.
+CEILINGS = {"javascript": 871_500, "css": 65_000, "management_entry": 120_000}
 
 
 def measure(dist: Path) -> dict[str, int]:
