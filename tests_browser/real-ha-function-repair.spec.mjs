@@ -49,6 +49,24 @@ test("quarantined Function Tools repair through shipped frontend and genuine HA"
   expect(after.function_repair).toBeUndefined();
   expect(after.config.functions.map((item) => item.spec.name)).toContain("nightly_repaired_tool");
   expect(after.config.prompt).toBe("Nightly safe edit while tools need repair");
+
+  // A retained collection editor may submit again after the final tool repair
+  // has cleared quarantine. Exercise that same command against healthy state.
+  const groupsSaved = await page.evaluate(revision => window.browserHarness.panel._call("function_repair", "save_groups", {
+    groups: [], guest_allowed_group_ids: [], revision,
+  }), after.revision);
+  expect(groupsSaved.valid).toBe(true);
+  expect(groupsSaved.function_groups).toEqual([]);
+  expect(groupsSaved.config.functions).toEqual(after.config.functions);
+
+  await page.goto(fixture);
+  await page.waitForFunction(() => window.browserHarness?.panel?._selectedAgent?.());
+  const readback = await page.evaluate(() => window.browserHarness.panel._call("configuration", "get"));
+  expect(readback.function_repair).toBeUndefined();
+  expect(readback.config.function_groups).toEqual([]);
+  expect(readback.config.guest_allowed_group_ids).toEqual([]);
+  expect(readback.config.functions).toEqual(after.config.functions);
+  expect(readback.config.prompt).toBe(after.config.prompt);
   await expectContractCalls(page, "function_repair");
   await expectHarnessClean(page, pageErrors);
 });

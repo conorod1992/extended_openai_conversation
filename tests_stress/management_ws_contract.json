@@ -17,6 +17,7 @@
     {"journey": "function_repair", "section": "function_repair", "action": "save_one", "keys": ["index", "tool", "revision"], "contains": {"index": 0}},
     {"journey": "function_repair", "section": "function_repair", "action": "delete_one", "keys": ["index", "revision"]},
     {"journey": "function_repair", "section": "function_repair", "action": "save", "keys": ["tools", "revision"]},
+    {"journey": "function_repair", "section": "function_repair", "action": "save_groups", "keys": ["groups", "guest_allowed_group_ids", "revision"], "contains": {"groups": [], "guest_allowed_group_ids": []}},
     {"journey": "function_repair", "section": "function_repair", "action": "configuration_save", "keys": ["config"], "contains": {"config": {"prompt": "Nightly safe edit while tools need repair"}}},
     {"journey": "memory", "section": "memories", "action": "temporary_add", "keys": ["scope_id", "content", "category", "target_scope_id", "expires_at"]},
     {"journey": "memory", "section": "memories", "action": "add", "keys": ["scope_id", "content", "category", "target_scope_id"]},
