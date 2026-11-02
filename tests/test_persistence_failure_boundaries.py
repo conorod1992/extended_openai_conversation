@@ -23,6 +23,7 @@ class _ArchiveSession:
 class _ArchiveTurn:
     session_id: str
     timestamp: str
+    sequence: int | None = None
 
 
 class _ArchiveStorage:
