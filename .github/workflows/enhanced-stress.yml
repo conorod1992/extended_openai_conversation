@@ -565,12 +565,13 @@ jobs:
         run: bash ci/reconcile_stable_environment.sh
       - name: Install external Recorder database drivers
         run: pip install "PyMySQL>=1.1,<2" "psycopg2-binary>=2.9,<3"
-      - name: Certify MariaDB and PostgreSQL Recorder history
+      - name: Certify SQLite purge and MariaDB/PostgreSQL Recorder history
         run: >-
           pytest
           tests_stress/test_recorder_time_retention_lifecycle.py::test_native_history_against_external_recorder_database
           tests_stress/test_recorder_time_retention_lifecycle.py::test_recorder_backend_switch_preserves_history_and_statistics_semantics
           tests_stress/test_recorder_time_retention_lifecycle.py::test_external_recorder_connection_loss_then_recovery
+          tests_stress/test_recorder_time_retention_lifecycle.py::test_recorder_purge_can_overlap_native_history_query_and_recover
           -v -s --asyncio-mode=auto --timeout=180 --tb=short
 
   browser:
