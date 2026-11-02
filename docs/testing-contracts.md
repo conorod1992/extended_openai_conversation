@@ -16,6 +16,8 @@ Archive turn order survives a backwards wall-clock correction across a monthly s
 
 A validated full-agent journal authorizes recovery of rejected native category stores; corrupt data alone does not. Target and rollback tests preserve quarantine evidence, reload through ordinary managers, and retain the journal across failed writes and retries. Archive recovery inventories only exact owned monthly files. Usage recovery reconciles previously rejected handles through native reads, while healthy legacy totals mirrors retain their existing best-effort behavior.
 
+Combined recovery cases quarantine every native category together, interrupt the final bootstrap write, then retry with warm or cold manager state. They compare every restored category and the saved retention policy against the selected journal generation, including a subsequent Usage reload under that policy.
+
 Read results carry meaning independently of whether they contain records. Initial catalogue pending, failed and successful-empty states must render distinctly, with a deliberate catalogue retry and no retry storm from Home Assistant updates. Relative Usage periods use Home Assistant's local calendar rather than the latest activity or a retained summary date. Diagnostics share canonical configuration representation parsing and isolate failures between sections.
 
 Mobile dialog action reachability is checked geometrically after ordinary scrolling. Programmatic focus, locator clicks and scroll-into-view behavior alone do not establish that a user can reach a clipped footer.
