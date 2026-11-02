@@ -91,7 +91,12 @@ def test_native_fixture_bootstrap_preserves_module_identity_and_test_arguments(
         )
 
 
-def test_native_fixture_install_pins_core_and_preserves_child_failure(monkeypatch):
+@pytest.mark.parametrize(
+    "package_name", ["pytest-homeassistant", "pytest-home-assistant"]
+)
+def test_native_fixture_install_pins_core_and_preserves_child_failure(
+    monkeypatch, package_name
+):
     sha = "e" * 40
     extracted = []
     commands = []
@@ -103,12 +108,12 @@ def test_native_fixture_install_pins_core_and_preserves_child_failure(monkeypatc
     def extract(repository, commit, root):
         extracted.append((repository, commit, root))
         (root / "tests").mkdir(parents=True)
-        # Actual native Core layout at e3a70f5f5f4051bb9d4ef273b4650669ea7a5e2b.
+        # Verified source layouts: e3a70f5... (current) and dbb79b6... (cached).
         # The former test accepted a pip invocation against a nonexistent path.
-        package = root / "packages/pytest-homeassistant"
+        package = root / "packages" / package_name
         package.mkdir(parents=True)
         (package / "pyproject.toml").write_text(
-            '[project]\nname = "pytest-homeassistant"\nversion = "0.0.0"\n'
+            f'[project]\nname = "{package_name}"\nversion = "0.0.0"\n'
         )
 
     def run(args, **kwargs):
@@ -116,6 +121,7 @@ def test_native_fixture_install_pins_core_and_preserves_child_failure(monkeypatc
         assert extracted[0][2].exists()
         if args[1:4] == ["-m", "pip", "install"]:
             assert (Path(args[4]) / "pyproject.toml").is_file()
+            assert Path(args[4]).name == package_name
         return SimpleNamespace(returncode=5)
 
     monkeypatch.setattr(run_ha_dev_pytest, "extract_source", extract)
@@ -130,18 +136,29 @@ def test_native_fixture_install_pins_core_and_preserves_child_failure(monkeypatc
     assert not extracted[0][2].exists()
 
 
-def test_missing_native_package_fails_before_install_or_running_tests(monkeypatch):
+@pytest.mark.parametrize("ambiguous", [False, True], ids=["missing", "ambiguous"])
+def test_unusable_native_package_fails_before_install_or_running_tests(
+    monkeypatch, ambiguous
+):
     monkeypatch.setattr(sys, "argv", ["runner", "--core-sha", "e" * 40])
-    monkeypatch.setattr(
-        run_ha_dev_pytest, "extract_source", lambda *args: args[-1].mkdir()
-    )
+
+    def extract(*args):
+        root = args[-1]
+        root.mkdir()
+        if ambiguous:
+            for name in ("pytest-homeassistant", "pytest-home-assistant"):
+                package = root / "packages" / name
+                package.mkdir(parents=True)
+                (package / "pyproject.toml").write_text("[project]\n")
+
+    monkeypatch.setattr(run_ha_dev_pytest, "extract_source", extract)
     monkeypatch.setattr(
         run_ha_dev_pytest.subprocess,
         "run",
         lambda *_args, **_kwargs: pytest.fail("pip must not run"),
     )
     with pytest.raises(
-        RuntimeError, match="does not provide its native pytest package"
+        RuntimeError, match="must provide exactly one native pytest package"
     ):
         run_ha_dev_pytest.main()
 

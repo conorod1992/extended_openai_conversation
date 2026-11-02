@@ -56,11 +56,21 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="eoai-dev-fixtures-") as temporary:
         core_root = Path(temporary) / "core"
         extract_source("home-assistant/core", sha, core_root)
-        plugin_source = core_root / "packages/pytest-homeassistant"
-        if not (plugin_source / "pyproject.toml").is_file():
-            raise RuntimeError(
-                f"Home Assistant Core {sha} does not provide its native pytest package"
+        # Core renamed this package; cached dev images still own the previous
+        # immutable source layout. Never substitute fixtures from another SHA.
+        plugin_sources = [
+            candidate
+            for candidate in (
+                core_root / "packages/pytest-homeassistant",
+                core_root / "packages/pytest-home-assistant",
             )
+            if (candidate / "pyproject.toml").is_file()
+        ]
+        if len(plugin_sources) != 1:
+            raise RuntimeError(
+                f"Home Assistant Core {sha} must provide exactly one native pytest package"
+            )
+        plugin_source = plugin_sources[0]
         # Pin the already-installed Core version: helper installation must not
         # replace the immutable dev runtime with a published stable release.
         subprocess.run(
