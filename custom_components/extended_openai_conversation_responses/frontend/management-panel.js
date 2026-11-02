@@ -7,7 +7,7 @@ import {invalidateUsageWindows} from "./usage-cache.js";
 import {scheduleWallTime, scheduleInstant} from "./schedule-time.js";
 import {beginOperation} from "./operation-ownership.js";
 import {updateAuthenticationPresentation} from "./authentication-presentation.js";
-import {stopLiveStatus, watchTimedFeatureStatus} from "./management-live-status.js";
+import {stopLiveStatus, pauseLiveStatus, resumeLiveStatus, watchTimedFeatureStatus} from "./management-live-status.js";
 import {bindConfigurationClarity, enhanceConfigurationClarity} from "./management-draft-navigation.js";
 import {formatManagementTimestamp, prepareMemoryBrowser, ensureTemporaryScope, storeRuntimeGuidance} from "./management-data-state.js";
 import {enhanceConfirmationScope} from "./management-confirmation-scope.js";
@@ -325,12 +325,14 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       this._eocViewAssetToken = (this._eocViewAssetToken || 0) + 1;
       this._eocBroadcastReadToken = (this._eocBroadcastReadToken || 0) + 1;
       this._eocOverviewBroadcastPromise = null;
-      stopLiveStatus(this);
+      pauseLiveStatus(this);
       stopDraftRecovery(this);
       getRouteFeature("usage-maintenance/diagnostics")?.stopDiagnosticsWatch(this);
     }
+    const wasBlocked = this._eocPresentationBlocked;
     this._hass = value;
     updateAuthenticationPresentation(this, previousUser);
+    if (wasBlocked && !this._eocPresentationBlocked) resumeLiveStatus(this);
     this.style.colorScheme = value.themes?.darkMode ? "dark" : "light";
     this.shadowRoot?.querySelectorAll("ha-selector, ha-entity-picker, ha-user-picker, ha-yaml-editor").forEach(element => { element.hass = value; });
     this._loadInitialAgents();

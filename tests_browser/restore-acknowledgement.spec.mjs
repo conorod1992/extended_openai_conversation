@@ -66,6 +66,8 @@ for (const bundle of [false, true]) for (const outcome of ["acknowledged", "lost
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("usage-maintenance/backup-restore", bundle ? "&bundle=1" : ""));
   const panel = page.locator("extended-openai-management-panel");
+  await panel.locator("#transfer-export-mode").waitFor();
+  await panel.evaluate(host => {host.hass.user = {id:"restore-confirmation-owner", is_admin:true}; host.hass = host.hass;});
   await panel.locator("#transfer-export-mode").selectOption("full");
   const downloading = page.waitForEvent("download");
   await panel.locator("#create-backup-transfer").click();

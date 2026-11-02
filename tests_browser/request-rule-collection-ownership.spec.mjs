@@ -14,7 +14,7 @@ async function prepare(page, bundled, action, failed = false, secondRule = false
     const probe = window.ruleCollectionOwner = {backend, records:[], toasts:[]};
     probe.call = (action, extra = {}) => backend({type:"extended_openai_conversation_responses/management", section:"request_rules", action,
       entry_id:"entry-1", subentry_id:"agent-1", revision:browserHarness.getState().requestRules.revision, ...extra});
-    host.hass.user = {id:"rule-collection-owner-A", is_admin:true};
+    host.hass = {...host.hass, user:{id:"rule-collection-owner-A", is_admin:true}};
     host._toast = (...args) => probe.toasts.push(args);
     if (action === "move" || secondRule) {
       await probe.call("create", {rule:{...browserHarness.getState().requestRules.rules[0], name:"Second collection rule"}});

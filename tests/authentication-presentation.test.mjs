@@ -44,7 +44,7 @@ test("same-user updates preserve the Broadcast read and authored configuration",
   assert.equal(panel._draft, draft);
 });
 
-test("an in-flight live status watch cannot publish after an authentication round trip", async t => {
+for (const other of ["other-account", null]) test(`live status retires old replies and resumes after ${other ?? "logout"}`, async t => {
   const {create} = fixture(), panel = create(), gate = deferred();
   panel.hass = panel.hass;
   const timers = [], originalTimer = globalThis.setTimeout, originalClear = globalThis.clearTimeout;
@@ -52,17 +52,22 @@ test("an in-flight live status watch cannot publish after an authentication roun
   globalThis.clearTimeout = () => {};
   t.after(() => { stopLiveStatus(panel); globalThis.setTimeout = originalTimer; globalThis.clearTimeout = originalClear; retire(panel); });
   let published = false;
-  watchLiveStatus(panel, "test", {view:panel._viewKey(), delay:200, maxRefreshes:1, refresh:async current => {
+  watchLiveStatus(panel, "test", {view:panel._viewKey(), delay:200, maxRefreshes:2, refresh:async current => {
     await gate.promise;
     if (current()) published = true;
   }});
   const refresh = timers[0]();
   const original = panel.hass;
-  panel.hass = {...original, user:{id:"other-account"}};
+  panel.hass = {...original, user:other == null ? undefined : {id:other}};
+  assert.equal(timers.length, 1, "another account cannot resume the author's watch");
   panel.hass = original;
   gate.resolve();
   await refresh;
   assert.equal(published, false);
+  assert.equal(timers.length, 2, "the original author gets a fresh watch for the remaining budget");
+  await timers[1]();
+  assert.equal(published, true, "fresh current-owner status still updates after return");
+  assert.equal(timers.length, 2, "the original refresh budget is preserved across the transition");
 });
 
 test("lazy Broadcast binding cannot adopt a read from the previous authentication generation", async t => {

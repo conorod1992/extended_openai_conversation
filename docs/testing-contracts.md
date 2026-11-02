@@ -215,6 +215,11 @@ The mounted editor remains owned by its first known account: its content and
 dialogs leave the document while another account is active, with a reload action
 to open a fresh panel for that account. Returning to the original account preserves
 its authored nodes and drafts, but cannot revive retired reads or live watches.
+Nested editors and confirmations also regain their native modal ordering and
+focus after the original account returns; restoring an `open` attribute alone
+does not restore the browser's top layer.
+Live status resumes with fresh authentication ownership and the original
+remaining polling budget; paused replies cannot publish after resumption.
 Broadcast reads carry their authentication generation from request creation,
 including when their feature module binds only after the account round trip.
 

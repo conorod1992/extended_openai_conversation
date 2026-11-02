@@ -1,5 +1,5 @@
 import {expect, test} from "@playwright/test";
-import {expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
+import {expectHarnessClean, fixtureUrl, trackPageErrors, mountFreshAccountPanel} from "./browser-helpers.mjs";
 
 const repairedTool = {
   spec:{name:"opening_repair", description:"Original opening's raw repair draft", parameters:{type:"object", properties:{
@@ -115,6 +115,8 @@ for (const bundled of [false, true]) for (const repair of [false, true]) {
       const yaml = repair ? `${JSON.stringify(repairedTool,null,2)}\n\n` : healthyYaml;
       await panel.locator("#tool-yaml").fill(yaml);
       await drain(page);
+      const before = await presentation(panel);
+      const callIndex = await page.evaluate(() => toolOpeningOwner.calls.length);
       // There is no pending validation/save to retire. This NEW click must
       // remain bound to the owner that opened the existing editor.
       await panel.evaluate((host, change) => {
@@ -122,18 +124,23 @@ for (const bundled of [false, true]) for (const repair of [false, true]) {
         if (change === "ABA") host.hass = {...host.hass, user:{id:"tool-opening-owner-A", is_admin:true}};
       }, change);
       await drain(page);
-      const before = await presentation(panel);
-      const callIndex = await page.evaluate(() => toolOpeningOwner.calls.length);
-      await panel.locator(action === "Validate" ? "#tool-validate" : "#tool-save").click();
-      await drain(page);
-      expect(await page.evaluate(index => toolOpeningOwner.calls.slice(index), callIndex)).toEqual([]);
-      expect(await presentation(panel)).toEqual(before);
-      await expect(panel.locator("#tool-yaml")).toHaveValue(yaml);
+      if (change === "one-way") {
+        await expect(panel.getByRole("button", {name:"Reload settings", exact:true})).toBeVisible();
+        await expect(panel.locator("#tool-yaml")).toHaveCount(0);
+        expect(await page.evaluate(index => toolOpeningOwner.calls.slice(index), callIndex)).toEqual([]);
+        await mountFreshAccountPanel(panel);
+      } else {
+        await panel.locator(action === "Validate" ? "#tool-validate" : "#tool-save").click();
+        await drain(page);
+        expect(await page.evaluate(index => toolOpeningOwner.calls.slice(index), callIndex)).toEqual([]);
+        expect(await presentation(panel)).toEqual(before);
+        await expect(panel.locator("#tool-yaml")).toHaveValue(yaml);
 
-      // Explicit Cancel discards this retired opening. A fresh UI opening
-      // captures the current owner's authority and can use the same raw YAML.
-      await panel.locator("#tool-cancel").click();
-      await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", false);
+        // Explicit Cancel discards this retired opening. A fresh UI opening
+        // captures the current owner's authority and can use the same raw YAML.
+        await panel.locator("#tool-cancel").click();
+        await expect(panel.locator("#tool-dialog")).toHaveJSProperty("open", false);
+      }
       await drain(page);
       await panel.evaluate(async host => {
         host._invalidateCleanConfiguration(host._agentId);

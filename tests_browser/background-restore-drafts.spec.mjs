@@ -6,7 +6,10 @@ for (const variant of ["unchanged", "newer edits", "baseline reversion", "failed
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("usage-maintenance/backup-restore", `&agents=2${bundle ? "&bundle=1" : ""}`));
   const panel = page.locator("extended-openai-management-panel");
-  if (variant.startsWith("replacement")) await panel.evaluate(host => {host.hass = {...host.hass, user:{id:"restore-owner", is_admin:true}};});
+  if (variant.startsWith("replacement") || variant === "authentication") {
+    await panel.locator("#transfer-export-mode").waitFor();
+    await panel.evaluate(host => {host.hass = {...host.hass, user:{id:"restore-owner", is_admin:true}};});
+  }
   await panel.locator("#transfer-export-mode").selectOption("full");
   const downloading = page.waitForEvent("download");
   await panel.locator("#create-backup-transfer").click();

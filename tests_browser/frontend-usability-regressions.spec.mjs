@@ -59,11 +59,11 @@ test("Guest interval cannot be submitted by a different authenticated owner", as
     window.intervalOwner = host.hass.user;
     host.hass = {...host.hass, user:{...host.hass.user, id:"another-administrator"}};
   });
-  await panel.locator("#guest-update").click();
-  await expect(panel.locator("#toast")).toContainText("Reload Guest Mode");
+  await expect(panel.getByRole("button", {name:"Reload settings", exact:true})).toBeVisible();
+  await expect(panel.locator("#guest-update")).toHaveCount(0);
   expect(await page.evaluate(() => browserHarness.calls.filter(call => call.section === "guest_mode" && call.action === "update").length)).toBe(0);
-  await expect(panel.locator("#guest-start")).toHaveValue("2030-11-02T18:00");
   await panel.evaluate(host => { host.hass = {...host.hass, user:window.intervalOwner}; });
+  await expect(panel.locator("#guest-start")).toHaveValue("2030-11-02T18:00");
   await panel.locator("#guest-update").click();
   await expect(panel.locator("#toast")).toContainText("Guest Mode updated");
   expect(await page.evaluate(() => browserHarness.calls.filter(call => call.section === "guest_mode" && call.action === "update").length)).toBe(1);

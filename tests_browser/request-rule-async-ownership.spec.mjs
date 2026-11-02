@@ -1,5 +1,5 @@
 import {expect, test} from "@playwright/test";
-import {fixtureUrl, trackPageErrors, expectHarnessClean} from "./browser-helpers.mjs";
+import {fixtureUrl, trackPageErrors, expectHarnessClean, mountFreshAccountPanel} from "./browser-helpers.mjs";
 
 async function prepare(page, bundled, holdWrites = false) {
   const errors = trackPageErrors(page);
@@ -67,10 +67,16 @@ for (const bundled of [false,true]) for (const change of ["user","ABA","session"
     await panel.locator("#rule-action-type").selectOption("model_routing");
     await panel.locator("#rule-model").fill("held-old-model");
     await expect.poll(() => page.evaluate(() => ruleAsyncOwner.lookups.length)).toBe(1);
+    const original = change === "user" ? await snapshot(panel) : null;
     if (change === "visit") await reopen(panel);
     else await retireOwner(panel,change);
-    const before = await snapshot(panel);
+    const before = original || await snapshot(panel);
+    if (change === "user") await expect(panel.locator("#rule-dialog")).toHaveCount(0);
     await settle(page,"lookups",0,failed,["old-only"]);
+    if (change === "user") {
+      await expect(panel.locator("#rule-dialog")).toHaveCount(0);
+      await panel.evaluate(host => {host.hass = {...host.hass, user:{id:"rule-owner-A", is_admin:true}};});
+    }
     expect(await snapshot(panel)).toEqual(before);
     expect(await page.evaluate(() => ruleAsyncOwner.lookups.length)).toBe(1);
     await expectHarnessClean(page,errors);
@@ -108,7 +114,11 @@ for (const bundled of [false,true]) for (const change of ["user","ABA","session"
     await panel.locator("#rule-save").click();
     await expect.poll(() => page.evaluate(() => ruleAsyncOwner.writes.length)).toBe(1);
     if (change !== "visit") await retireOwner(panel,change);
-    await reopen(panel);
+    if (change === "user") {
+      await expect(panel.getByRole("button", {name:"Reload settings", exact:true})).toBeVisible();
+      await mountFreshAccountPanel(panel);
+      await panel.getByRole("button", {name:"Create rule", exact:true}).first().click();
+    } else await reopen(panel);
     await panel.locator("#rule-name").fill("New target Rule draft");
     const before = await panel.evaluate(host => ({result:structuredClone(host._result),error:host.shadowRoot.querySelector("#rule-error").textContent,
       disabled:host.shadowRoot.querySelector("#rule-save").disabled}));

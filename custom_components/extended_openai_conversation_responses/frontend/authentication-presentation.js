@@ -16,6 +16,11 @@ export function updateAuthenticationPresentation(panel, previousUser = null) {
   if (!state || !root?.childNodes || typeof document === "undefined") return;
   if (blocked) {
     if (!state.nodes) {
+      state.focus = root.activeElement;
+      state.modals = [...root.querySelectorAll("dialog:modal")];
+      // Confirmation overlays remain above their parent editors even if focus
+      // has moved to HA's account controls outside this shadow root.
+      state.modals.sort((left, right) => Number(left.id === "confirm-dialog") - Number(right.id === "confirm-dialog"));
       state.nodes = [...root.childNodes].filter(node => !node.matches?.("style,link[rel=stylesheet]"));
       state.nodes.forEach(node => node.remove());
     }
@@ -24,7 +29,7 @@ export function updateAuthenticationPresentation(panel, previousUser = null) {
       notice.setAttribute("role", "status");
       notice.dataset.eocAuthenticationNotice = "";
       const message = document.createElement("p");
-      message.textContent = "Your Home Assistant account changed. Reload to open settings for this account. Unsaved work remains with its original account.";
+      message.textContent = "Your Home Assistant account changed. Return to the original account to continue its unsaved work, or reload to open settings for this account.";
       const reload = document.createElement("button");
       reload.type = "button";
       reload.textContent = "Reload settings";
@@ -35,8 +40,14 @@ export function updateAuthenticationPresentation(panel, previousUser = null) {
     }
   } else if (state.nodes) {
     state.notice?.remove();
+    // Reattaching an open dialog does not reconstruct its native top-layer
+    // ordering. Reopen without invoking Close/Discard handlers on the drafts.
+    state.modals.forEach(dialog => dialog.removeAttribute("open"));
     root.append(...state.nodes);
+    state.modals.forEach(dialog => dialog.showModal());
+    if (state.focus?.isConnected) state.focus.focus?.({preventScroll:true});
     state.nodes = state.notice = null;
+    state.modals = state.focus = null;
   }
 }
 

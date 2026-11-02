@@ -1,8 +1,11 @@
 import {captureAuthentication} from "./authentication-presentation.js";
 
 const watches = new WeakMap();
+const paused = new WeakMap();
+const identityFor = (panel, view) => `${panel._data?.entry_id || ""}|${panel._agentId || ""}|${view}`;
 
 export function stopLiveStatus(panel, key = null) {
+  if (!key) paused.delete(panel);
   const entries = watches.get(panel);
   if (!entries) return;
   for (const [name, watch] of entries) {
@@ -13,14 +16,34 @@ export function stopLiveStatus(panel, key = null) {
   }
 }
 
+export function pauseLiveStatus(panel) {
+  const entries = watches.get(panel);
+  if (!entries?.size) return;
+  const remaining = [...entries].map(([key, watch]) => ({key, userId:watch.userId, identity:watch.identity,
+    options:{...watch.options, maxRefreshes:watch.options.maxRefreshes - watch.attempts}}));
+  stopLiveStatus(panel);
+  paused.set(panel, remaining);
+}
+
+export function resumeLiveStatus(panel) {
+  if (panel._eocPresentationBlocked) return;
+  const remaining = paused.get(panel);
+  paused.delete(panel);
+  for (const watch of remaining || []) {
+    if (watch.userId === panel.hass?.user?.id && watch.identity === identityFor(panel, panel._viewKey?.())
+        && watch.options.maxRefreshes > 0) watchLiveStatus(panel, watch.key, watch.options);
+  }
+}
+
 export function watchLiveStatus(panel, key, {view, delay, refresh, maxRefreshes = Infinity}) {
   let entries = watches.get(panel);
   if (!entries) watches.set(panel, entries = new Map());
-  const identity = `${panel._data?.entry_id || ""}|${panel._agentId || ""}|${view}`;
+  const identity = identityFor(panel, view);
   const existing = entries.get(key);
   if (existing?.identity === identity && !existing.stopped && existing.authCurrent()) return;
   stopLiveStatus(panel, key);
-  const watch = {identity, stopped:false, timer:null, attempts:0, authCurrent:captureAuthentication(panel)};
+  const watch = {identity, userId:panel.hass?.user?.id, options:{view, delay, refresh, maxRefreshes},
+    stopped:false, timer:null, attempts:0, authCurrent:captureAuthentication(panel)};
   entries.set(key, watch);
   const stop = () => {
     if (entries.get(key) === watch) stopLiveStatus(panel, key);
@@ -28,7 +51,7 @@ export function watchLiveStatus(panel, key, {view, delay, refresh, maxRefreshes 
   };
   const current = () => !watch.stopped && watch.authCurrent() && panel.isConnected !== false
     && panel._viewKey?.() === view
-    && `${panel._data?.entry_id || ""}|${panel._agentId || ""}|${view}` === identity;
+    && identityFor(panel, view) === identity;
   const schedule = () => {
     if (!current() || watch.attempts >= maxRefreshes) return stop();
     const milliseconds = typeof delay === "function" ? delay() : delay;
