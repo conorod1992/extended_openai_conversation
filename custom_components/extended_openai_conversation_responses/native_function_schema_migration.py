@@ -199,6 +199,12 @@ def _migrate_service_schema(tool: dict[str, Any], implementation: str) -> bool:
     if parameters not in historical:
         return False
 
+    # YAML aliases may share this schema with another Tool or backend payload.
+    # Replace only the recognized Tool's owned provider schema, so later Tools
+    # still compare their original fingerprints and custom siblings stay exact.
+    parameters = deepcopy(parameters)
+    spec = {**spec, "parameters": parameters}
+    tool["spec"] = spec
     service_data = _service_data_schema(parameters, implementation)
     service_data["description"] = SERVICE_DATA_DESCRIPTION
     service_data["additionalProperties"] = True
@@ -223,6 +229,9 @@ def _migrate_statistics_schema(tool: dict[str, Any]) -> bool:
     if not isinstance(parameters, dict):
         return False
 
+    parameters = deepcopy(parameters)
+    spec = {**spec, "parameters": parameters}
+    tool["spec"] = spec
     properties = cast(dict[str, Any], parameters["properties"])
     cast(dict[str, Any], properties["period"]).update(
         {
@@ -261,7 +270,7 @@ def migrate_legacy_stock_native_function_tools(
     therefore preserved value-for-value. Any schema change, including a strict setting
     or a changed parameter constraint, prevents migration.
     """
-    migrated = deepcopy(tools)
+    migrated = [deepcopy(tool) for tool in tools]
     changed = False
     for tool in migrated:
         function = tool.get("function")

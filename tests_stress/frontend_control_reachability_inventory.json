@@ -2,7 +2,7 @@
   "schema_version": 1,
   "purpose": "Reviewed source-level tripwire for interactive frontend markup. Runtime reachability is exercised by tests_browser/control-reachability.spec.mjs.",
   "interactive_marker_pattern": "<(?:button|input|select|textarea|summary|a)\\\\b|<ha-selector\\\\b|role=[\\\"'](?:button|switch|checkbox|link|tab)[\\\"']",
-  "expected_total_markers": 448,
+  "expected_total_markers": 452,
   "viewports": [
     {
       "name": "small-phone",
@@ -44,6 +44,7 @@
     "debug-panel.js": 13,
     "exposed-attributes-ui.js": 7,
     "function-add-menu.js": 4,
+    "function-group-collection-repair.js": 4,
     "guest-mode-ui.js": 12,
     "guide-page-impl.js": 4,
     "ha-llm-tools-list.js": 3,
@@ -86,19 +87,25 @@
     {
       "source": "request-rules-ui-core.js",
       "scenario": "Failed lazy Sharing initialization exposes a retry while subsequent disclosure toggles preserve authored state",
-      "selectors": ["[data-retry-rule-sharing]"],
+      "selectors": [
+        "[data-retry-rule-sharing]"
+      ],
       "browser_spec": "tests_browser/request-rule-sharing-retained.spec.mjs"
     },
     {
       "source": "management-actions.js",
       "scenario": "Configuration validation errors include an actionable off-route summary",
-      "selectors": ["[data-config-error]"],
+      "selectors": [
+        "[data-config-error]"
+      ],
       "browser_spec": "tests_browser/control-reachability.spec.mjs"
     },
     {
       "source": "guest-mode-ui.js",
       "scenario": "Memory search failure exposes a retry without reporting authoritative empty results",
-      "selectors": ["#retry-memory-search"],
+      "selectors": [
+        "#retry-memory-search"
+      ],
       "browser_spec": "tests_browser/control-reachability.spec.mjs"
     },
     {
@@ -133,7 +140,9 @@
     {
       "source": "usage-chart.js",
       "scenario": "Failed usage dependencies expose section reload controls",
-      "selectors": ["[data-usage-retry]"],
+      "selectors": [
+        "[data-usage-retry]"
+      ],
       "browser_spec": "tests_browser/control-reachability.spec.mjs"
     },
     {
@@ -154,6 +163,17 @@
         "#restore-provider-connection"
       ],
       "browser_spec": "tests_browser/sharing-security.spec.mjs"
+    },
+    {
+      "source": "function-group-collection-repair.js",
+      "scenario": "Non-list, missing and duplicated Group identifiers need complete collection repair with explicit Guest references; later edits survive first acknowledgement",
+      "selectors": [
+        "#group-collection-editor",
+        "#group-collection-guests",
+        "#group-collection-save",
+        "#group-collection-discard"
+      ],
+      "browser_spec": "tests_browser/function-group-collection-repair.spec.mjs"
     }
   ]
 }

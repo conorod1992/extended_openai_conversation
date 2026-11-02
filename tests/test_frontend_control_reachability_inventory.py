@@ -161,3 +161,19 @@ def test_sharing_initialization_retry_has_reviewed_browser_coverage() -> None:
     assert "scrollIntoViewIfNeeded" in spec
     assert "click({trial:true})" in spec
     assert controls["selectors"][0] in spec
+
+
+def test_complete_group_repair_controls_have_reviewed_browser_coverage() -> None:
+    controls = next(
+        item for item in _payload()["conditional_controls"]
+        if item["source"] == "function-group-collection-repair.js"
+    )
+    spec = (ROOT / controls["browser_spec"]).read_text(encoding="utf-8")
+    assert controls["selectors"] == [
+        "#group-collection-editor", "#group-collection-guests",
+        "#group-collection-save", "#group-collection-discard",
+    ]
+    for selector in controls["selectors"]:
+        assert selector in spec
+    for scenario in ("non-list", "missing-id", "numeric-id", "duplicate-id", "releaseGroupCollection"):
+        assert scenario in spec

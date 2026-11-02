@@ -205,6 +205,67 @@ async def test_pack_import_does_not_change_destination_wording_alternatives() ->
     assert target.snapshot()["wording_groups"] == target_wording
 
 
+@pytest.mark.parametrize("aggregate", [False, True])
+async def test_pack_append_preserves_retained_inactive_rules_after_restore(
+    monkeypatch, aggregate
+):
+    from custom_components.extended_openai_conversation_responses import (
+        request_rules as rules_module,
+    )
+
+    if aggregate:
+        monkeypatch.setattr(rules_module, "MAX_AGENT_PATTERN_STATES", 8)
+        retained = [
+            local_rule(
+                "First pattern", ["first long command"], "sentence_pattern", order=0
+            ),
+            local_rule(
+                "Inactive pattern", ["second long command"], "sentence_pattern", order=1
+            ),
+        ]
+    else:
+        retained = [
+            local_rule("Inactive legacy", ["(on; downstairs)"], "sentence_pattern")
+        ]
+    store = MemoryStore()
+    destination = RequestRules(store)
+    await destination.async_initialize()
+    await destination.async_replace_backup({"rules": retained})
+    before = destination.snapshot()
+    assert len(before["diagnostics"]) == 1
+    source = RequestRules(
+        MemoryStore(
+            {"rules": [local_rule("Healthy imported", ["healthy pack command"])]}
+        )
+    )
+    await source.async_initialize()
+    prepared = validate_rule_pack(export_rule_pack(source, "all", reviewed=True))
+    imported = await async_append_rule_pack(
+        destination, prepared, expected_revision=destination.revision()
+    )
+    assert destination.snapshot()["rules"][: len(retained)] == before["rules"]
+    assert destination.snapshot()["diagnostics"] == before["diagnostics"]
+    added = imported["rules"][0]
+    assert added["enabled"] is False
+    await destination.async_update(added["id"], {**added, "enabled": True})
+    reloaded = RequestRules(MemoryStore(await destination.async_backup_data()))
+    await reloaded.async_initialize()
+    assert reloaded.match("healthy pack command").rule["id"] == added["id"]
+    assert reloaded.snapshot()["diagnostics"] == before["diagnostics"]
+    if aggregate:
+        snapshot = reloaded.snapshot()
+        with pytest.raises(ValueError, match="state limit"):
+            await reloaded.async_create(
+                local_rule(
+                    "New overflow",
+                    ["another long command"],
+                    "sentence_pattern",
+                    order=3,
+                )
+            )
+        assert reloaded.snapshot() == snapshot
+
+
 async def test_pack_group_and_selected_exports_keep_subset_order() -> None:
     first = local_rule("First", phrases=["activate lights"], order=0)
     second = local_rule("Second", phrases=["good night"], order=1)

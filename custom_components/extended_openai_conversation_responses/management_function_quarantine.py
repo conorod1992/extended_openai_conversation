@@ -32,6 +32,7 @@ from .function_configuration_repair import (
 )
 from .live_subentry_updates import update_live_subentry
 from .management_function_repair import (
+    group_collection_repair_metadata,
     persist_valid_function_configuration,
     persisted_config_projection,
     repair_revision,
@@ -170,6 +171,7 @@ def _tolerant_persist_function_configuration(
             "validation_error": next_state.issue,
             "isolatable": bool(next_state.invalid),
             "tools_valid": not next_state.invalid and next_state.field_updates_allowed,
+            **group_collection_repair_metadata(prepared.persisted),
         }
     )
     update_live_subentry(hass, entry, subentry, data=prepared.persisted)

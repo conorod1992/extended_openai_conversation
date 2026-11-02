@@ -2,6 +2,16 @@
 
 Feature regressions remain useful, but this layer compares production entry points against shared guarantees. A new writer or action route should be added to the relevant matrix rather than receiving only a happy-path test.
 
+Recovery must include a usable repair operation, not only preservation and a diagnostic. Restored malformed Group identities require revision-bound collection repair; duplicate identity references require an explicit choice. Repairs validate the complete replacement and preserve unrelated raw Functions and configuration. Retained inactive Request Rules must not block unrelated pack imports, while incoming rules remain strictly validated and disabled by default.
+
+Migration candidates must be assessed against their original values. YAML aliases may share schemas between stock, custom and quarantined definitions: a migration detaches the provider schema it owns before modifying it, so unrelated definitions and backend payloads retain their values. Repeated startup must be idempotent after persisted reload.
+
+Editor authoring state, validated configuration and validation errors have separate ownership. Invalid Voice assignment rows must survive same-assistant navigation and remain correctable; an error must never replace the mapping object. Save admission must reject invalid retained rows even outside the Voice route, and Discard must retire their authoring state.
+
+Read results carry meaning independently of whether they contain records. Initial catalogue pending, failed and successful-empty states must render distinctly, with a deliberate catalogue retry and no retry storm from Home Assistant updates. Relative Usage periods use Home Assistant's local calendar rather than the latest activity or a retained summary date. Diagnostics share canonical configuration representation parsing and isolate failures between sections.
+
+Mobile dialog action reachability is checked geometrically after ordinary scrolling. Programmatic focus, locator clicks and scroll-into-view behavior alone do not establish that a user can reach a clipped footer.
+
 ## Entry-point matrix
 
 | Guarantee | Routes | Evidence |

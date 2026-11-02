@@ -9,7 +9,11 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .agent_config import validate_function_groups, validate_function_tools
+from .agent_config import (
+    parse_configured_function_tools,
+    validate_function_groups,
+    validate_function_tools,
+)
 from .const import (
     CONF_API_MODE,
     CONF_API_PROVIDER,
@@ -18,7 +22,6 @@ from .const import (
     CONF_CHAT_MODEL,
     CONF_CONVERSATION_CONTINUITY,
     CONF_FUNCTION_GROUPS,
-    CONF_FUNCTION_TOOLS,
     CONF_KNOWLEDGE_ENABLED,
     CONF_MEMORY_AUTO_CREATE,
     CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
@@ -29,7 +32,6 @@ from .const import (
     DEFAULT_API_PROVIDER,
     DEFAULT_ARCHIVE_ENABLED,
     DEFAULT_CHAT_MODEL,
-    DEFAULT_CONF_FUNCTION_TOOLS,
     DEFAULT_CONVERSATION_CONTINUITY,
     DEFAULT_FUNCTION_GROUPS,
     DEFAULT_KNOWLEDGE_ENABLED,
@@ -52,17 +54,11 @@ from .model_catalog_manager import DATA_MANAGER
 from .request import build_provider_request_snapshot, conversation_tools_required
 from .temporary_memory import async_get_temporary_memory
 from .usage import async_get_usage
-from .yaml_serialization import load_yaml_or_json
 
 
 def _configured_function_tools(data: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Parse configured tools with the same missing-value fallback as execution."""
-    function_tools_config = data.get(CONF_FUNCTION_TOOLS)
-    return validate_function_tools(
-        load_yaml_or_json(function_tools_config)
-        if function_tools_config
-        else DEFAULT_CONF_FUNCTION_TOOLS
-    )
+    return validate_function_tools(parse_configured_function_tools(data))
 
 
 async def async_get_config_entry_diagnostics(
@@ -128,41 +124,61 @@ async def async_get_config_entry_diagnostics(
         diagnostics["optional_subsystems"] = {
             key: dict(value) for key, value in subsystem_status.items()
         }
-        diagnostics.update(
-            async_get_continuity(hass, entry.entry_id, subentry.subentry_id).stats()
-        )
+        try:
+            diagnostics.update(
+                async_get_continuity(hass, entry.entry_id, subentry.subentry_id).stats()
+            )
+        except Exception as err:
+            diagnostics["continuity_error"] = type(err).__name__
+        function_tools = None
         try:
             function_tools = _configured_function_tools(subentry.data)
-            function_groups = validate_function_groups(
-                subentry.data.get(CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS)),
-                function_tools,
-            )
-            diagnostics.update(
-                {
-                    "configured_function_tools": len(function_tools),
-                    "configured_function_groups": len(function_groups),
-                    "configured_on_demand_function_groups": sum(
-                        group["loading_mode"] == "on_demand"
-                        for group in function_groups
+            diagnostics["configured_function_tools"] = len(function_tools)
+        except Exception as err:
+            diagnostics["function_tool_configuration_error"] = type(err).__name__
+        if function_tools is not None:
+            try:
+                function_groups = validate_function_groups(
+                    subentry.data.get(
+                        CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS)
                     ),
-                }
-            )
+                    function_tools,
+                )
+                diagnostics.update(
+                    {
+                        "configured_function_groups": len(function_groups),
+                        "configured_on_demand_function_groups": sum(
+                            group["loading_mode"] == "on_demand"
+                            for group in function_groups
+                        ),
+                    }
+                )
+            except Exception as err:
+                diagnostics["function_group_configuration_error"] = type(err).__name__
+        try:
             runtime = get_function_group_runtime(
                 hass, entry.entry_id, subentry.subentry_id
             )
             if runtime is not None:
                 diagnostics.update(runtime.stats())
+        except Exception as err:
+            diagnostics["function_group_runtime_error"] = type(err).__name__
+        try:
             guest_mode = await async_get_guest_mode(
                 hass, entry.entry_id, subentry.subentry_id
             )
-            diagnostics["guest_mode"] = {
-                "status": guest_mode.status(),
-                "policy": resolve_guest_policy(
-                    hass, subentry.data, guest_mode, function_tools
-                ).as_diagnostics(),
-            }
+            diagnostics["guest_mode"] = {"status": guest_mode.status()}
         except Exception as err:
-            diagnostics["function_group_configuration_error"] = type(err).__name__
+            diagnostics["guest_mode_storage_error"] = type(err).__name__
+        else:
+            try:
+                if function_tools is None:
+                    raise ValueError("Function Tool configuration is unavailable")
+                diagnostics["guest_mode"]["policy"] = resolve_guest_policy(
+                    hass, subentry.data, guest_mode, function_tools
+                ).as_diagnostics()
+            except Exception as err:
+                diagnostics["guest_mode"]["policy_error"] = type(err).__name__
         try:
             if subsystem_status.get("temporary_memory", {}).get("status") == "failed":
                 raise RuntimeError("disabled after initialization failure")

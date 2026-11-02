@@ -60,6 +60,7 @@ from .const import (
     CONF_FUNCTION_GROUPS,
     CONF_FUNCTION_TOOLS,
     CONF_GUEST_ALLOWED_FUNCTION_NAMES,
+    CONF_GUEST_ALLOWED_GROUP_IDS,
     CONF_GUEST_MODE_ENABLED,
     CONF_GUEST_POLICY_VERSION,
     CONF_KNOWLEDGE_ENABLED,
@@ -128,6 +129,7 @@ from .management_function_repair import (
     adopt_saved_configuration_revision,
     agent_config_revision as _agent_config_revision,  # noqa: F401
     async_prepare_persisted_function_tools,
+    group_collection_repair_metadata,
     normalized_persisted_config_snapshot,
     peek_function_tool_health,
     persisted_config_projection,
@@ -1150,6 +1152,7 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
                 details_result["function_repair"] = {
                     "group_issues": deepcopy(repair_state.group_issues),
                     "invalid_count": len(repair_state.invalid),
+                    **group_collection_repair_metadata(dict(subentry.data)),
                 }
 
             phase = perf_counter()
@@ -1392,6 +1395,7 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
             "isolatable": bool(repair_state.invalid),
             "tools_valid": not repair_state.invalid
             and repair_state.field_updates_allowed,
+            **group_collection_repair_metadata(persisted),
         }
     phase = perf_counter()
     if refresh_local_handling:
@@ -2109,6 +2113,7 @@ async def async_tools_command(request: _ManagementRequest) -> dict[str, Any]:
             "function_repair": {
                 "invalid_count": len(state.invalid),
                 "group_issues": deepcopy(state.group_issues),
+                **group_collection_repair_metadata(dict(subentry.data)),
             },
         }
     tools = inspect_function_tools(subentry.data)
@@ -3252,7 +3257,8 @@ def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
         vol.Optional("text"): str,
         vol.Optional("defaults"): dict,
         vol.Optional("wording_groups"): list,
-        vol.Optional("groups"): list,
+        vol.Optional("groups"): vol.Any(str, list),
+        vol.Optional(CONF_GUEST_ALLOWED_GROUP_IDS): list,
         vol.Optional("selection"): str,
         vol.Optional("rule_ids"): vol.Any(None, list),
         vol.Optional("pack"): vol.Any(str, dict),

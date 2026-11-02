@@ -4,6 +4,7 @@ import {recoverDisconnectedEditor, showRecoveredDraftCopy} from "./management-st
 import {mergeConfigurationRead, configurationDraftBaseline} from "./configuration-acknowledgement.js";
 import {planConfigurationRecovery, combineRecoveredConfiguration, recoveredConfigurationChanges} from "./configuration-draft-recovery.js";
 import {hasPageSaveAcknowledgement} from "./page-save-acknowledgement.js";
+import {transferVoiceMappingDraft} from "./voice-mapping-draft.js";
 
 // HA destroys custom panels during navigation and background suspension. Keep
 // the owning instance in document memory, never in persistent browser storage.
@@ -143,6 +144,7 @@ function restoreDraftSource(panel, source, key) {
       if (source._eocPendingModelPreparation) source._eocPendingModelPreparation.transferTo?.(panel);
       else source._eocModelIntent?.transferTo?.(source, panel);
     }
+    transferVoiceMappingDraft(panel, source);
     panel._syncConfigDirty();
     source._setConfigDirty(false);
     if (recoveryConfigurationCopies.get(panel)?.source === source) recoveryConfigurationCopies.delete(panel);

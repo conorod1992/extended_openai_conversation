@@ -57,6 +57,7 @@ assert.deepEqual(sortedUsageBreakdown({beta:20,alpha:20,gamma:40}), [
 const escape = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 const diagnosticHtml = renderUsageDiagnostics({
   _e:escape,
+  _usageHistoryWindow:"all",
   _hass:{config:{time_zone:"UTC"}},
 }, {
   days:{days:[{

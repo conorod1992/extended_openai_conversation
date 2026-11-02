@@ -11,7 +11,10 @@ DIST = Path("custom_components/extended_openai_conversation_responses/frontend/d
 # 2026-11-02 review: admission retry and import recovery add about 3.7 KiB
 # to the 849,603-byte pre-change JS bundle (under 0.5%). Keep finite headroom
 # for this scoped feature; entry and CSS budgets remain unchanged.
-CEILINGS = {"javascript": 860_000, "css": 65_000, "management_entry": 120_000}
+# The subsequent eight-fix review adds about 10 KiB (1.2%) for retained Voice
+# authoring and complete Group repair. Allow that reviewed feature growth with
+# finite headroom; do not relax the separate entry or CSS ceilings.
+CEILINGS = {"javascript": 870_000, "css": 65_000, "management_entry": 120_000}
 
 
 def measure(dist: Path) -> dict[str, int]:

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import {scheduleWallTime, scheduleInstant} from "../custom_components/extended_openai_conversation_responses/frontend/schedule-time.js";
 import {loadUsageWindow, loadUsageDaily, loadAllUsageDays} from "../custom_components/extended_openai_conversation_responses/frontend/usage-data.js";
-import {renderUsageDiagnostics} from "../custom_components/extended_openai_conversation_responses/frontend/usage-chart.js";
+import {renderUsageDiagnostics, localUsageDateKey, usageWindowBounds} from "../custom_components/extended_openai_conversation_responses/frontend/usage-chart.js";
 import {renderConversations, searchSessionRows, bindConversationActions} from "../custom_components/extended_openai_conversation_responses/frontend/management-history-pagination.js";
 import {GUIDE_TOPICS} from "../custom_components/extended_openai_conversation_responses/frontend/guide-content.js";
 
@@ -40,7 +40,9 @@ await loadUsageWindow(panel, "7", today, {useCache: false});
 finishStale({days: [], revision: "stale"});
 await stale;
 assert.equal((await loadUsageWindow(panel, "90", today)).revision, "fresh", "late response cannot repopulate invalidated cache");
-const local_run_summary = {count: 46, start_date: "2026-10-04", end_date: today, retention_days: 30};
+const usageToday = localUsageDateKey(new Date(), "UTC");
+const usageBounds = usageWindowBounds("7", usageToday);
+const local_run_summary = {count: 46, start_date: usageBounds.startDate, end_date: usageToday, retention_days: 30};
 const all = await loadAllUsageDays(async () => ({days: [], local_run_summary}));
 assert.deepEqual(all.local_run_summary, local_run_summary);
 const e = value => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll('"', "&quot;");

@@ -256,3 +256,76 @@ def test_historical_inserted_service_preset_is_migrated(implementation: str) -> 
     assert current["guest_allowed"] is True
     assert current["spec"]["strict"] is False
     assert _service_data(current)["additionalProperties"] is True
+
+
+@pytest.mark.parametrize("implementation", ["execute_service", "get_statistics"])
+def test_yaml_aliases_do_not_migrate_custom_schemas_or_backend_payloads(implementation):
+    fingerprint = (
+        migration._LEGACY_DEFAULT_EXECUTE_SERVICE_PARAMETERS
+        if implementation == "execute_service"
+        else migration._LEGACY_PRESET_GET_STATISTICS_PARAMETERS
+    )
+    shared = deepcopy(fingerprint)
+    native = _tool(implementation, {})
+    native["spec"]["parameters"] = shared
+    custom = {
+        "spec": {"name": "custom_template", "parameters": shared},
+        "function": {"type": "template", "value_template": "Done"},
+        "enabled": False,
+    }
+    backend = {
+        "spec": {
+            "name": "custom_script",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "function": {
+            "type": "script",
+            "variables": {"schema": shared},
+            "sequence": [{"stop": "Done"}],
+        },
+        "enabled": False,
+    }
+    source = yaml.safe_dump([native, custom, backend], sort_keys=False)
+    assert "&id" in source and "*id" in source
+    before = yaml.safe_load(source)
+    result, changed = migration.migrate_legacy_stock_native_function_tools_yaml(source)
+    assert changed is True
+    restored = yaml.safe_load(result)
+    assert restored[1:] == before[1:]
+    assert restored[0]["spec"]["strict"] is False
+    assert all(tool["enabled"] is False for tool in restored)
+    assert migration.migrate_legacy_stock_native_function_tools_yaml(result) == (
+        result,
+        False,
+    )
+
+
+@pytest.mark.parametrize("implementation", ["execute_service", "get_statistics"])
+def test_every_eligible_alias_uses_its_original_schema_fingerprint(implementation):
+    shared = deepcopy(
+        migration._LEGACY_DEFAULT_EXECUTE_SERVICE_PARAMETERS
+        if implementation == "execute_service"
+        else migration._LEGACY_PRESET_GET_STATISTICS_PARAMETERS
+    )
+    first = _tool(implementation, {})
+    first["spec"]["parameters"] = shared
+    second = {**first, "spec": {**first["spec"], "name": "second_native"}}
+    source = yaml.safe_dump([first, second], sort_keys=False)
+    result, changed = migration.migrate_legacy_stock_native_function_tools_yaml(source)
+    assert changed is True
+    tools = yaml.safe_load(result)
+    assert all(tool["spec"]["strict"] is False for tool in tools)
+    assert tools[0]["spec"]["parameters"] == tools[1]["spec"]["parameters"]
+    assert yaml.safe_load(source)[0]["spec"]["parameters"] == shared
+
+
+def test_whole_tool_aliases_are_assessed_independently():
+    tool = _tool(
+        "execute_service", migration._LEGACY_DEFAULT_EXECUTE_SERVICE_PARAMETERS
+    )
+    migrated, changed = migration.migrate_legacy_stock_native_function_tools(
+        [tool, tool]
+    )
+    assert changed is True
+    assert migrated[0] == migrated[1] and migrated[0] is not migrated[1]
+    assert "strict" not in tool["spec"]

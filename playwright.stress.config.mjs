@@ -5,6 +5,11 @@ import {devices} from "@playwright/test";
 // Heavy campaigns remain exclusive to *.stress.mjs; these existing smoke
 // journeys also close the nightly interaction inventory at negligible cost.
 export const nightlyInteractionSpecs = [
+  "voice-mapping-fresh-read-review.spec.mjs",
+  "voice-mapping-retained.spec.mjs",
+  "function-group-mobile-footer.spec.mjs",
+  "function-group-collection-repair.spec.mjs",
+
   "broadcast-retry.spec.mjs",
   "configuration-import-uncertain.spec.mjs",
   "request-rule-sharing-retained.spec.mjs",

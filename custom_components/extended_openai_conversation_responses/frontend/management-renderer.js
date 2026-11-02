@@ -270,11 +270,10 @@ function renderDynamicRegions(panel) {
     }
     return;
   }
-  const markup = !agent
+  const markup = panel._error ? panel._routeError(panel._error) : !agent
     ? panel._empty("No conversation agents configured.")
     : panel._busy ? (panel._loadingContent?.(agent) || panel._loading())
-      : panel._error ? panel._routeError(panel._error)
-        : panel._content(agent);
+      : panel._content(agent);
   const changed = route !== panel._eocRenderedRoute || markup !== panel._eocMainMarkup;
   const dialogsChanged = dialogs !== panel._eocDialogMarkup;
   if ((changed || dialogsChanged) && route === panel._eocRenderedRoute && root.querySelector("dialog[open]")) {
@@ -315,10 +314,11 @@ export function renderManagement(panel) {
 }
 
 export function showInitialLoading(panel) {
-  if (panel?._data !== null) return false;
+  if (panel?._data !== null || panel._error) return false;
   const main = panel.shadowRoot?.querySelector?.("main");
   if (!main || main.dataset.eocInitialLoading !== undefined) return false;
   main.innerHTML = panel._loading?.() || '<div class="loading" role="status">Loading…</div>';
+  panel._eocMainMarkup = main.innerHTML;
   panel._eocMainRevision = (panel._eocMainRevision || 0) + 1;
   main.setAttribute("aria-busy", "true");
   main.dataset.eocInitialLoading = "";

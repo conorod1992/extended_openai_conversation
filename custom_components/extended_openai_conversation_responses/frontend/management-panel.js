@@ -1,6 +1,7 @@
 import {functionUncertainty, requireFunctionAcknowledgement, markFunctionUncertainty, settleFunctionRead} from "./function-acknowledgement.js";
 import {clearRequestRuleUncertainty, requestRuleUncertainty, requireRequestRuleAcknowledgement, markUncertainRuleMutation} from "./request-rule-acknowledgement.js";
 import {mutationEffects} from "./management-mutation-effects.js";
+import {clearVoiceMappingDraft} from "./voice-mapping-draft.js";
 import {observeCatalogGeneration} from "./model-catalog.js";
 import {invalidateUsageWindows} from "./usage-cache.js";
 import {scheduleWallTime, scheduleInstant} from "./schedule-time.js";
@@ -335,10 +336,13 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const previous = this._eocCatalogBootstrap;
     const resolved = previous?.pending && previous.user == null && user != null;
     if (this._data && !retry && !resolved) return;
-    if (previous && previous.user === user) return;
+    if (previous && previous.user === user && (!retry || previous.pending)) return;
     this._interruptInitialAgents();
     const attempt = {user, pending:true};
     this._eocCatalogBootstrap = attempt;
+    this._error = null;
+    this._busy = true;
+    this._render();
     // A newly available user requires a new owned read, never adoption of the
     // old unknown-user result. Keep this attempt after failure as well: normal
     // HA state updates must not become an unbounded catalog retry loop.
@@ -516,6 +520,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _clearConfigDraft() {
+    clearVoiceMappingDraft(this);
     this._eocDraftGeneration = (this._eocDraftGeneration || 0) + 1;
     // Model work belongs to this draft owner. A new assistant or explicitly
     // replaced configuration must not inherit its intent or choice revision.
@@ -934,7 +939,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       if (ruleMutation && requestRuleUncertainty(this, owner)) throw requestRuleUncertainty(this, owner);
       result = await this._callCore(section, action, extra, mutationTrace);
       if (ruleMutation) requireRequestRuleAcknowledgement(action, result, extra.rule_id);
-      if (toolMutation) requireFunctionAcknowledgement(result);
+      if (toolMutation) requireFunctionAcknowledgement(result, section === "function_repair" && action === "save_groups");
       processMutationResponse(result, () => this._applyToolRevision(section, action, result, owner));
       if (
         ruleMutation
@@ -1240,7 +1245,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   async _loadSectionData(silent = false) {
-    if (!this._selectedAgent()) return this._render();
+    if (!this._selectedAgent()) {
+      this._busy = false;
+      return this._render();
+    }
     const view = this._viewKey();
     const loadToken = ++this._loadToken;
     const owner = captureConfigurationOwner(this);
@@ -1932,7 +1940,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const navigation = NAVIGATION.filter((item) => this._canAccessView(item.id));
     const local = this._visibleSubsections();
     const currentSection = local.find((item) => item.id === this._subsection);
-    this._eocMainMarkup = !agent ? this._empty("No conversation agents configured.") : this._busy ? this._loadingContent(agent) : this._error ? this._routeError(this._error) : this._content(agent);
+    this._eocMainMarkup = this._error ? this._routeError(this._error) : !agent ? this._empty("No conversation agents configured.") : this._busy ? this._loadingContent(agent) : this._content(agent);
     const configurationActions = agent && !this._busy && !this._error ? this._configurationActions() : "";
     this._eocDialogMarkup = this._dialogs();
     this._eocRenderedRoute = `${this._agentId}|${this._viewKey()}`;
@@ -2299,7 +2307,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       q("#list-search")?.addEventListener("input", (event) => { this._query = event.target.value; this._updateVisibleList(); });
     }
     const view = this._viewKey();
-    q("#retry-route")?.addEventListener("click", () => { void this._loadSection(); });
+    q("#retry-route")?.addEventListener("click", () => {
+      if (this._data === null) this._loadInitialAgents(true);
+      else void this._loadSection();
+    });
     if (view === "data-memory/knowledge") getRouteFeature(view)?.bindKnowledge(this);
     if (view === "data-memory/conversations") getRouteFeature(view)?.bindConversationActions(this);
     if (view === "data-memory/conversations") {

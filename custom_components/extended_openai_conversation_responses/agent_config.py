@@ -617,7 +617,10 @@ def validate_function_tools(value: Any) -> list[dict[str, Any]]:
             raise AgentConfigError(
                 f"{field}.function.name"
                 if function_type == "native"
-                and function_config.get("name") not in NATIVE_FUNCTION_IMPLEMENTATIONS
+                and (
+                    not isinstance(implementation := function_config.get("name"), str)
+                    or implementation not in NATIVE_FUNCTION_IMPLEMENTATIONS
+                )
                 else f"{field}.function",
                 f"configuration is invalid for {function_type}: {err}",
             ) from err

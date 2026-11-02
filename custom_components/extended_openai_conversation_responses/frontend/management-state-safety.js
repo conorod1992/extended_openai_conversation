@@ -4,6 +4,7 @@ import {same, clone} from "./unsaved-state.js";
 import {SECTION_CACHE_TTL_MS} from "./management-cache.js";
 import {configurationDraftBaseline} from "./configuration-acknowledgement.js";
 import {editorControls, dialogState, setDialogBaseline} from "./management-dialogs.js";
+import {voiceMappingDraftDirty} from "./voice-mapping-draft.js";
 export {SECTION_CACHE_TTL_MS};
 
 const RESET_PROMPT_KEYS = [
@@ -43,6 +44,7 @@ function configKeyChanged(panel, key) {
   if (!configBaselineReady(panel)) return false;
   const baseline = configurationDraftBaseline(panel);
   if (key === "__title") return panel._draftTitle !== baseline.title;
+  if (key === "voice_device_mappings" && voiceMappingDraftDirty(panel)) return true;
   return !same(panel._draft[key], baseline.config[key]);
 }
 
@@ -57,6 +59,7 @@ export function rebuildConfigDirtyKeys(panel) {
       if (!same(baseline[key], draft[key])) changed.add(key);
     }
     if (panel._draftTitle !== snapshot.title) changed.add("__title");
+    if (voiceMappingDraftDirty(panel)) changed.add("voice_device_mappings");
   }
   panel._eocDirtyConfigKeys = changed;
   return changed;
