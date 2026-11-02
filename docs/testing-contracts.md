@@ -162,6 +162,13 @@ conversion in a Home Assistant timezone distinct from UTC. Held Voice user
 catalogues are tested across discard and panel recovery for both successful and
 failed replies, including a newer explicit user clear.
 
+Retained data-editor retry checks require a rejected write to leave backend
+records unchanged, then verify a corrected save retires its old error alert
+while preserving input authored during acknowledgement. A later independent
+rejection must still publish a new error, and the final retry must save exactly
+the retained values. The same source and bundle journey covers both Memory
+editors and Knowledge.
+
 Broadcast retry tests drop the actual queue acknowledgement, retry its immutable
 operation identity, and assert a single admission. They cover payload/caller
 binding, bounded capacity without eviction of live receipts, expiry and server

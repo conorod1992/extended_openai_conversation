@@ -260,6 +260,7 @@
       "tests_browser/stale-response-matrix.stress.mjs::chromium::stale-response-matrix.stress.mjs::Memory late read cannot repaint a newer route",
       "tests_browser/stale-response-matrix.stress.mjs::chromium::stale-response-matrix.stress.mjs::Quiet Hours late read cannot repaint a newer route",
       "tests_browser/stale-response-matrix.stress.mjs::chromium::stale-response-matrix.stress.mjs::Request Rules late read cannot repaint a newer route",
+      "tests_browser/data-editor-retry-errors-hourly3-review.spec.mjs::chromium::data-editor-retry-errors-hourly3-review.spec.mjs::Successful data-editor retries retire prior rejection messages without losing newer input",
       "tests_browser/temporary-memory-later-edit-hourly2-review.spec.mjs::chromium::temporary-memory-later-edit-hourly2-review.spec.mjs::Short-term Memory acknowledges the submitted values while preserving later editor input",
       "tests_browser/timezone-locale-boundaries.spec.mjs::chromium::timezone-locale-boundaries.spec.mjs::browser Honolulu / HA Dublin / en-GB::Usage sends HA-local dates and renders the same instant in HA time",
       "tests_browser/timezone-locale-boundaries.spec.mjs::chromium::timezone-locale-boundaries.spec.mjs::browser Honolulu / HA Dublin / en-IE::Usage sends HA-local dates and renders the same instant in HA time",

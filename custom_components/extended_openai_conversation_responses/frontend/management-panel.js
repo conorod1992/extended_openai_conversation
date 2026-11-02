@@ -2591,6 +2591,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       // its operation, dialog or owner. Its save still needs acknowledgement.
       && this._ownsRetainedMutation(owner, {allowRefresh:true});
     let uncertain = false;
+    this._setDialogError("knowledge", "");
     this._setSaving(button, true);
     try {
       const response = await this._call("knowledge", editing ? "update" : "create", { ...(editing ? { source_id: this._editingSource.source_id, expected_revision: this._editingSource.updated_at } : {}), ...values });
@@ -2669,6 +2670,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       .map(control => ({control, disabled:control.disabled}));
     const unlock = () => { for (const {control, disabled} of locked) control.disabled = disabled; };
     for (const {control} of locked) control.disabled = true;
+    this._setDialogError("memory", "");
     this._setSaving(button, true);
     try {
       if (this._memoryEditorAgent !== this._agentId || this._memoryEditorScope !== this._scopeId) throw new Error("The selected agent or scope changed. Close and reopen this editor.");

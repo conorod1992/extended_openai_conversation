@@ -190,6 +190,7 @@ async function saveTemporaryMemory(panel) {
     error.textContent = "Memory, category, and expiry are required.";
     return;
   }
+  error.textContent = "";
   panel._temporaryMemorySaving = true;
   const save = panel.shadowRoot.querySelector("#temporary-memory-save");
   panel._setSaving(save, true);

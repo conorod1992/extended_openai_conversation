@@ -47,7 +47,10 @@ function host(kind = "knowledge", PanelType = Panel) {
   panel._knowledgeValues = () => ({title:"Saved source", description:"", content:"A", enabled:true});
   panel._memoryValues = () => ({content:"A", category:"general", target_scope_id:panel._scopeId, type:"persistent", subject:"", key:"", valid_from:""});
   panel._setSaving = (button, pending) => { if (button) button.disabled = pending; };
-  panel._setDialogError = (_kind, message) => panel.errors.push(message);
+  panel._setDialogError = (_kind, message) => {
+    panel.visibleError = message;
+    if (message) panel.errors.push(message);
+  };
   panel._render = () => {};
   panel._confirm = async () => true;
   panel.toasts = [];
@@ -72,6 +75,7 @@ async function createdIdentityWitness(PanelType = Panel, kind = "knowledge") {
   dialog.close = () => { throw Error("modal unavailable"); };
   await panel[kind === "knowledge" ? "_saveKnowledge" : "_saveMemory"]();
   assert.deepEqual(panel.errors, [], "a committed create is not a failed save");
+  assert.equal(panel.visibleError, "", "the active error surface remains clear after the admitted save");
   assert.match(panel.toasts.at(-1)?.[0] || "", /(?:saved|added), but .*could not be refreshed/i);
   await panel[kind === "knowledge" ? "_saveKnowledge" : "_saveMemory"]();
   const actions = backend.calls.filter(call => call.section === (kind === "knowledge" ? "knowledge" : "memories")).map(call => call.action);
