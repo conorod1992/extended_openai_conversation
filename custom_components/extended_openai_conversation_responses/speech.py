@@ -417,7 +417,7 @@ class StreamingSpeechSanitizer:
                 if (
                     pair == "**"
                     and not self._strong_open
-                    and (previous.isalnum() or previous in ")]")
+                    and (previous.isalnum() or previous in (")", "]"))
                 ):
                     after = self._format_buffer[index + 2 : index + 3]
                     if not after and not final:
@@ -440,7 +440,7 @@ class StreamingSpeechSanitizer:
                 if (
                     pair == "**"
                     and not self._strong_open
-                    and (previous.isalnum() or previous in ")]")
+                    and (previous.isalnum() or previous in (")", "]"))
                     and self._format_buffer.find("**", index + 2) < 0
                 ):
                     if not final:

@@ -737,6 +737,7 @@ def test_www_cleanup_preserves_ordinary_text(text) -> None:
     ("``a ` b ** c``", "a ` b ** c"),
     ("**eight** and 2**3", "eight and 2**3"),
     ("2**3**", "23"),
+    ("**3**2", "32"),
 ])
 def test_literal_operators_and_code_survive_all_stream_splits(text, expected):
     assert process_speech_text(text, _config()) == expected
