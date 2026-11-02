@@ -268,7 +268,10 @@ def migrate_legacy_stock_native_function_tools(
         if not isinstance(function, dict):
             continue
         implementation = function.get("name")
-        if function != {"type": "native", "name": implementation}:
+        if not isinstance(implementation, str) or function != {
+            "type": "native",
+            "name": implementation,
+        }:
             continue
         if implementation in {"execute_service", "execute_service_single"}:
             changed = _migrate_service_schema(tool, implementation) or changed

@@ -1,5 +1,5 @@
 import {copyTextToClipboard} from "./clipboard.js";
-import {invalidateImportPreview, renderConfigurationActions, bindSavedConfigurationActions, applyConfigurationImport} from "./assistant-configuration-actions.js";
+import {invalidateImportPreview, renderConfigurationActions, bindSavedConfigurationActions, applyConfigurationImport, refreshUncertainConfigurationImport} from "./assistant-configuration-actions.js";
 export {invalidateImportPreview, renderConfigurationActions} from "./assistant-configuration-actions.js";
 import {searchTokens, matchesFunctionSearchTokens, cachedFunctionSearchTokens} from "./function-search.js";
 export {matchesFunctionSearch} from "./function-search.js";
@@ -361,6 +361,8 @@ export function bindConfiguration(panel) {
       && importDocument.value === document && root.querySelector('input[name="import-mode"]:checked').value === mode && panel._agentId === agent
       && panel._configData?.revision === revision;
     try {
+      await refreshUncertainConfigurationImport(panel);
+      if (!current()) return;
       const result = await panel._call("configuration", "import_preview", {document, mode});
       if (!current()) return;
       panel._importDocument = document;

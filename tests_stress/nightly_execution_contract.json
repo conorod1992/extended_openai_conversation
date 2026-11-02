@@ -3088,6 +3088,8 @@
       "tests_browser/backup-transfer-lifecycle.stress.mjs::chromium::backup-transfer-lifecycle.stress.mjs::Backup export modes validate selection, preserve settings and reset on reopen",
       "tests_browser/backup-transfer-lifecycle.stress.mjs::chromium::backup-transfer-lifecycle.stress.mjs::Restore rejects corrupt input, supports cancel and requires file reselection after failure",
       "tests_browser/backup-transfer-lifecycle.stress.mjs::chromium::backup-transfer-lifecycle.stress.mjs::Restore selection preview follows the latest section choice and successful restore reloads",
+      "tests_browser/broadcast-retry.spec.mjs::chromium::broadcast-retry.spec.mjs::Broadcast retains an uncertain operation across refresh and requires a new-send confirmation for edits",
+      "tests_browser/broadcast-retry.spec.mjs::chromium::broadcast-retry.spec.mjs::Broadcast retains an uncertain operation across refresh and retries the same admission",
       "tests_browser/browser-lifecycle-resilience.stress.mjs::chromium::browser-lifecycle-resilience.stress.mjs::clipboard denial reports a recoverable error without breaking the preview",
       "tests_browser/browser-lifecycle-resilience.stress.mjs::chromium::browser-lifecycle-resilience.stress.mjs::suspend-resume simulation settles one pending save after clock and visibility discontinuity",
       "tests_browser/control-reachability.spec.mjs::chromium::control-reachability.spec.mjs::all rendered controls remain reachable across shipped routes and viewports::reachable controls: desktop",
@@ -3262,6 +3264,7 @@
       "tests_browser/real-ha-backend.spec.mjs::chromium::real-ha-backend.spec.mjs::shipped frontend keeps hostile stored text literal across mutation and fresh panels",
       "tests_browser/real-ha-broadcast-ack.spec.mjs::chromium::real-ha-broadcast-ack.spec.mjs::Broadcast retires an actual admitted message before the next click (bundle)",
       "tests_browser/real-ha-broadcast-ack.spec.mjs::chromium::real-ha-broadcast-ack.spec.mjs::Broadcast retires an actual admitted message before the next click (source)",
+      "tests_browser/real-ha-broadcast-ack.spec.mjs::chromium::real-ha-broadcast-ack.spec.mjs::Broadcast retries a lost actual queue acknowledgement with the original operation identity",
       "tests_browser/real-ha-credential-replacement.spec.mjs::chromium::real-ha-credential-replacement.spec.mjs::API key replacement uses native management WebSocket",
       "tests_browser/real-ha-cross-user-identity.stress.mjs::chromium::real-ha-cross-user-identity.stress.mjs::an already-authenticated browser obeys live HA admin downgrade and restoration",
       "tests_browser/real-ha-cross-user-identity.stress.mjs::chromium::real-ha-cross-user-identity.stress.mjs::one browser profile does not carry private EOAI state from user A into user B",
@@ -3312,6 +3315,9 @@
       "tests_browser/real-ha-upgrade-cache.stress.mjs::chromium::real-ha-upgrade-cache.stress.mjs::old frontend shell kept open against new HA backend converges after hard refresh",
       "tests_browser/reconnect-endurance.stress.mjs::chromium::reconnect-endurance.stress.mjs::one mounted panel has bounded backend calls after repeated disconnects",
       "tests_browser/request-debug-persistence.spec.mjs::chromium::request-debug-persistence.spec.mjs::Request debugging capture policy persists across a fresh panel",
+      "tests_browser/request-rule-sharing-retained.spec.mjs::chromium::request-rule-sharing-retained.spec.mjs::Rule Sharing preserves its reviewed file and export choices across disclosure and binding lifetimes",
+      "tests_browser/request-rule-sharing-retained.spec.mjs::chromium::request-rule-sharing-retained.spec.mjs::failed Sharing initialization can retry and a failed review retains the source and other authored choices",
+      "tests_browser/request-rule-sharing-retained.spec.mjs::chromium::request-rule-sharing-retained.spec.mjs::repeated Request Rules binding keeps one wording-add and one create-rule activation",
       "tests_browser/request-rules-captures-aliases.stress.mjs::chromium::request-rules-captures-aliases.stress.mjs::nightly capture and result-alias transitions remain stable across repeated edits",
       "tests_browser/request-rules-continue-matching.stress.mjs::chromium::request-rules-continue-matching.stress.mjs::nightly Continue Matching chain survives repeated authoring and fresh load",
       "tests_browser/request-rules-editor-roundtrip.stress.mjs::chromium::request-rules-editor-roundtrip.stress.mjs::nightly Request Rule editor matrix round-trips all matchers and major form modes",
@@ -3357,7 +3363,8 @@
       "tests_browser/usage-details-lifecycle.stress.mjs::chromium::usage-details-lifecycle.stress.mjs::nightly non-admin Usage omits detail clearing and retention controls",
       "tests_browser/usage-details-lifecycle.stress.mjs::chromium::usage-details-lifecycle.stress.mjs::nightly run details show failed provider requests, recover from errors, and ignore closed or switched dialogs",
       "tests_browser/usage-history-lifecycle.stress.mjs::chromium::usage-history-lifecycle.stress.mjs::nightly Usage history windows load lazily, cache selections, page all history, and keep charts responsive",
-      "tests_browser/usage-history-lifecycle.stress.mjs::chromium::usage-history-lifecycle.stress.mjs::nightly Usage window waits for pending history before accepting another selection"
+      "tests_browser/usage-history-lifecycle.stress.mjs::chromium::usage-history-lifecycle.stress.mjs::nightly Usage window waits for pending history before accepting another selection",
+      "tests_browser/configuration-import-uncertain.spec.mjs::chromium::configuration-import-uncertain.spec.mjs::an uncertain new-agent import retains edited source and requires an accepted catalogue read before another preview"
     ],
     "browser-firefox": [
       "tests_browser/abnormal-frontend-resilience.stress.mjs::firefox::abnormal-frontend-resilience.stress.mjs::IME composition interrupted by blur preserves one exact value without duplicate mutation",
@@ -3373,6 +3380,8 @@
       "tests_browser/accessibility-layout.stress.mjs::firefox::accessibility-layout.stress.mjs::large text and long names keep rule edit actions reachable",
       "tests_browser/accessibility-layout.stress.mjs::firefox::accessibility-layout.stress.mjs::major management pages keep unique IDs and reachable navigation at narrow and wide sizes",
       "tests_browser/backend-reconnect.spec.mjs::firefox::backend-reconnect.spec.mjs::mounted management panel recovers after HA backend disconnect and reconnect",
+      "tests_browser/broadcast-retry.spec.mjs::firefox::broadcast-retry.spec.mjs::Broadcast retains an uncertain operation across refresh and requires a new-send confirmation for edits",
+      "tests_browser/broadcast-retry.spec.mjs::firefox::broadcast-retry.spec.mjs::Broadcast retains an uncertain operation across refresh and retries the same admission",
       "tests_browser/browser-lifecycle-resilience.stress.mjs::firefox::browser-lifecycle-resilience.stress.mjs::clipboard denial reports a recoverable error without breaking the preview",
       "tests_browser/browser-lifecycle-resilience.stress.mjs::firefox::browser-lifecycle-resilience.stress.mjs::suspend-resume simulation settles one pending save after clock and visibility discontinuity",
       "tests_browser/cross-browser-keyboard.stress.mjs::firefox::cross-browser-keyboard.stress.mjs::keyboard-only Assistant configuration edit saves and survives reload",
@@ -3417,8 +3426,12 @@
       "tests_browser/real-ha-shell.spec.mjs::firefox::real-ha-shell.spec.mjs::nightly ownership::Function Tool validation success cannot take over another editor",
       "tests_browser/real-ha-shell.spec.mjs::firefox::real-ha-shell.spec.mjs::nightly ownership::failed initial satellite registry request retries in the same panel",
       "tests_browser/real-ha-shell.spec.mjs::firefox::real-ha-shell.spec.mjs::nightly ownership::satellite registry replacement resolves the current native selection in one document",
+      "tests_browser/request-rule-sharing-retained.spec.mjs::firefox::request-rule-sharing-retained.spec.mjs::Rule Sharing preserves its reviewed file and export choices across disclosure and binding lifetimes",
+      "tests_browser/request-rule-sharing-retained.spec.mjs::firefox::request-rule-sharing-retained.spec.mjs::failed Sharing initialization can retry and a failed review retains the source and other authored choices",
+      "tests_browser/request-rule-sharing-retained.spec.mjs::firefox::request-rule-sharing-retained.spec.mjs::repeated Request Rules binding keeps one wording-add and one create-rule activation",
       "tests_browser/stale-response-ordering.spec.mjs::firefox::stale-response-ordering.spec.mjs::older backend response cannot overwrite a newer mounted-panel route",
-      "tests_real_ha/test_browser_cross_engine_handoff_acceptance.py::test_cross_browser_state_handoff_survives_true_ha_restart[firefox]"
+      "tests_real_ha/test_browser_cross_engine_handoff_acceptance.py::test_cross_browser_state_handoff_survives_true_ha_restart[firefox]",
+      "tests_browser/configuration-import-uncertain.spec.mjs::firefox::configuration-import-uncertain.spec.mjs::an uncertain new-agent import retains edited source and requires an accepted catalogue read before another preview"
     ],
     "browser-webkit": [
       "tests_browser/abnormal-frontend-resilience.stress.mjs::webkit::abnormal-frontend-resilience.stress.mjs::IME composition interrupted by blur preserves one exact value without duplicate mutation",
@@ -3434,6 +3447,8 @@
       "tests_browser/accessibility-layout.stress.mjs::webkit::accessibility-layout.stress.mjs::large text and long names keep rule edit actions reachable",
       "tests_browser/accessibility-layout.stress.mjs::webkit::accessibility-layout.stress.mjs::major management pages keep unique IDs and reachable navigation at narrow and wide sizes",
       "tests_browser/backend-reconnect.spec.mjs::webkit::backend-reconnect.spec.mjs::mounted management panel recovers after HA backend disconnect and reconnect",
+      "tests_browser/broadcast-retry.spec.mjs::webkit::broadcast-retry.spec.mjs::Broadcast retains an uncertain operation across refresh and requires a new-send confirmation for edits",
+      "tests_browser/broadcast-retry.spec.mjs::webkit::broadcast-retry.spec.mjs::Broadcast retains an uncertain operation across refresh and retries the same admission",
       "tests_browser/browser-lifecycle-resilience.stress.mjs::webkit::browser-lifecycle-resilience.stress.mjs::clipboard denial reports a recoverable error without breaking the preview",
       "tests_browser/browser-lifecycle-resilience.stress.mjs::webkit::browser-lifecycle-resilience.stress.mjs::suspend-resume simulation settles one pending save after clock and visibility discontinuity",
       "tests_browser/cross-browser-keyboard.stress.mjs::webkit::cross-browser-keyboard.stress.mjs::keyboard-only Assistant configuration edit saves and survives reload",
@@ -3478,8 +3493,12 @@
       "tests_browser/real-ha-shell.spec.mjs::webkit::real-ha-shell.spec.mjs::nightly ownership::Function Tool validation success cannot take over another editor",
       "tests_browser/real-ha-shell.spec.mjs::webkit::real-ha-shell.spec.mjs::nightly ownership::failed initial satellite registry request retries in the same panel",
       "tests_browser/real-ha-shell.spec.mjs::webkit::real-ha-shell.spec.mjs::nightly ownership::satellite registry replacement resolves the current native selection in one document",
+      "tests_browser/request-rule-sharing-retained.spec.mjs::webkit::request-rule-sharing-retained.spec.mjs::Rule Sharing preserves its reviewed file and export choices across disclosure and binding lifetimes",
+      "tests_browser/request-rule-sharing-retained.spec.mjs::webkit::request-rule-sharing-retained.spec.mjs::failed Sharing initialization can retry and a failed review retains the source and other authored choices",
+      "tests_browser/request-rule-sharing-retained.spec.mjs::webkit::request-rule-sharing-retained.spec.mjs::repeated Request Rules binding keeps one wording-add and one create-rule activation",
       "tests_browser/stale-response-ordering.spec.mjs::webkit::stale-response-ordering.spec.mjs::older backend response cannot overwrite a newer mounted-panel route",
-      "tests_real_ha/test_browser_cross_engine_handoff_acceptance.py::test_cross_browser_state_handoff_survives_true_ha_restart[webkit]"
+      "tests_real_ha/test_browser_cross_engine_handoff_acceptance.py::test_cross_browser_state_handoff_survives_true_ha_restart[webkit]",
+      "tests_browser/configuration-import-uncertain.spec.mjs::webkit::configuration-import-uncertain.spec.mjs::an uncertain new-agent import retains edited source and requires an accepted catalogue read before another preview"
     ],
     "native-browser-chromium": [
       "tests_browser/real-ha-compatibility.spec.mjs::chromium::real-ha-compatibility.spec.mjs::HA native components and actual Assist path remain compatible"

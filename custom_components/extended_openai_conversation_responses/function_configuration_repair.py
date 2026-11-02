@@ -285,7 +285,10 @@ def has_unavailable_native_tool(options: dict[str, Any]) -> bool:
         isinstance(tool, dict)
         and isinstance(tool.get("function"), dict)
         and tool["function"].get("type") == "native"
-        and tool["function"].get("name") not in NATIVE_FUNCTION_IMPLEMENTATIONS
+        and (
+            not isinstance(implementation := tool["function"].get("name"), str)
+            or implementation not in NATIVE_FUNCTION_IMPLEMENTATIONS
+        )
         for tool in editable
     )
 

@@ -34,6 +34,7 @@ async def test_websocket_broadcast_snapshot_returns_manager_state(
     """Snapshot exposes the current catalog, history, and permission state."""
     manager = SimpleNamespace(
         enabled=True,
+        retry_token=lambda: "retry-window",
         pending=Mock(return_value=[]),
         catalog=Mock(return_value={"satellites": [{"id": "assist_satellite.kitchen"}]}),
         history=Mock(
@@ -57,6 +58,7 @@ async def test_websocket_broadcast_snapshot_returns_manager_state(
         1,
         {
             "enabled": True,
+            "retry_token": "retry-window",
             "can_manage": False,
             "pending": [],
             "catalog": {"satellites": [{"id": "assist_satellite.kitchen"}]},
@@ -234,6 +236,7 @@ async def test_pending_snapshot_uses_same_privacy_boundary_as_history(
     items = [visible, hidden, hidden_origin]
     manager = SimpleNamespace(
         enabled=True,
+        retry_token=lambda: "retry-window",
         catalog=Mock(return_value={"satellites": []}),
         history=lambda: items,
         pending=lambda: items,

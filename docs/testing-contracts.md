@@ -116,6 +116,36 @@ acceptance is required by these deterministic checks.
 
 ## PR regressions and Enhanced certification scope
 
+The Function representation corpus in `tests/fixtures/function_configuration_representations.json`
+is shared by dependency, migration, serialized restore and journal-recovery checks.
+It distinguishes legacy raw empty values from explicitly empty serialized
+collections, preserves typed backend values and disabled definitions, and retains
+quarantined siblings unchanged. Repeated startup must be idempotent, keep healthy
+siblings usable, and never silently enable an unavailable capability. Unsupported
+data does not authorize replacement; unrelated programming, I/O and cancellation
+failures still propagate. The native process-crash journey also checks quarantine
+and healthy-sibling operation after recovery and another clean restart.
+
+Mutation wire tests serialize actual backend results and feed them to production
+JavaScript acknowledgement consumers. Rejection requires evidence that no write
+committed; missing/malformed responses and transport loss remain uncertain.
+Confirmed commitment retires only its submitted draft before presentation and
+refresh, including committed responses carrying warnings or partial outcomes.
+An uncertain configuration import consumes its preview but retains source text;
+another preview requires an authoritative assistant-list refresh. These checks
+extend existing owner and acknowledgement helpers rather than adding a global
+transaction coordinator.
+
+Broadcast retry tests drop the actual queue acknowledgement, retry its immutable
+operation identity, and assert a single admission. They cover payload/caller
+binding, bounded capacity without eviction of live receipts, expiry and server
+replacement, authorization changes, cancellation, and failures after insertion.
+Uncertain attempts survive snapshot refresh; edits and revoked authentication
+lifetimes require explicit new-send confirmation. Real-browser disclosure/rebind
+journeys preserve Rule Sharing files, review and export choices, and initialization
+failure remains retryable. These journeys are registered in the nightly browser
+execution inventory in addition to PR smoke collection.
+
 PR lint runs the nightly selection and execution-catalog guards without Home
 Assistant fixtures. A new real-HA file must be selected by Enhanced or explicitly
 assigned to an existing genuine-HA acceptance job in

@@ -1,5 +1,6 @@
 import {callMutation, captureConfigurationOwner, presentAcknowledgedMutation, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
 import {acknowledgeBroadcast} from "./broadcast-acknowledgement.js";
+import {broadcastAttempt, sameBroadcastPayload, retireBroadcastAttempt} from "./broadcast-retry.js";
 import {watchLiveStatus, stopLiveStatus} from "./management-live-status.js";
 const ROUTE_STYLE = `/* Overview Broadcast */
 #broadcast-card{background:color-mix(in srgb,var(--secondary-background-color) 20%,var(--card-background-color));border-color:color-mix(in srgb,var(--divider-color) 72%,var(--secondary-text-color))}
@@ -126,6 +127,7 @@ function bindBroadcastControls(panel, snapshot) {
   root.querySelectorAll('input[name="broadcast-destination"]').forEach((input) => input.addEventListener("change", (event) => {
     if (!event.target.checked) return;
     panel._broadcastWholeHome = event.target.value === "whole";
+    panel._broadcastDraftRevision = (panel._broadcastDraftRevision || 0) + 1;
     const host = root.querySelector("#broadcast-card");
     const latest = panel._eocBroadcastSnapshot || snapshot;
     if (host) host.innerHTML = broadcastMarkup(panel, latest);
@@ -135,6 +137,7 @@ function bindBroadcastControls(panel, snapshot) {
     panel._broadcastSelected ||= new Set();
     if (event.target.checked) panel._broadcastSelected.add(event.target.dataset.broadcastEntity);
     else panel._broadcastSelected.delete(event.target.dataset.broadcastEntity);
+    panel._broadcastDraftRevision = (panel._broadcastDraftRevision || 0) + 1;
     event.target.closest(".broadcast-target")?.classList.toggle("is-selected", event.target.checked);
   }));
   root.querySelector("#broadcast-refresh")?.addEventListener("click", () => loadBroadcast(panel));
@@ -150,19 +153,46 @@ function bindBroadcastControls(panel, snapshot) {
     if (!wholeHome && !selected.length) return panel._toast("Choose at least one Assist satellite or Whole home.", true);
     panel._broadcastSending = true;
     button.disabled = true;
+    let attempt;
+    let retrying = false;
     try {
+      const payload = {message, whole_home:wholeHome, entity_ids:wholeHome ? [] : selected};
+      attempt = broadcastAttempt(panel, submission, payload, (panel._eocBroadcastSnapshot || snapshot)?.retry_token);
+      if (attempt.blocked || !sameBroadcastPayload(attempt.payload, payload)) {
+        if (!await panel._confirm("Send a new Broadcast?", "The previous send may already have been queued or delivered. Check recent broadcasts before sending again. A new send can repeat the announcement.", "Send as new")) return;
+        // Confirmation yields. Never send later edits or a different user's work.
+        const current = captureConfigurationOwner(panel);
+        if (current.userId !== submission.userId || current.authenticationGeneration !== submission.authenticationGeneration
+            || (panel._broadcastDraftRevision || 0) !== draftRevision
+            || panel._broadcastAttempt !== attempt) return;
+        if (!await loadBroadcast(panel)) return;
+        const refreshed = captureConfigurationOwner(panel);
+        if (refreshed.userId !== submission.userId || refreshed.authenticationGeneration !== submission.authenticationGeneration
+            || (panel._broadcastDraftRevision || 0) !== draftRevision || panel._broadcastAttempt !== attempt) return;
+        retireBroadcastAttempt(panel, attempt);
+        attempt = broadcastAttempt(panel, submission, payload, panel._eocBroadcastSnapshot?.retry_token);
+      }
+      retrying = attempt.uncertain;
+      attempt.uncertain = true;
       const response = await callMutation(() => panel._hass.callWS({
         type: WS_BROADCAST,
         action: "send",
-        message,
-        whole_home: wholeHome,
-        entity_ids: wholeHome ? [] : selected,
+        ...attempt.payload,
+        ...(attempt.operationId ? {operation_id:attempt.operationId} : {}),
       }));
       const result = acknowledgeBroadcast(panel, submission, message, draftRevision, response);
+      retireBroadcastAttempt(panel, attempt);
       await presentAcknowledgedMutation(panel, submission, "Broadcast queued", async () => {
         if (!await loadBroadcast(panel)) throw Error("Broadcast history could not be refreshed.");
       }, result);
     } catch (err) {
+      if (attempt) {
+        if (err.code === "invalid_request" || err.mutationOutcome === "rejected") {
+          if (retrying) attempt.blocked = true;
+          else retireBroadcastAttempt(panel, attempt);
+        }
+        else if (!attempt.operationId || ["broadcast_retry_expired", "broadcast_retry_uncertain"].includes(err.code)) attempt.blocked = true;
+      }
       panel._toast(`Unable to send Broadcast: ${err.message || String(err)}`, true);
     } finally {
       panel._broadcastSending = false;

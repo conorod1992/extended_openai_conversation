@@ -14,6 +14,14 @@ TTL limits waiting in the queue; it does not cancel an announcement already bein
 
 The action and Function Tool require an explicit destination unless whole-home delivery is requested. Home Assistant access checks apply to target resolution. See [Home Assistant actions](../services.md) and [Native Function Tools](../functions/native-details.md).
 
+### Retrying a send
+
+The Broadcast composer retains the same attempted send after a temporary connection failure. Retrying its unchanged message and destinations returns the original queue admission instead of adding another announcement. A successful admission retires that attempt before history is refreshed.
+
+Retry protection lasts up to ten minutes from the loaded Broadcast view and applies while the same Broadcast manager remains running. It is bounded to 512 admitted attempts; reaching capacity refuses new protected sends while preserving existing retry receipts. It does not persist across Home Assistant restart or integration reload. A changed message or destination, an expired retry window, or an uncertain admission requires confirmation before sending as a new announcement. Check recent delivery history first: the original announcement may already have played. Refreshing history alone does not renew an uncertain attempt.
+
+This protection concerns queue admission. Delivery status remains separate, and retry protection does not guarantee that a satellite spoke the announcement. Existing automation actions and model Function Tools retain their existing send semantics.
+
 ### Removal and reinstallation
 
 The global Quiet Hours policy and Broadcast enabled setting are retained when the final EOAI integration entry is removed. Reinstalling EOAI loads these settings again. Disable each feature before removing EOAI if you do not want it to reactivate after reinstallation. Quiet Hours restoration records are also retained so unavailable controls can be restored when EOAI returns.
