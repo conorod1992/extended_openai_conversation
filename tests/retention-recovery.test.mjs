@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {fixture, edit, retire, replace, retainPanelDrafts, restorePanelDrafts, stopDraftRecovery, configurationSubmissionIsCurrent, saveConfiguration, discardConfigurationDraft, flushUntil} from "./management-ownership-harness.mjs";
+import {startStoredConfigurationPrefetch, ENTRY_KEY} from "../custom_components/extended_openai_conversation_responses/frontend/management-route.js";
 
 function failedRetention() {
   const scenario = fixture(), panel = scenario.create();
@@ -17,6 +18,31 @@ function failedRetention() {
   edit(panel, "usage_request_retention_days", 0);
   return {...scenario, panel};
 }
+
+for (const failRead of [false, true]) test(`committed retention recovery discards an older prefetch; source read failed=${failRead}`, async () => {
+  const f = failedRetention(), source = f.panel, target = f.create(), storage = globalThis.localStorage;
+  target._clearConfigDraft();
+  globalThis.localStorage = {getItem:key => key === ENTRY_KEY ? f.state.entry : null, setItem() {}};
+  const prefetch = startStoredConfigurationPrefetch(target, target._agentId);
+  await prefetch.promise;
+  if (failRead) {
+    const send = source.hass.callWS;
+    source.hass.callWS = request => request.section === "configuration" && request.action === "get"
+      ? Promise.reject(new Error("Source refresh unavailable")) : send(request);
+  }
+  await saveConfiguration(source, null);
+  source.isConnected = false; retainPanelDrafts(source); restorePanelDrafts(target);
+  try {
+    await flushUntil(() => !source._configDirty);
+    assert.equal(prefetch.detail.status, "discarded");
+    assert.equal(target._configData.revision, "r1");
+    assert.equal(target._draft.usage_request_retention_days, 0);
+    await saveConfiguration(target, null);
+    assert.equal(f.state.writes[1].revision, "r1");
+    assert.deepEqual(f.state.writes[1].config, {usage_request_retention_days:0});
+    assert.equal(target._configDirty, false);
+  } finally { globalThis.localStorage = storage; retire(source, target); }
+});
 
 for (const failRead of [false, true]) test(`retention recovery refreshes an older full destination; source read failed=${failRead}`, async () => {
   const f = failedRetention(), source = f.panel, target = f.create();

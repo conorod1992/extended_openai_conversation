@@ -6,6 +6,7 @@ import {pendingRetentionFields} from "../custom_components/extended_openai_conve
 import {newVoiceMappingRow, updateVoiceMappingRows, voiceMappingDraftError, voiceMappingDraftDirty} from "../custom_components/extended_openai_conversation_responses/frontend/voice-mapping-draft.js";
 import {captureConfigurationSubmission, retireReplacedConfigurationDraft, configurationAuthoringBaseline, configurationDraftBaseline} from "../custom_components/extended_openai_conversation_responses/frontend/configuration-acknowledgement.js";
 import {TestEventTarget} from "./frontend-test-helpers.mjs";
+import {startStoredConfigurationPrefetch, ENTRY_KEY} from "../custom_components/extended_openai_conversation_responses/frontend/management-route.js";
 
 function scenario({failRead = false, mode = "current", unchangedImport = false} = {}) {
   const f = fixture();
@@ -391,4 +392,49 @@ test("multiple unread recoveries retain independent read receipts while Voice ro
     assert.equal(reads, 2, "deferred Voice scopes do not alternate fresh reads indefinitely");
     assert.equal(pendingRetentionFields(target).length, 2);
   } finally { retire(source, second, target); }
+});
+
+for (const failure of ["none", "source read", "destination read", "destination read, same visit", "unchanged import"]) test(`committed recovery cannot consume a pre-import configuration prefetch: ${failure}`, async () => {
+  const f = scenario({failRead:failure !== "none", unchangedImport:failure === "unchanged import"});
+  const source = f.panel, target = f.create(), storage = globalThis.localStorage;
+  target._clearConfigDraft();
+  globalThis.localStorage = {getItem:key => key === ENTRY_KEY ? f.state.entry : null, setItem() {}};
+  const prefetch = startStoredConfigurationPrefetch(target, target._agentId);
+  await prefetch.promise;
+  edit(source, "usage_request_retention_days", 7);
+  await applyConfigurationImport(source, source.shadowRoot);
+  const send = target.hass.callWS;
+  let fail = failure.startsWith("destination read"), reads = 0;
+  target.hass.callWS = request => {
+    if (request.section === "configuration" && request.action === "get") {
+      reads++;
+      if (fail) return Promise.reject(new Error("Destination refresh unavailable"));
+    }
+    return send(request);
+  };
+  source.isConnected = false; retainPanelDrafts(source); restorePanelDrafts(target);
+  try {
+    if (fail) {
+      await flushUntil(() => target.toasts.some(message => message.includes("complete settings")));
+      assert.equal(source._configDirty, true);
+      assert.equal(pendingRetentionFields(target).length, 0);
+      assert.equal(target._configData, null);
+      fail = false;
+      if (failure.endsWith("same visit")) await target._loadConfigDraft({preserveResult:true, full:true});
+      else target._loadToken++;
+      restorePanelDrafts(target);
+    }
+    await flushUntil(() => !source._configDirty);
+    assert.equal(prefetch.detail.status, "discarded");
+    assert.equal(prefetch.detail.reason, "committed-recovery");
+    assert.equal(reads, failure.startsWith("destination read") ? 2 : 1);
+    const unchanged = failure === "unchanged import";
+    assert.equal(target._configData.revision, unchanged ? "r0" : "r1");
+    assert.equal(target._draft.usage_request_retention_days, unchanged ? 30 : 0);
+    assert.equal(target._configDataStale, false);
+    await saveConfiguration(target, null);
+    assert.equal(f.state.writes[0].revision, unchanged ? "r0" : "r1");
+    assert.deepEqual(f.state.writes[0].config, {usage_request_retention_days:unchanged ? 30 : 0, usage_run_retention_days:30});
+    assert.equal(target._configDirty, false);
+  } finally { globalThis.localStorage = storage; retire(source, target); }
 });

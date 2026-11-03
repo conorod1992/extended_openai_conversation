@@ -5,6 +5,7 @@ import {mergeConfigurationRead, configurationDraftBaseline, configurationAuthori
 import {planConfigurationRecovery, combineRecoveredConfiguration, recoveredConfigurationChanges} from "./configuration-draft-recovery.js";
 import {hasPageSaveAcknowledgement} from "./page-save-acknowledgement.js";
 import {transferVoiceMappingDraft, voiceMappingDraftDirty} from "./voice-mapping-draft.js";
+import {discardStoredConfigurationPrefetch} from "./management-route.js";
 
 // HA destroys custom panels during navigation and background suspension. Keep
 // the owning instance in document memory, never in persistent browser storage.
@@ -253,7 +254,10 @@ function prepareFullRecoveryBaseline(panel, source, key) {
         && panel._loadToken === state.visit && panel._cacheGeneration === state.generation) {
       // Finish an unread destination overwrite before receiving another draft.
       // Otherwise its retired values could hide an equal incoming authored edit.
-      if (replacement || unreadSource) panel._invalidateCleanConfiguration?.(panel._agentId);
+      if (replacement || unreadSource) {
+        panel._invalidateCleanConfiguration?.(panel._agentId);
+        discardStoredConfigurationPrefetch(panel, "committed-recovery");
+      }
       return panel._loadConfigDraft({preserveResult:true, full:true});
     }
   }).catch(() => {
