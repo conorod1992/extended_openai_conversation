@@ -32,12 +32,19 @@ for (const bundle of [false,true]) for (const fault of ["lost", "unknown_error",
   await expect.poll(()=>page.evaluate(()=>typeof window.releaseOldRuleRead)).toBe("function");
   await panel.locator("#rules-default-word-forms").uncheck();
   await panel.locator("#save-page").click();
-  await expect(panel.locator("#save-page")).toBeEnabled();
+  await expect(panel.locator("#save-page")).toBeDisabled();
   expect(await page.evaluate(()=>browserHarness.getState().requestRules.defaults.word_forms)).toBe(false);
   await page.evaluate(async()=>{releaseOldRuleRead(); await oldRuleRead;});
   // A read captured before the commit must not authorize another write.
-  await panel.locator("#save-page").click();
-  await expect(panel.locator("#save-page")).toBeEnabled();
+  // Exercise production admission directly as well as the disabled UI.
+  const attemptWrite=() => panel.evaluate(async host => {
+    const scope=host._unsavedState.scopes.get("capabilities/request-rules");
+    try {await host._call("request_rules","settings",{...host._rulesSettingsDraft,revision:scope.revision});}
+    catch {return;}
+    throw Error("Uncertain settings were admitted without a complete fresh read");
+  });
+  await attemptWrite();
+  await expect(panel.locator("#save-page")).toBeDisabled();
   expect(await page.evaluate(()=>settingsWrites)).toBe(1);
   // A newer but incomplete list must not certify recovery either.
   await panel.evaluate(async host=>{
@@ -48,15 +55,20 @@ for (const bundle of [false,true]) for (const fault of ["lost", "unknown_error",
     };
     try {await host._call("request_rules","list");} finally {host.hass.callWS=send;}
   });
-  await panel.locator("#save-page").click();
-  await expect(panel.locator("#save-page")).toBeEnabled();
+  await attemptWrite();
+  await expect(panel.locator("#save-page")).toBeDisabled();
   expect(await page.evaluate(()=>settingsWrites)).toBe(1);
+  await panel.locator(".rule-settings details").evaluateAll(nodes=>nodes.forEach(node=>{node.open=true;}));
+  await panel.locator("#rules-default-wording").uncheck();
   // Ordinary section refresh must recover, without a collection/editor detour.
   await panel.evaluate(async host=>{host._sectionCache.clear(); await host._loadSection(true);});
   await panel.locator(".rule-settings details").evaluateAll(nodes=>nodes.forEach(node=>{node.open=true;}));
+  await expect(panel.locator("#rules-default-wording")).not.toBeChecked();
+  await expect(panel.locator("#save-page")).toBeEnabled();
   // A refresh must not silently rebase dirty settings over concurrent changes.
   // Explicitly discard the retained draft against the freshly read baseline.
   await panel.locator("#discard-page").click();
+  await panel.locator(".rule-settings details").evaluateAll(nodes=>nodes.forEach(node=>{node.open=true;}));
   await panel.locator("#rules-default-wording").uncheck();
   await panel.locator("#save-page").click();
   await expect.poll(()=>page.evaluate(()=>browserHarness.getState().requestRules.defaults.wording_alternatives)).toBe(false);

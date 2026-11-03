@@ -828,7 +828,7 @@ for (const bundled of [false, true]) {
         const server = window.__policyServer;
         if (message.section === "quiet_hours" && message.action === "update") {
           server.updates.push(structuredClone(message));
-          if (message.revision !== server.revision) throw new Error("Quiet Hours configuration changed; reload before saving");
+          if (message.revision !== server.revision) throw Object.assign(new Error("Quiet Hours configuration changed; reload before saving"), {code:"invalid_request"});
         }
         const result = await call(message);
         return message.section === "quiet_hours" ? {...result, revision:server.revision,
