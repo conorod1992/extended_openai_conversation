@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 import voluptuous as vol
+from voluptuous_openapi import UNSUPPORTED
 
 from custom_components.extended_openai_conversation_responses import (
     conversation as owner,
@@ -30,8 +31,17 @@ from tests.test_ha_llm_tools import TestAPI, context, register
 from tests.test_tool_exchange_protocol import _final_stream, _function_call_stream
 
 
-async def _native_conversation(hass, monkeypatch, tool, *, recovery=False):
-    register(hass, TestAPI(hass, api_id="effect-recovery", tools=[tool]))
+async def _native_conversation(
+    hass, monkeypatch, tool, *, recovery=False, serializer=None
+):
+    class SourceAPI(TestAPI):
+        async def async_get_api_instance(self, context):
+            instance = await super().async_get_api_instance(context)
+            if serializer is not None:
+                instance.custom_serializer = serializer
+            return instance
+
+    register(hass, SourceAPI(hass, api_id="effect-recovery", tools=[tool]))
     discovered = await async_discover(hass, context())
     configured = new_reference_tool(
         next(iter(discovered.tools.values())).reference, set()
@@ -218,3 +228,55 @@ async def test_explicit_identity_preserving_ha_calls_remain_distinct(hass, monke
     second = await run.invoke()
     assert second.response.error_code is None
     assert effects == [{"operation_id": 1}, {"operation_id": 2}]
+
+
+async def test_unchanged_preview_does_not_certify_stateful_native_normalization(
+    hass, monkeypatch
+):
+    validations = []
+    effects = []
+
+    def normalize(value):
+        validations.append(value)
+        return value if len(validations) == 1 else 11
+
+    class Stateful(llm.Tool):
+        name = "stateful"
+        integration = "extended_openai_conversation_responses"
+        description = "Return the effective invocation"
+        parameters = vol.Schema({vol.Required("operation_id"): vol.All(int, normalize)})
+
+        async def async_call(self, hass, tool_input, llm_context):
+            actual = self.parameters(dict(tool_input.tool_args))
+            effects.append(actual)
+            result_type = getattr(llm, "ToolResult", None)
+            return result_type(data=actual) if result_type is not None else actual
+
+    run = await _native_conversation(
+        hass,
+        monkeypatch,
+        Stateful(),
+        serializer=lambda schema: (
+            {"type": "integer"} if schema is normalize else UNSUPPORTED
+        ),
+    )
+    run.client.responses.create.side_effect = [
+        _function_call_stream([("first", run.name, {"operation_id": 10})]),
+        TimeoutError("continuation lost"),
+    ]
+    await run.invoke()
+    assert validations == [10, 10]
+    assert effects == [{"operation_id": 11}]
+    result = next(
+        item
+        for item in run.retained
+        if isinstance(item, conversation.ToolResultContent)
+    )
+    actual = tool_result_data(result)["result"]
+    run.client.responses.create.side_effect = [
+        _function_call_stream([("new-id", run.name, actual)]),
+        _final_stream(),
+    ]
+    second = await run.invoke()
+    assert second.response.error_code is not None
+    assert effects == [{"operation_id": 11}]

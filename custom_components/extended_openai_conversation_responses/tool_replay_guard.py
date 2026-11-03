@@ -12,6 +12,8 @@ import hashlib
 import json
 from typing import Any
 
+import voluptuous as vol
+
 from homeassistant.components import conversation
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
@@ -38,6 +40,35 @@ _PRECISE_EFFECT_KINDS = {
     "file_write",
     "file_edit",
 }
+
+
+def _ha_schema_preserves_values(schema: Any, depth: int = 0) -> bool:
+    """Recognize plain validation without re-running possibly stateful schemas."""
+    if depth > 32:
+        return False
+    if any(schema is kind for kind in (str, int, float, bool, type(None))):
+        return True
+    if schema is None or type(schema) in (str, int, float, bool):
+        return True
+    if type(schema) is vol.Schema:
+        return _ha_schema_preserves_values(schema.schema, depth + 1)
+    if type(schema) is dict:
+        return all(
+            (
+                type(key) is str
+                or (
+                    type(key) in (vol.Optional, vol.Required)
+                    and type(key.schema) is str
+                )
+            )
+            and _ha_schema_preserves_values(value, depth + 1)
+            for key, value in schema.items()
+        )
+    if type(schema) is list:
+        return all(_ha_schema_preserves_values(value, depth + 1) for value in schema)
+    # Custom validators/coercions may happen to return an unchanged preview,
+    # then change the actual native invocation. Equality alone proves nothing.
+    return False
 
 
 @dataclass
@@ -317,6 +348,7 @@ def record_dispatch(
     # after a failed continuation, or apply a non-idempotent schema twice.
     spec["_effective_arguments_unknown"] = ha_parameters is not None and (
         _signature(prepared_call) != _signature(tool_input)
+        or not _ha_schema_preserves_values(ha_parameters)
     )
     signature = (
         _signature(prepared_call, spec, prepared=prepared_arguments is not None)
