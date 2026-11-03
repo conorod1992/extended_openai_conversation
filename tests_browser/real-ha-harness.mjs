@@ -23,7 +23,7 @@ try {
   sessionStorage.removeItem("eocRealHaOutcomes");
 }
 const hass = {
-  config: {time_zone: "Europe/Dublin"},
+  config: {},
   callWS: async (message) => {
     const index = calls.length;
     const trace = structuredClone(message);
@@ -62,6 +62,12 @@ const hass = {
 window.browserHarness = {calls, outcomes, hass, windowErrors: [], rejections: []};
 window.addEventListener("error", (event) => window.browserHarness.windowErrors.push(String(event.error || event.message)));
 window.addEventListener("unhandledrejection", (event) => window.browserHarness.rejections.push(String(event.reason)));
+
+// Match the native frontend: wall-time editors must use the connected HA
+// instance's zone, not a fixture constant that may differ from the resolver.
+const configuration = await hass.callWS({type:"get_config"});
+if (typeof configuration?.time_zone !== "string") throw new Error("HA configuration did not provide a timezone");
+hass.config = configuration;
 
 if (frontendRoot) {
   await import(`${frontendRoot.replace(/\/$/, "")}/management-panel.js`);

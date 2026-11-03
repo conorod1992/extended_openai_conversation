@@ -587,6 +587,8 @@ for (const now of [false, true]) {
     ));
     const before = await updates();
     const original = await panel.evaluate(host => host._call("guest_mode", "get"));
+    const haConfig = await panel.evaluate(host => host.hass.callWS({type:"get_config"}));
+    expect(await panel.evaluate(host => host.hass.config.time_zone)).toBe(haConfig.time_zone);
     const button = panel.locator(now ? "#guest-now" : "#guest-update");
     await panel.locator("#guest-indefinite").uncheck();
     await panel.locator("#guest-end").fill("");
