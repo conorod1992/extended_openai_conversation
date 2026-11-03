@@ -137,14 +137,25 @@ def test_ios_cache_warms_default_branch_and_uses_exact_build_identity():
         for step in steps
         if step.get("uses", "").startswith("actions/cache/")
     ]
-    assert len(caches) == 4
+    assert len(caches) == 6
     assert all(
         "IOS_BUILD_CACHE_ID" in cache["key"] and "restore-keys" not in cache
         for cache in caches
     )
-    assert sorted(cache["key"] for cache in caches[:2]) == sorted(
-        cache["key"] for cache in caches[2:]
-    )
+    # Pair by action and identity, rather than relying on step order: a host
+    # tool cache is restored before Bundler and saved after Bundler.
+    restored = {
+        step["with"]["key"]: step["with"]["path"]
+        for step in steps
+        if step.get("uses", "").startswith("actions/cache/restore@")
+    }
+    saved = {
+        step["with"]["key"]: step["with"]["path"]
+        for step in steps
+        if step.get("uses", "").startswith("actions/cache/save@")
+    }
+    assert len(restored) == len(saved) == 3
+    assert restored == saved
 
 
 @pytest.mark.parametrize(
