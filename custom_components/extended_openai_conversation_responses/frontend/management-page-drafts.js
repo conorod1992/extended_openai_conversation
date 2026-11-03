@@ -3,7 +3,7 @@ import {processMutationResponse, requireMutationAcknowledgement, captureConfigur
 import {formatWordingAlternatives, parseWordingAlternatives} from "./wording-alternatives.js";
 import {enhancementChanged} from "./management-enhancement-state.js";
 import {completePolicyResponse, retainPageSaveAcknowledgement, hasPendingPageSaveRead, PAGE_SAVE_READ_EVENT, PAGE_SAVE_READ_MESSAGE} from "./page-save-acknowledgement.js";
-import {UnsavedState, clone, same, draftScope, saveBarMarkup} from "./unsaved-state.js";
+import {UnsavedState, clone, same, mergeAcknowledgedDraft, draftScope, saveBarMarkup} from "./unsaved-state.js";
 import {NAVIGATION} from "./frontend-navigation.js";
 
 const GUEST = "capabilities/guest-mode";
@@ -56,7 +56,7 @@ export function initializePageDraft(panel) {
     // Keep the authoring baseline/revision while retaining the current saved
     // projection for an explicit discard after a refresh or recovered ACK.
     existing.result = result;
-    if (sameResult || existing.dirty() || existing.pending || existing.acknowledgedSave?.owns()) return;
+    if (sameResult || existing.dirty() || existing.pending || existing.uncertainSubmission || existing.acknowledgedSave?.owns()) return;
   }
   const field = view === GUEST ? "_guestDraft" : view === QUIET ? "_quietHoursDraft" : "_rulesSettingsDraft";
   const baseline = view === RULES ? settings(result) : result.config || {};
@@ -134,9 +134,49 @@ export function initializePageDraft(panel) {
     // current saved policy. Explicit discard adopts that acknowledged read.
     scope.baseline = clone(view === RULES ? settings(scope.result) : scope.result.config || {});
     scope.revision = scope.result.revision;
+    if (scope.uncertainSubmission) scope.uncertainSubmission = clone(scope.baseline);
     scope.write(clone(scope.baseline));
   };
+  retainUncertainPolicyDraft(panel, scope, view);
   state.register(view, scope);
+}
+
+function retainUncertainPolicyDraft(panel, scope, view) {
+  const save = scope.save.bind(scope), dirty = scope.dirty.bind(scope);
+  scope.dirty = () => dirty() || Boolean(scope.uncertainSubmission && !same(scope.read(), scope.uncertainSubmission));
+  scope.reconcileUncertainRead = result => {
+    if (!scope.uncertainSubmission || !scope.isCurrent() || scope.pending) return;
+    const saved = view === RULES ? settings(result) : result.config;
+    const current = clone(scope.read()), submitted = scope.uncertainSubmission;
+    const next = mergeAcknowledgedDraft(current, scope.baseline, saved);
+    // A reversion can equal the old baseline while still being newer than the
+    // uncertain submission. Preserve both kinds of authoring against the read.
+    for (const key of new Set([...Object.keys(current), ...Object.keys(submitted)])) {
+      if (Object.hasOwn(current, key) === Object.hasOwn(submitted, key) && same(current[key], submitted[key])) continue;
+      if (Object.hasOwn(current, key)) next[key] = clone(current[key]);
+      else delete next[key];
+    }
+    scope.baseline = clone(saved);
+    scope.revision = result.revision;
+    scope.result = result;
+    scope.uncertainSubmission = null;
+    scope.write(next);
+  };
+  scope.save = async () => {
+    if (scope.pending) return false;
+    const owner = captureConfigurationDraftOwner(panel), submitted = clone(scope.read());
+    try {
+      const result = await save();
+      scope.uncertainSubmission = null;
+      return result;
+    } catch (error) {
+      if (error?.mutationOutcome === "uncertain") {
+        scope.uncertainSubmission = submitted;
+        retainPageSaveAcknowledgement(panel, scope, owner, view, {uncertain:true});
+      }
+      throw error;
+    }
+  };
 }
 
 function refreshSavedGuestPolicy(panel, scope, owner) {

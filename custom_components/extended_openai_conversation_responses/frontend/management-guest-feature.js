@@ -61,7 +61,7 @@ export function acknowledgeGuestInterval(panel, submission, status) {
   if (!["active_from", "active_until", "indefinite"].every(key => Object.hasOwn(status || {}, key))) return;
   // An indefinite interval does not submit Ends. Keep that inactive input so
   // toggling indefinite off does not silently erase an authored finite end.
-  const saved = intervalValues(panel, status, state.values.end);
+  const saved = intervalValues(panel, status, submission.values.end);
   state.values = mergeAcknowledgedDraft(state.values, submission.values, saved);
   state.baseline = saved;
 }

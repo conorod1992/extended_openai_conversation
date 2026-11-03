@@ -48,6 +48,7 @@ export function acceptPageRead(panel, result, read) {
   if (read.view !== "capabilities/request-rules") requireMutationAcknowledgement(Boolean(projection), "loading the saved policy");
   if (!projection) return false;
   acceptedReads.set(panel, {...read, projection, sequence:(acceptedReads.get(panel)?.sequence || 0) + 1});
+  if (ownsScope) scope.reconcileUncertainRead?.(result);
   const obligations = readObligations.get(panel);
   for (const entry of obligations || []) {
     if (!entry.acknowledgement.owns()) obligations.delete(entry);
@@ -75,7 +76,8 @@ export function hasPageSaveAcknowledgement(panel) {
 
 export function hasPendingPageSaveRead(panel) {
   const obligations = readObligations.get(panel);
-  let pending = false;
+  const scope = panel._unsavedState?.scopes.get(panel._viewKey?.());
+  let pending = Boolean(scope?.isCurrent?.() && scope.uncertainSubmission);
   for (const entry of obligations || []) {
     if (!entry.acknowledgement.owns() || freshPageRead(panel, entry.state)) obligations.delete(entry);
     else if (configurationSubmissionIsCurrent(panel, entry.state.owner)
@@ -84,13 +86,14 @@ export function hasPendingPageSaveRead(panel) {
   return pending;
 }
 
-// The policy save callback records this before draftScope clears pending. A
-// clean detached source still owns the obligation to refresh its replacement.
-export function retainPageSaveAcknowledgement(source, scope, submission, view) {
-  if (source.isConnected !== false || !VIEWS.has(view)
+// Successful detached saves and uncertain saves retain a read obligation.
+// Uncertainty can outlive a connected error and a later panel replacement.
+export function retainPageSaveAcknowledgement(source, scope, submission, view, {uncertain = false} = {}) {
+  if ((!uncertain && source.isConnected !== false) || !VIEWS.has(view)
       || !configurationSubmissionIsCurrent(source, submission)) return;
   const states = new WeakMap();
   const ownsSource = () => configurationSubmissionIsCurrent(source, submission)
+    && (!uncertain || Boolean(scope.uncertainSubmission))
     && source._unsavedState?.scopes.get(view) === scope && scope.acknowledgedSave === acknowledgement;
   const ownsDestination = panel => panel.isConnected !== false && panel._data?.is_admin
     && configurationOwnerIsCurrent(panel, submission) && panel._viewKey?.() === view;
@@ -98,7 +101,10 @@ export function retainPageSaveAcknowledgement(source, scope, submission, view) {
     if (!ownsSource()) return {accepted:true, refreshing:false};
     if (!ownsDestination(destination) || source.isConnected !== false) return {accepted:false, refreshing:false};
     let state = states.get(destination);
-    if (state && freshPageRead(destination, state)) return {accepted:true, refreshing:false};
+    if (state && freshPageRead(destination, state)) {
+      if (uncertain) scope.reconcileUncertainRead?.(destination._result);
+      return {accepted:true, refreshing:false};
+    }
     if (state && !state.isCurrent()) state = null;
     if (state?.running) return {accepted:false, refreshing:true};
     if (state?.failedVisit === destination._loadToken) return {accepted:false, refreshing:false};
@@ -126,7 +132,8 @@ export function retainPageSaveAcknowledgement(source, scope, submission, view) {
       state.running = false;
       if (stillOwned() && !freshPageRead(destination, state)) {
         state.failedVisit = destination._loadToken;
-        destination._toast?.("Changes saved, but the policy could not be refreshed. Refresh this section to retry.", true);
+        destination._toast?.(uncertain ? "The policy save outcome is unknown. Refresh this section to recover your edits."
+          : "Changes saved, but the policy could not be refreshed. Refresh this section to retry.", true);
       }
       retry?.();
     });

@@ -2234,7 +2234,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
           return this._refreshGuestModeMutation(agentId, result);
         }, result);
       } catch (err) {
-        this._toast(`Unable to update Guest Mode: ${err.message || String(err)}`, true);
+        if (configurationSubmissionIsCurrent(this, submission)) this._toast(`Unable to update Guest Mode: ${err.message || String(err)}`, true);
       }
     });
   }
@@ -2251,7 +2251,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         requireMutationAcknowledgement(result?.status && typeof result.status === "object", "the Guest Mode change");
         await presentAcknowledgedMutation(this, submission, "Guest Mode ended", () => this._refreshGuestModeMutation(agentId, result), result);
       } catch (err) {
-        this._toast(`Unable to end Guest Mode: ${err.message || String(err)}`, true);
+        if (configurationSubmissionIsCurrent(this, submission)) this._toast(`Unable to end Guest Mode: ${err.message || String(err)}`, true);
       }
     });
   }

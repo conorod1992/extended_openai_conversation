@@ -34,13 +34,21 @@ for (const bundled of [false, true]) for (const missingRevision of [false, true]
   await panel.locator("#guest-web-search").uncheck();
   await panel.locator("#guest-separate-control").evaluate(input => {for (let p=input.parentElement;p;p=p.parentElement) if(p.tagName === "DETAILS") p.open=true;});
   await panel.locator("#guest-separate-control").check();
-  await panel.locator("#save-page").click();
+  if (missingRevision) {
+    await expect(panel.locator("#save-page")).toBeDisabled();
+    await panel.locator("#save-page").evaluate(button => button.click());
+  } else await panel.locator("#save-page").click();
   await expect.poll(() => panel.evaluate(host => host._unsavedState.scopes.get("capabilities/guest-mode").pending)).toBe(false);
   const stored = await page.evaluate(() => browserHarness.getState().guest);
   const attempts = await page.evaluate(() => policyReviewAttempts);
   expect(stored.config.guest_mode_enabled).toBe(true);
-  expect(attempts).toHaveLength(2);
-  expect(attempts[1].revision).toBeDefined();
+  expect(attempts).toHaveLength(missingRevision ? 1 : 2);
+  if (!missingRevision) expect(attempts[1].revision).toBeDefined();
+  else {
+    await panel.evaluate(host => host._loadSection(true));
+    await expect(panel.locator("#save-page")).toBeEnabled();
+    expect(await panel.evaluate(host => host._guestDraft.guest_mode_enabled)).toBe(true);
+  }
   await page.goto(fixtureUrl("capabilities/guest-mode", bundled ? "&bundle=1" : ""));
   await expect(panel.locator("#guest-controls-enabled")).toBeChecked();
 });
@@ -77,12 +85,20 @@ for (const bundled of [false, true]) for (const missingRevision of [false, true]
   await page.evaluate(() => changeQuietConcurrently());
   await panel.locator("#qh-enabled").uncheck();
   await panel.locator("#qh-start").fill("21:45");
-  await panel.locator("#save-page").click();
+  if (missingRevision) {
+    await expect(panel.locator("#save-page")).toBeDisabled();
+    await panel.locator("#save-page").evaluate(button => button.click());
+  } else await panel.locator("#save-page").click();
   await expect.poll(() => panel.evaluate(host => host._unsavedState.scopes.get("capabilities/quiet-hours").pending)).toBe(false);
   expect(await page.evaluate(() => browserHarness.getState().quiet.config.start)).toBe("23:15");
   const attempts = await page.evaluate(() => quietReviewAttempts);
-  expect(attempts).toHaveLength(2);
-  expect(attempts[1].revision).toBeDefined();
+  expect(attempts).toHaveLength(missingRevision ? 1 : 2);
+  if (!missingRevision) expect(attempts[1].revision).toBeDefined();
+  else {
+    await panel.evaluate(host => host._loadSection(true));
+    await expect(panel.locator("#save-page")).toBeEnabled();
+    await expect(panel.locator("#qh-start")).toHaveValue("21:45");
+  }
   await page.goto(fixtureUrl("capabilities/quiet-hours", bundled ? "&bundle=1" : ""));
   await expect(panel.locator("#qh-start")).toHaveValue("23:15");
 });
