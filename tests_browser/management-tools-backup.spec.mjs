@@ -14,8 +14,6 @@ for (const localEdit of [false, true]) test(`background restore refreshes its ag
   await panel.getByRole("button", {name:"Save changes", exact:true}).click();
   await expect(panel.getByText("Unsaved changes", {exact:true})).toHaveCount(0);
   await panel.evaluate(host => host._navigate("usage-maintenance", "backup-restore"));
-  await panel.locator("#backup-file-transfer").setInputFiles(path);
-  await expect(panel.locator("#restore-transfer-apply")).toBeEnabled();
   await page.evaluate(() => {
     const original = browserHarness.hass.callWS.bind(browserHarness.hass);
     browserHarness.hass.callWS = async message => {
@@ -26,6 +24,8 @@ for (const localEdit of [false, true]) test(`background restore refreshes its ag
       return original(message);
     };
   });
+  await panel.locator("#backup-file-transfer").setInputFiles(path);
+  await expect(panel.locator("#restore-transfer-apply")).toBeEnabled();
   await panel.locator("#restore-transfer-apply").click();
   await acceptConfirmation(panel);
   await expect.poll(() => page.evaluate(() => window.restoreStarted)).toBe(true);
@@ -48,8 +48,6 @@ test("agent A restore completion preserves agent B's pending Overview", async ({
   const download = page.waitForEvent("download");
   await panel.locator("#create-backup-transfer").click();
   const path = await (await download).path();
-  await panel.locator("#backup-file-transfer").setInputFiles(path);
-  await expect(panel.locator("#restore-transfer-apply")).toBeEnabled();
   await page.evaluate(() => {
     const original = browserHarness.hass.callWS.bind(browserHarness.hass);
     window.pendingOverviewB = [];
@@ -66,6 +64,8 @@ test("agent A restore completion preserves agent B's pending Overview", async ({
       return result;
     };
   });
+  await panel.locator("#backup-file-transfer").setInputFiles(path);
+  await expect(panel.locator("#restore-transfer-apply")).toBeEnabled();
   await panel.locator("#restore-transfer-apply").click();
   await acceptConfirmation(panel);
   await expect.poll(() => page.evaluate(() => window.restoreCommitted)).toBe(true);
@@ -93,8 +93,6 @@ test("Escape cannot hide a committed restore's completion or refreshed configura
   await panel.getByRole("button", {name:"Save changes", exact:true}).click();
   await expect(panel.getByText("Unsaved changes", {exact:true})).toHaveCount(0);
   await panel.evaluate(host => host._navigate("usage-maintenance", "backup-restore"));
-  await panel.locator("#backup-file-transfer").setInputFiles(path);
-  await expect(panel.locator("#restore-transfer-apply")).toBeEnabled();
   await page.evaluate(() => {
     const original = browserHarness.hass.callWS.bind(browserHarness.hass);
     browserHarness.hass.callWS = async message => {
@@ -106,6 +104,8 @@ test("Escape cannot hide a committed restore's completion or refreshed configura
       return result;
     };
   });
+  await panel.locator("#backup-file-transfer").setInputFiles(path);
+  await expect(panel.locator("#restore-transfer-apply")).toBeEnabled();
   await panel.locator("#restore-transfer-apply").click();
   await acceptConfirmation(panel);
   await expect.poll(() => page.evaluate(() => window.restoreCommitted)).toBe(true);

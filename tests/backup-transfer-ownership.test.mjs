@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {bindBackupTransfer, cancelBackupImport, openBackupPicker, refreshImportPreview} from "../custom_components/extended_openai_conversation_responses/frontend/backup-transfer-ui.js";
+import {bindBackupTransfer, cancelBackupImport, downloadArchiveBackup, openBackupPicker, refreshImportPreview, uploadFullBackup} from "../custom_components/extended_openai_conversation_responses/frontend/backup-transfer-ui.js";
 import {cleanupStateSafety, confirmStateSafeNavigation} from "../custom_components/extended_openai_conversation_responses/frontend/management-state-safety.js";
 import {deferred} from "./frontend-test-helpers.mjs";
 import {readFile} from "node:fs/promises";
@@ -182,14 +182,15 @@ test("restore acknowledgement sensitivity detects cache errors escaping the tran
   await assert.rejects(() => restoreAcknowledgementWitness("cache", bind), /consume its session|retire its preview|presentation must not reject/);
 });
 
-for (const cleanup of ["cancel", "picker", "preview", "navigation", "disconnect", "escape", "close"]) {
-  test(`prepared imports retain ownership during ${cleanup} after switching agents`, async () => {
+for (const cleanup of ["cancel", "picker", "preview", "navigation", "disconnect", "escape", "close"]) for (const replacedConnection of [false, true]) {
+  test(`prepared imports retain ownership during ${cleanup} after switching agents (replacement connection: ${replacedConnection})`, async () => {
     const h = harness();
     await h.upload();
     const session = h.panel._backupTransferSession;
     assert.equal(Object.isFrozen(session), true);
     assert.equal(Object.isFrozen(session.owner), true);
     h.switchAgent();
+    if (replacedConnection) h.panel._hass = {callWS() { assert.fail("cleanup must not use a replacement connection"); }};
     if (cleanup === "cancel") await cancelBackupImport(h.panel);
     if (cleanup === "picker") openBackupPicker(h.panel, {value:"", click(){}});
     if (cleanup === "preview") assert.equal(refreshImportPreview(h.panel), false);
@@ -203,6 +204,107 @@ for (const cleanup of ["cancel", "picker", "preview", "navigation", "disconnect"
     h.panel._eocBackupTransferCleanup();
   });
 }
+
+function authenticatedPanel(callWS) {
+  return {
+    _hass:{user:{id:"original"}, callWS},
+    get hass() { return this._hass; },
+    _eocAuthenticationGeneration:1,
+    _selectedAgent:() => ({entry_id:"entry-A", subentry_id:"agent-A"}),
+  };
+}
+
+function replaceAuthentication(panel, replacement) {
+  panel._eocAuthenticationGeneration++;
+  panel._hass = replacement === "disconnected" ? null : {
+    user:{id:"replacement", is_admin:replacement === "admin"},
+    callWS() { assert.fail("a retired transfer must never borrow the replacement transport"); },
+  };
+}
+
+for (const mode of ["full", "custom"]) for (const stage of ["export_start", "export_chunk"]) for (const replacement of ["admin", "non-admin", "disconnected"]) {
+  test(`${mode} export cancelled through original transport after ${stage} with ${replacement}`, async () => {
+    const ready = deferred(), response = deferred(), calls = [];
+    const panel = authenticatedPanel(async function(message) {
+      assert.equal(this, originalHass, "the original callWS receiver is retained");
+      calls.push(message.action);
+      const result = message.action === "export_start"
+        ? {session_id:"export-A", size:1, chunk_count:1}
+        : {session_id:"export-A", index:0, offset:0, bytes:1, data:"eA=="};
+      if (message.action === stage) { ready.resolve(); await response.promise; }
+      return result;
+    });
+    const originalHass = panel._hass;
+    let downloads = 0;
+    const pending = downloadArchiveBackup(panel, {mode, sections:mode === "custom" ? ["configuration"] : null}, async () => { downloads++; });
+    const rejected = assert.rejects(pending, /authentication changed/);
+    await ready.promise;
+    replaceAuthentication(panel, replacement);
+    response.resolve();
+    await rejected;
+    assert.equal(downloads, 0);
+    assert.deepEqual(calls, stage === "export_start" ? ["export_start", "export_cancel"] : ["export_start", "export_chunk", "export_cancel"]);
+  });
+}
+
+for (const originalOffline of [false, true]) test(`failed pending export keeps original cleanup ownership (original offline: ${originalOffline})`, async () => {
+  const ready = deferred(), response = deferred(), calls = [];
+  const panel = authenticatedPanel(async message => {
+    calls.push(message.action);
+    if (message.action === "export_start") return {session_id:"export-A", size:1, chunk_count:1};
+    if (message.action === "export_chunk") { ready.resolve(); return response.promise; }
+    if (originalOffline) throw Error("original connection closed");
+    return {cancelled:true};
+  });
+  const pending = downloadArchiveBackup(panel, {}, () => assert.fail("failed export must not download"));
+  const rejected = assert.rejects(pending, /chunk failed/);
+  await ready.promise;
+  replaceAuthentication(panel, "admin");
+  response.reject(Error("chunk failed"));
+  await rejected;
+  assert.deepEqual(calls, ["export_start", "export_chunk", "export_cancel"]);
+});
+
+for (const stage of ["import_start", "file_read", "import_chunk", "import_inspect"]) for (const replacement of ["admin", "disconnected"]) test(`upload retains cleanup owner across ${stage} with ${replacement}`, async () => {
+  const ready = deferred(), response = deferred(), calls = [];
+  const panel = authenticatedPanel(async function(message) {
+    assert.equal(this, originalHass);
+    calls.push(message.action);
+    if (message.action === stage) { ready.resolve(); await response.promise; }
+    if (message.action === "import_start") return {session_id:"import-A", chunk_size:1, chunk_count:1};
+    if (message.action === "import_chunk") return {session_id:"import-A", next_index:1, received:1};
+    if (message.action === "import_inspect") return {valid:true};
+    return {cancelled:true};
+  });
+  const originalHass = panel._hass;
+  const file = {name:"backup.zip", size:1, slice:() => ({async arrayBuffer() {
+    if (stage === "file_read") { ready.resolve(); await response.promise; }
+    return new Uint8Array([1]).buffer;
+  }})};
+  const pending = uploadFullBackup(panel, file);
+  const rejected = assert.rejects(pending, /superseded/);
+  await ready.promise;
+  replaceAuthentication(panel, replacement);
+  response.resolve();
+  await rejected;
+  const expected = ["import_start"];
+  if (["import_chunk", "import_inspect"].includes(stage)) expected.push("import_chunk");
+  if (stage === "import_inspect") expected.push("import_inspect");
+  assert.deepEqual(calls, [...expected, "import_cancel"]);
+  assert.equal(panel._backupTransferUploads.size, 0);
+});
+
+test("same-user HA updates retain the upload transport through preview and restore", async () => {
+  const h = harness();
+  await h.upload();
+  h.panel._hass = {callWS() { assert.fail("prepared sessions must retain their admitting transport"); }};
+  await new Promise(resolve => setTimeout(resolve, 200));
+  assert.ok(h.calls.some(call => call.action === "import_inspect" && !call.data.inspect_only));
+  assert.equal(h.nodes.get("#restore-transfer-apply").disabled, false);
+  await h.nodes.get("#restore-transfer-apply").handlers.click();
+  assert.ok(h.calls.some(call => call.action === "import_restore"));
+  assert.equal(h.panel._backupTransferSession, null);
+});
 
 test("choosing a new backup after an agent switch retires the old owned session", async () => {
   const h = harness();
@@ -239,14 +341,15 @@ test("a switched agent cannot apply a prepared restore after confirmation", asyn
 });
 
 for (const switchAgent of [false, true]) test(`late restore completion cannot clear a newer prepared import (switch agent: ${switchAgent})`, async () => {
-  const h = harness(); await h.upload();
-  h.panel._backupTransferPreviewToken = "validated";
-  h.nodes.get("#restore-transfer-apply").disabled = false;
+  const h = harness();
   const restore = deferred(), started = deferred(), original = h.panel._hass.callWS;
   h.panel._hass.callWS = message => {
     if (message.action === "import_restore") { assert.equal(message.subentry_id, "agent-A"); started.resolve(); return restore.promise; }
     return original(message);
   };
+  await h.upload();
+  h.panel._backupTransferPreviewToken = "validated";
+  h.nodes.get("#restore-transfer-apply").disabled = false;
   const applying = h.nodes.get("#restore-transfer-apply").handlers.click(); await started.promise;
   await confirmStateSafeNavigation(h.panel, null);
   if (switchAgent) h.switchAgent();
@@ -261,13 +364,14 @@ for (const switchAgent of [false, true]) test(`late restore completion cannot cl
 
 for (const dismissal of ["escape", "cancel"]) {
   test(`an executing restore survives ${dismissal} and reports completion`, async () => {
-    const h = harness(); await h.upload();
-    await new Promise(resolve => setTimeout(resolve, 200));
+    const h = harness();
     const restore = deferred(), started = deferred(), original = h.panel._hass.callWS;
     h.panel._hass.callWS = message => {
       if (message.action === "import_restore") { started.resolve(); return restore.promise; }
       return original(message);
     };
+    await h.upload();
+    await new Promise(resolve => setTimeout(resolve, 200));
     const toasts = [], reloads = [];
     h.panel._toast = message => toasts.push(message);
     h.panel._loadAgents = async (id, owner) => {
@@ -295,13 +399,14 @@ for (const dismissal of ["escape", "cancel"]) {
 }
 
 test("a departed restore reports its outcome and invalidates its owner's cache", async () => {
-  const h = harness(); await h.upload();
-  await new Promise(resolve => setTimeout(resolve, 200));
+  const h = harness();
   const restore = deferred(), started = deferred(), original = h.panel._hass.callWS;
   h.panel._hass.callWS = message => {
     if (message.action === "import_restore") { started.resolve(); return restore.promise; }
     return original(message);
   };
+  await h.upload();
+  await new Promise(resolve => setTimeout(resolve, 200));
   const toasts = [], invalidated = [];
   h.panel._toast = message => toasts.push(message);
   h.panel._invalidateCleanConfiguration = id => invalidated.push(id);
@@ -318,13 +423,14 @@ test("a departed restore reports its outcome and invalidates its owner's cache",
 
 for (const refreshFails of [false, true]) {
   test(`background restore refreshes its selected agent after navigation (refresh fails: ${refreshFails})`, async () => {
-    const h = harness(); await h.upload();
-    await new Promise(resolve => setTimeout(resolve, 200));
+    const h = harness();
     const restore = deferred(), started = deferred(), original = h.panel._hass.callWS;
     h.panel._hass.callWS = message => {
       if (message.action === "import_restore") { started.resolve(); return restore.promise; }
       return original(message);
     };
+    await h.upload();
+    await new Promise(resolve => setTimeout(resolve, 200));
     let view = "usage-maintenance/backup-restore";
     h.panel._viewKey = () => view;
     const reloads = [], toasts = [];

@@ -129,7 +129,7 @@ for (const bundle of [false,true]) for(const aba of [false,true]) test(`late sha
 
 });
 
-for (const bundle of [false,true]) for(const aba of [false,true]) test(`late full private backup owner download bundle=${bundle} aba=${aba}`,async({page})=>{
+for (const bundle of [false,true]) for(const aba of [false,true]) for (const mode of ["full", "custom"]) test(`late ${mode} private backup owner download bundle=${bundle} aba=${aba}`,async({page})=>{
   await page.goto(`/tests_browser/fixture.html?route=usage-maintenance/backup-restore${bundle?'&bundle=1':''}`);
   const panel=page.locator('extended-openai-management-panel');
   await expect(panel.locator('#create-backup-transfer')).toBeVisible();
@@ -138,24 +138,30 @@ for (const bundle of [false,true]) for(const aba of [false,true]) test(`late ful
     const saved=await host._call('configuration','get');
     await host._call('configuration','save',{revision:saved.revision,config:{prompt:'OWNER_PRIVATE_FULL_BACKUP_V2'}});
     const call=host.hass.callWS.bind(host.hass);
-    window.heldOwnerExport={calls:0,button:host.shadowRoot.querySelector('#create-backup-transfer')};
+    window.heldOwnerExport={calls:0,cancellations:[],replacementCalls:[],button:host.shadowRoot.querySelector('#create-backup-transfer')};
     host.hass.callWS=async message=>{
       const result=await call(message);
+      if (message.action === 'export_cancel') heldOwnerExport.cancellations.push(result);
       if(message.action!=='export_chunk')return result;
       heldOwnerExport.calls++;
       return new Promise(resolve=>heldOwnerExport.release=()=>resolve(result));
     };
   });
-  await panel.locator('#transfer-export-mode').selectOption('full');
+  await panel.locator('#transfer-export-mode').selectOption(mode);
   await panel.locator('#create-backup-transfer').click();
   await expect.poll(()=>page.evaluate(()=>heldOwnerExport.calls)).toBe(1);
-  await panel.evaluate(host=>{host.hass={...host.hass,user:{id:'replacement-account',is_admin:false}};});
+  await panel.evaluate(host=>{host.hass={...host.hass,user:{id:'replacement-account',is_admin:false},callWS:async message=>{
+    heldOwnerExport.replacementCalls.push(message);
+    throw Error('replacement account must not own cleanup');
+  }};});
   await expect(panel.getByRole('button',{name:'Reload settings',exact:true})).toBeVisible();
   if(aba)await panel.evaluate(host=>{host.hass={...host.hass,user:{id:'original-export-owner',is_admin:true}};});
   const downloads=[];page.on('download',download=>downloads.push(download));
   await page.evaluate(()=>heldOwnerExport.release());
   await expect.poll(()=>page.evaluate(()=>heldOwnerExport.button.disabled)).toBe(false);
   expect(downloads).toHaveLength(0);
+  expect(await page.evaluate(()=>heldOwnerExport.cancellations)).toEqual([{cancelled:true}]);
+  expect(await page.evaluate(()=>heldOwnerExport.replacementCalls)).toEqual([]);
 });
 
 for(const bundle of [false,true])test(`open sharing dialog retires across account replacement bundle=${bundle}`,async({page})=>{

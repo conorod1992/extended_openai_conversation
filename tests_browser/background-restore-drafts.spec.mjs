@@ -21,8 +21,7 @@ for (const variant of ["unchanged", "newer edits", "baseline reversion", "failed
   await panel.locator('[data-config="__title"]').fill("Pre-restore stale title");
   await panel.locator('[data-config="max_tokens"]').fill("777");
   await panel.evaluate(host => host._navigate("usage-maintenance", "backup-restore"));
-  await panel.locator("#backup-file-transfer").setInputFiles(path);
-  await expect(panel.locator("#restore-transfer-apply")).toBeEnabled();
+  // Install the server fault before the transfer captures its transport.
   await panel.evaluate((host, variant) => {
     window.restoreWrites = 0;
     const send = host.hass.callWS.bind(host.hass);
@@ -41,6 +40,8 @@ for (const variant of ["unchanged", "newer edits", "baseline reversion", "failed
       return result;
     };
   }, variant);
+  await panel.locator("#backup-file-transfer").setInputFiles(path);
+  await expect(panel.locator("#restore-transfer-apply")).toBeEnabled();
   await panel.locator("#restore-transfer-apply").click();
   await acceptConfirmation(panel);
   await expect.poll(() => page.evaluate(() => typeof releaseRestoreReply)).toBe("function");

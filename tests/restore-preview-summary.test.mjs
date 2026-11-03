@@ -37,6 +37,9 @@ assert.equal(nodes.get('#restore-transfer-apply').disabled, true);
 
 // A slower earlier file must not replace the session selected after it.
 const oldInspect = deferred();
+const abandonedFullPreview = deferred();
+let fullPreviewStarted = false;
+let holdFullPreview = false;
 const raceCalls = [];
 const raceSection = {checked:true, value:'persistent_memory', addEventListener(){}};
 const raceNodes = new Map(['#create-backup-transfer', '#restore-backup-transfer', '#backup-file-transfer',
@@ -54,6 +57,10 @@ const racePanel = {_selectedAgent: () => ({entry_id:'entry', subentry_id:'agent'
     if (action === 'import_chunk') return {session_id:data.session_id, next_index:1, received:1};
     if (action === 'import_inspect' && data.inspect_only && data.session_id === 'A') return oldInspect.promise;
     if (action === 'import_inspect' && data.inspect_only) return {valid:true,title:'B',source_kind:'full_backup',available_sections:['persistent_memory'],preview:{selected_sections:['persistent_memory']},preview_token:'B-token'};
+    if (action === 'import_inspect' && !data.inspect_only && data.session_id === 'B' && holdFullPreview) {
+      fullPreviewStarted = true;
+      return abandonedFullPreview.promise;
+    }
     if (action === 'import_inspect') return {preview:{selected_sections:['persistent_memory']},preview_token:`${data.session_id}-preview`};
     if (action === 'import_cancel') return {cancelled:true};
     throw new Error(`Unexpected ${action}`);
@@ -79,16 +86,9 @@ assert.ok(raceCalls.some(([action, data]) => action === 'import_cancel' && data.
 
 // A full preview that has not settled must not hold the panel-wide dispatch slot
 // when a different backup is selected. Its eventual completion must remain stale.
-const abandonedFullPreview = deferred();
-const originalRaceWS = racePanel._hass.callWS;
-let fullPreviewStarted = false;
-racePanel._hass.callWS = async message => {
-  if (message.action === 'import_inspect' && !message.data.inspect_only && message.data.session_id === 'B') {
-    fullPreviewStarted = true;
-    return abandonedFullPreview.promise;
-  }
-  return originalRaceWS(message);
-};
+// Inject a server delay through the already-admitted transport; replacing the
+// panel's callWS must no longer redirect an existing session.
+holdFullPreview = true;
 refreshImportPreview(racePanel);
 await new Promise(resolve => setTimeout(resolve, 180));
 assert.equal(fullPreviewStarted, true);

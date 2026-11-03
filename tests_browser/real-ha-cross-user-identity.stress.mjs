@@ -112,8 +112,82 @@ async function checkConfigurationExportRetirement(page, bundled) {
   await downloadExport();
 }
 
+async function checkBackupCleanupTransport(page, bundled) {
+  const cases = [
+    {mode:"custom", admin:false},
+    {mode:"custom", admin:true},
+    {mode:"full", admin:false},
+    {mode:"full", admin:true, failure:true},
+    {mode:"full", admin:true, stage:"export_start"},
+  ];
+  try {
+    for (const scenario of cases) await test.step(JSON.stringify(scenario), async () => {
+      await post(permissionControl, {admin:scenario.admin});
+      await page.goto(`${fixture(raceBackendA, "usage-maintenance/backup-restore")}&bundle=${bundled ? "1" : "0"}`);
+      const panel = page.locator("extended-openai-management-panel");
+      await expect(panel.locator("#create-backup-transfer")).toBeVisible();
+      await panel.evaluate(async (host, scenario) => {
+        const user = await host.hass.callWS({type:"auth/current_user"});
+        host.hass = {...host.hass, user};
+        const original = host.hass.callWS.bind(host.hass);
+        window.backupCleanup = {ownerId:user.id, calls:[], cancellations:[], replacementCalls:[], button:host.shadowRoot.querySelector("#create-backup-transfer")};
+        host.hass.callWS = async message => {
+          const result = await original(message);
+          if (!message.type?.endsWith("/backup_transfer")) return result;
+          backupCleanup.calls.push(message.action);
+          if (message.action === "export_cancel") backupCleanup.cancellations.push(result);
+          if (message.action !== (scenario.stage || "export_chunk")) return result;
+          backupCleanup.sessionId = result.session_id;
+          backupCleanup.ready = true;
+          return new Promise((resolve, reject) => {
+            backupCleanup.release = () => scenario.failure ? reject(Error("controlled chunk completion error")) : resolve(result);
+          });
+        };
+      }, scenario);
+      await panel.locator("#transfer-export-mode").selectOption(scenario.mode);
+      await panel.locator("#create-backup-transfer").click();
+      await expect.poll(() => page.evaluate(() => backupCleanup.ready)).toBe(true);
+      await panel.evaluate(async (host, backend) => {
+        const callWS = async message => {
+          const response = await fetch(backend, {method:"POST", body:JSON.stringify(message)});
+          const result = await response.json();
+          if (!response.ok) throw Error(result.message || "Authenticated HA request failed");
+          return result;
+        };
+        const user = await callWS({type:"auth/current_user"});
+        backupCleanup.replacementUser = user;
+        host.hass = {...host.hass, user, callWS:message => {
+          backupCleanup.replacementCalls.push(message);
+          return callWS(message);
+        }};
+      }, permissionBackend);
+      expect(await page.evaluate(() => backupCleanup.replacementUser.id)).not.toBe(await page.evaluate(() => backupCleanup.ownerId));
+      expect(await page.evaluate(() => backupCleanup.replacementUser.is_admin)).toBe(scenario.admin);
+      await expect(panel.getByRole("button", {name:"Reload settings", exact:true})).toBeVisible();
+      const downloads = [];
+      const onDownload = download => downloads.push(download);
+      page.on("download", onDownload);
+      try {
+        await page.evaluate(() => backupCleanup.release());
+        await expect.poll(() => page.evaluate(() => backupCleanup.button.disabled)).toBe(false);
+        expect(downloads).toHaveLength(0);
+        expect(await page.evaluate(() => backupCleanup.replacementCalls)).toEqual([]);
+        expect(await page.evaluate(() => backupCleanup.cancellations)).toEqual([{cancelled:true}]);
+        expect(await page.evaluate(() => backupCleanup.calls)).toEqual(scenario.stage === "export_start"
+          ? ["export_start", "export_cancel"] : ["export_start", "export_chunk", "export_cancel"]);
+        expect(await panel.evaluate(host => host.hass.user.id)).toBe(await page.evaluate(() => backupCleanup.replacementUser.id));
+        await expect(panel.locator("[data-artifact]")).toHaveCount(0);
+      } finally {
+        page.off("download", onDownload);
+      }
+    });
+  } finally {
+    await post(permissionControl, {admin:true});
+  }
+}
+
 test("one browser profile does not carry private EOAI state from user A into user B", async ({page}) => {
-  test.skip(!switchBackend || !switchControl || !raceBackendA || !raceBackendB, "requires switchable and separately authenticated HA identities");
+  test.skip(!switchBackend || !switchControl || !raceBackendA || !raceBackendB || !permissionBackend || !permissionControl, "requires switchable and separately authenticated HA identities");
   test.setTimeout(120_000);
   const errors = trackPageErrors(page);
 
@@ -148,6 +222,7 @@ test("one browser profile does not carry private EOAI state from user A into use
   await expect(panel.getByText("Private same-browser marker B", {exact: true})).toBeVisible();
   await expect(panel.getByText("Private same-browser marker A", {exact: true})).toHaveCount(0);
   for (const bundled of [false, true]) await test.step(`configuration export ownership (${bundled ? "bundle" : "source"})`, () => checkConfigurationExportRetirement(page, bundled));
+  for (const bundled of [false, true]) await test.step(`backup cleanup ownership (${bundled ? "bundle" : "source"})`, () => checkBackupCleanupTransport(page, bundled));
   await expectHarnessClean(page, errors);
 });
 
