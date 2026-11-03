@@ -20,8 +20,9 @@ from tests.test_usage_detail_lifecycle import DetailStorage, TotalsStorage
 
 
 @pytest.mark.parametrize("fail_first", [False, True])
+@pytest.mark.parametrize("replacement", [False, True])
 async def test_retention_failure_retry_through_real_panel(
-    hass, management_agent, management_message, monkeypatch, fail_first
+    hass, management_agent, management_message, monkeypatch, fail_first, replacement
 ):
     entry, subentry = management_agent
     entry.state = ConfigEntryState.NOT_LOADED
@@ -77,6 +78,7 @@ async def test_retention_failure_retry_through_real_panel(
     await write(
         {
             "baseline": baseline,
+            "replacement": replacement,
             "agent": {
                 "entry_id": entry.entry_id,
                 "subentry_id": subentry.subentry_id,
@@ -122,6 +124,10 @@ async def test_retention_failure_retry_through_real_panel(
         assert len(errors) == 1
         assert done[0]["dirty"] is True
         assert done[0]["revision"] != baseline["revision"]
+        if replacement:
+            assert done[1]["label"] == "replacement"
+            assert done[1]["dirty"] is True
+            assert done[1]["pending"] is True
     assert len(prune_calls) >= (2 if fail_first else 1), (
         "An ordinary retry after the storage recovers must reach pruning again"
     )

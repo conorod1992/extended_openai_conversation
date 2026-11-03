@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {fixture, edit, retire, saveConfiguration, discardConfigurationDraft, flushUntil} from "./management-ownership-harness.mjs";
+import {fixture, edit, retire, replace, retainPanelDrafts, restorePanelDrafts, stopDraftRecovery, configurationSubmissionIsCurrent, saveConfiguration, discardConfigurationDraft, flushUntil} from "./management-ownership-harness.mjs";
 
 function failedRetention() {
   const scenario = fixture(), panel = scenario.create();
@@ -85,5 +85,58 @@ for (const transition of ["selection", "authentication", "draft"]) {
       assert.equal(state.writes.length, 1);
       assert.equal(panel.toasts.length, 0);
     } finally { retire(panel); }
+  });
+}
+
+test("settled deletion recovery survives repeated panel replacement with a fresh owner and newer edits", async () => {
+  const {panel:source, create, state} = failedRetention();
+  const panels = [source];
+  try {
+    await saveConfiguration(source, null);
+    let panel = source;
+    for (let generation = 1; generation <= 2; generation++) {
+      const previous = panel;
+      panel = replace(previous, (...args) => {
+        const target = create(...args);
+        target._eocDraftGeneration = generation + 5;
+        target._eocAuthentication = {userId:target.hass.user.id, generation:generation + 10};
+        edit(target, "temperature", 0.8);
+        return target;
+      });
+      panels.push(panel);
+      assert.equal(previous._configDirty, false);
+      assert.equal(previous._eocPendingRetention, null);
+      assert.equal(panel._configDirty, true);
+      assert.equal(panel._draft.temperature, 0.8);
+      assert.equal(configurationSubmissionIsCurrent(panel, panel._eocPendingRetention), true);
+    }
+    await saveConfiguration(panel, null);
+    assert.deepEqual(state.writes[1].config, {temperature:0.8, usage_request_retention_days:0});
+    assert.equal(state.writes[1].revision, "r1");
+    assert.equal(panel._configDirty, false);
+    assert.equal(panel._eocPendingRetention, null);
+  } finally { retire(...panels); }
+});
+
+for (const boundary of ["user", "entry", "assistant", "access", "authentication", "draft"]) {
+  test(`replacement cannot transfer pending deletion across a changed ${boundary}`, async () => {
+    const {panel:source, create, agentB} = failedRetention();
+    let target;
+    try {
+      await saveConfiguration(source, null);
+      if (boundary === "authentication") source._eocAuthentication = {userId:source.hass.user.id, generation:1};
+      if (boundary === "draft") source._eocDraftGeneration = 1;
+      source.isConnected = false;
+      retainPanelDrafts(source);
+      stopDraftRecovery(source);
+      target = create(boundary === "assistant" ? agentB : source._agentId,
+        boundary === "user" ? "another-user" : source.hass.user.id);
+      if (boundary === "entry") target._data.agents[0].entry_id = "another-entry";
+      if (boundary === "access") target._data.is_admin = false;
+      restorePanelDrafts(target);
+      stopDraftRecovery(target);
+      assert.equal(target._eocPendingRetention ?? null, null);
+      assert.equal(target._configDirty, false);
+    } finally { retire(...[source, target].filter(Boolean)); }
   });
 }

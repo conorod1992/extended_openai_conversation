@@ -3179,10 +3179,21 @@ async def _async_management_request(
         subentry.data.get(key, default) for key, default in retention_fields.items()
     )
     retention_updates = message.get("settings" if section == "settings" else "config")
-    if retention_changed or (
+    # A failed prune can leave the policy committed. Reapplying that policy is
+    # still meaningful even when the explicit retry makes no configuration delta.
+    # Imports apply the saved destination policy, not a flat config payload; a
+    # newly created assistant must never prune the originally selected assistant.
+    current_import = (
+        (section, action) == ("configuration", "import")
+        and message.get("mode", "current") == "current"
+        and result.get("status") == "updated"
+        and result.get("subentry_id") == subentry_id
+    )
+    if retention_changed or current_import or (
         (section, action)
         in {
             ("configuration", "save"),
+            ("configuration", "update"),
             ("function_repair", "configuration_save"),
             ("settings", "update"),
         }

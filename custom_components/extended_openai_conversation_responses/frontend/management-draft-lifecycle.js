@@ -1,7 +1,7 @@
 import {clone, same} from "./unsaved-state.js";
 import {pageCoordinator} from "./management-page-drafts.js";
-import {recoverDisconnectedEditor, showRecoveredDraftCopy} from "./management-state-safety.js";
-import {mergeConfigurationRead, configurationDraftBaseline} from "./configuration-acknowledgement.js";
+import {recoverDisconnectedEditor, showRecoveredDraftCopy, pendingRetentionFields} from "./management-state-safety.js";
+import {mergeConfigurationRead, configurationDraftBaseline, captureConfigurationOwner} from "./configuration-acknowledgement.js";
 import {planConfigurationRecovery, combineRecoveredConfiguration, recoveredConfigurationChanges} from "./configuration-draft-recovery.js";
 import {hasPageSaveAcknowledgement} from "./page-save-acknowledgement.js";
 import {transferVoiceMappingDraft} from "./voice-mapping-draft.js";
@@ -146,6 +146,15 @@ function restoreDraftSource(panel, source, key) {
       else source._eocModelIntent?.transferTo?.(source, panel);
     }
     transferVoiceMappingDraft(panel, source);
+    const retention = pendingRetentionFields(source);
+    if (retention.length) {
+      // A committed policy has no authored delta, but deletion may still need
+      // retrying. The lifecycle gates verified this destination; bind its own
+      // session rather than transferring the detached source's authority.
+      panel._eocPendingRetention = {...captureConfigurationOwner(panel),
+        fields:[...new Set([...pendingRetentionFields(panel), ...retention])]};
+      source._eocPendingRetention = null;
+    }
     panel._syncConfigDirty();
     source._setConfigDirty(false);
     if (recoveryConfigurationCopies.get(panel)?.source === source) recoveryConfigurationCopies.delete(panel);

@@ -1,11 +1,13 @@
 import {expect, test} from "@playwright/test";
 import {fixtureUrl, acceptConfirmation, trackPageErrors, expectHarnessClean} from "./browser-helpers.mjs";
 
-for (const bundled of [false, true]) test(`Retention deletion retries a committed storage failure (${bundled ? "bundle" : "source"})`, async ({page}) => {
+for (const bundled of [false, true]) for (const replacement of [false, true]) test(`Retention deletion retries a committed storage failure (${bundled ? "bundle" : "source"}, ${replacement ? "replacement" : "same panel"})`, async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("usage-maintenance/retention", bundled ? "&bundle=1" : ""));
   const panel = page.locator("extended-openai-management-panel");
   await expect(panel.locator("#config-usage_request_retention_days")).toBeVisible();
+  await panel.evaluate(host => { host.hass = {...host.hass, user:{id:"retention-admin", is_admin:true}}; });
+  await expect.poll(() => panel.evaluate(host => !host._busy && !host._eocCatalogBootstrap?.pending)).toBe(true);
   await panel.evaluate(host => {
     const send = host.hass.callWS.bind(host.hass);
     window.retentionAttempts = [];
@@ -29,6 +31,18 @@ for (const bundled of [false, true]) test(`Retention deletion retries a committe
   await expect(panel.locator("#config-usage_request_retention_days")).toHaveValue("0");
   const firstRevision = await page.evaluate(() => retentionAttempts[0].revision);
   expect(await panel.evaluate(host => host._configData.revision)).not.toBe(firstRevision);
+  if (replacement) {
+    await panel.evaluate(host => {
+      const next = document.createElement("extended-openai-management-panel");
+      next.hass = host.hass;
+      host.remove();
+      document.body.append(next);
+      window.browserHarness.panel = next;
+    });
+    await expect(panel.locator("#config-usage_request_retention_days")).toHaveValue("0");
+    await expect(panel.locator("#save-config")).toBeEnabled();
+    expect(await panel.evaluate(host => Boolean(host._eocPendingRetention))).toBe(true);
+  }
   await panel.locator("#save-config").click();
   await expect(panel.locator("#toast")).toHaveText("Changes saved");
   await expect(panel.locator("#save-config")).toHaveCount(0);
