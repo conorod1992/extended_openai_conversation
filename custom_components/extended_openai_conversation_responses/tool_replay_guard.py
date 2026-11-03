@@ -300,6 +300,8 @@ def record_dispatch(
     )
     if ha_parameters is not None:
         spec["_ha_parameters"] = ha_parameters
+    # Capture model-call identity before any future schema/default evaluation.
+    spec["_original_call_signatures"] = frozenset(_signature(item) for item in retained)
     prepared_call = (
         llm.ToolInput(
             tool_name=tool_input.tool_name,
@@ -473,7 +475,16 @@ def remember_unacknowledged_calls(
         # Never evict an unresolved effect and silently permit its replay.
         effects[conversation_id] = {"*"}
     schemas = state.schemas
-    schemas.setdefault(conversation_id, {}).update(dict(records))
+    retained_records = schemas.setdefault(conversation_id, {})
+    for signature, spec in records:
+        previous = retained_records.get(signature, {})
+        retained_records[signature] = {
+            **spec,
+            "_original_call_signatures": frozenset(
+                spec.get("_original_call_signatures", ())
+            )
+            | frozenset(previous.get("_original_call_signatures", ())),
+        }
     uncertain = state.uncertain_tools
     uncertain.setdefault(conversation_id, set()).update(
         call.tool_name
@@ -507,7 +518,11 @@ def was_unacknowledged_equivalent(
         chat_log.conversation_id, ()
     ):
         return True
-    if _signature(tool_input) in records:
+    raw_signature = _signature(tool_input)
+    if raw_signature in records or any(
+        raw_signature in spec.get("_original_call_signatures", ())
+        for spec in records.values()
+    ):
         return True
     return any(
         _signature(tool_input, spec) == signature for signature, spec in records.items()

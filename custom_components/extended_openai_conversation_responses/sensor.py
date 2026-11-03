@@ -29,6 +29,7 @@ from .const import (
     DOMAIN,
 )
 from .guest_mode import GuestModeManager, async_get_guest_mode
+from .persistence_hardening import StorageRepairRequired
 from .usage import UsageManager, async_get_usage
 
 _LOGGER = logging.getLogger(__name__)
@@ -50,6 +51,13 @@ async def async_setup_entry(
             guest_mode = await async_get_guest_mode(
                 hass, config_entry.entry_id, subentry.subentry_id
             )
+        except StorageRepairRequired as err:
+            _LOGGER.error(
+                "Assistant %s sensors remain unavailable because retained storage requires repair: %s",
+                subentry.subentry_id,
+                err,
+            )
+            continue
         except HomeAssistantError:
             gate = get_agent_maintenance_gate(
                 hass, config_entry.entry_id, subentry.subentry_id

@@ -2122,7 +2122,12 @@ class ExtendedOpenAIAgentEntity(
             )
             entry_data = getattr(getattr(self, "entry", None), "data", {})
             limit = None
-            if effective_api_provider(entry_data.get("api_provider"), entry_data.get("base_url")) == "azure":
+            if (
+                effective_api_provider(
+                    entry_data.get("api_provider"), entry_data.get("base_url")
+                )
+                == "azure"
+            ):
                 snapshot = build_provider_request_snapshot(
                     self.subentry.data, entry_data, tools_required=True
                 )

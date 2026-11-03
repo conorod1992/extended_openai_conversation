@@ -1007,7 +1007,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (section === "guest_mode" && action === "update") {
       payload = {...extra};
       for (const key of ["active_from", "active_until"]) {
-        if (payload[key]) payload[key] = normalizeGuestModeTimestamp(payload[key]);
+        if (payload[key] && !Object.hasOwn(payload.local_times || {}, key)) payload[key] = normalizeGuestModeTimestamp(payload[key]);
       }
     }
     return this._request(section, action, payload, mutationTrace);
