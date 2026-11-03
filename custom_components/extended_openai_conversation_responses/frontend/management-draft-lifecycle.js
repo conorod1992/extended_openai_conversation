@@ -78,9 +78,16 @@ export function restorePanelDrafts(panel) {
     // Discarding the detached editor cannot cancel that backend operation.
     get pending() { return [...sources].some(hasOwnPendingWork); },
     discard: () => {
-      for (const source of sources) for (const scope of ownScopes(source)) if (scope.dirty()) scope.discard?.();
-      sources.clear();
-      retained.delete(key);
+      for (const source of sources) {
+        const configuration = pageCoordinator(source).scopes.get("configuration");
+        // Discard consumed configuration too: independent Voice rows must not
+        // revive its old authoring when they recompute dirty state.
+        for (const scope of ownScopes(source)) if (scope === configuration || scope.dirty()) scope.discard?.();
+        // Discard authoring, while preserving committed cleanup and read
+        // obligations which the individual scopes deliberately retain.
+        if (!hasRetainedWork(source)) sources.delete(source);
+      }
+      if (!sources.size) retained.delete(key);
       recoveryConfigurationCopies.delete(panel);
       synchronizeUnloadGuard();
     },

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {fixture, edit, retire, replace, retainPanelDrafts, restorePanelDrafts, stopDraftRecovery, configurationSubmissionIsCurrent, saveConfiguration, discardConfigurationDraft, flushUntil} from "./management-ownership-harness.mjs";
+import {fixture, edit, retire, replace, retainPanelDrafts, restorePanelDrafts, stopDraftRecovery, configurationSubmissionIsCurrent, saveConfiguration, discardConfigurationDraft, flushUntil, confirmStateSafeNavigation} from "./management-ownership-harness.mjs";
 import {startStoredConfigurationPrefetch, ENTRY_KEY} from "../custom_components/extended_openai_conversation_responses/frontend/management-route.js";
 
 function failedRetention() {
@@ -42,6 +42,28 @@ for (const failRead of [false, true]) test(`committed retention recovery discard
     assert.deepEqual(f.state.writes[1].config, {usage_request_retention_days:0});
     assert.equal(target._configDirty, false);
   } finally { globalThis.localStorage = storage; retire(source, target); }
+});
+
+for (const failRead of [false, true]) test(`navigation Discard preserves a retained deletion retry; source read failed=${failRead}`, async () => {
+  const f = failedRetention(), source = f.panel, target = f.create(), send = target.hass.callWS;
+  if (failRead) {
+    const sourceSend = source.hass.callWS;
+    source.hass.callWS = request => request.action === "get" ? Promise.reject(new Error("Source read unavailable")) : sourceSend(request);
+  }
+  await saveConfiguration(source, null);
+  let fail = true;
+  target.hass.callWS = request => request.action === "get" && fail ? Promise.reject(new Error("Destination read unavailable")) : send(request);
+  source.isConnected = false; retainPanelDrafts(source); restorePanelDrafts(target);
+  try {
+    await flushUntil(() => target.toasts.some(message => message.includes("complete settings")));
+    assert.equal(await confirmStateSafeNavigation(target, null), true);
+    fail = false; target._loadToken++; restorePanelDrafts(target);
+    await flushUntil(() => Boolean(target._eocPendingRetention));
+    await saveConfiguration(target, null);
+    assert.equal(f.state.writes[1].revision, "r1");
+    assert.deepEqual(f.state.writes[1].config, {usage_request_retention_days:0});
+    assert.equal(target._configDirty, false);
+  } finally { retire(source, target); }
 });
 
 for (const failRead of [false, true]) test(`retention recovery refreshes an older full destination; source read failed=${failRead}`, async () => {

@@ -1,12 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {fixture, edit, retire, replace, saveConfiguration, flushUntil, retainPanelDrafts, restorePanelDrafts, stopDraftRecovery} from "./management-ownership-harness.mjs";
+import {fixture, edit, retire, replace, saveConfiguration, flushUntil, retainPanelDrafts, restorePanelDrafts, stopDraftRecovery, confirmStateSafeNavigation} from "./management-ownership-harness.mjs";
 import {applyConfigurationImport, refreshUncertainConfigurationImport} from "../custom_components/extended_openai_conversation_responses/frontend/assistant-configuration-actions.js";
 import {pendingRetentionFields} from "../custom_components/extended_openai_conversation_responses/frontend/management-state-safety.js";
-import {newVoiceMappingRow, updateVoiceMappingRows, voiceMappingDraftError, voiceMappingDraftDirty} from "../custom_components/extended_openai_conversation_responses/frontend/voice-mapping-draft.js";
+import {newVoiceMappingRow, updateVoiceMappingRows, voiceMappingDraftError, voiceMappingDraftDirty, voiceMappingDraft} from "../custom_components/extended_openai_conversation_responses/frontend/voice-mapping-draft.js";
 import {captureConfigurationSubmission, retireReplacedConfigurationDraft, configurationAuthoringBaseline, configurationDraftBaseline} from "../custom_components/extended_openai_conversation_responses/frontend/configuration-acknowledgement.js";
 import {TestEventTarget} from "./frontend-test-helpers.mjs";
 import {startStoredConfigurationPrefetch, ENTRY_KEY} from "../custom_components/extended_openai_conversation_responses/frontend/management-route.js";
+import {retireAssistantDraft} from "../custom_components/extended_openai_conversation_responses/frontend/management-catalog-ownership.js";
 
 function scenario({failRead = false, mode = "current", unchangedImport = false} = {}) {
   const f = fixture();
@@ -437,4 +438,114 @@ for (const failure of ["none", "source read", "destination read", "destination r
     assert.deepEqual(f.state.writes[0].config, {usage_request_retention_days:unchanged ? 30 : 0, usage_run_retention_days:30});
     assert.equal(target._configDirty, false);
   } finally { globalThis.localStorage = storage; retire(source, target); }
+});
+
+for (const projection of ["full", "retention"]) test(`navigation Discard preserves committed import cleanup after a failed ${projection} recovery`, async () => {
+  const f = scenario({failRead:true}), source = f.panel, target = f.create(f.agentA, f.state.user, projection);
+  edit(source, "max_tokens", 777);
+  await applyConfigurationImport(source, source.shadowRoot);
+  edit(source, "temperature", 0.8);
+  const send = target.hass.callWS;
+  let fail = true;
+  target.hass.callWS = request => request.section === "configuration" && request.action === "get" && fail
+    ? Promise.reject(new Error("Destination refresh unavailable")) : send(request);
+  source.isConnected = false; retainPanelDrafts(source); restorePanelDrafts(target);
+  try {
+    await flushUntil(() => target.toasts.some(message => message.includes("complete settings")));
+    assert.equal(await confirmStateSafeNavigation(target, null), true);
+    assert.equal(source._draft.temperature, 0.4, "authored edits were discarded");
+    assert.equal(pendingRetentionFields(source).length, 2, "committed cleanup cannot be discarded");
+    retireAssistantDraft(target, f.agentB); restorePanelDrafts(target);
+    assert.equal(pendingRetentionFields(target).length, 0, "the retry cannot follow another assistant");
+    retireAssistantDraft(target, f.agentA); fail = false;
+    await target._loadConfigDraft({preserveResult:true, full:true}); restorePanelDrafts(target);
+    await flushUntil(() => pendingRetentionFields(target).length === 2);
+    assert.equal(target._draft.max_tokens, 1600);
+    assert.equal(target._draft.temperature, 0.4);
+    await saveConfiguration(target, null);
+    assert.equal(f.state.writes[0].revision, "r1");
+    assert.deepEqual(f.state.writes[0].config, {usage_request_retention_days:0, usage_run_retention_days:30});
+    assert.equal(target._configDirty, false);
+  } finally { retire(source, target); }
+});
+
+test("declining navigation Discard preserves both authored edits and committed cleanup", async () => {
+  const f = scenario({failRead:true}), source = f.panel, target = f.create(), send = target.hass.callWS;
+  await applyConfigurationImport(source, source.shadowRoot);
+  edit(source, "temperature", 0.8);
+  let fail = true;
+  target.hass.callWS = request => request.action === "get" && fail ? Promise.reject(new Error("Read unavailable")) : send(request);
+  source.isConnected = false; retainPanelDrafts(source); restorePanelDrafts(target);
+  try {
+    await flushUntil(() => target.toasts.some(message => message.includes("complete settings")));
+    target._confirm = async () => false;
+    assert.equal(await confirmStateSafeNavigation(target, null), false);
+    assert.equal(source._draft.temperature, 0.8);
+    fail = false; target._loadToken++; restorePanelDrafts(target);
+    await flushUntil(() => pendingRetentionFields(target).length === 2);
+    await saveConfiguration(target, null);
+    assert.deepEqual(f.state.writes[0].config, {temperature:0.8, usage_request_retention_days:0, usage_run_retention_days:30});
+  } finally { retire(source, target); }
+});
+
+test("navigation Discard removes ordinary conflicting recovered authoring", async () => {
+  const f = fixture(), source = f.create(), target = f.create();
+  edit(source, "prompt", "Recovered prompt"); edit(target, "prompt", "Destination prompt");
+  captureRecoveryDialogs(target);
+  source.isConnected = false; retainPanelDrafts(source); restorePanelDrafts(target);
+  const next = f.create();
+  try {
+    assert.equal(target.recoveryDialog.open, true);
+    assert.equal(await confirmStateSafeNavigation(target, null), true);
+    restorePanelDrafts(next);
+    assert.equal(source._configDirty, false);
+    assert.equal(next._draft.prompt, "Original");
+    assert.equal(next._configDirty, false);
+    assert.equal(next._unsavedState?.scopes.get("retained-drafts")?.dirty() || false, false);
+  } finally { retire(source, target, next); }
+});
+
+test("navigation Discard retains an acknowledged save's failed refresh without reviving later edits", async () => {
+  const f = fixture(), source = f.create(), target = f.create(), write = f.state.holdWrite("success"), send = target.hass.callWS;
+  edit(source, "prompt", "Saved prompt");
+  const saving = saveConfiguration(source, null);
+  await flushUntil(() => write.entered);
+  edit(source, "temperature", 0.8);
+  source.isConnected = false; retainPanelDrafts(source);
+  write.release.resolve(); await saving;
+  let fail = true;
+  target.hass.callWS = request => request.action === "get" && fail ? Promise.reject(new Error("Read unavailable")) : send(request);
+  restorePanelDrafts(target);
+  try {
+    await flushUntil(() => target.toasts.some(message => message.includes("could not be refreshed")));
+    assert.equal(await confirmStateSafeNavigation(target, null), true);
+    fail = false; target._loadToken++; restorePanelDrafts(target);
+    await flushUntil(() => target._configData.revision === "r1");
+    await flushUntil(() => !source._eocAcknowledgedConfiguration);
+    assert.equal(target._draft.prompt, "Saved prompt");
+    assert.equal(target._draft.temperature, 0.4);
+    assert.equal(target._configDirty, false);
+  } finally { retire(source, target); }
+});
+
+for (const order of ["configuration first", "Voice first"]) test(`discarding retained Voice rows cannot revive consumed configuration: ${order}`, async () => {
+  const f = fixture();
+  for (const record of f.state.records.values()) record.config.voice_device_mappings = {office:"user:owner"};
+  const source = f.create(), target = f.create(), next = f.create();
+  edit(source, "prompt", "Already transferred prompt");
+  for (const panel of [source, target]) {
+    if (order === "configuration first") await confirmStateSafeNavigation(panel, "assistant/voice");
+    updateVoiceMappingRows(panel, [...voiceMappingDraft(panel).rows, newVoiceMappingRow()]); panel._syncConfigDirty();
+  }
+  source.isConnected = false; retainPanelDrafts(source); restorePanelDrafts(target);
+  try {
+    assert.equal(source._configDirty, false);
+    assert.equal(voiceMappingDraftDirty(source), true);
+    assert.equal(target._draft.prompt, "Already transferred prompt");
+    assert.equal(await confirmStateSafeNavigation(target, null), true);
+    restorePanelDrafts(next);
+    assert.equal(voiceMappingDraftDirty(source), false);
+    assert.equal(next._draft.prompt, "Original");
+    assert.equal(next._configDirty, false);
+  } finally { retire(source, target, next); }
 });
