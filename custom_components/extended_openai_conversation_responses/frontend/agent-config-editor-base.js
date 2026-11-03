@@ -355,14 +355,15 @@ export function bindConfiguration(panel) {
   root.querySelectorAll('input[name="import-mode"]').forEach(control => bindOwnedEvent(control, "change", "assistant-actions", () => invalidateImportPreview(panel, importApply, importSummary)));
   bindOwnedEvent(root.querySelector("#import-preview"), "click", "assistant-actions", async () => {
     invalidateImportPreview(panel, importApply, importSummary);
-    const document = importDocument.value, revision = panel._configData?.revision, mode = root.querySelector('input[name="import-mode"]:checked').value;
+    const document = importDocument.value, mode = root.querySelector('input[name="import-mode"]:checked').value;
+    let revision = panel._configData?.revision;
     const agent = panel._agentId, dialog = root.querySelector("#import-dialog");
     const ownsOperation = beginOperation(panel, "import-preview");
     const current = () => ownsOperation() && dialog?.open && importDocument.isConnected
       && importDocument.value === document && root.querySelector('input[name="import-mode"]:checked').value === mode && panel._agentId === agent
       && panel._configData?.revision === revision;
     try {
-      await refreshUncertainConfigurationImport(panel);
+      if (await refreshUncertainConfigurationImport(panel, {configuration:mode === "current"})) revision = panel._configData?.revision;
       if (!current()) return;
       const result = await panel._call("configuration", "import_preview", {document, mode});
       if (!current()) return;

@@ -1,6 +1,6 @@
 import {same} from "./unsaved-state.js";
 import {reconcileSavedConfiguration} from "./configuration-save-dom.js";
-import {requireMutationAcknowledgement, captureConfigurationDraftOwner, captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, completeConfigurationAcknowledgement, reconcileConfigurationAcknowledgement, discardConfigurationDraft} from "./configuration-acknowledgement.js";
+import {requireMutationAcknowledgement, captureConfigurationDraftOwner, captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, completeConfigurationAcknowledgement, reconcileConfigurationAcknowledgement, discardConfigurationDraft, recoverCommittedRetention, USAGE_RETENTION_FIELDS} from "./configuration-acknowledgement.js";
 import {CONFIG_OWNER_BY_KEY} from "./management-config-owners.js";
 import {SETTING_LOOKUP} from "./management-setting-lookup.js";
 import {focusManagementSetting} from "./frontend-navigation.js";
@@ -218,20 +218,10 @@ async function saveConfiguration(panel, button) {
       },
     });
   } catch (err) {
-    const retention = submission.fields.filter(key => ["usage_request_retention_days", "usage_run_retention_days"].includes(key));
+    const retention = submission.fields.filter(key => USAGE_RETENTION_FIELDS.includes(key));
     if (configurationSubmissionIsCurrent(panel, submission) && retention.length
         && (err.mutationOutcome === "committed" || err.code === "eoai_mutation_committed")) {
-      // The configuration committed, but deletion still needs an explicit retry.
-      // Refresh its revision without consuming newer edits or losing Save when
-      // the freshly persisted retention values already match the draft.
-      panel._eocPendingRetention = {...captureConfigurationOwner(panel), fields:retention};
-      panel._invalidateCleanConfiguration?.(submission.agentId);
-      panel._configDataStale = true;
-      try { await panel._loadConfigDraft({preserveResult:true}); } catch {}
-      if (configurationSubmissionIsCurrent(panel, submission)) {
-        panel._syncConfigDirty?.();
-        panel._render();
-      }
+      await recoverCommittedRetention(panel, submission, retention);
     }
     if (configurationSubmissionIsCurrent(panel, submission)) panel._toast(`Unable to save configuration: ${err.message || String(err)}`, true);
   } finally {

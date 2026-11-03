@@ -15,7 +15,9 @@ DIST = Path("custom_components/extended_openai_conversation_responses/frontend/d
 # authoring and complete Group repair. Allow that reviewed feature growth with
 # finite headroom; do not relax the separate entry or CSS ceilings.
 # Reviewed private-publication ownership guards add about 1.2 KiB.
-CEILINGS = {"javascript": 871_500, "css": 65_000, "management_entry": 120_000}
+# Shared committed-import retention recovery adds under 1 KiB; keep the
+# separate entry and CSS limits unchanged and less than 1 KiB of JS headroom.
+CEILINGS = {"javascript": 872_500, "css": 65_000, "management_entry": 120_000}
 
 
 def measure(dist: Path) -> dict[str, int]:
