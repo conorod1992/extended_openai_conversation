@@ -2235,6 +2235,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
           return this._refreshGuestModeMutation(agentId, result);
         }, result);
       } catch (err) {
+        getRouteFeature("capabilities/guest-mode")?.retainUncertainGuestInterval(this, intervalSubmission, err);
         if (configurationSubmissionIsCurrent(this, submission)) this._toast(`Unable to update Guest Mode: ${err.message || String(err)}`, true);
       }
     });

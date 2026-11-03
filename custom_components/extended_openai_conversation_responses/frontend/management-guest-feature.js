@@ -3,9 +3,12 @@ import {formatUsageNumber} from "./usage-format.js";
 import {captureConfigurationDraftOwner, configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
 import {clone, same, mergeAcknowledgedDraft} from "./unsaved-state.js";
 import {pageCoordinator} from "./management-page-drafts.js";
+import {reviewRecoveredScope} from "./management-state-safety.js";
 
 const GUEST_VIEW = "capabilities/guest-mode";
 const intervalValues = (panel, status, retainedEnd = "") => ({start:status.active_from_local || panel._dateTimeLocal(status.active_from), end:status.indefinite ? retainedEnd : (status.active_until_local || panel._dateTimeLocal(status.active_until)), indefinite:Boolean(status.indefinite)});
+const intervalDirty = state => !same(state.values, state.baseline)
+  || Boolean(state.uncertainSubmission && !same(state.values, state.uncertainSubmission));
 
 function intervalState(panel, status = panel._result?.status || {}) {
   let state = panel._guestIntervalDraft;
@@ -21,24 +24,32 @@ function intervalState(panel, status = panel._result?.status || {}) {
     panel._guestIntervalDraft = state;
     const current = () => panel._guestIntervalDraft === state && configurationSubmissionIsCurrent(panel, state.owner);
     pageCoordinator(panel).register("guest-interval", {
-      dirty:() => current() && !same(state.values, state.baseline),
+      isCurrent:current, read:() => state.values,
+      get baseline() {return state.baseline;},
+      dirty:() => current() && intervalDirty(state),
       get pending() { return current() && Boolean(panel._guestOperation); },
       owns:destination => Boolean(destination) && current(),
       destinations:() => [GUEST_VIEW],
-      discard:() => { if (current()) state.values = clone(state.baseline); },
-      restore:target => {
+      discard:() => { if (current()) {state.values = clone(state.baseline);state.uncertainSubmission = null;} },
+      restore:(target, retry) => {
         const targetOwner = captureConfigurationDraftOwner(target);
         if (!current() || target._viewKey?.() !== GUEST_VIEW || !target._data?.is_admin
             || ["agentId", "entryId", "userId"].some(key => state.owner[key] !== targetOwner[key])) return;
         const destination = intervalState(target);
-        if (!destination || !same(destination.values, destination.baseline)) return;
+        if (!destination) return;
+        if (intervalDirty(destination)) {
+          reviewRecoveredScope(target, panel, "guest-interval", "Guest Mode interval", retry);
+          return;
+        }
         destination.baseline = clone(state.baseline);
         destination.values = clone(state.values);
+        destination.uncertainSubmission = clone(state.uncertainSubmission);
         state.values = clone(state.baseline);
+        state.uncertainSubmission = null;
         target._render();
       },
     });
-  } else if (same(state.values, state.baseline)) {
+  } else if (!intervalDirty(state)) {
     state.baseline = intervalValues(panel, status, state.values.end);
     state.values = clone(state.baseline);
   }
@@ -64,6 +75,15 @@ export function acknowledgeGuestInterval(panel, submission, status) {
   const saved = intervalValues(panel, status, submission.values.end);
   state.values = mergeAcknowledgedDraft(state.values, submission.values, saved);
   state.baseline = saved;
+  state.uncertainSubmission = null;
+}
+
+export function retainUncertainGuestInterval(panel, submission, error) {
+  // Record evidence on its original private draft even across an authentication
+  // transition. This neither presents a result nor authorizes another owner.
+  if (error?.mutationOutcome === "uncertain" && submission?.state === panel._guestIntervalDraft) {
+    submission.state.uncertainSubmission = clone(submission.values);
+  }
 }
 
 export function bindGuestInterval(panel) {

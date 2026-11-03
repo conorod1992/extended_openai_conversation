@@ -23,7 +23,9 @@ DIST = Path("custom_components/extended_openai_conversation_responses/frontend/d
 # Budget 873,300 total JS bytes; retain the separate entry and CSS limits.
 # Uncertain policy recovery and its fresh-read cache bypass add 1,208 JS bytes.
 # Budget 874,500 total JS bytes; keep entry and CSS limits unchanged.
-CEILINGS = {"javascript": 874_500, "css": 65_000, "management_entry": 120_000}
+# Competing scope reviews and uncertain interval recovery add 2,225 JS bytes.
+# Budget 876,800 total JS bytes; keep entry and CSS limits unchanged.
+CEILINGS = {"javascript": 876_800, "css": 65_000, "management_entry": 120_000}
 
 
 def measure(dist: Path) -> dict[str, int]:

@@ -2,7 +2,7 @@ import {getRouteFeature} from "./management-route.js";
 import {pageCoordinator, currentPageScope} from "./management-page-drafts.js";
 import {same, clone} from "./unsaved-state.js";
 import {SECTION_CACHE_TTL_MS} from "./management-cache.js";
-import {configurationDraftBaseline, configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
+import {configurationDraftBaseline, configurationSubmissionIsCurrent, captureConfigurationOwner, captureConfigurationDraftOwner} from "./configuration-acknowledgement.js";
 import {editorControls, dialogState, setDialogBaseline} from "./management-dialogs.js";
 import {voiceMappingDraftDirty} from "./voice-mapping-draft.js";
 export {SECTION_CACHE_TTL_MS};
@@ -224,6 +224,44 @@ export function showRecoveredDraftCopy(panel, {
   panel.shadowRoot.append(recovery);
   recovery.showModal();
   return recovery;
+}
+
+const recoveredScopeCopies = new WeakMap();
+
+// Competing policy/interval drafts keep their own baselines and revisions.
+// Review both copies instead of silently dropping or rebasing either owner.
+export function reviewRecoveredScope(panel, source, id, label, retry) {
+  const from = pageCoordinator(source).scopes.get(id), to = pageCoordinator(panel).scopes.get(id);
+  if (!from?.dirty() || !to?.dirty() || !from.isCurrent?.() || !to.isCurrent?.()) return;
+  const owner = captureConfigurationOwner(panel), sourceOwner = captureConfigurationDraftOwner(source);
+  if (["agentId", "entryId", "userId"].some(key => owner[key] !== sourceOwner[key])) return;
+  const view = panel._viewKey(), visit = panel._loadToken, generation = panel._cacheGeneration;
+  const current = () => panel.isConnected && !source.isConnected && panel._data?.is_admin && !panel._eocPresentationBlocked
+    && configurationSubmissionIsCurrent(panel, owner) && configurationSubmissionIsCurrent(source, sourceOwner)
+    && panel._viewKey() === view && panel._loadToken === visit && panel._cacheGeneration === generation
+    && pageCoordinator(source).scopes.get(id) === from && pageCoordinator(panel).scopes.get(id) === to
+    && from.isCurrent() && to.isCurrent();
+  if (!current()) return;
+  const values = {recovered:clone(from.read()), current:clone(to.read())};
+  const baseline = clone(from.baseline), targetBaseline = clone(to.baseline);
+  const copies = recoveredScopeCopies.get(panel) || new WeakMap();
+  recoveredScopeCopies.set(panel, copies);
+  const previous = copies.get(from);
+  if (previous && configurationSubmissionIsCurrent(panel, previous.owner) && previous.visit === visit
+      && previous.generation === generation && same(previous.values, values)
+      && same(previous.baseline, baseline) && same(previous.targetBaseline, targetBaseline)) return;
+  if (panel.shadowRoot?.querySelector("dialog[open]")) return;
+  copies.set(from, {owner, visit, generation, values, baseline, targetBaseline});
+  const dialog = showRecoveredDraftCopy(panel, {
+    title:`Recovered ${label}`, label:`Recovered and current ${label} values`, values,
+    description:"Another editor has unsaved changes. Both drafts are kept. Copy the recovered values before discarding either draft.",
+    canDiscard:() => current() && same(from.read(), values.recovered) && same(to.read(), values.current)
+      && same(from.baseline, baseline) && same(to.baseline, targetBaseline),
+    onDiscard:() => from.discard(),
+  });
+  // A read or navigation may retire this dialog. Retry through the lifecycle's
+  // current owner gates so a stale copy cannot hide another retained scope.
+  dialog.addEventListener("close", () => queueMicrotask(() => {if (panel.isConnected) retry?.();}), {once:true});
 }
 
 function showRecoveredEditorValues(panel, old, values, ownsSource) {

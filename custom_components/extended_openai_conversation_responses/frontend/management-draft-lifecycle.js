@@ -1,6 +1,6 @@
 import {clone, same} from "./unsaved-state.js";
 import {pageCoordinator} from "./management-page-drafts.js";
-import {recoverDisconnectedEditor, showRecoveredDraftCopy, pendingRetentionFields} from "./management-state-safety.js";
+import {recoverDisconnectedEditor, showRecoveredDraftCopy, reviewRecoveredScope, pendingRetentionFields} from "./management-state-safety.js";
 import {mergeConfigurationRead, configurationDraftBaseline, configurationAuthoringBaseline, configurationSubmissionIsCurrent, captureConfigurationOwner} from "./configuration-acknowledgement.js";
 import {planConfigurationRecovery, combineRecoveredConfiguration, recoveredConfigurationChanges} from "./configuration-draft-recovery.js";
 import {hasPageSaveAcknowledgement} from "./page-save-acknowledgement.js";
@@ -175,7 +175,7 @@ function restoreDraftSource(panel, source, key) {
     if (recoveryConfigurationCopies.get(panel)?.source === source) recoveryConfigurationCopies.delete(panel);
     panel._render();
   }
-  for (const scope of ownScopes(source)) if (scope.dirty() && scope.restore) scope.restore(panel);
+  for (const scope of ownScopes(source)) if (scope.dirty() && scope.restore) scope.restore(panel, () => restorePanelDrafts(panel));
   // Page drafts and editors keep their original route, baseline and revision.
   // Restore only after that route has passed the new panel's access checks.
   if (source._viewKey() === panel._viewKey() && source._scopeId === panel._scopeId
@@ -188,6 +188,10 @@ function restoreDraftSource(panel, source, key) {
       if (!result.accepted) return;
     }
     const to = pageCoordinator(panel).scopes.get(panel._viewKey());
+    if (from?.dirty() && to?.dirty() && ["capabilities/guest-mode", "capabilities/quiet-hours", "capabilities/request-rules"].includes(panel._viewKey())) {
+      const label = {"capabilities/guest-mode":"Guest Mode policy", "capabilities/quiet-hours":"Quiet Hours policy", "capabilities/request-rules":"Request Rules settings"}[panel._viewKey()];
+      reviewRecoveredScope(panel, source, panel._viewKey(), label, () => restorePanelDrafts(panel));
+    }
     if (from?.dirty() && to?.write && !to.dirty() && panel._data?.is_admin) {
       const field = {"capabilities/guest-mode":"_guestDraft", "capabilities/quiet-hours":"_quietHoursDraft", "capabilities/request-rules":"_rulesSettingsDraft"}[panel._viewKey()];
       if (field) {
