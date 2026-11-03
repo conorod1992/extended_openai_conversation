@@ -180,7 +180,7 @@ from .ha_llm_tools import (
 )
 from .ha_permissions import bind_active_ha_context
 from .ha_tool_result_compat import make_tool_result_content
-from .helpers import get_exposed_entities
+from .helpers import effective_api_provider, get_exposed_entities
 from .knowledge import KnowledgeLibrary, async_get_knowledge, search_result_as_dict
 from .legacy_agent_alias import register_legacy_agent, unregister_legacy_agent
 from .local_intents import LocalIntentResult, async_try_handle_local_intent
@@ -2122,7 +2122,7 @@ class ExtendedOpenAIAgentEntity(
             )
             entry_data = getattr(getattr(self, "entry", None), "data", {})
             limit = None
-            if entry_data.get("api_provider") == "azure":
+            if effective_api_provider(entry_data.get("api_provider"), entry_data.get("base_url")) == "azure":
                 snapshot = build_provider_request_snapshot(
                     self.subentry.data, entry_data, tools_required=True
                 )

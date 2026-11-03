@@ -45,6 +45,7 @@ async def test_startup_migrates_only_exact_stock_conversation_prompts(
     entry = SimpleNamespace(
         version=version,
         disabled_by=None,
+        data={},
         entry_id="entry",
         title="Agent",
         options={},

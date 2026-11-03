@@ -53,6 +53,7 @@ def _entry(
         title="Legacy agent",
         version=version,
         disabled_by=None,
+        data={},
         options={} if options is None else options,
         subentries={} if subentries is None else dict(subentries),
     )

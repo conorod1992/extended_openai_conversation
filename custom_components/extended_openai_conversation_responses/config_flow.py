@@ -82,7 +82,7 @@ from .const import (
     DOMAIN,
 )
 from .ha_schema import schema_for_ha
-from .helpers import get_authenticated_client
+from .helpers import effective_api_provider, get_authenticated_client
 from .model_capabilities import (
     get_model_capabilities,
     parameter_is_allowed,
@@ -308,7 +308,9 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> None:
     api_version = data.get(CONF_API_VERSION)
     organization = data.get(CONF_ORGANIZATION)
     skip_authentication = data.get(CONF_SKIP_AUTHENTICATION, False)
-    api_provider = data.get(CONF_API_PROVIDER)
+    api_provider = effective_api_provider(data.get(CONF_API_PROVIDER), base_url)
+    if api_provider == "azure":
+        data[CONF_API_PROVIDER] = api_provider
 
     if base_url == DEFAULT_CONF_BASE_URL:
         # Do not set base_url if using OpenAI for case of OpenAI's base_url change

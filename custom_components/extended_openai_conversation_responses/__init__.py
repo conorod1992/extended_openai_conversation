@@ -100,6 +100,7 @@ from .debug_ui import async_setup_debug_ui
 from .delayed_tools import async_setup_delayed_tools
 from .ha_permissions import async_setup_ha_permissions
 from .helpers import (
+    effective_api_provider,
     get_authenticated_client,
     get_model_config,
     supports_openai_hosted_tools,
@@ -484,6 +485,15 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
         hass.config_entries.async_entries(DOMAIN),
         key=lambda e: e.disabled_by is not None,
     )
+
+    for entry in entries:
+        provider = effective_api_provider(
+            entry.data.get(CONF_API_PROVIDER), entry.data.get(CONF_BASE_URL)
+        )
+        if provider == "azure" and entry.data.get(CONF_API_PROVIDER) != provider:
+            hass.config_entries.async_update_entry(
+                entry, data={**entry.data, CONF_API_PROVIDER: provider}
+            )
 
     # Schema migration is intentionally independent of config-entry version. It is
     # idempotent and exact-match only, so current entries created by an older release

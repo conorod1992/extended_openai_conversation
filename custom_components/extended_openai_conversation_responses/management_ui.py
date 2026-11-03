@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import suppress
 from copy import deepcopy
@@ -69,6 +70,8 @@ from .const import (
     CONF_USAGE_RUN_RETENTION_DAYS,
     DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
     DEFAULT_SHARED_MEMORY_MODE,
+    DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
+    DEFAULT_USAGE_RUN_RETENTION_DAYS,
     DOMAIN,
     GUEST_POLICY_VERSION,
     MANAGEMENT_PANEL_TITLE,
@@ -3164,7 +3167,58 @@ async def _async_management_request(
         else None
     )
     dispatch_ms = _elapsed_ms(dispatch_started)
+    retention_fields = {
+        CONF_USAGE_REQUEST_RETENTION_DAYS: DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
+        CONF_USAGE_RUN_RETENTION_DAYS: DEFAULT_USAGE_RUN_RETENTION_DAYS,
+    }
+    previous_retention = tuple(
+        subentry.data.get(key, default) for key, default in retention_fields.items()
+    )
     result = await handler(request)
+    retention_changed = previous_retention != tuple(
+        subentry.data.get(key, default) for key, default in retention_fields.items()
+    )
+    retention_updates = message.get("settings" if section == "settings" else "config")
+    if retention_changed or (
+        (section, action)
+        in {
+            ("configuration", "save"),
+            ("function_repair", "configuration_save"),
+            ("settings", "update"),
+        }
+        and result.get("valid") is not False
+        and isinstance(retention_updates, dict)
+        and {CONF_USAGE_REQUEST_RETENTION_DAYS, CONF_USAGE_RUN_RETENTION_DAYS}
+        & retention_updates.keys()
+    ):
+        from .mutation_outcomes import mark_mutation_failure
+        from .operation_settlement import async_settle_owned_operation
+        from .usage import async_get_durable_usage
+
+        async def apply_retention() -> None:
+            usage = await async_get_durable_usage(hass, entry_id, subentry_id)
+            usage.request_retention_days = int(
+                subentry.data.get(
+                    CONF_USAGE_REQUEST_RETENTION_DAYS,
+                    DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
+                )
+            )
+            usage.run_retention_days = int(
+                subentry.data.get(
+                    CONF_USAGE_RUN_RETENTION_DAYS, DEFAULT_USAGE_RUN_RETENTION_DAYS
+                )
+            )
+            await usage.async_prune_details()
+
+        try:
+            await async_settle_owned_operation(asyncio.create_task(apply_retention()))
+        except Exception as err:
+            raise mark_mutation_failure(
+                HomeAssistantError(
+                    "Configuration saved, but Usage retention could not be applied; retry saving retention to finish deletion."
+                ),
+                "committed",
+            ) from err
     handler_ms = _elapsed_ms(handler_started) if handler_started is not None else None
 
     committed_result = result

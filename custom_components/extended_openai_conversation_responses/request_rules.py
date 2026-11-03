@@ -56,7 +56,11 @@ from .guest_mode import (
     GuestModeDenied,
     guest_arguments_allowed_runtime,
 )
-from .helpers import get_model_config, get_reasoning_effort_options
+from .helpers import (
+    effective_api_provider,
+    get_model_config,
+    get_reasoning_effort_options,
+)
 from .model_catalog import all_reasoning_efforts
 from .operational_errors import log_handled_failure
 from .persistence_hardening import (
@@ -3904,7 +3908,10 @@ async def _async_evaluate_matched_rule(
     capability_model = (
         str(request_options.get("azure_model") or selected_model)
         if request_options is not None
-        and (entry_data or {}).get("api_provider") == "azure"
+        and effective_api_provider(
+            (entry_data or {}).get("api_provider"), (entry_data or {}).get("base_url")
+        )
+        == "azure"
         else selected_model
     )
     if effort:

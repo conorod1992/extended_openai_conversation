@@ -103,9 +103,9 @@ export async function applyConfigurationImport(panel, root) {
       if (mode === "current") {
         retireReplacedConfigurationDraft(panel, submittedDraft);
         acknowledgementOwner = captureConfigurationOwner(panel);
-        loadIntent = captureCatalogSelectionIntent(panel);
       }
       root.querySelector("#import-dialog").close();
+      if (mode === "current") loadIntent = captureCatalogSelectionIntent(panel);
       await panel._loadAgents(panel._agentId, acknowledgementOwner, loadIntent);
     }, result);
   } catch (err) {

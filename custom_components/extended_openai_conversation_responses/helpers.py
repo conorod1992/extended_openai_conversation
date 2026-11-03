@@ -96,6 +96,15 @@ def is_azure_url(base_url: str | None) -> bool:
     )
 
 
+def effective_api_provider(api_provider: str | None, base_url: str | None) -> str:
+    """Use the same Azure hostname inference for clients and capability consumers."""
+    return (
+        "azure"
+        if api_provider == "azure" or is_azure_url(base_url)
+        else (api_provider or DEFAULT_API_PROVIDER)
+    )
+
+
 def supports_openai_hosted_tools(
     api_provider: str | None, base_url: str | None
 ) -> bool:
@@ -165,7 +174,7 @@ async def get_authenticated_client(
     # Match HA core: retain its shared HTTPX client and TLS/connection policy.
     # SDK 3 supports this client at runtime, while typing targets HTTPX2.
     client: AsyncClient
-    if base_url and (is_azure_url(base_url) or api_provider == "azure"):
+    if base_url and effective_api_provider(api_provider, base_url) == "azure":
         client = AsyncAzureOpenAI(
             api_key=api_key,
             azure_endpoint=base_url,
