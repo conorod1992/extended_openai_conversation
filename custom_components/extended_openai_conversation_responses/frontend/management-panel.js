@@ -24,7 +24,7 @@ import {ASSISTANT_INTRO_MARKUP, renderManagement, showPendingDestination, reconc
 import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, syncAgentPicker, refreshConfigurationErrors} from "./management-actions.js";
 import {callMutation, captureConfigurationOwner, configurationSubmissionIsCurrent, configurationReadOvertookSubmission, mergeConfigurationRead, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
 import {captureCatalogLoad, catalogFailureIsCurrent} from "./management-catalog-ownership.js";
-import {capturePageRead, acceptPageRead} from "./page-save-acknowledgement.js";
+import {capturePageRead, acceptPageRead, hasPendingPageSaveRead} from "./page-save-acknowledgement.js";
 import {loadAgentsWithOverviewPrefetch, loadRoute, bindRequestRuleSearch, applyRequestRuleSearch, warmRouteAsset, prefetchIntentRead, consumeIntentRead, consumeStoredConfigurationPrefetch, discardStoredConfigurationPrefetch, markConfigurationRead, measureConfigurationRead} from "./management-route.js";
 import {getConfigurationEditor, getConfigurationTools, getRouteFeature, routeAssetKind, routeFeaturesReady, isRestrictedManagementView, nonAdminOverviewKnowledgeSnapshot} from "./management-route.js";
 import {NAVIGATION, pageMetadata, routeFromPath, routePath, focusManagementSetting} from "./frontend-navigation.js";
@@ -1299,7 +1299,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const cacheKey = cache.key;
     // Configuration uses its generation-checked clean snapshots, never the
     // generic read-only section cache's independent freshness window.
-    const showCached = !configOnly && cache.result !== undefined && (cache.fresh || ["overview", "data-memory/knowledge", "usage-maintenance/usage"].includes(view));
+    // Policy recovery also requires a fresh accepted read before another save.
+    const showCached = !configOnly && !hasPendingPageSaveRead(this) && cache.result !== undefined && (cache.fresh || ["overview", "data-memory/knowledge", "usage-maintenance/usage"].includes(view));
     if (showCached) {
       this._contentData = null;
       this._result = view === "usage-maintenance/usage"

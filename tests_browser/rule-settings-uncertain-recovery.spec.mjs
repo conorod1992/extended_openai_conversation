@@ -61,7 +61,7 @@ for (const bundle of [false,true]) for (const fault of ["lost", "unknown_error",
   await panel.locator(".rule-settings details").evaluateAll(nodes=>nodes.forEach(node=>{node.open=true;}));
   await panel.locator("#rules-default-wording").uncheck();
   // Ordinary section refresh must recover, without a collection/editor detour.
-  await panel.evaluate(async host=>{host._sectionCache.clear(); await host._loadSection(true);});
+  await panel.locator('.subsection-nav button[data-subsection="request-rules"]').click();
   await panel.locator(".rule-settings details").evaluateAll(nodes=>nodes.forEach(node=>{node.open=true;}));
   await expect(panel.locator("#rules-default-wording")).not.toBeChecked();
   await expect(panel.locator("#save-page")).toBeEnabled();

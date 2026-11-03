@@ -21,8 +21,8 @@ DIST = Path("custom_components/extended_openai_conversation_responses/frontend/d
 # Allow 600 reviewed bytes, keeping the independent entry and CSS limits.
 # Retained Discard cleanup and model-intent retirement add 209 bytes.
 # Budget 873,300 total JS bytes; retain the separate entry and CSS limits.
-# Uncertain policy draft recovery adds 1,189 JS bytes, including read/retry
-# guards. Budget 1,200 reviewed bytes; keep entry and CSS limits unchanged.
+# Uncertain policy recovery and its fresh-read cache bypass add 1,208 JS bytes.
+# Budget 874,500 total JS bytes; keep entry and CSS limits unchanged.
 CEILINGS = {"javascript": 874_500, "css": 65_000, "management_entry": 120_000}
 
 
