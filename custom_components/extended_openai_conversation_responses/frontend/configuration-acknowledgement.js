@@ -99,6 +99,15 @@ export function configurationDraftBaseline(panel, baseline = panel._configData) 
   return panel._eocAcknowledgedConfiguration?.baseline?.(baseline) || baseline;
 }
 
+// A committed overwrite retires the submitted values before its saved values
+// are readable. Compare authoring against that submission, keeping the saved
+// configuration/revision separate for persistence and acknowledgement.
+export function configurationAuthoringBaseline(panel, baseline = panel._configData) {
+  const restored = panel._eocRestoredConfiguration;
+  return restored && configurationSubmissionIsCurrent(panel, restored)
+    ? {config:restored.draft, title:restored.title} : configurationDraftBaseline(panel, baseline);
+}
+
 export function discardConfigurationDraft(panel) {
   if (panel._configurationSaving) return false;
   const baseline = configurationDraftBaseline(panel);
@@ -127,10 +136,7 @@ export function discardConfigurationDraft(panel) {
 }
 
 export function mergeConfigurationRead(panel, current, baseline, saved) {
-  const restored = panel._eocRestoredConfiguration;
-  // Restore replaces the submitted draft. Only subsequently authored edits survive.
-  const comparison = restored && configurationSubmissionIsCurrent(panel, restored)
-    ? {config:restored.draft, title:restored.title} : configurationDraftBaseline(panel, baseline);
+  const comparison = configurationAuthoringBaseline(panel, baseline);
   const pending = panel._eocConfigurationSubmission;
   const protectedFields = pending && !pending.acknowledged && configurationSubmissionIsCurrent(panel, pending) ? pending.fields : [];
   panel._eocModelIntent?.acceptReasoningRead?.(panel, saved.config, {comparisonConfig:comparison.config, protectedFields});

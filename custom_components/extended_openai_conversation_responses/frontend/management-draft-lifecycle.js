@@ -1,10 +1,10 @@
 import {clone, same} from "./unsaved-state.js";
 import {pageCoordinator} from "./management-page-drafts.js";
 import {recoverDisconnectedEditor, showRecoveredDraftCopy, pendingRetentionFields} from "./management-state-safety.js";
-import {mergeConfigurationRead, configurationDraftBaseline, captureConfigurationOwner} from "./configuration-acknowledgement.js";
+import {mergeConfigurationRead, configurationDraftBaseline, configurationAuthoringBaseline, configurationSubmissionIsCurrent, captureConfigurationOwner} from "./configuration-acknowledgement.js";
 import {planConfigurationRecovery, combineRecoveredConfiguration, recoveredConfigurationChanges} from "./configuration-draft-recovery.js";
 import {hasPageSaveAcknowledgement} from "./page-save-acknowledgement.js";
-import {transferVoiceMappingDraft} from "./voice-mapping-draft.js";
+import {transferVoiceMappingDraft, voiceMappingDraftDirty} from "./voice-mapping-draft.js";
 
 // HA destroys custom panels during navigation and background suspension. Keep
 // the owning instance in document memory, never in persistent browser storage.
@@ -113,19 +113,21 @@ function restoreDraftSource(panel, source, key) {
     if (!result.accepted) return;
     if (source._eocAcknowledgedConfiguration === configurationAcknowledgement) source._eocAcknowledgedConfiguration = null;
   }
-  if (source._configDirty && source._draftAgentId === panel._agentId && panel._data?.is_admin) {
-    if (panel._configDirty && panel._draftAgentId !== panel._agentId) return;
-    // A cold Retention visit has only a partial configuration projection.
-    // Missing fields there are unknown, not deletions from a retained full
-    // draft. Obtain a full, current baseline before transferring ownership.
-    if (prepareFullRecoveryBaseline(panel, source, key)) return;
+  const configuration = source._configDirty && source._draftAgentId === panel._agentId && panel._data?.is_admin;
+  if (configuration && panel._configDirty && panel._draftAgentId !== panel._agentId) return;
+  // Finish a destination overwrite, or a cold partial Retention read, before
+  // receiving configuration or an independently retained Voice row scope.
+  if ((configuration || voiceMappingDraftDirty(source)) && panel._data?.is_admin
+      && prepareFullRecoveryBaseline(panel, source, key)) return;
+  if (configuration) {
     const fresh = panel._configData?.config ? panel._configData : null;
     const target = {draft:panel._draft, title:panel._draftTitle};
     const targetBaseline = configurationDraftBaseline(panel);
-    const sourceBaseline = configurationDraftBaseline(source);
+    const sourceBaseline = configurationAuthoringBaseline(source);
+    const targetComparison = configurationAuthoringBaseline(panel);
     const targetOwnsModel = Boolean(panel._eocModelIntent || panel._eocPendingModelPreparation || panel._eocReasoningChoiceRevision);
     const plan = (panel._configDirty || targetOwnsModel) && target.draft && targetBaseline?.config
-      ? planConfigurationRecovery({draft:source._draft, title:source._draftTitle}, sourceBaseline, target, targetBaseline, {targetOwnsModel}) : null;
+      ? planConfigurationRecovery({draft:source._draft, title:source._draftTitle}, sourceBaseline, target, targetComparison, {targetOwnsModel}) : null;
     if (plan?.conflicts.length) {
       showConfigurationRecoveryConflict(panel, source, key, sourceBaseline);
       return;
@@ -213,7 +215,7 @@ function showConfigurationRecoveryConflict(panel, source, key, baseline) {
     canDiscard:() => panel.isConnected && !source.isConnected && panel._data?.is_admin && owner(panel) === key && owner(source) === key
       && panel._loadToken === visit && panel._cacheGeneration === generation
       && same(source._draft, current.draft) && source._draftTitle === current.title
-      && same(configurationDraftBaseline(source), baselineSnapshot),
+      && same(configurationAuthoringBaseline(source), baselineSnapshot),
     onDiscard:() => {
       pageCoordinator(source).scopes.get("configuration")?.discard();
       recoveryConfigurationCopies.delete(panel);
@@ -224,15 +226,23 @@ function showConfigurationRecoveryConflict(panel, source, key, baseline) {
 }
 
 function prepareFullRecoveryBaseline(panel, source, key) {
-  if (!source._configData?.config || source._configData.projection === "retention"
-      || panel._configData?.projection !== "retention") return false;
+  const restored = panel._eocRestoredConfiguration;
+  const replacement = restored && configurationSubmissionIsCurrent(panel, restored) ? restored : null;
+  if (!replacement && (!source._configData?.config || source._configData.projection === "retention"
+      || panel._configData?.projection !== "retention")) return false;
   const previous = recoveryConfigurationReads.get(panel);
-  if (previous?.key === key && (previous.running || (previous.visit === panel._loadToken && previous.generation === panel._cacheGeneration))) return true;
-  const state = {key, running:true, visit:panel._loadToken, generation:panel._cacheGeneration, view:panel._viewKey()};
+  if (previous?.key === key && (previous.running || previous.replacement === replacement
+      && previous.visit === panel._loadToken && previous.generation === panel._cacheGeneration)) return true;
+  const state = {key, replacement, running:true, visit:panel._loadToken, generation:panel._cacheGeneration, view:panel._viewKey()};
   recoveryConfigurationReads.set(panel, state);
   void Promise.resolve().then(() => {
     if (panel.isConnected && owner(panel) === key && panel._data?.is_admin && panel._viewKey() === state.view
-        && panel._loadToken === state.visit && panel._cacheGeneration === state.generation) return panel._loadConfigDraft({preserveResult:true, full:true});
+        && panel._loadToken === state.visit && panel._cacheGeneration === state.generation) {
+      // Finish an unread destination overwrite before receiving another draft.
+      // Otherwise its retired values could hide an equal incoming authored edit.
+      if (replacement) panel._invalidateCleanConfiguration?.(panel._agentId);
+      return panel._loadConfigDraft({preserveResult:true, full:true});
+    }
   }).catch(() => {
     // Keep the original source intact and avoid retrying a failed read on every
     // render. A new visit or invalidation can retry through the normal gates.

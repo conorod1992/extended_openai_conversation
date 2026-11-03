@@ -2,8 +2,8 @@ import {expect,test} from "@playwright/test";
 import {fixtureUrl,expectHarnessClean,trackPageErrors} from "./browser-helpers.mjs";
 
 const baseline={office:"user:owner",living:"shared:household"};
-async function setup(page) {
-  await page.goto(fixtureUrl("assistant/basics"));
+async function setup(page, bundled = false) {
+  await page.goto(fixtureUrl("assistant/basics", bundled ? "&bundle=1" : ""));
   await page.waitForFunction(()=>browserHarness?.panel?._configData?.revision);
   await page.evaluate(async()=>{
     const h=browserHarness,p=h.panel,s=h.getState().configuration;
@@ -64,6 +64,35 @@ test("duplicate Voice rows survive route changes and remount until corrected wit
   await panel.locator("#save-config").click();
   await expect.poll(()=>page.evaluate(()=>browserHarness.getState().configuration.config.voice_device_mappings)).toEqual({office:"unretained",living:"shared:household"});
   await expectHarnessClean(page,errors);
+});
+
+for (const bundled of [false, true]) test(`deferred Voice recovery after Discard saves the displayed mapping; bundle=${bundled}`, async ({page}) => {
+  const errors = trackPageErrors(page), source = await setup(page, bundled);
+  await source.locator(".voice-owner-type").nth(0).selectOption("unretained");
+  await source.evaluate(host => {
+    window.deferredVoiceSource = host;
+    const target = document.createElement("extended-openai-management-panel");
+    target.id = "voice-destination";
+    target.hass = host.hass;
+    document.body.append(target);
+    browserHarness.panel = target;
+  });
+  const target = page.locator("#voice-destination");
+  await expect(target.locator("[data-voice-mapping-row]")).toHaveCount(2);
+  await target.locator("#add-voice-mapping").click();
+  await target.evaluate(async host => { deferredVoiceSource.remove(); await host._loadSection(true); });
+  await expect.poll(() => page.evaluate(() => deferredVoiceSource._configDirty)).toBe(false);
+  await expect(target.locator("[data-voice-mapping-row]")).toHaveCount(3);
+  await expect(target.locator('[data-error="voice_device_mappings"]')).toContainText("empty assignment");
+  await target.locator("#revert-config").click();
+  await target.evaluate(host => host._loadSection(true));
+  await expect(target.locator("[data-voice-mapping-row]")).toHaveCount(2);
+  await expect(target.locator(".voice-owner-type").nth(0)).toHaveValue("unretained");
+  expect(await target.evaluate(host => host._draft.voice_device_mappings)).toEqual({...baseline, office:"unretained"});
+  await target.locator("#save-config").click();
+  await expect.poll(() => page.evaluate(() => browserHarness.getState().configuration.config.voice_device_mappings)).toEqual({...baseline, office:"unretained"});
+  await expect.poll(() => target.evaluate(host => host._configDirty)).toBe(false);
+  await expectHarnessClean(page, errors);
 });
 
 test("failed Voice lookup remains editable after navigation and remount and blocks global Save",async({page})=>{

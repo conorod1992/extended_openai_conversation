@@ -1,10 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {fixture, edit, retire, replace, saveConfiguration, flushUntil} from "./management-ownership-harness.mjs";
+import {fixture, edit, retire, replace, saveConfiguration, flushUntil, retainPanelDrafts, restorePanelDrafts, stopDraftRecovery} from "./management-ownership-harness.mjs";
 import {applyConfigurationImport, refreshUncertainConfigurationImport} from "../custom_components/extended_openai_conversation_responses/frontend/assistant-configuration-actions.js";
 import {pendingRetentionFields} from "../custom_components/extended_openai_conversation_responses/frontend/management-state-safety.js";
 import {newVoiceMappingRow, updateVoiceMappingRows, voiceMappingDraftError, voiceMappingDraftDirty} from "../custom_components/extended_openai_conversation_responses/frontend/voice-mapping-draft.js";
-import {captureConfigurationSubmission, retireReplacedConfigurationDraft} from "../custom_components/extended_openai_conversation_responses/frontend/configuration-acknowledgement.js";
+import {captureConfigurationSubmission, retireReplacedConfigurationDraft, configurationAuthoringBaseline, configurationDraftBaseline} from "../custom_components/extended_openai_conversation_responses/frontend/configuration-acknowledgement.js";
+import {TestEventTarget} from "./frontend-test-helpers.mjs";
 
 function scenario({failRead = false, mode = "current"} = {}) {
   const f = fixture(), panel = f.create(), send = panel.hass.callWS;
@@ -144,4 +145,137 @@ test("a replacement preserves newer invalid Voice rows even when their persisten
     assert.match(voiceMappingDraftError(panel), /Choose an Assist satellite/);
     assert.equal(voiceMappingDraftDirty(panel), true);
   } finally { retire(panel); }
+});
+
+function captureRecoveryDialogs(panel) {
+  TestEventTarget.prototype.append = function() {};
+  globalThis.document = {createElement(tagName) {
+    return {tagName, dataset:{}, children:[], handlers:{}, append(...nodes) {this.children.push(...nodes);},
+      setAttribute() {}, addEventListener(type, callback) {this.handlers[type]=callback;},
+      showModal() {this.open=true;}, close() {this.open=false; this.handlers.close?.();}, remove() {}};
+  }};
+  panel.shadowRoot.append = dialog => {panel.recoveryDialog=dialog;};
+}
+
+for (const variant of ["clean", "retired", "newer"]) test(`recovery compares only post-overwrite source edits: ${variant}`, async () => {
+  const f = scenario({failRead:true}), source = f.panel;
+  if (variant !== "clean") {
+    edit(source, "max_tokens", 777);
+    edit(source, "usage_request_retention_days", 7);
+    source._draftTitle = "Retired title";
+  }
+  await applyConfigurationImport(source, source.shadowRoot);
+  const saved = source._configData;
+  if (variant === "newer") edit(source, "max_tokens", 999);
+  const target = replace(source, (...args) => {
+    const p = f.create(...args);
+    edit(p, "max_tokens", 888);
+    p._draftTitle = "Later destination title";
+    captureRecoveryDialogs(p);
+    return p;
+  });
+  try {
+    assert.equal(source._configData, saved, "authoring comparison does not rewrite the saved baseline");
+    assert.equal(source._configData.revision, "r0");
+    if (variant === "newer") {
+      assert.equal(target.recoveryDialog.open, true);
+      const copy = JSON.parse(target.recoveryDialog.children.find(node => node.tagName === "textarea").value);
+      assert.deepEqual(copy, {config:{max_tokens:999}}, "the copy excludes overwritten fields and title");
+      assert.equal(source._configDirty, true);
+      target.recoveryDialog.children.find(node => node.textContent === "Discard recovered edits").onclick();
+      await flushUntil(() => pendingRetentionFields(target).length === 2);
+    } else assert.equal(target.recoveryDialog?.open ?? false, false);
+    assert.equal(target._draft.max_tokens, 888);
+    assert.equal(target._draftTitle, "Later destination title");
+    assert.equal(pendingRetentionFields(target).length, 2);
+    assert.equal(source._configDirty, false);
+    await saveConfiguration(target, null);
+    assert.deepEqual(f.state.writes[0].config, {max_tokens:888, usage_request_retention_days:0, usage_run_retention_days:30});
+    assert.equal(f.state.writes[0].revision, "r1");
+  } finally { retire(source, target); }
+});
+
+test("shared restore retirement ignores overwritten settings while recovering a later title", async () => {
+  const f = fixture(), source = f.create();
+  edit(source, "usage_request_retention_days", 7);
+  const submitted = captureConfigurationSubmission(source);
+  // A confirmed configuration-only restore changes the persisted snapshot;
+  // the later title belongs to the next save and keeps this source retained.
+  Object.assign(f.state.records.get(source._agentId), {revision:"r1", title:"Restored",
+    config:{...source._configData.config, usage_request_retention_days:0}});
+  source._draftTitle = "Authored after restore";
+  retireReplacedConfigurationDraft(source, submitted);
+  source._syncConfigDirty();
+  const target = replace(source, (...args) => {
+    const p = f.create(...args);
+    edit(p, "usage_request_retention_days", 30);
+    captureRecoveryDialogs(p);
+    return p;
+  });
+  try {
+    assert.equal(target.recoveryDialog?.open ?? false, false);
+    assert.equal(target._draft.usage_request_retention_days, 30);
+    assert.equal(target._draftTitle, "Authored after restore");
+    await saveConfiguration(target, null);
+    assert.deepEqual(f.state.writes[0].config, {usage_request_retention_days:30});
+    assert.equal(f.state.writes[0].title, "Authored after restore");
+    assert.equal(f.state.writes[0].revision, "r1");
+  } finally { retire(source, target); }
+});
+
+for (const boundary of ["authentication", "draft", "selection"]) test(`retirement cannot suppress authoring under a newer ${boundary} owner`, async () => {
+  const f = scenario({failRead:true}), panel = f.panel;
+  edit(panel, "max_tokens", 777);
+  await applyConfigurationImport(panel, panel.shadowRoot);
+  try {
+    assert.equal(configurationAuthoringBaseline(panel).config.max_tokens, 777);
+    if (boundary === "authentication") panel._eocAuthentication = {userId:panel.hass.user.id, generation:1};
+    if (boundary === "draft") panel._eocDraftGeneration = 1;
+    if (boundary === "selection") panel._agentId = f.agentB;
+    assert.equal(configurationAuthoringBaseline(panel), configurationDraftBaseline(panel));
+  } finally { retire(panel); }
+});
+
+for (const variant of ["equal incoming value", "failed read", "newer destination edit"]) test(`an unread destination overwrite resolves before recovery: ${variant}`, async () => {
+  const f = scenario({failRead:true}), target = f.panel, source = f.create();
+  edit(source, "max_tokens", 777);
+  edit(target, "max_tokens", 777);
+  await applyConfigurationImport(target, target.shadowRoot);
+  target.shadowRoot.querySelector("#import-dialog").close();
+  captureRecoveryDialogs(target);
+  if (variant === "newer destination edit") edit(target, "max_tokens", 888);
+  const send = target.hass.callWS;
+  let fail = variant === "failed read";
+  target.hass.callWS = async request => {
+    if (request.action === "get" && fail) throw new Error("Destination read unavailable");
+    return send(request);
+  };
+  source.isConnected = false;
+  retainPanelDrafts(source);
+  stopDraftRecovery(source);
+  restorePanelDrafts(target);
+  try {
+    if (fail) {
+      await flushUntil(() => target.toasts.some(message => message.includes("complete settings")));
+      assert.equal(source._configDirty, true);
+      assert.equal(target._configData.revision, "r0");
+      assert.ok(target._eocRestoredConfiguration);
+      fail = false;
+      target._loadToken++;
+      restorePanelDrafts(target);
+    }
+    await flushUntil(() => target._configData.revision === "r1" && !target._configDataStale);
+    assert.equal(target._eocRestoredConfiguration, null);
+    if (variant === "newer destination edit") {
+      await flushUntil(() => target.recoveryDialog?.open);
+      assert.equal(target._draft.max_tokens, 888);
+      assert.equal(source._configDirty, true);
+    } else {
+      await flushUntil(() => !source._configDirty);
+      assert.equal(target._draft.max_tokens, 777, "an incoming edit equal to the retired value remains authored");
+      await saveConfiguration(target, null);
+      assert.equal(f.state.writes[0].config.max_tokens, 777);
+      assert.equal(f.state.writes[0].revision, "r1");
+    }
+  } finally { retire(source, target); }
 });

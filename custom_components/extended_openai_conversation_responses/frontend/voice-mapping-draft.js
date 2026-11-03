@@ -55,14 +55,22 @@ function register(panel, state) {
 export function transferVoiceMappingDraft(target, source) {
   const state = existing(source);
   if (!state || !current(source, state) || !dirty(state) || source.isConnected !== false
-      || target.isConnected === false || !target._data?.is_admin) return false;
+      || target.isConnected === false || !target._data?.is_admin
+      || !target._draft || target._draftAgentId !== target._agentId) return false;
   const receivingOwner = owner(target);
   if (["agent", "entry", "user"].some(field => receivingOwner[field] !== state.owner[field])) return false;
   const prior = existing(target);
   if (prior && dirty(prior)) return false;
+  const validated = validateRows(state.rows);
+  const targetMapping = mapping(target._draft.voice_device_mappings);
+  const sourceMapping = validated.mapping || mapping(source._draft?.voice_device_mappings);
+  if (!same(targetMapping, baselineMapping(target)) && !same(targetMapping, sourceMapping)) return false;
   const receiving = voiceMappingDraft(target);
   receiving.rows = clone(state.rows);
   receiving.baseline = clone(state.baseline);
+  // A deferred row-only recovery can outlive the original configuration handoff.
+  // Keep the valid persistence map aligned with the rows the editor now owns.
+  if (validated.mapping) target._draft.voice_device_mappings = clone(validated.mapping);
   state.rows = fromMapping(baselineMapping(source));
   state.baseline = projection(state.rows);
   return true;
