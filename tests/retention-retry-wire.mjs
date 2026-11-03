@@ -17,6 +17,3 @@ await saveConfiguration(panel,null);snapshot('retry-save');
 await panel._loadConfigDraft();snapshot('normal-refresh');panel._draftTitle='Unrelated title edit';panel._syncConfigDirty();await saveConfiguration(panel,null);snapshot('unrelated-title-save');
 send({done:snapshots});
 retire(panel);input.close();
-
-
-
