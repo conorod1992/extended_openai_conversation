@@ -32,7 +32,7 @@ function temporaryMemoryCard(panel, memory) {
   return `<article class="list-card" data-memory-id="${panel._e(memory.memory_id)}">
     <div class="card-main clickable edit-temporary-memory" tabindex="0" role="button" data-id="${panel._e(memory.memory_id)}">
       <p class="primary-copy">${panel._e(memory.content)}</p>
-      <p class="meta">${panel._e(memory.category)} · ${panel._e(ownerLabel(panel, memory.owner_scope_id))} · Expires ${panel._e(panel._formatDate(memory.expires_at))}</p>
+      <p class="meta">${panel._e(memory.category)} · ${panel._e(ownerLabel(panel, memory.owner_scope_id))} · Expires ${panel._e((memory.expires_at_local?.replace("T", " ") || panel._formatDate(memory.expires_at)))}</p>
     </div>
     <div class="actions"><button type="button" class="secondary edit-temporary-memory" data-id="${panel._e(memory.memory_id)}">Edit</button><button type="button" class="danger delete-temporary" data-id="${panel._e(memory.memory_id)}">Delete</button></div>
   </article>`;
@@ -100,7 +100,7 @@ export function reconcileTemporaryMemories(panel) {
   const state = collections.get(panel);
   if (!state || state.host !== panel.shadowRoot.querySelector("[data-temporary-memories]") || state.identity !== memoryCollectionIdentity(panel)) return false;
   reconcileKeyedChildren(state.list, state.cards, panel._result?.memories || [], memory => memory.memory_id,
-    memory => JSON.stringify([memory.content, memory.category, memory.expires_at, ownerLabel(panel, memory.owner_scope_id)]),
+    memory => JSON.stringify([memory.content, memory.category, memory.expires_at, memory.expires_at_local, ownerLabel(panel, memory.owner_scope_id)]),
     memory => temporaryMemoryCard(panel, memory), [state.empty]);
   const diagnostics = temporaryDiagnostics(panel);
   if (state.diagnostics !== diagnostics) { state.host.querySelector("[data-temporary-diagnostics]").innerHTML = diagnostics; state.diagnostics = diagnostics; }
@@ -136,7 +136,7 @@ export function openTemporaryMemory(panel, memoryId) {
     memory_id: memory.memory_id,
     content: memory.content || "",
     category: memory.category || "general",
-    expires_at: memoryLocalDateTime(panel, memory.expires_at),
+    expires_at: memory.expires_at_local || memoryLocalDateTime(panel, memory.expires_at),
     original_expiry: memory.expires_at,
     owner_scope_id: memory.owner_scope_id || panel._scopeId,
   };
@@ -202,7 +202,8 @@ async function saveTemporaryMemory(panel) {
       category,
       // An unrelated edit must not reinterpret the displayed wall time if HA's
       // timezone changed while this editor was open.
-      expires_at: temporaryMemoryExpiryForSave(panel, expiresAt, draft),
+      expires_at: expiresAt === draft.expires_at ? draft.original_expiry : expiresAt,
+      ...(expiresAt === draft.expires_at ? {} : {local_times: {expires_at: expiresAt}}),
     });
     if (!configurationSubmissionIsCurrent(panel, submission) || !panel._ownsRetainedMutation(owner)) return;
     requireMutationAcknowledgement(response?.memory?.memory_id, "saving the temporary memory");

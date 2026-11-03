@@ -38,3 +38,5 @@ Category metadata follows the same privacy policy as the memory content, includi
 Each agent can retain up to 100 active temporary memories. A record holds up to 500 characters of content and a 64-character category. Automatic context includes at most 30 records and 6,000 characters, so retaining a record does not guarantee that it is included in every request.
 
 Expiry removes context; it does not schedule a notification, reminder or delayed Home Assistant action.
+
+Dates entered in the panel are resolved and displayed using Home Assistant's timezone rules, independently of the browser's timezone database. Changing another field preserves the existing expiry instant. New expiry times in a repeated DST hour use its first occurrence; nonexistent local times are rejected.

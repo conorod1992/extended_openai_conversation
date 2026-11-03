@@ -4,7 +4,7 @@ import {mutationEffects} from "./management-mutation-effects.js";
 import {clearVoiceMappingDraft} from "./voice-mapping-draft.js";
 import {observeCatalogGeneration} from "./model-catalog.js";
 import {invalidateUsageWindows} from "./usage-cache.js";
-import {scheduleWallTime, scheduleInstant} from "./schedule-time.js";
+import {scheduleWallTime} from "./schedule-time.js";
 import {beginOperation} from "./operation-ownership.js";
 import {updateAuthenticationPresentation} from "./authentication-presentation.js";
 import {stopLiveStatus, pauseLiveStatus, resumeLiveStatus, watchTimedFeatureStatus} from "./management-live-status.js";
@@ -2149,6 +2149,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _dateTimeLocal(value) {
+    const status = this._result?.status || {};
+    for (const field of ["active_from", "active_until"]) {
+      if (value && value === status[field] && status[`${field}_local`]) return status[`${field}_local`];
+    }
     return scheduleWallTime(value, this._hass?.config?.time_zone || "UTC");
   }
 
@@ -2208,15 +2212,21 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const endInput = root.querySelector("#guest-end");
       const end = endInput?.value;
       const status = this._result?.status || {};
-      const originalInstant = (value, original) => original && value === this._dateTimeLocal(original) ? original : scheduleInstant(value, this._hass?.config?.time_zone || "UTC");
+      const localTimes = {};
+      const originalInstant = (field, value, original) => {
+        if (original && value === this._dateTimeLocal(original)) return original;
+        localTimes[field] = value;
+        return value;
+      };
       try {
         if (!indefinite && (!end || !endInput.checkValidity())) {
           throw new Error("Choose an end time or select Remain active indefinitely.");
         }
         const result = await this._call("guest_mode", "update", {
-          ...(start ? {active_from: now ? start : originalInstant(start, status.active_from)} : {}),
-          ...(!indefinite && end ? {active_until: originalInstant(end, status.active_until)} : {}),
+          ...(start ? {active_from: now ? start : originalInstant("active_from", start, status.active_from)} : {}),
+          ...(!indefinite && end ? {active_until: originalInstant("active_until", end, status.active_until)} : {}),
           indefinite,
+          local_times: localTimes,
         });
         requireMutationAcknowledgement(result?.status && typeof result.status === "object", "the Guest Mode change");
         await presentAcknowledgedMutation(this, submission, "Guest Mode updated", () => {
@@ -2695,7 +2705,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         scope_id: sourceScope,
         ...(this._editingMemory ? {memory_id: this._editingMemory.memory_id, expected_revision: this._editingMemory.revision} : {}),
         ...feature.memoryMutationValues(values, this._editingMemory),
-        ...(temporary ? {expires_at: feature.memoryExpiryISO(this, values.expires_at)} : {}),
+        ...(temporary ? {expires_at: values.expires_at, local_times: {expires_at: values.expires_at}} : {}),
       });
       if (!current()) {
         if (ownsEditor()) requireMutationAcknowledgement(false, "reconciling the Memory save after its owner changed");

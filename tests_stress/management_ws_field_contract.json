@@ -329,6 +329,10 @@
     "yaml": {
       "required": false,
       "kind": "string"
+    },
+    "local_times": {
+      "required": false,
+      "kind": "object"
     }
   },
   "backup_transfer": {

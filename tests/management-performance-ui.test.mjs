@@ -1239,7 +1239,8 @@ for (const refreshOutcome of ["failure", "scope-change"]) {
   panel._call = async (_section, _action, payload) => { submitted = payload; return {}; };
   await panel._updateGuestMode();
   assert.equal(submitted.active_until, end);
-  assert.equal(submitted.active_from, "2026-10-31T16:00:00.000Z");
+  assert.equal(submitted.active_from, "2026-10-31T12:00");
+  assert.deepEqual(submitted.local_times, {active_from:"2026-10-31T12:00"});
   if (previousTimezone === undefined) delete process.env.TZ; else process.env.TZ = previousTimezone;
 }
 

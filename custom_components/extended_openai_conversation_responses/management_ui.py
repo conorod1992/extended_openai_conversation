@@ -3144,6 +3144,9 @@ async def _async_management_request(
     resolution_started = perf_counter()
     entry, subentry = entry_and_agent(hass, entry_id, subentry_id)
     resolution_ms = _elapsed_ms(resolution_started)
+    from .management_datetime import resolve_management_dates
+
+    message = resolve_management_dates(hass, message)
     request = _ManagementRequest(
         hass, user_id, is_admin, message, entry_id, subentry_id, entry, subentry
     )
@@ -3166,7 +3169,9 @@ async def _async_management_request(
 
     committed_result = result
     try:
-        result = dict(result)
+        from .management_datetime import project_management_dates
+
+        result = project_management_dates(hass, section, dict(result))
         if isinstance(result.get("config"), dict):
             # Effective defaults and capabilities depend on installation-wide data,
             # independently of the persisted assistant's configuration revision.
@@ -3290,6 +3295,7 @@ def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
         vol.Optional("kind"): str,
         vol.Optional("start_date"): str,
         vol.Optional("end_date"): str,
+        vol.Optional("local_times"): dict,
         vol.Optional("active_from"): str,
         vol.Optional("active_until"): str,
         vol.Optional("indefinite"): bool,

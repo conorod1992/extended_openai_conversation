@@ -73,7 +73,7 @@ def _hass(entry=None):
     return SimpleNamespace(
         config_entries=config_entries,
         auth=SimpleNamespace(),
-        config=SimpleNamespace(language="en"),
+        config=SimpleNamespace(language="en", time_zone="UTC"),
         data={},
         services=SimpleNamespace(async_call=AsyncMock()),
     )
@@ -819,7 +819,7 @@ def _residual_hass(entry=None):
     return SimpleNamespace(
         config_entries=config_entries,
         auth=SimpleNamespace(),
-        config=SimpleNamespace(language="en"),
+        config=SimpleNamespace(language="en", time_zone="UTC"),
         data={},
         http=SimpleNamespace(async_register_static_paths=AsyncMock()),
         services=SimpleNamespace(async_call=AsyncMock()),

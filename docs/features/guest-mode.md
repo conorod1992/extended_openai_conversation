@@ -117,3 +117,5 @@ offset and seconds, including during repeated daylight-saving hours.
 Home Assistant actions through EOAI require explicit entity IDs or area, device,
 floor or label selectors. The `entity_id: all` sentinel is rejected before dispatch:
 Home Assistant expands it too late for EOAI to authorize the actual targets.
+
+Scheduled dates entered in the panel use Home Assistant's timezone rules for both display and conversion. Nonexistent or ambiguous local times are rejected; an unchanged existing schedule keeps its original instant.

@@ -5,7 +5,7 @@ import {clone, same, mergeAcknowledgedDraft} from "./unsaved-state.js";
 import {pageCoordinator} from "./management-page-drafts.js";
 
 const GUEST_VIEW = "capabilities/guest-mode";
-const intervalValues = (panel, status, retainedEnd = "") => ({start:panel._dateTimeLocal(status.active_from), end:status.indefinite ? retainedEnd : panel._dateTimeLocal(status.active_until), indefinite:Boolean(status.indefinite)});
+const intervalValues = (panel, status, retainedEnd = "") => ({start:status.active_from_local || panel._dateTimeLocal(status.active_from), end:status.indefinite ? retainedEnd : (status.active_until_local || panel._dateTimeLocal(status.active_until)), indefinite:Boolean(status.indefinite)});
 
 function intervalState(panel, status = panel._result?.status || {}) {
   let state = panel._guestIntervalDraft;
@@ -86,7 +86,7 @@ export function guestPolicyView(panel, status, policy, state) {
   const selector = (key, type, label) => `<label class="setting"><span>${label}</span><ha-selector data-guest-key="${key}" data-guest-selector="${type}"></ha-selector></label>`;
   const manager = (key, type, label, description) => `<details class="guest-manager eoc-details-base"><summary><span><strong>${label}</strong><small>${formatUsageNumber((config[key] || []).length)} excluded · ${description}</small></span><span class="manage-label">Manage</span></summary><div class="guest-manager-body">${selector(key,type,`Choose ${label.toLowerCase()}`)}</div></details>`;
   const mode = (key, label, values) => `<label>${label}<select data-guest-mode="${key}">${values.map(([value,text]) => `<option value="${value}" ${config[key] === value ? "selected" : ""}>${text}</option>`).join("")}</select></label>`;
-  const intervalSummary = status.active_from ? `Starts ${panel._e(panel._formatDate(status.active_from))}${status.active_until ? ` · Ends ${panel._e(panel._formatDate(status.active_until))}` : " · No expiry"}` : "No interval configured";
+  const intervalSummary = status.active_from ? `Starts ${panel._e((status.active_from_local?.replace("T", " ") || panel._formatDate(status.active_from)))}${status.active_until ? ` · Ends ${panel._e((status.active_until_local?.replace("T", " ") || panel._formatDate(status.active_until)))}` : " · No expiry"}` : "No interval configured";
   const hasInterval = Boolean(status.currently_active || status.scheduled || status.active_from || status.active_until);
   const canEditPolicy = panel._data?.is_admin && (!panel._result?.legacy_policy || panel._guestMigrationReview);
   const assistantPermission = canEditPolicy ? `<details class="guest-advanced eoc-details-base"><summary>Assistant activation permission</summary><p class="help">This permission is separate from the Guest Mode activation state.</p><label class="toggle"><span>Allow the assistant to activate Guest Mode</span><input id="guest-controls-enabled" type="checkbox" ${config.guest_mode_enabled ? "checked" : ""}></label><p class="help">Lets the assistant activate Guest Mode, start it earlier, or extend it. The assistant can never shorten or disable Guest Mode. Turning this off never ends or weakens an active restriction.</p></details>` : "";
