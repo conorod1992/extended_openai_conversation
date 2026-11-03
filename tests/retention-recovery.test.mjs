@@ -18,6 +18,28 @@ function failedRetention() {
   return {...scenario, panel};
 }
 
+for (const failRead of [false, true]) test(`retention recovery refreshes an older full destination; source read failed=${failRead}`, async () => {
+  const f = failedRetention(), source = f.panel, target = f.create();
+  edit(target, "max_tokens", 888);
+  if (failRead) {
+    const send = source.hass.callWS;
+    source.hass.callWS = request => request.section === "configuration" && request.action === "get"
+      ? Promise.reject(new Error("Source refresh unavailable")) : send(request);
+  }
+  await saveConfiguration(source, null);
+  source.isConnected = false; retainPanelDrafts(source); restorePanelDrafts(target);
+  try {
+    await flushUntil(() => !source._configDirty);
+    assert.equal(target._configData.revision, "r1");
+    assert.equal(target._draft.max_tokens, 888);
+    assert.equal(target._draft.usage_request_retention_days, 0);
+    await saveConfiguration(target, null);
+    assert.equal(f.state.writes[1].revision, "r1");
+    assert.deepEqual(f.state.writes[1].config, {max_tokens:888, usage_request_retention_days:0});
+    assert.equal(target._configDirty, false);
+  } finally { retire(source, target); }
+});
+
 test("committed retention failure refreshes revision but keeps deletion available to Save", async () => {
   const {panel, state} = failedRetention();
   try {

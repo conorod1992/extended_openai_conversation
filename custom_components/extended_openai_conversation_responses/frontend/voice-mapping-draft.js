@@ -66,8 +66,10 @@ export function transferVoiceMappingDraft(target, source) {
   const sourceMapping = validated.mapping || mapping(source._draft?.voice_device_mappings);
   if (!same(targetMapping, baselineMapping(target)) && !same(targetMapping, sourceMapping)) return false;
   const receiving = voiceMappingDraft(target);
-  receiving.rows = clone(state.rows);
-  receiving.baseline = clone(state.baseline);
+  // Equal projections can keep their mounted widgets. Preserve their row IDs
+  // so those widgets still address the receiving state after recovery.
+  if (!same(projection(receiving.rows), projection(state.rows))) receiving.rows = clone(state.rows);
+  receiving.baseline = projection(fromMapping(baselineMapping(target)));
   // A deferred row-only recovery can outlive the original configuration handoff.
   // Keep the valid persistence map aligned with the rows the editor now owns.
   if (validated.mapping) target._draft.voice_device_mappings = clone(validated.mapping);

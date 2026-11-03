@@ -100,3 +100,47 @@ test("deferred invalid Voice rows stay invalid and block Save after recovery", a
     assert.equal(f.state.writes.length, 0);
   } finally { retire(source, target); }
 });
+
+for (const committed of [false, true]) for (const rows of ["assignment", "removal", "empty"]) test(`Voice recovery adopts the destination baseline after a lost reply: committed=${committed}, rows=${rows}`, async () => {
+  const f = fixture();
+  for (const record of f.state.records.values()) record.config.voice_device_mappings = {office:"user:owner", living:"shared:household"};
+  const source = f.create(), send = source.hass.callWS;
+  const authored = rows === "assignment" ? {office:"unretained", living:"shared:household"} : rows === "removal" ? saved : {};
+  updateVoiceMappingRows(source, Object.entries(authored).map(([deviceId, owner]) => ({...newVoiceMappingRow(), deviceId, owner})));
+  source._syncConfigDirty();
+  source.hass.callWS = async request => {
+    if (request.section === "configuration" && request.action === "save") {
+      if (committed) await send(request);
+      throw new Error("Save reply lost");
+    }
+    return send(request);
+  };
+  await saveConfiguration(source, null);
+  assert.equal(source._configDirty, true);
+  const target = f.create(), ids = voiceMappingDraft(target).rows.map(row => row.id);
+  source.isConnected = false; retainPanelDrafts(source); restorePanelDrafts(target);
+  try {
+    assert.deepEqual(target._draft.voice_device_mappings, authored);
+    assert.equal(target._configDirty, !committed);
+    assert.equal(voiceMappingDraftDirty(target), !committed);
+    assert.equal(voiceMappingDraftDirty(source), false);
+    if (committed) {
+      assert.deepEqual(voiceMappingDraft(target).rows.map(row => row.id), ids, "equal rows keep the native widgets' IDs");
+      const writer = f.create();
+      try {
+        updateVoiceMappingRows(writer, [{...newVoiceMappingRow(), deviceId:"hall", owner:"unretained"}]); writer._syncConfigDirty();
+        await saveConfiguration(writer, null);
+        target._invalidateCleanConfiguration(target._agentId);
+        await target._loadConfigDraft({preserveResult:true, full:true});
+        assert.deepEqual(target._draft.voice_device_mappings, {hall:"unretained"});
+        assert.deepEqual(voiceMappingDraft(target).rows.map(({deviceId, owner}) => ({deviceId, owner})), [{deviceId:"hall", owner:"unretained"}]);
+        assert.equal(voiceMappingDraftDirty(target), false, "a later read cannot retain an obsolete authoring baseline");
+        assert.equal(target._configDirty, false);
+      } finally { retire(writer); }
+    } else {
+      await saveConfiguration(target, null);
+      assert.deepEqual(f.state.snapshot(target._agentId).config.voice_device_mappings, authored);
+      assert.equal(target._configDirty, false);
+    }
+  } finally { retire(source, target); }
+});

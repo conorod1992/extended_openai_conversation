@@ -95,6 +95,46 @@ for (const bundled of [false, true]) test(`deferred Voice recovery after Discard
   await expectHarnessClean(page, errors);
 });
 
+for (const bundled of [false, true]) test(`already committed Voice recovery stays clean and editable; bundle=${bundled}`, async ({page}) => {
+  const errors = trackPageErrors(page), source = await setup(page, bundled);
+  await source.locator(".voice-owner-type").nth(0).selectOption("unretained");
+  await source.evaluate(host => {
+    const send = host.hass.callWS.bind(host.hass);
+    let fail = true;
+    host.hass.callWS = async request => {
+      const reply = await send(request);
+      if (request.section === "configuration" && request.action === "save" && fail) {
+        fail = false;
+        throw {code:"offline", message:"Save reply lost"};
+      }
+      return reply;
+    };
+  });
+  await source.locator("#save-config").click();
+  await expect.poll(() => source.evaluate(host => host._configurationSaving)).toBe(false);
+  await source.evaluate(host => {
+    window.committedVoiceSource = host;
+    const target = document.createElement("extended-openai-management-panel");
+    target.id = "committed-destination"; target.hass = host.hass;
+    document.body.append(target); browserHarness.panel = target;
+  });
+  const target = page.locator("#committed-destination");
+  await expect(target.locator("[data-voice-mapping-row]")).toHaveCount(2);
+  await target.evaluate(async host => {
+    window.committedVoiceRow = host.shadowRoot.querySelector("[data-voice-mapping-row]");
+    committedVoiceSource.remove(); await host._loadSection(true);
+  });
+  await expect.poll(() => target.evaluate(host => host._configDirty)).toBe(false);
+  expect(await target.evaluate(host => host.shadowRoot.querySelector("[data-voice-mapping-row]") === committedVoiceRow)).toBe(true);
+  await target.locator(".voice-owner-type").nth(0).selectOption("shared");
+  await select(target, 0, "assist_satellite.kitchen");
+  await expect.poll(() => target.evaluate(host => host._draft.voice_device_mappings)).toEqual({kitchen:"shared:household", living:"shared:household"});
+  await target.locator("#save-config").click();
+  await expect.poll(() => page.evaluate(() => browserHarness.getState().configuration.config.voice_device_mappings)).toEqual({kitchen:"shared:household", living:"shared:household"});
+  await expect.poll(() => target.evaluate(host => host._configDirty)).toBe(false);
+  await expectHarnessClean(page, errors);
+});
+
 test("failed Voice lookup remains editable after navigation and remount and blocks global Save",async({page})=>{
   const errors=trackPageErrors(page);let panel=await setup(page);
   await page.evaluate(()=>{browserHarness.voiceMode="failed";});

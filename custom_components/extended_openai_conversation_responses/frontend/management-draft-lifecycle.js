@@ -226,21 +226,34 @@ function showConfigurationRecoveryConflict(panel, source, key, baseline) {
 }
 
 function prepareFullRecoveryBaseline(panel, source, key) {
+  const previous = recoveryConfigurationReads.get(panel);
+  const recoveryOwner = captureConfigurationOwner(panel);
+  const completed = previous && configurationSubmissionIsCurrent(panel, previous.owner) ? previous.completed : new WeakSet();
+  // An ordinary full refresh can also finish a previously failed recovery read.
+  if (previous?.sourceRecovery && configurationSubmissionIsCurrent(panel, previous.owner) && panel._configData?.config && !panel._configDataStale
+      && panel._configData?.projection !== "retention" && (panel._eocConfigurationReadEpoch || 0) > previous.epoch) completed.add(previous.sourceRecovery);
   const restored = panel._eocRestoredConfiguration;
   const replacement = restored && configurationSubmissionIsCurrent(panel, restored) ? restored : null;
-  if (!replacement && (!source._configData?.config || source._configData.projection === "retention"
+  const sourceRecovery = [source._eocRestoredConfiguration, source._eocPendingRetention]
+    .find(value => value && configurationSubmissionIsCurrent(source, value));
+  // An existing full destination may predate the source's committed import or
+  // retention save. Its mere presence cannot certify the transferred retry.
+  const unreadSource = sourceRecovery && !completed.has(sourceRecovery) && (source._configDataStale
+    || panel._configDataStale || source._configData?.revision !== panel._configData?.revision);
+  if (!replacement && !unreadSource && (!source._configData?.config || source._configData.projection === "retention"
       || panel._configData?.projection !== "retention")) return false;
-  const previous = recoveryConfigurationReads.get(panel);
-  if (previous?.key === key && (previous.running || previous.replacement === replacement
+  if (previous?.key === key && (previous.running || configurationSubmissionIsCurrent(panel, previous.owner)
+      && previous.replacement === replacement && previous.sourceRecovery === sourceRecovery
       && previous.visit === panel._loadToken && previous.generation === panel._cacheGeneration)) return true;
-  const state = {key, replacement, running:true, visit:panel._loadToken, generation:panel._cacheGeneration, view:panel._viewKey()};
+  const state = {key, owner:recoveryOwner, replacement, sourceRecovery, completed, epoch:panel._eocConfigurationReadEpoch || 0,
+    running:true, visit:panel._loadToken, generation:panel._cacheGeneration, view:panel._viewKey()};
   recoveryConfigurationReads.set(panel, state);
   void Promise.resolve().then(() => {
     if (panel.isConnected && owner(panel) === key && panel._data?.is_admin && panel._viewKey() === state.view
         && panel._loadToken === state.visit && panel._cacheGeneration === state.generation) {
       // Finish an unread destination overwrite before receiving another draft.
       // Otherwise its retired values could hide an equal incoming authored edit.
-      if (replacement) panel._invalidateCleanConfiguration?.(panel._agentId);
+      if (replacement || unreadSource) panel._invalidateCleanConfiguration?.(panel._agentId);
       return panel._loadConfigDraft({preserveResult:true, full:true});
     }
   }).catch(() => {

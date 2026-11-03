@@ -17,7 +17,9 @@ DIST = Path("custom_components/extended_openai_conversation_responses/frontend/d
 # Reviewed private-publication ownership guards add about 1.2 KiB.
 # Shared committed-import retention recovery adds under 1 KiB; keep the
 # separate entry and CSS limits unchanged and less than 1 KiB of JS headroom.
-CEILINGS = {"javascript": 872_500, "css": 65_000, "management_entry": 120_000}
+# Fresh committed-recovery reads and receiving Voice baselines add 558 bytes.
+# Allow 600 reviewed bytes, keeping the independent entry and CSS limits.
+CEILINGS = {"javascript": 873_100, "css": 65_000, "management_entry": 120_000}
 
 
 def measure(dist: Path) -> dict[str, int]:

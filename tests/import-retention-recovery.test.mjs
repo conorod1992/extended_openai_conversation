@@ -7,8 +7,10 @@ import {newVoiceMappingRow, updateVoiceMappingRows, voiceMappingDraftError, voic
 import {captureConfigurationSubmission, retireReplacedConfigurationDraft, configurationAuthoringBaseline, configurationDraftBaseline} from "../custom_components/extended_openai_conversation_responses/frontend/configuration-acknowledgement.js";
 import {TestEventTarget} from "./frontend-test-helpers.mjs";
 
-function scenario({failRead = false, mode = "current"} = {}) {
-  const f = fixture(), panel = f.create(), send = panel.hass.callWS;
+function scenario({failRead = false, mode = "current", unchangedImport = false} = {}) {
+  const f = fixture();
+  if (unchangedImport) for (const record of f.state.records.values()) record.config.usage_run_retention_days = 30;
+  const panel = f.create(), send = panel.hass.callWS;
   const input = {value:"reviewed import"}, button = {disabled:false}, summary = {textContent:""};
   const dialog = {open:true, querySelectorAll:() => [], close() {this.open=false;}};
   const controls = new Map([["#import-document", input], ["#import-apply", button], ["#import-summary", summary],
@@ -21,7 +23,7 @@ function scenario({failRead = false, mode = "current"} = {}) {
   panel.hass.callWS = async request => {
     if (request.action === "agents" && !request.section) return {is_admin:true, agents:structuredClone(f.state.agents), scopes:[]};
     if (request.section === "configuration" && request.action === "import") {
-      if (mode === "current") {
+      if (mode === "current" && !unchangedImport) {
         const record = f.state.records.get(panel._agentId);
         Object.assign(record, {title:"Imported", revision:failed ? "r2" : "r1",
           config:{...record.config, max_tokens:1600, usage_request_retention_days:0, usage_run_retention_days:30, voice_device_mappings:{imported:"shared"}}});
@@ -44,6 +46,7 @@ for (const failRead of [false, true]) test(`committed import retains deletion ac
   assert.equal(source._configDirty, true);
   const target = replace(source, f.create);
   try {
+    await flushUntil(() => !source._configDirty);
     assert.equal(target._draft.max_tokens, 1600, "the confirmed overwrite retires the submitted draft");
     assert.deepEqual(new Set(pendingRetentionFields(target)), new Set(["usage_request_retention_days", "usage_run_retention_days"]));
     target._draftTitle = "Later title";
@@ -75,6 +78,7 @@ test("later edits survive committed-import refresh and detached completion canno
   edit(source, "temperature", 0.8);
   const target = replace(source, f.create);
   try {
+    await flushUntil(() => !source._configDirty);
     assert.equal(target._draft.max_tokens, 1600);
     assert.equal(target._draft.temperature, 0.8);
     read.release.resolve("success");
@@ -175,6 +179,7 @@ for (const variant of ["clean", "retired", "newer"]) test(`recovery compares onl
     return p;
   });
   try {
+    await flushUntil(() => variant === "newer" ? target.recoveryDialog?.open : !source._configDirty);
     assert.equal(source._configData, saved, "authoring comparison does not rewrite the saved baseline");
     assert.equal(source._configData.revision, "r0");
     if (variant === "newer") {
@@ -213,6 +218,7 @@ test("shared restore retirement ignores overwritten settings while recovering a 
     return p;
   });
   try {
+    await flushUntil(() => !source._configDirty);
     assert.equal(target.recoveryDialog?.open ?? false, false);
     assert.equal(target._draft.usage_request_retention_days, 30);
     assert.equal(target._draftTitle, "Authored after restore");
@@ -278,4 +284,111 @@ for (const variant of ["equal incoming value", "failed read", "newer destination
       assert.equal(f.state.writes[0].revision, "r1");
     }
   } finally { retire(source, target); }
+});
+
+for (const failRead of [false, true]) test(`committed import refreshes an older full destination before recovery; source read failed=${failRead}`, async () => {
+  const f = scenario({failRead}), source = f.panel, target = f.create();
+  edit(source, "usage_request_retention_days", 7);
+  edit(target, "max_tokens", 888);
+  await applyConfigurationImport(source, source.shadowRoot);
+  source.shadowRoot.querySelector("#import-dialog").close();
+  source.isConnected = false;
+  retainPanelDrafts(source);
+  restorePanelDrafts(target);
+  try {
+    await flushUntil(() => !source._configDirty);
+    assert.equal(target._configData.revision, "r1");
+    assert.equal(target._configDataStale, false);
+    assert.equal(target._draftTitle, "Imported");
+    assert.equal(target._draft.max_tokens, 888);
+    assert.equal(target._draft.usage_request_retention_days, 0);
+    assert.equal(pendingRetentionFields(target).length, 2);
+    await saveConfiguration(target, null);
+    assert.deepEqual(f.state.writes[0].config, {max_tokens:888, usage_request_retention_days:0, usage_run_retention_days:30});
+    assert.equal(f.state.writes[0].revision, "r1");
+    assert.equal(target._configDirty, false);
+  } finally { retire(source, target); }
+});
+
+for (const retry of ["new visit", "owned full read"]) test(`an older full destination retries a failed committed-recovery read: ${retry}`, async () => {
+  const f = scenario({failRead:true}), source = f.panel, target = f.create(), send = target.hass.callWS;
+  edit(target, "max_tokens", 888);
+  await applyConfigurationImport(source, source.shadowRoot);
+  let fail = true, reads = 0;
+  target.hass.callWS = async request => {
+    if (request.section === "configuration" && request.action === "get") {
+      reads++;
+      if (fail) throw new Error("Destination refresh unavailable");
+    }
+    return send(request);
+  };
+  source.isConnected = false; retainPanelDrafts(source); restorePanelDrafts(target);
+  try {
+    await flushUntil(() => target.toasts.some(message => message.includes("complete settings")));
+    assert.equal(source._configDirty, true);
+    assert.equal(pendingRetentionFields(source).length, 2);
+    assert.equal(pendingRetentionFields(target).length, 0);
+    assert.equal(target._configDataStale, true);
+    for (let i = 0; i < 5; i++) restorePanelDrafts(target);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(reads, 1, "failed recovery does not loop on render");
+    fail = false;
+    if (retry === "new visit") target._loadToken++;
+    else await target._loadConfigDraft({preserveResult:true, full:true});
+    restorePanelDrafts(target);
+    await flushUntil(() => !source._configDirty);
+    assert.equal(reads, 2);
+    assert.equal(target._draft.max_tokens, 888);
+    assert.equal(target._draft.usage_request_retention_days, 0);
+    assert.equal(target._configData.revision, "r1");
+  } finally { retire(source, target); }
+});
+
+test("an unchanged committed import can certify the same revision without looping", async () => {
+  const f = scenario({failRead:true, unchangedImport:true}), source = f.panel, target = f.create();
+  edit(source, "usage_request_retention_days", 7);
+  edit(target, "max_tokens", 888);
+  await applyConfigurationImport(source, source.shadowRoot);
+  source.isConnected = false; retainPanelDrafts(source); restorePanelDrafts(target);
+  try {
+    await flushUntil(() => !source._configDirty);
+    assert.equal(target._configData.revision, "r0");
+    assert.equal(target._draft.usage_request_retention_days, 30);
+    assert.equal(pendingRetentionFields(target).length, 2);
+    await saveConfiguration(target, null);
+    assert.equal(f.state.writes[0].revision, "r0");
+    assert.deepEqual(f.state.writes[0].config, {max_tokens:888, usage_request_retention_days:30, usage_run_retention_days:30});
+  } finally { retire(source, target); }
+});
+
+test("multiple unread recoveries retain independent read receipts while Voice rows remain deferred", async () => {
+  const f = scenario({failRead:true}), source = f.panel, second = f.create(), target = f.create();
+  updateVoiceMappingRows(target, [newVoiceMappingRow()]); target._syncConfigDirty();
+  edit(target, "max_tokens", 888);
+  await applyConfigurationImport(source, source.shadowRoot);
+  updateVoiceMappingRows(source, [newVoiceMappingRow()]); source._syncConfigDirty();
+  const submitted = captureConfigurationSubmission(second);
+  f.state.records.get(source._agentId).revision = "r2";
+  retireReplacedConfigurationDraft(second, submitted, {retainUntilRead:true});
+  updateVoiceMappingRows(second, [newVoiceMappingRow()]); second._syncConfigDirty();
+  const send = target.hass.callWS;
+  let reads = 0;
+  target.hass.callWS = request => {
+    if (request.section === "configuration" && request.action === "get") reads++;
+    return send(request);
+  };
+  for (const panel of [source, second]) { panel.isConnected = false; retainPanelDrafts(panel); }
+  restorePanelDrafts(target);
+  try {
+    await flushUntil(() => !source._configDirty && !second._configDirty);
+    assert.equal(reads, 2);
+    assert.equal(target._configData.revision, "r2");
+    assert.equal(target._draft.max_tokens, 888);
+    assert.equal(voiceMappingDraftDirty(source), true);
+    assert.equal(voiceMappingDraftDirty(second), true);
+    for (let i = 0; i < 5; i++) restorePanelDrafts(target);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(reads, 2, "deferred Voice scopes do not alternate fresh reads indefinitely");
+    assert.equal(pendingRetentionFields(target).length, 2);
+  } finally { retire(source, second, target); }
 });
