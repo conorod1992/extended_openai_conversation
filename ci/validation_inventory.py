@@ -5,11 +5,14 @@
 # release publishing, image publishing, supplementary race amplification,
 # and maintenance are separate from this validation run.
 TEST_WORKFLOWS = (
+    # Dispatch the measured critical paths before spending time discovering
+    # shorter child runs. Preserve all lanes and their existing inputs.
+    ("ios-companion-app.yml", {}),
+    ("enhanced-stress.yml", {"campaign": "all", "intensity": "heavy"}),
     ("ci.yml", {}),
     ("post-merge-smoke.yml", {}),
     ("frontend.yml", {}),
     ("real-ha.yml", {}),
-    ("enhanced-stress.yml", {"campaign": "all", "intensity": "heavy"}),
     ("release-smoke.yml", {}),
     ("cross-browser-smoke.yml", {}),
     ("upgrade-acceptance.yml", {"from_version": "all"}),
@@ -21,7 +24,6 @@ TEST_WORKFLOWS = (
     ("ipv6-only-networking-acceptance.yml", {}),
     ("ha-browser-compatibility.yml", {}),
     ("android-companion-app.yml", {}),
-    ("ios-companion-app.yml", {}),
     ("mutation.yml", {"campaign": "all"}),
     ("hacs.yaml", {}),
     ("frontend-latency-diagnostics.yml", {"runs": "3", "diagnostic_picker": "false"}),

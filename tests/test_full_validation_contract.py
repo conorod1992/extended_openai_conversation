@@ -70,6 +70,12 @@ def test_validation_mode_dispatches_expected_inventory(
     monkeypatch.setattr(driver, "programme_inputs", programme)
     monkeypatch.chdir(tmp_path)
     assert driver.main() == int(failed)
+    launched = [call.args[0] for call in dispatch.call_args_list]
+    assert len(launched) == len(set(launched))
+    if mode == "full":
+        assert launched[:2] == ["ios-companion-app.yml", "enhanced-stress.yml"]
+    else:
+        assert launched[0] == "enhanced-stress.yml"
     calls = {call.args[0]: call.args[1] for call in dispatch.call_args_list}
     expected = {name for name, _ in original}
     if mode == "quick":
