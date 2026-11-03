@@ -9,7 +9,7 @@ from pathlib import Path
 import shutil
 from typing import Any
 
-from aiohttp import web
+from aiohttp import ClientSession, web
 import pytest
 
 from tests_real_ha.test_browser_release_upgrade_acceptance import _model_catalog_result
@@ -69,7 +69,9 @@ class _SkewBridge:
                     async with asyncio.timeout(30):
                         await self.release_old_save.wait()
 
-                if message.get("type") == WS_CATALOG:
+                if message.get("type") == "get_config":
+                    result = self.hass.config.as_dict()
+                elif message.get("type") == WS_CATALOG:
                     result = await _model_catalog_result(self.hass, message)
                 else:
                     result = await async_management_command(
@@ -129,11 +131,7 @@ async def _run_playwright(
     npx = shutil.which("npx")
     assert npx is not None, "npx is required for frontend/backend skew acceptance"
     repo_root = Path(__file__).resolve().parents[1]
-    served = (
-        repo_root
-        / "tests_browser"
-        / f".frontend-skew-release-{os.getpid()}"
-    )
+    served = repo_root / "tests_browser" / f".frontend-skew-release-{os.getpid()}"
     if served.exists():
         shutil.rmtree(served)
     shutil.copytree(old_frontend_dir, served)
@@ -226,3 +224,35 @@ def test_skew_fixture_uses_the_requested_released_frontend() -> None:
     assert (old_frontend / "management-panel.js").is_file()
     # A release-era frontend shape intentionally differs from the candidate bundle.
     assert (old_frontend / "agent-config-editor-base.js").is_file()
+
+
+@pytest.mark.parametrize("kind", ["skew", "release"])
+async def test_browser_bridges_expose_the_actual_ha_configuration(
+    hass: Any, socket_enabled: Any, kind: str
+) -> None:
+    """The browser's wall-time metadata must agree with its backend resolver."""
+    del socket_enabled
+    if kind == "skew":
+        bridge = _SkewBridge(hass, "configuration-probe")
+        await bridge.start()
+        backend_url, cleanup = bridge.backend_url, bridge.close
+    else:
+        from tests_real_ha.test_browser_release_upgrade_acceptance import (
+            _start_management_bridge,
+        )
+
+        runner, backend_url = await _start_management_bridge(
+            hass, "configuration-probe"
+        )
+        cleanup = runner.cleanup
+    try:
+        async with (
+            ClientSession() as client,
+            client.post(backend_url, json={"type": "get_config"}) as response,
+        ):
+            assert response.status == 200
+            configuration = await response.json()
+        assert configuration["time_zone"] == hass.config.time_zone
+        assert configuration == hass.config.as_dict()
+    finally:
+        await cleanup()
