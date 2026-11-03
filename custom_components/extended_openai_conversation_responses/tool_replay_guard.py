@@ -311,6 +311,13 @@ def record_dispatch(
         if prepared_arguments is not None
         else tool_input
     )
+    # HA dispatches the original input and its tool owns normalization. If our
+    # preview changes that input, another application (e.g. a callable default)
+    # need not describe the effect's actual arguments. Do not claim precision
+    # after a failed continuation, or apply a non-idempotent schema twice.
+    spec["_effective_arguments_unknown"] = ha_parameters is not None and (
+        _signature(prepared_call) != _signature(tool_input)
+    )
     signature = (
         _signature(prepared_call, spec, prepared=prepared_arguments is not None)
         if isinstance(getattr(tool_input, "tool_name", None), str)
@@ -491,8 +498,13 @@ def remember_unacknowledged_calls(
         for content in new_content
         if isinstance(content, conversation.AssistantContent) and content.tool_calls
         for call in content.tool_calls
-        if getattr(entity, "_execution_tool_outcomes", {}).get(id(call))
-        in {"partial", "uncertain"}
+        if (
+            getattr(entity, "_execution_tool_outcomes", {}).get(id(call))
+            in {"partial", "uncertain"}
+            or getattr(entity, "_dispatched_tool_signatures", {})
+            .get(id(call), (None, {}))[1]
+            .get("_effective_arguments_unknown", False)
+        )
         and _needs_tool_wide_guard(entity, call)
     )
     while len(schemas) > _MAX_AMBIGUOUS_CONVERSATIONS:

@@ -279,7 +279,7 @@ async def test_disabled_tool_is_rejected_at_execution_time(monkeypatch) -> None:
     entity.hass = SimpleNamespace(
         config_entries=SimpleNamespace(
             async_get_entry=lambda _entry_id: SimpleNamespace(
-                subentries={"agent": persisted_subentry}
+                data={}, subentries={"agent": persisted_subentry}
             )
         )
     )
@@ -310,7 +310,7 @@ def test_disabled_group_is_rejected_when_execution_resolves_latest_state() -> No
         hass=SimpleNamespace(
             config_entries=SimpleNamespace(
                 async_get_entry=lambda _entry_id: SimpleNamespace(
-                    subentries={"agent": persisted_subentry}
+                    data={}, subentries={"agent": persisted_subentry}
                 )
             )
         ),
@@ -463,6 +463,7 @@ async def test_version_six_migration_adds_empty_groups_without_rewriting_tools(
         data={"functions": "[]\n"},
     )
     entry = SimpleNamespace(
+        data={},
         entry_id="entry",
         version=5,
         disabled_by=None,

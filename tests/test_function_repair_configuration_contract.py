@@ -330,7 +330,7 @@ async def test_shared_configuration_response_contract_covers_normal_and_repair_a
 ) -> None:
     """Normal and repair Configuration actions share one guidance contract."""
     entry = SimpleNamespace(data={"provider": "test"})
-    subentry = SimpleNamespace()
+    subentry = SimpleNamespace(data={})
     monkeypatch.setattr(
         management_ui,
         "entry_and_agent",

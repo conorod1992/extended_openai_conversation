@@ -145,7 +145,7 @@ async def test_management_contract_validates_and_enriches_owner_operations(
 
     manager = Manager()
     entry = SimpleNamespace(entry_id="entry")
-    subentry = SimpleNamespace(subentry_id="sub")
+    subentry = SimpleNamespace(subentry_id="sub", data={})
 
     monkeypatch.setattr(
         management_ui,

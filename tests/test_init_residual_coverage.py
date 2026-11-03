@@ -23,7 +23,9 @@ async def test_unload_removes_request_rule_runtime_state(
     unloaded_templates: list[str] = []
 
     class ConfigEntries:
-        async def async_unload_platforms(self, entry: object, platforms: object) -> bool:
+        async def async_unload_platforms(
+            self, entry: object, platforms: object
+        ) -> bool:
             return True
 
     async def fake_unload_templates(_hass: object, entry_id: str) -> None:
@@ -35,6 +37,7 @@ async def test_unload_removes_request_rule_runtime_state(
         config_entries=ConfigEntries(),
     )
     entry = SimpleNamespace(
+        data={},
         entry_id="entry-1",
         subentries={
             "one": SimpleNamespace(subentry_id="conversation-1"),
@@ -58,6 +61,7 @@ async def test_current_entry_persists_stock_native_schema_migration(
         data={integration.CONF_FUNCTION_TOOLS: "legacy"},
     )
     entry = SimpleNamespace(
+        data={},
         entry_id="entry-1",
         version=integration.CONFIG_ENTRY_VERSION,
         disabled_by=None,

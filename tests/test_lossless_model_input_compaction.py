@@ -60,6 +60,11 @@ def test_default_device_context_groups_areas_without_losing_entity_fields(
         "binary_sensor.front_door": None,
     }
     monkeypatch.setattr(
+        exposed_attributes.ar,
+        "async_get",
+        lambda _: SimpleNamespace(async_get_area=lambda _: None),
+    )
+    monkeypatch.setattr(
         exposed_attributes,
         "get_entity_prompt_metadata",
         lambda _hass, entity_id: SimpleNamespace(area_id=area_ids[entity_id]),

@@ -614,7 +614,8 @@ for (const now of [false, true]) {
     await expect(panel.locator("#toast")).toHaveText("Guest Mode updated");
     const finite = (await updates()).at(-1);
     expect(finite.indefinite).toBe(false);
-    expect(finite.active_until).toBe(expectedEnd);
+    expect(finite.active_until).toBe(end);
+    expect(finite.local_times).toMatchObject({active_until:end});
     const finiteStatus = await panel.evaluate(host => host._call("guest_mode", "get"));
     expect(finiteStatus.status.indefinite).toBe(false);
     expect(new Date(finiteStatus.status.active_until).toISOString()).toBe(expectedEnd);

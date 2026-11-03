@@ -76,3 +76,6 @@ async def test_guest_store_corruption_does_not_remove_sibling_sensors(
         item.read_text(encoding="utf-8") == raw for item in evidence
     )
     assert "requires repair" in caplog.text
+    # Native corrupt-store preservation schedules delayed HA Store work. Flush
+    # it through HA's normal stop lifecycle, including the healthy manager.
+    await hass.async_stop(force=True)

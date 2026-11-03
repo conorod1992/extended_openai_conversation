@@ -50,6 +50,7 @@ async def test_legacy_default_is_persisted_readable_editable_and_requestable(
         subentry_id="future", subentry_type="future", data=deepcopy(original)
     )
     entry = SimpleNamespace(
+        data={},
         version=version,
         disabled_by=None,
         entry_id="entry",

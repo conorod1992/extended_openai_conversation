@@ -195,8 +195,11 @@ class LiveTool:
                 log_handled_failure(_LOGGER, "HA tool backend failed", error)
                 raise public from None
             raise
+        # An error envelope may follow partial side effects, just like a raised
+        # exception. Keep that receipt uncertain until the result is checked.
+        result = execution_tool_result(result)
         execution_completed(receipt)
-        return execution_tool_result(result)
+        return result
 
 
 @dataclass(slots=True)

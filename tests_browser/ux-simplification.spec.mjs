@@ -27,7 +27,8 @@ for (const bundled of [false, true]) {
       await expect(panel.locator("#memory-dialog")).not.toHaveJSProperty("open", true);
       const calls = await page.evaluate(() => dataCollectionBackend.calls.filter(call => call.action === "temporary_add"));
       expect(calls).toHaveLength(1);
-      expect(calls[0]).toMatchObject({content: "Manual short-term fact", expires_at: "2026-10-02T17:30:00.000Z", target_scope_id: "user:test-user"});
+      expect(calls[0]).toMatchObject({content: "Manual short-term fact", expires_at: "2026-10-02T18:30", local_times:{expires_at:"2026-10-02T18:30"}, target_scope_id: "user:test-user"});
+      expect(await page.evaluate(() => dataCollectionBackend.state.temporary.at(-1).expires_at)).toBe("2026-10-02T17:30:00.000Z");
       expect(calls[0]).not.toHaveProperty("importance");
       expect(calls[0]).not.toHaveProperty("refresh_confirmation");
       expect(await panel.evaluate(host => host._data.scopes.find(scope => scope.scope_id === host._scopeId)?.temporary_memory_count)).toBe(originalCount + 1);
@@ -45,7 +46,8 @@ for (const bundled of [false, true]) {
       await panel.locator("#temporary-memory-expiry").fill("2026-10-03T19:00");
       await panel.locator("#temporary-memory-save").click();
       await expect(panel.locator("#temporary-memory-dialog")).not.toHaveJSProperty("open", true);
-      expect(await page.evaluate(() => dataCollectionBackend.calls.filter(call => call.action === "temporary_update").at(-1).expires_at)).toBe("2026-10-03T18:00:00.000Z");
+      expect(await page.evaluate(() => dataCollectionBackend.calls.filter(call => call.action === "temporary_update").at(-1))).toMatchObject({expires_at:"2026-10-03T19:00", local_times:{expires_at:"2026-10-03T19:00"}});
+      expect(await page.evaluate(() => dataCollectionBackend.state.temporary.at(-1).expires_at)).toBe("2026-10-03T18:00:00.000Z");
       await expectHarnessClean(page, errors);
     });
   }

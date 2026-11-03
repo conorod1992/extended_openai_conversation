@@ -71,7 +71,9 @@ async def test_ha_schema_normalization_preserves_replay_protection(
             # Native HA tools own validation of their dispatch input. A second
             # application to already-prepared values would increment twice.
             effects.append(self.parameters(dict(tool_input.tool_args)))
-            return {"completed": True}
+            payload = {"completed": True}
+            result_type = getattr(llm, "ToolResult", None)
+            return result_type(data=payload) if result_type is not None else payload
 
     class SourceAPI(TestAPI):
         async def async_get_api_instance(self, context):
@@ -163,7 +165,10 @@ async def test_ha_schema_normalization_preserves_replay_protection(
         assert second.response.error_code is None
         second = await invoke()
         assert second.conversation_id == "conversation-1"
-    blocked = repeat in {"failed-identical", "failed-equivalent"}
+    # HA owns the second normalization; a changed preview cannot certify the
+    # executed identity. Until acknowledgement, distinct calls are conservative
+    # too. Acknowledged/recovered repetitions remain independent operations.
+    blocked = repeat in {"failed-identical", "failed-equivalent", "failed-distinct"}
     assert len(effects) == (1 if blocked else 2)
     if normalization == "coercion":
         assert effects[0] == {"operation_id": value_type(2)}

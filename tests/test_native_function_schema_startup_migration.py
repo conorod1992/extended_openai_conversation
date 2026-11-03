@@ -80,6 +80,7 @@ async def test_startup_persists_schema_without_touching_group_or_metadata(hass) 
         "unrelated": "keep-me",
     }
     entry = MagicMock()
+    entry.data = {}
     entry.disabled_by = None
     entry.version = CONFIG_ENTRY_VERSION
     entry.subentries = {"agent": subentry}

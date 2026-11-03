@@ -65,6 +65,7 @@ def hass(tmp_path: Path, monkeypatch) -> MagicMock:
     workdir = tmp_path / "extended_openai_conversation_responses"
     workdir.mkdir(parents=True, exist_ok=True)
     hass.config.config_dir = str(tmp_path)
+    hass.config.time_zone = "UTC"
     hass.config.path.side_effect = lambda *parts: str(tmp_path.joinpath(*parts))
     hass.states = MagicMock()
     hass.states.get = MagicMock(return_value=MagicMock(state="on"))

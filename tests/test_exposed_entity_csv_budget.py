@@ -50,6 +50,11 @@ def test_csv_row_round_trips_commas_quotes_and_line_breaks() -> None:
 
 def test_grouped_default_uses_csv_writer_without_attributes(hass, monkeypatch) -> None:
     monkeypatch.setattr(
+        exposed_attributes.ar,
+        "async_get",
+        lambda _: SimpleNamespace(async_get_area=lambda _: None),
+    )
+    monkeypatch.setattr(
         exposed_attributes,
         "get_entity_prompt_metadata",
         lambda _hass, _entity_id: SimpleNamespace(area_id="kitchen"),
@@ -76,7 +81,9 @@ def test_grouped_default_uses_csv_writer_without_attributes(hass, monkeypatch) -
     ]
 
 
-def test_legacy_default_quotes_fields_and_passes_raw_json_to_writer(hass, monkeypatch) -> None:
+def test_legacy_default_quotes_fields_and_passes_raw_json_to_writer(
+    hass, monkeypatch
+) -> None:
     monkeypatch.setattr(exposed_attributes, "resolve_area_id", lambda *_args: "kitchen")
     entities = [
         {

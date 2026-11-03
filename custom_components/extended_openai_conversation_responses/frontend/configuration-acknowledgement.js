@@ -100,6 +100,9 @@ export function discardConfigurationDraft(panel) {
     panel._configDataStale = true;
   }
   panel._setConfigDirty(false);
+  // Discard authored edits, while retaining an unfinished retention operation
+  // whose policy already committed and still needs a deletion retry.
+  panel._syncConfigDirty?.();
   return true;
 }
 

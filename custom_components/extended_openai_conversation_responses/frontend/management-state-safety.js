@@ -2,7 +2,7 @@ import {getRouteFeature} from "./management-route.js";
 import {pageCoordinator, currentPageScope} from "./management-page-drafts.js";
 import {same, clone} from "./unsaved-state.js";
 import {SECTION_CACHE_TTL_MS} from "./management-cache.js";
-import {configurationDraftBaseline} from "./configuration-acknowledgement.js";
+import {configurationDraftBaseline, configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
 import {editorControls, dialogState, setDialogBaseline} from "./management-dialogs.js";
 import {voiceMappingDraftDirty} from "./voice-mapping-draft.js";
 export {SECTION_CACHE_TTL_MS};
@@ -42,10 +42,16 @@ function configBaselineReady(panel) {
 
 function configKeyChanged(panel, key) {
   if (!configBaselineReady(panel)) return false;
+  if (pendingRetentionFields(panel).includes(key)) return true;
   const baseline = configurationDraftBaseline(panel);
   if (key === "__title") return panel._draftTitle !== baseline.title;
   if (key === "voice_device_mappings" && voiceMappingDraftDirty(panel)) return true;
   return !same(panel._draft[key], baseline.config[key]);
+}
+
+export function pendingRetentionFields(panel) {
+  const pending = panel._eocPendingRetention;
+  return pending && configurationSubmissionIsCurrent(panel, pending) ? pending.fields : [];
 }
 
 export function rebuildConfigDirtyKeys(panel) {
@@ -60,6 +66,7 @@ export function rebuildConfigDirtyKeys(panel) {
     }
     if (panel._draftTitle !== snapshot.title) changed.add("__title");
     if (voiceMappingDraftDirty(panel)) changed.add("voice_device_mappings");
+    for (const key of pendingRetentionFields(panel)) changed.add(key);
   }
   panel._eocDirtyConfigKeys = changed;
   return changed;

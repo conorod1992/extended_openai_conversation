@@ -56,6 +56,7 @@ def _restart_and_migrate(restored):
         },
     )
     entry = SimpleNamespace(
+        data={},
         entry_id="restart-entry",
         version=integration.CONFIG_ENTRY_VERSION,
         disabled_by=None,

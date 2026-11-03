@@ -194,7 +194,10 @@ async def test_current_startup_migration_decodes_in_worker(hass, monkeypatch):
     raw = yaml.safe_dump([_tool("migration_unique")])
     subentry = SimpleNamespace(data={"functions": raw}, subentry_type="conversation")
     entry = SimpleNamespace(
-        version=CONFIG_ENTRY_VERSION, disabled_by=None, subentries={"agent": subentry}
+        data={},
+        version=CONFIG_ENTRY_VERSION,
+        disabled_by=None,
+        subentries={"agent": subentry},
     )
     fake = SimpleNamespace(
         config_entries=SimpleNamespace(async_entries=lambda _: [entry]),
@@ -248,7 +251,10 @@ async def test_startup_worker_does_not_overwrite_a_newer_configuration(
     original = {"functions": yaml.safe_dump([_tool("concurrent_migration")])}
     subentry = SimpleNamespace(data=original, subentry_type="conversation")
     entry = SimpleNamespace(
-        version=CONFIG_ENTRY_VERSION, disabled_by=None, subentries={"agent": subentry}
+        data={},
+        version=CONFIG_ENTRY_VERSION,
+        disabled_by=None,
+        subentries={"agent": subentry},
     )
     update = Mock()
     fake = SimpleNamespace(
