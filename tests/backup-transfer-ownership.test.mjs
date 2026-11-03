@@ -182,15 +182,16 @@ test("restore acknowledgement sensitivity detects cache errors escaping the tran
   await assert.rejects(() => restoreAcknowledgementWitness("cache", bind), /consume its session|retire its preview|presentation must not reject/);
 });
 
-for (const cleanup of ["cancel", "picker", "preview", "navigation", "disconnect", "escape", "close"]) for (const replacedConnection of [false, true]) {
-  test(`prepared imports retain ownership during ${cleanup} after switching agents (replacement connection: ${replacedConnection})`, async () => {
+for (const cleanup of ["cancel", "picker", "preview", "navigation", "disconnect", "escape", "close"]) for (const connection of ["original", "replacement", "disconnected"]) {
+  test(`prepared imports retain ownership during ${cleanup} after switching agents (connection: ${connection})`, async () => {
     const h = harness();
     await h.upload();
     const session = h.panel._backupTransferSession;
     assert.equal(Object.isFrozen(session), true);
     assert.equal(Object.isFrozen(session.owner), true);
     h.switchAgent();
-    if (replacedConnection) h.panel._hass = {callWS() { assert.fail("cleanup must not use a replacement connection"); }};
+    if (connection === "replacement") h.panel._hass = {callWS() { assert.fail("cleanup must not use a replacement connection"); }};
+    if (connection === "disconnected") h.panel._hass = null;
     if (cleanup === "cancel") await cancelBackupImport(h.panel);
     if (cleanup === "picker") openBackupPicker(h.panel, {value:"", click(){}});
     if (cleanup === "preview") assert.equal(refreshImportPreview(h.panel), false);
