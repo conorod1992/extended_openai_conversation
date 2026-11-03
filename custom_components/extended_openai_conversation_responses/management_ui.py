@@ -3189,18 +3189,22 @@ async def _async_management_request(
         and result.get("status") == "updated"
         and result.get("subentry_id") == subentry_id
     )
-    if retention_changed or current_import or (
-        (section, action)
-        in {
-            ("configuration", "save"),
-            ("configuration", "update"),
-            ("function_repair", "configuration_save"),
-            ("settings", "update"),
-        }
-        and result.get("valid") is not False
-        and isinstance(retention_updates, dict)
-        and {CONF_USAGE_REQUEST_RETENTION_DAYS, CONF_USAGE_RUN_RETENTION_DAYS}
-        & retention_updates.keys()
+    if (
+        retention_changed
+        or current_import
+        or (
+            (section, action)
+            in {
+                ("configuration", "save"),
+                ("configuration", "update"),
+                ("function_repair", "configuration_save"),
+                ("settings", "update"),
+            }
+            and result.get("valid") is not False
+            and isinstance(retention_updates, dict)
+            and {CONF_USAGE_REQUEST_RETENTION_DAYS, CONF_USAGE_RUN_RETENTION_DAYS}
+            & retention_updates.keys()
+        )
     ):
         from .mutation_outcomes import mark_mutation_failure
         from .operation_settlement import async_settle_owned_operation

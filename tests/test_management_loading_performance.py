@@ -17,6 +17,7 @@ from custom_components.extended_openai_conversation_responses import (
     management_function_repair as function_repair,
     management_loading_performance as loading,
     management_ui,
+    usage,
 )
 from custom_components.extended_openai_conversation_responses.agent_config import (
     agent_config_defaults,
@@ -565,6 +566,8 @@ def test_agent_revision_lineage_survives_projection_cache_eviction(monkeypatch) 
 
 async def test_import_replaces_cached_configuration_projection(monkeypatch) -> None:
     hass, _entry, _subentry = _hass_with_agent()
+    retention = SimpleNamespace(async_prune_details=AsyncMock())
+    monkeypatch.setattr(usage, "async_get_durable_usage", AsyncMock(return_value=retention))
     monkeypatch.setattr(
         function_repair, "_persisted_projections", function_repair.OrderedDict()
     )
@@ -598,6 +601,7 @@ async def test_import_replaces_cached_configuration_projection(monkeypatch) -> N
     assert after["config"]["max_tokens"] == 777
     assert after["revision"] == imported["revision"]
     assert after["revision"] != before["revision"]
+    retention.async_prune_details.assert_awaited_once()
 
 
 def test_function_mutation_seeds_next_persisted_read(monkeypatch) -> None:

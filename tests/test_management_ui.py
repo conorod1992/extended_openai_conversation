@@ -13,6 +13,7 @@ from custom_components.extended_openai_conversation_responses import (
     management_projections,
     management_request_preview,
     management_ui,
+    usage as usage_module,
 )
 from custom_components.extended_openai_conversation_responses.agent_config import (
     AgentConfigError,
@@ -1162,6 +1163,8 @@ async def test_guest_backup_and_service_dispatch_edges(monkeypatch) -> None:
 async def test_configuration_transfer_and_validation_routes(hass, monkeypatch) -> None:
     entry, subentry = _residual_entry_pair()
     hass = _residual_hass(entry)
+    retention = SimpleNamespace(async_prune_details=AsyncMock())
+    monkeypatch.setattr(usage_module, "async_get_durable_usage", AsyncMock(return_value=retention))
     monkeypatch.setattr(management_ui, "entry_and_agent", lambda *_: (entry, subentry))
 
     with pytest.raises(HomeAssistantError, match="config must be an object"):
@@ -1221,6 +1224,7 @@ async def test_configuration_transfer_and_validation_routes(hass, monkeypatch) -
         _residual_message("configuration", "import", document=document, confirm=True),
     )
     assert current["status"] == "updated"
+    retention.async_prune_details.assert_awaited_once()
     assert current["subentry_id"] == "agent-1"
     with pytest.raises(HomeAssistantError, match="mode must be current or new"):
         await management_ui.async_management_command(
