@@ -194,6 +194,8 @@ COUNT_METRICS = {
     "normalized_schema_rejections",
     "normalized_schema_healthy_dispatches",
     "native_history_worker_settlements",
+    "recorder_purge_query_races",
+    "post_purge_history_recoveries",
     "native_history_cancelled_recoveries",
     "native_automation_layout_cases",
     "native_automation_load_rejections",

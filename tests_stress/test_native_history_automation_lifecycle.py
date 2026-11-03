@@ -10,6 +10,7 @@ from custom_components.extended_openai_conversation_responses.functions.native i
     NativeFunction,
 )
 from homeassistant.components import automation, conversation, recorder
+from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
 from homeassistant.components.recorder import history as recorder_history
 from homeassistant.setup import async_setup_component
 from homeassistant.util import dt as dt_util
@@ -171,6 +172,7 @@ async def test_native_history_worker_owns_session_until_query_finishes(
         {"recorder": {"db_url": f"sqlite:///{tmp_path / 'cancellation.db'}"}},
     )
     started = dt_util.utcnow() - timedelta(seconds=1)
+    async_expose_entity(hass, conversation.DOMAIN, "sensor.recorder_acceptance", True)
     hass.states.async_set("sensor.recorder_acceptance", "recorded-before-cancel")
     await hass.async_block_till_done()
     instance = recorder.get_instance(hass)

@@ -26,8 +26,9 @@ from custom_components.extended_openai_conversation_responses.usage import (
     RequestUsage,
     async_get_usage,
 )
-from homeassistant.components import recorder
-from homeassistant.components.recorder import statistics
+from homeassistant.components import conversation, recorder
+from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
+from homeassistant.components.recorder import history as recorder_history, statistics
 from homeassistant.components.recorder.models.statistics import StatisticMeanType
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -201,11 +202,8 @@ async def test_recorder_purge_can_overlap_native_history_query_and_recover(
     stress_trace: list[dict],
 ) -> None:
     """A purge racing an EOAI history read must not corrupt the query/session lifecycle."""
-    from custom_components.extended_openai_conversation_responses.functions import (
-        native,
-    )
-
     await _setup_recorder(hass, f"sqlite:///{tmp_path / 'purge-race.db'}")
+    async_expose_entity(hass, conversation.DOMAIN, "sensor.recorder_acceptance", True)
     started = dt_util.utcnow() - timedelta(seconds=2)
     hass.states.async_set("sensor.recorder_acceptance", "before-purge")
     await hass.async_block_till_done()
@@ -214,7 +212,7 @@ async def test_recorder_purge_can_overlap_native_history_query_and_recover(
 
     entered = asyncio.Event()
     release = asyncio.Event()
-    original = native.recorder_history.get_significant_states_with_session
+    original = recorder_history.get_significant_states_with_session
 
     def gated(*args, **kwargs):
         hass.loop.call_soon_threadsafe(entered.set)
@@ -223,7 +221,7 @@ async def test_recorder_purge_can_overlap_native_history_query_and_recover(
             time.sleep(0.01)
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(native.recorder_history, "get_significant_states_with_session", gated)
+    monkeypatch.setattr(recorder_history, "get_significant_states_with_session", gated)
     query = asyncio.create_task(
         NativeFunction().get_history(
             hass,
@@ -239,21 +237,27 @@ async def test_recorder_purge_can_overlap_native_history_query_and_recover(
             _EXPOSED,
         )
     )
-    await asyncio.wait_for(entered.wait(), timeout=10)
-
-    purge = asyncio.create_task(
-        hass.services.async_call(
-            "recorder",
-            "purge",
-            {"keep_days": 0, "repack": False, "apply_filter": False},
-            blocking=True,
+    purge = None
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=10)
+        purge = asyncio.create_task(
+            hass.services.async_call(
+                "recorder",
+                "purge",
+                {"keep_days": 0, "repack": False, "apply_filter": False},
+                blocking=True,
+            )
         )
-    )
-    await asyncio.sleep(0)
-    release.set()
-    rows = await asyncio.wait_for(query, timeout=20)
-    await asyncio.wait_for(purge, timeout=30)
-    assert rows
+        await asyncio.sleep(0)
+        release.set()
+        rows = await asyncio.wait_for(query, timeout=20)
+        await asyncio.wait_for(purge, timeout=30)
+        assert rows
+    finally:
+        release.set()
+        await asyncio.gather(
+            query, *([purge] if purge is not None else []), return_exceptions=True
+        )
 
     hass.states.async_set("sensor.recorder_acceptance", "after-purge")
     await hass.async_block_till_done()
@@ -296,6 +300,7 @@ async def test_native_history_against_external_recorder_database(
             pytest.fail(f"{env_name} is required for external Recorder certification")
         pytest.skip(f"{env_name} is not configured")
     await _setup_recorder(hass, db_url)
+    async_expose_entity(hass, conversation.DOMAIN, "sensor.recorder_acceptance", True)
     hass.states.async_set("sensor.recorder_acceptance", f"{backend}-recorded")
     await hass.async_block_till_done()
     await _wait_recording_done(hass)
@@ -342,6 +347,7 @@ async def test_recorder_backend_switch_preserves_history_and_statistics_semantic
         pytest.skip(f"{env_name} is not configured")
 
     await _setup_recorder(hass, db_url)
+    async_expose_entity(hass, conversation.DOMAIN, "sensor.recorder_acceptance", True)
 
     # This state sequence mirrors the boundary-sensitive SQLite acceptance case.
     # The migration itself belongs to Home Assistant; EOAI's contract is that the
@@ -583,6 +589,7 @@ async def test_external_recorder_connection_loss_then_recovery(
         pytest.skip(f"{env_name} is not configured")
 
     await _setup_recorder(hass, db_url)
+    async_expose_entity(hass, conversation.DOMAIN, "sensor.recorder_acceptance", True)
     hass.states.async_set("sensor.recorder_acceptance", f"{backend}-before-outage")
     await hass.async_block_till_done()
     await _wait_recording_done(hass)
@@ -602,7 +609,7 @@ async def test_external_recorder_connection_loss_then_recovery(
     with monkeypatch.context() as outage:
         outage.setattr(engine, "connect", unavailable_connect)
         with pytest.raises(
-            HomeAssistantError, match="^History is temporarily unavailable$"
+            HomeAssistantError, match=r"^History is temporarily unavailable$"
         ) as unavailable:
             await NativeFunction().get_history(
                 hass,

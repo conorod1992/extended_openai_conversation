@@ -8,6 +8,7 @@ on:
     paths:
       - .github/workflows/ios-companion-app.yml
       - ci/patch_ios_companion_e2e.py
+      - ci/prepare_ios_build_tools.sh
   schedule:
     - cron: "35 5 * * 1,4"
 
@@ -124,6 +125,15 @@ jobs:
           grep -q "Companion app iOS saved title" "$IOS_DIR/Tests/UI/OnboardingE2ETests.swift"
           grep -q -- '-collect-test-diagnostics never' "$IOS_DIR/fastlane/lanes/testing.rb"
 
+      - name: Restore iOS host build-tool cache
+        id: ios-buildtools-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ env.IOS_DIR }}/BuildTools/.build
+            ${{ env.IOS_DIR }}/.build
+          key: ios-e2e-buildtools-v1-${{ runner.os }}-${{ env.IOS_BUILD_CACHE_ID }}
+
       - name: Set up Ruby 4.0.7
         uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1
         with:
@@ -147,6 +157,11 @@ jobs:
           xcodebuild -resolvePackageDependencies \
             -project HomeAssistant.xcodeproj \
             -scheme Tests-UI
+
+      - name: Prepare pinned iOS host build tools
+        id: ios-buildtools-prepare
+        timeout-minutes: 20
+        run: bash ci/prepare_ios_build_tools.sh "$IOS_DIR"
 
       - name: Run genuine iOS Companion journey
         working-directory: ${{ env.IOS_DIR }}
@@ -252,6 +267,15 @@ jobs:
         with:
           path: ${{ env.IOS_DIR }}/vendor/bundle
           key: ios-e2e-gems-v2-${{ runner.os }}-${{ env.IOS_BUILD_CACHE_ID }}-ruby-4.0.7
+
+      - name: Save iOS host build-tool cache
+        if: always() && steps.ios-buildtools-prepare.outcome == 'success' && steps.ios-buildtools-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ env.IOS_DIR }}/BuildTools/.build
+            ${{ env.IOS_DIR }}/.build
+          key: ios-e2e-buildtools-v1-${{ runner.os }}-${{ env.IOS_BUILD_CACHE_ID }}
 
       - name: Save iOS DerivedData cache
         if: always() && steps.ios-deriveddata-cache.outputs.cache-hit != 'true'

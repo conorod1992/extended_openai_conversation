@@ -129,6 +129,14 @@ async def test_native_history_reads_real_recorder_and_serializes_tool_result(
     assert "inside" in json.dumps(serialized)
     assert "private" not in json.dumps(serialized)
 
+    # The admitted argument list is not authority once real Assist exposure is
+    # revoked. Re-exposing the same entity must restore the ordinary read path.
+    async_expose_entity(hass, conversation.DOMAIN, "sensor.recorder_acceptance", False)
+    with pytest.raises(EntityNotExposed):
+        await NativeFunction().get_history(hass, {}, args, None, _EXPOSED)
+    async_expose_entity(hass, conversation.DOMAIN, "sensor.recorder_acceptance", True)
+    assert await NativeFunction().get_history(hass, {}, args, None, _EXPOSED) == raw
+
 
 @pytest.mark.parametrize("boundary", ["unexposed", "missing"])
 async def test_native_history_preserves_entity_and_exposure_boundaries(
@@ -223,6 +231,13 @@ async def test_native_statistics_reads_real_recorder_and_enforces_exposure(
         assert rows[0]["max"] == pytest.approx(73.4)
         assert "sum" not in rows[0]
     assert "sensor.hidden_acceptance" not in result
+    async_expose_entity(hass, conversation.DOMAIN, "sensor.recorder_acceptance", False)
+    with pytest.raises(EntityNotExposed):
+        await NativeFunction().get_statistics(hass, {}, args, None, _EXPOSED)
+    async_expose_entity(hass, conversation.DOMAIN, "sensor.recorder_acceptance", True)
+    assert (
+        await NativeFunction().get_statistics(hass, {}, args, None, _EXPOSED) == result
+    )
     with pytest.raises(EntityNotExposed):
         await NativeFunction().get_statistics(
             hass,

@@ -1,5 +1,6 @@
 import {expect, test} from "@playwright/test";
-import {expectHarnessClean, trackPageErrors} from "./browser-helpers.mjs";
+import {readFile} from "node:fs/promises";
+import {acceptSharingReview, expectHarnessClean, trackPageErrors} from "./browser-helpers.mjs";
 
 const switchBackend = process.env.REAL_HA_IDENTITY_SWITCH_BACKEND;
 const switchControl = process.env.REAL_HA_IDENTITY_SWITCH_CONTROL;
@@ -20,8 +21,99 @@ async function post(url, body) {
   return response.json();
 }
 
+async function checkConfigurationExportRetirement(page, bundled) {
+  const marker = `Auth-owned configuration export ${bundled ? "bundle" : "source"}`;
+  await page.goto(`${fixture(raceBackendA, "assistant/basics")}&bundle=${bundled ? "1" : "0"}`);
+  let panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator("#export-agent")).toBeAttached();
+  const owner = await panel.evaluate(async host => {
+    const user = await host.hass.callWS({type:"auth/current_user"});
+    host.hass = {...host.hass, user};
+    return user;
+  });
+  expect(owner.is_admin).toBe(true);
+  await panel.evaluate(async (host, marker) => {
+    const saved = await host._call("configuration", "get");
+    await host._call("configuration", "save", {revision:saved.revision, config:{prompt:marker}});
+  }, marker);
+
+  const startExport = async () => {
+    if (!await panel.locator("#export-agent").isVisible()) await panel.locator(".agent-actions-menu > summary").click();
+    await panel.locator("#export-agent").click();
+    await panel.locator("[data-custom]").click();
+  };
+  const downloadExport = async () => {
+    await startExport();
+    await expect(panel.locator("[data-artifact]")).toHaveValue(new RegExp(marker));
+    const pending = page.waitForEvent("download");
+    await acceptSharingReview(panel);
+    expect(await readFile(await (await pending).path(), "utf8")).toContain(marker);
+  };
+  await downloadExport(); // Healthy unchanged-owner baseline through the real UI.
+
+  await panel.evaluate(host => {
+    const call = host.hass.callWS.bind(host.hass);
+    window.pendingConfigurationExport = {generation:host._eocAuthenticationGeneration, published:[]};
+    const operation = pendingConfigurationExport;
+    operation.observer = new MutationObserver(() => {
+      const artifact = host.shadowRoot.querySelector("[data-artifact]");
+      if (artifact) operation.published.push({user:host.hass.user.id, value:artifact.value});
+    });
+    operation.observer.observe(host.shadowRoot, {childList:true, subtree:true});
+    host.hass.callWS = async message => {
+      const result = await call(message);
+      if (message.section !== "configuration" || message.action !== "export") return result;
+      operation.ready = true;
+      return new Promise(resolve => { operation.release = () => resolve(result); });
+    };
+  });
+  await startExport();
+  await expect.poll(() => page.evaluate(() => pendingConfigurationExport.ready)).toBe(true);
+  const replacement = await panel.evaluate(async (host, backend) => {
+    const callWS = async message => {
+      const response = await fetch(backend, {method:"POST", body:JSON.stringify(message)});
+      const result = await response.json();
+      if (!response.ok) throw Error(result.message || "Authenticated HA request failed");
+      return result;
+    };
+    const user = await callWS({type:"auth/current_user"});
+    host.hass = {...host.hass, user, callWS};
+    return user;
+  }, raceBackendB);
+  expect(replacement.id).not.toBe(owner.id);
+  expect(replacement.is_admin).toBe(true);
+  await expect(panel.getByRole("button", {name:"Reload settings", exact:true})).toBeVisible();
+  const retiredDownloads = [];
+  const onDownload = download => retiredDownloads.push(download);
+  page.on("download", onDownload);
+  await page.evaluate(async () => {
+    pendingConfigurationExport.release();
+    // The held response's handler drains its microtasks before the next task.
+    await new Promise(resolve => setTimeout(resolve, 0));
+  });
+  expect(await panel.evaluate(host => host.hass.user.id)).toBe(replacement.id);
+  expect(await panel.evaluate(host => host._eocAuthenticationGeneration)).toBeGreaterThan(await page.evaluate(() => pendingConfigurationExport.generation));
+  await expect(panel.locator("[data-artifact]")).toHaveCount(0);
+  expect(await page.evaluate(() => pendingConfigurationExport.published)).toEqual([]);
+  expect(retiredDownloads).toHaveLength(0);
+  page.off("download", onDownload);
+  await page.evaluate(() => pendingConfigurationExport.observer.disconnect());
+
+  // The retired panel remains owned by A. Open a fresh authoring session for B
+  // with B's genuine connection, without reviving A's pending operation.
+  await panel.evaluate(host => {
+    const fresh = document.createElement("extended-openai-management-panel");
+    fresh.hass = host.hass;
+    host.replaceWith(fresh);
+    browserHarness.panel = fresh;
+  });
+  panel = page.locator("extended-openai-management-panel");
+  await expect(panel.locator("#export-agent")).toBeAttached();
+  await downloadExport();
+}
+
 test("one browser profile does not carry private EOAI state from user A into user B", async ({page}) => {
-  test.skip(!switchBackend || !switchControl, "requires switchable genuine HA identities");
+  test.skip(!switchBackend || !switchControl || !raceBackendA || !raceBackendB, "requires switchable and separately authenticated HA identities");
   test.setTimeout(120_000);
   const errors = trackPageErrors(page);
 
@@ -55,6 +147,7 @@ test("one browser profile does not carry private EOAI state from user A into use
   await panel.locator("#memory-save").click();
   await expect(panel.getByText("Private same-browser marker B", {exact: true})).toBeVisible();
   await expect(panel.getByText("Private same-browser marker A", {exact: true})).toHaveCount(0);
+  for (const bundled of [false, true]) await test.step(`configuration export ownership (${bundled ? "bundle" : "source"})`, () => checkConfigurationExportRetirement(page, bundled));
   await expectHarnessClean(page, errors);
 });
 

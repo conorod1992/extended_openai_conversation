@@ -49,6 +49,7 @@ def test_ios_companion_workflow_warms_default_branch_without_pr_builds():
         "paths": [
             ".github/workflows/ios-companion-app.yml",
             "ci/patch_ios_companion_e2e.py",
+            "ci/prepare_ios_build_tools.sh",
         ],
     }
     assert triggers["schedule"] == [{"cron": "35 5 * * 1,4"}]
@@ -144,6 +145,38 @@ def test_ios_companion_caches_expensive_build_state_across_retries():
     )
     assert "steps.ios-gems-cache.outputs.cache-hit" in install["run"]
     assert "xcodebuild -resolvePackageDependencies" in install["run"]
+
+
+def test_ios_host_tools_are_prepared_even_on_cache_hits_before_the_journey():
+    steps = _workflow()["jobs"]["companion"]["steps"]
+    preparation = next(
+        step for step in steps if step.get("id") == "ios-buildtools-prepare"
+    )
+    journey = next(
+        step
+        for step in steps
+        if step.get("name") == "Run genuine iOS Companion journey"
+    )
+    assert "prepare_ios_build_tools.sh" in preparation["run"]
+    assert preparation["timeout-minutes"] == 20
+    assert "if" not in preparation
+    assert steps.index(preparation) < steps.index(journey)
+    assert "continue-on-error" not in journey
+    restored = next(step for step in steps if step.get("id") == "ios-buildtools-cache")
+    saved = next(
+        step for step in steps if step.get("name") == "Save iOS host build-tool cache"
+    )
+    assert restored["with"] == saved["with"]
+    assert "IOS_BUILD_CACHE_ID" in restored["with"]["key"]
+    assert "BuildTools/.build" in restored["with"]["path"]
+    assert "${{ env.IOS_DIR }}/.build" in restored["with"]["path"]
+    assert "steps.ios-buildtools-prepare.outcome == 'success'" in saved["if"]
+    record = next(
+        step
+        for step in steps
+        if step.get("name") == "Record source-bound iOS Companion evidence"
+    )
+    assert record["if"] == "success()"
 
 
 def test_ios_fixture_uses_a_dashboard_with_an_unobstructed_header(tmp_path):

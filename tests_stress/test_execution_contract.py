@@ -858,6 +858,7 @@ def test_native_history_and_automation_lifecycles_are_mandatory():
         "test_native_history_reads_real_recorder_and_serializes_tool_result": 3,
         "test_native_history_preserves_entity_and_exposure_boundaries": 2,
         "test_native_history_worker_owns_session_until_query_finishes": 2,
+        "test_recorder_purge_can_overlap_native_history_query_and_recover": 1,
         "test_native_automation_success_requires_generated_id_loaded": 4,
         "test_unloaded_automation_rolls_back_without_success": 4,
     }.items():
@@ -866,6 +867,8 @@ def test_native_history_and_automation_lifecycles_are_mandatory():
         assert not set(nodes) & policy.get("allowances", {}).keys()
     minimums = policy["minimums"]["functions"]
     assert minimums["native_history_worker_settlements"] == 2
+    assert minimums["recorder_purge_query_races"] == 1
+    assert minimums["post_purge_history_recoveries"] == 1
     assert minimums["native_history_cancelled_recoveries"] == 1
     assert minimums["native_automation_layout_cases"] == 4
     assert minimums["native_automation_load_rejections"] == 2
