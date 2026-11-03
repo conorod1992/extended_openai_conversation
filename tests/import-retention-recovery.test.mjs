@@ -8,6 +8,8 @@ import {captureConfigurationSubmission, retireReplacedConfigurationDraft, config
 import {TestEventTarget} from "./frontend-test-helpers.mjs";
 import {startStoredConfigurationPrefetch, ENTRY_KEY} from "../custom_components/extended_openai_conversation_responses/frontend/management-route.js";
 import {retireAssistantDraft} from "../custom_components/extended_openai_conversation_responses/frontend/management-catalog-ownership.js";
+import {changeConfigurationModel} from "../custom_components/extended_openai_conversation_responses/frontend/agent-config-editor-model-v2.js";
+import {recordReasoningChoice} from "../custom_components/extended_openai_conversation_responses/frontend/configuration-controls.js";
 
 function scenario({failRead = false, mode = "current", unchangedImport = false} = {}) {
   const f = fixture();
@@ -548,4 +550,49 @@ for (const order of ["configuration first", "Voice first"]) test(`discarding ret
     assert.equal(next._draft.prompt, "Original");
     assert.equal(next._configDirty, false);
   } finally { retire(source, target, next); }
+});
+
+for (const phase of ["completed", "pending", "explicit reasoning", "cancel"]) test(`navigation Discard retires model authoring while retaining cleanup: ${phase}`, async () => {
+  const f = scenario({failRead:true}), source = f.panel;
+  for (const record of f.state.records.values()) Object.assign(record.config, {chat_model:"base", reasoning_effort:"low"});
+  Object.assign(source._configData.config, {chat_model:"base", reasoning_effort:"low"});
+  Object.assign(source._draft, {chat_model:"base", reasoning_effort:"low"});
+  const target = f.create(), send = source.hass.callWS, call = source._call.bind(source);
+  const metadata = {model_metadata:{reasoning:{supported:true, efforts:["low", "high"]}, recommended_profile:{reasoning_effort:"low"}}};
+  let finishLookup;
+  const lookup = phase === "pending" ? new Promise(resolve => {finishLookup = resolve;}) : Promise.resolve(metadata);
+  source.hass.callWS = request => request.type === "extended_openai_conversation_responses/model_catalog" ? lookup : send(request);
+  source._call = (section, action, extra) => action === "validate" ? Promise.resolve({valid:true}) : call(section, action, extra);
+  await applyConfigurationImport(source, source.shadowRoot);
+  source.shadowRoot.querySelector("#import-dialog").close();
+  source._draft.chat_model = "discarded";
+  const changing = changeConfigurationModel(source, {dataset:{config:"chat_model"}, value:"discarded"});
+  if (phase !== "pending") await changing;
+  if (phase === "explicit reasoning") {source._draft.reasoning_effort = "high"; recordReasoningChoice(source);}
+  const targetSend = target.hass.callWS;
+  let fail = true;
+  target.hass.callWS = request => request.action === "get" && fail ? Promise.reject(new Error("Read unavailable")) : targetSend(request);
+  target._confirm = async () => phase !== "cancel";
+  source.isConnected = false; retainPanelDrafts(source); restorePanelDrafts(target);
+  let second;
+  try {
+    await flushUntil(() => target.toasts.some(message => message.includes("complete settings")));
+    assert.equal(await confirmStateSafeNavigation(target, null), phase !== "cancel");
+    if (phase === "pending") {finishLookup(metadata); await changing;}
+    fail = false; target._loadToken++; restorePanelDrafts(target);
+    await flushUntil(() => !source._configDirty);
+    assert.equal(target._draft.chat_model, phase === "cancel" ? "discarded" : "base");
+    assert.equal(Boolean(target._eocModelIntent), phase === "cancel");
+    captureRecoveryDialogs(target);
+    second = f.create(); edit(second, "chat_model", "wanted");
+    second.isConnected = false; retainPanelDrafts(second); restorePanelDrafts(target);
+    if (phase === "cancel") {
+      assert.equal(target.recoveryDialog.open, true, "a preserved model choice still conflicts with another owner");
+    } else {
+      assert.equal(target.recoveryDialog?.open ?? false, false);
+      assert.equal(target._draft.chat_model, "wanted");
+      await saveConfiguration(target, null);
+      assert.deepEqual(f.state.writes[0].config, {chat_model:"wanted", usage_request_retention_days:0, usage_run_retention_days:30});
+    }
+  } finally { retire(source, target, ...(second ? [second] : [])); }
 });

@@ -1,7 +1,7 @@
 import {expect, test} from "@playwright/test";
 import {fixtureUrl, acceptConfirmation, expectHarnessClean, trackPageErrors} from "./browser-helpers.mjs";
 
-for (const bundled of [false, true]) test(`Discard on assistant switch retains committed cleanup after a failed recovery read; bundle=${bundled}`, async ({page}) => {
+for (const bundled of [false, true]) for (const modelDraft of [false, true]) test(`Discard on assistant switch retains committed cleanup after a failed recovery read; bundle=${bundled}, model=${modelDraft}`, async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("assistant/basics", `&agents=2${bundled ? "&bundle=1" : ""}`));
   const source = page.locator("extended-openai-management-panel").first();
@@ -36,6 +36,11 @@ for (const bundled of [false, true]) test(`Discard on assistant switch retains c
   await expect.poll(() => source.evaluate(host => host._eocImportPending)).toBe(false);
   await source.locator("#import-cancel").click();
   await source.locator('[data-config="max_tokens"]').fill("999");
+  if (modelDraft) {
+    await source.locator('[data-config="chat_model"]').fill("gpt-4o");
+    await source.locator('[data-config="max_tokens"]').focus();
+    await expect.poll(() => source.evaluate(host => Boolean(host._eocModelIntent) && !host._eocPendingModelPreparation)).toBe(true);
+  }
   await target.evaluate(async host => {document.querySelector("#discard-source").remove(); await host._loadSection(true);});
   await expect(target.getByText("Unsaved configuration is retained. Refresh this section to retry loading the complete settings.", {exact:true})).toBeVisible();
   await target.locator("#agent").selectOption("scale-agent-1"); await acceptConfirmation(target);
@@ -46,9 +51,24 @@ for (const bundled of [false, true]) test(`Discard on assistant switch retains c
   await expect.poll(() => target.evaluate(host => host._eocPendingRetention?.fields.length)).toBe(2);
   await expect(target.locator('[data-config="max_tokens"]')).toHaveValue("1600");
   await expect(target.locator("dialog[data-eoc-recovered-editor][open]")).toHaveCount(0);
+  if (modelDraft) {
+    expect(await target.evaluate(host => Boolean(host._eocModelIntent))).toBe(false);
+    await target.evaluate(host => {
+      const next=document.createElement("extended-openai-management-panel");
+      next.id="model-source"; next.hass=host.hass; document.body.append(next);
+    });
+    const modelSource=page.locator("#model-source");
+    await expect(modelSource.locator('[data-config="chat_model"]')).toBeVisible();
+    await modelSource.locator('[data-config="chat_model"]').fill("gpt-4.1");
+    await modelSource.locator('[data-config="max_tokens"]').focus();
+    await expect.poll(() => modelSource.evaluate(host => Boolean(host._eocModelIntent) && !host._eocPendingModelPreparation)).toBe(true);
+    await target.evaluate(async host => {document.querySelector("#model-source").remove(); await host._loadSection(true);});
+    await expect(target.locator("dialog[data-eoc-recovered-editor][open]")).toHaveCount(0);
+    await expect(target.locator('[data-config="chat_model"]')).toHaveValue("gpt-4.1");
+  }
   await target.locator("#save-config").click();
   await expect.poll(() => target.evaluate(host => host._configDirty)).toBe(false);
   const writes=await page.evaluate(() => browserHarness.calls.filter(call => call.section==="configuration" && call.action==="save"));
-  expect(writes.at(-1).config).toEqual({usage_request_retention_days:0, usage_run_retention_days:30});
+  expect(writes.at(-1).config).toEqual({usage_request_retention_days:0, usage_run_retention_days:30, ...(modelDraft ? {chat_model:"gpt-4.1"} : {})});
   await expectHarnessClean(page, errors);
 });

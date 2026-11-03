@@ -19,9 +19,9 @@ DIST = Path("custom_components/extended_openai_conversation_responses/frontend/d
 # separate entry and CSS limits unchanged and less than 1 KiB of JS headroom.
 # Fresh committed-recovery reads and receiving Voice baselines add 558 bytes.
 # Allow 600 reviewed bytes, keeping the independent entry and CSS limits.
-# Retained Discard cleanup adds 66 bytes; allow 100 reviewed bytes without
-# changing the separate entry and CSS limits.
-CEILINGS = {"javascript": 873_200, "css": 65_000, "management_entry": 120_000}
+# Retained Discard cleanup and model-intent retirement add 209 bytes.
+# Budget 873,300 total JS bytes; retain the separate entry and CSS limits.
+CEILINGS = {"javascript": 873_300, "css": 65_000, "management_entry": 120_000}
 
 
 def measure(dist: Path) -> dict[str, int]:

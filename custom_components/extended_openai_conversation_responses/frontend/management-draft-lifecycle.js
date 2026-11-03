@@ -83,6 +83,11 @@ export function restorePanelDrafts(panel) {
         // Discard consumed configuration too: independent Voice rows must not
         // revive its old authoring when they recompute dirty state.
         for (const scope of ownScopes(source)) if (scope === configuration || scope.dirty()) scope.discard?.();
+        // A discarded model choice or lookup cannot own later recovery.
+        source._eocModelChangeToken = (source._eocModelChangeToken || 0) + 1;
+        source._eocPendingModelPreparation = null;
+        source._eocModelIntent = null;
+        source._eocReasoningChoiceRevision = 0;
         // Discard authoring, while preserving committed cleanup and read
         // obligations which the individual scopes deliberately retain.
         if (!hasRetainedWork(source)) sources.delete(source);
