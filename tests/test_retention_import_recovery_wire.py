@@ -29,7 +29,11 @@ async def test_import_retry_after_real_pruning_failure(
     entry, subentry = management_agent
     entry.state = ConfigEntryState.NOT_LOADED
     field = f"usage_{detail}_retention_days"
-    manager = usage.UsageManager(TotalsStorage(), detail_storage=DetailStorage())
+    manager = usage.UsageManager(
+        TotalsStorage(),
+        detail_storage=DetailStorage(),
+        agent_subentry_id=subentry.subentry_id,
+    )
     await manager.async_initialize()
     async with manager.async_run():
         await manager.async_record_request(
