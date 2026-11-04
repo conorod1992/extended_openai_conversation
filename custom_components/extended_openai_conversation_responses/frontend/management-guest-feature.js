@@ -86,7 +86,10 @@ export function acknowledgeGuestInterval(panel, submission, status) {
   if (!state || panel._guestIntervalDraft !== state || !configurationSubmissionIsCurrent(panel, state.owner)) return;
   // Older/partial replies can confirm an action without supplying an interval.
   // Missing fields must not canonicalize authored values to empty or false.
-  if (!["active_from", "active_until", "indefinite"].every(key => Object.hasOwn(status || {}, key))) return;
+  if (!["active_from", "active_until", "indefinite"].every(key => Object.hasOwn(status || {}, key))) {
+    state.uncertainSubmission = clone(submission.values);
+    return;
+  }
   // An indefinite interval does not submit Ends. Keep that inactive input so
   // toggling indefinite off does not silently erase an authored finite end.
   const saved = intervalValues(panel, status, submission.values.end);

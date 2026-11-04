@@ -249,6 +249,25 @@ for(const visits of [1,2]) for(const reply of ["success","malformed","lost"]) te
   assert.equal(writes,1);
 });
 
+test("a partial interval acknowledgement preserves a newer reversion across replacement",async t => {
+  const f=fixture(),source=f.create(),panels=[source],gate=deferred();
+  source._page="capabilities";source._subsection="guest-mode";await routeAssetPromise(view,source);
+  source._result={status:{active_from:null,active_until:null,indefinite:true}};
+  const controls={"#guest-start":{value:""},"#guest-end":{value:""},"#guest-indefinite":{checked:true}};
+  dialogs(source,controls);captureGuestInterval(source);const reset=documentStub();
+  t.after(() => cleanup(panels,reset));let entered=false;
+  source._hass.callWS=async () => {entered=true;await gate.promise;return {status:{state:"active"}};};
+  source._refreshGuestModeMutation=async () => {};
+  controls["#guest-start"].value="2027-06-04T12:00";captureGuestInterval(source);
+  const operation=source._updateGuestMode();await flushUntil(() => entered);
+  controls["#guest-start"].value="";captureGuestInterval(source);source.isConnected=false;retainPanelDrafts(source);
+  const target=f.create();panels.push(target);target._page="capabilities";target._subsection="guest-mode";
+  target._result={status:{active_from:"2027-06-04T12:00:00Z",active_until:null,indefinite:true}};
+  dialogs(target,{...controls,"#guest-start":{value:"2027-06-04T12:00"}});captureGuestInterval(target);
+  gate.resolve();await operation;restorePanelDrafts(target);
+  assert.equal(target._guestIntervalDraft.values.start,"","an incomplete canonical status cannot retire newer authored values");
+});
+
 for(const reply of ["malformed","lost"]) test(`a clean canonical interval read retires obsolete ${reply} evidence`,async t => {
   const f=fixture(),panel=f.create();panel._page="capabilities";panel._subsection="guest-mode";await routeAssetPromise(view,panel);
   panel._result={status:{active_from:null,active_until:null,indefinite:true}};
