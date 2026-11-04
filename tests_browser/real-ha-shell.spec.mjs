@@ -1036,6 +1036,13 @@ test("genuine HA YAML keyboard saves reject invalid YAML before persisting the c
   await expect(card).toHaveCount(0);
 });
 
+async function selectNativePickerOption(picker, label) {
+  // New HA uses option semantics; older releases put a button inside the item.
+  const option = picker.getByRole("option").filter({hasText: label});
+  const legacyButton = picker.locator("ha-combo-box-item").filter({hasText: label}).locator("button");
+  await option.or(legacyButton).first().click();
+}
+
 test("cold Quiet Hours loads native entity pickers and saves both manual selections", async ({context,page}) => {
   await authenticate(context);
   // This test receives its own browser context. Do not visit another editor
@@ -1049,7 +1056,7 @@ test("cold Quiet Hours loads native entity pickers and saves both manual selecti
     const picker=card.locator(`ha-entity-picker[data-kind="${kind}"]`);
     await expect(picker.locator("ha-picker-field")).toBeVisible({timeout:30000});
     await picker.locator("ha-picker-field").click();
-    await picker.getByRole("option").filter({hasText:label}).click();
+    await selectNativePickerOption(picker,label);
     await expect(picker).toHaveJSProperty("value",entityId);
     expect(await picker.evaluate(element=>Boolean(element.shadowRoot) && element.getBoundingClientRect().height>0)).toBe(true);
   };
@@ -1096,13 +1103,13 @@ test("cold Voice user pickers select a secondary HA user and keep its name after
   await page.reload();
   await expect(defaultPicker.locator('ha-generic-picker')).toHaveCount(1);
   await defaultPicker.locator('ha-picker-field').click();
-  await defaultPicker.getByRole('option').filter({hasText:secondaryName}).click();
+  await selectNativePickerOption(defaultPicker,secondaryName);
   await expect(defaultPicker).toHaveJSProperty('value',secondaryId);
   const mappingPicker=panel.locator('.voice-owner-user-picker');
   await panel.locator('.voice-owner-type').selectOption('user');
   await expect(mappingPicker.locator('ha-generic-picker')).toHaveCount(1);
   await mappingPicker.locator('ha-picker-field').click();
-  await mappingPicker.getByRole('option').filter({hasText:secondaryName}).click();
+  await selectNativePickerOption(mappingPicker,secondaryName);
   await expect(mappingPicker).toHaveJSProperty('value',secondaryId);
   await panel.locator('#save-config').click();
   await expect.poll(()=>panel.evaluate(host=>host._configDirty)).toBe(false);
