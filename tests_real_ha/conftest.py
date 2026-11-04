@@ -23,6 +23,17 @@ from custom_components.extended_openai_conversation_responses.restore_recovery i
 
 
 @pytest.fixture
+def hass_storage(request: pytest.FixtureRequest):
+    """Select real disk I/O before Core constructs stores for OS-boundary tests."""
+    if "real_store_io" in request.fixturenames:
+        yield {}
+        return
+    from pytest_homeassistant_custom_component.common import mock_storage
+    with mock_storage() as stored_data:
+        yield stored_data
+
+
+@pytest.fixture
 def hass_config_dir(tmp_path: Path) -> str:
     """Choose each instance's directory before HA constructs its storage owners."""
     # Recent Core binds Store I/O paths during construction. Relocating config_dir
