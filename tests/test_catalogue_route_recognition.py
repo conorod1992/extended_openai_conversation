@@ -246,3 +246,119 @@ async def test_already_unsupported_captured_effort_does_not_newly_block_reset(
         catalog_runtime, "async_get_request_rules", AsyncMock(return_value=rules)
     )
     assert (await manager.async_reset())["source"] == "bundled"
+
+
+@pytest.mark.parametrize("api", ["responses", "chat_completions"])
+async def test_captured_effort_does_not_hide_a_fixed_processing_tier(
+    hass, monkeypatch, api
+):
+    manager, options, _old, entry, candidate = setup_manager(
+        hass, monkeypatch, "gpt-5", None
+    )
+    options.update(api_mode=api, azure_model="gpt-5.6", service_tier="fast")
+    next(model for model in candidate["models"] if model["id"] == "gpt-5")[
+        "service_tiers"
+    ].append("fast")
+    data.validate_catalog_transition(None, candidate)
+    manager.store.saved = {"catalog": candidate, "last_checked": 0}
+    await manager.async_load()
+    rule = _rule(
+        "route",
+        "route {effort=low|high}",
+        match_type="sentence_pattern",
+        action={
+            "model": "routed-deployment",
+            "azure_model": "gpt-5",
+            "reasoning_effort": "{effort}",
+            "scope": "conversation",
+            "continue_to_ai": True,
+        },
+    )
+    rules = RequestRules(MemoryStore({"rules": [rule]}))
+    await rules.async_initialize()
+    monkeypatch.setattr(
+        catalog_runtime, "async_get_request_rules", AsyncMock(return_value=rules)
+    )
+
+    async def call():
+        route = RequestRuleRuntime()
+        result = await async_evaluate_rule(
+            hass,
+            rules,
+            route,
+            "route high",
+            "new-session",
+            options["chat_model"],
+            request_options=options,
+            entry_data=entry.data,
+        )
+        effective = route.effective_options(
+            options, "new-session", result.request_override
+        )
+        sent = build_provider_request_snapshot(
+            effective, entry.data, tools_required=False
+        ).api_kwargs
+        assert sent["service_tier"] == "fast"
+
+    await call()
+    result = await manager.async_reset()
+    await call()
+    assert result["source"] == "downloaded"
+    assert "blocked" in result["last_error"]
+
+
+@pytest.mark.parametrize("api", ["responses", "chat_completions"])
+async def test_captured_effort_can_use_a_nonrecommended_conditional_tool_profile(
+    hass, monkeypatch, api
+):
+    manager, options, _old, entry, candidate = setup_manager(
+        hass, monkeypatch, TARGET, None
+    )
+    options.update(api_mode=api, max_function_calls_per_conversation=5)
+    add_target(candidate, reasoning=True)
+    model = next(item for item in candidate["models"] if item["id"] == TARGET)
+    model["function_calling"][api] = {
+        "support": "conditional",
+        "allowed_reasoning_efforts": ["high"],
+    }
+    model["tools"]["function"][api] = {
+        "support": "conditional",
+        "requires": {"reasoning_effort": ["high"]},
+    }
+    data.validate_catalog_transition(None, candidate)
+    rule = _rule(
+        "route",
+        "route {effort=low|high}",
+        match_type="sentence_pattern",
+        action={
+            "model": "custom-deployment",
+            "azure_model": TARGET,
+            "reasoning_effort": "{effort}",
+            "scope": "conversation",
+            "continue_to_ai": True,
+        },
+    )
+    rules = RequestRules(MemoryStore({"rules": [rule]}))
+    await rules.async_initialize()
+    monkeypatch.setattr(
+        catalog_runtime, "async_get_request_rules", AsyncMock(return_value=rules)
+    )
+    assert (await manager.async_apply_update())["source"] == "downloaded"
+    route = RequestRuleRuntime()
+    result = await async_evaluate_rule(
+        hass,
+        rules,
+        route,
+        "route high",
+        "new-session",
+        options["chat_model"],
+        request_options=options,
+        entry_data=entry.data,
+    )
+    effective = route.effective_options(options, "new-session", result.request_override)
+    sent = build_provider_request_snapshot(
+        effective, entry.data, tools_required=True
+    ).api_kwargs
+    assert (
+        sent.get("reasoning", {}).get("effort", sent.get("reasoning_effort")) == "high"
+    )

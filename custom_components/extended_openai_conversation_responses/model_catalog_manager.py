@@ -345,6 +345,30 @@ class ModelCatalogManager:
                                 and not routed_metadata["reasoning"]["supported"]
                             ):
                                 return False
+                            # A captured effort must not hide fixed API, tool,
+                            # tier or output requirements. Try the finite effort
+                            # set rather than assuming the recommendation: a
+                            # conditional capability can require another value.
+                            for possible_effort in routed_metadata["reasoning"][
+                                "efforts"
+                            ] or [None]:
+                                try:
+                                    build_provider_request_snapshot(
+                                        {
+                                            **effective,
+                                            CONF_REASONING_EFFORT: possible_effort,
+                                        },
+                                        entry_data,
+                                        tools_required=conversation_tools_required(
+                                            effective
+                                        ),
+                                        model_capabilities=routed_metadata,
+                                    )
+                                except HomeAssistantError:
+                                    continue
+                                break
+                            else:
+                                return False
                             continue
                         # Explicit Rule efforts are validated at execution; the
                         # request builder may omit stale agent-only preferences.
