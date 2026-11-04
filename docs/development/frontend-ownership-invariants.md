@@ -259,7 +259,9 @@ separate from clonable authoring values. Keep dismisses the reviewed source for
 this visit while destination editing continues. A stale Discard cannot discard
 changed values and instead permits a fresh review. Later visits or changed source
 values require review again. Discard, transfer and an acknowledged source save
-retire the old Voice recovery marker before new authoring begins.
+retire the old Voice recovery marker before new authoring begins. Voice-only
+Discard also retires already-transferred serialized source values before dirty
+state is recomputed, while preserving configuration which has not transferred.
 
 `voice-competing-recovery.test.mjs` and `voice-competing-recovery.spec.mjs` cover
 successful destination saves, same-policy saves, repeated replacement, explicit

@@ -1,1 +1,0 @@
-import"./management-core-CT3MDFn4.js";import{s as e}from"./management-temporary-memory-CbdNcMAR.js";export{e as openTemporaryMemory};

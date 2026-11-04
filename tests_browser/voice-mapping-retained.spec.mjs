@@ -66,7 +66,7 @@ test("duplicate Voice rows survive route changes and remount until corrected wit
   await expectHarnessClean(page,errors);
 });
 
-for (const bundled of [false, true]) test(`deferred Voice recovery after Discard saves the displayed mapping; bundle=${bundled}`, async ({page}) => {
+for (const bundled of [false, true]) test(`off-route deferred Voice recovery after Discard saves the displayed mapping; bundle=${bundled}`, async ({page}) => {
   const errors = trackPageErrors(page), source = await setup(page, bundled);
   await source.locator(".voice-owner-type").nth(0).selectOption("unretained");
   await source.evaluate(host => {
@@ -80,12 +80,17 @@ for (const bundled of [false, true]) test(`deferred Voice recovery after Discard
   const target = page.locator("#voice-destination");
   await expect(target.locator("[data-voice-mapping-row]")).toHaveCount(2);
   await target.locator("#add-voice-mapping").click();
-  await target.evaluate(async host => { deferredVoiceSource.remove(); await host._loadSection(true); });
-  await expect.poll(() => page.evaluate(() => deferredVoiceSource._configDirty)).toBe(false);
   await expect(target.locator("[data-voice-mapping-row]")).toHaveCount(3);
   await expect(target.locator('[data-error="voice_device_mappings"]')).toContainText("empty assignment");
+  // On Voice, competing rows now require explicit review (covered by
+  // voice-competing-recovery.spec.mjs). Keep this positive control for global
+  // Discard before that review, including Save of the subsequently shown map.
+  await navigate(target, "basics");
+  await target.evaluate(async host => { deferredVoiceSource.remove(); await host._loadSection(true); });
+  await expect.poll(() => page.evaluate(() => deferredVoiceSource._configDirty)).toBe(false);
   await target.locator("#revert-config").click();
   await target.evaluate(host => host._loadSection(true));
+  await navigate(target, "voice");
   await expect(target.locator("[data-voice-mapping-row]")).toHaveCount(2);
   await expect(target.locator(".voice-owner-type").nth(0)).toHaveValue("unretained");
   expect(await target.evaluate(host => host._draft.voice_device_mappings)).toEqual({...baseline, office:"unretained"});

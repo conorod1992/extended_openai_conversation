@@ -39,6 +39,7 @@ for (const bundled of [false, true]) for (const decision of ["keep", "discard"])
     picker.dispatchEvent(new CustomEvent("value-changed", {detail:{value:selected}, bubbles:true, composed:true}));
   }, value);
   await chooseSatellite(0, "assist_satellite.living");
+  await panel.locator('[data-config="voice_unmapped_policy"]').selectOption("shared");
   await expect(panel.locator('[data-error="voice_device_mappings"]')).toContainText("more than once");
   await mountFreshAccountPanel(panel);
   await expect(panel.locator("[data-voice-mapping-row]")).toHaveCount(2);
@@ -54,7 +55,10 @@ for (const bundled of [false, true]) for (const decision of ["keep", "discard"])
   await panel.evaluate(host => host._render());
   await review.getByRole("button", {name:decision === "keep" ? "Keep draft for later" : "Discard recovered edits", exact:true}).click();
   await chooseSatellite(1, "assist_satellite.living");
+  await expect(panel.locator(".voice-device-id").nth(1)).toHaveValue("living");
+  await expect(panel.locator('[data-error="voice_device_mappings"]')).toBeEmpty();
   await panel.locator(".voice-owner-type").nth(0).selectOption("unretained");
+  await panel.locator('[data-config="voice_unmapped_policy"]').selectOption("unretained");
   await expect(panel.locator('[data-error="voice_device_mappings"]')).toBeEmpty();
   await expect(review).toHaveCount(0);
   await panel.locator("#save-config").click();
@@ -69,9 +73,11 @@ for (const bundled of [false, true]) for (const decision of ["keep", "discard"])
       const retained = JSON.parse(await review.locator("textarea").inputValue());
       expect(retained.recovered).toEqual(copies.recovered);
       expect(retained.current.map(row => row.deviceId)).toEqual(["office", "living"]);
-      await review.getByRole("button", {name:"Keep draft for later", exact:true}).click();
+      await review.getByRole("button", {name:visit === 0 ? "Keep draft for later" : "Discard recovered edits", exact:true}).click();
     } else await expect(review).toHaveCount(0);
     expect(await panel.evaluate(host => host._draft.voice_device_mappings)).toEqual(expected);
+    await expect(panel.locator('[data-config="voice_unmapped_policy"]')).toHaveValue("unretained");
+    await expect(review).toHaveCount(0);
     await expect(panel.locator(".voice-device-id").nth(0)).toHaveValue("office");
     await expect(panel.locator(".voice-owner-type").nth(0)).toHaveValue("unretained");
   }

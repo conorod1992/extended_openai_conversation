@@ -53,6 +53,9 @@ function register(panel, state) {
     destinations:() => ["assistant/voice"],
     discard:() => {
       if (!current(panel, state)) return;
+      // A detached source may already have transferred its serialized draft.
+      // Retire those consumed values before row cleanup recomputes dirty state.
+      if (panel.isConnected === false && panel._configDirty === false) panel._unsavedState?.scopes.get("configuration")?.discard?.();
       state.rows = fromMapping(baselineMapping(panel));
       state.baseline = projection(state.rows);
       clearRecovery(state);

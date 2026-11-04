@@ -3,11 +3,12 @@ import test from "node:test";
 import {fixture, retire, saveConfiguration, discardConfigurationDraft, retainPanelDrafts, restorePanelDrafts, stopDraftRecovery} from "./management-ownership-harness.mjs";
 import {voiceMappingDraft, updateVoiceMappingRows, newVoiceMappingRow, voiceMappingDraftDirty, captureVoiceMappingDraft} from "../custom_components/extended_openai_conversation_responses/frontend/voice-mapping-draft.js";
 
-function setup() {
+function setup({prompt} = {}) {
   const f = fixture();
   for (const record of f.state.records.values()) record.config.voice_device_mappings = {office:"user:owner"};
   const source = f.create(), target = f.create();
   updateVoiceMappingRows(source, [{...newVoiceMappingRow(), deviceId:"living", owner:"shared:household"}]);
+  if (prompt) source._draft.prompt = prompt;
   source._syncConfigDirty();
   updateVoiceMappingRows(target, [...voiceMappingDraft(target).rows, newVoiceMappingRow()]);
   target._syncConfigDirty();
@@ -92,4 +93,38 @@ test("a resumed source save retires its earlier deferred recovery decision", asy
     assert.deepEqual(reopened._draft.voice_device_mappings, {hallway:"unretained"});
     assert.equal(voiceMappingDraftDirty(source), false);
   } finally { retire(source, target, ...(reopened ? [reopened] : [])); }
+});
+
+
+test("discarding only recovered Voice rows cannot revive already transferred configuration", async () => {
+  const f = setup({prompt:"Transferred prompt"}), {source, target} = f;
+  try {
+    assert.equal(target._draft.prompt, "Transferred prompt");
+    target._draft.prompt = "New saved destination prompt";
+    updateVoiceMappingRows(target, [{...newVoiceMappingRow(), deviceId:"bedroom", owner:"unretained"}]);
+    target._syncConfigDirty();
+    await saveConfiguration(target, null);
+    const retained = [...source._unsavedState.scopes.entries()].find(([id]) => id.startsWith("voice-mapping-rows:"))[1];
+    retained.discard();
+    restorePanelDrafts(target);
+    assert.equal(target._draft.prompt, "New saved destination prompt");
+    assert.equal(source._configDirty, false);
+    assert.equal(f.state.writes.length, 1);
+  } finally { retire(source, target); }
+});
+
+
+test("Voice-only Discard preserves configuration which has not transferred", () => {
+  const f = fixture(), source = f.create();
+  try {
+    updateVoiceMappingRows(source, [newVoiceMappingRow()]);
+    source._draft.prompt = "Untransferred source prompt";
+    source._syncConfigDirty();
+    source.isConnected = false;
+    const scope = [...source._unsavedState.scopes.entries()].find(([id]) => id.startsWith("voice-mapping-rows:"))[1];
+    scope.discard();
+    assert.equal(source._draft.prompt, "Untransferred source prompt");
+    assert.equal(source._configDirty, true);
+    assert.equal(voiceMappingDraftDirty(source), false);
+  } finally { retire(source); }
 });
