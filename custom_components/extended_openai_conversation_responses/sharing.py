@@ -648,6 +648,8 @@ def project_configuration(
         )
         if public:
             result[key] = deepcopy(value)
+        elif key == "function_groups":
+            continue  # Project coherent groups after their retained members are known.
         elif reviewed and key in AGENT_CONFIG_FIELDS and key != "functions":
             candidate = redacted.get(key)
             if not _unsafe(candidate):
@@ -670,10 +672,36 @@ def project_configuration(
                 result["functions"].append(deepcopy(candidate))
             else:
                 record_omission(summary, f"function_tool_{index + 1}")
-        if len(result["functions"]) != len(tools):
-            result["function_groups"] = []
     elif tools:
         record_omission(summary, "function_tool")
+    if reviewed:
+        groups = decoded.get("function_groups", [])
+        candidates = redacted.get("function_groups", [])
+        names = {tool["spec"]["name"] for tool in result["functions"]}
+        blocked_members: set[str] = set()
+        for index, group in enumerate(groups):
+            candidate = (
+                candidates[index]
+                if isinstance(candidates, list) and index < len(candidates)
+                else None
+            )
+            if not isinstance(candidate, dict) or _unsafe(candidate):
+                # Losing an unsafe group's metadata must not promote its members
+                # from disabled/on-demand to immediately available tools.
+                blocked_members.update(group.get("functions", []))
+                record_omission(summary, f"function_group_{index + 1}")
+                continue
+            members = [name for name in candidate.get("functions", []) if name in names]
+            if members or not group.get("functions"):
+                result["function_groups"].append(
+                    {**deepcopy(candidate), "functions": members}
+                )
+            else:
+                record_omission(summary, f"function_group_{index + 1}")
+        for tool in result["functions"]:
+            if tool["spec"]["name"] in blocked_members:
+                tool["enabled"] = False
+                record_omission(summary, "function_group_member_disabled")
     # Skills contain arbitrary external/custom content and dependency references.
     if not reviewed:
         result["function_groups"] = []

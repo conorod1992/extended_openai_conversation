@@ -70,7 +70,7 @@ export function renderOverview(panel, agent) {
   const setupHealth = buildSetupHealth(result.setup_health || {});
   const guest = agent.guest_mode || {};
   const warnings = [];
-  if (["active", "active_indefinitely"].includes(guest.state) && !guest.has_home_assistant_exclusions) warnings.push("Guest Mode is active without configured Home Assistant exclusions.");
+  if (["active", "active_indefinitely"].includes(guest.state) && guest.has_home_assistant_exclusions === false) warnings.push("Guest Mode is active without configured Home Assistant exclusions.");
   for (const issue of result.load_errors || []) warnings.push(`${issue.label} could not be loaded. Other overview information is still available.`);
   const loading = result.loading || {};
   const memoryCount = Number(agent.memory_count || 0).toLocaleString();

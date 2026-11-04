@@ -44,9 +44,11 @@ def model_capability_snapshot(
         _ACTIVE_CAPABILITY_SNAPSHOT.reset(token)
 
 
-def get_model_capabilities(model_id: str) -> dict[str, Any]:
+def get_model_capabilities(
+    model_id: str, *, provider: str | None = None
+) -> dict[str, Any]:
     """Return authoritative v2 capability data for one exact model ID."""
-    return model_metadata(model_id)
+    return model_metadata(model_id, provider=provider)
 
 
 def frontend_capabilities(

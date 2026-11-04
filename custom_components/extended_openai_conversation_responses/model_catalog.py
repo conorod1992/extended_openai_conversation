@@ -787,14 +787,38 @@ def all_reasoning_efforts() -> list[str]:
     )
 
 
-def model_metadata(model: str) -> dict[str, Any]:
+def model_metadata(model: str, *, provider: str | None = None) -> dict[str, Any]:
     """Return exact-ID metadata; unknown IDs receive conservative capabilities."""
     model_id = str(model or "").lower()
     item = _active_by_id.get(model_id)
+    if item is None and model_id == "o3-pro-2025-06-10":
+        item = _active_by_id.get("o3-pro")
     if item is not None:
-        return deepcopy(item)
-    result = cast(dict[str, Any], deepcopy(_active["defaults"]))
-    result.update({"id": model_id, "display_name": model_id, "kind": "custom"})
+        result = deepcopy(item)
+        result["id"] = model_id
+    else:
+        result = cast(dict[str, Any], deepcopy(_active["defaults"]))
+        result.update({"id": model_id, "display_name": model_id, "kind": "custom"})
+    # Adjustable effort and reasoning-token consumption are different contracts.
+    # OpenAI documents o3-pro's token use without an adjustable-effort enum;
+    # Azure explicitly documents the o-series low/medium/high parameter.
+    o3_pro = model_id in {"o3-pro", "o3-pro-2025-06-10"}
+    result["uses_reasoning_tokens"] = bool(result["reasoning"]["supported"] or o3_pro)
+    if provider == "azure" and o3_pro:
+        efforts = ["low", "medium", "high"]
+        result["reasoning"] = {
+            "supported": True,
+            "efforts": efforts,
+            "openai_default": None,
+            "by_api": {
+                "responses": {"efforts": efforts},
+                "chat_completions": {"efforts": []},
+            },
+        }
+        result["recommended_profile"] = {
+            **result["recommended_profile"],
+            "reasoning_effort": "low",
+        }
     return result
 
 
@@ -836,6 +860,9 @@ def compatibility_capabilities(
         "supports_max_completion_tokens": metadata["output_tokens"]["chat_completions"]
         == "max_completion_tokens",
         "supports_reasoning_effort": metadata["reasoning"]["supported"],
+        "uses_reasoning_tokens": metadata.get(
+            "uses_reasoning_tokens", metadata["reasoning"]["supported"]
+        ),
         "supports_service_tier": bool(metadata["service_tiers"]),
         "service_tier_options": list(metadata["service_tiers"]),
         "reasoning_effort_options": list(metadata["reasoning"]["efforts"]),

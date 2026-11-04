@@ -66,6 +66,8 @@ Routing precedence for a provider request is:
 
 Conversation overrides use the current conversation/continuity identity and expire with it. They do not change the saved agent configuration.
 
+For Azure, a routed deployment and its underlying model travel together. Enter **Underlying Azure model** (`azure_model` in the action JSON) when routing to a different custom deployment name. An exact catalogued model name can supply its own identity; routing to the configured deployment reuses that deployment’s saved binding. A different unknown deployment alias without a binding is rejected before changing the conversation route. Request-only and conversation resets restore the corresponding configured deployment/model pair.
+
 A reset follows the same explicit flow choice. With **Continue to AI** on and **This request only**, the configured agent defaults apply to that one provider call while any saved conversation override remains in place for the next normal request. A **Rest of this conversation** reset clears the saved conversation override.
 
 Existing routing rules created before this option was added retain their previous behaviour when first loaded: Equals and Sentence pattern rules remain standalone, while Starts with, Ends with, and Contains rules continue to the provider. Once normalized, that choice is stored explicitly and no longer changes when the match type changes.

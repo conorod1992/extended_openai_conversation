@@ -593,17 +593,17 @@ def test_system_prompt_allows_advanced_home_assistant_templates() -> None:
 
 
 def test_reasoning_default_and_explicit_validation(monkeypatch) -> None:
-    monkeypatch.setattr(agent_config, "get_reasoning_effort_options", lambda _model: [])
+    monkeypatch.setattr(agent_config, "get_reasoning_effort_options", lambda _model, **_kwargs: [])
     monkeypatch.setattr(
         agent_config,
         "get_model_config",
-        lambda _model: {"recommended_profile": {}},
+        lambda _model, **_kwargs: {"recommended_profile": {}},
     )
     result = normalize_agent_config({})
     assert agent_config.CONF_REASONING_EFFORT not in result
 
     monkeypatch.setattr(
-        agent_config, "get_reasoning_effort_options", lambda _model: ["low", "high"]
+        agent_config, "get_reasoning_effort_options", lambda _model, **_kwargs: ["low", "high"]
     )
     with pytest.raises(AgentConfigError, match=r"reasoning_effort.*unsupported"):
         normalize_agent_config({agent_config.CONF_REASONING_EFFORT: "medium"})

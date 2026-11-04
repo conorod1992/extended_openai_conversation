@@ -1,3 +1,4 @@
+import {prepareRulePackDownload} from "./rule-pack-download.js";
 import {captureAuthentication} from "./authentication-presentation.js";
 import {captureConfigurationOwner, presentAcknowledgedMutation, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
 import {applyRulePackImportMutation, refreshRuleSharingGroups} from "./request-rules-ui-core.js";
@@ -5,8 +6,8 @@ import {reviewSharingExport, SHARING_CONTRACT} from "./sharing-review.js";
 
 const MAX_PACK_BYTES=2*1024*1024;
 
-function downloadPack(pack) {
-  const blob=new Blob([JSON.stringify(pack,null,2)],{type:"application/json"});
+
+function downloadPack(blob) {
   const url=URL.createObjectURL(blob), link=document.createElement("a");
   link.href=url;link.download="request-rule-pack.json";link.click();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
@@ -36,9 +37,10 @@ export function bindRuleSharing(panel, host) {
     try{
       const pack=await panel._call("request_rules","rule_pack_export",{selection,group_id:selection==="group"?(groupSelect.value||null):null,rule_ids:ruleIds,reviewed_custom:Boolean(q("#rule-pack-reviewed-custom")?.checked)});
       if(!current())return;
-      if(!await reviewSharingExport(panel,{json:JSON.stringify(pack,null,2),security:pack.security}))return;
+      const download=prepareRulePackDownload(pack);
+      if(!await reviewSharingExport(panel,{json:download.json,security:pack.security}))return;
       if(!current())return;
-      downloadPack(pack);setMessage(`${pack.rules.length} rules exported.`);
+      downloadPack(download.blob);setMessage(`${pack.rules.length} rules exported.`);
     }catch(err){setMessage(err.message||String(err));}
   };
   const selectDialog=q("#rule-pack-select-dialog");

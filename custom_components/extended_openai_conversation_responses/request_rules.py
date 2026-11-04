@@ -2019,6 +2019,7 @@ def _validate_action(
         }
     allowed = {
         "model",
+        "azure_model",
         "reasoning_effort",
         "scope",
         "reset",
@@ -2038,13 +2039,15 @@ def _validate_action(
     if scope not in ROUTING_SCOPES:
         raise ValueError("unsupported routing scope")
     model = str(value.get("model") or "").strip()
+    underlying_model = str(value.get("azure_model") or "").strip()
     effort = str(value.get("reasoning_effort") or "").strip()
     if reset:
         model = ""
+        underlying_model = ""
         effort = ""
     if not reset and not model and not effort:
         raise ValueError("model routing must set a model or reasoning effort")
-    for routing_value in (model, effort):
+    for routing_value in (model, effort, underlying_model):
         if any(marker in routing_value for marker in ("{{", "{%", "{#")):
             raise ValueError(
                 "model routing captured values must use simple {name} references"
@@ -2058,6 +2061,7 @@ def _validate_action(
         raise ValueError("unsupported reasoning effort")
     return {
         "model": model or None,
+        **({"azure_model": underlying_model} if underlying_model else {}),
         "reasoning_effort": effort or None,
         "scope": scope,
         "reset": reset,
@@ -3310,15 +3314,21 @@ def validate_rule_model_request(
     action = rule["action"]
     if action.get("reset"):
         return
-    values = {
-        CONF_CHAT_MODEL: action.get("model"),
-        CONF_REASONING_EFFORT: action.get("reasoning_effort"),
-    }
-    model = values[CONF_CHAT_MODEL]
+    from .model_routing import routed_model_override
+
+    model = action.get("model")
     if isinstance(model, str) and SLOT_REFERENCE.search(model):
         return  # A captured model is validated once resolved, before storing state.
-    candidate = {**options, **{key: value for key, value in values.items() if value}}
-    effort = values[CONF_REASONING_EFFORT]
+    underlying_model = action.get("azure_model")
+    if isinstance(underlying_model, str) and SLOT_REFERENCE.search(underlying_model):
+        return  # The complete deployment/binding pair is checked after capture resolution.
+    values = routed_model_override(options, model, underlying_model, entry_data)
+    effort = action.get("reasoning_effort")
+    candidate = {
+        **options,
+        **values,
+        **({CONF_REASONING_EFFORT: effort} if effort else {}),
+    }
     if isinstance(effort, str) and SLOT_REFERENCE.search(effort):
         # Dynamic reasoning cannot excuse a statically incompatible model/API.
         # Effort-dependent features still receive full validation at execution.
@@ -3342,7 +3352,11 @@ def validate_rule_model_request(
         from .request import capability_model_identity
 
         _validate_effective_reasoning(
-            capability_model_identity(candidate, entry_data), effort
+            capability_model_identity(candidate, entry_data),
+            effort,
+            provider=effective_api_provider(
+                entry_data.get("api_provider"), entry_data.get("base_url")
+            ),
         )
     validate_routed_request_options(candidate, entry_data)
 
@@ -3371,12 +3385,12 @@ def _resolved_routing_value(value: str, slots: Mapping[str, str], field: str) ->
 
 
 def _validate_effective_reasoning(
-    model: str, effort: str, *, captured: bool = False
+    model: str, effort: str, *, captured: bool = False, provider: str | None = None
 ) -> None:
     """Validate a resolved reasoning value against the model that will receive it."""
-    if not get_model_config(model).get("supports_reasoning_effort"):
+    if not get_model_config(model, provider=provider).get("supports_reasoning_effort"):
         raise HomeAssistantError(f"Model {model} does not support reasoning effort")
-    if effort not in get_reasoning_effort_options(model):
+    if effort not in get_reasoning_effort_options(model, provider=provider):
         if captured:
             raise HomeAssistantError(f"Unsupported captured reasoning effort: {effort}")
         raise HomeAssistantError(
@@ -3541,6 +3555,11 @@ async def async_evaluate_rule(
                     applied = runtime.get(session_id, timeout_minutes)
                     for key, value in (
                         (CONF_CHAT_MODEL, action["model"]),
+                        (
+                            "azure_model",
+                            action.get("azure_model")
+                            or (action["model"] if "azure_model" in applied else None),
+                        ),
                         (CONF_REASONING_EFFORT, action["reasoning_effort"]),
                     ):
                         if value:
@@ -3903,17 +3922,24 @@ async def _async_evaluate_matched_rule(
     selected_model = (
         model or conversation_override.get(CONF_CHAT_MODEL) or configured_model
     )
-    # Azure requests use deployment identities, with capabilities explicitly
-    # asserted by the agent's underlying-model binding just as provider setup does.
-    capability_model = (
-        str(request_options.get("azure_model") or selected_model)
-        if request_options is not None
-        and effective_api_provider(
-            (entry_data or {}).get("api_provider"), (entry_data or {}).get("base_url")
-        )
-        == "azure"
-        else selected_model
+    from .model_routing import routed_model_override
+    from .request import capability_model_identity
+
+    underlying_model = (
+        _resolved_routing_value(action["azure_model"], match.slots, "Azure model")
+        if action.get("azure_model")
+        else None
     )
+    override = routed_model_override(
+        request_options or {CONF_CHAT_MODEL: configured_model},
+        model,
+        underlying_model,
+        entry_data or {},
+        conversation_override,
+    )
+    candidate = {**(request_options or {}), **conversation_override, **override}
+    candidate.setdefault(CONF_CHAT_MODEL, selected_model)
+    capability_model = capability_model_identity(candidate, entry_data or {})
     if effort:
         captured_effort = bool(
             action["reasoning_effort"]
@@ -3926,18 +3952,26 @@ async def _async_evaluate_matched_rule(
             capability_model,
             effort,
             captured=captured_effort and not captured_model,
+            provider=effective_api_provider(
+                (entry_data or {}).get("api_provider"),
+                (entry_data or {}).get("base_url"),
+            ),
         )
 
-    override = {}
-    if model:
-        override[CONF_CHAT_MODEL] = model
     if effort:
         override[CONF_REASONING_EFFORT] = effort
     combined_override = {**conversation_override, **override}
     combined_model = combined_override.get(CONF_CHAT_MODEL, configured_model)
     combined_effort = combined_override.get(CONF_REASONING_EFFORT)
     if combined_effort and (not effort or combined_model != selected_model):
-        _validate_effective_reasoning(capability_model, combined_effort)
+        _validate_effective_reasoning(
+            capability_model,
+            combined_effort,
+            provider=effective_api_provider(
+                (entry_data or {}).get("api_provider"),
+                (entry_data or {}).get("base_url"),
+            ),
+        )
     if request_options is not None:
         validate_routed_request_options(
             {**request_options, **combined_override}, entry_data or {}

@@ -68,6 +68,7 @@ from .const import (
     CONF_SHARED_MEMORY_MODE,
     CONF_USAGE_REQUEST_RETENTION_DAYS,
     CONF_USAGE_RUN_RETENTION_DAYS,
+    DEFAULT_CHAT_MODEL,
     DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
     DEFAULT_SHARED_MEMORY_MODE,
     DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
@@ -237,13 +238,17 @@ def _configuration_options() -> dict[str, list[dict[str, Any]]]:
 
 
 @lru_cache(maxsize=64)
-def _cached_model_capabilities(model: str, generation: int = 0) -> dict[str, Any]:
+def _cached_model_capabilities(
+    model: str, generation: int = 0, provider: str | None = None
+) -> dict[str, Any]:
     """Cache exact model capabilities within one active catalogue generation."""
-    return model_capabilities(model)
+    return model_capabilities(model, provider=provider)
 
 
-def _configuration_model_capabilities(model: str) -> dict[str, Any]:
-    return deepcopy(_cached_model_capabilities(model, catalog_generation()))
+def _configuration_model_capabilities(
+    model: str, *, provider: str | None = None
+) -> dict[str, Any]:
+    return deepcopy(_cached_model_capabilities(model, catalog_generation(), provider))
 
 
 def _elapsed_ms(start: float) -> float:
@@ -932,10 +937,16 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
             for tool in configured_tools
             if function_tool_enabled(tool) and not is_ha_tool(tool)
         ]
+        from .helpers import effective_api_provider
         from .request import capability_model_identity
 
         entry_data = getattr(request.entry, "data", {})
-        snapshot["api_provider"] = entry_data.get(CONF_API_PROVIDER, "openai")
+        snapshot["api_provider"] = effective_api_provider(
+            entry_data.get(CONF_API_PROVIDER), entry_data.get("base_url")
+        )
+        snapshot["configured_model"] = subentry.data.get(
+            CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL
+        )
         # An absent Azure binding means each routed deployment supplies its own
         # capability identity; the base effective model is not a binding.
         snapshot["azure_model"] = subentry.data.get("azure_model") or None
@@ -1376,7 +1387,8 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
     phase = perf_counter()
     capability_hits = _cached_model_capabilities.cache_info().hits
     capabilities = _configuration_model_capabilities(
-        str(snapshot.get("azure_model") or snapshot[CONF_CHAT_MODEL])
+        str(snapshot.get("azure_model") or snapshot[CONF_CHAT_MODEL]),
+        provider="azure" if snapshot.get("azure_model") else None,
     )
     timings["model_capabilities_ms"] = _elapsed_ms(phase)
     timings["model_capabilities_cache_hit"] = (
@@ -1568,7 +1580,8 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
 
         phase = perf_counter()
         capabilities = _configuration_model_capabilities(
-            str(config.get("azure_model") or config[CONF_CHAT_MODEL])
+            str(config.get("azure_model") or config[CONF_CHAT_MODEL]),
+            provider="azure" if config.get("azure_model") else None,
         )
         model_capabilities_ms = _elapsed_ms(phase)
 
@@ -1657,7 +1670,8 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
                 str(
                     result["config"].get("azure_model")
                     or result["config"][CONF_CHAT_MODEL]
-                )
+                ),
+                provider="azure" if result["config"].get("azure_model") else None,
             )
         return result
     if action == "update":
@@ -1706,7 +1720,8 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             "title": saved_title,
             "config": snapshot,
             "model_capabilities": model_capabilities(
-                str(snapshot.get("azure_model") or snapshot[CONF_CHAT_MODEL])
+                str(snapshot.get("azure_model") or snapshot[CONF_CHAT_MODEL]),
+                provider="azure" if snapshot.get("azure_model") else None,
             ),
         }
         if refresh_local_handling:

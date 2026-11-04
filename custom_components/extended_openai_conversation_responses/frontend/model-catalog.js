@@ -24,9 +24,17 @@ export function observeCatalogGeneration(panel, result = {}, forceInvalidate = f
 }
 
 export async function lookupModelData(panel, model = "", action = "lookup", isCurrent = () => true) {
-  const result = await panel._hass.callWS({
-    type: "extended_openai_conversation_responses/model_catalog", action, model,
-  });
+  const request={type:"extended_openai_conversation_responses/model_catalog",action,model};
+  if(panel._result?.api_provider === "azure" || panel._draft?.azure_model || panel._configData?.config?.azure_model) request.provider="azure";
+  let result;
+  try { result=await panel._hass.callWS(request); }
+  catch(error) {
+    // Older HA backends reject an unknown field before dispatching the action.
+    // Retry only that typed schema rejection, never an uncertain operation.
+    if(!request.provider || error?.code!=="invalid_format" || !String(error.message).includes("provider")) throw error;
+    const {provider: _provider,...legacy}=request;
+    result=await panel._hass.callWS(legacy);
+  }
   // A committed global mutation invalidates caches even if its initiating
   // editor no longer owns the returned model-specific presentation.
   const current = isCurrent();

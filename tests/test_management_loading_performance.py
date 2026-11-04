@@ -1647,7 +1647,7 @@ async def test_save_model_metadata_reuses_only_unchanged_model(monkeypatch) -> N
          "revision": ordinary["revision"],
          "action": "save", "config": {"chat_model": "gpt-5"}},
     )
-    capabilities.assert_called_once_with("gpt-5")
+    capabilities.assert_called_once_with("gpt-5", provider=None)
     assert model["_performance"]["model_capabilities_cache_hit"] is False
     expected = model["model_capabilities"]["supports_temperature"]
     model["model_capabilities"]["supports_temperature"] = not expected

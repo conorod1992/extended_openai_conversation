@@ -66,6 +66,11 @@ def request_rule_match_preview(match: RuleMatch | None) -> dict[str, Any]:
             "type": "model_routing",
             "reset": bool(action.get("reset")),
             "model": action.get("model"),
+            **(
+                {"azure_model": action["azure_model"]}
+                if action.get("azure_model")
+                else {}
+            ),
             "reasoning_effort": action.get("reasoning_effort"),
             "scope": action.get("scope"),
             "consumed": consumed,

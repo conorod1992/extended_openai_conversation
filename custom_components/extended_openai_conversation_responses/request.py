@@ -333,7 +333,12 @@ def request_model_capabilities(
     capabilities = (
         model_capabilities
         if model_capabilities is not None
-        else get_model_capabilities(capability_model_identity(options, entry_data))
+        else get_model_capabilities(
+            capability_model_identity(options, entry_data),
+            provider=effective_api_provider(
+                entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
+            ),
+        )
     )
     if (
         capabilities.get("status") == "unknown"
@@ -404,7 +409,10 @@ def context_summary_request_settings(
             effort = validate_reasoning_effort(model, raw_effort, api_mode)
         # The visible summary is prompted to stay short. Reasoning shares the
         # output allowance, so a reasoning request needs substantially more room.
-        limit = 8192 if effort not in {None, "none"} else 512
+        reasons = capabilities.get(
+            "uses_reasoning_tokens", capabilities["reasoning"]["supported"]
+        )
+        limit = 8192 if reasons and effort != "none" else 512
         limit = min(
             limit * (2 if retry else 1), capabilities["limits"]["max_output_tokens"]
         )

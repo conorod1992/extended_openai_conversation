@@ -30,7 +30,7 @@ Existing agents that predate context-strategy storage can retain this legacy fal
 
 ## Summarize older messages
 
-Makes a bounded model request to summarize older context while retaining recent raw turns. It uses the effective model and reasoning effort for that request, including Request Rule overrides. The instruction targets at most 256 visible summary tokens. The total output allowance is 512 tokens without reasoning, or 8,192 with reasoning, because hidden reasoning shares that allowance. Both are capped by the model's supported output limit.
+Makes a bounded model request to summarize older context while retaining recent raw turns. It uses the effective model and reasoning effort for that request, including Request Rule overrides. The instruction targets at most 256 visible summary tokens. The total output allowance is 512 tokens without reasoning, or 8,192 with reasoning, including implicit/fixed reasoning such as o3-pro, because hidden reasoning shares that allowance. Both are capped by the model's supported output limit.
 
 Ordinary summary maintenance runs after the current reply is complete. Oversized prepared input can also require summarization before sending a provider request. If another turn arrives before deferred summarization finishes, the integration waits for and applies the pending summary before sending the next provider request. This preserves the same conversation context rather than temporarily falling back to an incomplete history.
 

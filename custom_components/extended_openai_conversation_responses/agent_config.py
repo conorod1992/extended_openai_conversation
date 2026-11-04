@@ -955,11 +955,12 @@ def normalize_reasoning_defaults(config: dict[str, Any], *, explicit: bool) -> N
     selected_model = str(
         config.get("azure_model") or config.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
     )
-    if not get_reasoning_effort_options(selected_model):
+    provider = "azure" if config.get("azure_model") else None
+    if not get_reasoning_effort_options(selected_model, provider=provider):
         config.pop(CONF_REASONING_EFFORT, None)
     elif not explicit:
         recommended = (
-            get_model_config(selected_model)
+            get_model_config(selected_model, provider=provider)
             .get("recommended_profile", {})
             .get("reasoning_effort")
         )
@@ -1083,7 +1084,9 @@ def normalize_agent_config(
     selected_model = str(
         result.get("azure_model") or result.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
     )
-    reasoning_options = get_reasoning_effort_options(selected_model)
+    reasoning_options = get_reasoning_effort_options(
+        selected_model, provider="azure" if result.get("azure_model") else None
+    )
 
     _require_type(
         result,
@@ -1434,12 +1437,14 @@ def agent_config_snapshot(
     )
 
 
-def model_capabilities(model: str) -> dict[str, Any]:
+def model_capabilities(model: str, *, provider: str | None = None) -> dict[str, Any]:
     """Return model-specific fields and choices supported by the backend."""
     from .model_capabilities import frontend_capabilities
+    from .model_catalog import model_metadata
 
-    capabilities: dict[str, Any] = frontend_capabilities(model)
-    capabilities["reasoning_effort_options"] = get_reasoning_effort_options(model)
+    capabilities: dict[str, Any] = frontend_capabilities(
+        model, metadata=model_metadata(model, provider=provider)
+    )
     return capabilities
 
 

@@ -43,19 +43,23 @@ def get_api_mode(
     return select_api_path(model, configured_mode, tools_required, effort, web_search)
 
 
-def get_model_config(model: str) -> dict[str, Any]:
+def get_model_config(model: str, *, provider: str | None = None) -> dict[str, Any]:
     """Return legacy-compatible booleans derived from v2 capability data.
 
     `supports_max_tokens` is deliberately always false. Older call sites that still
     branch on this helper therefore normalize onto max_completion_tokens instead of
     ever emitting the deprecated max_tokens field.
     """
-    return compatibility_capabilities(model)
+    return compatibility_capabilities(
+        model, metadata=model_metadata(model, provider=provider)
+    )
 
 
-def get_reasoning_effort_options(model: str) -> list[str]:
+def get_reasoning_effort_options(
+    model: str, *, provider: str | None = None
+) -> list[str]:
     """Return the exact model-specific reasoning enum from the active catalogue."""
-    return list(model_metadata(model)["reasoning"]["efforts"])
+    return list(model_metadata(model, provider=provider)["reasoning"]["efforts"])
 
 
 def get_exposed_entities(hass: HomeAssistant) -> list[dict[str, Any]]:

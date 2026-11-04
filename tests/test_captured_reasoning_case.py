@@ -64,7 +64,11 @@ async def test_captured_effort_is_canonical_before_validation_and_storage(
     assert result is not None and result.consume
     assert result.match.slots["effort"] == display
     saved = runtime.get("session")
-    assert saved == {"chat_model": model, "reasoning_effort": "high"}
+    assert saved == {
+        "chat_model": model,
+        "reasoning_effort": "high",
+        **({"azure_model": "gpt-5"} if azure else {}),
+    }
     snapshot = build_provider_request_snapshot(
         {**options, **saved}, entry, tools_required=False
     )

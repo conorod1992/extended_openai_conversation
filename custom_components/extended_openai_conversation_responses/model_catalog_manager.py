@@ -570,6 +570,7 @@ class ModelCatalogManager:
             ("status", "lookup", "check", "update", "apply", "reset")
         ),
         vol.Optional("model", default=""): vol.All(str, vol.Length(max=128)),
+        vol.Optional("provider"): vol.In(["openai", "azure"]),
     }
 )
 @websocket_api.require_admin
@@ -604,7 +605,7 @@ async def websocket_catalog(
             )
             return
 
-    metadata = model_metadata(msg["model"])
+    metadata = model_metadata(msg["model"], provider=msg.get("provider"))
     capabilities = frontend_capabilities(msg["model"], metadata=metadata)
     connection.send_result(
         msg["id"],

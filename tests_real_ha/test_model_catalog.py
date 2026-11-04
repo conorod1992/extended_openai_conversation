@@ -36,9 +36,9 @@ async def test_admin_update_reload_and_reset_using_registered_command(
     next(item for item in value["models"] if item["id"] == "gpt-5.6")["reasoning"][
         "efforts"
     ].append("minimal")
-    next(item for item in value["models"] if item["id"] == "gpt-5.6")[
-        "reasoning"
-    ]["by_api"]["responses"]["efforts"].append("minimal")
+    next(item for item in value["models"] if item["id"] == "gpt-5.6")["reasoning"][
+        "by_api"
+    ]["responses"]["efforts"].append("minimal")
 
     async def chunks(_size):
         yield json.dumps(value).encode()
@@ -112,3 +112,20 @@ async def test_admin_update_reload_and_reset_using_registered_command(
     assert restarted.catalog is None
     assert restarted.available_catalog == value
     assert restarted.etag == '"catalog-2"'
+
+    # The registered schema accepts provider-aware lookups without leaking the
+    # Azure effort profile into the shared OpenAI catalogue or another lookup.
+    for provider, expected in [("azure", ["low", "medium", "high"]), ("openai", [])]:
+        await admin.send_json_auto_id(
+            {
+                "type": runtime.WS_CATALOG,
+                "action": "lookup",
+                "model": "o3-pro",
+                "provider": provider,
+            }
+        )
+        response = await admin.receive_json()
+        assert response["success"] is True
+        assert response["result"]["reasoning_effort_options"] == expected
+        assert response["result"]["model_capabilities"]["uses_reasoning_tokens"] is True
+    assert get_reasoning_effort_options("o3-pro") == []

@@ -202,3 +202,23 @@ for (const change of ["agent", "model", "route", "load", "generation", "draft"])
   assert.deepEqual(host._result.model_capabilities, {marker:"newer"});
   assert.equal(state.refreshes, 1);
 }
+
+
+// The provider-aware lookup is compatible with older backends only after a
+// definite schema rejection; a transport failure must never repeat an action.
+for (const code of ["invalid_format", "connection_lost"]) {
+  const calls=[];
+  const compatible={_result:{api_provider:"azure"},_hass:{callWS:async request=>{
+    calls.push(request);
+    if(calls.length===1) throw {code,message:"extra keys not allowed: provider"};
+    return {};
+  }}};
+  if(code==="invalid_format") {
+    await lookupModelData(compatible,"o3-pro","apply");
+    assert.equal(calls.length,2);assert.equal(calls[0].provider,"azure");
+    assert.equal(Object.hasOwn(calls[1],"provider"),false);
+  } else {
+    await assert.rejects(lookupModelData(compatible,"o3-pro","apply"));
+    assert.equal(calls.length,1);
+  }
+}

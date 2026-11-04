@@ -36,7 +36,9 @@ DIST = Path("custom_components/extended_openai_conversation_responses/frontend/d
 # headroom and the separate entry/CSS ceilings.
 # Expired finite Guest activation now requires an explicit future end or
 # indefinite choice. The local validation adds 243 reviewed JS bytes.
-CEILINGS = {"javascript": 880_800, "css": 65_000, "management_entry": 120_000}
+# Azure route binding controls, provider-aware lookups and bounded Rule Pack
+# download preparation add about 1.1 KiB. Keep the entry and CSS limits intact.
+CEILINGS = {"javascript": 881_900, "css": 65_000, "management_entry": 120_000}
 
 
 def measure(dist: Path) -> dict[str, int]:

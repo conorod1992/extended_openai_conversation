@@ -56,9 +56,7 @@ async def test_overview_usage_detail_hides_latest_for_non_admin(
 
 
 @pytest.mark.asyncio
-async def test_overview_usage_detail_keeps_latest_for_admin(
-    hass, monkeypatch
-) -> None:
+async def test_overview_usage_detail_keeps_latest_for_admin(hass, monkeypatch) -> None:
     entry, subentry = _entry_and_subentry()
     monkeypatch.setattr(loading, "async_get_usage", AsyncMock(return_value=object()))
     monkeypatch.setattr(
@@ -136,9 +134,7 @@ async def test_overview_knowledge_detail_projects_feature_status(
 
 
 @pytest.mark.asyncio
-async def test_overview_guest_mode_detail_uses_loaded_status(
-    hass, monkeypatch
-) -> None:
+async def test_overview_guest_mode_detail_uses_loaded_status(hass, monkeypatch) -> None:
     entry, subentry = _entry_and_subentry()
     guest = SimpleNamespace(status=Mock(return_value={"active": True}))
     monkeypatch.setattr(
@@ -155,7 +151,10 @@ async def test_overview_guest_mode_detail_uses_loaded_status(
         kind="guest_mode",
     )
 
-    assert result["agent"]["guest_mode"] == {"active": True}
+    assert result["agent"]["guest_mode"] == {
+        "active": True,
+        "has_home_assistant_exclusions": False,
+    }
     guest.status.assert_called_once()
 
 

@@ -88,3 +88,7 @@ configured output limit. Models listed in the catalog use their exact mapping;
 OpenAI and Azure retain `max_completion_tokens`. Responses uses `max_output_tokens`.
 Catalog schema 8 also permits a model to specify `chat_completions: max_tokens`
 with `legacy_max_tokens: chat_completions_only`. Older schema catalogs remain readable.
+
+### Implicit reasoning and provider-specific effort
+
+Reasoning-token consumption is separate from an adjustable reasoning-effort parameter. Both OpenAI and Azure o3-pro use the reasoning summary budget, including the documented `o3-pro-2025-06-10` snapshot. Azure offers its documented `low`, `medium`, and `high` choices. OpenAI’s model-specific documentation does not establish that same adjustable enumeration, so EOAI retains its conservative effort controls for OpenAI while budgeting for implicit reasoning. These provider projections do not change the downloadable catalogue schema.

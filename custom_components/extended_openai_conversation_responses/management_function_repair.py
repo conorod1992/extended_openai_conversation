@@ -633,7 +633,8 @@ def safe_configuration_payload(
             "defaults": deepcopy(_cached_repair_defaults(catalog_generation())),
             "options": management_ui.agent_config_options(),
             "model_capabilities": management_ui._configuration_model_capabilities(
-                config[management_ui.CONF_CHAT_MODEL]
+                config.get("azure_model") or config[management_ui.CONF_CHAT_MODEL],
+                provider="azure" if config.get("azure_model") else None,
             ),
             "function_types": sorted(management_ui.FUNCTIONS),
             "function_repair": {
