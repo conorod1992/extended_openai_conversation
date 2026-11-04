@@ -488,6 +488,8 @@ def _public_manager(
     manager._lock = asyncio.Lock()
     manager._initialized = True
     manager._unsubscribers = []
+    manager._timezone_unsubscribe = None
+    manager._stopping = False
     manager._registered_state_entity_id = None
     manager._published_state = None
     manager._registry_unsubscribe = None
@@ -1022,6 +1024,7 @@ def _hass(states=None):
     return SimpleNamespace(
         data={},
         states=_States(states),
+        bus=SimpleNamespace(async_listen=Mock(return_value=Mock())),
         services=SimpleNamespace(async_call=AsyncMock()),
     )
 
@@ -1038,6 +1041,8 @@ def _runtime_manager(hass=None, *, initialized=True):
     manager._lock = asyncio.Lock()
     manager._initialized = initialized
     manager._unsubscribers = []
+    manager._timezone_unsubscribe = None
+    manager._stopping = False
     return manager
 
 
@@ -1549,6 +1554,8 @@ def _bare_runtime_manager(
     manager._lock = asyncio.Lock()
     manager._initialized = True
     manager._unsubscribers = []
+    manager._timezone_unsubscribe = None
+    manager._stopping = False
     return manager
 
 
@@ -2074,7 +2081,9 @@ async def test_prepared_volume_intent_survives_policy_change(monkeypatch, hass):
 
 
 @pytest.mark.asyncio
-async def test_same_physical_control_with_new_satellite_keeps_ownership(hass, monkeypatch):
+async def test_same_physical_control_with_new_satellite_keeps_ownership(
+    hass, monkeypatch
+):
     _install_registry(monkeypatch, "bedroom")
     manager = _stateful_public_manager(hass)
     manager._config = _config(wake_sound="unchanged")
@@ -2124,7 +2133,9 @@ async def test_retarget_to_original_values_needs_no_second_restore(monkeypatch, 
 
 
 @pytest.mark.asyncio
-async def test_manual_same_value_adjustment_during_satellite_save_is_preserved(hass, monkeypatch):
+async def test_manual_same_value_adjustment_during_satellite_save_is_preserved(
+    hass, monkeypatch
+):
     _install_registry(monkeypatch, "bedroom")
     manager = _stateful_public_manager(hass)
     manager._config = _config(max_volume=0.1, wake_sound="unchanged")
@@ -2203,3 +2214,36 @@ async def test_failed_period_metadata_save_retains_continuous_quiet_volume(
     calls.clear()
     await manager.async_update_config(_config(enabled=False).as_dict())
     assert calls == [("media_player.bedroom", 0.55)]
+
+
+@pytest.mark.parametrize(
+    "stopping,event_data",
+    [(False, {"elevation": 10}), (True, {"time_zone": "Europe/Paris"})],
+)
+async def test_timezone_callback_ignores_unrelated_updates_and_retired_managers(
+    stopping, event_data
+):
+    manager = _runtime_manager()
+    manager._stopping = stopping
+    manager._reschedule = Mock()
+    manager.async_reconcile = AsyncMock()
+    await manager._handle_core_config_update(SimpleNamespace(data=event_data))
+    manager._reschedule.assert_not_called()
+    manager.async_reconcile.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "failure", [ValueError("storage unavailable"), asyncio.CancelledError()]
+)
+async def test_timezone_callback_preserves_failure_and_cancellation_contracts(failure):
+    manager = _runtime_manager()
+    manager._reschedule = Mock()
+    manager.async_reconcile = AsyncMock(side_effect=failure)
+    event = SimpleNamespace(data={"time_zone": "Europe/Paris"})
+    if isinstance(failure, asyncio.CancelledError):
+        with pytest.raises(asyncio.CancelledError):
+            await manager._handle_core_config_update(event)
+    else:
+        await manager._handle_core_config_update(event)
+    manager._reschedule.assert_called_once_with()
+    manager.async_reconcile.assert_awaited_once_with()
