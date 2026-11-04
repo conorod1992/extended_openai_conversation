@@ -1049,7 +1049,7 @@ test("cold Quiet Hours loads native entity pickers and saves both manual selecti
     const picker=card.locator(`ha-entity-picker[data-kind="${kind}"]`);
     await expect(picker.locator("ha-picker-field")).toBeVisible({timeout:30000});
     await picker.locator("ha-picker-field").click();
-    await picker.locator("ha-combo-box-item").filter({hasText:label}).locator("button").click();
+    await picker.getByRole("option").filter({hasText:label}).click();
     await expect(picker).toHaveJSProperty("value",entityId);
     expect(await picker.evaluate(element=>Boolean(element.shadowRoot) && element.getBoundingClientRect().height>0)).toBe(true);
   };
@@ -1096,13 +1096,13 @@ test("cold Voice user pickers select a secondary HA user and keep its name after
   await page.reload();
   await expect(defaultPicker.locator('ha-generic-picker')).toHaveCount(1);
   await defaultPicker.locator('ha-picker-field').click();
-  await defaultPicker.locator('ha-picker-combo-box ha-combo-box-item').filter({hasText:secondaryName}).locator('button').click();
+  await defaultPicker.getByRole('option').filter({hasText:secondaryName}).click();
   await expect(defaultPicker).toHaveJSProperty('value',secondaryId);
   const mappingPicker=panel.locator('.voice-owner-user-picker');
   await panel.locator('.voice-owner-type').selectOption('user');
   await expect(mappingPicker.locator('ha-generic-picker')).toHaveCount(1);
   await mappingPicker.locator('ha-picker-field').click();
-  await mappingPicker.locator('ha-picker-combo-box ha-combo-box-item').filter({hasText:secondaryName}).locator('button').click();
+  await mappingPicker.getByRole('option').filter({hasText:secondaryName}).click();
   await expect(mappingPicker).toHaveJSProperty('value',secondaryId);
   await panel.locator('#save-config').click();
   await expect.poll(()=>panel.evaluate(host=>host._configDirty)).toBe(false);
