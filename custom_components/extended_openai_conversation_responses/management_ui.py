@@ -3208,22 +3208,10 @@ async def _async_management_request(
     ):
         from .mutation_outcomes import mark_mutation_failure
         from .operation_settlement import async_settle_owned_operation
-        from .usage import async_get_durable_usage
+        from .usage import async_apply_usage_retention
 
         async def apply_retention() -> None:
-            usage = await async_get_durable_usage(hass, entry_id, subentry_id)
-            usage.request_retention_days = int(
-                subentry.data.get(
-                    CONF_USAGE_REQUEST_RETENTION_DAYS,
-                    DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
-                )
-            )
-            usage.run_retention_days = int(
-                subentry.data.get(
-                    CONF_USAGE_RUN_RETENTION_DAYS, DEFAULT_USAGE_RUN_RETENTION_DAYS
-                )
-            )
-            await usage.async_prune_details()
+            await async_apply_usage_retention(hass, entry_id, subentry_id)
 
         try:
             await async_settle_owned_operation(asyncio.create_task(apply_retention()))
