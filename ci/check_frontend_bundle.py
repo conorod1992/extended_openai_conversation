@@ -34,7 +34,9 @@ DIST = Path("custom_components/extended_openai_conversation_responses/frontend/d
 # Owned interval read reconciliation and guarded native-input updates add
 # about 1.6 KiB, including submission tracking and read certificates. Keep finite
 # headroom and the separate entry/CSS ceilings.
-CEILINGS = {"javascript": 880_500, "css": 65_000, "management_entry": 120_000}
+# Expired finite Guest activation now requires an explicit future end or
+# indefinite choice. The local validation adds 243 reviewed JS bytes.
+CEILINGS = {"javascript": 880_800, "css": 65_000, "management_entry": 120_000}
 
 
 def measure(dist: Path) -> dict[str, int]:
