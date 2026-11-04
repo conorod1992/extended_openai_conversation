@@ -548,6 +548,7 @@ async def test_ai_task_handler_covers_basic_and_advanced_lifecycle_paths() -> No
     handler.async_step_advanced = None
     metadata = {
         "reasoning": {"supported": True, "efforts": ["low", "high"]},
+        "recommended_profile": {"reasoning_effort": "low"},
         "service_tiers": ["auto", "default", "flex", "fast", "priority"],
     }
 

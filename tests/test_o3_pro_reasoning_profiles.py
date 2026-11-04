@@ -27,7 +27,7 @@ from tests.test_context_management import _normal_history
 
 @pytest.mark.parametrize("provider", ["openai", "azure"])
 @pytest.mark.parametrize("identity", ["o3-pro", "o3-pro-2025-06-10"])
-def test_o3_pro_reasoning_token_budget_and_provider_effort(provider, identity):
+def test_o3_pro_reasoning_token_budget_and_provider_effort(hass, provider, identity):
     azure = provider == "azure"
     model = "my-o3-deployment" if azure else identity
     options = {
@@ -111,3 +111,48 @@ async def test_actual_summary_handoff_uses_reasoning_budget(provider, recovers):
         is recovers
     )
     assert entity._usage.async_record_request.await_count == 2
+
+
+@pytest.mark.parametrize("provider", ["openai", "azure"])
+@pytest.mark.parametrize("saved", [None, "high"])
+async def test_ai_task_advanced_form_uses_the_effective_provider(provider, saved):
+    from custom_components.extended_openai_conversation_responses.config_flow import (
+        ExtendedOpenAIAITaskSubentryFlowHandler,
+    )
+
+    options = {
+        "chat_model": "o3-pro",
+        "api_mode": "responses",
+        **({"azure_model": "o3-pro"} if provider == "azure" else {}),
+        **({"reasoning_effort": saved} if saved else {}),
+    }
+    suggested = {}
+
+    def capture_suggestions(schema, values):
+        suggested.update(values)
+        return schema
+
+    flow = SimpleNamespace(
+        options=options,
+        _temp_data=None,
+        _is_new=False,
+        _get_entry=lambda: SimpleNamespace(data={"api_provider": provider}),
+        async_show_form=lambda **kwargs: kwargs,
+        add_suggested_values_to_schema=capture_suggestions,
+    )
+    shown = await ExtendedOpenAIAITaskSubentryFlowHandler.async_step_advanced(flow)
+    schema = shown["data_schema"]
+    if provider == "azure":
+        selector = next(
+            value
+            for key, value in schema.schema.items()
+            if str(key) == "reasoning_effort"
+        )
+        assert [item["value"] for item in selector.config["options"]] == [
+            "low",
+            "medium",
+            "high",
+        ]
+        assert suggested["reasoning_effort"] == (saved or "low")
+    else:
+        assert "reasoning_effort" not in {str(key) for key in schema.schema}
