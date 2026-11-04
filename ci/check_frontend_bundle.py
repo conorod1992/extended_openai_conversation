@@ -29,7 +29,9 @@ DIST = Path("custom_components/extended_openai_conversation_responses/frontend/d
 # Budget 877,700 total JS bytes; keep entry and CSS limits unchanged.
 # Explicit interval recovery intent and retained review decisions add 969 bytes.
 # Budget 878,700 total JS bytes; keep entry and CSS limits unchanged.
-CEILINGS = {"javascript": 878_700, "css": 65_000, "management_entry": 120_000}
+# Sequencing independent reviews adds under 200 bytes. Keep each retained
+# configuration's dismissal independently, without relaxing entry/CSS limits.
+CEILINGS = {"javascript": 878_900, "css": 65_000, "management_entry": 120_000}
 
 
 def measure(dist: Path) -> dict[str, int]:

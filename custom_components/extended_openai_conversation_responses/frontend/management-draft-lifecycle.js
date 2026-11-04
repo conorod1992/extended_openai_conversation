@@ -64,8 +64,6 @@ export function retainPanelDrafts(panel) {
 export function restorePanelDrafts(panel) {
   if (panel._eocPresentationBlocked) return;
   const key = owner(panel), sources = retained.get(key);
-  const previousCopy = recoveryConfigurationCopies.get(panel);
-  if (previousCopy && (!previousCopy.source._configDirty || owner(previousCopy.source) !== key)) recoveryConfigurationCopies.delete(panel);
   for (const source of sources || []) {
     if (owner(source) !== key) { sources.delete(source); continue; }
     restoreDraftSource(panel, source, key);
@@ -140,6 +138,7 @@ function restoreDraftSource(panel, source, key) {
   // receiving configuration or an independently retained Voice row scope.
   if ((configuration || voiceMappingDraftDirty(source)) && panel._data?.is_admin
       && prepareFullRecoveryBaseline(panel, source, key)) return;
+  let configurationConflict = false;
   if (configuration) {
     const fresh = panel._configData?.config ? panel._configData : null;
     const target = {draft:panel._draft, title:panel._draftTitle};
@@ -149,41 +148,46 @@ function restoreDraftSource(panel, source, key) {
     const targetOwnsModel = Boolean(panel._eocModelIntent || panel._eocPendingModelPreparation || panel._eocReasoningChoiceRevision);
     const plan = (panel._configDirty || targetOwnsModel) && target.draft && targetBaseline?.config
       ? planConfigurationRecovery({draft:source._draft, title:source._draftTitle}, sourceBaseline, target, targetComparison, {targetOwnsModel}) : null;
-    if (plan?.conflicts.length || competingConfigurations.has(source)) {
+    configurationConflict = Boolean(plan?.conflicts.length || competingConfigurations.has(source));
+    if (configurationConflict) {
       showConfigurationRecoveryConflict(panel, source, key, sourceBaseline);
-      return;
+    } else {
+      panel._configData = fresh || clone(source._configData);
+      panel._configDataStale = !fresh;
+      const sourceDraft = source._draft;
+      const merged = mergeConfigurationRead(source, {draft:sourceDraft, title:source._draftTitle}, source._configData, panel._configData);
+      source._eocPendingModelPreparation?.rebindDraft?.(sourceDraft, sourceDraft,
+        {savedConfig:panel._configData.projection === "retention" ? undefined : panel._configData.config});
+      const recovered = plan ? combineRecoveredConfiguration(target, targetBaseline, merged) : merged;
+      if (plan?.preserveTargetModel) panel._eocPendingModelPreparation?.rebindDraft?.(target.draft, recovered.draft);
+      panel._draft = recovered.draft;
+      panel._draftTitle = recovered.title;
+      panel._draftAgentId = panel._agentId;
+      if (!plan?.preserveTargetModel) {
+        if (source._eocPendingModelPreparation) source._eocPendingModelPreparation.transferTo?.(panel);
+        else source._eocModelIntent?.transferTo?.(source, panel);
+      }
+      transferVoiceMappingDraft(panel, source);
+      const retention = pendingRetentionFields(source);
+      if (retention.length) {
+        // A committed policy has no authored delta, but deletion may still need
+        // retrying. The lifecycle gates verified this destination; bind its own
+        // session rather than transferring the detached source's authority.
+        panel._eocPendingRetention = {...captureConfigurationOwner(panel),
+          fields:[...new Set([...pendingRetentionFields(panel), ...retention])]};
+        source._eocPendingRetention = null;
+      }
+      panel._syncConfigDirty();
+      source._setConfigDirty(false);
+      recoveryConfigurationCopies.get(panel)?.delete(source);
+      panel._render();
     }
-    panel._configData = fresh || clone(source._configData);
-    panel._configDataStale = !fresh;
-    const sourceDraft = source._draft;
-    const merged = mergeConfigurationRead(source, {draft:sourceDraft, title:source._draftTitle}, source._configData, panel._configData);
-    source._eocPendingModelPreparation?.rebindDraft?.(sourceDraft, sourceDraft,
-      {savedConfig:panel._configData.projection === "retention" ? undefined : panel._configData.config});
-    const recovered = plan ? combineRecoveredConfiguration(target, targetBaseline, merged) : merged;
-    if (plan?.preserveTargetModel) panel._eocPendingModelPreparation?.rebindDraft?.(target.draft, recovered.draft);
-    panel._draft = recovered.draft;
-    panel._draftTitle = recovered.title;
-    panel._draftAgentId = panel._agentId;
-    if (!plan?.preserveTargetModel) {
-      if (source._eocPendingModelPreparation) source._eocPendingModelPreparation.transferTo?.(panel);
-      else source._eocModelIntent?.transferTo?.(source, panel);
-    }
-    transferVoiceMappingDraft(panel, source);
-    const retention = pendingRetentionFields(source);
-    if (retention.length) {
-      // A committed policy has no authored delta, but deletion may still need
-      // retrying. The lifecycle gates verified this destination; bind its own
-      // session rather than transferring the detached source's authority.
-      panel._eocPendingRetention = {...captureConfigurationOwner(panel),
-        fields:[...new Set([...pendingRetentionFields(panel), ...retention])]};
-      source._eocPendingRetention = null;
-    }
-    panel._syncConfigDirty();
-    source._setConfigDirty(false);
-    if (recoveryConfigurationCopies.get(panel)?.source === source) recoveryConfigurationCopies.delete(panel);
-    panel._render();
   }
-  for (const scope of ownScopes(source)) if (scopeHasChanges(scope) && scope.restore) scope.restore(panel, () => restorePanelDrafts(panel));
+  for (const [id, scope] of pageCoordinator(source).scopes) {
+    // Configuration conflicts still defer their Voice rows and editors. The
+    // independently saved Guest interval can continue through its own gates.
+    if (id !== "retained-drafts" && (!configurationConflict || id === "guest-interval") && scopeHasChanges(scope) && scope.restore) scope.restore(panel, () => restorePanelDrafts(panel));
+  }
   // Page drafts and editors keep their original route, baseline and revision.
   // Restore only after that route has passed the new panel's access checks.
   if (source._viewKey() === panel._viewKey() && source._scopeId === panel._scopeId
@@ -221,7 +225,7 @@ function restoreDraftSource(panel, source, key) {
     // A newer HA panel can arrive while an older destination awaits imports.
     // Retry through the complete lifecycle gate, including ownership, access,
     // pending mutations and the current route, rather than bypassing it.
-    void recoverDisconnectedEditor(panel, source, () => restorePanelDrafts(panel)).catch(() => panel._toast?.("Unsaved editor recovery is pending. Return to its original page to retry.", true));
+    if (!configurationConflict) void recoverDisconnectedEditor(panel, source, () => restorePanelDrafts(panel)).catch(() => panel._toast?.("Unsaved editor recovery is pending. Return to its original page to retry.", true));
   }
 }
 
@@ -229,13 +233,15 @@ function showConfigurationRecoveryConflict(panel, source, key, baseline) {
   const baselineSnapshot = clone(baseline);
   const current = {draft:clone(source._draft), title:source._draftTitle};
   const values = recoveredConfigurationChanges(current, baseline);
-  const previous = recoveryConfigurationCopies.get(panel);
-  if (previous?.source === source && previous.visit === panel._loadToken && same(previous.values, values)) return;
+  const copies = recoveryConfigurationCopies.get(panel) || new WeakMap();
+  recoveryConfigurationCopies.set(panel, copies);
+  const previous = copies.get(source);
+  if (previous?.visit === panel._loadToken && same(previous.values, values)) return;
   if (panel.shadowRoot?.querySelector("dialog[open]")) return;
   competingConfigurations.add(source);
   const visit = panel._loadToken, generation = panel._cacheGeneration;
-  recoveryConfigurationCopies.set(panel, {source, visit, values});
-  showRecoveredDraftCopy(panel, {
+  copies.set(source, {visit, values});
+  const dialog = showRecoveredDraftCopy(panel, {
     title:"Recovered unsaved configuration", label:"Recovered configuration values", values,
     description:"The retained configuration conflicts with your current draft. Copy its recovered changes before discarding either draft.",
     canDiscard:() => panel.isConnected && !source.isConnected && panel._data?.is_admin && owner(panel) === key && owner(source) === key
@@ -245,11 +251,12 @@ function showConfigurationRecoveryConflict(panel, source, key, baseline) {
     onDiscard:() => {
       competingConfigurations.delete(source);
       pageCoordinator(source).scopes.get("configuration")?.discard();
-      recoveryConfigurationCopies.delete(panel);
+      copies.delete(source);
       retainPanelDrafts(source);
       queueMicrotask(() => restorePanelDrafts(panel));
     },
   });
+  dialog.addEventListener("close", () => queueMicrotask(() => {if (panel.isConnected) restorePanelDrafts(panel);}), {once:true});
 }
 
 function prepareFullRecoveryBaseline(panel, source, key) {

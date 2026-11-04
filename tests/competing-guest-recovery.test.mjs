@@ -80,6 +80,40 @@ for(const editor of ["configuration","policy","interval"]) test(`a kept ${editor
   else assert.equal(reopened._guestIntervalDraft.values.end,"");
 });
 
+test("keeping a configuration conflict exposes an independently retained Guest policy",async t => {
+  const f=fixture(),source=f.create(),target=f.create(),panels=[source,target],reset=documentStub();
+  t.after(() => cleanup(panels,reset));
+  for(const panel of panels) {
+    panel._page="capabilities";panel._subsection="guest-mode";
+    panel._result={config:{guest_function_policy:"off",guest_web_search:false},revision:"r0"};initializePageDraft(panel);dialogs(panel);
+  }
+  edit(source,"max_tokens",425);edit(target,"max_tokens",477);
+  source._guestDraft.guest_function_policy="on";target._guestDraft.guest_web_search=true;
+  source.isConnected=false;retainPanelDrafts(source);restorePanelDrafts(target);
+  const configuration=target.reviews.find(dialog => dialog.open);assert.ok(configuration);
+  assert.equal(configuration.children[0].textContent,"Recovered unsaved configuration");
+  configuration.children.find(child => child.textContent === "Keep draft for later").onclick();
+  await flushUntil(() => target.reviews.some(dialog => dialog.open));
+  assert.deepEqual(reviewValues(target),{recovered:{guest_function_policy:"on",guest_web_search:false},current:{guest_function_policy:"off",guest_web_search:true}});
+  assert.equal(source._configDirty,true);assert.equal(target._draft.max_tokens,477);
+});
+
+test("multiple kept configuration conflicts are reviewed once each in a visit",async t => {
+  const f=fixture(),first=f.create(),second=f.create(),target=f.create(),panels=[first,second,target],reset=documentStub();
+  t.after(() => cleanup(panels,reset));
+  for(const [index,panel] of panels.entries()) {edit(panel,"max_tokens",425+index*52);dialogs(panel);}
+  for(const panel of [first,second]) {panel.isConnected=false;retainPanelDrafts(panel);}
+  restorePanelDrafts(target);
+  for(let index=0;index<2;index++) {
+    const dialog=target.reviews.find(value => value.open);assert.ok(dialog);
+    assert.equal(JSON.parse(dialog.children.find(value => value.tagName === "textarea").value).config.max_tokens,425+index*52);
+    dialog.children.find(value => value.textContent === "Keep draft for later").onclick();
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  assert.equal(target.reviews.filter(value => value.open).length,0,"keeping the second copy must not reopen the first");
+  assert.equal(target.reviews.length,2);assert.equal(first._configDirty,true);assert.equal(second._configDirty,true);
+});
+
 for(const transition of [false,true]) for(const reply of ["malformed","lost"]) test(`a recovered Guest policy retains a usable save baseline: ${reply}, authentication return=${transition}`,async t => {
   const f=fixture(),source=f.create(),gate=deferred(),panels=[source];
   source._page="capabilities";source._subsection="guest-mode";
