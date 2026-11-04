@@ -16,8 +16,15 @@ def routed_model_override(
     underlying_model: str | None,
     entry_data: Mapping[str, Any],
     prior: Mapping[str, Any] | None = None,
+    *,
+    model_is_known: bool | None = None,
 ) -> dict[str, str]:
-    """Resolve only the binding belonging to this route, never a different deployment."""
+    """Resolve the route's binding against current or prospective recognition.
+
+    Catalogue guards supply recognition from the proposed catalogue. Runtime
+    callers retain the active lookup; configured and explicit bindings do not
+    require an exact catalogue entry.
+    """
     override = {CONF_CHAT_MODEL: model} if model else {}
     azure = (
         effective_api_provider(
@@ -38,7 +45,11 @@ def routed_model_override(
             override["azure_model"] = str(defaults.get("azure_model") or model)
         elif prior and model == prior.get(CONF_CHAT_MODEL) and prior.get("azure_model"):
             override["azure_model"] = str(prior["azure_model"])
-        elif get_model_capabilities(model)["status"] != "unknown":
+        elif (
+            model_is_known
+            if model_is_known is not None
+            else get_model_capabilities(model)["status"] != "unknown"
+        ):
             override["azure_model"] = model
         else:
             raise HomeAssistantError(

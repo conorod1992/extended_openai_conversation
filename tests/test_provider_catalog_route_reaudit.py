@@ -101,7 +101,12 @@ async def test_valid_bound_azure_route_survives_apply_and_reset(
     before = build_provider_request_snapshot(
         effective, entry.data, tools_required=False
     ).api_kwargs
-    assert (await manager.async_apply_update())["source"] == "downloaded"
+    if restart:
+        manager.store.saved = {"catalog": candidate, "last_checked": 0}
+        await manager.async_load()
+        assert manager.status()["source"] == "downloaded"
+    else:
+        assert (await manager.async_apply_update())["source"] == "downloaded"
     assert (
         build_provider_request_snapshot(
             effective, entry.data, tools_required=False

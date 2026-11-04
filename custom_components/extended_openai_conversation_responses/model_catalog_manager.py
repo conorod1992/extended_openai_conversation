@@ -302,15 +302,27 @@ class ModelCatalogManager:
                         and not (provider == "azure" and routed_binding)
                     ):
                         continue
-                    if routed_effort and SLOT_REFERENCE.search(str(routed_effort)):
-                        continue
+                    dynamic_effort = bool(
+                        routed_effort and SLOT_REFERENCE.search(str(routed_effort))
+                    )
                     if not routed_model and not routed_effort:
                         continue
                     try:
                         effective = {
                             **options,
                             **routed_model_override(
-                                options, routed_model, routed_binding, entry_data
+                                options,
+                                routed_model,
+                                routed_binding,
+                                entry_data,
+                                model_is_known=(
+                                    catalog_model_metadata(
+                                        candidate, routed_model, provider=provider
+                                    )["status"]
+                                    != "unknown"
+                                    if routed_model
+                                    else None
+                                ),
                             ),
                         }
                         if routed_effort:
@@ -320,6 +332,20 @@ class ModelCatalogManager:
                             capability_model_identity(effective, entry_data),
                             provider=provider,
                         )
+                        if dynamic_effort:
+                            # Defer the captured value, not the fixed model's
+                            # recognition or previously available effort support.
+                            current_metadata = catalog_model_metadata(
+                                self.catalog,
+                                capability_model_identity(effective, entry_data),
+                                provider=provider,
+                            )
+                            if (
+                                current_metadata["reasoning"]["supported"]
+                                and not routed_metadata["reasoning"]["supported"]
+                            ):
+                                return False
+                            continue
                         # Explicit Rule efforts are validated at execution; the
                         # request builder may omit stale agent-only preferences.
                         if routed_effort and (
@@ -538,7 +564,18 @@ class ModelCatalogManager:
                         effective = {
                             **subentry.data,
                             **routed_model_override(
-                                subentry.data, model, binding, entry_data
+                                subentry.data,
+                                model,
+                                binding,
+                                entry_data,
+                                model_is_known=(
+                                    catalog_model_metadata(
+                                        None, model, provider=provider
+                                    )["status"]
+                                    != "unknown"
+                                    if model
+                                    else None
+                                ),
                             ),
                             CONF_REASONING_EFFORT: effort,
                         }
