@@ -227,12 +227,14 @@ export function showRecoveredDraftCopy(panel, {
 }
 
 const recoveredScopeCopies = new WeakMap();
+const competingScopes = new WeakSet();
+export const scopeNeedsRecoveryReview = scope => Boolean(scope && competingScopes.has(scope));
 
 // Competing policy/interval drafts keep their own baselines and revisions.
 // Review both copies instead of silently dropping or rebasing either owner.
 export function reviewRecoveredScope(panel, source, id, label, retry) {
   const from = pageCoordinator(source).scopes.get(id), to = pageCoordinator(panel).scopes.get(id);
-  if (!from?.dirty() || !to?.dirty() || !from.isCurrent?.() || !to.isCurrent?.()) return;
+  if (!(from?.dirty() || from?.hasRecoveryIntent?.()) || !(to?.dirty() || to?.hasRecoveryIntent?.() || scopeNeedsRecoveryReview(from)) || !from.isCurrent?.() || !to.isCurrent?.()) return;
   const owner = captureConfigurationOwner(panel), sourceOwner = captureConfigurationDraftOwner(source);
   if (["agentId", "entryId", "userId"].some(key => owner[key] !== sourceOwner[key])) return;
   const view = panel._viewKey(), visit = panel._loadToken, generation = panel._cacheGeneration;
@@ -251,13 +253,17 @@ export function reviewRecoveredScope(panel, source, id, label, retry) {
       && previous.generation === generation && same(previous.values, values)
       && same(previous.baseline, baseline) && same(previous.targetBaseline, targetBaseline)) return;
   if (panel.shadowRoot?.querySelector("dialog[open]")) return;
+  // A competing draft remains a review copy after Keep, including when the
+  // destination subsequently saves and becomes clean. Clean is not consent
+  // to replace that newly saved intent with the older retained values.
+  competingScopes.add(from);
   copies.set(from, {owner, visit, generation, values, baseline, targetBaseline});
   const dialog = showRecoveredDraftCopy(panel, {
     title:`Recovered ${label}`, label:`Recovered and current ${label} values`, values,
     description:"Another editor has unsaved changes. Both drafts are kept. Copy the recovered values before discarding either draft.",
     canDiscard:() => current() && same(from.read(), values.recovered) && same(to.read(), values.current)
       && same(from.baseline, baseline) && same(to.baseline, targetBaseline),
-    onDiscard:() => from.discard(),
+    onDiscard:() => {competingScopes.delete(from);from.discard();},
   });
   // A read or navigation may retire this dialog. Retry through the lifecycle's
   // current owner gates so a stale copy cannot hide another retained scope.

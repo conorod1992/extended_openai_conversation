@@ -1,6 +1,6 @@
 import {clone, same} from "./unsaved-state.js";
 import {pageCoordinator} from "./management-page-drafts.js";
-import {recoverDisconnectedEditor, showRecoveredDraftCopy, reviewRecoveredScope, pendingRetentionFields} from "./management-state-safety.js";
+import {recoverDisconnectedEditor, showRecoveredDraftCopy, reviewRecoveredScope, scopeNeedsRecoveryReview, pendingRetentionFields} from "./management-state-safety.js";
 import {mergeConfigurationRead, configurationDraftBaseline, configurationAuthoringBaseline, configurationSubmissionIsCurrent, captureConfigurationOwner} from "./configuration-acknowledgement.js";
 import {planConfigurationRecovery, combineRecoveredConfiguration, recoveredConfigurationChanges} from "./configuration-draft-recovery.js";
 import {hasPageSaveAcknowledgement} from "./page-save-acknowledgement.js";
@@ -14,9 +14,11 @@ import {discardStoredConfigurationPrefetch} from "./management-route.js";
 const retained = new Map();
 const recoveryConfigurationReads = new WeakMap();
 const recoveryConfigurationCopies = new WeakMap();
+const competingConfigurations = new WeakSet();
 const ownScopes = panel => [...pageCoordinator(panel).scopes.entries()]
   .filter(([id]) => id !== "retained-drafts").map(([, scope]) => scope);
-const hasOwnChanges = panel => ownScopes(panel).some(scope => scope.dirty());
+const scopeHasChanges = scope => scope.dirty() || Boolean(scope.hasRecoveryIntent?.());
+const hasOwnChanges = panel => ownScopes(panel).some(scopeHasChanges);
 const hasOwnPendingWork = panel => Boolean(panel._configurationSaving || panel._eocAgentMutations || panel._backupRestoreOperations?.size
   || ownScopes(panel).some(scope => scope.pending));
 const hasRetainedWork = panel => hasOwnChanges(panel) || hasOwnPendingWork(panel)
@@ -73,16 +75,17 @@ export function restorePanelDrafts(panel) {
     dirty: () => owner(panel) === key && [...sources].some(source => source !== panel && hasOwnChanges(source)),
     owns: destination => Boolean(destination),
     destinations: () => [...sources].filter(hasOwnChanges).flatMap(source => ownScopes(source)
-      .filter(scope => scope.dirty()).flatMap(scope => scope.destinations?.() || [source._viewKey()])),
+      .filter(scopeHasChanges).flatMap(scope => scope.destinations?.() || [source._viewKey()])),
     // A dispatched write remains pending after HA replaces its owning panel.
     // Discarding the detached editor cannot cancel that backend operation.
     get pending() { return [...sources].some(hasOwnPendingWork); },
     discard: () => {
       for (const source of sources) {
+        competingConfigurations.delete(source);
         const configuration = pageCoordinator(source).scopes.get("configuration");
         // Discard consumed configuration too: independent Voice rows must not
         // revive its old authoring when they recompute dirty state.
-        for (const scope of ownScopes(source)) if (scope === configuration || scope.dirty()) scope.discard?.();
+        for (const scope of ownScopes(source)) if (scope === configuration || scopeHasChanges(scope)) scope.discard?.();
         // A discarded model choice or lookup cannot own later recovery.
         source._eocModelChangeToken = (source._eocModelChangeToken || 0) + 1;
         source._eocPendingModelPreparation = null;
@@ -92,11 +95,16 @@ export function restorePanelDrafts(panel) {
         // obligations which the individual scopes deliberately retain.
         if (!hasRetainedWork(source)) sources.delete(source);
       }
+      for (const scope of ownScopes(panel)) if (scope.hasRecoveryIntent?.()) scope.discard?.();
       if (!sources.size) retained.delete(key);
       recoveryConfigurationCopies.delete(panel);
       synchronizeUnloadGuard();
     },
   });
+  if (![...(sources || [])].some(source => source !== panel && hasRetainedWork(source))) {
+    for (const scope of ownScopes(panel)) scope.settleRecoveryIntent?.();
+    if (sources?.has(panel) && !hasRetainedWork(panel)) sources.delete(panel);
+  }
   if (!sources?.size) retained.delete(key);
   synchronizeUnloadGuard();
 }
@@ -141,7 +149,7 @@ function restoreDraftSource(panel, source, key) {
     const targetOwnsModel = Boolean(panel._eocModelIntent || panel._eocPendingModelPreparation || panel._eocReasoningChoiceRevision);
     const plan = (panel._configDirty || targetOwnsModel) && target.draft && targetBaseline?.config
       ? planConfigurationRecovery({draft:source._draft, title:source._draftTitle}, sourceBaseline, target, targetComparison, {targetOwnsModel}) : null;
-    if (plan?.conflicts.length) {
+    if (plan?.conflicts.length || competingConfigurations.has(source)) {
       showConfigurationRecoveryConflict(panel, source, key, sourceBaseline);
       return;
     }
@@ -175,7 +183,7 @@ function restoreDraftSource(panel, source, key) {
     if (recoveryConfigurationCopies.get(panel)?.source === source) recoveryConfigurationCopies.delete(panel);
     panel._render();
   }
-  for (const scope of ownScopes(source)) if (scope.dirty() && scope.restore) scope.restore(panel, () => restorePanelDrafts(panel));
+  for (const scope of ownScopes(source)) if (scopeHasChanges(scope) && scope.restore) scope.restore(panel, () => restorePanelDrafts(panel));
   // Page drafts and editors keep their original route, baseline and revision.
   // Restore only after that route has passed the new panel's access checks.
   if (source._viewKey() === panel._viewKey() && source._scopeId === panel._scopeId
@@ -188,11 +196,11 @@ function restoreDraftSource(panel, source, key) {
       if (!result.accepted) return;
     }
     const to = pageCoordinator(panel).scopes.get(panel._viewKey());
-    if (from?.dirty() && to?.dirty() && ["capabilities/guest-mode", "capabilities/quiet-hours", "capabilities/request-rules"].includes(panel._viewKey())) {
+    if (from?.dirty() && (to?.dirty() || scopeNeedsRecoveryReview(from)) && ["capabilities/guest-mode", "capabilities/quiet-hours", "capabilities/request-rules"].includes(panel._viewKey())) {
       const label = {"capabilities/guest-mode":"Guest Mode policy", "capabilities/quiet-hours":"Quiet Hours policy", "capabilities/request-rules":"Request Rules settings"}[panel._viewKey()];
       reviewRecoveredScope(panel, source, panel._viewKey(), label, () => restorePanelDrafts(panel));
     }
-    if (from?.dirty() && to?.write && !to.dirty() && panel._data?.is_admin) {
+    if (from?.dirty() && to?.write && !to.dirty() && !scopeNeedsRecoveryReview(from) && panel._data?.is_admin) {
       const field = {"capabilities/guest-mode":"_guestDraft", "capabilities/quiet-hours":"_quietHoursDraft", "capabilities/request-rules":"_rulesSettingsDraft"}[panel._viewKey()];
       if (field) {
         // A recovered policy keeps the revision against which its edits were
@@ -224,6 +232,7 @@ function showConfigurationRecoveryConflict(panel, source, key, baseline) {
   const previous = recoveryConfigurationCopies.get(panel);
   if (previous?.source === source && previous.visit === panel._loadToken && same(previous.values, values)) return;
   if (panel.shadowRoot?.querySelector("dialog[open]")) return;
+  competingConfigurations.add(source);
   const visit = panel._loadToken, generation = panel._cacheGeneration;
   recoveryConfigurationCopies.set(panel, {source, visit, values});
   showRecoveredDraftCopy(panel, {
@@ -234,6 +243,7 @@ function showConfigurationRecoveryConflict(panel, source, key, baseline) {
       && same(source._draft, current.draft) && source._draftTitle === current.title
       && same(configurationAuthoringBaseline(source), baselineSnapshot),
     onDiscard:() => {
+      competingConfigurations.delete(source);
       pageCoordinator(source).scopes.get("configuration")?.discard();
       recoveryConfigurationCopies.delete(panel);
       retainPanelDrafts(source);

@@ -80,7 +80,7 @@ for(const bundled of [false,true]) for(const editor of ["policy","interval"]) fo
       await panel.locator("#guest-web-search").uncheck();
     }
     else await panel.locator(mode).selectOption(reply === "success" ? "off" : "custom");
-  } else if((destination === "disjoint") !== (reply === "success")) await setEnd(panel,"2027-06-04T16:00");
+  } else if((destination === "disjoint") !== (reply === "success")) await setEnd(panel,reply === "success" ? "" : "2027-06-04T16:00");
   else await panel.locator("#guest-start").fill("2027-06-04T16:00");
   const authored=await panel.evaluate((host,editor) => structuredClone(editor === "policy" ? host._guestDraft : host._guestIntervalDraft.values),editor);
   if(visits === 2) await replacePanel(panel,true);

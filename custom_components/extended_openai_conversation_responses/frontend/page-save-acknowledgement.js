@@ -7,6 +7,35 @@ export const PAGE_SAVE_READ_EVENT = "eoc-page-save-read-changed";
 export const PAGE_SAVE_READ_MESSAGE = "The saved policy is still being refreshed. Refresh this section before saving.";
 
 const notifyReadState = panel => panel.shadowRoot?.dispatchEvent?.(new Event(PAGE_SAVE_READ_EVENT));
+const transportFor = panel => ({connection:panel.hass?.connection, callWS:panel.hass?.callWS, connected:panel.hass?.connection?.connected});
+
+export function retryPageSaveReadsOnTransport(panel) {
+  // A failed read may have used a now-closed socket. Reconnect grants one fresh
+  // read attempt, never another policy mutation or an unowned error dismissal.
+  const obligations = readObligations.get(panel);
+  if (!obligations?.size || panel.isConnected === false || panel._eocPresentationBlocked || !panel._data?.is_admin) return false;
+  const transport = transportFor(panel), retries = [];
+  for (const entry of obligations) {
+    const state = entry.state, previous = state.transport;
+    if (state.failedVisit !== panel._loadToken || state.view !== panel._viewKey?.()
+        || !entry.acknowledgement.owns() || !configurationSubmissionIsCurrent(panel, state.owner)) continue;
+    if (transport.connected === false) {state.transport = transport; continue;}
+    const changed = previous && (transport.connection && transport.connection !== previous.connection
+      || !transport.connection && !previous.connection && transport.callWS !== previous.callWS
+      || previous.connected === false && transport.connected === true);
+    if (!changed) continue;
+    state.failedVisit = null;
+    retries.push(entry);
+  }
+  if (!retries.length) return false;
+  const owner = captureConfigurationOwner(panel), visit = panel._loadToken, view = panel._viewKey?.();
+  panel._error = null;
+  queueMicrotask(() => {
+    if (panel.isConnected !== false && panel._data?.is_admin && !panel._eocPresentationBlocked && configurationSubmissionIsCurrent(panel, owner)
+        && panel._loadToken === visit && panel._viewKey?.() === view) for (const entry of retries) entry.retry?.();
+  });
+  return true;
+}
 
 export function capturePageRead(panel, view = panel._viewKey?.()) {
   return VIEWS.has(view) ? {owner:captureConfigurationOwner(panel), view,
@@ -111,7 +140,7 @@ export function retainPageSaveAcknowledgement(source, scope, submission, view, {
     const owner = captureConfigurationOwner(destination);
     // The refresh attempt retires on authentication changes. Its obligation
     // still belongs to this draft and requires a fresh accepted policy read.
-    state = {view, sequence:acceptedReads.get(destination)?.sequence || 0, running:true,
+    state = {view, sequence:acceptedReads.get(destination)?.sequence || 0, running:true, transport:transportFor(destination),
       owner:captureConfigurationDraftOwner(destination),
       isCurrent:() => configurationSubmissionIsCurrent(destination, owner)};
     states.set(destination, state);
@@ -132,7 +161,7 @@ export function retainPageSaveAcknowledgement(source, scope, submission, view, {
       state.running = false;
       if (stillOwned() && !freshPageRead(destination, state)) {
         state.failedVisit = destination._loadToken;
-        destination._toast?.(uncertain ? "The policy save outcome is unknown. Refresh this section to recover your edits."
+        if (!retryPageSaveReadsOnTransport(destination)) destination._toast?.(uncertain ? "The policy save outcome is unknown. Refresh this section to recover your edits."
           : "Changes saved, but the policy could not be refreshed. Refresh this section to retry.", true);
       }
       retry?.();

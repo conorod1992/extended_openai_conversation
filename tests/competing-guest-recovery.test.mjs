@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {fixture, retire, retainPanelDrafts, restorePanelDrafts, flushUntil} from "./management-ownership-harness.mjs";
+import {fixture, retire, retainPanelDrafts, restorePanelDrafts, flushUntil, edit, saveConfiguration} from "./management-ownership-harness.mjs";
 import {deferred, TestEventTarget} from "./frontend-test-helpers.mjs";
 import {initializePageDraft, currentPageScope} from "../custom_components/extended_openai_conversation_responses/frontend/management-page-drafts.js";
 import {capturePageRead, acceptPageRead} from "../custom_components/extended_openai_conversation_responses/frontend/page-save-acknowledgement.js";
@@ -40,6 +40,68 @@ function cleanup(panels, reset) {
   }
   reset();
 }
+
+for(const editor of ["configuration","policy","interval"]) test(`a kept ${editor} copy cannot replace a later saved destination`,async t => {
+  const f=fixture(),source=f.create(),target=f.create(),panels=[source,target],reset=documentStub();
+  t.after(() => cleanup(panels,reset));
+  const saved={config:{guest_function_policy:"on",guest_web_search:true},revision:"r1",status:{active_from:"2027-06-04T12:00:00Z",active_until:null,indefinite:true}};
+  const setup=panel => {
+    dialogs(panel);
+    if(editor === "configuration") return;
+    panel._page="capabilities";panel._subsection="guest-mode";panel._result=copy(saved);initializePageDraft(panel);
+    if(editor === "interval") {
+      const controls={"#guest-start":{value:"2027-06-04T12:00"},"#guest-end":{value:""},"#guest-indefinite":{checked:true}};
+      dialogs(panel,controls);captureGuestInterval(panel);
+    }
+  };
+  setup(source);setup(target);
+  if(editor === "configuration") {edit(source,"max_tokens",425);edit(target,"max_tokens",477);}
+  else if(editor === "policy") {source._guestDraft.guest_function_policy="off";target._guestDraft.guest_function_policy="custom";}
+  else {source._guestIntervalDraft.values.end="2027-06-04T17:00";target._guestIntervalDraft.values.end="2027-06-04T16:00";}
+  source.isConnected=false;retainPanelDrafts(source);restorePanelDrafts(target);
+  const review=target.reviews.find(dialog => dialog.open);assert.ok(review);
+  review.children.find(child => child.textContent === "Keep draft for later").onclick();
+  if(editor === "configuration") {
+    target._draftTitle="New saved title";target._syncConfigDirty();await saveConfiguration(target,null);
+    assert.equal(f.state.snapshot(f.agentA).config.max_tokens,477);assert.equal(target._configDirty,false);
+  } else if(editor === "policy") {
+    target._hass.callWS=async request => {Object.assign(saved,{config:copy(request.config),revision:"r2"});return copy(saved);};
+    await currentPageScope(target).save();assert.equal(currentPageScope(target).dirty(),false);
+  } else {
+    // Saving an indefinite interval retains its inactive end locally. A fresh
+    // destination has no such input, and must still expose the kept source.
+    target._guestIntervalDraft.baseline=copy(target._guestIntervalDraft.values);
+  }
+  target.isConnected=false;retainPanelDrafts(target);
+  const reopened=f.create();panels.push(reopened);setup(reopened);restorePanelDrafts(reopened);
+  assert.ok(reopened.reviews.some(dialog => dialog.open),"a kept copy requires review even after the destination became clean");
+  if(editor === "configuration") {assert.equal(reopened._draft.max_tokens,477);assert.equal(reopened._draftTitle,"New saved title");}
+  else if(editor === "policy") assert.equal(reopened._guestDraft.guest_function_policy,"custom");
+  else assert.equal(reopened._guestIntervalDraft.values.end,"");
+});
+
+for(const transition of [false,true]) for(const reply of ["malformed","lost"]) test(`a recovered Guest policy retains a usable save baseline: ${reply}, authentication return=${transition}`,async t => {
+  const f=fixture(),source=f.create(),gate=deferred(),panels=[source];
+  source._page="capabilities";source._subsection="guest-mode";
+  let saved={config:{guest_function_policy:"off",guest_web_search:false},revision:"r0"},writes=0;
+  source._result=copy(saved);initializePageDraft(source);dialogs(source);
+  const reset=documentStub();t.after(() => cleanup(panels,reset));
+  source._hass.callWS=async request => {writes++;saved={config:copy(request.config),revision:`r${writes}`};await gate.promise;if(reply === "lost") throw {code:3,message:"Connection lost"};return {};};
+  Object.assign(source._guestDraft,{guest_function_policy:"on",guest_web_search:true});
+  const operation=currentPageScope(source).save();await flushUntil(() => writes === 1);
+  source._guestDraft.guest_function_policy="off";source._guestDraft.guest_function_policy="on";source._guestDraft.guest_function_policy="off";
+  if(transition) source._eocAuthentication={userId:source.hass.user.id,generation:2};
+  source.isConnected=false;retainPanelDrafts(source);
+  const target=f.create();panels.push(target);target._page="capabilities";target._subsection="guest-mode";target._result=copy(saved);initializePageDraft(target);dialogs(target);
+  target._loadSection=async () => {const read=capturePageRead(target);target._result=copy(saved);acceptPageRead(target,target._result,read);initializePageDraft(target);};
+  gate.resolve();await operation.catch(() => {});restorePanelDrafts(target);
+  await flushUntil(() => target._guestDraft.guest_function_policy === "off");
+  target._guestDraft.guest_web_search=false;
+  const scope=currentPageScope(target);assert.equal(scope.dirty(),true,"off/false differs from the committed on/true policy");
+  assert.deepEqual(scope.baseline,saved.config);assert.equal(scope.revision,"r1");
+  target._hass.callWS=async request => {writes++;assert.equal(request.revision,"r1");saved={config:copy(request.config),revision:"r2"};return copy(saved);};
+  await scope.save();assert.deepEqual(saved.config,{guest_function_policy:"off",guest_web_search:false});assert.equal(writes,2);
+});
 
 for(const editor of ["policy","interval"]) for(const destination of ["disjoint","conflicting"]) for(const reply of ["success","malformed","lost"]) for(const visits of [1,2]) for(const authoring of ["revert","aba","clear_restore"]) test(`competing Guest ${editor}: ${destination}, ${reply}, visits=${visits}, ${authoring}`,async t => {
   const f=fixture(),panels=[],commit=deferred(),response=deferred();
@@ -115,6 +177,55 @@ for(const editor of ["policy","interval"]) for(const destination of ["disjoint",
     await flushUntil(() => target.reviews.some(dialog => dialog.open));
     assert.equal(writes,1);
   } finally {commit.resolve();response.resolve();}
+});
+
+for(const visits of [1,2]) for(const reply of ["success","malformed","lost"]) test(`an interval destination's clear/restore intent remains visible: visits=${visits}, ${reply}`,async t => {
+  const f=fixture(),source=f.create(),panels=[source],gate=deferred();
+  source._page="capabilities";source._subsection="guest-mode";await routeAssetPromise(view,source);
+  const status={active_from:"2027-06-04T12:00:00Z",active_until:null,indefinite:true};
+  source._result={status:{active_from:null,active_until:null,indefinite:false}};
+  const inputs={"#guest-start":{value:""},"#guest-end":{value:"",checkValidity:()=>true},"#guest-indefinite":{checked:false}};
+  dialogs(source,inputs);captureGuestInterval(source);const reset=documentStub();let writes=0,operation;
+  t.after(async () => {gate.resolve();await operation;cleanup(panels,reset);});
+  source._refreshGuestModeMutation=async () => {};
+  source._hass.callWS=async () => {writes++;await gate.promise;if(reply === "lost") throw {code:3,message:"Connection lost"};return reply === "malformed" ? {} : {status};};
+  Object.assign(inputs["#guest-start"],{value:"2027-06-04T12:00"});inputs["#guest-end"].value="2027-06-04T13:00";inputs["#guest-indefinite"].checked=true;
+  captureGuestInterval(source);operation=source._updateGuestMode();await flushUntil(() => writes === 1);
+  inputs["#guest-end"].value="";captureGuestInterval(source);inputs["#guest-end"].value="2027-06-04T17:00";captureGuestInterval(source);
+  source.isConnected=false;retainPanelDrafts(source);
+  const createTarget=() => {
+    const target=f.create();panels.push(target);target._page="capabilities";target._subsection="guest-mode";target._result={status};
+    const controls={"#guest-start":{value:"2027-06-04T12:00"},"#guest-end":{value:""},"#guest-indefinite":{checked:true}};
+    dialogs(target,controls);captureGuestInterval(target);restorePanelDrafts(target);return {target,controls};
+  };
+  let {target,controls}=createTarget();
+  controls["#guest-indefinite"].checked=false;captureGuestInterval(target,"guest-indefinite");
+  captureGuestInterval(target,"guest-end");controls["#guest-indefinite"].checked=true;captureGuestInterval(target,"guest-indefinite");
+  assert.equal(target._unsavedState.scopes.get("guest-interval").dirty(),false,"the interval still matches its saved baseline");
+  if(visits === 2) {target.isConnected=false;retainPanelDrafts(target);({target,controls}=createTarget());}
+  gate.resolve();await operation;restorePanelDrafts(target);
+  await flushUntil(() => target.reviews.some(dialog => dialog.open));
+  const values=reviewValues(target);assert.deepEqual(new Set([values.current.end,values.recovered.end]),new Set(["","2027-06-04T17:00"]));
+  const kept=copy(values.current),dialog=target.reviews.find(dialog => dialog.open);
+  dialog.children.find(child => child.textContent === "Discard recovered edits").onclick();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(target._guestIntervalDraft.values,kept);
+  target.isConnected=false;retainPanelDrafts(target);const final=createTarget().target;restorePanelDrafts(final);
+  assert.equal(final._guestIntervalDraft.values.end,kept.end);assert.equal(final.reviews.length,0);
+  assert.equal(writes,1);
+});
+
+for(const reply of ["malformed","lost"]) test(`a clean canonical interval read retires obsolete ${reply} evidence`,async t => {
+  const f=fixture(),panel=f.create();panel._page="capabilities";panel._subsection="guest-mode";await routeAssetPromise(view,panel);
+  panel._result={status:{active_from:null,active_until:null,indefinite:true}};
+  const controls={"#guest-start":{value:""},"#guest-end":{value:""},"#guest-indefinite":{checked:true}};
+  dialogs(panel,controls);captureGuestInterval(panel);t.after(() => cleanup([panel],() => {}));
+  let actual;
+  panel._hass.callWS=async request => {actual=request.active_from;if(reply === "lost") throw {code:3,message:"Connection lost"};return {};};
+  await panel._updateGuestMode(true);assert.equal(panel._unsavedState.scopes.get("guest-interval").dirty(),false);
+  panel._result={status:{active_from:actual,active_until:null,indefinite:true}};
+  controls["#guest-start"].value=panel._dateTimeLocal(actual);captureGuestInterval(panel);
+  assert.equal(panel._unsavedState.scopes.get("guest-interval").dirty(),false,"an authoritative read without newer edits must not invent dirty work");
 });
 
 for(const change of ["discard","source edit","destination edit","baseline","visit","authentication return","different user"]) test(`competing policy review safely handles ${change}`,async t => {

@@ -3,7 +3,7 @@ import {formatUsageNumber} from "./usage-format.js";
 import {captureConfigurationDraftOwner, configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
 import {clone, same, mergeAcknowledgedDraft} from "./unsaved-state.js";
 import {pageCoordinator} from "./management-page-drafts.js";
-import {reviewRecoveredScope} from "./management-state-safety.js";
+import {reviewRecoveredScope, scopeNeedsRecoveryReview} from "./management-state-safety.js";
 
 const GUEST_VIEW = "capabilities/guest-mode";
 const intervalValues = (panel, status, retainedEnd = "") => ({start:status.active_from_local || panel._dateTimeLocal(status.active_from), end:status.indefinite ? retainedEnd : (status.active_until_local || panel._dateTimeLocal(status.active_until)), indefinite:Boolean(status.indefinite)});
@@ -27,40 +27,57 @@ function intervalState(panel, status = panel._result?.status || {}) {
       isCurrent:current, read:() => state.values,
       get baseline() {return state.baseline;},
       dirty:() => current() && intervalDirty(state),
+      hasRecoveryIntent:() => current() && Boolean(state.recoveryIntent),
+      settleRecoveryIntent:() => {
+        if (!current() || !state.recoveryIntent) return;
+        const saved = panel._result?.status;
+        if (!intervalDirty(state)) {
+          if (!["active_from", "active_until", "indefinite"].every(key => Object.hasOwn(saved || {}, key))) return;
+          state.baseline = intervalValues(panel, saved, state.baseline.end);
+        }
+        state.recoveryIntent = false;
+      },
       get pending() { return current() && Boolean(panel._guestOperation); },
       owns:destination => Boolean(destination) && current(),
       destinations:() => [GUEST_VIEW],
-      discard:() => { if (current()) {state.values = clone(state.baseline);state.uncertainSubmission = null;} },
+      discard:() => { if (current()) {state.values = clone(state.baseline);state.uncertainSubmission = null;state.recoveryIntent = false;} },
       restore:(target, retry) => {
         const targetOwner = captureConfigurationDraftOwner(target);
         if (!current() || target._viewKey?.() !== GUEST_VIEW || !target._data?.is_admin
             || ["agentId", "entryId", "userId"].some(key => state.owner[key] !== targetOwner[key])) return;
         const destination = intervalState(target);
         if (!destination) return;
-        if (intervalDirty(destination)) {
+        if (intervalDirty(destination) || destination.recoveryIntent || scopeNeedsRecoveryReview(pageCoordinator(panel).scopes.get("guest-interval"))) {
           reviewRecoveredScope(target, panel, "guest-interval", "Guest Mode interval", retry);
           return;
         }
         destination.baseline = clone(state.baseline);
         destination.values = clone(state.values);
         destination.uncertainSubmission = clone(state.uncertainSubmission);
+        destination.recoveryIntent = state.recoveryIntent;
         state.values = clone(state.baseline);
         state.uncertainSubmission = null;
+        state.recoveryIntent = false;
         target._render();
       },
     });
-  } else if (!intervalDirty(state)) {
+  } else if (!intervalDirty(state) && !state.recoveryIntent) {
     state.baseline = intervalValues(panel, status, state.values.end);
     state.values = clone(state.baseline);
+    state.uncertainSubmission = null;
   }
   return state;
 }
 
-export function captureGuestInterval(panel) {
+export function captureGuestInterval(panel, field = null) {
   const state = intervalState(panel);
   const root = panel.shadowRoot;
   if (!state || !root.querySelector("#guest-start")) return null;
   state.values = {start:root.querySelector("#guest-start").value, end:root.querySelector("#guest-end").value, indefinite:root.querySelector("#guest-indefinite").checked};
+  // An explicit reaffirmation can equal the saved value while competing with a
+  // retained editor. Keep that decision available without inventing a save.
+  const retained = pageCoordinator(panel).scopes.get("retained-drafts");
+  if (field && (retained?.dirty() || retained?.pending)) state.recoveryIntent = true;
   return {state, values:clone(state.values)};
 }
 
@@ -89,7 +106,7 @@ export function retainUncertainGuestInterval(panel, submission, error) {
 export function bindGuestInterval(panel) {
   for (const id of ["guest-start", "guest-end", "guest-indefinite"]) {
     const control = panel.shadowRoot.querySelector(`#${id}`);
-    for (const type of ["input", "change"]) control?.addEventListener(type, () => captureGuestInterval(panel));
+    for (const type of ["input", "change"]) control?.addEventListener(type, () => captureGuestInterval(panel, id));
   }
 }
 
