@@ -23,8 +23,11 @@ for(const bundled of [false,true]) for(const alias of [false,true]) test(`Azure 
   await expect.poll(()=>page.evaluate(()=>azureRouteCalls.find(call=>call.section==="request_rules"&&call.action==="create")?.rule?.action?.model)).toBe(alias?"cheap-deployment":"gpt-4.1-mini");
   const action=await page.evaluate(()=>azureRouteCalls.find(call=>call.section==="request_rules"&&call.action==="create").rule.action);
   expect(action.azure_model).toBe(alias?"gpt-4.1-mini":undefined);
-  await expect(panel.locator("#rule-save")).toHaveCount(0);
-  await expect(panel.getByText("Azure cheap route",{exact:true}).first()).toBeVisible();
+  await expect(panel.locator("#rule-dialog")).toHaveJSProperty("open",false);
+  await expect(panel.getByRole("heading",{name:"Azure cheap route",exact:true})).toBeVisible();
+  await panel.locator(".request-rule-card").filter({hasText:"Azure cheap route"}).locator(".rule-edit").click();
+  await expect(panel.locator("#rule-model")).toHaveValue(alias?"cheap-deployment":"gpt-4.1-mini");
+  await expect(panel.locator("#rule-azure-model")).toHaveValue(alias?"gpt-4.1-mini":"");
   await expectHarnessClean(page,errors);
 });
 
