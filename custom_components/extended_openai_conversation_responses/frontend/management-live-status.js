@@ -85,10 +85,12 @@ export function watchTimedFeatureStatus(panel) {
       : boundaryDelay(panel._result?.period_ends_at),
     refresh: async (current) => {
       const loadToken = panel._loadToken;
+      const interval = guest ? panel._unsavedState?.scopes.get("guest-interval") : null;
+      const intervalRead = interval?.captureRead?.();
       const result = await panel._call(guest ? "guest_mode" : "quiet_hours", "get");
       if (!current() || panel._loadToken !== loadToken || panel._guestOperation) return;
       if (guest) {
-        panel._unsavedState?.scopes.get("guest-interval")?.reconcileRead?.(result.status);
+        interval?.reconcileRead?.(result.status, intervalRead);
         panel._patchGuestModeStatus(panel._agentId, result.status);
         const status = panel._result?.status || {};
         const node = panel.shadowRoot.querySelector("[data-guest-live-status]");

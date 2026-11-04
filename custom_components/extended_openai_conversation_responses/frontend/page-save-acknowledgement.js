@@ -39,7 +39,8 @@ export function retryPageSaveReadsOnTransport(panel) {
 
 export function capturePageRead(panel, view = panel._viewKey?.()) {
   return VIEWS.has(view) ? {owner:captureConfigurationOwner(panel), view,
-    visit:panel._loadToken, generation:panel._cacheGeneration} : null;
+    visit:panel._loadToken, generation:panel._cacheGeneration,
+    interval:view === "capabilities/guest-mode" ? panel._unsavedState?.scopes.get("guest-interval")?.captureRead?.() : null} : null;
 }
 
 function currentRead(panel, read) {
@@ -78,7 +79,7 @@ export function acceptPageRead(panel, result, read) {
   if (!projection) return false;
   acceptedReads.set(panel, {...read, projection, sequence:(acceptedReads.get(panel)?.sequence || 0) + 1});
   if (ownsScope) scope.reconcileUncertainRead?.(result);
-  if (read.view === "capabilities/guest-mode") panel._unsavedState?.scopes.get("guest-interval")?.reconcileRead?.(result.status);
+  if (read.view === "capabilities/guest-mode") panel._unsavedState?.scopes.get("guest-interval")?.reconcileRead?.(result.status, read.interval);
   const obligations = readObligations.get(panel);
   for (const entry of obligations || []) {
     if (!entry.acknowledgement.owns()) obligations.delete(entry);

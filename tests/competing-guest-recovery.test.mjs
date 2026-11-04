@@ -385,6 +385,36 @@ for(const reply of ["partial","lost"]) for(const field of ["start","end","indefi
   assert.equal(scope.dirty(),newer,"only edits after Discard remain unsaved");assert.equal(scope.needsRead(),false);
 });
 
+for(const route of ["section","timed"]) for(const older of [false,true]) test(`a ${route} read cannot retire a newer unresolved interval; older evidence=${older}`,async t => {
+  const f=fixture(),panel=f.create();panel._page="capabilities";panel._subsection="guest-mode";await routeAssetPromise(view,panel);
+  const original={active_from:"2027-06-04T12:00:00Z",active_until:"2027-06-04T15:00:00Z",indefinite:false};
+  const saved={...original,active_until:"2027-06-04T14:00:00Z"};
+  panel._result={status:original,config:{guest_web_search:false},revision:"r0"};
+  const controls={"#guest-start":{value:"2027-06-04T12:00"},"#guest-end":{value:"2027-06-04T15:00",checkValidity:()=>true},"#guest-indefinite":{checked:false}};
+  dialogs(panel,controls);captureGuestInterval(panel);panel._refreshGuestModeMutation=async () => {};
+  const readGate=deferred(),writeGate=deferred();let entered=false,reading=false;
+  panel._hass.callWS=async request => {
+    if(request.action === "details") return {};
+    if(request.action === "update") {entered=true;if(!older || reading) await writeGate.promise;throw {code:3,message:"Connection lost"};}
+    reading=true;await readGate.promise;return {config:{guest_web_search:false},revision:"r0",status:older ? saved : original};
+  };
+  if(older) {controls["#guest-end"].value="2027-06-04T14:00";captureGuestInterval(panel);await panel._updateGuestMode();entered=false;}
+  const timers=[],realSet=globalThis.setTimeout,realClear=globalThis.clearTimeout;
+  t.after(() => {stopLiveStatus(panel);globalThis.setTimeout=realSet;globalThis.clearTimeout=realClear;cleanup([panel],() => {});});
+  let readingOperation;
+  if(route === "section") readingOperation=panel._loadSectionData(true);
+  else {globalThis.setTimeout=callback => {timers.push(callback);return timers.length;};globalThis.clearTimeout=() => {};watchTimedFeatureStatus(panel);readingOperation=timers.shift()();}
+  await flushUntil(() => reading);
+  controls["#guest-end"].value="2027-06-04T14:00";captureGuestInterval(panel);const writing=panel._updateGuestMode();await flushUntil(() => entered);
+  controls["#guest-end"].value="2027-06-04T15:00";captureGuestInterval(panel);writeGate.resolve();await writing;
+  const scope=panel._unsavedState.scopes.get("guest-interval"),evidence=panel._guestIntervalDraft.uncertainSubmission;
+  readGate.resolve();await readingOperation;
+  assert.equal(scope.needsRead(),true,"a read begun against older evidence cannot certify this operation");
+  assert.equal(panel._guestIntervalDraft.uncertainSubmission,evidence);assert.equal(scope.dirty(),true);
+  panel._hass.callWS=async request => request.action === "details" ? {} : {config:{guest_web_search:false},revision:"r1",status:saved};
+  await panel._loadSectionData(true);assert.equal(scope.needsRead(),false);assert.equal(scope.dirty(),true);
+});
+
 for(const change of ["discard","source edit","destination edit","baseline","visit","authentication return","different user"]) test(`competing policy review safely handles ${change}`,async t => {
   const f=fixture(),source=f.create(),target=f.create(),panels=[source,target];
   for(const panel of panels) {

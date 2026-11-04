@@ -49,7 +49,10 @@ function intervalState(panel, status = panel._result?.status || {}) {
     const current = () => panel._guestIntervalDraft === state && configurationSubmissionIsCurrent(panel, state.owner);
     pageCoordinator(panel).register("guest-interval", {
       isCurrent:current, read:() => state.values,
-      reconcileRead:status => reconcileIntervalRead(panel, state, status),
+      captureRead:() => state.uncertainSubmission,
+      reconcileRead:(status, evidence) => {
+        if (evidence === state.uncertainSubmission) reconcileIntervalRead(panel, state, status);
+      },
       needsRead:() => current() && Boolean(state.uncertainSubmission),
       get baseline() {return state.baseline;},
       dirty:() => current() && intervalDirty(state),

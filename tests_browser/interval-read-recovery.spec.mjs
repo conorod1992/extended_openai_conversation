@@ -53,6 +53,49 @@ for(const bundled of [false,true]) for(const outcome of ["partial","lost","not c
   await expectHarnessClean(page,errors);
 });
 
+for(const bundled of [false,true]) for(const read of ["section","timed"]) test(`an older ${read} read cannot certify a newer interval submission; bundle=${bundled}`,async ({page}) => {
+  const errors=trackPageErrors(page);
+  await page.clock.install({time:new Date("2026-11-04T01:00:00Z")});
+  await page.goto(fixtureUrl("capabilities/guest-mode",bundled ? "&bundle=1" : ""));
+  const panel=page.locator("extended-openai-management-panel");await expect(panel.locator("#guest-start")).toBeAttached();
+  await panel.evaluate(async host => {
+    host.hass={...host.hass,user:{id:"interval-read-lifetime-owner",is_admin:true},config:{...host.hass.config,time_zone:"UTC"}};
+    const send=host.hass.callWS.bind(host.hass);
+    window.intervalReadOwnership={status:{active_from:"2027-06-04T12:00:00Z",active_until:"2027-06-04T15:00:00Z",indefinite:false},writes:0};
+    host.hass.callWS=async request => {
+      if(request.section !== "guest_mode") return send(request);
+      if(request.action === "get") {
+        const result={...await send(request),status:structuredClone(intervalReadOwnership.status)};
+        if(intervalReadOwnership.holdNext) {
+          intervalReadOwnership.holdNext=false;intervalReadOwnership.reading=true;
+          await new Promise(resolve => {intervalReadOwnership.releaseRead=resolve;});intervalReadOwnership.delivered=true;
+        }
+        return result;
+      }
+      if(request.action !== "update") return send(request);
+      intervalReadOwnership.writes++;intervalReadOwnership.status.active_until=`${request.active_until}:00Z`;
+      intervalReadOwnership.committed=true;await new Promise(resolve => {intervalReadOwnership.releaseWrite=resolve;});
+      throw {code:3,message:"Connection lost"};
+    };
+    host._sectionCache.clear();await host._loadSection(true);intervalReadOwnership.holdNext=true;
+  });
+  if(read === "section") await panel.evaluate(host => {host._sectionCache.clear();void host._loadSectionData(true);});
+  else await page.clock.runFor(60_100);
+  await expect.poll(() => page.evaluate(() => intervalReadOwnership.reading)).toBe(true);
+  await panel.locator("#guest-end").fill("2027-06-04T14:00");await panel.locator("#guest-update").click();
+  await expect.poll(() => page.evaluate(() => intervalReadOwnership.committed)).toBe(true);
+  await panel.locator("#guest-end").fill("2027-06-04T15:00");await page.evaluate(() => intervalReadOwnership.releaseWrite());
+  await expect.poll(() => panel.evaluate(host => Boolean(host._guestOperation))).toBe(false);
+  await page.evaluate(() => intervalReadOwnership.releaseRead());await expect.poll(() => page.evaluate(() => intervalReadOwnership.delivered)).toBe(true);
+  expect(await panel.evaluate(host => host._unsavedState.scopes.get("guest-interval").needsRead())).toBe(true);
+  expect(await panel.evaluate(host => host._unsavedState.scopes.get("guest-interval").dirty())).toBe(true);
+  await panel.locator('.subsection-nav button[data-subsection="guest-mode"]').click();
+  await expect.poll(() => panel.evaluate(host => host._unsavedState.scopes.get("guest-interval").needsRead())).toBe(false);
+  await expect(panel.locator("#guest-end")).toHaveValue("2027-06-04T15:00");
+  expect(await panel.evaluate(host => host._unsavedState.scopes.get("guest-interval").dirty())).toBe(true);
+  expect(await page.evaluate(() => intervalReadOwnership.writes)).toBe(1);await expectHarnessClean(page,errors);
+});
+
 for(const bundled of [false,true]) for(const outcome of ["partial","lost"]) for(const newer of [false,true]) test(`interval scope Discard adopts saved values after ${outcome}, newer end=${newer}, bundle=${bundled}`,async ({page}) => {
   const errors=trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/guest-mode",bundled ? "&bundle=1" : ""));
@@ -74,7 +117,12 @@ for(const bundled of [false,true]) for(const outcome of ["partial","lost"]) for(
   },outcome);
   await panel.locator("#guest-end").fill("2027-06-04T14:00");await panel.locator("#guest-update").click();
   await expect.poll(() => panel.evaluate(host => Boolean(host._guestOperation))).toBe(false);
-  await panel.evaluate(host => {host._unsavedState.scopes.get("guest-interval").discard();host._render();});
+  await panel.evaluate(host => {
+    host._unsavedState.scopes.get("guest-interval").discard();
+    // Match the coordinator's Discard renderer: unchanged HTML must still
+    // replace edited native input properties with the discarded draft.
+    host._eocMainMarkup=null;host._render();
+  });
   await expect(panel.locator("#guest-end")).toHaveValue("2027-06-04T15:00");
   if(newer) await panel.locator("#guest-end").fill("2027-06-04T17:00");
   await panel.locator('.subsection-nav button[data-subsection="guest-mode"]').click();
