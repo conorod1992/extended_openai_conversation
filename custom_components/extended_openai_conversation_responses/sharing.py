@@ -649,6 +649,8 @@ def project_configuration(
         if public:
             result[key] = deepcopy(value)
         elif key == "function_groups":
+            if not reviewed:
+                record_omission(summary, key)
             continue  # Project coherent groups after their retained members are known.
         elif reviewed and key in AGENT_CONFIG_FIELDS and key != "functions":
             candidate = redacted.get(key)

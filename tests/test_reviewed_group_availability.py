@@ -113,3 +113,20 @@ def test_unsafe_group_metadata_disables_members_and_reports_change(hass, kind):
         item["field"] == "function_group_member_disabled"
         for item in artifact["security"]["omitted"]
     )
+
+
+def test_restricted_export_still_reports_omitted_groups():
+    from custom_components.extended_openai_conversation_responses.sharing import (
+        project_configuration,
+    )
+
+    projected, security = project_configuration(
+        {
+            "functions": [{**_tool("held_tool"), "enabled": True}],
+            "function_groups": [_group("held", ["held_tool"], enabled=False)],
+        },
+        reviewed=False,
+    )
+    assert projected["functions"] == []
+    assert projected["function_groups"] == []
+    assert any(item["field"] == "function_groups" for item in security["omitted"])
