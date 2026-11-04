@@ -31,6 +31,7 @@ from custom_components.extended_openai_conversation_responses.conversation_archi
     async_get_archive,
 )
 from homeassistant.components import conversation
+from homeassistant.components.conversation.chat_log import DATA_CHAT_LOGS
 from homeassistant.components.assist_pipeline.pipeline import (
     PipelineEventType,
     PipelineInput,
@@ -282,6 +283,8 @@ async def test_populated_assist_feature_effects_and_real_oracle_canaries(
         )
         spoken, delivered_id = await _assist(hass, agent, f"populated-{phase}", _QUERY)
         assert isinstance(delivered_id, str) and delivered_id
+        assert delivered_id in hass.data[DATA_CHAT_LOGS]
+        assert hass.data[DATA_CHAT_LOGS][delivered_id].content[-1].content == spoken
         if phase == "owner":
             owner_conversation_id = delivered_id
         else:

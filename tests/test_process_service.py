@@ -357,6 +357,7 @@ async def test_early_failure_after_continuity_claim_releases_session(monkeypatch
         lambda *_: user_scope("alice", source="test", device_id="kitchen"),
     )
     user_input = SimpleNamespace(
+        context=Context(user_id="alice"),
         as_llm_context=lambda _: SimpleNamespace(
             context=SimpleNamespace(id="context", user_id="alice")
         ),

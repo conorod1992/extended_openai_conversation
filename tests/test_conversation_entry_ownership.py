@@ -233,6 +233,7 @@ async def test_continuity_stage_restores_guest_and_prompt_state(
         _async_process_claimed=AsyncMock(return_value="result"),
     )
     request = SimpleNamespace(
+        context=Context(),
         as_llm_context=Mock(return_value=SimpleNamespace(context=Context())),
         satellite_id=None,
         device_id="device",

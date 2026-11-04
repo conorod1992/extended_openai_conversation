@@ -8,6 +8,8 @@ from typing import Any
 
 import pytest
 
+from homeassistant.core import Context
+
 from custom_components.extended_openai_conversation_responses import (
     conversation as conversation_module,
 )
@@ -57,6 +59,7 @@ class _ClaimedContinuity:
 def _user_input() -> Any:
     """Return the minimum request surface consumed by ``_async_process_with_continuity``."""
     return SimpleNamespace(
+        context=Context(),
         as_llm_context=lambda _domain: SimpleNamespace(
             context=SimpleNamespace(id="context-id")
         ),
