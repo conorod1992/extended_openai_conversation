@@ -436,7 +436,7 @@ async def test_chat_history_summary_token_parameter(
     )
 
     assert result == "summary"
-    assert create.await_args.kwargs[token_key] == 256
+    assert create.await_args.kwargs[token_key] == 512
 
 
 async def test_summary_empty_failure_usage_and_cancellation() -> None:

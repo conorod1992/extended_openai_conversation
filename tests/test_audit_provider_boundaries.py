@@ -111,7 +111,8 @@ async def test_custom_summary_uses_provider_aware_tokens():
         )
         == "summary"
     )
-    assert create.await_args.kwargs["max_tokens"] == 256
+    assert create.await_args.kwargs["max_tokens"] == 512
+    assert "reasoning_effort" not in create.await_args.kwargs
 
 
 @pytest.mark.parametrize(

@@ -383,6 +383,43 @@ def auxiliary_output_token_limit(
     return result
 
 
+def context_summary_request_settings(
+    model: str,
+    api_mode: str,
+    options: Mapping[str, Any],
+    entry_data: Mapping[str, Any],
+    *,
+    retry: bool = False,
+) -> dict[str, Any]:
+    """Bound auxiliary output deliberately, including the model's hidden reasoning."""
+    capabilities = request_model_capabilities(
+        {**options, CONF_CHAT_MODEL: model}, entry_data
+    )
+    with model_capability_snapshot(model, capabilities):
+        effort = None
+        if capabilities["reasoning"]["supported"]:
+            raw_effort = options.get(CONF_REASONING_EFFORT)
+            if raw_effort is None:
+                raw_effort = recommended_reasoning_effort(model)
+            effort = validate_reasoning_effort(model, raw_effort, api_mode)
+        # The visible summary is prompted to stay short. Reasoning shares the
+        # output allowance, so a reasoning request needs substantially more room.
+        limit = 8192 if effort not in {None, "none"} else 512
+        limit = min(
+            limit * (2 if retry else 1), capabilities["limits"]["max_output_tokens"]
+        )
+        field, value = auxiliary_output_token_limit(
+            model, api_mode, limit, options, entry_data
+        )
+    kwargs: dict[str, Any] = {field: value}
+    if effort is not None:
+        if api_mode == API_MODE_RESPONSES:
+            kwargs["reasoning"] = {"effort": effort}
+        else:
+            kwargs["reasoning_effort"] = effort
+    return kwargs
+
+
 def build_provider_request_snapshot(
     options: Mapping[str, Any],
     entry_data: Mapping[str, Any],
