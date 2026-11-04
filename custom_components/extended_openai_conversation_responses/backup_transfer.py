@@ -9,6 +9,7 @@ from contextlib import suppress
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 import hashlib
+import io
 import json
 import logging
 import math
@@ -419,6 +420,19 @@ def _hash_file(path: str) -> str:
     return digest.hexdigest()
 
 
+class _BoundedArchiveFile(io.BufferedRandom):
+    """Reject a ZIP write before it can exceed the reserved staging budget."""
+
+    def write(self, data: Any) -> int:
+        # ZipFile seeks back to rewrite local headers. Bound the resulting end
+        # position rather than cumulative writes, including the central directory.
+        if self.tell() + len(data) > MAX_BACKUP_ARCHIVE_BYTES:
+            raise backup.BackupError(
+                "This full backup exceeds the 64 MB compressed safety limit"
+            )
+        return super().write(data)
+
+
 def _build_archive_file(
     snapshot: dict[str, Any], staging_dir: str | None = None
 ) -> dict[str, Any]:
@@ -437,7 +451,7 @@ def _build_archive_file(
     try:
         payload_hash = hashlib.sha256()
         payload_bytes = 0
-        with open(path, "w+b") as archive_file:
+        with _BoundedArchiveFile(io.FileIO(path, "w+")) as archive_file:
             with zipfile.ZipFile(
                 archive_file,
                 "w",
