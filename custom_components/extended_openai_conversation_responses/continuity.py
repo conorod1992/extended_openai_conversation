@@ -12,7 +12,9 @@ from typing import Any, cast
 from uuid import uuid4
 
 from homeassistant.components import conversation
+from homeassistant.components.conversation.chat_log import current_chat_log
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.chat_session import current_session
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -78,6 +80,21 @@ def chat_log_admission_scope(
         # A foreign parent stays separate even when it delegates different text
         # or explicitly requests another child conversation ID.
         retain_unclaimed_chat_log(source)
+    if (
+        source is not None
+        and getattr(source, "turn_active", None) is False
+        and current_chat_log.get() is source
+    ):
+        # A task can inherit these ContextVars and run after its caller closed
+        # or expired. Let Core reopen current stored state rather than borrow a
+        # retired log/session, while preserving a live parent's separate binding.
+        current_chat_log.set(None)
+        session = current_session.get()
+        if session is not None and session.conversation_id == source.conversation_id:
+            current_session.set(None)
+        # Leave retired native contexts cleared in this task. Restoring them
+        # would let Core's caller borrow or publish into the same closed log.
+        source = None
     if (
         source is None
         or source.conversation_id != conversation_id

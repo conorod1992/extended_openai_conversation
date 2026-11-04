@@ -25,10 +25,15 @@ On HA 2026.11, Assist or another conversation agent can open a live parent log
 before calling EOAI. EOAI keeps that unowned parent separate and returns the ID of
 its own conversation. While the parent log remains live, later calls using the
 parent ID resume EOAI's conversation for the same assistant, privacy owner and
-Guest state. Clients should use the returned conversation ID for subsequent turns.
+Guest state. Activity through the parent ID refreshes its native inactivity clock when that
+native session permits the caller. Clients should use the returned conversation ID
+for subsequent turns.
 Parent history is preserved rather than copied into model context. Explicit resets
 and Core session expiry start fresh context; a replacement parent log does not
 inherit the old log's binding merely because its ID is the same.
+
+Delayed calls do not borrow a closed native caller log; continuation comes from
+the current owned log or the configured continuity cache.
 
 ## Inactivity and lifecycle
 

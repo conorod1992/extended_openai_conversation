@@ -242,3 +242,43 @@ async def test_inherited_admission_record_expires_with_parent_scope():
     release.set()
     await task
     assert source.content == []
+
+
+@pytest.mark.parametrize("failure", [None, RuntimeError, asyncio.CancelledError])
+@pytest.mark.parametrize("active", [False, True])
+def test_native_context_keeps_active_callers_and_retires_closed_callers(
+    failure, active
+):
+    from homeassistant.components.conversation.chat_log import current_chat_log
+    from homeassistant.helpers.chat_session import current_session
+
+    source = _admitted_log()
+    source.turn_active = active
+    session = SimpleNamespace(conversation_id=source.conversation_id)
+    log_token = current_chat_log.set(source)
+    session_token = current_session.set(session)
+    try:
+
+        def invoke():
+            with chat_log_admission_scope(
+                source, source.conversation_id, "current question"
+            ):
+                assert current_chat_log.get() is (source if active else None)
+                assert current_session.get() is (session if active else None)
+                if active:
+                    with forward_chat_log_deltas(source, source, "current question"):
+                        pass
+                if failure:
+                    raise failure()
+
+        if failure:
+            with pytest.raises(failure):
+                invoke()
+        else:
+            invoke()
+        assert current_chat_log.get() is (source if active else None)
+        assert current_session.get() is (session if active else None)
+        assert len(source.content) == 1
+    finally:
+        current_session.reset(session_token)
+        current_chat_log.reset(log_token)

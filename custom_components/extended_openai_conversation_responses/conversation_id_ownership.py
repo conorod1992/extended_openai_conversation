@@ -7,7 +7,9 @@ from typing import Any
 from weakref import ref
 
 from homeassistant.components.conversation.chat_log import DATA_CHAT_LOGS, ChatLog
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Context, HomeAssistant
+from homeassistant.helpers.chat_session import DATA_CHAT_SESSION
+from homeassistant.helpers.typing import UNDEFINED
 
 from .const import DOMAIN
 from .conversation_ids import GUEST_CONTINUITY_NAMESPACE, create_conversation_id
@@ -76,6 +78,7 @@ def resolve_parent_conversation_id(
     conversation_id: str | None,
     *,
     guest_active: bool,
+    context: Context | None = None,
 ) -> str | None:
     """Resolve an existing binding before continuity applies its Guest namespace."""
     if (
@@ -95,19 +98,29 @@ def resolve_parent_conversation_id(
             target is not None
             and hass.data.get(_CONVERSATION_ID_OWNERS, {}).get(target) == owner
         ):
+            # Calls through the original ID count as activity on that parent.
+            # Do not bind or extend another authenticated user's native session.
+            session = hass.data.get(DATA_CHAT_SESSION, {}).get(conversation_id)
+            if context is not None and session is not None:
+                user_id = getattr(session, "user_id", UNDEFINED)
+                if user_id is UNDEFINED or user_id == context.user_id:
+                    session.async_updated()
             return target
     return conversation_id
 
 
 def bind_parent_conversation_id(
-    source: ChatLog | None, target: str, owner: tuple[str, str]
+    hass: HomeAssistant | None,
+    parent_id: str | None,
+    target: str,
+    owner: tuple[str, str],
 ) -> None:
     """Retain the actual owned log for retries through an unchanged parent ID."""
-    if source is not None and source.conversation_id != target:
-        history = _unclaimed_live_history(source.hass, source.conversation_id)
+    if hass is not None and parent_id is not None and parent_id != target:
+        history = _unclaimed_live_history(hass, parent_id)
         if (
             history is not None
-            and source.hass.data.get(_CONVERSATION_ID_OWNERS, {}).get(target) == owner
+            and hass.data.get(_CONVERSATION_ID_OWNERS, {}).get(target) == owner
         ):
             history.bindings[owner] = target
 

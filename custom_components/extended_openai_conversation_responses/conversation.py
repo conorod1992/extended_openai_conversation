@@ -847,6 +847,7 @@ class ExtendedOpenAIAgentEntity(
                         scope,
                         user_input.conversation_id,
                         guest_active=request_policy.guest_active,
+                        context=user_input.context,
                     ),
                     timeout_minutes,
                     namespace=(
@@ -962,13 +963,9 @@ class ExtendedOpenAIAgentEntity(
                 register_conversation_id_cleanup(
                     session, self.hass, claimed_id, claim_owner
                 )
-                if (
-                    assist_chat_log is not None
-                    and assist_chat_log.conversation_id == incoming_conversation_id
-                ):
-                    bind_parent_conversation_id(
-                        assist_chat_log, claimed_id, claim_owner
-                    )
+                bind_parent_conversation_id(
+                    self.hass, incoming_conversation_id, claimed_id, claim_owner
+                )
             if resolution.discard_history:
                 # A restore preserves only the private Archive identity. Core may
                 # still hold its old log; discard that context before this turn.

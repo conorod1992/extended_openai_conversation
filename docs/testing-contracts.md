@@ -270,3 +270,14 @@ the original live parent ID retain the same failed-turn context.
 Claim cleanup registration is bounded per native session and owner, including
 long-lived parent-bound conversations. Cleanup from a retired session or registry
 cannot release the replacement claim.
+
+Active requests through a live parent ID refresh its native inactivity clock
+without rebinding native authentication. A separate-user call cannot keep another
+user's native parent session alive. Native cleanup is exercised past the initial
+five-minute boundary while the same binding and active model history survive.
+
+Delayed tasks inherit native ContextVars. Tests close and optionally expire the
+parent before releasing the delayed delegate, then inspect actual provider input
+and Core's current log/session registries. Closed contexts stay retired in the inherited task
+on success, error and cancellation, while active callers keep their native contexts; a live parent binding is found by its stored
+identity, and retired history must never reappear in a new request.

@@ -795,3 +795,162 @@ async def test_explicit_child_ids_do_not_rebind_the_foreign_parent(
     assert len(set(ids)) == 3
     sent = json.dumps(wire.requests[-1]["body"])
     assert "CHILD_ONE_SENTINEL" not in sent and "CHILD_TWO_SENTINEL" not in sent
+
+
+@pytest.mark.skipif(
+    not hasattr(conversation.ChatLog, "turn_active"), reason="Requires live HA logs"
+)
+@pytest.mark.parametrize("api", ["responses", "chat_completions"])
+@pytest.mark.parametrize("guest", [False, True])
+async def test_active_parent_id_calls_keep_their_binding_past_initial_core_timeout(
+    hass, monkeypatch, freezer, api, guest
+):
+    from datetime import timedelta
+    from homeassistant.helpers.chat_session import (
+        DATA_CHAT_SESSION,
+        DATA_CHAT_SESSION_CLEANUP,
+    )
+    from homeassistant.util import dt as dt_util
+
+    agent = await _agent(hass, conversation_continuity="ha_default", api_mode=api)
+    user = await hass.auth.async_create_user("Active alias", group_ids=["system-admin"])
+    context = Context(user_id=user.id)
+    if guest:
+        await agent._guest_mode.async_update_trusted(indefinite=True)
+    reply = _chat_sse_text if api == "chat_completions" else _responses_sse_text
+    wire = _install_wire(monkeypatch, agent, [reply("Acknowledged") for _ in range(3)])
+
+    async def say(text):
+        return await conversation.async_converse(
+            hass=hass,
+            text=text,
+            conversation_id="active-parent",
+            context=context,
+            language="en",
+            agent_id=agent.entity_id,
+        )
+
+    start = dt_util.utcnow()
+    supplied = conversation.ConversationInput(
+        text="ACTIVE_ALIAS_SENTINEL",
+        device_id=None,
+        satellite_id=None,
+        context=context,
+        language="en",
+        conversation_id="active-parent",
+        agent_id="conversation.router",
+    )
+    with async_get_chat_session(hass, "active-parent", context=context) as session:
+        with async_get_chat_log(hass, session, supplied) as source:
+            first = await say(supplied.text)
+            assert first.response.error_code is None
+            source.async_add_assistant_content_without_tools(
+                conversation.AssistantContent(
+                    agent_id="conversation.router", content="Parent answer"
+                )
+            )
+    freezer.move_to(start + timedelta(seconds=240))
+    kept = await say("Continue through the original parent ID")
+    assert (
+        kept.response.error_code is None
+        and kept.conversation_id == first.conversation_id
+    )
+    freezer.move_to(start + timedelta(seconds=302))
+    cleanup = hass.data[DATA_CHAT_SESSION_CLEANUP]
+    if cleanup.unsub:
+        cleanup.unsub()
+        cleanup.unsub = None
+    cleanup._cleanup(dt_util.utcnow())
+    assert "active-parent" in hass.data[DATA_CHAT_SESSION]
+    resumed = await say("Another parent-ID continuation")
+    assert (
+        resumed.response.error_code is None
+        and resumed.conversation_id == first.conversation_id
+    )
+    assert "ACTIVE_ALIAS_SENTINEL" in json.dumps(wire.requests[-1]["body"])
+
+
+@pytest.mark.skipif(
+    not hasattr(conversation.ChatLog, "turn_active"), reason="Requires live HA logs"
+)
+@pytest.mark.parametrize("api", ["responses", "chat_completions"])
+@pytest.mark.parametrize("expired", [False, True])
+@pytest.mark.parametrize("guest", [False, True])
+async def test_delayed_delegate_cannot_reuse_a_closed_parent_context(
+    hass, monkeypatch, freezer, api, expired, guest
+):
+    from datetime import timedelta
+    from homeassistant.helpers.chat_session import (
+        DATA_CHAT_SESSION,
+        DATA_CHAT_SESSION_CLEANUP,
+    )
+    from homeassistant.util import dt as dt_util
+
+    agent = await _agent(hass, conversation_continuity="ha_default", api_mode=api)
+    user = await hass.auth.async_create_user(
+        "Delayed parent", group_ids=["system-admin"]
+    )
+    context = Context(user_id=user.id)
+    if guest:
+        await agent._guest_mode.async_update_trusted(indefinite=True)
+    reply = _chat_sse_text if api == "chat_completions" else _responses_sse_text
+    wire = _install_wire(
+        monkeypatch, agent, [reply("Background answer") for _ in range(2)]
+    )
+    gate = asyncio.Event()
+
+    async def say(text, incoming):
+        return await conversation.async_converse(
+            hass=hass,
+            text=text,
+            conversation_id=incoming,
+            context=context,
+            language="en",
+            agent_id=agent.entity_id,
+        )
+
+    async def delayed():
+        await gate.wait()
+        first = await say("FIRST_BACKGROUND_SENTINEL", "delayed-parent")
+        assert first.response.error_code is None
+        assert "FOREIGN_RETIRED_SENTINEL" not in json.dumps(wire.requests[-1]["body"])
+        assert first.conversation_id in hass.data[DATA_CHAT_SESSION]
+        assert first.conversation_id in hass.data[DATA_CHAT_LOGS]
+        second = await say(
+            "Background follow-up",
+            first.conversation_id if expired else "delayed-parent",
+        )
+        assert second.response.error_code is None
+        assert second.conversation_id == first.conversation_id
+        sent = json.dumps(wire.requests[-1]["body"])
+        assert "FIRST_BACKGROUND_SENTINEL" in sent
+        assert "FOREIGN_RETIRED_SENTINEL" not in sent
+
+    start = dt_util.utcnow()
+    supplied = conversation.ConversationInput(
+        text="FOREIGN_RETIRED_SENTINEL",
+        device_id=None,
+        satellite_id=None,
+        context=context,
+        language="en",
+        conversation_id="delayed-parent",
+        agent_id="conversation.router",
+    )
+    with async_get_chat_session(hass, "delayed-parent", context=context) as session:
+        with async_get_chat_log(hass, session, supplied) as source:
+            task = asyncio.create_task(delayed())
+            source.async_add_assistant_content_without_tools(
+                conversation.AssistantContent(
+                    agent_id="conversation.router", content="Parent finished"
+                )
+            )
+    freezer.move_to(start + timedelta(seconds=302 if expired else 60))
+    if expired:
+        cleanup = hass.data[DATA_CHAT_SESSION_CLEANUP]
+        if cleanup.unsub:
+            cleanup.unsub()
+            cleanup.unsub = None
+        cleanup._cleanup(dt_util.utcnow())
+        assert "delayed-parent" not in hass.data[DATA_CHAT_SESSION]
+    gate.set()
+    await task
