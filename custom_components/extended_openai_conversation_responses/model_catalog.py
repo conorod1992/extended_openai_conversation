@@ -602,18 +602,52 @@ def _effective_catalog(catalog: dict[str, Any] | None) -> dict[str, Any]:
 
 def _model_metadata_from(catalog: dict[str, Any], model: str) -> dict[str, Any]:
     model_id = str(model or "").lower()
-    for item in catalog["models"]:
-        if item["id"] == model_id:
-            return cast(dict[str, Any], deepcopy(item))
+    item = next((item for item in catalog["models"] if item["id"] == model_id), None)
+    if item is None and model_id == "o3-pro-2025-06-10":
+        item = next(
+            (item for item in catalog["models"] if item["id"] == "o3-pro"), None
+        )
+    if item is not None:
+        return {**deepcopy(item), "id": model_id}
     result = cast(dict[str, Any], deepcopy(catalog["defaults"]))
     result.update({"id": model_id, "display_name": model_id, "kind": "custom"})
     return result
 
 
-def catalog_model_metadata(
-    catalog: dict[str, Any] | None, model: str
+def _provider_model_metadata(
+    result: dict[str, Any], model_id: str, provider: str | None
 ) -> dict[str, Any]:
-    return _model_metadata_from(_effective_catalog(catalog), model)
+    """Project installed provider contracts onto an isolated catalogue lookup."""
+    # Adjustable effort and reasoning-token consumption are different contracts.
+    # OpenAI documents o3-pro's token use without an adjustable-effort enum;
+    # Azure explicitly documents the o-series low/medium/high parameter.
+    o3_pro = model_id in {"o3-pro", "o3-pro-2025-06-10"}
+    result["uses_reasoning_tokens"] = bool(result["reasoning"]["supported"] or o3_pro)
+    if provider == "azure" and o3_pro:
+        efforts = ["low", "medium", "high"]
+        result["reasoning"] = {
+            "supported": True,
+            "efforts": efforts,
+            "openai_default": None,
+            "by_api": {
+                "responses": {"efforts": efforts},
+                "chat_completions": {"efforts": []},
+            },
+        }
+        result["recommended_profile"] = {
+            **result["recommended_profile"],
+            "reasoning_effort": "low",
+        }
+    return result
+
+
+def catalog_model_metadata(
+    catalog: dict[str, Any] | None, model: str, *, provider: str | None = None
+) -> dict[str, Any]:
+    model_id = str(model or "").lower()
+    return _provider_model_metadata(
+        _model_metadata_from(_effective_catalog(catalog), model_id), model_id, provider
+    )
 
 
 def catalog_reasoning_efforts(catalog: dict[str, Any] | None) -> list[str]:
@@ -799,27 +833,7 @@ def model_metadata(model: str, *, provider: str | None = None) -> dict[str, Any]
     else:
         result = cast(dict[str, Any], deepcopy(_active["defaults"]))
         result.update({"id": model_id, "display_name": model_id, "kind": "custom"})
-    # Adjustable effort and reasoning-token consumption are different contracts.
-    # OpenAI documents o3-pro's token use without an adjustable-effort enum;
-    # Azure explicitly documents the o-series low/medium/high parameter.
-    o3_pro = model_id in {"o3-pro", "o3-pro-2025-06-10"}
-    result["uses_reasoning_tokens"] = bool(result["reasoning"]["supported"] or o3_pro)
-    if provider == "azure" and o3_pro:
-        efforts = ["low", "medium", "high"]
-        result["reasoning"] = {
-            "supported": True,
-            "efforts": efforts,
-            "openai_default": None,
-            "by_api": {
-                "responses": {"efforts": efforts},
-                "chat_completions": {"efforts": []},
-            },
-        }
-        result["recommended_profile"] = {
-            **result["recommended_profile"],
-            "reasoning_effort": "low",
-        }
-    return result
+    return _provider_model_metadata(result, model_id, provider)
 
 
 def compatibility_capabilities(

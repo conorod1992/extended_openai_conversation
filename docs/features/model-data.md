@@ -1,6 +1,6 @@
 # Model data catalogue
 
-Extended OpenAI ships a JSON catalogue for OpenAI conversational and reasoning models and the provider capabilities this integration uses. Configuration, Request Rules, previews, and live requests use the same active capabilities. This is deliberately narrower than OpenAI's full model and product directory.
+Extended OpenAI ships a JSON catalogue for OpenAI conversational and reasoning models and the provider capabilities this integration uses. Configuration, Request Rules, previews, and live requests use the same active capabilities. Catalogue apply/reset safeguards also resolve Azure deployments with each route’s own underlying model and provider profile. Captured deployment names with a fixed underlying model receive the same checks; fully dynamic bindings remain validated when the rule runs. This is deliberately narrower than OpenAI's full model and product directory.
 
 ## Updating and resetting
 

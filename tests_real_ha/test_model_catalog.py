@@ -5,6 +5,7 @@ import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
+import pytest
 from pytest_homeassistant_custom_component.common import MockUser
 
 from custom_components.extended_openai_conversation_responses import (
@@ -20,11 +21,55 @@ from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
 from tests_real_ha.test_backup_transfer_protocol import _user_token
 
 
+@pytest.mark.parametrize("azure", [False, True])
 async def test_admin_update_reload_and_reset_using_registered_command(
-    hass, hass_ws_client, monkeypatch
+    hass, hass_ws_client, monkeypatch, azure
 ):
-    entry = _make_entry(include_ai_task=False)
+    entry = _make_entry(
+        include_ai_task=False,
+        **(
+            {
+                "data": {"api_provider": "azure", "api_version": "2025-04-01-preview"},
+                "base_url": "https://eoai-catalog-test.openai.azure.com/openai/v1",
+                "conversation_options": {
+                    "chat_model": "base-deployment",
+                    "azure_model": "gpt-4.1-mini",
+                    "api_mode": "responses",
+                    "functions": [],
+                    "memory_mode": "off",
+                    "temporary_memory": "off",
+                    "max_function_calls_per_conversation": 0,
+                },
+            }
+            if azure
+            else {}
+        ),
+    )
     await _setup_entry(hass, entry)
+    if azure:
+        from custom_components.extended_openai_conversation_responses.request_rules import (
+            async_get_request_rules,
+        )
+
+        subentry = next(iter(entry.subentries.values()))
+        rules = await async_get_request_rules(
+            hass, entry.entry_id, subentry.subentry_id
+        )
+        await rules.async_create(
+            {
+                "name": "Routed o3-pro",
+                "phrases": ["use the pro deployment"],
+                "match_type": "equals",
+                "action_type": "model_routing",
+                "action": {
+                    "model": "pro-deployment",
+                    "azure_model": "o3-pro",
+                    "reasoning_effort": "high",
+                    "scope": "conversation",
+                    "continue_to_ai": True,
+                },
+            }
+        )
     admin = await hass_ws_client(
         hass, await _user_token(hass, MockUser(id="catalog-admin", is_owner=True))
     )

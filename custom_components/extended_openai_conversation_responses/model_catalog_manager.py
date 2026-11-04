@@ -14,17 +14,19 @@ import voluptuous as vol
 from homeassistant.components import websocket_api
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
 
 from .const import (
-    CONF_CHAT_MODEL,
+    CONF_CHAT_MODEL as CONF_CHAT_MODEL,
     CONF_REASONING_EFFORT,
     DEFAULT_CHAT_MODEL as DEFAULT_CHAT_MODEL,
     DOMAIN,
 )
 from .ha_schema import websocket_command as ha_websocket_command
+from .helpers import effective_api_provider
 from .model_capabilities import frontend_capabilities
 from .model_catalog import (
     BUNDLED_CATALOG,
@@ -43,6 +45,7 @@ from .model_catalog import (
     validate_or_migrate_catalog,
 )
 from .model_lifecycle import sync_all_model_lifecycles
+from .model_routing import routed_model_override
 from .operational_errors import log_handled_failure
 from .request_rules import SLOT_REFERENCE, async_get_request_rules
 from .strict_store import PropagatingWriteStore
@@ -250,6 +253,10 @@ class ModelCatalogManager:
         )
 
         for entry in self.hass.config_entries.async_entries(DOMAIN):
+            entry_data = getattr(entry, "data", {})
+            provider = effective_api_provider(
+                entry_data.get("api_provider"), entry_data.get("base_url")
+            )
             for subentry in entry.subentries.values():
                 if subentry.subentry_type not in {"conversation", "ai_task_data"}:
                     continue
@@ -264,7 +271,9 @@ class ModelCatalogManager:
                             if subentry.subentry_type == "conversation"
                             else False
                         ),
-                        model_capabilities=catalog_model_metadata(candidate, model),
+                        model_capabilities=catalog_model_metadata(
+                            candidate, model, provider=provider
+                        ),
                     )
                 except Exception:
                     return False
@@ -284,23 +293,32 @@ class ModelCatalogManager:
                         continue
                     routed_model = action.get("model")
                     routed_effort = action.get("reasoning_effort")
-                    if routed_model and SLOT_REFERENCE.search(str(routed_model)):
+                    routed_binding = action.get("azure_model")
+                    if routed_binding and SLOT_REFERENCE.search(str(routed_binding)):
+                        continue
+                    if (
+                        routed_model
+                        and SLOT_REFERENCE.search(str(routed_model))
+                        and not (provider == "azure" and routed_binding)
+                    ):
                         continue
                     if routed_effort and SLOT_REFERENCE.search(str(routed_effort)):
                         continue
                     if not routed_model and not routed_effort:
                         continue
-                    effective = dict(options)
-                    if routed_model:
-                        effective[CONF_CHAT_MODEL] = routed_model
-                    if routed_effort:
-                        effective[CONF_REASONING_EFFORT] = routed_effort
                     try:
+                        effective = {
+                            **options,
+                            **routed_model_override(
+                                options, routed_model, routed_binding, entry_data
+                            ),
+                        }
+                        if routed_effort:
+                            effective[CONF_REASONING_EFFORT] = routed_effort
                         routed_metadata = catalog_model_metadata(
                             candidate,
-                            capability_model_identity(
-                                effective, getattr(entry, "data", {})
-                            ),
+                            capability_model_identity(effective, entry_data),
+                            provider=provider,
                         )
                         # Explicit Rule efforts are validated at execution; the
                         # request builder may omit stale agent-only preferences.
@@ -448,6 +466,10 @@ class ModelCatalogManager:
 
         bundled_efforts = set(catalog_reasoning_efforts(None))
         for entry in self.hass.config_entries.async_entries(DOMAIN):
+            entry_data = getattr(entry, "data", {})
+            provider = effective_api_provider(
+                entry_data.get("api_provider"), entry_data.get("base_url")
+            )
             for subentry in entry.subentries.values():
                 if subentry.subentry_type not in {"conversation", "ai_task_data"}:
                     continue
@@ -456,12 +478,14 @@ class ModelCatalogManager:
                     subentry.data, getattr(entry, "data", {})
                 )
                 configured_effort = subentry.data.get(CONF_REASONING_EFFORT)
-                metadata = catalog_model_metadata(None, configured_model)
+                metadata = catalog_model_metadata(
+                    None, configured_model, provider=provider
+                )
                 bundled_config_efforts = metadata["reasoning"]["efforts"]
                 # A legacy value omitted by both request builders is inactive.
                 # Still protect reasoning that the active catalogue actually uses.
                 current_metadata = catalog_model_metadata(
-                    self.catalog, configured_model
+                    self.catalog, configured_model, provider=provider
                 )
                 if (
                     isinstance(configured_effort, str)
@@ -499,18 +523,31 @@ class ModelCatalogManager:
                     ):
                         continue
                     model = action.get("model")
-                    if isinstance(model, str) and SLOT_REFERENCE.search(model):
+                    binding = action.get("azure_model")
+                    if (
+                        isinstance(binding, str) and SLOT_REFERENCE.search(binding)
+                    ) or (
+                        isinstance(model, str)
+                        and SLOT_REFERENCE.search(model)
+                        and not (provider == "azure" and binding)
+                    ):
                         if effort not in bundled_efforts:
                             return True
                         continue
-                    effective = {**subentry.data, CONF_REASONING_EFFORT: effort}
-                    if isinstance(model, str) and model:
-                        effective[CONF_CHAT_MODEL] = model
+                    try:
+                        effective = {
+                            **subentry.data,
+                            **routed_model_override(
+                                subentry.data, model, binding, entry_data
+                            ),
+                            CONF_REASONING_EFFORT: effort,
+                        }
+                    except HomeAssistantError:
+                        return True
                     metadata = catalog_model_metadata(
                         None,
-                        capability_model_identity(
-                            effective, getattr(entry, "data", {})
-                        ),
+                        capability_model_identity(effective, entry_data),
+                        provider=provider,
                     )
                     if (
                         not metadata["reasoning"]["supported"]
