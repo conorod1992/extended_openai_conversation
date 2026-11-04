@@ -363,6 +363,28 @@ for(const first of ["partial","lost"]) for(const field of ["start","end","indefi
   assert.equal(panel._unsavedState.scopes.get("guest-interval").dirty(),true);
 });
 
+for(const reply of ["partial","lost"]) for(const field of ["start","end","indefinite"]) for(const newer of [false,true]) test(`Discard after ${reply} ${field} update adopts the read; newer end=${newer}`,async t => {
+  const f=fixture(),panel=f.create();panel._page="capabilities";panel._subsection="guest-mode";await routeAssetPromise(view,panel);
+  panel._result={status:{active_from:"2027-06-04T12:00:00Z",active_until:"2027-06-04T15:00:00Z",indefinite:false},config:{guest_web_search:false},revision:"r0"};
+  const controls={"#guest-start":{value:"2027-06-04T12:00"},"#guest-end":{value:"2027-06-04T15:00",checkValidity:()=>true},"#guest-indefinite":{checked:false}};
+  dialogs(panel,controls);captureGuestInterval(panel);panel._refreshGuestModeMutation=async () => {};let saved;
+  t.after(() => cleanup([panel],() => {}));
+  panel._hass.callWS=async request => {
+    saved={active_from:request.local_times?.active_from ? `${request.active_from}:00Z` : request.active_from,active_until:request.indefinite ? null : request.local_times?.active_until ? `${request.active_until}:00Z` : request.active_until,indefinite:request.indefinite};
+    if(reply === "partial") return {status:{state:"active"}};
+    throw {code:3,message:"Connection lost"};
+  };
+  controls[`#guest-${field}`][field === "indefinite" ? "checked" : "value"]=field === "indefinite" ? true : "2027-06-04T14:00";
+  captureGuestInterval(panel);await panel._updateGuestMode();const scope=panel._unsavedState.scopes.get("guest-interval");
+  scope.discard();assert.equal(scope.dirty(),false);assert.equal(scope.needsRead(),true);
+  for(const key of ["start","end"]) controls[`#guest-${key}`].value=panel._guestIntervalDraft.values[key];
+  controls["#guest-indefinite"].checked=panel._guestIntervalDraft.values.indefinite;
+  if(newer) {controls["#guest-end"].value="2027-06-04T17:00";captureGuestInterval(panel);}
+  const read=capturePageRead(panel);panel._result={...panel._result,status:saved};acceptPageRead(panel,panel._result,read);
+  assert.deepEqual(panel._guestIntervalDraft.values,{start:field === "start" ? "2027-06-04T14:00" : "2027-06-04T12:00",end:newer ? "2027-06-04T17:00" : field === "end" ? "2027-06-04T14:00" : "2027-06-04T15:00",indefinite:field === "indefinite"});
+  assert.equal(scope.dirty(),newer,"only edits after Discard remain unsaved");assert.equal(scope.needsRead(),false);
+});
+
 for(const change of ["discard","source edit","destination edit","baseline","visit","authentication return","different user"]) test(`competing policy review safely handles ${change}`,async t => {
   const f=fixture(),source=f.create(),target=f.create(),panels=[source,target];
   for(const panel of panels) {

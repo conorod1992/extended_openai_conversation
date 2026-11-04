@@ -10,18 +10,18 @@ const intervalValues = (panel, status, retainedEnd = "") => ({start:status.activ
 const intervalDirty = state => !same(state.values, state.baseline)
   || Boolean(state.uncertainSubmission && !same(state.values, state.uncertainSubmission));
 const completeInterval = status => ["active_from", "active_until", "indefinite"].every(key => Object.hasOwn(status || {}, key));
-const clearSubmission = state => {state.uncertainSubmission = null;state.submissionAcknowledged = false;state.submissionImplicitStart = false;};
+const clearSubmission = state => {state.uncertainSubmission = null;state.adoptUnchangedRead = false;state.submissionImplicitStart = false;};
 
 function reconcileIntervalRead(panel, state, status) {
   if (panel._guestIntervalDraft !== state || !configurationSubmissionIsCurrent(panel, state.owner)
       || panel._guestOperation || !state.uncertainSubmission || !completeInterval(status)) return;
   const current = clone(state.values), submitted = state.uncertainSubmission;
   const saved = intervalValues(panel, status, submitted.end);
-  // A confirmed partial reply can normalize unchanged submitted inputs. A lost
-  // reply may not have committed: every explicit interval input remains intent,
-  // including a later submission reverting an earlier unresolved write.
-  state.values = state.submissionAcknowledged ? mergeAcknowledgedDraft(current, submitted, saved) : clone(current);
-  if (!state.submissionAcknowledged && state.submissionImplicitStart && current.start === submitted.start) state.values.start = saved.start;
+  // Confirmed partial replies and Discard can normalize untouched inputs. A
+  // lost reply may not have committed: explicit inputs remain intent, including
+  // a later submission reverting an earlier unresolved write.
+  state.values = state.adoptUnchangedRead ? mergeAcknowledgedDraft(current, submitted, saved) : clone(current);
+  if (!state.adoptUnchangedRead && state.submissionImplicitStart && current.start === submitted.start) state.values.start = saved.start;
   state.baseline = saved;
   clearSubmission(state);
   // Timed reads avoid rebuilding the editor. Update only inputs which still
@@ -70,7 +70,10 @@ function intervalState(panel, status = panel._result?.status || {}) {
         if (!current()) return;
         state.values = clone(state.baseline);
         // Discard authoring, not the read needed to learn what the write did.
-        if (state.uncertainSubmission) state.uncertainSubmission = clone(state.baseline);
+        if (state.uncertainSubmission) {
+          state.uncertainSubmission = clone(state.baseline);
+          state.adoptUnchangedRead = true;
+        }
         state.recoveryIntent = false;
       },
       restore:(target, retry) => {
@@ -86,7 +89,7 @@ function intervalState(panel, status = panel._result?.status || {}) {
         destination.baseline = clone(state.baseline);
         destination.values = clone(state.values);
         destination.uncertainSubmission = clone(state.uncertainSubmission);
-        destination.submissionAcknowledged = state.submissionAcknowledged;
+        destination.adoptUnchangedRead = state.adoptUnchangedRead;
         destination.submissionImplicitStart = state.submissionImplicitStart;
         destination.recoveryIntent = state.recoveryIntent;
         state.values = clone(state.baseline);
@@ -121,7 +124,7 @@ export function acknowledgeGuestInterval(panel, submission, status) {
   // Missing fields must not canonicalize authored values to empty or false.
   if (!completeInterval(status)) {
     state.uncertainSubmission = clone(submission.values);
-    state.submissionAcknowledged = true;
+    state.adoptUnchangedRead = true;
     state.submissionImplicitStart = Boolean(submission.implicitStart);
     return;
   }
@@ -138,7 +141,7 @@ export function retainUncertainGuestInterval(panel, submission, error) {
   // transition. This neither presents a result nor authorizes another owner.
   if (error?.mutationOutcome === "uncertain" && submission?.state === panel._guestIntervalDraft) {
     submission.state.uncertainSubmission = clone(submission.values);
-    submission.state.submissionAcknowledged = false;
+    submission.state.adoptUnchangedRead = false;
     submission.state.submissionImplicitStart = Boolean(submission.implicitStart);
   }
 }

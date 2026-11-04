@@ -53,6 +53,37 @@ for(const bundled of [false,true]) for(const outcome of ["partial","lost","not c
   await expectHarnessClean(page,errors);
 });
 
+for(const bundled of [false,true]) for(const outcome of ["partial","lost"]) for(const newer of [false,true]) test(`interval scope Discard adopts saved values after ${outcome}, newer end=${newer}, bundle=${bundled}`,async ({page}) => {
+  const errors=trackPageErrors(page);
+  await page.goto(fixtureUrl("capabilities/guest-mode",bundled ? "&bundle=1" : ""));
+  const panel=page.locator("extended-openai-management-panel");await expect(panel.locator("#guest-start")).toBeAttached();
+  await panel.evaluate(async (host,outcome) => {
+    host.hass={...host.hass,user:{id:"interval-discard-owner",is_admin:true},config:{...host.hass.config,time_zone:"UTC"}};
+    const send=host.hass.callWS.bind(host.hass);
+    window.intervalDiscard={status:{active_from:"2027-06-04T12:00:00Z",active_until:"2027-06-04T15:00:00Z",indefinite:false},writes:0};
+    host.hass.callWS=async request => {
+      if(request.section !== "guest_mode") return send(request);
+      if(request.action === "get") return {...await send(request),status:structuredClone(intervalDiscard.status)};
+      if(request.action !== "update") return send(request);
+      intervalDiscard.writes++;
+      intervalDiscard.status.active_until=`${request.active_until}:00Z`;
+      if(outcome === "partial") return {status:{state:"active"}};
+      throw {code:3,message:"Connection lost"};
+    };
+    host._sectionCache.clear();await host._loadSection(true);
+  },outcome);
+  await panel.locator("#guest-end").fill("2027-06-04T14:00");await panel.locator("#guest-update").click();
+  await expect.poll(() => panel.evaluate(host => Boolean(host._guestOperation))).toBe(false);
+  await panel.evaluate(host => {host._unsavedState.scopes.get("guest-interval").discard();host._render();});
+  await expect(panel.locator("#guest-end")).toHaveValue("2027-06-04T15:00");
+  if(newer) await panel.locator("#guest-end").fill("2027-06-04T17:00");
+  await panel.locator('.subsection-nav button[data-subsection="guest-mode"]').click();
+  await expect.poll(() => panel.evaluate(host => host._unsavedState.scopes.get("guest-interval").needsRead())).toBe(false);
+  await expect(panel.locator("#guest-end")).toHaveValue(newer ? "2027-06-04T17:00" : "2027-06-04T14:00");
+  expect(await panel.evaluate(host => host._unsavedState.scopes.get("guest-interval").dirty())).toBe(newer);
+  expect(await page.evaluate(() => intervalDiscard.writes)).toBe(1);await expectHarnessClean(page,errors);
+});
+
 for(const bundled of [false,true]) for(const first of ["partial","lost"]) for(const field of ["start","end","indefinite"]) test(`a later unresolved interval ${field} reversion stays authored after ${first}; bundle=${bundled}`,async ({page}) => {
   const errors=trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/guest-mode",bundled ? "&bundle=1" : ""));
