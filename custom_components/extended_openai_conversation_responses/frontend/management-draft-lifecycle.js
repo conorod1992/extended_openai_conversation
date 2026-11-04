@@ -167,7 +167,7 @@ function restoreDraftSource(panel, source, key) {
         if (source._eocPendingModelPreparation) source._eocPendingModelPreparation.transferTo?.(panel);
         else source._eocModelIntent?.transferTo?.(source, panel);
       }
-      transferVoiceMappingDraft(panel, source);
+      transferVoiceMappingDraft(panel, source, () => restorePanelDrafts(panel));
       const retention = pendingRetentionFields(source);
       if (retention.length) {
         // A committed policy has no authored delta, but deletion may still need

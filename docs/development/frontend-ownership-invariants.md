@@ -243,3 +243,26 @@ generation. Reading the previous ID from mutable `hass` would miss in-place
 A→B→A updates. Ordinary same-user updates reuse the record; identity changes
 replace it. The existing generation property is a computed compatibility view,
 not a second independently mutable counter.
+
+
+## Deferred Voice recovery and explicit review
+
+A dirty receiving Voice editor defers the retained rows. The source records the
+receiving saved revision: a later successful destination save cannot turn that
+old source into an automatic replacement, even when the save preserves the
+original mapping or another panel receives recovery. Return to Voice to review
+both row projections. Invalid and unfinished rows remain recoverable values.
+
+Voice uses the shared recovered-scope dialog in `management-dialogs.js`. Its
+scope registration is stable across renders; callback registrations remain
+separate from clonable authoring values. Keep dismisses the reviewed source for
+this visit while destination editing continues. A stale Discard cannot discard
+changed values and instead permits a fresh review. Later visits or changed source
+values require review again. Discard, transfer and an acknowledged source save
+retire the old Voice recovery marker before new authoring begins.
+
+`voice-competing-recovery.test.mjs` and `voice-competing-recovery.spec.mjs` cover
+successful destination saves, same-policy saves, repeated replacement, explicit
+Keep/Discard, invalid rows, stable rendering, source-save retirement and exact
+write counts. Existing deferred-Voice and competing-Guest controls remain part
+of the shared-dialog regression boundary.

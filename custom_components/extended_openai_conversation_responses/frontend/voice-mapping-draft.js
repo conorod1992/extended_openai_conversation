@@ -1,6 +1,8 @@
 import {UnsavedState, clone, same} from "./unsaved-state.js";
+import {reviewRecoveredScope, scopeNeedsRecoveryReview, clearScopeRecoveryReview} from "./management-dialogs.js";
 
 const states = new WeakMap();
+const scopeRegistrations = new WeakMap();
 let rowSequence = 0;
 const owner = panel => ({agent:panel._agentId, entry:panel._selectedAgent?.()?.entry_id,
   user:panel.hass?.user?.id, generation:panel._eocDraftGeneration || 0});
@@ -34,25 +36,36 @@ function dirty(state) {
   return !same(projection(state.rows), state.baseline) || Boolean(validateRows(state.rows).error);
 }
 
+function clearRecovery(state) {
+  state.deferredBaseline = null;
+  clearScopeRecoveryReview(scopeRegistrations.get(state));
+}
+
 function register(panel, state) {
   const scopes = panel._unsavedState ||= new UnsavedState();
-  scopes.register(`voice-mapping-rows:${key(state.owner)}`, {
+  // Rendering the same rows must not replace the scope owning an open review.
+  const scope = scopeRegistrations.get(state) || {
+    isCurrent:() => current(panel, state),
+    get baseline() { return state.baseline; },
     dirty:() => current(panel, state) && dirty(state),
-    read:() => clone(state.rows),
+    read:() => clone(projection(state.rows)),
     owns:destination => Boolean(destination) && current(panel, state),
     destinations:() => ["assistant/voice"],
     discard:() => {
       if (!current(panel, state)) return;
       state.rows = fromMapping(baselineMapping(panel));
       state.baseline = projection(state.rows);
+      clearRecovery(state);
       if (panel._draft) panel._draft.voice_device_mappings = clone(baselineMapping(panel));
       panel._syncConfigDirty?.();
     },
-    restore:target => { if (transferVoiceMappingDraft(target, panel)) { target._syncConfigDirty?.(); target._render?.(); } },
-  });
+    restore:(target, retry) => { if (transferVoiceMappingDraft(target, panel, retry)) { target._syncConfigDirty?.(); target._render?.(); } },
+  };
+  scopeRegistrations.set(state, scope);
+  scopes.register(`voice-mapping-rows:${key(state.owner)}`, scope);
 }
 
-export function transferVoiceMappingDraft(target, source) {
+export function transferVoiceMappingDraft(target, source, retry) {
   const state = existing(source);
   if (!state || !current(source, state) || !dirty(state) || source.isConnected !== false
       || target.isConnected === false || !target._data?.is_admin
@@ -60,7 +73,19 @@ export function transferVoiceMappingDraft(target, source) {
   const receivingOwner = owner(target);
   if (["agent", "entry", "user"].some(field => receivingOwner[field] !== state.owner[field])) return false;
   const prior = existing(target);
-  if (prior && dirty(prior)) return false;
+  const competing = prior && dirty(prior);
+  if (competing) state.deferredBaseline ||= {revision:target._configData?.revision};
+  if (competing || scopeNeedsRecoveryReview(scopeRegistrations.get(state))
+      || state.deferredBaseline && state.deferredBaseline.revision !== target._configData?.revision) {
+    // A later successful save is not consent to receive the deferred rows.
+    // Retain both copies, including across replacement, until explicit review.
+    if (target._viewKey?.() === "assistant/voice") {
+      voiceMappingDraft(target);
+      reviewRecoveredScope(target, source, `voice-mapping-rows:${key(state.owner)}`,
+        "Voice assignments", retry, {targetId:`voice-mapping-rows:${key(owner(target))}`, requireReview:true});
+    }
+    return false;
+  }
   const validated = validateRows(state.rows);
   const targetMapping = mapping(target._draft.voice_device_mappings);
   const sourceMapping = validated.mapping || mapping(source._draft?.voice_device_mappings);
@@ -75,6 +100,7 @@ export function transferVoiceMappingDraft(target, source) {
   if (validated.mapping) target._draft.voice_device_mappings = clone(validated.mapping);
   state.rows = fromMapping(baselineMapping(source));
   state.baseline = projection(state.rows);
+  clearRecovery(state);
   return true;
 }
 
@@ -152,6 +178,7 @@ export function discardVoiceMappingDraft(panel, savedMapping = baselineMapping(p
   if (!state) return;
   state.rows = fromMapping(savedMapping);
   state.baseline = projection(state.rows);
+  clearRecovery(state);
 }
 
 export function acknowledgeVoiceMappingDraft(panel, saved, submission, fields) {
@@ -164,4 +191,5 @@ export function acknowledgeVoiceMappingDraft(panel, saved, submission, fields) {
     return retained ? {...row,id:retained.id,satellite:retained.satellite} : row;
   });
   state.baseline = projection(savedRows);
+  clearRecovery(state);
 }
