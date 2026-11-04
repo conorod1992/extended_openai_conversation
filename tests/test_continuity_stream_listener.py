@@ -6,7 +6,9 @@ from types import SimpleNamespace
 import pytest
 
 from custom_components.extended_openai_conversation_responses.continuity import (
+    chat_log_admission_scope,
     forward_chat_log_deltas,
+    processing_conversation_scope,
 )
 from homeassistant.components import conversation
 
@@ -139,3 +141,96 @@ def test_reroute_cleanup_cannot_remove_an_ancestor_or_advanced_turn(case):
     ):
         assert source.content == before
     assert source.content == before
+
+
+def _admitted_log():
+    source = _log()
+    source.conversation_id = "source"
+    source.turn_active = True
+    source.turn_start = 0
+    return source
+
+
+@pytest.mark.parametrize("failure", [None, RuntimeError, asyncio.CancelledError])
+@pytest.mark.parametrize("claimed", [False, True])
+def test_admission_cleanup_is_limited_to_unclaimed_inputs(failure, claimed):
+    source = _admitted_log()
+    pending = source.content[0]
+
+    def run():
+        with chat_log_admission_scope(source, "source", "current question"):
+            if claimed:
+                with forward_chat_log_deltas(source, source, "current question"):
+                    pass
+            if failure:
+                raise failure()
+
+    if failure:
+        with pytest.raises(failure):
+            run()
+    else:
+        run()
+    assert source.content == ([pending] if claimed else [])
+
+
+@pytest.mark.parametrize(
+    "case", ["old_core", "other_id", "other_text", "advanced", "replaced", "ancestor"]
+)
+def test_admission_cleanup_preserves_unrelated_or_advanced_content(case):
+    source = _admitted_log()
+    source.turn_active = case != "old_core"
+    if case == "ancestor":
+        with processing_conversation_scope(object(), "source"):
+            with chat_log_admission_scope(source, "source", "current question"):
+                pass
+        assert len(source.content) == 1
+        return
+    with chat_log_admission_scope(
+        source,
+        "other" if case == "other_id" else "source",
+        "other" if case == "other_text" else "current question",
+    ):
+        if case == "advanced":
+            source.content.append(
+                conversation.AssistantContent(agent_id="agent", content="partial")
+            )
+        elif case == "replaced":
+            source.content[-1] = conversation.UserContent(content="current question")
+        expected = source.content.copy()
+    assert source.content == expected
+
+
+@pytest.mark.parametrize("same_target", [False, True])
+def test_nested_unowned_call_cannot_claim_or_remove_parent_admission(same_target):
+    source = _admitted_log()
+    with chat_log_admission_scope(source, "source", "current question"):
+        with chat_log_admission_scope(source, "source", "current question"):
+            with forward_chat_log_deltas(
+                source,
+                source if same_target else _log(),
+                "current question",
+                rerouted_input=True,
+            ):
+                assert len(source.content) == 1
+        assert len(source.content) == 1
+    # Neither nested target can claim its parent's pending admission.
+    assert source.content == []
+
+
+async def test_inherited_admission_record_expires_with_parent_scope():
+    source = _admitted_log()
+    release = asyncio.Event()
+
+    async def descendant():
+        await release.wait()
+        # The parent admission is retired, even in this inherited task context.
+        with chat_log_admission_scope(source, "source", "current question"):
+            pass
+
+    with chat_log_admission_scope(source, "source", "current question"):
+        with forward_chat_log_deltas(source, source, "current question"):
+            task = asyncio.create_task(descendant())
+    assert len(source.content) == 1
+    release.set()
+    await task
+    assert source.content == []

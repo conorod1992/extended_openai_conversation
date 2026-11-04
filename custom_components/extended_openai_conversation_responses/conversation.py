@@ -106,6 +106,7 @@ from .continuity import (
     GUEST_CONTINUITY_NAMESPACE,
     ConversationContinuity,
     async_get_continuity,
+    chat_log_admission_scope,
     forward_chat_log_deltas,
     processing_conversation_scope,
 )
@@ -746,48 +747,57 @@ class ExtendedOpenAIAgentEntity(
         surround debug capture, request caches, Voice Identity and reconciliation.
         No installer may replace this method or any of its request-entry owners.
         """
-        ready = self._agent_ready
-        if ready is not None:
-            await ready.wait()
-            if self._agent_ready is not ready or self._agent_initialization_failed:
-                return self._agent_not_ready_result(user_input)
-        if not user_input.text.strip():
-            response = intent.IntentResponse(language=user_input.language)
-            response.async_set_speech("")
-            return ConversationResult(
-                response=response,
-                conversation_id=user_input.conversation_id,
-                continue_conversation=False,
-            )
-
-        with (
-            bind_active_ha_context(user_input.context),
-            bind_request_satellite(getattr(user_input, "satellite_id", None)),
+        with chat_log_admission_scope(
+            current_chat_log.get(), user_input.conversation_id, user_input.text
         ):
-            async with conversation_request_lease(self):
-                with conversation_debug_trace(self, user_input) as trace:
-                    with formatted_tool_cache():
-                        config_token = _ACTIVE_REQUEST_CONFIG_DATA.set(
-                            self.subentry.data
-                        )
-                        try:
-                            async with voice_identity_scope(self, user_input):
-                                await async_reconcile_runtime_configuration(self)
-                                reconciled_token = _ACTIVE_RUNTIME_RECONCILED.set(True)
-                                try:
-                                    await async_prepare_runtime_function_tools(
-                                        self.hass, self.subentry.data
+            ready = self._agent_ready
+            if ready is not None:
+                await ready.wait()
+                if self._agent_ready is not ready or self._agent_initialization_failed:
+                    return self._agent_not_ready_result(user_input)
+            if not user_input.text.strip():
+                response = intent.IntentResponse(language=user_input.language)
+                response.async_set_speech("")
+                return ConversationResult(
+                    response=response,
+                    conversation_id=user_input.conversation_id,
+                    continue_conversation=False,
+                )
+
+            with (
+                bind_active_ha_context(user_input.context),
+                bind_request_satellite(getattr(user_input, "satellite_id", None)),
+            ):
+                async with conversation_request_lease(self):
+                    with conversation_debug_trace(self, user_input) as trace:
+                        with formatted_tool_cache():
+                            config_token = _ACTIVE_REQUEST_CONFIG_DATA.set(
+                                self.subentry.data
+                            )
+                            try:
+                                async with voice_identity_scope(self, user_input):
+                                    await async_reconcile_runtime_configuration(self)
+                                    reconciled_token = _ACTIVE_RUNTIME_RECONCILED.set(
+                                        True
                                     )
-                                    result = await self._async_process_with_continuity(
-                                        user_input
-                                    )
-                                finally:
-                                    _ACTIVE_RUNTIME_RECONCILED.reset(reconciled_token)
-                        finally:
-                            _ACTIVE_REQUEST_CONFIG_DATA.reset(config_token)
-                    if trace is not None:
-                        trace.result = result
-                    return result
+                                    try:
+                                        await async_prepare_runtime_function_tools(
+                                            self.hass, self.subentry.data
+                                        )
+                                        result = (
+                                            await self._async_process_with_continuity(
+                                                user_input
+                                            )
+                                        )
+                                    finally:
+                                        _ACTIVE_RUNTIME_RECONCILED.reset(
+                                            reconciled_token
+                                        )
+                            finally:
+                                _ACTIVE_REQUEST_CONFIG_DATA.reset(config_token)
+                        if trace is not None:
+                            trace.result = result
+                        return result
 
     async def _async_process_with_continuity(
         self, user_input: ConversationInput

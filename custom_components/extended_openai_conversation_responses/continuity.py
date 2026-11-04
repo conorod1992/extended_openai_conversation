@@ -43,6 +43,73 @@ _PROCESSING_CONVERSATIONS: ContextVar[tuple[_ProcessingConversation, ...]] = Con
 )
 
 
+@dataclass(slots=True)
+class _ChatLogAdmission:
+    source: conversation.ChatLog
+    claimed: bool = False
+    active: bool = True
+
+
+_CHAT_LOG_ADMISSIONS: ContextVar[tuple[_ChatLogAdmission | None, ...]] = ContextVar(
+    "eoai_chat_log_admissions", default=()
+)
+
+
+@contextmanager
+def chat_log_admission_scope(
+    source: conversation.ChatLog | None,
+    conversation_id: str | None,
+    request_text: str,
+) -> Generator[None]:
+    """Retire an untouched Core admission unless this invocation owns its log.
+
+    Core 2026.11 retains live inputs even if preparation fails before continuity
+    can route a Guest turn. Never capture an ancestor's admission, and keep an
+    owned turn on failure: its history may contain unresolved tool effects.
+    """
+    if (
+        source is None
+        or source.conversation_id != conversation_id
+        or not getattr(source, "turn_active", False)
+        or getattr(source, "turn_start", None) != len(source.content) - 1
+        or not source.content
+        or not isinstance(source.content[-1], conversation.UserContent)
+        or source.content[-1].content != request_text
+        or any(
+            item is not None and item.active and item.source is source
+            for item in _CHAT_LOG_ADMISSIONS.get()
+        )
+        or any(
+            item.active
+            and source.conversation_id
+            in {item.conversation_id, item.claimed_conversation_id}
+            for item in _PROCESSING_CONVERSATIONS.get()
+        )
+    ):
+        token = _CHAT_LOG_ADMISSIONS.set((*_CHAT_LOG_ADMISSIONS.get(), None))
+        try:
+            yield
+        finally:
+            _CHAT_LOG_ADMISSIONS.reset(token)
+        return
+    admission = _ChatLogAdmission(source)
+    pending = source.content[-1]
+    token = _CHAT_LOG_ADMISSIONS.set((*_CHAT_LOG_ADMISSIONS.get(), admission))
+    try:
+        yield
+    finally:
+        admission.active = False
+        _CHAT_LOG_ADMISSIONS.reset(token)
+        if (
+            not admission.claimed
+            and getattr(source, "turn_active", False)
+            and getattr(source, "turn_start", None) == len(source.content) - 1
+            and source.content
+            and source.content[-1] is pending
+        ):
+            source.content.pop()
+
+
 @contextmanager
 def processing_conversation_scope(
     manager: object,
@@ -77,6 +144,10 @@ def forward_chat_log_deltas(
     their separate logs, and the callback must never survive this request.
     An owned rerouted input is removed from Core's otherwise unused live log.
     """
+    admissions = _CHAT_LOG_ADMISSIONS.get()
+    admission = admissions[-1] if admissions else None
+    if admission is not None and admission.active and admission.source is target:
+        admission.claimed = True
     if (
         source is None
         or source is target
@@ -92,6 +163,14 @@ def forward_chat_log_deltas(
     # The caller confirms the source ID, excluding unrelated ancestor requests.
     if (
         rerouted_input
+        and (
+            not admissions
+            or (
+                admission is not None
+                and admission.active
+                and admission.source is source
+            )
+        )
         and getattr(source, "turn_active", False)
         and getattr(source, "turn_start", None) == len(source.content) - 1
     ):

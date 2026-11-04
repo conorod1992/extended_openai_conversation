@@ -232,3 +232,15 @@ Memory response and usable collection, since the route heading may paint earlier
 
 
 Release-day CI resolves fixtures for the exact released Home Assistant version. If a published custom-component test plugin is unavailable, only reviewed immutable source pairs in `ci/resolve_ha_test_plugin.py` may supply the bridge. Home Assistant 2026.11.0 ships the official fixture package in Core: the bridge relocates its import namespace for the existing tests, pins the exact Core dependency and verifies wheel version, actual released version constants and source provenance. It registers one fixture plugin. Older releases retain their pinned upstream generator; no beta fixtures are relabelled and no older runtime substitutes for the selected release. The unused standalone respx pytest plugin is disabled as recommended by the official package, allowing Home Assistant to install its HTTP compatibility alias first.
+
+
+HA 2026.11 live-history regressions admit the actual Guest input through Core's
+ChatSession/ChatLog contexts, fail preparation with both exceptions and
+cancellation, then resume the owner and inspect the provider wire. Untouched
+inputs that never acquire continuity ownership must leave the source log. Owned
+failed turns remain available for recovery; nested invocations cannot claim or
+remove an ancestor's input. Both provider APIs run these controls, alongside
+listener restoration and inherited-task lifetime tests. Catalogue transition
+checks exercise explicit reasoning inherited by model-only rules, including
+prior conversation routes, disabled/request-scoped controls and explicit route
+overrides, without mutating saved choices or publishing blocked metadata.
