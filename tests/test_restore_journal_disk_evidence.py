@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.ha_store_test_helpers import disk_write_boundary
+
 from custom_components.extended_openai_conversation_responses.restore_recovery import (
     _async_write_journal_verified,
     _journal_store,
@@ -42,10 +44,11 @@ async def test_shutdown_write_failure_cannot_be_verified_as_success(hass, monkey
     hass.state = CoreState.stopping
     store = _journal_store(hass, "entry", "agent")
 
-    def fail(_data):
+    def fail(*_data):
         raise OSError("write failed")
 
-    monkeypatch.setattr(store, "_write_data", fail)
+    writer, write_name = disk_write_boundary(store)
+    monkeypatch.setattr(writer, write_name, fail)
     with pytest.raises(_JournalVerificationUnavailable):
         await _async_write_journal_verified(store, {"candidate": True})
     assert await store.async_load() is None

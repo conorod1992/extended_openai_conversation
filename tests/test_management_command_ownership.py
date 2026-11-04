@@ -73,6 +73,7 @@ def test_real_installer_activation_and_repeated_setup_preserve_identity() -> Non
 import asyncio
 from contextlib import ExitStack
 from unittest.mock import AsyncMock, MagicMock, patch
+import homeassistant  # Core starts before custom integrations in a real installation.
 from custom_components import extended_openai_conversation_responses as integration
 from custom_components.extended_openai_conversation_responses import management_ui as ui
 from custom_components.extended_openai_conversation_responses import management_loading_performance as loading

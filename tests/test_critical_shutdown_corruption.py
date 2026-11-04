@@ -6,6 +6,8 @@ from unittest.mock import Mock
 
 import pytest
 
+from tests.ha_store_test_helpers import disk_write_boundary
+
 from custom_components.extended_openai_conversation_responses.strict_store import (
     PropagatingWriteStore,
     RecoveryGuardedStore,
@@ -50,14 +52,15 @@ async def test_shutdown_failure_never_becomes_a_successful_receipt(
     store = PropagatingWriteStore(
         hass, 1, "shutdown-failure", atomic_writes=True, serialize_in_event_loop=False
     )
-    write = store._write_data
+    writer, write_name = disk_write_boundary(store)
+    write = getattr(writer, write_name)
 
-    def fail(data):
+    def fail(*data):
         if after_write:
-            write(data)
+            write(*data)
         raise OSError("private failure")
 
-    monkeypatch.setattr(store, "_write_data", fail)
+    monkeypatch.setattr(writer, write_name, fail)
     with pytest.raises(OSError):
         await store.async_save({"generation": 1})
     assert Path(store.path).exists() is after_write

@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock
 import atomicwrites
 import pytest
 
+from tests.ha_store_test_helpers import serialization_boundary
+
 from custom_components.extended_openai_conversation_responses import (
     backup,
     restore_recovery,
@@ -72,13 +74,14 @@ async def test_manager_reconciles_serialization_failure_before_next_mutation(
     before = await library.async_backup_data()
     path = Path(storage._store.path)
     before_bytes = path.read_bytes()
-    native_write = storage._store._write_data
+    writer, write_name = serialization_boundary(storage._store)
+    native_write = getattr(writer, write_name)
 
     def fail_serialization(envelope):
         native_write({**envelope, "private": _PrivateValue()})
 
     with monkeypatch.context() as fault:
-        fault.setattr(storage._store, "_write_data", fail_serialization)
+        fault.setattr(writer, write_name, fail_serialization)
         with pytest.raises(OSError, match="serialization failed"):
             await library.async_create("Candidate", "", "uncommitted candidate fact")
     assert await library.async_backup_data() == before
@@ -128,16 +131,17 @@ async def test_native_journal_failure_keeps_disk_phase_for_recovery(
             raise OSError(errno.EIO, "injected post-replace failure")
 
     # Corrupt only the outgoing envelope, leaving transaction RAM state intact.
-    native_write = Store._write_data
+    writer, write_name = serialization_boundary(Store)
+    native_write = getattr(writer, write_name)
 
     def failed_serialization(store, envelope):
         if Path(store.path) == path and envelope["data"]["phase"] == phase:
             envelope = {**envelope, "private": _PrivateValue()}
-        native_write(store, envelope)
+        return native_write(store, envelope)
 
     with monkeypatch.context() as fault:
         if boundary == "serialization":
-            fault.setattr(Store, "_write_data", failed_serialization)
+            fault.setattr(writer, write_name, failed_serialization)
         else:
             fault.setattr(atomicwrites, "_replace_atomic", failed_replace)
         with pytest.raises(backup.BackupError, match=r"could not be.*verified"):

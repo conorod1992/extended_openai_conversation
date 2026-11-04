@@ -21,12 +21,13 @@ GENERATED_PLUGIN_VERSION = "0.13.370+eoai.ha2026.10.2.gaacf4b5e.c8d7fd8b6"
 
 @dataclass(frozen=True, slots=True)
 class GeneratedFixture:
-    """An explicitly reviewed released Core/generator pair."""
+    """An explicitly reviewed released Core fixture source."""
 
     ha_version: str
     plugin_version: str
     core_sha: str
     generator_sha: str = GENERATOR_SHA
+    official_package: bool = False
 
     @property
     def provenance(self) -> dict[str, str]:
@@ -45,6 +46,15 @@ GENERATED_FIXTURES = {
         "2026.10.3",
         "0.13.370+eoai.ha2026.10.3.gaacf4b5e.c1f214b84",
         "1f214b8461dd1fbbd66e10765c6905f49d3c1d86",
+    ),
+    # This release ships its official fixtures inside Core. The source and
+    # fixture-producing package therefore have the same immutable identity.
+    "2026.11.0": GeneratedFixture(
+        "2026.11.0",
+        "0.13.370+eoai.ha2026.11.0.official.c74cf5a49",
+        "74cf5a49c63ed8d4d87717844bf14f79c28c9cea",
+        generator_sha="74cf5a49c63ed8d4d87717844bf14f79c28c9cea",
+        official_package=True,
     ),
     "2026.10.4": GeneratedFixture(
         "2026.10.4",

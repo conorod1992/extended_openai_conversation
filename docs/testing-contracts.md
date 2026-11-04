@@ -229,3 +229,6 @@ earlier child or Energy manager load that yields before exposure is revoked.
 Current visibility narrows the originally admitted Guest/caller scope; it never
 widens it. The browser resilience slow-read witness waits for the actual delayed
 Memory response and usable collection, since the route heading may paint earlier.
+
+
+Release-day CI resolves fixtures for the exact released Home Assistant version. If a published custom-component test plugin is unavailable, only reviewed immutable source pairs in `ci/resolve_ha_test_plugin.py` may supply the bridge. Home Assistant 2026.11.0 ships the official fixture package in Core: the bridge relocates its import namespace for the existing tests, pins the exact Core dependency and verifies wheel version, actual released version constants and source provenance. It registers one fixture plugin. Older releases retain their pinned upstream generator; no beta fixtures are relabelled and no older runtime substitutes for the selected release. The unused standalone respx pytest plugin is disabled as recommended by the official package, allowing Home Assistant to install its HTTP compatibility alias first.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install exact published fixtures, or regenerate the pinned release-day bridge."""
+"""Install exact released fixtures from published packages or pinned sources."""
 
 from __future__ import annotations
 
@@ -8,6 +8,8 @@ import ast
 from email.parser import Parser
 import json
 from pathlib import Path
+import re
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -86,10 +88,101 @@ def verify_wheel(wheel: Path, fixture: GeneratedFixture = DEFAULT_FIXTURE) -> No
             raise RuntimeError("Generated fixture source provenance differs")
 
 
+def prepare_official_fixture_bridge(
+    core: Path, destination: Path, fixture: GeneratedFixture
+) -> None:
+    """Keep released Core fixtures under the existing test-import namespace.
+
+    Core 2026.11 ships its own fixture package. Relocate only that namespace and
+    package metadata; fixture bodies stay upstream. Do not load both plugins.
+    """
+    shutil.copytree(core / "packages/pytest-homeassistant", destination)
+    package = destination / "pytest_homeassistant_custom_component"
+    (destination / "pytest_homeassistant").rename(package)
+    for source in package.rglob("*.py"):
+        source.write_text(
+            re.sub(
+                r"\bpytest_homeassistant\b",
+                "pytest_homeassistant_custom_component",
+                source.read_text(encoding="utf-8"),
+            ),
+            encoding="utf-8",
+        )
+    project = destination / "pyproject.toml"
+    metadata = project.read_text(encoding="utf-8")
+    for old, new in (
+        (
+            'name = "pytest-homeassistant"',
+            'name = "pytest-homeassistant-custom-component"',
+        ),
+        ('version = "0.0.0"', f'version = "{fixture.plugin_version}"'),
+        ('"homeassistant",', f'"homeassistant=={fixture.ha_version}",'),
+        ("pytest_homeassistant", "pytest_homeassistant_custom_component"),
+    ):
+        if old not in metadata:
+            raise RuntimeError("Released official fixture metadata has changed")
+        metadata = metadata.replace(old, new)
+    metadata += '\n[tool.setuptools.package-data]\n"*" = ["*.json"]\n'
+    project.write_text(metadata, encoding="utf-8")
+    # Copy the actual released Core version, never a version supplied by CI.
+    source = (core / "homeassistant/const.py").read_text(encoding="utf-8")
+    constants = [
+        ast.get_source_segment(source, node)
+        for node in ast.parse(source).body
+        if isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+        and node.target.id in {"MAJOR_VERSION", "MINOR_VERSION", "PATCH_VERSION"}
+    ]
+    if len(constants) != 3 or not all(constants):
+        raise RuntimeError("Released Core version constants have changed")
+    (package / "const.py").write_text(
+        "from typing import Final\n" + "\n".join(constants) + "\n", encoding="utf-8"
+    )
+    (package / "eoai_source_identity.json").write_text(
+        json.dumps(fixture.provenance), encoding="utf-8"
+    )
+
+
+def build_official_fixture_bridge(destination: Path, fixture: GeneratedFixture) -> Path:
+    """Package the exact released official fixtures without installing them."""
+    destination.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="eoai-official-ha-fixtures-") as temporary:
+        root = Path(temporary)
+        extract_source("home-assistant/core", fixture.core_sha, root / "core")
+        package = root / "bridge"
+        prepare_official_fixture_bridge(root / "core", package, fixture)
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "wheel",
+                "--no-deps",
+                "--wheel-dir",
+                str(destination.resolve()),
+                str(package),
+            ],
+            check=True,
+        )
+    wheel = next(
+        destination.glob(
+            f"pytest_homeassistant_custom_component-{fixture.plugin_version}-*.whl"
+        )
+    )
+    verify_wheel(wheel, fixture)
+    print(
+        "Packaged exact official fixtures: " + json.dumps(fixture.provenance),
+        flush=True,
+    )
+    return wheel
+
+
 def build_generated_plugin(
     destination: Path, fixture: GeneratedFixture = DEFAULT_FIXTURE
 ) -> Path:
-    """Run the unmodified upstream generator on exact released Core sources."""
+    """Build exact released fixtures using their reviewed source layout."""
+    if fixture.official_package:
+        return build_official_fixture_bridge(destination, fixture)
     destination.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="eoai-ha-fixtures-") as temporary:
         root = Path(temporary)

@@ -8,6 +8,8 @@ from unittest.mock import Mock
 
 import pytest
 
+from tests.ha_store_test_helpers import disk_write_boundary
+
 from custom_components.extended_openai_conversation_responses import management_ui as ui
 from custom_components.extended_openai_conversation_responses.guest_mode import (
     GuestModeManager,
@@ -66,14 +68,15 @@ async def test_guest_write_failure_recovers_before_next_public_command(
 
     manager.async_add_listener(failing_listener)
     manager.async_add_listener(lambda: observed.append(manager.is_active()))
-    write = manager._store._write_data
+    writer, write_name = disk_write_boundary(manager._store)
+    write = getattr(writer, write_name)
 
-    def fail(data):
+    def fail(*data):
         if after_write:
-            write(data)
+            write(*data)
         raise OSError("disk settlement failed")
 
-    monkeypatch.setattr(manager._store, "_write_data", fail)
+    monkeypatch.setattr(writer, write_name, fail)
     reply = await send(hass, entry, subentry, action)
     reply.send_result.assert_not_called()
     assert reply.send_error.call_args.args[1] == "eoai_mutation_uncertain"
@@ -85,7 +88,7 @@ async def test_guest_write_failure_recovers_before_next_public_command(
     assert observed == ([expected_active] if after_write else [])
     if not after_write:
         assert await fresh.async_backup_data() == original
-    monkeypatch.setattr(manager._store, "_write_data", write)
+    monkeypatch.setattr(writer, write_name, write)
     next_reply = await send(hass, entry, subentry, action)
     next_reply.send_error.assert_not_called()
     assert next_reply.send_result.call_args.args[1]["status"]["currently_active"] is (

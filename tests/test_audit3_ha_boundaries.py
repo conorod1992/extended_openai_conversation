@@ -5,6 +5,8 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from tests.ha_store_test_helpers import initialize_config_entries
+
 from custom_components.extended_openai_conversation_responses.functions.script import (
     ScriptFunction,
 )
@@ -80,6 +82,7 @@ async def test_shared_alias_survives_either_sibling_removal(
 
 async def test_disabled_quiet_sensor_stays_absent_and_can_be_reenabled(tmp_path):
     hass = HomeAssistant(str(tmp_path))
+    await initialize_config_entries(hass)
     dr.async_setup(hass)
     await dr.async_load(hass)
     registry = er.async_get(hass)

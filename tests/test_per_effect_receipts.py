@@ -7,6 +7,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+
+from tests.ha_store_test_helpers import initialize_config_entries
 import voluptuous as vol
 
 from custom_components.extended_openai_conversation_responses import (
@@ -801,6 +803,7 @@ async def test_nested_provider_exchange_overrides_independent_ownership(
     from homeassistant.helpers import device_registry as dr, entity_registry as er
 
     hass = HomeAssistant(str(tmp_path))
+    await initialize_config_entries(hass)
     dr.async_setup(hass)
     await dr.async_load(hass, load_empty=True)
     await er.async_load(hass, load_empty=True)

@@ -9,6 +9,8 @@ from unittest.mock import Mock
 
 import pytest
 
+from tests.ha_store_test_helpers import disk_write_boundary
+
 from custom_components.extended_openai_conversation_responses import (
     knowledge,
     management_ui,
@@ -249,13 +251,8 @@ async def test_validated_replacement_clears_barrier_only_after_persistence(
         raise OSError("replacement write failed")
 
     with monkeypatch.context() as fault:
-        fault.setattr(
-            writer,
-            "_write_prepared_data"
-            if writer._serialize_in_event_loop
-            else "_write_data",
-            failed_write,
-        )
+        target, write_name = disk_write_boundary(writer)
+        fault.setattr(target, write_name, failed_write)
         with pytest.raises(OSError, match="replacement write failed"):
             await fresh.async_replace_backup(replacement)
     assert path.read_bytes() == evidence

@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from tests.ha_store_test_helpers import disk_write_boundary
+
 from custom_components.extended_openai_conversation_responses import (
     agent_configuration as runtime,
     conversation,
@@ -54,16 +56,17 @@ async def test_conversation_recovers_guest_state_and_keeps_corruption_fail_close
 
     entry_agent._async_process_with_continuity = continue_request
     assert await entry_agent.async_process(entry_input) == "processed"
-    write = guest._store._write_data
+    writer, write_name = disk_write_boundary(guest._store)
+    write = getattr(writer, write_name)
     load = guest._store.async_load
     save = guest._store.async_save
 
-    def fail(data):
+    def fail(*data):
         if after_write:
-            write(data)
+            write(*data)
         raise OSError("PRIVATE-GUEST-WRITE")
 
-    monkeypatch.setattr(guest._store, "_write_data", fail)
+    monkeypatch.setattr(writer, write_name, fail)
     monkeypatch.setattr(
         guest._store, "async_load", AsyncMock(side_effect=OSError("PRIVATE-GUEST-READ"))
     )
@@ -72,7 +75,7 @@ async def test_conversation_recovers_guest_state_and_keeps_corruption_fail_close
     with pytest.raises(HomeAssistantError, match="unavailable"):
         await entry_agent.async_process(entry_input)
     assert observed == [True]
-    monkeypatch.setattr(guest._store, "_write_data", write)
+    monkeypatch.setattr(writer, write_name, write)
     monkeypatch.setattr(guest._store, "async_load", load)
     path = Path(guest._store.path)
     authoritative = json.loads(path.read_text())["data"]

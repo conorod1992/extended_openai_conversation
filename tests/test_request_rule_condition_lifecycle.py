@@ -117,12 +117,16 @@ def native_duration(hass, monkeypatch):
     async def platform(_hass, key):
         return "light", light_conditions
 
+    listener_module = condition
+    if not hasattr(listener_module, "async_track_target_selector_state_change_event"):
+        from homeassistant.helpers.condition import entity_condition
+        listener_module = entity_condition
     monkeypatch.setattr(
-        condition, "async_track_target_selector_state_change_event", track
+        listener_module, "async_track_target_selector_state_change_event", track
     )
     monkeypatch.setattr(condition, "_async_get_condition_platform", platform)
     monkeypatch.setattr(
-        condition,
+        listener_module,
         "async_extract_referenced_entity_ids",
         lambda *_args, **_kwargs: SimpleNamespace(
             referenced={"light.kitchen"}, indirectly_referenced=set()

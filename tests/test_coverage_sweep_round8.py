@@ -86,7 +86,7 @@ def test_backup_preview_forget_only_removes_matching_session(hass) -> None:
 
 
 @pytest.mark.asyncio
-async def test_model_catalog_candidate_skips_dynamic_and_reset_routing_rules(
+async def test_model_catalog_candidate_defers_values_but_checks_fixed_requirements(
     hass, monkeypatch
 ) -> None:
     from custom_components.extended_openai_conversation_responses import (
@@ -151,7 +151,16 @@ async def test_model_catalog_candidate_skips_dynamic_and_reset_routing_rules(
         )
         is True
     )
-    assert build.call_count == 1
+    # Agent settings and the captured-effort route's fixed requirements are
+    # checked. The captured value itself never reaches the request builder.
+    assert build.call_count == 2
+    assert build.call_args_list[0].args[0] == options
+    routed_options = build.call_args_list[1].args[0]
+    assert (
+        routed_options[manager_module.CONF_CHAT_MODEL]
+        == manager_module.DEFAULT_CHAT_MODEL
+    )
+    assert routed_options[manager_module.CONF_REASONING_EFFORT] != "{effort}"
 
 
 @pytest.mark.asyncio

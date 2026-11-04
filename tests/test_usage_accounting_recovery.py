@@ -505,5 +505,5 @@ async def test_runtime_usage_aggregate_stores_use_atomic_writes(
     totals_store = cast(Any, manager._storage)
     daily_store = cast(Any, manager._daily_storage)
 
-    assert totals_store._atomic_writes is True
-    assert daily_store._atomic_writes is True
+    assert getattr(totals_store, "_io", totals_store)._atomic_writes is True
+    assert getattr(daily_store, "_io", daily_store)._atomic_writes is True

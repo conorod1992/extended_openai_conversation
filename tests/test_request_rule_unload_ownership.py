@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from tests.ha_store_test_helpers import disk_write_boundary
+
 import custom_components.extended_openai_conversation_responses as integration
 from custom_components.extended_openai_conversation_responses import request_rules as rr
 from custom_components.extended_openai_conversation_responses.agent_maintenance import (
@@ -248,7 +250,8 @@ async def test_unload_drains_an_already_dispatched_write_before_replacement(
     hass, entry, key, platforms_unloaded = unload_case
     old = await rr.async_get_request_rules(hass, "entry", "agent")
     created = await old.async_create(local_rule("Retained"))
-    write = old._store._write_prepared_data
+    writer, write_name = disk_write_boundary(old._store)
+    write = getattr(writer, write_name)
     entered, release = asyncio.Event(), threading.Event()
     loop = asyncio.get_running_loop()
 
@@ -257,7 +260,7 @@ async def test_unload_drains_an_already_dispatched_write_before_replacement(
         assert release.wait(10)
         write(*args)
 
-    monkeypatch.setattr(old._store, "_write_prepared_data", blocked_write)
+    monkeypatch.setattr(writer, write_name, blocked_write)
     writing = asyncio.create_task(
         old.async_update(created["id"], {**created, "name": "Before reload"})
     )

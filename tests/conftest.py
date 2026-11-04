@@ -70,6 +70,7 @@ def hass(tmp_path: Path, monkeypatch) -> MagicMock:
     hass.states = MagicMock()
     hass.states.get = MagicMock(return_value=MagicMock(state="on"))
     hass.states.async_all = MagicMock(return_value=[])
+    hass.config_entries.async_wait_initialized = AsyncMock()
     hass.services = MagicMock()
     hass.services.has_service = MagicMock(return_value=True)
     hass.services.async_call = AsyncMock()
