@@ -3060,7 +3060,11 @@
     "tests_real_ha/test_trigger_capture_sensor_isolation.py::test_saved_rule_native_wait_selects_only_its_entity[True-grouped-numeric_state]",
     "tests_real_ha/test_trigger_capture_sensor_isolation.py::test_saved_rule_native_wait_selects_only_its_entity[True-grouped-state]",
     "tests_real_ha/test_trigger_capture_sensor_isolation.py::test_saved_rule_native_wait_selects_only_its_entity[True-options-numeric_state]",
-    "tests_real_ha/test_trigger_capture_sensor_isolation.py::test_saved_rule_native_wait_selects_only_its_entity[True-options-state]"
+    "tests_real_ha/test_trigger_capture_sensor_isolation.py::test_saved_rule_native_wait_selects_only_its_entity[True-options-state]",
+    "tests_real_ha/test_quiet_hours_timezone.py::test_timezone_update_reconciles_public_state_controls_and_deadlines[False]",
+    "tests_real_ha/test_quiet_hours_timezone.py::test_timezone_update_reconciles_public_state_controls_and_deadlines[True]",
+    "tests_real_ha/test_quiet_hours_timezone.py::test_timezone_listener_preserves_overlapping_ownership_and_retires_on_shutdown[False]",
+    "tests_real_ha/test_quiet_hours_timezone.py::test_timezone_listener_preserves_overlapping_ownership_and_retires_on_shutdown[True]"
   ],
   "browser": {
     "browser": [
@@ -4384,7 +4388,8 @@
       "tests_stress/test_quiet_hours_multi_satellite.py",
       "tests_stress/test_quiet_hours_ownership_time.py",
       "tests_real_ha/test_quiet_hours_generation_recovery.py",
-      "tests_real_ha/test_quiet_hours_identity_shutdown.py"
+      "tests_real_ha/test_quiet_hours_identity_shutdown.py",
+      "tests_real_ha/test_quiet_hours_timezone.py"
     ],
     "request-rules": [
       "tests_real_ha/test_request_rules_script_semantics.py",
