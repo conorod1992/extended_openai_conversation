@@ -1301,7 +1301,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     // Configuration uses its generation-checked clean snapshots, never the
     // generic read-only section cache's independent freshness window.
     // Policy recovery also requires a fresh accepted read before another save.
-    const showCached = !configOnly && !hasPendingPageSaveRead(this) && cache.result !== undefined && (cache.fresh || ["overview", "data-memory/knowledge", "usage-maintenance/usage"].includes(view));
+    const intervalRead = view === "capabilities/guest-mode" && this._unsavedState?.scopes.get("guest-interval")?.needsRead?.();
+    const showCached = !configOnly && !hasPendingPageSaveRead(this) && !intervalRead && cache.result !== undefined && (cache.fresh || ["overview", "data-memory/knowledge", "usage-maintenance/usage"].includes(view));
     if (showCached) {
       this._contentData = null;
       this._result = view === "usage-maintenance/usage"
@@ -2224,6 +2225,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         if (!indefinite && (!end || !endInput.checkValidity())) {
           throw new Error("Choose an end time or select Remain active indefinitely.");
         }
+        intervalSubmission.implicitStart = now || !start;
         const result = await this._call("guest_mode", "update", {
           ...(start ? {active_from: now ? start : originalInstant("active_from", start, status.active_from)} : {}),
           ...(!indefinite && end ? {active_until: originalInstant("active_until", end, status.active_until)} : {}),

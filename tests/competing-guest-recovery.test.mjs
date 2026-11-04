@@ -7,6 +7,8 @@ import {capturePageRead, acceptPageRead} from "../custom_components/extended_ope
 import {captureGuestInterval} from "../custom_components/extended_openai_conversation_responses/frontend/management-guest-feature.js";
 import {routeAssetPromise} from "../custom_components/extended_openai_conversation_responses/frontend/management-route.js";
 import {same} from "../custom_components/extended_openai_conversation_responses/frontend/unsaved-state.js";
+import {writeSectionCache} from "../custom_components/extended_openai_conversation_responses/frontend/management-cache.js";
+import {watchTimedFeatureStatus, stopLiveStatus} from "../custom_components/extended_openai_conversation_responses/frontend/management-live-status.js";
 
 const view="capabilities/guest-mode";
 const copy=value => structuredClone(value);
@@ -276,9 +278,89 @@ for(const reply of ["malformed","lost"]) test(`a clean canonical interval read r
   let actual;
   panel._hass.callWS=async request => {actual=request.active_from;if(reply === "lost") throw {code:3,message:"Connection lost"};return {};};
   await panel._updateGuestMode(true);assert.equal(panel._unsavedState.scopes.get("guest-interval").dirty(),false);
-  panel._result={status:{active_from:actual,active_until:null,indefinite:true}};
+  const read=capturePageRead(panel);
+  panel._result={status:{active_from:actual,active_until:null,indefinite:true},config:{guest_web_search:false},revision:"r1"};
+  acceptPageRead(panel,panel._result,read);
   controls["#guest-start"].value=panel._dateTimeLocal(actual);captureGuestInterval(panel);
   assert.equal(panel._unsavedState.scopes.get("guest-interval").dirty(),false,"an authoritative read without newer edits must not invent dirty work");
+});
+
+for(const reply of ["partial","lost","not committed"]) for(const newer of ["none","revert","inactive end"]) test(`an accepted interval read settles ${reply} evidence and preserves ${newer}`,async t => {
+  const f=fixture(),panel=f.create();panel._page="capabilities";panel._subsection="guest-mode";await routeAssetPromise(view,panel);
+  panel._result={status:{active_from:null,active_until:null,indefinite:false},config:{guest_web_search:false},revision:"r0"};
+  const controls={"#guest-start":{value:""},"#guest-end":{value:"",checkValidity:()=>true},"#guest-indefinite":{checked:false}};
+  dialogs(panel,controls);captureGuestInterval(panel);t.after(() => cleanup([panel],() => {}));
+  controls["#guest-start"].value="2027-06-04T12:00";controls["#guest-end"].value="2027-06-04T13:00";controls["#guest-indefinite"].checked=newer === "inactive end";
+  captureGuestInterval(panel);const gate=deferred();let entered=false;
+  panel._hass.callWS=async () => {entered=true;await gate.promise;if(reply !== "partial") throw {code:3,message:"Connection lost"};return {status:{state:"active"}};};
+  panel._refreshGuestModeMutation=async () => {};
+  const operation=panel._updateGuestMode();await flushUntil(() => entered);
+  if(newer === "revert") {controls["#guest-start"].value="";controls["#guest-end"].value="";captureGuestInterval(panel);}
+  if(newer === "inactive end") {controls["#guest-end"].value="2027-06-04T17:00";captureGuestInterval(panel);}
+  gate.resolve();await operation;
+  const before=copy(panel._guestIntervalDraft.values),scope=panel._unsavedState.scopes.get("guest-interval");
+  const read=capturePageRead(panel);
+  panel._result={...panel._result,status:reply === "not committed" ? {active_from:null,active_until:null,indefinite:false} : {active_from:"2027-06-04T12:00:00Z",active_until:newer === "inactive end" ? null : "2027-06-04T13:00:00Z",indefinite:newer === "inactive end"}};
+  assert.equal(acceptPageRead(panel,panel._result,read),true);
+  assert.equal(scope.dirty(),reply === "not committed" ? newer !== "revert" : newer !== "none","a completed read must establish the actual saved interval");
+  assert.deepEqual(panel._guestIntervalDraft.values,before,"the authoritative read preserves post-submission authoring");
+  assert.equal(panel._guestIntervalDraft.uncertainSubmission,null);
+  controls["#guest-start"].value=reply === "not committed" ? "" : "2027-06-04T12:00";controls["#guest-end"].value=reply === "not committed" ? "" : "2027-06-04T13:00";controls["#guest-indefinite"].checked=reply !== "not committed" && newer === "inactive end";captureGuestInterval(panel);
+  assert.equal(scope.dirty(),false,"returning to the now-known saved values clears unsaved state");
+});
+
+for(const route of ["section","timed"]) for(const boundary of ["current","incomplete","pending","owner","discard"]) test(`interval baseline recovery through ${route}: ${boundary}`,async t => {
+  const f=fixture(),panel=f.create();panel._page="capabilities";panel._subsection="guest-mode";await routeAssetPromise(view,panel);
+  panel._result={status:{active_from:null,active_until:null,indefinite:true},config:{guest_web_search:false},revision:"r0"};
+  const controls={"#guest-start":{value:""},"#guest-end":{value:"",checkValidity:()=>true},"#guest-indefinite":{checked:true}};
+  dialogs(panel,controls);captureGuestInterval(panel);panel._refreshGuestModeMutation=async () => {};
+  panel._hass.callWS=async () => ({status:{state:"active"}});
+  await panel._updateGuestMode(true);
+  const scope=panel._unsavedState.scopes.get("guest-interval"),before=copy(panel._guestIntervalDraft.baseline);
+  captureGuestInterval(panel);assert.ok(scope.needsRead(),"an unchanged render cannot certify a locally merged old status");
+  let reads=0;
+  const status={active_from:"2027-06-04T12:00:00Z",active_until:null,indefinite:true};
+  panel._hass.callWS=async request => {if(request.action === "details") return {};reads++;return {config:{guest_web_search:false},revision:"r1",status:boundary === "incomplete" ? {state:"active"} : status};};
+  if(boundary === "pending") panel._guestOperation=Promise.resolve();
+  if(boundary === "discard") {scope.discard();assert.equal(scope.needsRead(),true,"Discard retains the authoritative read obligation");assert.equal(scope.dirty(),false);}
+  if(boundary === "owner") panel._eocDraftGeneration=(panel._eocDraftGeneration||0)+1;
+  const timers=[],realSet=globalThis.setTimeout,realClear=globalThis.clearTimeout;
+  t.after(() => {stopLiveStatus(panel);globalThis.setTimeout=realSet;globalThis.clearTimeout=realClear;panel._guestOperation=null;cleanup([panel],() => {});});
+  if(route === "section") {
+    writeSectionCache(panel,panel._sectionCacheKey(view),copy(panel._result));
+    await panel._loadSectionData();
+  } else {
+    globalThis.setTimeout=callback => {timers.push(callback);return timers.length;};globalThis.clearTimeout=() => {};
+    watchTimedFeatureStatus(panel);assert.equal(timers.length,1);await timers.shift()();
+  }
+  if(["current","discard"].includes(boundary)) {
+    assert.equal(reads,1);assert.equal(scope.needsRead(),false);assert.equal(scope.dirty(),false);
+    assert.equal(controls["#guest-start"].value,"2027-06-04T12:00","the native input follows accepted normalization");
+  } else if(["incomplete","pending"].includes(boundary)) {
+    assert.equal(scope.needsRead(),true);assert.deepEqual(panel._guestIntervalDraft.baseline,before);
+  } else assert.equal(scope.needsRead(),false);
+});
+
+for(const first of ["partial","lost"]) for(const field of ["start","end","indefinite"]) test(`a later unresolved ${field} reversion survives an earlier ${first} interval write`,async t => {
+  const f=fixture(),panel=f.create();panel._page="capabilities";panel._subsection="guest-mode";await routeAssetPromise(view,panel);
+  const original={active_from:"2027-06-04T12:00:00Z",active_until:"2027-06-04T15:00:00Z",indefinite:false};
+  panel._result={status:original,config:{guest_web_search:false},revision:"r0"};
+  const controls={"#guest-start":{value:"2027-06-04T12:00"},"#guest-end":{value:"2027-06-04T15:00",checkValidity:()=>true},"#guest-indefinite":{checked:false}};
+  dialogs(panel,controls);captureGuestInterval(panel);panel._refreshGuestModeMutation=async () => {};let writes=0,saved;
+  t.after(() => cleanup([panel],() => {}));
+  panel._hass.callWS=async request => {
+    if(++writes === 1) {
+      saved={active_from:request.local_times?.active_from ? `${request.active_from}:00Z` : request.active_from,active_until:request.indefinite ? null : request.local_times?.active_until ? `${request.active_until}:00Z` : request.active_until,indefinite:request.indefinite};
+      if(first === "partial") return {status:{state:"active"}};
+    }
+    throw {code:3,message:"Connection lost"};
+  };
+  const control=controls[`#guest-${field}`],property=field === "indefinite" ? "checked" : "value",before=control[property];
+  control[property]=field === "indefinite" ? true : "2027-06-04T14:00";captureGuestInterval(panel);await panel._updateGuestMode();
+  control[property]=before;captureGuestInterval(panel);await panel._updateGuestMode();assert.equal(writes,2);
+  const read=capturePageRead(panel);panel._result={...panel._result,status:saved};acceptPageRead(panel,panel._result,read);
+  assert.equal(panel._guestIntervalDraft.values[field],before,"the second submission is authored even when it equals the oldest baseline");
+  assert.equal(panel._unsavedState.scopes.get("guest-interval").dirty(),true);
 });
 
 for(const change of ["discard","source edit","destination edit","baseline","visit","authentication return","different user"]) test(`competing policy review safely handles ${change}`,async t => {

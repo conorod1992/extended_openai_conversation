@@ -31,7 +31,10 @@ DIST = Path("custom_components/extended_openai_conversation_responses/frontend/d
 # Budget 878,700 total JS bytes; keep entry and CSS limits unchanged.
 # Sequencing independent reviews adds under 200 bytes. Keep each retained
 # configuration's dismissal independently, without relaxing entry/CSS limits.
-CEILINGS = {"javascript": 878_900, "css": 65_000, "management_entry": 120_000}
+# Owned interval read reconciliation and guarded native-input updates add
+# 1,431 bytes, including explicit/implicit submission tracking. Keep finite
+# headroom and the separate entry/CSS ceilings.
+CEILINGS = {"javascript": 880_300, "css": 65_000, "management_entry": 120_000}
 
 
 def measure(dist: Path) -> dict[str, int]:

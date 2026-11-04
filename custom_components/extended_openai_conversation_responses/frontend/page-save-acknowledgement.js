@@ -78,6 +78,7 @@ export function acceptPageRead(panel, result, read) {
   if (!projection) return false;
   acceptedReads.set(panel, {...read, projection, sequence:(acceptedReads.get(panel)?.sequence || 0) + 1});
   if (ownsScope) scope.reconcileUncertainRead?.(result);
+  if (read.view === "capabilities/guest-mode") panel._unsavedState?.scopes.get("guest-interval")?.reconcileRead?.(result.status);
   const obligations = readObligations.get(panel);
   for (const entry of obligations || []) {
     if (!entry.acknowledgement.owns()) obligations.delete(entry);

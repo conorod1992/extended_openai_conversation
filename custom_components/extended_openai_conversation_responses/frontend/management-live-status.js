@@ -88,6 +88,7 @@ export function watchTimedFeatureStatus(panel) {
       const result = await panel._call(guest ? "guest_mode" : "quiet_hours", "get");
       if (!current() || panel._loadToken !== loadToken || panel._guestOperation) return;
       if (guest) {
+        panel._unsavedState?.scopes.get("guest-interval")?.reconcileRead?.(result.status);
         panel._patchGuestModeStatus(panel._agentId, result.status);
         const status = panel._result?.status || {};
         const node = panel.shadowRoot.querySelector("[data-guest-live-status]");

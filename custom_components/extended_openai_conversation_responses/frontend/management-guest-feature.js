@@ -9,6 +9,30 @@ const GUEST_VIEW = "capabilities/guest-mode";
 const intervalValues = (panel, status, retainedEnd = "") => ({start:status.active_from_local || panel._dateTimeLocal(status.active_from), end:status.indefinite ? retainedEnd : (status.active_until_local || panel._dateTimeLocal(status.active_until)), indefinite:Boolean(status.indefinite)});
 const intervalDirty = state => !same(state.values, state.baseline)
   || Boolean(state.uncertainSubmission && !same(state.values, state.uncertainSubmission));
+const completeInterval = status => ["active_from", "active_until", "indefinite"].every(key => Object.hasOwn(status || {}, key));
+const clearSubmission = state => {state.uncertainSubmission = null;state.submissionAcknowledged = false;state.submissionImplicitStart = false;};
+
+function reconcileIntervalRead(panel, state, status) {
+  if (panel._guestIntervalDraft !== state || !configurationSubmissionIsCurrent(panel, state.owner)
+      || panel._guestOperation || !state.uncertainSubmission || !completeInterval(status)) return;
+  const current = clone(state.values), submitted = state.uncertainSubmission;
+  const saved = intervalValues(panel, status, submitted.end);
+  // A confirmed partial reply can normalize unchanged submitted inputs. A lost
+  // reply may not have committed: every explicit interval input remains intent,
+  // including a later submission reverting an earlier unresolved write.
+  state.values = state.submissionAcknowledged ? mergeAcknowledgedDraft(current, submitted, saved) : clone(current);
+  if (!state.submissionAcknowledged && state.submissionImplicitStart && current.start === submitted.start) state.values.start = saved.start;
+  state.baseline = saved;
+  clearSubmission(state);
+  // Timed reads avoid rebuilding the editor. Update only inputs which still
+  // show the values used by this reconciliation, preserving newer DOM input.
+  for (const [id, key, property] of [["guest-start", "start", "value"], ["guest-end", "end", "value"], ["guest-indefinite", "indefinite", "checked"]]) {
+    const control = panel.shadowRoot?.querySelector?.(`#${id}`);
+    if (control?.[property] === current[key]) control[property] = state.values[key];
+  }
+  const end = panel.shadowRoot?.querySelector?.("#guest-end");
+  if (end && panel.shadowRoot?.querySelector?.("#guest-indefinite")?.checked === state.values.indefinite) end.disabled = state.values.indefinite;
+}
 
 function intervalState(panel, status = panel._result?.status || {}) {
   let state = panel._guestIntervalDraft;
@@ -25,6 +49,8 @@ function intervalState(panel, status = panel._result?.status || {}) {
     const current = () => panel._guestIntervalDraft === state && configurationSubmissionIsCurrent(panel, state.owner);
     pageCoordinator(panel).register("guest-interval", {
       isCurrent:current, read:() => state.values,
+      reconcileRead:status => reconcileIntervalRead(panel, state, status),
+      needsRead:() => current() && Boolean(state.uncertainSubmission),
       get baseline() {return state.baseline;},
       dirty:() => current() && intervalDirty(state),
       hasRecoveryIntent:() => current() && Boolean(state.recoveryIntent),
@@ -40,7 +66,13 @@ function intervalState(panel, status = panel._result?.status || {}) {
       get pending() { return current() && Boolean(panel._guestOperation); },
       owns:destination => Boolean(destination) && current(),
       destinations:() => [GUEST_VIEW],
-      discard:() => { if (current()) {state.values = clone(state.baseline);state.uncertainSubmission = null;state.recoveryIntent = false;} },
+      discard:() => {
+        if (!current()) return;
+        state.values = clone(state.baseline);
+        // Discard authoring, not the read needed to learn what the write did.
+        if (state.uncertainSubmission) state.uncertainSubmission = clone(state.baseline);
+        state.recoveryIntent = false;
+      },
       restore:(target, retry) => {
         const targetOwner = captureConfigurationDraftOwner(target);
         if (!current() || target._viewKey?.() !== GUEST_VIEW || !target._data?.is_admin
@@ -54,17 +86,18 @@ function intervalState(panel, status = panel._result?.status || {}) {
         destination.baseline = clone(state.baseline);
         destination.values = clone(state.values);
         destination.uncertainSubmission = clone(state.uncertainSubmission);
+        destination.submissionAcknowledged = state.submissionAcknowledged;
+        destination.submissionImplicitStart = state.submissionImplicitStart;
         destination.recoveryIntent = state.recoveryIntent;
         state.values = clone(state.baseline);
-        state.uncertainSubmission = null;
+        clearSubmission(state);
         state.recoveryIntent = false;
         target._render();
       },
     });
-  } else if (!intervalDirty(state) && !state.recoveryIntent) {
+  } else if (!intervalDirty(state) && !state.recoveryIntent && !state.uncertainSubmission) {
     state.baseline = intervalValues(panel, status, state.values.end);
     state.values = clone(state.baseline);
-    state.uncertainSubmission = null;
   }
   return state;
 }
@@ -86,8 +119,10 @@ export function acknowledgeGuestInterval(panel, submission, status) {
   if (!state || panel._guestIntervalDraft !== state || !configurationSubmissionIsCurrent(panel, state.owner)) return;
   // Older/partial replies can confirm an action without supplying an interval.
   // Missing fields must not canonicalize authored values to empty or false.
-  if (!["active_from", "active_until", "indefinite"].every(key => Object.hasOwn(status || {}, key))) {
+  if (!completeInterval(status)) {
     state.uncertainSubmission = clone(submission.values);
+    state.submissionAcknowledged = true;
+    state.submissionImplicitStart = Boolean(submission.implicitStart);
     return;
   }
   // An indefinite interval does not submit Ends. Keep that inactive input so
@@ -95,7 +130,7 @@ export function acknowledgeGuestInterval(panel, submission, status) {
   const saved = intervalValues(panel, status, submission.values.end);
   state.values = mergeAcknowledgedDraft(state.values, submission.values, saved);
   state.baseline = saved;
-  state.uncertainSubmission = null;
+  clearSubmission(state);
 }
 
 export function retainUncertainGuestInterval(panel, submission, error) {
@@ -103,6 +138,8 @@ export function retainUncertainGuestInterval(panel, submission, error) {
   // transition. This neither presents a result nor authorizes another owner.
   if (error?.mutationOutcome === "uncertain" && submission?.state === panel._guestIntervalDraft) {
     submission.state.uncertainSubmission = clone(submission.values);
+    submission.state.submissionAcknowledged = false;
+    submission.state.submissionImplicitStart = Boolean(submission.implicitStart);
   }
 }
 
