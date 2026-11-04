@@ -74,6 +74,10 @@ def chat_log_admission_scope(
     histories. Never capture a tracked ancestor's admission, and keep an owned
     turn on failure: its history may contain unresolved tool effects.
     """
+    if source is not None:
+        # A foreign parent stays separate even when it delegates different text
+        # or explicitly requests another child conversation ID.
+        retain_unclaimed_chat_log(source)
     if (
         source is None
         or source.conversation_id != conversation_id

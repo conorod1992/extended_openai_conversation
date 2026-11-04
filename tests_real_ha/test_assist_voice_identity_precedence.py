@@ -188,7 +188,10 @@ async def test_genuine_assist_prefers_registry_device_voice_identity_when_both_i
     assert session["scope_type"] == "user"
     assert session["scope_source"] == "device_mapping"
     assert session["source_device_id"] == _DEVICE_ID
-    assert session["home_assistant_conversation_id"] == _CONVERSATION_ID
+    assert (
+        session["home_assistant_conversation_id"]
+        == intent_end.data["intent_output"]["conversation_id"]
+    )
     assert session["turn_count"] == 1
     assert session["retention_state"] == "retained"
 

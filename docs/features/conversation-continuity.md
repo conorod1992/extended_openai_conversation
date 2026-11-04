@@ -5,7 +5,8 @@ run ends and a later wake-word or Assist request begins. It is different from
 **Continue conversation**, which only controls whether Home Assistant keeps listening
 immediately after an answer.
 
-- **Home Assistant default** preserves the existing conversation-ID behaviour.
+- **Home Assistant default** uses the caller-supplied or returned conversation ID,
+  with separate history for an already-open unowned parent log (see below).
 - **Per device** lets the same Assist satellite/device resume recent context.
   Device context is isolated by resolved privacy owner: changing the authenticated
   user or device mapping cannot resume another owner's history or session settings.
@@ -19,6 +20,15 @@ immediately after an answer.
 Requests using the same Home Assistant conversation ID are serialized, including
 device/user modes that fall back to Home Assistant default. Separate conversation
 IDs can still run concurrently.
+
+On HA 2026.11, Assist or another conversation agent can open a live parent log
+before calling EOAI. EOAI keeps that unowned parent separate and returns the ID of
+its own conversation. While the parent log remains live, later calls using the
+parent ID resume EOAI's conversation for the same assistant, privacy owner and
+Guest state. Clients should use the returned conversation ID for subsequent turns.
+Parent history is preserved rather than copied into model context. Explicit resets
+and Core session expiry start fresh context; a replacement parent log does not
+inherit the old log's binding merely because its ID is the same.
 
 ## Inactivity and lifecycle
 

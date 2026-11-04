@@ -112,8 +112,10 @@ from .continuity import (
 )
 from .conversation_archive import ArchiveSession, ConversationArchive, async_get_archive
 from .conversation_id_ownership import (
+    bind_parent_conversation_id,
     claim_conversation_id,
     register_conversation_id_cleanup,
+    resolve_parent_conversation_id,
 )
 from .conversation_lifecycle import (
     ConversationLifecycleToken,
@@ -839,7 +841,13 @@ class ExtendedOpenAIAgentEntity(
                     continuity_mode,
                     scope,
                     source_device_id,
-                    user_input.conversation_id,
+                    resolve_parent_conversation_id(
+                        getattr(self, "hass", None),
+                        getattr(getattr(self, "subentry", None), "subentry_id", None),
+                        scope,
+                        user_input.conversation_id,
+                        guest_active=request_policy.guest_active,
+                    ),
                     timeout_minutes,
                     namespace=(
                         GUEST_CONTINUITY_NAMESPACE
@@ -954,6 +962,13 @@ class ExtendedOpenAIAgentEntity(
                 register_conversation_id_cleanup(
                     session, self.hass, claimed_id, claim_owner
                 )
+                if (
+                    assist_chat_log is not None
+                    and assist_chat_log.conversation_id == incoming_conversation_id
+                ):
+                    bind_parent_conversation_id(
+                        assist_chat_log, claimed_id, claim_owner
+                    )
             if resolution.discard_history:
                 # A restore preserves only the private Archive identity. Core may
                 # still hold its old log; discard that context before this turn.

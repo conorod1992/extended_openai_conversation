@@ -88,9 +88,10 @@ async def _assist(hass, agent, conversation_id, text):
     assert events[-1].type == PipelineEventType.RUN_END
     ends = [event for event in events if event.type == PipelineEventType.INTENT_END]
     assert len(ends) == 1
-    result = ends[0].data["intent_output"]["response"]
+    output = ends[0].data["intent_output"]
+    result = output["response"]
     assert "error" not in result
-    return result["speech"]["plain"]["speech"]
+    return result["speech"]["plain"]["speech"], output["conversation_id"]
 
 
 async def _archive_effects(archive):
@@ -133,7 +134,7 @@ def _tool_result(body, api_mode, call_id):
     )
 
 
-def _expected(api_mode, phase):
+def _expected(api_mode, phase, owner_conversation_id):
     """Reviewed expected effects, independent of production generators/results."""
     return {
         "provider_paths": [
@@ -157,7 +158,7 @@ def _expected(api_mode, phase):
         "archive": [
             {
                 "owner": f"user:{_OWNER}",
-                "conversation": "populated-owner",
+                "conversation": owner_conversation_id,
                 "turn_count": 1,
                 "turns": [(_QUERY, "Owner fixture ready.", True)],
             }
@@ -241,11 +242,13 @@ async def test_populated_assist_feature_effects_and_real_oracle_canaries(
         hass.states.async_set(_TARGET, "off")
 
     from tests_real_ha.entity_service_probe import register_entity_service_probe
+
     register_entity_service_probe(hass, "light", "turn_off", turn_off)
     call = _responses_sse_tool_call if api_mode == "responses" else _chat_sse_tool_call
     text_reply = _responses_sse_text if api_mode == "responses" else _chat_sse_text
     evidence = []
     rejections = 0
+    owner_conversation_id = None
     for phase in ["owner", "guest"]:
         if phase == "guest":
             await agent._guest_mode.async_update_trusted(indefinite=True)
@@ -277,7 +280,12 @@ async def test_populated_assist_feature_effects_and_real_oracle_canaries(
                 text_reply(f"{phase.capitalize()} fixture ready."),
             ],
         )
-        spoken = await _assist(hass, agent, f"populated-{phase}", _QUERY)
+        spoken, delivered_id = await _assist(hass, agent, f"populated-{phase}", _QUERY)
+        assert isinstance(delivered_id, str) and delivered_id
+        if phase == "owner":
+            owner_conversation_id = delivered_id
+        else:
+            assert delivered_id != owner_conversation_id
         bodies = [request["body"] for request in wire.requests]
         assert len(bodies) == 4
         first = json.dumps(bodies[0], ensure_ascii=False)
@@ -313,7 +321,7 @@ async def test_populated_assist_feature_effects_and_real_oracle_canaries(
             "result": spoken,
             "archive": await _archive_effects(archive),
         }
-        expected = _expected(api_mode, phase)
+        expected = _expected(api_mode, phase, owner_conversation_id)
         assert_effect_ledger(actual, expected)
         assert (await archive.async_list_sessions(f"user:{_FOREIGN}"))["sessions"] == []
         # Mutate captured evidence from the real journey. These canaries use the
@@ -334,6 +342,9 @@ async def test_populated_assist_feature_effects_and_real_oracle_canaries(
             mutation = deepcopy(actual)
             mutation[field] = value
             mutations.append(mutation)
+        wrong_binding = deepcopy(actual)
+        wrong_binding["archive"][0]["conversation"] = "foreign-or-stale-conversation"
+        mutations.append(wrong_binding)
         for mutation in mutations:
             with pytest.raises(AssertionError, match="Observed journey effects differ"):
                 assert_effect_ledger(mutation, expected)

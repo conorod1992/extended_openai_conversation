@@ -254,3 +254,19 @@ identity, with weak references following Core's lifetime. First Guest admissions
 remain isolated on owner resumption; initial HA-default claims and owned failed
 turns retain their IDs and recovery history. Replacement-log and collection
 controls prevent exclusion from surviving the history it protects.
+
+
+Sequential parent-delegation checks first complete a successful child request,
+then fail the next delegation. Success must never make an unowned parent eligible
+for EOAI admission cleanup. Parent IDs bind to separate conversations by assistant,
+privacy scope and Guest state before namespace resolution. Actual HA counter
+effects verify that lost continuations and cancellation keep replay protection
+through that binding, while successful acknowledgement permits an intentional
+repeat. Native Core cleanup, a replacement parent with a still-live child, explicit
+reset and retired weak callbacks must not resurrect old context or erase new
+bindings. Initial Assist callers receive the owned conversation ID; retries through
+the original live parent ID retain the same failed-turn context.
+
+Claim cleanup registration is bounded per native session and owner, including
+long-lived parent-bound conversations. Cleanup from a retired session or registry
+cannot release the replacement claim.

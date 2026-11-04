@@ -178,6 +178,172 @@ def test_replacement_log_does_not_inherit_a_retained_foreign_logs_exclusion():
         )
         == "reused"
     )
-    assert hass.data[ownership._UNCLAIMED_CHAT_LOGS]["reused"] is source
+    assert hass.data[ownership._UNCLAIMED_CHAT_LOGS]["reused"].source() is source
     assert not ownership.conversation_id_is_owned(None, "reused")
     assert not ownership.conversation_id_is_owned(SimpleNamespace(data=None), "reused")
+
+def test_parent_binding_is_scoped_and_does_not_outlive_its_owned_target():
+    from homeassistant.components.conversation.chat_log import DATA_CHAT_LOGS
+
+    hass = SimpleNamespace(data={DATA_CHAT_LOGS: {}})
+    source = _UnownedLog(hass=hass, conversation_id="parent")
+    hass.data[DATA_CHAT_LOGS]["parent"] = source
+    ownership.retain_unclaimed_chat_log(source)
+    targets = []
+    for agent, scope, guest in [
+        ("agent", _scope("a"), False),
+        ("agent", _scope("b"), False),
+        ("other", _scope("a"), False),
+        ("agent", _scope("a"), True),
+    ]:
+        target = ownership.claim_conversation_id(
+            hass, agent, scope, "parent", guest_active=guest
+        )
+        targets.append(target)
+        assert target != "parent"
+        assert (
+            ownership.resolve_parent_conversation_id(
+                hass, agent, scope, "parent", guest_active=guest
+            )
+            == target
+        )
+        ownership.retain_unclaimed_chat_log(source)
+        assert (
+            ownership.claim_conversation_id(
+                hass, agent, scope, "parent", guest_active=guest
+            )
+            == target
+        )
+    assert len(set(targets)) == 4
+    assert not ownership.conversation_id_is_owned(hass, "parent")
+    ownership.release_conversation_id_claim(hass, targets[0], ("agent", "user:a"))
+    assert (
+        ownership.resolve_parent_conversation_id(
+            hass, "agent", _scope("a"), "parent", guest_active=False
+        )
+        == "parent"
+    )
+    assert (
+        ownership.claim_conversation_id(
+            hass, "agent", _scope("a"), "parent", guest_active=False
+        )
+        not in targets
+    )
+
+
+def test_replacement_parent_and_retired_weak_callback_cannot_reuse_or_remove_new_binding():
+    from homeassistant.components.conversation.chat_log import DATA_CHAT_LOGS
+
+    hass = SimpleNamespace(data={DATA_CHAT_LOGS: {}})
+    source = _UnownedLog(hass=hass, conversation_id="parent")
+    hass.data[DATA_CHAT_LOGS]["parent"] = source
+    ownership.retain_unclaimed_chat_log(source)
+    old_record = hass.data[ownership._UNCLAIMED_CHAT_LOGS]["parent"]
+    old_target = ownership.claim_conversation_id(
+        hass, "agent", _scope(), "parent", guest_active=False
+    )
+    replacement = _UnownedLog(hass=hass, conversation_id="parent")
+    hass.data[DATA_CHAT_LOGS]["parent"] = replacement
+    assert (
+        ownership.resolve_parent_conversation_id(
+            hass, "agent", _scope(), "parent", guest_active=False
+        )
+        == "parent"
+    )
+    ownership.retain_unclaimed_chat_log(replacement)
+    new_target = ownership.claim_conversation_id(
+        hass, "agent", _scope(), "parent", guest_active=False
+    )
+    assert new_target != old_target
+    del source
+    assert old_record.source() is None
+    assert (
+        ownership.resolve_parent_conversation_id(
+            hass, "agent", _scope(), "parent", guest_active=False
+        )
+        == new_target
+    )
+
+
+def test_actual_guest_target_can_bind_to_parent_after_namespace_resolution():
+    from homeassistant.components.conversation.chat_log import DATA_CHAT_LOGS
+
+    hass = SimpleNamespace(data={DATA_CHAT_LOGS: {}})
+    source = _UnownedLog(hass=hass, conversation_id="parent")
+    hass.data[DATA_CHAT_LOGS]["parent"] = source
+    ownership.retain_unclaimed_chat_log(source)
+    assert (
+        ownership.claim_conversation_id(
+            hass, "agent", _scope(), "actual-guest", guest_active=True
+        )
+        == "actual-guest"
+    )
+    ownership.bind_parent_conversation_id(
+        source, "actual-guest", ("agent", "guest:user:user-a")
+    )
+    assert (
+        ownership.resolve_parent_conversation_id(
+            hass, "agent", _scope(), "parent", guest_active=True
+        )
+        == "actual-guest"
+    )
+    assert (
+        ownership.resolve_parent_conversation_id(
+            hass, "agent", _scope(), "parent", guest_active=False
+        )
+        == "parent"
+    )
+    assert (
+        ownership.resolve_parent_conversation_id(
+            None, "agent", _scope(), "parent", guest_active=True
+        )
+        == "parent"
+    )
+    assert (
+        ownership.resolve_parent_conversation_id(
+            SimpleNamespace(data=None), "agent", _scope(), "parent", guest_active=True
+        )
+        == "parent"
+    )
+    ownership.bind_parent_conversation_id(None, "unused", ("agent", "user:user-a"))
+
+
+def test_repeated_claim_cleanup_registration_is_bounded_per_native_session():
+    owner = ("agent", "user:a")
+    hass = SimpleNamespace(data={ownership._CONVERSATION_ID_OWNERS: {"session": owner}})
+    session = SimpleNamespace(async_on_cleanup=Mock())
+    for _ in range(100):
+        ownership.register_conversation_id_cleanup(session, hass, "session", owner)
+    session.async_on_cleanup.assert_called_once()
+    session.async_on_cleanup.call_args.args[0]()
+    assert hass.data[ownership._CLEANUP_REGISTRATIONS] == {}
+    assert hass.data[ownership._CONVERSATION_ID_OWNERS] == {}
+
+
+def test_retired_session_cleanup_cannot_release_a_replacement_claim():
+    owner = ("agent", "user:a")
+    hass = SimpleNamespace(data={ownership._CONVERSATION_ID_OWNERS: {"session": owner}})
+    old = SimpleNamespace(async_on_cleanup=Mock())
+    replacement = SimpleNamespace(async_on_cleanup=Mock())
+    ownership.register_conversation_id_cleanup(old, hass, "session", owner)
+    ownership.register_conversation_id_cleanup(replacement, hass, "session", owner)
+    old.async_on_cleanup.call_args.args[0]()
+    assert hass.data[ownership._CONVERSATION_ID_OWNERS]["session"] == owner
+    assert hass.data[ownership._CLEANUP_REGISTRATIONS]["session"].session is replacement
+    replacement.async_on_cleanup.call_args.args[0]()
+    assert hass.data[ownership._CONVERSATION_ID_OWNERS] == {}
+    assert hass.data[ownership._CLEANUP_REGISTRATIONS] == {}
+
+
+def test_cleanup_from_a_retired_registry_cannot_release_current_claim():
+    owner = ("agent", "user:a")
+    hass = SimpleNamespace(data={ownership._CONVERSATION_ID_OWNERS: {"session": owner}})
+    old = SimpleNamespace(async_on_cleanup=Mock())
+    current = SimpleNamespace(async_on_cleanup=Mock())
+    ownership.register_conversation_id_cleanup(old, hass, "session", owner)
+    hass.data[ownership._CLEANUP_REGISTRATIONS] = {}
+    ownership.register_conversation_id_cleanup(current, hass, "session", owner)
+    old.async_on_cleanup.call_args.args[0]()
+    assert hass.data[ownership._CONVERSATION_ID_OWNERS]["session"] == owner
+    current.async_on_cleanup.call_args.args[0]()
+    assert hass.data[ownership._CONVERSATION_ID_OWNERS] == {}
