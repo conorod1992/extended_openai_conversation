@@ -10,6 +10,10 @@ from custom_components.extended_openai_conversation_responses.continuity import 
     forward_chat_log_deltas,
     processing_conversation_scope,
 )
+from custom_components.extended_openai_conversation_responses.conversation_id_ownership import (
+    claim_conversation_id,
+)
+from custom_components.extended_openai_conversation_responses.scope import shared_scope
 from homeassistant.components import conversation
 
 
@@ -145,6 +149,10 @@ def test_reroute_cleanup_cannot_remove_an_ancestor_or_advanced_turn(case):
 
 def _admitted_log():
     source = _log()
+    source.hass = SimpleNamespace(data={})
+    claim_conversation_id(
+        source.hass, "agent", shared_scope(source="test"), "source", guest_active=False
+    )
     source.conversation_id = "source"
     source.turn_active = True
     source.turn_start = 0

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from typing import Any
+from weakref import WeakValueDictionary
 
+from homeassistant.components.conversation.chat_log import DATA_CHAT_LOGS, ChatLog
 from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
@@ -11,6 +13,35 @@ from .conversation_ids import GUEST_CONTINUITY_NAMESPACE, create_conversation_id
 from .scope import ResolvedDataScope
 
 _CONVERSATION_ID_OWNERS = f"{DOMAIN}.conversation_id_owners"
+_UNCLAIMED_CHAT_LOGS = f"{DOMAIN}.unclaimed_chat_logs"
+
+
+def conversation_id_is_owned(hass: HomeAssistant | None, conversation_id: str) -> bool:
+    """Return whether an EOAI invocation has already claimed this history."""
+    data = getattr(hass, "data", {})
+    return isinstance(data, dict) and conversation_id in data.get(
+        _CONVERSATION_ID_OWNERS, {}
+    )
+
+
+def retain_unclaimed_chat_log(source: ChatLog) -> None:
+    """Preserve a foreign admission, excluding its live log from later EOAI use.
+
+    A matching input alone does not prove that EOAI owns the caller's turn.
+    Weak references expire with Core's logs; a replacement log with the same ID
+    is a different history and must not inherit this exclusion.
+    """
+    logs: WeakValueDictionary[str, ChatLog] = source.hass.data.setdefault(
+        _UNCLAIMED_CHAT_LOGS, WeakValueDictionary()
+    )
+    logs[source.conversation_id] = source
+
+
+def _is_unclaimed_live_log(hass: HomeAssistant, conversation_id: str) -> bool:
+    retained = hass.data.get(_UNCLAIMED_CHAT_LOGS, {}).get(conversation_id)
+    return retained is not None and retained is hass.data.get(DATA_CHAT_LOGS, {}).get(
+        conversation_id
+    )
 
 
 def claim_conversation_id(
@@ -36,7 +67,7 @@ def claim_conversation_id(
     owner = (agent_id, f"guest:{scope.scope_id}" if guest_active else scope.scope_id)
     existing = owners.get(conversation_id)
 
-    if existing is None:
+    if existing is None and not _is_unclaimed_live_log(hass, conversation_id):
         owners[conversation_id] = owner
         return conversation_id
 

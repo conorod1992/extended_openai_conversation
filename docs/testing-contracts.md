@@ -244,3 +244,13 @@ listener restoration and inherited-task lifetime tests. Catalogue transition
 checks exercise explicit reasoning inherited by model-only rules, including
 prior conversation routes, disabled/request-scoped controls and explicit route
 overrides, without mutating saved choices or publishing blocked metadata.
+
+
+Native delegation checks also admit a parent input on a log not owned by EOAI,
+then delegate identical text and ID through HA's conversation entry. Preparation
+and claimed-turn errors/cancellation must preserve the parent's history. Unowned
+logs retained this way are excluded from subsequent EOAI claims by exact live-log
+identity, with weak references following Core's lifetime. First Guest admissions
+remain isolated on owner resumption; initial HA-default claims and owned failed
+turns retain their IDs and recovery history. Replacement-log and collection
+controls prevent exclusion from surviving the history it protects.

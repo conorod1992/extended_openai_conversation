@@ -130,3 +130,54 @@ def test_cleanup_registration_releases_claim_and_ignores_unsupported_session() -
     ownership.register_conversation_id_cleanup(
         unsupported, hass, "conversation", owner
     )
+
+class _UnownedLog(SimpleNamespace):
+    """Weak-referenceable stand-in with Core's lifetime and identity semantics."""
+
+
+def test_unclaimed_history_is_excluded_only_while_that_exact_core_log_is_live():
+    import weakref
+    from homeassistant.components.conversation.chat_log import DATA_CHAT_LOGS
+
+    hass = SimpleNamespace(data={DATA_CHAT_LOGS: {}})
+    source = _UnownedLog(hass=hass, conversation_id="foreign")
+    hass.data[DATA_CHAT_LOGS]["foreign"] = source
+    reference = weakref.ref(source)
+    assert not ownership.conversation_id_is_owned(hass, "foreign")
+    ownership.retain_unclaimed_chat_log(source)
+    routed = ownership.claim_conversation_id(
+        hass, "agent", _scope(), "foreign", guest_active=False
+    )
+    assert routed != "foreign"
+    assert not ownership.conversation_id_is_owned(hass, "foreign")
+    assert ownership.conversation_id_is_owned(hass, routed)
+    hass.data[DATA_CHAT_LOGS].pop("foreign")
+    del source
+    assert reference() is None
+    assert not hass.data[ownership._UNCLAIMED_CHAT_LOGS]
+    assert (
+        ownership.claim_conversation_id(
+            hass, "agent", _scope(), "foreign", guest_active=False
+        )
+        == "foreign"
+    )
+
+
+def test_replacement_log_does_not_inherit_a_retained_foreign_logs_exclusion():
+    from homeassistant.components.conversation.chat_log import DATA_CHAT_LOGS
+
+    hass = SimpleNamespace(data={DATA_CHAT_LOGS: {}})
+    source = _UnownedLog(hass=hass, conversation_id="reused")
+    hass.data[DATA_CHAT_LOGS]["reused"] = source
+    ownership.retain_unclaimed_chat_log(source)
+    replacement = _UnownedLog(hass=hass, conversation_id="reused")
+    hass.data[DATA_CHAT_LOGS]["reused"] = replacement
+    assert (
+        ownership.claim_conversation_id(
+            hass, "agent", _scope(), "reused", guest_active=False
+        )
+        == "reused"
+    )
+    assert hass.data[ownership._UNCLAIMED_CHAT_LOGS]["reused"] is source
+    assert not ownership.conversation_id_is_owned(None, "reused")
+    assert not ownership.conversation_id_is_owned(SimpleNamespace(data=None), "reused")

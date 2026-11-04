@@ -20,6 +20,10 @@ from .const import (
     CONVERSATION_CONTINUITY_HA_DEFAULT,
     CONVERSATION_CONTINUITY_USER,
 )
+from .conversation_id_ownership import (
+    conversation_id_is_owned,
+    retain_unclaimed_chat_log,
+)
 from .conversation_ids import (
     GUEST_CONTINUITY_NAMESPACE as GUEST_CONTINUITY_NAMESPACE,
     GUEST_CONVERSATION_ID_PREFIX,
@@ -46,6 +50,7 @@ _PROCESSING_CONVERSATIONS: ContextVar[tuple[_ProcessingConversation, ...]] = Con
 @dataclass(slots=True)
 class _ChatLogAdmission:
     source: conversation.ChatLog
+    source_owned: bool
     claimed: bool = False
     active: bool = True
 
@@ -64,8 +69,10 @@ def chat_log_admission_scope(
     """Retire an untouched Core admission unless this invocation owns its log.
 
     Core 2026.11 retains live inputs even if preparation fails before continuity
-    can route a Guest turn. Never capture an ancestor's admission, and keep an
-    owned turn on failure: its history may contain unresolved tool effects.
+    can route a Guest turn. Only a previously claimed EOAI log authorizes input
+    removal. Unowned caller logs keep their content and leave EOAI's eligible
+    histories. Never capture a tracked ancestor's admission, and keep an owned
+    turn on failure: its history may contain unresolved tool effects.
     """
     if (
         source is None
@@ -92,7 +99,9 @@ def chat_log_admission_scope(
         finally:
             _CHAT_LOG_ADMISSIONS.reset(token)
         return
-    admission = _ChatLogAdmission(source)
+    admission = _ChatLogAdmission(
+        source, conversation_id_is_owned(source.hass, source.conversation_id)
+    )
     pending = source.content[-1]
     token = _CHAT_LOG_ADMISSIONS.set((*_CHAT_LOG_ADMISSIONS.get(), admission))
     try:
@@ -100,8 +109,11 @@ def chat_log_admission_scope(
     finally:
         admission.active = False
         _CHAT_LOG_ADMISSIONS.reset(token)
+        if not admission.claimed and not admission.source_owned:
+            retain_unclaimed_chat_log(source)
         if (
             not admission.claimed
+            and admission.source_owned
             and getattr(source, "turn_active", False)
             and getattr(source, "turn_start", None) == len(source.content) - 1
             and source.content
@@ -168,6 +180,7 @@ def forward_chat_log_deltas(
             or (
                 admission is not None
                 and admission.active
+                and admission.source_owned
                 and admission.source is source
             )
         )
