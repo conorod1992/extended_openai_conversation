@@ -34,10 +34,24 @@ for (const bundled of [false, true]) for (const decision of ["keep", "discard"])
   await expect(panel.locator("[data-voice-mapping-row]")).toHaveCount(2);
   await panel.locator("#save-config").click();
   await expect.poll(() => page.evaluate(() => voiceCompetition.committed)).toBe(true);
-  const chooseSatellite = async (index, value) => panel.locator(".voice-satellite-picker").nth(index).evaluate((picker, selected) => {
-    picker.value = selected;
-    picker.dispatchEvent(new CustomEvent("value-changed", {detail:{value:selected}, bubbles:true, composed:true}));
-  }, value);
+  const mappingReady = async () => {
+    await expect(panel.locator("[data-voice-mapping-feature][data-ready]")).toBeAttached();
+    await expect(panel.locator("[data-voice-mapping-row][data-voice-bound]")).toHaveCount(2);
+  };
+  const chooseSatellite = async (index, value) => {
+    await mappingReady();
+    // A render can retire a child between locator resolution and evaluate.
+    // Resolve and dispatch on the mounted picker in the same browser task.
+    const accepted = await panel.evaluate((host, {index, selected}) => {
+      const picker = host.shadowRoot.querySelectorAll("[data-voice-mapping-row][data-voice-bound] .voice-satellite-picker")[index];
+      if (!picker?.isConnected) throw Error("The current Voice picker is not ready");
+      const prior = picker.__voiceSelection;
+      picker.value = selected;
+      picker.dispatchEvent(new CustomEvent("value-changed", {detail:{value:selected}, bubbles:true, composed:true}));
+      return picker.__voiceSelection !== prior;
+    }, {index, selected:value});
+    expect(accepted).toBe(true);
+  };
   await chooseSatellite(0, "assist_satellite.living");
   await panel.locator('[data-config="voice_unmapped_policy"]').selectOption("shared");
   await expect(panel.locator('[data-error="voice_device_mappings"]')).toContainText("more than once");
@@ -53,6 +67,7 @@ for (const bundled of [false, true]) for (const decision of ["keep", "discard"])
   expect(copies.recovered.map(row => row.deviceId)).toEqual(["living", "living"]);
   expect(copies.current.map(row => row.deviceId)).toEqual(["office", "office"]);
   await panel.evaluate(host => host._render());
+  await mappingReady();
   await review.getByRole("button", {name:decision === "keep" ? "Keep draft for later" : "Discard recovered edits", exact:true}).click();
   await chooseSatellite(1, "assist_satellite.living");
   await expect(panel.locator(".voice-device-id").nth(1)).toHaveValue("living");
