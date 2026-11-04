@@ -903,13 +903,22 @@ class ExtendedOpenAIAgentEntity(
         continuity = self._continuity
         assert continuity is not None
         assist_chat_log = current_chat_log.get()
+        incoming_conversation_id = user_input.conversation_id
         user_input.conversation_id = resolution.conversation_id
         with (
             async_get_chat_session(
                 self.hass, resolution.conversation_id, context=user_input.context
             ) as session,
             async_get_chat_log(self.hass, session, user_input) as chat_log,
-            forward_chat_log_deltas(assist_chat_log, chat_log, user_input.text),
+            forward_chat_log_deltas(
+                assist_chat_log,
+                chat_log,
+                user_input.text,
+                rerouted_input=(
+                    assist_chat_log is not None
+                    and assist_chat_log.conversation_id == incoming_conversation_id
+                ),
+            ),
             processing_conversation_scope(
                 continuity, chat_log.conversation_id, resolution.conversation_id
             ),

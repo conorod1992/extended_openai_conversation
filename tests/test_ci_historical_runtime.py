@@ -257,3 +257,32 @@ def test_official_fixture_bridge_preserves_source_and_single_plugin(tmp_path, dr
     assert {
         p.relative_to(core): p.read_bytes() for p in core.rglob("*") if p.is_file()
     } == original
+
+
+@pytest.mark.usefixtures("socket_enabled")
+def test_native_coverage_does_not_import_eoai_during_dependency_initialization():
+    """Avoid reentrant package imports while Cython dependencies define enums."""
+    import subprocess
+    import sys
+    from pathlib import Path
+    import configparser
+
+    config = configparser.ConfigParser()
+    config.read("ci/coverage-native-config-flow.ini")
+    assert (
+        config["run"]["include"]
+        == "*/custom_components/extended_openai_conversation_responses/config_flow.py"
+    )
+    assert config["report"]["fail_under"] == "84"
+    script = """
+import coverage, sys
+probe = coverage.Coverage(config_file="ci/coverage-native-config-flow.ini")
+probe.start()
+assert not any(name.startswith("custom_components.extended_openai_conversation_responses") for name in sys.modules)
+import bleak_retry_connector
+probe.stop()
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], cwd=Path.cwd(), capture_output=True, text=True
+    )
+    assert result.returncode == 0, result.stderr

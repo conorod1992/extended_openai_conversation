@@ -68,20 +68,35 @@ def forward_chat_log_deltas(
     source: conversation.ChatLog | None,
     target: conversation.ChatLog,
     request_text: str,
+    *,
+    rerouted_input: bool = False,
 ) -> Generator[None]:
     """Keep the current Assist listener when continuity selects another ChatLog.
 
     Only the live listener follows this request. History and ownership remain on
     their separate logs, and the callback must never survive this request.
+    An owned rerouted input is removed from Core's otherwise unused live log.
     """
     if (
         source is None
         or source is target
-        or source.delta_listener is None
         or not source.content
         or not isinstance(source.content[-1], conversation.UserContent)
         or source.content[-1].content != request_text
     ):
+        yield
+        return
+    # New Core retains live log mutations even when the agent routes the turn
+    # elsewhere. Remove only this input's untouched admission from the original
+    # log; otherwise Guest text can become part of the owner's future context.
+    # The caller confirms the source ID, excluding unrelated ancestor requests.
+    if (
+        rerouted_input
+        and getattr(source, "turn_active", False)
+        and getattr(source, "turn_start", None) == len(source.content) - 1
+    ):
+        source.content.pop()
+    if source.delta_listener is None:
         yield
         return
     previous_listener = target.delta_listener

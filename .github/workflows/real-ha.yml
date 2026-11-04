@@ -494,7 +494,8 @@ jobs:
                 --dist=loadscope
               )
               COVERAGE_ARGS=(
-                --cov=custom_components.extended_openai_conversation_responses.config_flow
+                --cov
+                --cov-config=ci/coverage-native-config-flow.ini
                 --cov-branch
                 --cov-report=term-missing
                 --cov-report=xml:real-ha-config-flow-coverage.xml

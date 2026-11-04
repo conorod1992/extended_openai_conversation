@@ -167,7 +167,7 @@ async def test_caller_tool_round_trip_crosses_sdk_wire_with_ha_context(
     probe = ContextProbeTool()
     caller = CallerAPI(hass=hass, id="wire-probe", name="Wire Probe")
     caller.tools = [probe]
-    user = MockUser(id="ai-task-wire-user", name="AI Task Wire User")
+    user = MockUser(id="ai-task-wire-user", name="AI Task Wire User", is_owner=True)
     user.add_to_hass(hass)
     context = Context(user_id=user.id)
     requests: list[dict[str, Any]] = []
