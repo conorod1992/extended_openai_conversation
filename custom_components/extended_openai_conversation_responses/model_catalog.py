@@ -41,7 +41,9 @@ class IncompatibleCatalogError(ValueError):
 
 
 _ID = re.compile(r"[a-z0-9][a-z0-9._:-]{0,127}\Z")
-_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
+REASONING_EFFORT_VALUES = frozenset(
+    {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
+)
 _SUPPORT = {"always", "conditional", "never", "undocumented"}
 _SEND_POLICIES = {"omit", "omit_unless_configured"}
 _STATUSES = {"current", "deprecated", "unknown"}
@@ -186,9 +188,12 @@ def _validate_metadata(value: dict[str, Any], *, model_entry: bool = False) -> N
     if type(reasoning["supported"]) is not bool or not isinstance(efforts, list):
         raise ValueError("Invalid reasoning capability")
     if (
-        len(efforts) > len(_EFFORTS)
+        len(efforts) > len(REASONING_EFFORT_VALUES)
         or len(set(efforts)) != len(efforts)
-        or any(not isinstance(item, str) or item not in _EFFORTS for item in efforts)
+        or any(
+            not isinstance(item, str) or item not in REASONING_EFFORT_VALUES
+            for item in efforts
+        )
         or reasoning["supported"] != bool(efforts)
     ):
         raise ValueError("Invalid reasoning efforts")

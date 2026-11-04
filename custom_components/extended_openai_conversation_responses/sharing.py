@@ -13,8 +13,9 @@ import re
 from typing import Any
 from urllib.parse import unquote, urlsplit, urlunsplit
 
+from .const import CONTEXT_TRUNCATE_STRATEGIES, SERVICE_TIER_OPTIONS
 from .function_yaml import decoded_function_fields
-from .model_catalog import BUNDLED_CATALOG
+from .model_catalog import BUNDLED_CATALOG, REASONING_EFFORT_VALUES
 from .secret_redaction import (
     REDACTED_SECRET_SENTINEL,
     _is_function_tool_schema_root,
@@ -188,9 +189,11 @@ PUBLIC_NUMBERS = frozenset(
 PUBLIC_ENUMS = {
     "chat_model": frozenset(BUNDLED_CATALOG.resolved),
     "api_mode": {"auto", "responses", "chat_completions"},
-    "reasoning_effort": {"", "none", "minimal", "low", "medium", "high", "xhigh"},
-    "service_tier": {"", "auto", "default", "flex", "priority"},
-    "context_truncate_strategy": {"clear", "truncate"},
+    "reasoning_effort": REASONING_EFFORT_VALUES | {""},
+    "service_tier": frozenset(SERVICE_TIER_OPTIONS) | {""},
+    "context_truncate_strategy": frozenset(
+        item["key"] for item in CONTEXT_TRUNCATE_STRATEGIES
+    ),
     "memory_mode": {"off", "manual", "automatic"},
     "guest_knowledge_policy": {"off", "on", "custom"},
     "guest_function_policy": {"off", "on", "custom"},
