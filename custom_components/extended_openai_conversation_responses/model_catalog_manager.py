@@ -282,7 +282,26 @@ class ModelCatalogManager:
                 rules = await async_get_request_rules(
                     self.hass, entry.entry_id, subentry.subentry_id
                 )
-                for rule in rules.snapshot()["rules"]:
+                saved_rules = rules.snapshot()["rules"]
+                inherited_efforts = set()
+                configured_effort = options.get(CONF_REASONING_EFFORT)
+                if isinstance(configured_effort, str) and configured_effort:
+                    inherited_efforts.add(configured_effort)
+                for saved_rule in saved_rules:
+                    saved_action = saved_rule.get("action", {})
+                    saved_effort = saved_action.get("reasoning_effort")
+                    if (
+                        saved_rule.get("enabled", True)
+                        and saved_rule.get("action_type") == "model_routing"
+                        and not saved_action.get("reset")
+                        and saved_action.get("scope", "conversation") == "conversation"
+                        and isinstance(saved_effort, str)
+                        and saved_effort
+                        and not SLOT_REFERENCE.search(saved_effort)
+                    ):
+                        inherited_efforts.add(saved_effort)
+                continued_efforts: set[str] = set()
+                for rule in saved_rules:
                     if (
                         not rule.get("enabled", True)
                         or rule.get("action_type") != "model_routing"
@@ -294,6 +313,17 @@ class ModelCatalogManager:
                     routed_model = action.get("model")
                     routed_effort = action.get("reasoning_effort")
                     routed_binding = action.get("azure_model")
+                    if (
+                        action.get("scope") == "request"
+                        and rule.get("continue_matching")
+                        and not action.get("continue_to_ai")
+                        and isinstance(routed_effort, str)
+                        and routed_effort
+                        and not SLOT_REFERENCE.search(routed_effort)
+                    ):
+                        # Only later rules in this ordered snapshot can inherit
+                        # a request-only setting through continued matching.
+                        continued_efforts.add(routed_effort)
                     if routed_binding and SLOT_REFERENCE.search(str(routed_binding)):
                         continue
                     if (
@@ -332,6 +362,51 @@ class ModelCatalogManager:
                             capability_model_identity(effective, entry_data),
                             provider=provider,
                         )
+                        possible_efforts = inherited_efforts | continued_efforts
+                        if not routed_effort and possible_efforts:
+                            # A model-only rule can inherit explicit reasoning
+                            # from the agent or a previous conversation route.
+                            current_metadata = catalog_model_metadata(
+                                self.catalog,
+                                capability_model_identity(effective, entry_data),
+                                provider=provider,
+                            )
+                            for inherited_effort in possible_efforts:
+                                if (
+                                    not current_metadata["reasoning"]["supported"]
+                                    or inherited_effort
+                                    not in current_metadata["reasoning"]["efforts"]
+                                ):
+                                    continue
+                                inherited_options = {
+                                    **effective,
+                                    CONF_REASONING_EFFORT: inherited_effort,
+                                }
+                                try:
+                                    build_provider_request_snapshot(
+                                        inherited_options,
+                                        entry_data,
+                                        tools_required=conversation_tools_required(
+                                            effective
+                                        ),
+                                        model_capabilities=current_metadata,
+                                    )
+                                except HomeAssistantError:
+                                    continue  # This combination was already unusable.
+                                if (
+                                    not routed_metadata["reasoning"]["supported"]
+                                    or inherited_effort
+                                    not in routed_metadata["reasoning"]["efforts"]
+                                ):
+                                    return False
+                                build_provider_request_snapshot(
+                                    inherited_options,
+                                    entry_data,
+                                    tools_required=conversation_tools_required(
+                                        effective
+                                    ),
+                                    model_capabilities=routed_metadata,
+                                )
                         if dynamic_effort:
                             # Defer the captured value, not the fixed model's
                             # recognition or previously available effort support.
