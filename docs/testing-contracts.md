@@ -154,6 +154,19 @@ or promote members out of disabled/on-demand groups. Unit boundary cases and the
 native backup-transfer export collector cover these contracts without mutating
 the source configuration.
 
+Reviewed exports reconcile selected Skills after Tool and Group omissions, then
+round-trip through the ordinary configuration importer. Typed YAML and unsafe Group
+metadata must not leave a dangling loader dependency or enable a disabled loader.
+Nested Composite result aliases belong to the parent step; hydration, persistence
+and execution retain those aliases without passing them to strict child validators.
+Provider connection recovery is shared by the credential endpoint and registered
+`change_config` action, including authentication-failed, unchanged and disabled
+entries. Provider-aware configuration reads, writes, copies, sharing and browser
+catalogue lookups use the actual parent provider. Cached scalar snapshots also
+track provider context while reusing unchanged Function validation. Portable
+configuration validation preserves explicit provider-specific efforts until the
+destination provider is known; request assembly still owns API compatibility.
+
 Mutation wire tests serialize actual backend results and feed them to production
 JavaScript acknowledgement consumers, including Function, Group and Rule deletion.
 Rejection requires evidence that no write

@@ -123,17 +123,28 @@ class CompositeFunction(Function):
             next_function = get_function(next_function_config["type"])
             from ..execution_outcomes import execute_backend, execution_child
 
+            # The alias belongs to this sequence step, not the child backend.
+            # A shallow copy retains hydrated Script/Template runtime objects.
+            persisted = deepcopy(next_function_config)
+            response_variable = persisted.pop("response_variable", None)
+            backend_config = _RuntimeFunctionConfig(
+                {
+                    key: value
+                    for key, value in next_function_config.items()
+                    if key != "response_variable"
+                },
+                persisted,
+            )
             with propagate_function_execution_errors(), execution_child(index):
                 result = await execute_backend(
                     next_function,
                     hass,
-                    next_function_config,
+                    backend_config,
                     new_arguments,
                     llm_context,
                     exposed_entities,
                 )
 
-            response_variable = next_function_config.get("response_variable")
             if response_variable:
                 new_arguments[response_variable] = result
 

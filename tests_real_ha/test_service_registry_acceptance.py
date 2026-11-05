@@ -39,7 +39,9 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 
 
-def _entry(*, memory: bool = False) -> MockConfigEntry:
+def _entry(
+    *, memory: bool = False, skip_authentication: bool = True
+) -> MockConfigEntry:
     """Build one local-only entry suitable for service acceptance tests."""
     conversation_data = {CONF_MEMORY_MODE: MEMORY_MODE_MANUAL} if memory else {}
     return MockConfigEntry(
@@ -47,7 +49,7 @@ def _entry(*, memory: bool = False) -> MockConfigEntry:
         title="Service Registry Acceptance",
         data={
             CONF_API_KEY: "sk-service-acceptance",
-            CONF_SKIP_AUTHENTICATION: True,
+            CONF_SKIP_AUTHENTICATION: skip_authentication,
         },
         version=CONFIG_ENTRY_VERSION,
         subentries_data=[
@@ -67,6 +69,98 @@ async def _setup_entry(hass: HomeAssistant, entry: MockConfigEntry) -> None:
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     assert entry.state is ConfigEntryState.LOADED
+
+
+@pytest.mark.parametrize("changed", [False, True])
+async def test_change_config_recovers_auth_failed_entry(hass, monkeypatch, changed):
+    from openai import AuthenticationError
+
+    from custom_components import extended_openai_conversation_responses as integration
+
+    entry = _entry(skip_authentication=False)
+    entry.add_to_hass(hass)
+    rejected = AuthenticationError(
+        "invalid", response=MagicMock(status_code=401, request=MagicMock()), body=None
+    )
+    authenticate = AsyncMock(side_effect=rejected)
+    monkeypatch.setattr(integration, "get_authenticated_client", authenticate)
+    assert not await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.SETUP_ERROR
+    assert not entry.update_listeners
+    authenticate.side_effect = None
+    authenticate.return_value = MagicMock()
+    monkeypatch.setattr(
+        services, "get_authenticated_client", AsyncMock(return_value=object())
+    )
+    key = "repaired-key" if changed else entry.data[CONF_API_KEY]
+    await hass.services.async_call(
+        DOMAIN,
+        "change_config",
+        {
+            "config_entry": entry.entry_id,
+            CONF_API_KEY: key,
+        },
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+    assert entry.data[CONF_API_KEY] == key
+    assert entry.state is ConfigEntryState.LOADED
+    assert authenticate.await_count == 2
+    assert entry.update_listeners
+
+
+@pytest.mark.parametrize("changed", [False, True])
+async def test_change_config_loaded_entry_reloads_once(hass, monkeypatch, changed):
+    from custom_components import extended_openai_conversation_responses as integration
+
+    entry = _entry(skip_authentication=False)
+    authenticate = AsyncMock(return_value=MagicMock())
+    monkeypatch.setattr(integration, "get_authenticated_client", authenticate)
+    monkeypatch.setattr(
+        services, "get_authenticated_client", AsyncMock(return_value=object())
+    )
+    await _setup_entry(hass, entry)
+    key = "rotated-key" if changed else entry.data[CONF_API_KEY]
+    await hass.services.async_call(
+        DOMAIN,
+        "change_config",
+        {
+            "config_entry": entry.entry_id,
+            CONF_API_KEY: key,
+        },
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.LOADED
+    assert authenticate.await_count == 2
+
+
+async def test_change_config_disabled_entry_stays_disabled(hass, monkeypatch):
+    from homeassistant.config_entries import ConfigEntryDisabler
+
+    entry = _entry()
+    await _setup_entry(hass, entry)
+    await hass.config_entries.async_set_disabled_by(
+        entry.entry_id, ConfigEntryDisabler.USER
+    )
+    await hass.async_block_till_done()
+    monkeypatch.setattr(
+        services, "get_authenticated_client", AsyncMock(return_value=object())
+    )
+    await hass.services.async_call(
+        DOMAIN,
+        "change_config",
+        {
+            "config_entry": entry.entry_id,
+            CONF_API_KEY: "disabled-new-key",
+        },
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+    assert entry.disabled_by is ConfigEntryDisabler.USER
+    assert entry.state is ConfigEntryState.NOT_LOADED
+    assert entry.data[CONF_API_KEY] == "disabled-new-key"
 
 
 def _conversation_subentry(entry: MockConfigEntry):

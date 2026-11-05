@@ -78,6 +78,30 @@ def _validation_error(error: OpenAIError) -> HomeAssistantError:
     return HomeAssistantError(f"{message} The existing API key was not changed.")
 
 
+def request_provider_reload_after_update(
+    hass: HomeAssistant,
+    entry: ConfigEntry[Any],
+    state_before: ConfigEntryState,
+    *,
+    changed: bool,
+    validation_performed: bool,
+) -> bool:
+    """Share post-save recovery without duplicating the loaded update listener."""
+    if entry.disabled_by is not None:
+        return False
+    if state_before is ConfigEntryState.LOADED:
+        if changed:
+            return True  # The normal update listener owns this reload.
+        if not validation_performed:
+            return False
+    elif not state_before.recoverable:
+        return False
+    # Failed startup has no update listener. Successful validation of an unchanged
+    # key can also repair provider-side access and warrants a fresh setup attempt.
+    hass.config_entries.async_schedule_reload(entry.entry_id)
+    return True
+
+
 async def async_replace_api_key(
     hass: HomeAssistant,
     entry: ConfigEntry[Any],
@@ -135,24 +159,13 @@ async def async_replace_api_key(
 
     state_before = entry.state
     changed = hass.config_entries.async_update_entry(entry, data=candidate)
-    reload_requested = False
-    if state_before is ConfigEntryState.LOADED:
-        if changed:
-            # Successful setup registers this integration's normal update listener,
-            # which reloads the entry after a changed config-entry update.
-            reload_requested = True
-        elif not skip_authentication:
-            # A successful validation can repair provider-side access without
-            # changing the credential string. Reload once so any pending native
-            # reauth flow/runtime failure state is cleared consistently.
-            hass.config_entries.async_schedule_reload(entry.entry_id)
-            reload_requested = True
-    elif entry.disabled_by is None and state_before.recoverable:
-        # Startup authentication failures occur before the normal update listener
-        # is registered. Retry after successful validation even when the key string
-        # is unchanged, since provider-side access may have been repaired meanwhile.
-        hass.config_entries.async_schedule_reload(entry.entry_id)
-        reload_requested = True
+    reload_requested = request_provider_reload_after_update(
+        hass,
+        entry,
+        state_before,
+        changed=changed,
+        validation_performed=not skip_authentication,
+    )
 
     return {
         "updated": changed,

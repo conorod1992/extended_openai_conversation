@@ -23,7 +23,7 @@ from .const import (
     DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
 )
 from .exposed_attributes import exposed_attribute_catalog
-from .helpers import supports_openai_hosted_tools
+from .helpers import effective_api_provider, supports_openai_hosted_tools
 from .request import build_provider_request_snapshot
 from .skill_availability import skill_loader_status
 
@@ -143,6 +143,9 @@ def decorate_configuration_result(
 
     decorated = {
         **result,
+        "api_provider": effective_api_provider(
+            entry_data.get("api_provider"), entry_data.get("base_url")
+        ),
         "configuration_guidance": configuration_guidance_snapshot(
             entry_data, config, decoded_functions=True
         ),

@@ -78,7 +78,7 @@ def is_field_only_configuration_update(updates: Mapping[str, Any]) -> bool:
 
 
 def merge_unchanged_function_configuration(
-    subentry: Any, updates: dict[str, Any]
+    subentry: Any, updates: dict[str, Any], *, provider: str | None = None
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Return a scoped save payload and a separate normalized display candidate."""
     if not is_field_only_configuration_update(updates):
@@ -110,6 +110,7 @@ def merge_unchanged_function_configuration(
         updates,
         validated_functions=validated_functions,
         function_tools_as_list=True,
+        provider=provider,
     )
     persisted = project_agent_config_updates(subentry.data, updates, candidate)
     return persisted, candidate

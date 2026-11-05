@@ -23,6 +23,8 @@ Exports use saved configuration. Save any draft settings first if you want them 
 
 Shareable Setup with reviewed custom content retains quarantined Function Tool and Group definitions for repair after import, subject to the usual sharing omissions. Export does not silently repair malformed records or missing references. If omitting private content would make an ambiguous Function collection executable, its retained Functions are disabled and that change is listed in the omission summary. Usable disabled and load-when-needed groups retain their availability restrictions.
 
+If sharing omissions remove or disable the built-in Skill loader, the export also omits the now-unavailable Skill selections and lists that omission. This lets ordinary configuration import complete without enabling an omitted or disabled Function. Reconfigure the loader and select the desired Skills after import. The source assistant and private backups retain their original selections.
+
 ## What a full backup includes
 
 A full backup contains the selected agent's:

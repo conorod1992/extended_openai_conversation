@@ -564,11 +564,12 @@ async def async_overview_summary(
 
 
 def _snapshot_normalized_configuration(
-    config: dict[str, Any], *, validated: bool = False
+    config: dict[str, Any], *, validated: bool = False, provider: str | None = None
 ) -> dict[str, Any]:
     """Project decoded Functions; raw persisted sources use agent_config_snapshot."""
     snapshot = agent_config_value_snapshot(
-        {key: value for key, value in config.items() if key in AGENT_CONFIG_FIELDS}
+        {key: value for key, value in config.items() if key in AGENT_CONFIG_FIELDS},
+        provider=provider,
     )
     configured = snapshot[CONF_FUNCTION_TOOLS]
     if validated:

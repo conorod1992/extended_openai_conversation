@@ -109,6 +109,12 @@ def effective_api_provider(api_provider: str | None, base_url: str | None) -> st
     )
 
 
+def entry_api_provider(entry: Any) -> str:
+    """Resolve capability context from the parent connection, never its model."""
+    data = getattr(entry, "data", {})
+    return effective_api_provider(data.get("api_provider"), data.get("base_url"))
+
+
 def supports_openai_hosted_tools(
     api_provider: str | None, base_url: str | None
 ) -> bool:

@@ -76,8 +76,15 @@ async def test_provider_change_validates_only_enabled_rules_and_llm_subentries(
         )
         for kind in ["conversation", "ai_task_data", "other"]
     }
+    from homeassistant.config_entries import ConfigEntryState
+
     entry = SimpleNamespace(
-        domain=DOMAIN, entry_id="entry", data={CONF_API_KEY: "old"}, subentries=children
+        state=ConfigEntryState.LOADED,
+        disabled_by=None,
+        domain=DOMAIN,
+        entry_id="entry",
+        data={CONF_API_KEY: "old"},
+        subentries=children,
     )
     hass.config_entries.async_get_entry.return_value = entry
     monkeypatch.setattr(
@@ -117,7 +124,10 @@ async def test_provider_change_validates_only_enabled_rules_and_llm_subentries(
 
 async def test_query_image_requires_token_limit_before_reading_files(hass, monkeypatch):
     monkeypatch.setattr(services, "get_api_mode", lambda *_: "responses")
-    monkeypatch.setattr("custom_components.extended_openai_conversation_responses.request.normalize_output_token_limit", lambda *_: None)
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.request.normalize_output_token_limit",
+        lambda *_: None,
+    )
     handler = (await _handlers(hass))["query_image"]
     with pytest.raises(HomeAssistantError, match="Output token limit is required"):
         await handler(

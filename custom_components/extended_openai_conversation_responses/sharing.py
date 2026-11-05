@@ -766,6 +766,26 @@ def project_configuration(
             result["functions"],
             summary,
         )
+        if result.get("skills"):
+            from .function_configuration_repair import (
+                function_configuration_repair_state,
+            )
+            from .skill_availability import skill_loader_status
+
+            # Sharing can remove or disable a loader after source validation.
+            # Preserve quarantine, but do not export dangling Skill selections
+            # that the ordinary configuration importer cannot accept.
+            repair = function_configuration_repair_state(result)
+            tools_for_skills = repair.valid if repair else result["functions"]
+            groups_for_skills = repair.groups if repair else result["function_groups"]
+            if not skill_loader_status(
+                result["skills"],
+                tools_for_skills,
+                groups_for_skills,
+                max_function_calls=result.get("max_function_calls_per_conversation"),
+            ).available:
+                record_omission(summary, "skills", count=len(result["skills"]))
+                result["skills"] = []
     # Skills contain arbitrary external/custom content and dependency references.
     if not reviewed:
         result["function_groups"] = []
