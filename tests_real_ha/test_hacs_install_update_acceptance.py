@@ -161,7 +161,7 @@ def _assert_obsolete_modules_not_loaded() -> None:
 
 async def _ensure_hacs(hass: Any) -> Any:
     """Set up HACS through its real config flow, faking only human OAuth consent."""
-    from homeassistant.config_entries import ConfigEntryState, SOURCE_USER
+    from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
     from homeassistant.data_entry_flow import FlowResultType
 
     entries = hass.config_entries.async_entries(HACS_DOMAIN)
@@ -516,6 +516,9 @@ def _write_evidence(config_dir: Path) -> None:
     if not target:
         return
     hacs_state = json.loads((config_dir / _HACS_STATE_FILE).read_text(encoding="utf-8"))
+    assert set(hacs_state.get("owner_checkpoints", {})) == {
+        "candidate-migrate", "candidate-restart"
+    }, "Both retained repository-owner cold-boot checks are required"
     eoai_state = json.loads((config_dir / _STATE_FILE).read_text(encoding="utf-8"))
     payload = {
         "candidate_sha": os.environ.get("GITHUB_SHA"),

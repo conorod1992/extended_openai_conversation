@@ -246,3 +246,19 @@ async def test_every_candidate_cold_boot_checks_retained_owner(
     )
     await action(hass, tmp_path)
     owner.assert_awaited_once_with(hass, tmp_path, phase)
+
+
+@pytest.mark.parametrize("include_first", [False, True])
+def test_export_rejects_incomplete_owner_evidence(
+    owned_repository, monkeypatch, include_first
+):
+    probe = owned_repository
+    probe.state["owner_checkpoints"] = (
+        {"candidate-migrate": {}} if include_first else {}
+    )
+    probe.path.write_text(json.dumps(probe.state), encoding="utf-8")
+    output = probe.root / "evidence.json"
+    monkeypatch.setenv(journey._EVIDENCE_ENV, str(output))
+    with pytest.raises(AssertionError, match="Both retained repository-owner"):
+        journey._write_evidence(probe.root)
+    assert not output.exists()
