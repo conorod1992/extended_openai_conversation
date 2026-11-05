@@ -97,9 +97,11 @@ async def test_carry_forward_cannot_reclaim_a_later_manual_choice_after_restart(
     assert media in manager.active["observed_controls"]
 
 
-@pytest.mark.parametrize("returned", [0.8, 0.6])
+@pytest.mark.parametrize(
+    "returned,attributed", [(0.8, False), (0.6, False), (0.2, False), (0.2, True)]
+)
 async def test_expired_unacknowledged_application_does_not_suppress_new_period(
-    hass, monkeypatch, returned
+    hass, monkeypatch, returned, attributed
 ):
     _install_registry(monkeypatch, "bedroom")
     manager = _stateful_public_manager(hass)
@@ -117,9 +119,18 @@ async def test_expired_unacknowledged_application_does_not_suppress_new_period(
     manager._active = manager._normalize_active(deepcopy(manager.active))
     writes.clear()
     hass.states.async_set(media, "idle", {"volume_level": returned})
-    hass.states.get(media).context = SimpleNamespace(id="returned-state")
+    hass.states.get(media).context = SimpleNamespace(
+        id=(
+            manager.active["controls"][media]["application_context_id"]
+            if attributed
+            else "returned-state"
+        )
+    )
     for _ in range(3):
         await manager.async_reconcile(now=now + timedelta(days=1, hours=1))
     assert hass.states.get(media).attributes["volume_level"] == 0.2
-    assert writes == [(media, 0.2)]
-    assert manager.active["controls"][media]["original_value"] == returned
+    assert writes == ([] if returned == 0.2 else [(media, 0.2)])
+    if returned != 0.2 or attributed:
+        assert manager.active["controls"][media]["original_value"] == (
+            0.8 if returned == 0.2 else returned
+        )

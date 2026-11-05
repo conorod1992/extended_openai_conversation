@@ -1160,10 +1160,8 @@ class QuietHoursManager:
                     if control["kind"] == "volume"
                     else _current_switch(self.hass, entity_id)
                 )
-                if control.get("application_state") != "applied" or not (
-                    self._control_values_equal(
-                        control["kind"], current, self._attained_quiet_value(control)
-                    )
+                if not self._control_values_equal(
+                    control["kind"], current, self._attained_quiet_value(control)
                 ):
                     continue
             if "pending_quiet_value" not in control and self._observe_owned_volume(
