@@ -32,16 +32,16 @@ from custom_components.extended_openai_conversation_responses.function_configura
 from custom_components.extended_openai_conversation_responses.management_function_repair import (
     async_function_repair,
 )
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.config_entries import ConfigEntryState
+from homeassistant.exceptions import HomeAssistantError
 
 
 @pytest.fixture(autouse=True)
 async def retained_rules(monkeypatch, hass):
-    from tests.test_request_rules import MemoryStore
     from custom_components.extended_openai_conversation_responses.request_rules import (
         RequestRules,
     )
+    from tests.test_request_rules import MemoryStore
 
     manager = RequestRules(MemoryStore())
     await manager.async_initialize()
@@ -54,6 +54,9 @@ async def retained_rules(monkeypatch, hass):
 
 
 class _FakeConfigEntries:
+    def async_entries(self, _domain):
+        return []
+
     def __init__(self) -> None:
         self.updates = 0
 
@@ -566,8 +569,8 @@ async def test_save_one_repairs_and_renames_group_reference_without_touching_sib
 ) -> None:
     data, mixed, valid_tool = _mixed_legacy_tool_data()
     old_name = mixed[1]["spec"]["name"]
-    from tests.test_request_rules import local_rule
     from custom_components.extended_openai_conversation_responses.const import DOMAIN
+    from tests.test_request_rules import local_rule
 
     rule = local_rule()
     rule["action"]["actions"] = [
@@ -746,3 +749,60 @@ async def test_save_one_rejects_duplicate_name_without_persisting(
         )
 
     assert config_entries.updates == 0
+
+
+async def test_quarantine_repair_cannot_leave_state_control_rule_stale(
+    monkeypatch, retained_rules
+):
+    from custom_components.extended_openai_conversation_responses.const import DOMAIN
+    from tests.test_request_rules import local_rule
+
+    data, mixed, valid = _mixed_legacy_tool_data()
+    old = mixed[1]["spec"]["name"]
+    rule = local_rule()
+    rule["action"]["actions"] = [
+        {
+            "action": f"{DOMAIN}.disable_function_tools",
+            "data": {
+                "config_entry": "entry-1",
+                "agent_id": "agent-1",
+                "functions": [old],
+            },
+        }
+    ]
+    await retained_rules.async_create(rule)
+    entry, subentry = _entry_and_subentry(data)
+    config_entries = _FakeConfigEntries()
+    hass = SimpleNamespace(data={}, config_entries=config_entries)
+    monkeypatch.setattr(
+        management_ui, "entry_and_agent", lambda *args, **kwargs: (entry, subentry)
+    )
+    before = deepcopy(subentry.data)
+    snapshot = await async_function_repair(
+        hass,
+        "admin",
+        True,
+        {
+            "action": "get",
+            "entry_id": "entry-1",
+            "subentry_id": "agent-1",
+        },
+    )
+    replacement = deepcopy(valid)
+    replacement["spec"]["name"] = "repaired_tool"
+    with pytest.raises(HomeAssistantError, match="enable/disable references"):
+        await async_function_repair(
+            hass,
+            "admin",
+            True,
+            {
+                "action": "save_one",
+                "entry_id": "entry-1",
+                "subentry_id": "agent-1",
+                "revision": snapshot["revision"],
+                "index": 1,
+                "tool": replacement,
+            },
+        )
+    assert config_entries.updates == 0
+    assert subentry.data == before

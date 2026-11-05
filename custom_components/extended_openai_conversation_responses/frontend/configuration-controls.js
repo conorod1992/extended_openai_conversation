@@ -61,6 +61,9 @@ export function applyConfigurationControl(panel, control) {
     const rule = panel._draft[key]?.[index];
     if (!Number.isInteger(index) || index < 0 || !rule) return null;
     const field = control.classList.contains("regex-pattern") ? "pattern" : "replacement";
+    // Native textareas normalize CR/CRLF to LF. An untouched control must not
+    // rewrite an imported regex (or replacement) just because its row moves.
+    if (value === String(rule[field] ?? "").replace(/\r\n?/g, "\n")) return {key, changed:false};
     const changed = rule[field] !== value;
     if (changed) rule[field] = value;
     return {key, changed};
@@ -82,7 +85,8 @@ export function readConfigurationDraft(panel) {
   const state = {_draft:clone(panel._draft || panel._result?.config || {}), _draftTitle:panel._draftTitle, _configData:panel._configData};
   if (root.querySelector("#local-intent-list")) state._draft.local_intent_exclusions = [];
   if (root.querySelector("#regex-rules")) {
-    state._draft.speech_regex_replacements = [...root.querySelectorAll(".rule-row")].map(() => ({pattern:"", replacement:""}));
+    state._draft.speech_regex_replacements = [...root.querySelectorAll(".rule-row")].map((_, index) =>
+      clone(state._draft.speech_regex_replacements?.[index] || {pattern:"", replacement:""}));
   }
   root.querySelectorAll(CONFIGURATION_CONTROLS).forEach((control) => applyConfigurationControl(state, control));
   panel._eocPendingModelPreparation?.rebindDraft?.(panel._draft, state._draft);

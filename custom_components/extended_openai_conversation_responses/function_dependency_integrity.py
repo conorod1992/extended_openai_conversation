@@ -12,7 +12,7 @@ from homeassistant.exceptions import HomeAssistantError
 
 from . import request_rules
 from .agent_config import function_tool_enabled
-from .const import CONF_GUEST_ALLOWED_GROUP_IDS
+from .const import CONF_GUEST_ALLOWED_GROUP_IDS, DOMAIN
 from .function_execution import async_validate_function_arguments, inferred_schema_type
 from .mutation_outcomes import mark_mutation_failure
 from .script_payload import (
@@ -23,6 +23,105 @@ from .script_payload import (
 from .script_structure import iter_script_actions
 
 _TEMPLATE_MARKERS = ("{{", "{%", "{#")
+
+
+def state_control_references(
+    rules: Sequence[Mapping[str, Any]],
+    field: str,
+    name: str,
+    entry_id: str,
+    agent_id: str,
+    resolve_agent: Callable[[str], tuple[str, str] | None],
+) -> list[str]:
+    """Find known or unresolved state-control consumers without rendering templates."""
+    suffix = "tools" if field == "functions" else "groups"
+    services = {f"{DOMAIN}.{verb}_function_{suffix}" for verb in ("enable", "disable")}
+    references = []
+    for rule in rules:
+        for action in _rule_script_actions(rule):
+            service = action.get(
+                "action", action.get("service", action.get("service_template"))
+            )
+            if not isinstance(service, str) or service.lower() not in services:
+                continue
+            data = effective_service_payload(action)
+            if data is not None and not any(_contains_template(key) for key in data):
+                target_entry = data.get("config_entry")
+                if (
+                    isinstance(target_entry, str)
+                    and not _contains_template(target_entry)
+                    and target_entry != entry_id
+                ):
+                    continue
+                target_agent = data.get("agent_id")
+                if (
+                    isinstance(target_agent, str)
+                    and not _contains_template(target_agent)
+                    and target_agent != agent_id
+                    and resolve_agent(target_agent) != (entry_id, agent_id)
+                ):
+                    continue
+                values = data.get(field, [])
+                if not _contains_template(values) and name not in (
+                    values if isinstance(values, list) else [values]
+                ):
+                    continue
+            references.append(str(rule.get("name", rule.get("id", "unnamed rule"))))
+            break
+    return references
+
+
+async def async_require_unreferenced_state_control_rename(
+    hass: HomeAssistant,
+    entry: Any,
+    subentry: Any,
+    field: str,
+    old: str,
+    new: str,
+    *,
+    get_rules: Any,
+) -> None:
+    """Refuse dependent renames before any write, including cross-agent rules."""
+    if old == new:
+        return
+    from homeassistant.helpers import entity_registry as er
+
+    def resolve_agent(reference: str) -> tuple[str, str] | None:
+        entity = er.async_get(hass).async_get(reference)
+        if (
+            entity is None
+            or entity.config_subentry_id is None
+            or entity.config_entry_id is None
+        ):
+            return None
+        return entity.config_entry_id, entity.config_subentry_id
+
+    entries = {
+        item.entry_id: item for item in hass.config_entries.async_entries(DOMAIN)
+    }
+    entries[entry.entry_id] = entry
+    consumers = []
+    for owner in entries.values():
+        for source in owner.subentries.values():
+            if source.subentry_type != "conversation":
+                continue
+            manager = await get_rules(hass, owner.entry_id, source.subentry_id)
+            document = await manager.async_backup_data()
+            names = state_control_references(
+                document.get("rules", []),
+                field,
+                old,
+                entry.entry_id,
+                subentry.subentry_id,
+                resolve_agent,
+            )
+            consumers.extend(f"{source.title}: {name}" for name in names)
+    if consumers:
+        raise HomeAssistantError(
+            "Cannot rename while Request Rules contain static or unresolved "
+            "enable/disable references. Update these actions first, then retry: "
+            + "; ".join(consumers)
+        )
 
 
 def _is_template_string(value: Any) -> bool:
