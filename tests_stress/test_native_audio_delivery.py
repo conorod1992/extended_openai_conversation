@@ -155,10 +155,11 @@ async def _install_audio_entities(
 
     async def setup_entry(hass, entry):
         await hass.config_entries.async_forward_entry_setups(entry, list(entities))
-        return True
+        # This fixture is registered as a native integration. Core 2026.11
+        # requires native entry callbacks to return None on success.
 
     async def unload_entry(hass, entry):
-        return await hass.config_entries.async_unload_platforms(entry, list(entities))
+        assert await hass.config_entries.async_unload_platforms(entry, list(entities))
 
     class AudioFlow(ConfigFlow, domain=_AUDIO_DOMAIN):
         VERSION = 1

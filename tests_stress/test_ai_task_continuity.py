@@ -19,6 +19,7 @@ from custom_components.extended_openai_conversation_responses.const import (
 )
 from homeassistant.components import ai_task
 from homeassistant.core import Context
+from homeassistant.exceptions import Unauthorized
 from tests_real_ha.test_ai_task_provider_wire import MODES, _task_entity, _text_reply
 from tests_real_ha.test_ai_task_runtime import CallerAPI, ContextProbeTool
 from tests_real_ha.test_provider_wire_e2e import (
@@ -27,6 +28,35 @@ from tests_real_ha.test_provider_wire_e2e import (
     _responses_sse_tool_call,
 )
 from tests_stress.conftest import record
+
+
+@pytest.mark.parametrize("mode", MODES)
+async def test_caller_task_without_entity_control_never_reaches_provider(
+    hass, monkeypatch, stress_trace, mode
+):
+    """Owner-context continuity fixtures must retain native task admission."""
+    entry, entity_id = await _task_entity(hass, mode)
+    user = MockUser(id="task-without-control").add_to_hass(hass)
+    user.mock_policy({"entities": {"entity_ids": {entity_id: {"read": True}}}})
+    requests = []
+
+    async def send(request, *args, **kwargs):
+        requests.append(request)
+        raise AssertionError("Unauthorized AI Task reached the provider")
+
+    raw = _raw_client(SimpleNamespace(_client=entry.runtime_data))
+    monkeypatch.setattr(raw._client, "send", send)
+    with pytest.raises(Unauthorized):
+        await ai_task.async_generate_data(
+            hass,
+            task_name="Denied caller task",
+            entity_id=entity_id,
+            instructions="Must not reach the provider.",
+            context=Context(user_id=user.id),
+        )
+    assert requests == []
+    record(stress_trace, "summary", mode=mode, permission_denials=1,
+           provider_requests=0)
 
 
 def _image_bytes() -> bytes:
