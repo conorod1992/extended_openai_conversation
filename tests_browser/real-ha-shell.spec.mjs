@@ -1101,9 +1101,11 @@ test("cold Voice user pickers select a secondary HA user and keep its name after
       element.__selectionOpening = {opened:false, gestures:[]};
       element.addEventListener("picker-opened", () => { element.__selectionOpening.opened = true; });
       element.addEventListener("pointerdown", event => {
-        if (!event.composedPath().some(node => node.matches?.('[role="option"],ha-combo-box-item'))) return;
-        const generic = element.shadowRoot.querySelector("ha-generic-picker");
-        const combo = generic?.shadowRoot.querySelector("ha-picker-combo-box");
+        const path = event.composedPath();
+        const combo = path.find(node => node.localName === "ha-picker-combo-box");
+        // The field's value renderer can also contain ha-combo-box-item. Only
+        // a gesture inside the native popup is an option-selection gesture.
+        if (!combo || !path.some(node => node.matches?.('[role="option"],ha-combo-box-item'))) return;
         element.__selectionOpening.gestures.push({
           opened:element.__selectionOpening.opened,
           focused:combo?.matches(":focus-within") || false,

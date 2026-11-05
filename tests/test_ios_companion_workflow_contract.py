@@ -99,7 +99,9 @@ def test_ios_e2e_patcher_extends_the_upstream_onboarding_test():
     assert "-collect-test-diagnostics never" in patcher
     assert "until: settings" in patcher
     assert "sidebarScrolls < 6" in patcher
-    assert 'NSPredicate(format: "label == %@", "Page")' in patcher
+    assert 'let pageSelector = webView.descendants(matching: .any)' in patcher
+    assert 'NSPredicate(format: "label == %@ AND value == %@", "Page", "Overview")' in patcher
+    assert 'NSPredicate(format: "label == %@ AND value == %@", "Page", "Assistant")' in patcher
     assert 'NSPredicate(format: "label == %@", "Assistant")' in patcher
     assert 'tapWebElement(labelContaining: "assistant"' not in patcher
 
