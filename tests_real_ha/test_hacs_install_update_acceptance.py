@@ -373,6 +373,20 @@ async def _child_main() -> None:
     config_dir = Path(os.environ[_CONFIG_DIR_ENV]).resolve()
     sys.path.insert(0, str(config_dir))
 
+    def report_import_owner(stage: str) -> None:
+        parent = sys.modules.get("custom_components")
+        print(json.dumps({
+            "stage": stage, "phase": os.environ[_CHILD_PHASE_ENV],
+            "config": str(config_dir),
+            "hacs_installed": (config_dir / "custom_components/hacs/__init__.py").is_file(),
+            "parent_init": (config_dir / "custom_components/__init__.py").is_file(),
+            "import_file": getattr(parent, "__file__", None),
+            "import_paths": list(getattr(parent, "__path__", [])),
+            "search_paths": sys.path,
+        }), file=sys.stderr, flush=True)
+
+    report_import_owner("before-bootstrap")
+
     hass = await bootstrap.async_setup_hass(
         runner.RuntimeConfig(config_dir=str(config_dir), skip_pip=False)
     )
@@ -380,6 +394,7 @@ async def _child_main() -> None:
     if recorder_helper.DATA_RECORDER not in hass.data:
         recorder_helper.async_initialize_recorder(hass)
     await hass.async_start()
+    report_import_owner("after-bootstrap")
 
     try:
         phase = os.environ[_CHILD_PHASE_ENV]
