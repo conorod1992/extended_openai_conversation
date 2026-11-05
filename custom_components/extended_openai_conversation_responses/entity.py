@@ -117,7 +117,7 @@ from .ha_tool_result_compat import (
     is_tool_result_content,
     make_tool_result_content,
 )
-from .helpers import get_api_mode
+from .helpers import entry_api_provider, get_api_mode
 from .model_tool_results import async_prepare_tool_results, serialize_model_tool_result
 from .non_streaming import completed_chat_chunks, completed_responses_events
 from .operational_errors import log_handled_failure
@@ -903,7 +903,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     raise HomeAssistantError(
                         f"{model} does not support native Structured Outputs."
                     )
-                azure = self.entry.data.get(CONF_API_PROVIDER) == "azure"
+                azure = entry_api_provider(self.entry) == "azure"
                 if structure_schema is None:
                     structured_schema = _format_structured_output(
                         structure, chat_log.llm_api, azure=azure

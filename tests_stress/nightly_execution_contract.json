@@ -1,6 +1,10 @@
 {
   "schema": "eoai-nightly-execution-contract/v1",
   "pytest": [
+    "tests_real_ha/test_ai_task_provider_wire.py::test_change_config_azure_task_keeps_original_number_bounds[chat-canonical]",
+    "tests_real_ha/test_ai_task_provider_wire.py::test_change_config_azure_task_keeps_original_number_bounds[chat-legacy]",
+    "tests_real_ha/test_ai_task_provider_wire.py::test_change_config_azure_task_keeps_original_number_bounds[responses-canonical]",
+    "tests_real_ha/test_ai_task_provider_wire.py::test_change_config_azure_task_keeps_original_number_bounds[responses-legacy]",
     "tests_real_ha/test_usage_accounting_failure_recovery.py::test_recovered_storage_policy_updates_live_volatile_manager[0]",
     "tests_real_ha/test_usage_accounting_failure_recovery.py::test_recovered_storage_policy_updates_live_volatile_manager[30]",
     "tests_real_ha/test_optional_startup_ownership.py::test_already_cancelling_sibling_finishes_cleanup_before_owner_returns",

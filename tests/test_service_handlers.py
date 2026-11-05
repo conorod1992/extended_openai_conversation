@@ -1023,3 +1023,42 @@ async def test_function_enable_action_persists_only_runtime_function_defaults(
         ]
         is False
     )
+
+
+@pytest.mark.parametrize("saved_provider", [None, "openai"])
+async def test_change_config_canonicalizes_azure_endpoint_before_validation(
+    hass, monkeypatch, saved_provider
+):
+    from homeassistant.config_entries import ConfigEntryState
+
+    original = {CONF_API_KEY: "old", "organization": "kept"}
+    if saved_provider is not None:
+        original[CONF_API_PROVIDER] = saved_provider
+    entry = SimpleNamespace(
+        entry_id="entry",
+        state=ConfigEntryState.LOADED,
+        disabled_by=None,
+        domain=DOMAIN,
+        data=original,
+    )
+    hass.config_entries.async_get_entry.return_value = entry
+    authenticate = AsyncMock(return_value=object())
+    monkeypatch.setattr(services, "get_authenticated_client", authenticate)
+    handlers = await _handlers(hass)
+    await handlers["change_config"](
+        _call(
+            services.CHANGE_CONFIG_SCHEMA(
+                {
+                    "config_entry": "entry",
+                    CONF_BASE_URL: "https://schema.openai.azure.com",
+                    "api_version": "2024-10-21",
+                    CONF_API_KEY: "replacement",
+                }
+            )
+        )
+    )
+    assert authenticate.await_args.kwargs["api_provider"] == "azure"
+    saved = hass.config_entries.async_update_entry.call_args.kwargs["data"]
+    assert saved[CONF_API_PROVIDER] == "azure"
+    assert saved["organization"] == "kept"
+    assert original.get(CONF_API_PROVIDER) == saved_provider
