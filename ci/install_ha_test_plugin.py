@@ -14,6 +14,8 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from time import sleep
+from urllib.error import HTTPError
 from urllib.request import urlopen
 import venv
 import zipfile
@@ -36,11 +38,21 @@ DEFAULT_FIXTURE = GENERATED_FIXTURES[GENERATED_HA_VERSION]
 
 def extract_source(repository: str, sha: str, destination: Path) -> None:
     """Download immutable source and reject unsafe archive members."""
-    with urlopen(
-        f"https://codeload.github.com/{repository}/tar.gz/{sha}", timeout=120
-    ) as response:
-        archive = destination.parent / f"{sha}.tar.gz"
-        archive.write_bytes(response.read())
+    archive = destination.parent / f"{sha}.tar.gz"
+    for attempt in range(4):
+        try:
+            with urlopen(
+                f"https://codeload.github.com/{repository}/tar.gz/{sha}", timeout=120
+            ) as response:
+                archive.write_bytes(response.read())
+            break
+        except HTTPError as error:
+            error.close()
+            if error.code not in {429, 500, 502, 503, 504} or attempt == 3:
+                raise
+            # Retry the same immutable source, never a moving branch or a
+            # substitute runtime. Permanent failures still fail closed.
+            sleep(5 * 2**attempt)
     with tarfile.open(archive) as source:
         source.extractall(destination.parent, filter="data")
     (destination.parent / f"{repository.rsplit('/', 1)[-1]}-{sha}").rename(destination)

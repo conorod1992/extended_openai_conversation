@@ -110,6 +110,7 @@ jobs:
         env:
           REQUESTED_HA_DEV_SHA: ${{ inputs.ha_dev_sha }}
         run: |
+          set -euo pipefail
           # Function to extract package version from manifest
           get_package_version() {
             local manifest="$1"
@@ -124,18 +125,19 @@ jobs:
           echo "ha-core-sha=$HA_CORE_SHA" >> $GITHUB_OUTPUT
           echo "Home Assistant Core dev commit: $HA_CORE_SHA"
 
-          PYTHON_VERSION=$(curl -fsSL https://raw.githubusercontent.com/${{ env.HA_CORE_REPO }}/$HA_CORE_SHA/.python-version | tr -d '\n')
+          PYTHON_VERSION=$(curl -fsSL --retry 3 --retry-delay 5 --retry-max-time 60 --connect-timeout 10 --max-time 30 https://raw.githubusercontent.com/${{ env.HA_CORE_REPO }}/$HA_CORE_SHA/.python-version | tr -d '\n')
+          test -n "$PYTHON_VERSION"
           echo "python-version=$PYTHON_VERSION" >> $GITHUB_OUTPUT
           echo "Python version from HA core: $PYTHON_VERSION"
 
           # Get openai_conversation dependencies
-          OPENAI_MANIFEST=$(curl -fsSL https://raw.githubusercontent.com/${{ env.HA_CORE_REPO }}/$HA_CORE_SHA/homeassistant/components/openai_conversation/manifest.json)
+          OPENAI_MANIFEST=$(curl -fsSL --retry 3 --retry-delay 5 --retry-max-time 60 --connect-timeout 10 --max-time 30 https://raw.githubusercontent.com/${{ env.HA_CORE_REPO }}/$HA_CORE_SHA/homeassistant/components/openai_conversation/manifest.json)
           OPENAI_VERSION=$(get_package_version "$OPENAI_MANIFEST" "openai")
           echo "openai-version=$OPENAI_VERSION" >> $GITHUB_OUTPUT
           echo "openai version from HA core: $OPENAI_VERSION"
 
           # Get conversation dependencies
-          CONVERSATION_MANIFEST=$(curl -fsSL https://raw.githubusercontent.com/${{ env.HA_CORE_REPO }}/$HA_CORE_SHA/homeassistant/components/conversation/manifest.json)
+          CONVERSATION_MANIFEST=$(curl -fsSL --retry 3 --retry-delay 5 --retry-max-time 60 --connect-timeout 10 --max-time 30 https://raw.githubusercontent.com/${{ env.HA_CORE_REPO }}/$HA_CORE_SHA/homeassistant/components/conversation/manifest.json)
           HASSIL_VERSION=$(get_package_version "$CONVERSATION_MANIFEST" "hassil")
           echo "hassil-version=$HASSIL_VERSION" >> $GITHUB_OUTPUT
           echo "hassil version from HA core: $HASSIL_VERSION"
@@ -145,13 +147,13 @@ jobs:
           echo "home-assistant-intents version from HA core: $HA_INTENTS_VERSION"
 
           # Get rest dependencies
-          REST_MANIFEST=$(curl -fsSL https://raw.githubusercontent.com/${{ env.HA_CORE_REPO }}/$HA_CORE_SHA/homeassistant/components/rest/manifest.json)
+          REST_MANIFEST=$(curl -fsSL --retry 3 --retry-delay 5 --retry-max-time 60 --connect-timeout 10 --max-time 30 https://raw.githubusercontent.com/${{ env.HA_CORE_REPO }}/$HA_CORE_SHA/homeassistant/components/rest/manifest.json)
           XMLTODICT_VERSION=$(get_package_version "$REST_MANIFEST" "xmltodict")
           echo "xmltodict-version=$XMLTODICT_VERSION" >> $GITHUB_OUTPUT
           echo "xmltodict version from HA core: $XMLTODICT_VERSION"
 
           # Get scrape dependencies
-          SCRAPE_MANIFEST=$(curl -fsSL https://raw.githubusercontent.com/${{ env.HA_CORE_REPO }}/$HA_CORE_SHA/homeassistant/components/scrape/manifest.json)
+          SCRAPE_MANIFEST=$(curl -fsSL --retry 3 --retry-delay 5 --retry-max-time 60 --connect-timeout 10 --max-time 30 https://raw.githubusercontent.com/${{ env.HA_CORE_REPO }}/$HA_CORE_SHA/homeassistant/components/scrape/manifest.json)
           BS4_VERSION=$(get_package_version "$SCRAPE_MANIFEST" "beautifulsoup4")
           echo "beautifulsoup4-version=$BS4_VERSION" >> $GITHUB_OUTPUT
           echo "beautifulsoup4 version from HA core: $BS4_VERSION"
