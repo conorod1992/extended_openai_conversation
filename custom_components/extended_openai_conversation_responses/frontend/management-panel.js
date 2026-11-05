@@ -1798,7 +1798,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       }
       if (agentId !== this._agentId || entryId !== this._selectedAgent()?.entry_id
           || loadToken !== this._loadToken || cacheGeneration !== this._cacheGeneration || view !== this._viewKey()) return;
-      if (!configurationSubmissionIsCurrent(this, readOwner) || (preserveResult && this.isConnected === false)) return;
+      // A detached source may already have transferred its serialized draft.
+      // Ordinary route reads must not revive those consumed values either.
+      if (!configurationSubmissionIsCurrent(this, readOwner) || this.isConnected === false) return;
       const currentBaseline = this._draftAgentId === agentId ? this._configData : null;
       // A newer acknowledgement/read owns its revision and baseline. Metadata
       // additions may replace the envelope while retaining the same config.

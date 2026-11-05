@@ -268,3 +268,12 @@ successful destination saves, same-policy saves, repeated replacement, explicit
 Keep/Discard, invalid rows, stable rendering, source-save retirement and exact
 write counts. Existing deferred-Voice and competing-Guest controls remain part
 of the shared-dialog regression boundary.
+
+Configuration read completion belongs to a mounted editor. Both ordinary route
+reads and preserve-result refreshes reject a detached panel before adopting a
+baseline or recomputing dirty state. Otherwise a read can revive already-consumed
+source values after another panel has saved or discarded its own draft. Durable
+write acknowledgements and retained read obligations keep their separate owners;
+a replacement or reconnected panel performs its own fresh read. The retired-read
+component and source/bundle browser regressions cover this boundary, including
+an unrelated Guest read obligation which keeps the detached source retained.
