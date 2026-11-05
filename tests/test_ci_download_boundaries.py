@@ -141,3 +141,87 @@ def test_prepare_step_never_publishes_an_empty_python_version(tmp_path, python_r
         assert result.returncode != 0
         assert "python-version=" not in outputs
         assert "openai-version=" not in outputs
+
+
+@pytest.mark.parametrize(
+    "filename,job_name,next_step",
+    [
+        ("upgrade-acceptance.yml", "upgrade", "Verify prebuilt browser environment"),
+        (
+            "openai-sdk-compatibility.yml",
+            "sdk-contract",
+            "Select SDK version for early warning",
+        ),
+    ],
+)
+@pytest.mark.parametrize("reconciliation_succeeds", [True, False])
+def test_stable_matrix_resolves_runtime_before_selecting_its_subject(
+    tmp_path, filename, job_name, next_step, reconciliation_succeeds
+):
+    root = Path(__file__).resolve().parents[1]
+    workflow = yaml.safe_load(
+        (root / ".github/workflows" / filename).read_text(encoding="utf-8")
+    )
+    steps = workflow["jobs"][job_name]["steps"]
+    step = next(
+        step
+        for step in steps
+        if step.get("name") == "Reconcile current stable test requirements"
+    )
+    assert steps.index(step) < next(
+        index
+        for index, candidate in enumerate(steps)
+        if candidate.get("name") == next_step
+    )
+    bash = (
+        str(
+            Path(os.environ.get("PROGRAMFILES", "C:/Program Files"))
+            / "Git/bin/bash.exe"
+        )
+        if os.name == "nt"
+        else shutil.which("bash")
+    )
+    assert bash and Path(bash).is_file()
+    # Execute the production step, keeping package/network operations at their
+    # boundary. An unchanged requirements hash must not bypass HA resolution.
+    stubs = r"""
+python() {
+  if [[ "$1" == -c && "$2" == *https://pypi.org/pypi/homeassistant/json* ]]; then
+    printf '2026.11.0\n'
+  elif [[ "$1" == ci/resolve_ha_test_plugin.py && "$2" == 2026.11.0 ]]; then
+    printf 'compatible-fixtures\n'
+  else
+    return 91
+  fi
+}
+bash() {
+  [[ "$1" == ci/reconcile_stable_environment.sh ]] || return 92
+  [[ "$EOAI_EXPECTED_HA_VERSION" == 2026.11.0 ]] || return 93
+  [[ "$EOAI_EXPECTED_HA_TEST_PLUGIN_VERSION" == compatible-fixtures ]] || return 94
+  printf 'reconciled\n' >> "$RECONCILIATION_RECEIPT"
+  return "$RECONCILIATION_RESULT"
+}
+"""
+    output, receipt = tmp_path / "outputs", tmp_path / "receipt"
+    result = subprocess.run(
+        [bash, "--noprofile", "--norc", "-c", stubs + step["run"]],
+        env={
+            **os.environ,
+            "GITHUB_ENV": output.as_posix(),
+            "RECONCILIATION_RECEIPT": receipt.as_posix(),
+            "RECONCILIATION_RESULT": "0" if reconciliation_succeeds else "42",
+        },
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    assert receipt.read_text(encoding="utf-8") == "reconciled\n"
+    if reconciliation_succeeds:
+        assert result.returncode == 0, result.stderr
+        assert (
+            output.read_text(encoding="utf-8") == "EOAI_EXPECTED_HA_VERSION=2026.11.0\n"
+        )
+    else:
+        assert result.returncode == 42
+        assert not output.exists()
