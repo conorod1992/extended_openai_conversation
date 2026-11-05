@@ -387,6 +387,16 @@ async def _child_main() -> None:
 
     report_import_owner("before-bootstrap")
 
+    def trace_hacs_removal(event, args):
+        if event == "shutil.rmtree" or (
+            event in {"os.remove", "os.rename", "os.rmdir"}
+            and args and "hacs" in str(args[0])
+        ):
+            import traceback
+            print(f"HACS filesystem event {event}: {args!r}\n" + "".join(traceback.format_stack(limit=24)), file=sys.stderr, flush=True)
+
+    sys.addaudithook(trace_hacs_removal)
+
     hass = await bootstrap.async_setup_hass(
         runner.RuntimeConfig(config_dir=str(config_dir), skip_pip=False)
     )
