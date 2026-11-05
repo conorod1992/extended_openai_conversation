@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from typing import Any, cast
@@ -32,14 +32,21 @@ def _manager(entity: Any) -> DeferredContextSummaryManager:
 
 
 async def _summarize_detached(
-    entity: Any, older: list[Any], model: str, api_mode: str
+    entity: Any,
+    older: list[Any],
+    model: str,
+    api_mode: str,
+    request_options: Mapping[str, Any] | None = None,
 ) -> str | None:
     """Account background summary cost without mutating an already-finalized run."""
     usage = getattr(entity, "_usage", None)
     run_context = getattr(usage, "_current_run", None) if usage is not None else None
     token = run_context.set(None) if run_context is not None else None
     try:
-        result = await entity._async_summarize_history(older, model, api_mode)
+        kwargs = (
+            {"request_options": request_options} if request_options is not None else {}
+        )
+        result = await entity._async_summarize_history(older, model, api_mode, **kwargs)
         return cast(str | None, result)
     finally:
         if run_context is not None and token is not None:
@@ -73,9 +80,12 @@ async def schedule_context_summary(
     model: str | None = None,
     api_mode: str | None = None,
     estimate: HistoryEstimator | None = None,
+    request_options: Mapping[str, Any] | None = None,
 ) -> bool:
     """Schedule eligible optional maintenance, leaving direct truncation synchronous."""
-    options = self.subentry.data
+    options = dict(
+        request_options if request_options is not None else self.subentry.data
+    )
     strategy = options.get(
         CONF_CONTEXT_TRUNCATE_STRATEGY, LEGACY_CONTEXT_TRUNCATE_STRATEGY
     )
@@ -108,7 +118,9 @@ async def schedule_context_summary(
             model=model,
             api_mode=api_mode,
             summarize=lambda older, summary_model, summary_api_mode: (
-                _summarize_detached(self, older, summary_model, summary_api_mode)
+                _summarize_detached(
+                    self, older, summary_model, summary_api_mode, options
+                )
             ),
             scheduler=schedule,
             estimate=estimate,

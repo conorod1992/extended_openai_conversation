@@ -15,7 +15,30 @@ DIST = Path("custom_components/extended_openai_conversation_responses/frontend/d
 # authoring and complete Group repair. Allow that reviewed feature growth with
 # finite headroom; do not relax the separate entry or CSS ceilings.
 # Reviewed private-publication ownership guards add about 1.2 KiB.
-CEILINGS = {"javascript": 871_500, "css": 65_000, "management_entry": 120_000}
+# Shared committed-import retention recovery adds under 1 KiB; keep the
+# separate entry and CSS limits unchanged and less than 1 KiB of JS headroom.
+# Fresh committed-recovery reads and receiving Voice baselines add 558 bytes.
+# Allow 600 reviewed bytes, keeping the independent entry and CSS limits.
+# Retained Discard cleanup and model-intent retirement add 209 bytes.
+# Budget 873,300 total JS bytes; retain the separate entry and CSS limits.
+# Uncertain policy recovery and its fresh-read cache bypass add 1,208 JS bytes.
+# Budget 874,500 total JS bytes; keep entry and CSS limits unchanged.
+# Competing scope reviews and uncertain interval recovery add 2,225 JS bytes.
+# Budget 876,800 total JS bytes; keep entry and CSS limits unchanged.
+# Owned read-only reconnect retries add a further 885 JS bytes.
+# Budget 877,700 total JS bytes; keep entry and CSS limits unchanged.
+# Explicit interval recovery intent and retained review decisions add 969 bytes.
+# Budget 878,700 total JS bytes; keep entry and CSS limits unchanged.
+# Sequencing independent reviews adds under 200 bytes. Keep each retained
+# configuration's dismissal independently, without relaxing entry/CSS limits.
+# Owned interval read reconciliation and guarded native-input updates add
+# about 1.6 KiB, including submission tracking and read certificates. Keep finite
+# headroom and the separate entry/CSS ceilings.
+# Expired finite Guest activation now requires an explicit future end or
+# indefinite choice. The local validation adds 243 reviewed JS bytes.
+# Azure route binding controls, provider-aware lookups and bounded Rule Pack
+# download preparation add about 1.1 KiB. Keep the entry and CSS limits intact.
+CEILINGS = {"javascript": 881_900, "css": 65_000, "management_entry": 120_000}
 
 
 def measure(dist: Path) -> dict[str, int]:

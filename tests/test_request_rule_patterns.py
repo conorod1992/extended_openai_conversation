@@ -570,3 +570,39 @@ def test_compiler_supports_empty_literal() -> None:
 
     assert fragment == _Fragment(0, ((0, "out"),))
     assert compiler.states == [_State("literal", value="")]
+
+@pytest.mark.parametrize("ending", [".", "...", "?", "!", "。", "؟", "\uff01", "\uff1f", "…"])
+@pytest.mark.parametrize(
+    ("pattern", "text"),
+    [
+        ("add to shopping list {item}", "add to shopping list"),
+        ("add {item} to {list_name}", "add milk to"),
+    ],
+)
+def test_sentence_ending_cannot_supply_missing_required_capture(ending, pattern, text):
+    assert compile_sentence_pattern(pattern).match(text + ending) is None
+
+
+def test_sentence_ending_keeps_optional_suffixes_and_real_capture_punctuation():
+    assert (
+        compile_sentence_pattern("turn the light on [please]").match(
+            "turn the light on.."
+        )
+        is not None
+    )
+    assert compile_sentence_pattern("add {item}").match("add milk.").captures == {
+        "item": "milk"
+    }
+    assert compile_sentence_pattern("add {item}").match(
+        "add milk, bread & jam!"
+    ).captures == {"item": "milk, bread & jam"}
+    assert compile_sentence_pattern("say hello!").match("say hello!") is not None
+    assert compile_sentence_pattern("say hello!").match("say hello") is None
+    assert compile_sentence_pattern("turn on [please]!").match("turn on!") is not None
+    assert compile_sentence_pattern("turn on [please]!").match("turn on?") is None
+    assert compile_sentence_pattern("add {item}.").match("add milk.").captures == {
+        "item": "milk"
+    }
+    assert compile_sentence_pattern("add {item}").match("add .").captures == {
+        "item": "."
+    }

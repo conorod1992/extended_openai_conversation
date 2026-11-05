@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from copy import deepcopy
 import hashlib
 from typing import Any
 
@@ -31,11 +32,17 @@ from custom_components.extended_openai_conversation_responses.memory import (
 )
 from custom_components.extended_openai_conversation_responses.transfer import (
     SECTION_PERSISTENT_MEMORY,
+    async_create_setup_export,
+    inspect_transfer,
 )
 from homeassistant.components import conversation
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import HomeAssistant
+from tests.test_reviewed_quarantine_export import (
+    effective_tool_names,
+    quarantine_source,
+)
 
 
 def _entry() -> MockConfigEntry:
@@ -73,6 +80,47 @@ def _conversation_subentry(entry: MockConfigEntry):
         for subentry in entry.subentries.values()
         if subentry.subentry_type == "conversation"
     )
+
+
+@pytest.mark.parametrize("reviewed", [False, True])
+@pytest.mark.parametrize(
+    "damage", ["healthy", "missing_spec", "missing_name", "invalid_group"]
+)
+async def test_setup_export_keeps_known_function_quarantine(
+    hass: HomeAssistant, reviewed: bool, damage: str
+) -> None:
+    config = quarantine_source(damage, encoded=True)
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Quarantined Setup Export",
+        data={},
+        version=CONFIG_ENTRY_VERSION,
+        subentries_data=[
+            {
+                "data": config,
+                "subentry_type": "conversation",
+                "title": "Repairable assistant",
+                "unique_id": None,
+            }
+        ],
+    )
+    entry.add_to_hass(hass)
+    subentry = _conversation_subentry(entry)
+    original = deepcopy(dict(subentry.data))
+    result = await async_create_setup_export(hass, entry, subentry, reviewed=reviewed)
+    restored = inspect_transfer(result["json"], "target")
+    assert restored.config is not None
+    assert effective_tool_names(restored.config) == (
+        effective_tool_names(original) if reviewed else set()
+    )
+    if reviewed:
+        from custom_components.extended_openai_conversation_responses import backup
+
+        snapshot = backup.export_configuration_snapshot(original)
+        projected = result["document"]["sections"]["configuration"]
+        assert projected["functions"] == snapshot["functions"]
+        assert projected["function_groups"] == snapshot["function_groups"]
+    assert dict(subentry.data) == original
 
 
 async def _user_token(hass: HomeAssistant, user: MockUser) -> str:

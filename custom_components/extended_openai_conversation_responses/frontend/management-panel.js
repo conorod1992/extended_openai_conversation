@@ -4,7 +4,7 @@ import {mutationEffects} from "./management-mutation-effects.js";
 import {clearVoiceMappingDraft} from "./voice-mapping-draft.js";
 import {observeCatalogGeneration} from "./model-catalog.js";
 import {invalidateUsageWindows} from "./usage-cache.js";
-import {scheduleWallTime, scheduleInstant} from "./schedule-time.js";
+import {scheduleWallTime} from "./schedule-time.js";
 import {beginOperation} from "./operation-ownership.js";
 import {updateAuthenticationPresentation} from "./authentication-presentation.js";
 import {stopLiveStatus, pauseLiveStatus, resumeLiveStatus, watchTimedFeatureStatus} from "./management-live-status.js";
@@ -24,7 +24,7 @@ import {ASSISTANT_INTRO_MARKUP, renderManagement, showPendingDestination, reconc
 import {bindSingleRequestSave, bindFrontendCorrectness, normalizeGuestModeTimestamp, syncAgentPicker, refreshConfigurationErrors} from "./management-actions.js";
 import {callMutation, captureConfigurationOwner, configurationSubmissionIsCurrent, configurationReadOvertookSubmission, mergeConfigurationRead, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
 import {captureCatalogLoad, catalogFailureIsCurrent} from "./management-catalog-ownership.js";
-import {capturePageRead, acceptPageRead} from "./page-save-acknowledgement.js";
+import {capturePageRead, acceptPageRead, hasPendingPageSaveRead, retryPageSaveReadsOnTransport} from "./page-save-acknowledgement.js";
 import {loadAgentsWithOverviewPrefetch, loadRoute, bindRequestRuleSearch, applyRequestRuleSearch, warmRouteAsset, prefetchIntentRead, consumeIntentRead, consumeStoredConfigurationPrefetch, discardStoredConfigurationPrefetch, markConfigurationRead, measureConfigurationRead} from "./management-route.js";
 import {getConfigurationEditor, getConfigurationTools, getRouteFeature, routeAssetKind, routeFeaturesReady, isRestrictedManagementView, nonAdminOverviewKnowledgeSnapshot} from "./management-route.js";
 import {NAVIGATION, pageMetadata, routeFromPath, routePath, focusManagementSetting} from "./frontend-navigation.js";
@@ -336,6 +336,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     this.style.colorScheme = value.themes?.darkMode ? "dark" : "light";
     this.shadowRoot?.querySelectorAll("ha-selector, ha-entity-picker, ha-user-picker, ha-yaml-editor").forEach(element => { element.hass = value; });
     this._loadInitialAgents();
+    retryPageSaveReadsOnTransport(this);
   }
 
   _loadInitialAgents(retry = false) {
@@ -1007,7 +1008,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     if (section === "guest_mode" && action === "update") {
       payload = {...extra};
       for (const key of ["active_from", "active_until"]) {
-        if (payload[key]) payload[key] = normalizeGuestModeTimestamp(payload[key]);
+        if (payload[key] && !Object.hasOwn(payload.local_times || {}, key)) payload[key] = normalizeGuestModeTimestamp(payload[key]);
       }
     }
     return this._request(section, action, payload, mutationTrace);
@@ -1299,7 +1300,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
     const cacheKey = cache.key;
     // Configuration uses its generation-checked clean snapshots, never the
     // generic read-only section cache's independent freshness window.
-    const showCached = !configOnly && cache.result !== undefined && (cache.fresh || ["overview", "data-memory/knowledge", "usage-maintenance/usage"].includes(view));
+    // Policy recovery also requires a fresh accepted read before another save.
+    const intervalRead = view === "capabilities/guest-mode" && this._unsavedState?.scopes.get("guest-interval")?.needsRead?.();
+    const showCached = !configOnly && !hasPendingPageSaveRead(this) && !intervalRead && cache.result !== undefined && (cache.fresh || ["overview", "data-memory/knowledge", "usage-maintenance/usage"].includes(view));
     if (showCached) {
       this._contentData = null;
       this._result = view === "usage-maintenance/usage"
@@ -1795,7 +1798,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       }
       if (agentId !== this._agentId || entryId !== this._selectedAgent()?.entry_id
           || loadToken !== this._loadToken || cacheGeneration !== this._cacheGeneration || view !== this._viewKey()) return;
-      if (!configurationSubmissionIsCurrent(this, readOwner) || (preserveResult && this.isConnected === false)) return;
+      // A detached source may already have transferred its serialized draft.
+      // Ordinary route reads must not revive those consumed values either.
+      if (!configurationSubmissionIsCurrent(this, readOwner) || this.isConnected === false) return;
       const currentBaseline = this._draftAgentId === agentId ? this._configData : null;
       // A newer acknowledgement/read owns its revision and baseline. Metadata
       // additions may replace the envelope while retaining the same config.
@@ -2149,6 +2154,10 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
   }
 
   _dateTimeLocal(value) {
+    const status = this._result?.status || {};
+    for (const field of ["active_from", "active_until"]) {
+      if (value && value === status[field] && status[`${field}_local`]) return status[`${field}_local`];
+    }
     return scheduleWallTime(value, this._hass?.config?.time_zone || "UTC");
   }
 
@@ -2208,15 +2217,28 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
       const endInput = root.querySelector("#guest-end");
       const end = endInput?.value;
       const status = this._result?.status || {};
-      const originalInstant = (value, original) => original && value === this._dateTimeLocal(original) ? original : scheduleInstant(value, this._hass?.config?.time_zone || "UTC");
+      const localTimes = {};
+      const originalInstant = (field, value, original) => {
+        if (original && value === this._dateTimeLocal(original)) return original;
+        localTimes[field] = value;
+        return value;
+      };
       try {
         if (!indefinite && (!end || !endInput.checkValidity())) {
           throw new Error("Choose an end time or select Remain active indefinitely.");
         }
+        if (now && !indefinite) {
+          const expired = status.active_until && end === this._dateTimeLocal(status.active_until)
+            ? Date.parse(status.active_until) <= Date.parse(start)
+            : end <= this._dateTimeLocal(start);
+          if (expired) throw new Error("Choose a future end time or select Remain active indefinitely before activating Guest Mode.");
+        }
+        intervalSubmission.implicitStart = now || !start;
         const result = await this._call("guest_mode", "update", {
-          ...(start ? {active_from: now ? start : originalInstant(start, status.active_from)} : {}),
-          ...(!indefinite && end ? {active_until: originalInstant(end, status.active_until)} : {}),
+          ...(start ? {active_from: now ? start : originalInstant("active_from", start, status.active_from)} : {}),
+          ...(!indefinite && end ? {active_until: originalInstant("active_until", end, status.active_until)} : {}),
           indefinite,
+          local_times: localTimes,
         });
         requireMutationAcknowledgement(result?.status && typeof result.status === "object", "the Guest Mode change");
         await presentAcknowledgedMutation(this, submission, "Guest Mode updated", () => {
@@ -2224,7 +2246,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
           return this._refreshGuestModeMutation(agentId, result);
         }, result);
       } catch (err) {
-        this._toast(`Unable to update Guest Mode: ${err.message || String(err)}`, true);
+        getRouteFeature("capabilities/guest-mode")?.retainUncertainGuestInterval(this, intervalSubmission, err);
+        if (configurationSubmissionIsCurrent(this, submission)) this._toast(`Unable to update Guest Mode: ${err.message || String(err)}`, true);
       }
     });
   }
@@ -2241,7 +2264,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         requireMutationAcknowledgement(result?.status && typeof result.status === "object", "the Guest Mode change");
         await presentAcknowledgedMutation(this, submission, "Guest Mode ended", () => this._refreshGuestModeMutation(agentId, result), result);
       } catch (err) {
-        this._toast(`Unable to end Guest Mode: ${err.message || String(err)}`, true);
+        if (configurationSubmissionIsCurrent(this, submission)) this._toast(`Unable to end Guest Mode: ${err.message || String(err)}`, true);
       }
     });
   }
@@ -2695,7 +2718,7 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         scope_id: sourceScope,
         ...(this._editingMemory ? {memory_id: this._editingMemory.memory_id, expected_revision: this._editingMemory.revision} : {}),
         ...feature.memoryMutationValues(values, this._editingMemory),
-        ...(temporary ? {expires_at: feature.memoryExpiryISO(this, values.expires_at)} : {}),
+        ...(temporary ? {expires_at: values.expires_at, local_times: {expires_at: values.expires_at}} : {}),
       });
       if (!current()) {
         if (ownsEditor()) requireMutationAcknowledgement(false, "reconciling the Memory save after its owner changed");

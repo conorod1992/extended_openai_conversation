@@ -1,6 +1,7 @@
 // Core dialog handlers are delegated from the host so owned dialogs can be
 // created on demand and removed when their route or agent changes.
-import {clone} from "./unsaved-state.js";
+import {clone, same} from "./unsaved-state.js";
+import {captureConfigurationOwner, captureConfigurationDraftOwner, configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
 
 export function setDialogBaseline(panel, id, value) {
   (panel._eocDialogBaselines ||= new Map()).set(id, value);
@@ -97,4 +98,93 @@ export function updateDialogs(panel, markup, {preserveEditors = false} = {}) {
 
 export function knowledgeSourceAvailabilityControl() {
   return `<div class="config-toggle setting knowledge-source-availability-setting"><span class="setting-copy"><span class="setting-label-row"><label for="knowledge-source-enabled"><strong>Available to the assistant</strong></label></span><small>Turn this off to keep the source stored locally without including it in Knowledge retrieval.</small></span><label class="switch-control" for="knowledge-source-enabled"><input id="knowledge-source-enabled" type="checkbox" role="switch" checked><span class="switch-track" aria-hidden="true"></span></label></div>`;
+}
+
+
+export function showRecoveredDraftCopy(panel, {
+  title = "Recovered unsaved editor",
+  description = "The saved definition could not be safely reopened. Copy your recovered edits before opening the current definition.",
+  values,
+  label = "Recovered editor values",
+  canDiscard = () => false,
+  onDiscard = () => {},
+  onKeep = () => {},
+}) {
+  const recovery = document.createElement("dialog");
+  recovery.className = "editor-dialog";
+  recovery.dataset.eocRecoveredEditor = "";
+  const heading = document.createElement("h2");
+  heading.textContent = title;
+  const explanation = document.createElement("p");
+  explanation.textContent = description;
+  const text = document.createElement("textarea");
+  text.value = JSON.stringify(values, null, 2);
+  text.readOnly = true;
+  text.setAttribute("aria-label", label);
+  const close = document.createElement("button");
+  close.textContent = "Keep draft for later";
+  close.onclick = () => {onKeep();recovery.close();};
+  const discard = document.createElement("button");
+  discard.textContent = "Discard recovered edits";
+  discard.onclick = () => {
+    if (recovery.open && canDiscard()) onDiscard();
+    recovery.close();
+  };
+  recovery.addEventListener("close", () => {
+    close.onclick = discard.onclick = null;
+    recovery.remove();
+  }, {once:true});
+  recovery.append(heading, explanation, text, close, discard);
+  panel.shadowRoot.append(recovery);
+  recovery.showModal();
+  return recovery;
+}
+
+const recoveredScopeCopies = new WeakMap();
+const competingScopes = new WeakSet();
+export const scopeNeedsRecoveryReview = scope => Boolean(scope && competingScopes.has(scope));
+export const clearScopeRecoveryReview = scope => {if (scope) competingScopes.delete(scope);};
+
+// Competing policy, interval and Voice drafts keep their own baselines and revisions.
+// Review both copies instead of silently dropping or rebasing either owner.
+export function reviewRecoveredScope(panel, source, id, label, retry, {targetId = id, requireReview = false} = {}) {
+  const from = source._unsavedState?.scopes.get(id), to = panel._unsavedState?.scopes.get(targetId);
+  if (!(from?.dirty() || from?.hasRecoveryIntent?.()) || !(requireReview || to?.dirty() || to?.hasRecoveryIntent?.() || scopeNeedsRecoveryReview(from)) || !from?.isCurrent?.() || !to?.isCurrent?.()) return;
+  const owner = captureConfigurationOwner(panel), sourceOwner = captureConfigurationDraftOwner(source);
+  if (["agentId", "entryId", "userId"].some(key => owner[key] !== sourceOwner[key])) return;
+  const view = panel._viewKey(), visit = panel._loadToken, generation = panel._cacheGeneration;
+  const current = () => panel.isConnected && !source.isConnected && panel._data?.is_admin && !panel._eocPresentationBlocked
+    && configurationSubmissionIsCurrent(panel, owner) && configurationSubmissionIsCurrent(source, sourceOwner)
+    && panel._viewKey() === view && panel._loadToken === visit && panel._cacheGeneration === generation
+    && source._unsavedState?.scopes.get(id) === from && panel._unsavedState?.scopes.get(targetId) === to
+    && from.isCurrent() && to.isCurrent();
+  if (!current()) return;
+  const values = {recovered:clone(from.read()), current:clone(to.read())};
+  const baseline = clone(from.baseline), targetBaseline = clone(to.baseline);
+  const copies = recoveredScopeCopies.get(panel) || new WeakMap();
+  recoveredScopeCopies.set(panel, copies);
+  const previous = copies.get(from);
+  // Keep dismisses this source for the visit while the destination is edited.
+  // Source changes or a later visit still require a fresh review.
+  if (previous && configurationSubmissionIsCurrent(panel, previous.owner) && previous.visit === visit
+      && previous.generation === generation && same(previous.values.recovered, values.recovered) && same(previous.baseline, baseline)
+      && (previous.kept || same(previous.values.current, values.current) && same(previous.targetBaseline, targetBaseline))) return;
+  if (panel.shadowRoot?.querySelector("dialog[open]")) return;
+  // A competing draft remains a review copy after Keep, including when the
+  // destination subsequently saves and becomes clean. Clean is not consent
+  // to replace that newly saved intent with the older retained values.
+  competingScopes.add(from);
+  const copy = {owner, visit, generation, values, baseline, targetBaseline, kept:false};
+  copies.set(from, copy);
+  const dialog = showRecoveredDraftCopy(panel, {
+    title:`Recovered ${label}`, label:`Recovered and current ${label} values`, values,
+    description:"Another editor has unsaved changes. Both drafts are kept. Copy the recovered values before discarding either draft.",
+    canDiscard:() => current() && same(from.read(), values.recovered) && same(to.read(), values.current)
+      && same(from.baseline, baseline) && same(to.baseline, targetBaseline),
+    onDiscard:() => {competingScopes.delete(from);from.discard();},
+    onKeep:() => {if (current()) copy.kept = true;},
+  });
+  // A read or navigation may retire this dialog. Retry through the lifecycle's
+  // current owner gates so a stale copy cannot hide another retained scope.
+  dialog.addEventListener("close", () => queueMicrotask(() => {if (panel.isConnected) retry?.();}), {once:true});
 }

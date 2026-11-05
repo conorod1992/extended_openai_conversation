@@ -197,11 +197,15 @@ async def _unsubscribe_assist_run(client: Any, run_id: int, task: asyncio.Task) 
 
 
 def _assert_speech_listener_restored(captured: dict[str, Any]) -> int:
-    """Prove the sanitizer detached and the original Assist listener was restored."""
+    """Prove EOAI restores its caller before HA retires the Assist listener."""
     chat_log = captured["chat_log"]
     listener = captured["observed_listener"]
     assert captured["restored_listener"] is listener
-    assert chat_log.delta_listener is listener
+    # The observation above runs at EOAI's context boundary. By the time the
+    # native Assist task has ended, Core's outer ChatLog context has cleared its
+    # listener in finally (including cancellation). Keeping it here would retain
+    # a retired Assist run, rather than prove EOAI's restoration responsibility.
+    assert chat_log.delta_listener is None
     return len(captured["listener_deltas"])
 
 

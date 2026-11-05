@@ -12,6 +12,8 @@ When Extended OpenAI changes a speaker, it remembers the earlier volume. At the 
 
 If Home Assistant starts or restarts while the current time is already inside the saved Quiet Hours period, the integration catches up and applies the active settings.
 
+The daily schedule follows Home Assistant’s configured timezone. Changing that timezone in Home Assistant immediately rechecks the current period and resets its start/end timers. Existing control ownership and manual adjustments still govern application and restoration.
+
 ## Wake-word sound
 
 The wake-word sound can be set to:

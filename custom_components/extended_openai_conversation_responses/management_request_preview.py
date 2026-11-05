@@ -31,6 +31,7 @@ from .const import (
     TEMPORARY_MEMORY_OFF,
 )
 from .function_groups import assemble_function_tools
+from .guest_function_tools import filter_guest_tools_and_groups
 from .guest_mode import async_get_guest_mode, resolve_guest_policy
 from .ha_llm_tools import ToolSnapshot, async_discover, is_ha_tool
 from .helpers import get_exposed_entities
@@ -172,31 +173,9 @@ async def async_preview_effective_request(
         )
         availability_groups = groups
         availability_tools = configured_tools
-        if guest_policy.guest_active:
-            membership = {
-                name: group for group in groups for name in group.get("functions", [])
-            }
-            configured_tools = [
-                tool
-                for tool in configured_tools
-                if not is_ha_tool(tool)
-                and guest_policy.allows_configured_tool(tool["spec"]["name"])
-                and (
-                    tool["spec"]["name"] not in membership
-                    or membership[tool["spec"]["name"]].get("guest_allowed") is True
-                )
-            ]
-            allowed_names = {tool["spec"]["name"] for tool in configured_tools}
-            groups = [
-                {
-                    **group,
-                    "functions": [
-                        name for name in group["functions"] if name in allowed_names
-                    ],
-                }
-                for group in groups
-                if group.get("guest_allowed") is True
-            ]
+        configured_tools, groups = filter_guest_tools_and_groups(
+            configured_tools, groups, guest_policy
+        )
         with effective_tool_runtime_scope(
             options, availability_tools, skill_manager, availability_groups
         ):

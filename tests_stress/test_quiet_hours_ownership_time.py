@@ -16,8 +16,8 @@ from custom_components.extended_openai_conversation_responses.quiet_hours import
     async_get_quiet_hours,
 )
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.storage import Store
 from homeassistant.util.file import WriteError
+from tests.ha_store_test_helpers import prepared_disk_write_boundary
 from tests_real_ha.test_quiet_hours_scheduling import (
     _install_control_services,
     _install_satellite_entities,
@@ -377,8 +377,8 @@ async def test_quiet_control_store_failure_retries_without_losing_original_value
 ):
     """Fault the real Store writer before commit and the corresponding HA action.
 
-    Quiet Hours uses HA's ordinary non-atomic writer. Gate its prepared-data
-    boundary, delegating every unaffected write to the actual native writer.
+    Quiet Hours uses HA's ordinary non-atomic writer. Gate this Store's native
+    prepared-data boundary, delegating unaffected writes to the actual writer.
     """
     await hass.config.async_set_time_zone("Europe/Dublin")
     now = [datetime(2026, 1, 10, 12, 0, tzinfo=DUBLIN)]
@@ -420,15 +420,16 @@ async def test_quiet_control_store_failure_retries_without_losing_original_value
     assert discovered["wake_sound_entity_id"] == wake
     target = media if kind == "volume" else wake
     path = Path(manager._store.path)
-    write_prepared = Store._write_prepared_data
+    writer, write_name = prepared_disk_write_boundary(manager._store)
+    write_prepared = getattr(writer, write_name)
     faults = []
     attempted_writes = []
 
-    def fail_target_write(store, mode, json_data):
-        if Path(store.path) == path and not faults:
+    def fail_target_write(mode, json_data):
+        if not faults:
             payload = json.loads(json_data)["data"]
             active = payload.get("active") or {}
-            attempted_writes.append({"destination": str(store.path), "active": active})
+            attempted_writes.append({"destination": str(path), "active": active})
             observed = target in active.get("observed_controls", [])
             owned = target in active.get("controls", {})
             if observed and owned == (stage == "ownership"):
@@ -437,7 +438,7 @@ async def test_quiet_control_store_failure_retries_without_losing_original_value
                 raise WriteError("Injected target control writer failure") from OSError(
                     errno.EIO, "Target control write failed before commit"
                 )
-        return write_prepared(store, mode, json_data)
+        return write_prepared(mode, json_data)
 
     try:
         now[0] = datetime(2026, 1, 10, 22, 5, tzinfo=DUBLIN)
@@ -447,7 +448,7 @@ async def test_quiet_control_store_failure_retries_without_losing_original_value
             is not None
         )
         with monkeypatch.context() as fault:
-            fault.setattr(Store, "_write_prepared_data", fail_target_write)
+            fault.setattr(writer, write_name, fail_target_write)
             with pytest.raises(OSError, match="Private storage write failed"):
                 await manager.async_reconcile(now=now[0])
                 pytest.fail(
@@ -558,11 +559,12 @@ async def test_pending_quiet_control_preserves_manual_change_after_storage_failu
     await manager._async_save_locked()
     target = media if kind == "volume" else wake
     path = Path(manager._store.path)
-    native_write = Store._write_prepared_data
+    writer, write_name = prepared_disk_write_boundary(manager._store)
+    native_write = getattr(writer, write_name)
     faults = []
 
-    def fail_ownership(store, mode, json_data):
-        if Path(store.path) == path and not faults:
+    def fail_ownership(mode, json_data):
+        if not faults:
             active = json.loads(json_data)["data"].get("active") or {}
             if target in active.get("controls", {}):
                 assert not calls
@@ -570,12 +572,12 @@ async def test_pending_quiet_control_preserves_manual_change_after_storage_failu
                 raise WriteError("Injected ownership write failure") from OSError(
                     errno.EIO, "Ownership write failed before commit"
                 )
-        return native_write(store, mode, json_data)
+        return native_write(mode, json_data)
 
     try:
         freezer.move_to(datetime(2026, 1, 10, 22, 5, tzinfo=DUBLIN))
         with monkeypatch.context() as fault:
-            fault.setattr(Store, "_write_prepared_data", fail_ownership)
+            fault.setattr(writer, write_name, fail_ownership)
             with pytest.raises(OSError):
                 await manager.async_reconcile()
         assert len(faults) == 1 and not calls
@@ -695,27 +697,27 @@ async def test_unacknowledged_quiet_intent_does_not_claim_independent_goal(
     hass, monkeypatch, stress_trace, freezer, kind, recovery, end_immediately
 ):
     manager, target, beta, calls = await _application_probe(hass, freezer, kind)
-    path = Path(manager._store.path)
-    native = Store._write_prepared_data
+    writer, write_name = prepared_disk_write_boundary(manager._store)
+    native = getattr(writer, write_name)
     faults = []
 
-    def failed_write(store, mode, data):
-        if Path(store.path) == path and not faults:
+    def failed_write(mode, data):
+        if not faults:
             active = json.loads(data)["data"].get("active") or {}
             if (
                 active.get("controls", {}).get(target, {}).get("application_state")
                 == "prepared"
             ):
                 faults.append(True)
-                native(store, mode, data)
+                native(mode, data)
                 raise WriteError("Prepared acknowledgement lost") from OSError(
                     errno.EIO, "Lost acknowledgement"
                 )
-        return native(store, mode, data)
+        return native(mode, data)
 
     try:
         with monkeypatch.context() as fault:
-            fault.setattr(Store, "_write_prepared_data", failed_write)
+            fault.setattr(writer, write_name, failed_write)
             with pytest.raises(OSError):
                 await manager.async_reconcile()
         assert faults and not any(entity == target for _, entity in calls)
@@ -770,23 +772,24 @@ async def test_successful_quiet_control_save_preserves_newer_independent_value(
     path = Path(manager._store.path)
     entered = asyncio.Event()
     release = threading.Event()
-    native = Store._write_prepared_data
+    writer, write_name = prepared_disk_write_boundary(manager._store)
+    native = getattr(writer, write_name)
     loop = asyncio.get_running_loop()
 
-    def held_write(store, mode, data):
-        if Path(store.path) == path and not entered.is_set():
+    def held_write(mode, data):
+        if not entered.is_set():
             active = json.loads(data)["data"].get("active") or {}
             if target in active.get("observed_controls", []) and (
                 target in active.get("controls", {})
             ) == (stage == "ownership"):
                 loop.call_soon_threadsafe(entered.set)
                 assert release.wait(15), "Control write was not released"
-        return native(store, mode, data)
+        return native(mode, data)
 
     caller = None
     try:
         with monkeypatch.context() as gate:
-            gate.setattr(Store, "_write_prepared_data", held_write)
+            gate.setattr(writer, write_name, held_write)
             caller = asyncio.create_task(manager.async_reconcile())
             await asyncio.wait_for(entered.wait(), 10)
             if kind == "volume":
@@ -834,25 +837,26 @@ async def test_quiet_control_reconciles_prepared_and_applied_write_outcomes(
 ):
     manager, target, beta, calls = await _application_probe(hass, freezer, kind)
     path = Path(manager._store.path)
-    native = Store._write_prepared_data
+    writer, write_name = prepared_disk_write_boundary(manager._store)
+    native = getattr(writer, write_name)
     faults = []
 
-    def failed_write(store, mode, data):
-        if Path(store.path) == path and not faults:
+    def failed_write(mode, data):
+        if not faults:
             active = json.loads(data)["data"].get("active") or {}
             phase = active.get("controls", {}).get(target, {}).get("application_state")
             if phase == ("prepared" if boundary == "prepared_ack" else "applied"):
                 faults.append(phase)
                 if boundary != "applied_before":
-                    native(store, mode, data)
+                    native(mode, data)
                 raise WriteError(
                     "Injected control acknowledgement failure"
                 ) from OSError(errno.EIO, "Control write outcome failure")
-        return native(store, mode, data)
+        return native(mode, data)
 
     try:
         with monkeypatch.context() as fault:
-            fault.setattr(Store, "_write_prepared_data", failed_write)
+            fault.setattr(writer, write_name, failed_write)
             with pytest.raises(OSError):
                 await manager.async_reconcile()
         assert len(faults) == 1

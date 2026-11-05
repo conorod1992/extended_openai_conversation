@@ -136,6 +136,42 @@ acceptance is required by these deterministic checks.
 
 ## PR regressions and Enhanced certification scope
 
+Prepared-write fault injection selects the native writer through
+`tests/ha_store_test_helpers.py`. The adapter binds to the target Store instance:
+legacy Core delegates through `_write_prepared_data`, while newer Core owns the
+writer in its I/O backend. Unknown layouts fail explicitly. Physical-file
+calibration covers both serialization modes, atomic and non-atomic writes,
+failure before writing, lost acknowledgement after writing, a held writer,
+unaffected sibling storage, fresh readers and recovery after removing a fault.
+Quiet Hours stress scenarios retain their original failure-phase, service-call,
+ownership and restart assertions; compatibility changes do not replace native
+serialization or writing with an in-memory store.
+Read-fault tests invalidate the native cache through the same shared helper,
+without assuming that Store owns the cache object. Stress tests reuse the native
+suite's conditional `hass_storage` fixture and canonical `real_store_io` opt-in,
+so Core's early Stores and later recovery readers share physical I/O from their
+construction. Tests without that opt-in retain the normal in-memory fixture.
+
+Browser fault injection must distinguish a server-confirmed rejected mutation
+from a lost or malformed acknowledgement. Only the rejected case permits a
+direct retry; uncertain policy saves require an accepted read first, preserving
+edits authored after submission. Destructive retention saves include the actual
+confirmation step and prove that no write precedes it. Shell bootstrap seeds
+onboarding through HA's Store API so mocked and native I/O receive the same
+state. Native picker journeys use the shared option/legacy-button adapter and
+continue asserting the resulting values and real backend effects. Browser bridge
+clients may authenticate lazily on first use, but never reconnect or replay a
+command after a later disconnect.
+
+Regular frontend CI also collects the complete Enhanced static suite, its
+targeted recheck and curated Firefox/WebKit suites using the existing execution
+reporter. It launches no browser,
+keeps collect-only ledgers in an isolated temporary directory, and compares exact
+execution counts against the partition inventory and mandatory case catalog.
+Adding a test without reviewing both catalogs fails this short preflight before
+the longer browser campaigns. The final certificate still requires actual
+passing executions from both static and native partitions.
+
 The Function representation corpus in `tests/fixtures/function_configuration_representations.json`
 is shared by dependency, migration, serialized restore and journal-recovery checks.
 It distinguishes legacy raw empty values from explicitly empty serialized
@@ -145,6 +181,27 @@ siblings usable, and never silently enable an unavailable capability. Unsupporte
 data does not authorize replacement; unrelated programming, I/O and cancellation
 failures still propagate. The native process-crash journey also checks quarantine
 and healthy-sibling operation after recovery and another clean restart.
+
+Reviewed Setup sharing also round-trips safe quarantined Function records and
+malformed Group collections through serialized import. Group membership projection
+removes references only to omitted Functions; existing unknown references remain
+repair-owned. Credential omissions must not activate an ambiguous Tool collection
+or promote members out of disabled/on-demand groups. Unit boundary cases and the
+native backup-transfer export collector cover these contracts without mutating
+the source configuration.
+
+Reviewed exports reconcile selected Skills after Tool and Group omissions, then
+round-trip through the ordinary configuration importer. Typed YAML and unsafe Group
+metadata must not leave a dangling loader dependency or enable a disabled loader.
+Nested Composite result aliases belong to the parent step; hydration, persistence
+and execution retain those aliases without passing them to strict child validators.
+Provider connection recovery is shared by the credential endpoint and registered
+`change_config` action, including authentication-failed, unchanged and disabled
+entries. Provider-aware configuration reads, writes, copies, sharing and browser
+catalogue lookups use the actual parent provider. Cached scalar snapshots also
+track provider context while reusing unchanged Function validation. Portable
+configuration validation preserves explicit provider-specific efforts until the
+destination provider is known; request assembly still owns API compatibility.
 
 Mutation wire tests serialize actual backend results and feed them to production
 JavaScript acknowledgement consumers, including Function, Group and Rule deletion.
@@ -229,3 +286,55 @@ earlier child or Energy manager load that yields before exposure is revoked.
 Current visibility narrows the originally admitted Guest/caller scope; it never
 widens it. The browser resilience slow-read witness waits for the actual delayed
 Memory response and usable collection, since the route heading may paint earlier.
+
+
+Release-day CI resolves fixtures for the exact released Home Assistant version. If a published custom-component test plugin is unavailable, only reviewed immutable source pairs in `ci/resolve_ha_test_plugin.py` may supply the bridge. Home Assistant 2026.11.0 ships the official fixture package in Core: the bridge relocates its import namespace for the existing tests, pins the exact Core dependency and verifies wheel version, actual released version constants and source provenance. It registers one fixture plugin. Older releases retain their pinned upstream generator; no beta fixtures are relabelled and no older runtime substitutes for the selected release. The unused standalone respx pytest plugin is disabled as recommended by the official package, allowing Home Assistant to install its HTTP compatibility alias first.
+
+
+HA 2026.11 live-history regressions admit the actual Guest input through Core's
+ChatSession/ChatLog contexts, fail preparation with both exceptions and
+cancellation, then resume the owner and inspect the provider wire. Untouched
+inputs that never acquire continuity ownership must leave the source log. Owned
+failed turns remain available for recovery; nested invocations cannot claim or
+remove an ancestor's input. Both provider APIs run these controls, alongside
+listener restoration and inherited-task lifetime tests. Catalogue transition
+checks exercise explicit reasoning inherited by model-only rules, including
+prior conversation routes, disabled/request-scoped controls and explicit route
+overrides, without mutating saved choices or publishing blocked metadata.
+
+
+Native delegation checks also admit a parent input on a log not owned by EOAI,
+then delegate identical text and ID through HA's conversation entry. Preparation
+and claimed-turn errors/cancellation must preserve the parent's history. Unowned
+logs retained this way are excluded from subsequent EOAI claims by exact live-log
+identity, with weak references following Core's lifetime. First Guest admissions
+remain isolated on owner resumption; initial HA-default claims and owned failed
+turns retain their IDs and recovery history. Replacement-log and collection
+controls prevent exclusion from surviving the history it protects.
+
+
+Sequential parent-delegation checks first complete a successful child request,
+then fail the next delegation. Success must never make an unowned parent eligible
+for EOAI admission cleanup. Parent IDs bind to separate conversations by assistant,
+privacy scope and Guest state before namespace resolution. Actual HA counter
+effects verify that lost continuations and cancellation keep replay protection
+through that binding, while successful acknowledgement permits an intentional
+repeat. Native Core cleanup, a replacement parent with a still-live child, explicit
+reset and retired weak callbacks must not resurrect old context or erase new
+bindings. Initial Assist callers receive the owned conversation ID; retries through
+the original live parent ID retain the same failed-turn context.
+
+Claim cleanup registration is bounded per native session and owner, including
+long-lived parent-bound conversations. Cleanup from a retired session or registry
+cannot release the replacement claim.
+
+Active requests through a live parent ID refresh its native inactivity clock
+without rebinding native authentication. A separate-user call cannot keep another
+user's native parent session alive. Native cleanup is exercised past the initial
+five-minute boundary while the same binding and active model history survive.
+
+Delayed tasks inherit native ContextVars. Tests close and optionally expire the
+parent before releasing the delayed delegate, then inspect actual provider input
+and Core's current log/session registries. Closed contexts stay retired in the inherited task
+on success, error and cancellation, while active callers keep their native contexts; a live parent binding is found by its stored
+identity, and retired history must never reappear in a new request.

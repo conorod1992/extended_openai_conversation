@@ -1,10 +1,11 @@
 import {same} from "./unsaved-state.js";
 import {reconcileSavedConfiguration} from "./configuration-save-dom.js";
-import {requireMutationAcknowledgement, captureConfigurationDraftOwner, captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, completeConfigurationAcknowledgement, reconcileConfigurationAcknowledgement, discardConfigurationDraft} from "./configuration-acknowledgement.js";
+import {requireMutationAcknowledgement, captureConfigurationDraftOwner, captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, completeConfigurationAcknowledgement, reconcileConfigurationAcknowledgement, discardConfigurationDraft, recoverCommittedRetention, USAGE_RETENTION_FIELDS} from "./configuration-acknowledgement.js";
 import {CONFIG_OWNER_BY_KEY} from "./management-config-owners.js";
 import {SETTING_LOOKUP} from "./management-setting-lookup.js";
 import {focusManagementSetting} from "./frontend-navigation.js";
 import {voiceMappingDraftError} from "./voice-mapping-draft.js";
+import {pendingRetentionFields} from "./management-state-safety.js";
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
 function fieldErrorKey(key) {
@@ -134,6 +135,15 @@ async function saveConfiguration(panel, button) {
     panel._toast?.(mappingError, true);
     return;
   }
+  if (pendingRetentionFields(panel).length && panel._configDataStale) {
+    const owner = captureConfigurationOwner(panel);
+    try { await panel._loadConfigDraft({preserveResult:true}); }
+    catch (error) {
+      if (configurationSubmissionIsCurrent(panel, owner)) panel._toast(`Refresh configuration before retrying retention: ${error.message || String(error)}`, true);
+      return;
+    }
+    if (!configurationSubmissionIsCurrent(panel, owner) || panel._configDataStale) return;
+  }
   if ((panel._eocAcknowledgedConfiguration || panel._eocRestoredConfiguration) && panel._configDataStale) {
     const owner = captureConfigurationOwner(panel), visit = panel._loadToken;
     try { await panel._loadConfigDraft({preserveResult:true}); }
@@ -197,6 +207,7 @@ async function saveConfiguration(panel, button) {
     }
 
     requireMutationAcknowledgement(result?.valid === true && result?.config && typeof result.config === "object", "saving configuration");
+    panel._eocPendingRetention = null;
     await completeConfigurationAcknowledgement(panel, result, submission, {
       message:"Changes saved",
       refresh:() => {
@@ -207,6 +218,11 @@ async function saveConfiguration(panel, button) {
       },
     });
   } catch (err) {
+    const retention = submission.fields.filter(key => USAGE_RETENTION_FIELDS.includes(key));
+    if (configurationSubmissionIsCurrent(panel, submission) && retention.length
+        && (err.mutationOutcome === "committed" || err.code === "eoai_mutation_committed")) {
+      await recoverCommittedRetention(panel, submission, retention);
+    }
     if (configurationSubmissionIsCurrent(panel, submission)) panel._toast(`Unable to save configuration: ${err.message || String(err)}`, true);
   } finally {
     for (const type of focusEvents) focusDocument?.removeEventListener(type, relinquishErrorFocus, true);

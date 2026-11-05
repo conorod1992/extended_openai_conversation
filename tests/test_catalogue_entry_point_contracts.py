@@ -77,6 +77,7 @@ async def test_provider_switch_validates_children_before_publishing(
 
     from custom_components.extended_openai_conversation_responses import services
     from custom_components.extended_openai_conversation_responses.const import DOMAIN
+    from homeassistant.config_entries import ConfigEntryState
     from homeassistant.exceptions import HomeAssistantError
     from tests.test_service_handlers import _call, _handlers
 
@@ -93,6 +94,8 @@ async def test_provider_switch_validates_children_before_publishing(
         },
     )
     entry = SimpleNamespace(
+        state=ConfigEntryState.LOADED,
+        disabled_by=None,
         entry_id="entry",
         domain=DOMAIN,
         data={"api_key": "old"},

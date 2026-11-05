@@ -98,7 +98,7 @@ async def test_live_management_uses_normal_service_with_owner_context(
     hass, monkeypatch
 ):
     monkeypatch.setattr(
-        management_ui, "entry_and_agent", lambda *_: (object(), object())
+        management_ui, "entry_and_agent", lambda *_: (object(), SimpleNamespace(data={}))
     )
     monkeypatch.setattr(
         management_ui, "_conversation_entity_id", lambda *_: "conversation.selected"

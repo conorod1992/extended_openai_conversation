@@ -8,6 +8,10 @@ from pathlib import Path
 import sys
 from unittest.mock import AsyncMock, patch
 
+import homeassistant  # noqa: F401 -- Core's HTTP aliases must precede HTTPX.
+
+# isort: split
+
 import httpx
 
 

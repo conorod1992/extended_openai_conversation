@@ -3,9 +3,36 @@ import {formatUsageNumber} from "./usage-format.js";
 import {captureConfigurationDraftOwner, configurationSubmissionIsCurrent} from "./configuration-acknowledgement.js";
 import {clone, same, mergeAcknowledgedDraft} from "./unsaved-state.js";
 import {pageCoordinator} from "./management-page-drafts.js";
+import {reviewRecoveredScope, scopeNeedsRecoveryReview} from "./management-state-safety.js";
 
 const GUEST_VIEW = "capabilities/guest-mode";
-const intervalValues = (panel, status, retainedEnd = "") => ({start:panel._dateTimeLocal(status.active_from), end:status.indefinite ? retainedEnd : panel._dateTimeLocal(status.active_until), indefinite:Boolean(status.indefinite)});
+const intervalValues = (panel, status, retainedEnd = "") => ({start:status.active_from_local || panel._dateTimeLocal(status.active_from), end:status.indefinite ? retainedEnd : (status.active_until_local || panel._dateTimeLocal(status.active_until)), indefinite:Boolean(status.indefinite)});
+const intervalDirty = state => !same(state.values, state.baseline)
+  || Boolean(state.uncertainSubmission && !same(state.values, state.uncertainSubmission));
+const completeInterval = status => ["active_from", "active_until", "indefinite"].every(key => Object.hasOwn(status || {}, key));
+const clearSubmission = state => {state.uncertainSubmission = null;state.adoptUnchangedRead = false;state.submissionImplicitStart = false;};
+
+function reconcileIntervalRead(panel, state, status) {
+  if (panel._guestIntervalDraft !== state || !configurationSubmissionIsCurrent(panel, state.owner)
+      || panel._guestOperation || !state.uncertainSubmission || !completeInterval(status)) return;
+  const current = clone(state.values), submitted = state.uncertainSubmission;
+  const saved = intervalValues(panel, status, submitted.end);
+  // Confirmed partial replies and Discard can normalize untouched inputs. A
+  // lost reply may not have committed: explicit inputs remain intent, including
+  // a later submission reverting an earlier unresolved write.
+  state.values = state.adoptUnchangedRead ? mergeAcknowledgedDraft(current, submitted, saved) : clone(current);
+  if (!state.adoptUnchangedRead && state.submissionImplicitStart && current.start === submitted.start) state.values.start = saved.start;
+  state.baseline = saved;
+  clearSubmission(state);
+  // Timed reads avoid rebuilding the editor. Update only inputs which still
+  // show the values used by this reconciliation, preserving newer DOM input.
+  for (const [id, key, property] of [["guest-start", "start", "value"], ["guest-end", "end", "value"], ["guest-indefinite", "indefinite", "checked"]]) {
+    const control = panel.shadowRoot?.querySelector?.(`#${id}`);
+    if (control?.[property] === current[key]) control[property] = state.values[key];
+  }
+  const end = panel.shadowRoot?.querySelector?.("#guest-end");
+  if (end && panel.shadowRoot?.querySelector?.("#guest-indefinite")?.checked === state.values.indefinite) end.disabled = state.values.indefinite;
+}
 
 function intervalState(panel, status = panel._result?.status || {}) {
   let state = panel._guestIntervalDraft;
@@ -21,35 +48,75 @@ function intervalState(panel, status = panel._result?.status || {}) {
     panel._guestIntervalDraft = state;
     const current = () => panel._guestIntervalDraft === state && configurationSubmissionIsCurrent(panel, state.owner);
     pageCoordinator(panel).register("guest-interval", {
-      dirty:() => current() && !same(state.values, state.baseline),
+      isCurrent:current, read:() => state.values,
+      captureRead:() => state.uncertainSubmission,
+      reconcileRead:(status, evidence) => {
+        if (evidence === state.uncertainSubmission) reconcileIntervalRead(panel, state, status);
+      },
+      needsRead:() => current() && Boolean(state.uncertainSubmission),
+      get baseline() {return state.baseline;},
+      dirty:() => current() && intervalDirty(state),
+      hasRecoveryIntent:() => current() && Boolean(state.recoveryIntent),
+      settleRecoveryIntent:() => {
+        if (!current() || !state.recoveryIntent) return;
+        const saved = panel._result?.status;
+        if (!intervalDirty(state)) {
+          if (!["active_from", "active_until", "indefinite"].every(key => Object.hasOwn(saved || {}, key))) return;
+          state.baseline = intervalValues(panel, saved, state.baseline.end);
+        }
+        state.recoveryIntent = false;
+      },
       get pending() { return current() && Boolean(panel._guestOperation); },
       owns:destination => Boolean(destination) && current(),
       destinations:() => [GUEST_VIEW],
-      discard:() => { if (current()) state.values = clone(state.baseline); },
-      restore:target => {
+      discard:() => {
+        if (!current()) return;
+        state.values = clone(state.baseline);
+        // Discard authoring, not the read needed to learn what the write did.
+        if (state.uncertainSubmission) {
+          state.uncertainSubmission = clone(state.baseline);
+          state.adoptUnchangedRead = true;
+        }
+        state.recoveryIntent = false;
+      },
+      restore:(target, retry) => {
         const targetOwner = captureConfigurationDraftOwner(target);
         if (!current() || target._viewKey?.() !== GUEST_VIEW || !target._data?.is_admin
             || ["agentId", "entryId", "userId"].some(key => state.owner[key] !== targetOwner[key])) return;
         const destination = intervalState(target);
-        if (!destination || !same(destination.values, destination.baseline)) return;
+        if (!destination) return;
+        if (intervalDirty(destination) || destination.recoveryIntent || scopeNeedsRecoveryReview(pageCoordinator(panel).scopes.get("guest-interval"))) {
+          reviewRecoveredScope(target, panel, "guest-interval", "Guest Mode interval", retry);
+          return;
+        }
         destination.baseline = clone(state.baseline);
         destination.values = clone(state.values);
+        destination.uncertainSubmission = clone(state.uncertainSubmission);
+        destination.adoptUnchangedRead = state.adoptUnchangedRead;
+        destination.submissionImplicitStart = state.submissionImplicitStart;
+        destination.recoveryIntent = state.recoveryIntent;
         state.values = clone(state.baseline);
+        clearSubmission(state);
+        state.recoveryIntent = false;
         target._render();
       },
     });
-  } else if (same(state.values, state.baseline)) {
+  } else if (!intervalDirty(state) && !state.recoveryIntent && !state.uncertainSubmission) {
     state.baseline = intervalValues(panel, status, state.values.end);
     state.values = clone(state.baseline);
   }
   return state;
 }
 
-export function captureGuestInterval(panel) {
+export function captureGuestInterval(panel, field = null) {
   const state = intervalState(panel);
   const root = panel.shadowRoot;
   if (!state || !root.querySelector("#guest-start")) return null;
   state.values = {start:root.querySelector("#guest-start").value, end:root.querySelector("#guest-end").value, indefinite:root.querySelector("#guest-indefinite").checked};
+  // An explicit reaffirmation can equal the saved value while competing with a
+  // retained editor. Keep that decision available without inventing a save.
+  const retained = pageCoordinator(panel).scopes.get("retained-drafts");
+  if (field && (retained?.dirty() || retained?.pending)) state.recoveryIntent = true;
   return {state, values:clone(state.values)};
 }
 
@@ -58,18 +125,34 @@ export function acknowledgeGuestInterval(panel, submission, status) {
   if (!state || panel._guestIntervalDraft !== state || !configurationSubmissionIsCurrent(panel, state.owner)) return;
   // Older/partial replies can confirm an action without supplying an interval.
   // Missing fields must not canonicalize authored values to empty or false.
-  if (!["active_from", "active_until", "indefinite"].every(key => Object.hasOwn(status || {}, key))) return;
+  if (!completeInterval(status)) {
+    state.uncertainSubmission = clone(submission.values);
+    state.adoptUnchangedRead = true;
+    state.submissionImplicitStart = Boolean(submission.implicitStart);
+    return;
+  }
   // An indefinite interval does not submit Ends. Keep that inactive input so
   // toggling indefinite off does not silently erase an authored finite end.
-  const saved = intervalValues(panel, status, state.values.end);
+  const saved = intervalValues(panel, status, submission.values.end);
   state.values = mergeAcknowledgedDraft(state.values, submission.values, saved);
   state.baseline = saved;
+  clearSubmission(state);
+}
+
+export function retainUncertainGuestInterval(panel, submission, error) {
+  // Record evidence on its original private draft even across an authentication
+  // transition. This neither presents a result nor authorizes another owner.
+  if (error?.mutationOutcome === "uncertain" && submission?.state === panel._guestIntervalDraft) {
+    submission.state.uncertainSubmission = clone(submission.values);
+    submission.state.adoptUnchangedRead = false;
+    submission.state.submissionImplicitStart = Boolean(submission.implicitStart);
+  }
 }
 
 export function bindGuestInterval(panel) {
   for (const id of ["guest-start", "guest-end", "guest-indefinite"]) {
     const control = panel.shadowRoot.querySelector(`#${id}`);
-    for (const type of ["input", "change"]) control?.addEventListener(type, () => captureGuestInterval(panel));
+    for (const type of ["input", "change"]) control?.addEventListener(type, () => captureGuestInterval(panel, id));
   }
 }
 
@@ -86,7 +169,7 @@ export function guestPolicyView(panel, status, policy, state) {
   const selector = (key, type, label) => `<label class="setting"><span>${label}</span><ha-selector data-guest-key="${key}" data-guest-selector="${type}"></ha-selector></label>`;
   const manager = (key, type, label, description) => `<details class="guest-manager eoc-details-base"><summary><span><strong>${label}</strong><small>${formatUsageNumber((config[key] || []).length)} excluded · ${description}</small></span><span class="manage-label">Manage</span></summary><div class="guest-manager-body">${selector(key,type,`Choose ${label.toLowerCase()}`)}</div></details>`;
   const mode = (key, label, values) => `<label>${label}<select data-guest-mode="${key}">${values.map(([value,text]) => `<option value="${value}" ${config[key] === value ? "selected" : ""}>${text}</option>`).join("")}</select></label>`;
-  const intervalSummary = status.active_from ? `Starts ${panel._e(panel._formatDate(status.active_from))}${status.active_until ? ` · Ends ${panel._e(panel._formatDate(status.active_until))}` : " · No expiry"}` : "No interval configured";
+  const intervalSummary = status.active_from ? `Starts ${panel._e((status.active_from_local?.replace("T", " ") || panel._formatDate(status.active_from)))}${status.active_until ? ` · Ends ${panel._e((status.active_until_local?.replace("T", " ") || panel._formatDate(status.active_until)))}` : " · No expiry"}` : "No interval configured";
   const hasInterval = Boolean(status.currently_active || status.scheduled || status.active_from || status.active_until);
   const canEditPolicy = panel._data?.is_admin && (!panel._result?.legacy_policy || panel._guestMigrationReview);
   const assistantPermission = canEditPolicy ? `<details class="guest-advanced eoc-details-base"><summary>Assistant activation permission</summary><p class="help">This permission is separate from the Guest Mode activation state.</p><label class="toggle"><span>Allow the assistant to activate Guest Mode</span><input id="guest-controls-enabled" type="checkbox" ${config.guest_mode_enabled ? "checked" : ""}></label><p class="help">Lets the assistant activate Guest Mode, start it earlier, or extend it. The assistant can never shorten or disable Guest Mode. Turning this off never ends or weakens an active restriction.</p></details>` : "";

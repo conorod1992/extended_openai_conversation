@@ -27,6 +27,7 @@ from homeassistant.components.homeassistant.exposed_entities import async_expose
 from homeassistant.const import ATTR_SUPPORTED_FEATURES
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr, entity_registry as er
+from homeassistant.helpers.storage import Store
 from homeassistant.setup import async_setup_component
 from tests_real_ha.test_acceptance_lifecycle import _make_entry
 from tests_real_ha.test_management_backend_acceptance import (
@@ -153,16 +154,8 @@ async def _start_ws_bridge(
     return runner, f"http://127.0.0.1:{port}/callws"
 
 
-@pytest.mark.asyncio
-async def test_shipped_browser_frontend_talks_to_real_management_websocket(
-    hass: HomeAssistant,
-    hass_ws_client: Any,
-) -> None:
-    """Chromium CRUD journeys must satisfy the genuine HA management contract."""
-    entry = _entry("Browser Backend Acceptance")
-    await _setup_entry(hass, entry)
-    # Both assistants are genuine loaded entries; identity coverage must not skip.
-    await _setup_entry(hass, _entry("Dependent Journey"))
+def _lazy_browser_client(hass: HomeAssistant, hass_ws_client: Any):
+    """Authenticate on first use, without reconnecting or replaying a command."""
 
     class BrowserClient:
         # Slow runner startup must not age an authenticated, unpolled test socket.
@@ -178,7 +171,22 @@ async def test_shipped_browser_frontend_talks_to_real_management_websocket(
         async def receive_json(self):
             return await self.client.receive_json()
 
-    runner, backend_url = await _start_ws_bridge(BrowserClient())
+    return BrowserClient()
+
+
+@pytest.mark.asyncio
+async def test_shipped_browser_frontend_talks_to_real_management_websocket(
+    hass: HomeAssistant,
+    hass_ws_client: Any,
+) -> None:
+    """Chromium CRUD journeys must satisfy the genuine HA management contract."""
+    entry = _entry("Browser Backend Acceptance")
+    await _setup_entry(hass, entry)
+    # Both assistants are genuine loaded entries; identity coverage must not skip.
+    await _setup_entry(hass, _entry("Dependent Journey"))
+    runner, backend_url = await _start_ws_bridge(
+        _lazy_browser_client(hass, hass_ws_client)
+    )
 
     repo_root = Path(__file__).resolve().parent.parent
     try:
@@ -520,10 +528,11 @@ async def real_ha_shell(
     """HA itself must register, serve, instantiate, and connect the shipped panel."""
     # A pristine pytest HA instance is in onboarding mode. Persist the normal
     # completed-onboarding state so Chromium reaches the actual application shell.
-    hass_storage[onboarding.STORAGE_KEY] = {
-        "version": onboarding.STORAGE_VERSION,
-        "data": {"done": list(onboarding.STEPS)},
-    }
+    # Use the selected Store backend: the ownership profile opts into native
+    # disk I/O before bootstrap, while ordinary shell tests use mocked storage.
+    await Store(hass, onboarding.STORAGE_VERSION, onboarding.STORAGE_KEY).async_save(
+        {"done": list(onboarding.STEPS)}
+    )
 
     assert await async_setup_component(hass, "websocket_api", {})
     assert await async_setup_component(hass, "frontend", {})

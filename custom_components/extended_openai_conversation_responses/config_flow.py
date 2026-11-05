@@ -82,7 +82,7 @@ from .const import (
     DOMAIN,
 )
 from .ha_schema import schema_for_ha
-from .helpers import get_authenticated_client
+from .helpers import effective_api_provider, get_authenticated_client
 from .model_capabilities import (
     get_model_capabilities,
     parameter_is_allowed,
@@ -287,15 +287,22 @@ def _ai_task_display_reasoning_effort(
     options: dict[str, Any],
     *,
     reconfigure: bool,
+    metadata: dict[str, Any] | None = None,
 ) -> str | None:
     """Return the reasoning effort that should drive the AI Task advanced form."""
-    recommended = recommended_reasoning_effort(chat_model)
+    recommended = (
+        metadata.get("recommended_profile", {}).get("reasoning_effort")
+        if metadata is not None
+        else recommended_reasoning_effort(chat_model)
+    )
     if not reconfigure:
         return recommended
     if str(options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)) != chat_model:
         return recommended
     saved = options.get(CONF_REASONING_EFFORT)
-    efforts = get_model_capabilities(chat_model)["reasoning"]["efforts"]
+    efforts = (
+        metadata if metadata is not None else get_model_capabilities(chat_model)
+    )["reasoning"]["efforts"]
     if saved is not None and str(saved) in efforts:
         return str(saved)
     return recommended
@@ -308,7 +315,9 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> None:
     api_version = data.get(CONF_API_VERSION)
     organization = data.get(CONF_ORGANIZATION)
     skip_authentication = data.get(CONF_SKIP_AUTHENTICATION, False)
-    api_provider = data.get(CONF_API_PROVIDER)
+    api_provider = effective_api_provider(data.get(CONF_API_PROVIDER), base_url)
+    if api_provider == "azure":
+        data[CONF_API_PROVIDER] = api_provider
 
     if base_url == DEFAULT_CONF_BASE_URL:
         # Do not set base_url if using OpenAI for case of OpenAI's base_url change
@@ -800,12 +809,21 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
         effective_options = {**self.options, **(self._temp_data or {})}
         chat_model = str(effective_options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
         capability_model = str(effective_options.get("azure_model") or chat_model)
-        metadata = get_model_capabilities(capability_model)
-        recommended_effort = recommended_reasoning_effort(capability_model)
+        entry_data = self._get_entry().data
+        metadata = get_model_capabilities(
+            capability_model,
+            provider=effective_api_provider(
+                entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
+            ),
+        )
+        recommended_effort = metadata.get("recommended_profile", {}).get(
+            "reasoning_effort"
+        )
         display_effort = _ai_task_display_reasoning_effort(
             capability_model,
             {**effective_options, CONF_CHAT_MODEL: capability_model},
             reconfigure=True,
+            metadata=metadata,
         )
 
         if user_input is not None:

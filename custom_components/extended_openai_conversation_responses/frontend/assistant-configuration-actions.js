@@ -1,4 +1,4 @@
-import {captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement, retireReplacedConfigurationDraft} from "./configuration-acknowledgement.js";
+import {captureConfigurationOwner, captureConfigurationSubmission, configurationSubmissionIsCurrent, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement, retireReplacedConfigurationDraft, recoverCommittedRetention} from "./configuration-acknowledgement.js";
 import {downloadConfigurationSharing} from "./sharing-review.js";
 import {invalidateOperation} from "./operation-ownership.js";
 import {bindOwnedEvent} from "./management-owned-events.js";
@@ -16,7 +16,7 @@ export function invalidateImportPreview(panel, applyButton, summary) {
 // text, but require an authoritative catalogue read before another preview can
 // authorize a new write. A new assistant affects the global catalogue, so this
 // payload-free barrier survives draft, selection and authentication changes.
-export async function refreshUncertainConfigurationImport(panel) {
+export async function refreshUncertainConfigurationImport(panel, {configuration = false} = {}) {
   const recovery = panel._eocImportRecovery;
   if (!recovery) return;
   const owner = captureConfigurationOwner(panel);
@@ -26,8 +26,17 @@ export async function refreshUncertainConfigurationImport(panel) {
       || receipt.userId !== owner.userId || !configurationSubmissionIsCurrent(panel, owner)) {
     throw new Error("The assistant list could not be refreshed. Keep the import source and validate again before another import.");
   }
+  if (configuration) {
+    panel._invalidateCleanConfiguration?.(owner.agentId);
+    panel._configDataStale = true;
+    await panel._loadConfigDraft({preserveResult:true, full:true});
+    if (!configurationSubmissionIsCurrent(panel, owner) || panel._configDataStale) {
+      throw new Error("Configuration could not be refreshed. Validate again before another import.");
+    }
+  }
   if (panel._eocImportRecovery === recovery) {
     panel._eocImportRecovery = null;
+    return true;
   }
 }
 
@@ -103,9 +112,9 @@ export async function applyConfigurationImport(panel, root) {
       if (mode === "current") {
         retireReplacedConfigurationDraft(panel, submittedDraft);
         acknowledgementOwner = captureConfigurationOwner(panel);
-        loadIntent = captureCatalogSelectionIntent(panel);
       }
       root.querySelector("#import-dialog").close();
+      if (mode === "current") loadIntent = captureCatalogSelectionIntent(panel);
       await panel._loadAgents(panel._agentId, acknowledgementOwner, loadIntent);
     }, result);
   } catch (err) {
@@ -121,6 +130,13 @@ export async function applyConfigurationImport(panel, root) {
         const summary = root.querySelector("#import-summary");
         if (summary && input.value === source) summary.textContent = "The import may already have been applied. Validate & preview again to refresh the assistant list before another import.";
       }
+      if (mode === "current" && err?.mutationOutcome === "committed") {
+        // The overwrite committed. Retire its submitted draft, preserving only
+        // later edits and a recoverable baseline if the authoritative read fails.
+        retireReplacedConfigurationDraft(panel, submittedDraft, {retainUntilRead:true});
+        await recoverCommittedRetention(panel, intent.owner);
+      }
+      if (!configurationSubmissionIsCurrent(panel, intent.owner)) return;
       panel._toast(`Unable to import: ${err.message || String(err)}`, true);
     }
   } finally {

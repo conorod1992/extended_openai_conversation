@@ -30,13 +30,13 @@ Existing agents that predate context-strategy storage can retain this legacy fal
 
 ## Summarize older messages
 
-Makes one bounded model request to summarize older context while retaining recent raw turns.
+Makes a bounded model request to summarize older context while retaining recent raw turns. It uses the effective model and reasoning effort for that request, including Request Rule overrides. The instruction targets at most 256 visible summary tokens. The total output allowance is 512 tokens without reasoning, or 8,192 with reasoning, including implicit/fixed reasoning such as o3-pro, because hidden reasoning shares that allowance. Both are capped by the model's supported output limit.
 
-The summary is generated after the current reply is complete so this optional maintenance request does not delay delivery of that reply. If another turn arrives before summarization finishes, the integration waits for and applies the pending summary before sending the next provider request. This preserves the same conversation context rather than temporarily falling back to an incomplete history.
+Ordinary summary maintenance runs after the current reply is complete. Oversized prepared input can also require summarization before sending a provider request. If another turn arrives before deferred summarization finishes, the integration waits for and applies the pending summary before sending the next provider request. This preserves the same conversation context rather than temporarily falling back to an incomplete history.
 
-If summarization fails, the integration falls back to **Keep recent messages** rather than breaking the conversation.
+If the provider reports output-token exhaustion, the integration retries once with twice the output allowance, still capped by the model's limit. Other failures are not retried. If summarization still fails, the integration falls back to **Keep recent messages** rather than breaking the conversation.
 
-Usage from the summary request is included in the agent's aggregate usage statistics. Because the request can finish after the user turn itself has completed, it is treated as detached maintenance rather than modifying an already-finalized per-turn usage run.
+Usage from every summary attempt is included in the agent's aggregate usage statistics. Deferred summaries are treated as detached maintenance rather than modifying an already-finalized per-turn usage run.
 
 ## Which strategy should I use?
 

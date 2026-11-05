@@ -602,3 +602,26 @@ for (const code of ["unknown_error", ""]) test(`generic mutation failure remains
   await assert.rejects(() => acknowledgement.callMutation(async () => {throw error;}), failure =>
     failure.mutationOutcome === "uncertain" && failure.cause === error && /refresh before retrying/.test(failure.message));
 });
+
+
+test("temporary create sends HA wall time without consulting client timezone rules", async () => {
+  const {panel, backend} = host("memory");
+  panel._hass.config = {time_zone:"Africa/Casablanca"};
+  panel._memoryValues = () => ({content:"Visitors", category:"general", target_scope_id:panel._scopeId, type:"temporary", expires_at:"2026-11-04T12:00"});
+  const format = Intl.DateTimeFormat;
+  Intl.DateTimeFormat = function () { throw Error("client timezone rules must not resolve authored time"); };
+  try { await panel._saveMemory(); } finally { Intl.DateTimeFormat = format; }
+  const sent = backend.calls.find(call => call.action === "temporary_add");
+  assert.equal(sent.expires_at, "2026-11-04T12:00");
+  assert.deepEqual(sent.local_times, {expires_at:"2026-11-04T12:00"});
+});
+
+test("Guest editor prefers HA wall projection over stale client rules", () => {
+  const {panel} = host();
+  panel._hass.config = {time_zone:"Africa/Casablanca"};
+  panel._result = {status:{active_from:"2026-11-04T12:00:00Z", active_from_local:"2026-11-04T12:00"}};
+  const format = Intl.DateTimeFormat;
+  Intl.DateTimeFormat = function () { throw Error("stale client timezone rules"); };
+  try { assert.equal(panel._dateTimeLocal(panel._result.status.active_from), "2026-11-04T12:00"); }
+  finally { Intl.DateTimeFormat = format; }
+});

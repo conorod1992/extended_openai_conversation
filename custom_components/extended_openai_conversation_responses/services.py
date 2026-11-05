@@ -535,7 +535,17 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                 "validated. No changes were saved by this operation. Try again."
             )
 
-        hass.config_entries.async_update_entry(entry, data=new_data)
+        from .provider_credentials import request_provider_reload_after_update
+
+        state_before = entry.state
+        changed = hass.config_entries.async_update_entry(entry, data=new_data)
+        request_provider_reload_after_update(
+            hass,
+            entry,
+            state_before,
+            changed=changed,
+            validation_performed=not new_data.get(CONF_SKIP_AUTHENTICATION, False),
+        )
 
     async def reload_skills(call: ServiceCall) -> ServiceResponse:
         """Reload skills from the user skill directory."""

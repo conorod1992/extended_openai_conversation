@@ -159,7 +159,7 @@ async def test_command_keeps_scope_authorization_before_memory_access(
     monkeypatch.setattr(
         management_ui,
         "entry_and_agent",
-        lambda *args: (object(), object()),
+        lambda *args: (object(), SimpleNamespace(data={})),
     )
 
     with pytest.raises(
@@ -243,7 +243,7 @@ async def test_command_routes_list_through_selected_scope_and_memory(
         "offset": 50,
     }
 
-    entry_and_agent = Mock(return_value=(object(), object()))
+    entry_and_agent = Mock(return_value=(object(), SimpleNamespace(data={})))
     selected_scope = Mock(return_value="user:selected")
     memory_scope = Mock(return_value="selected-owner")
     get_memory = AsyncMock(return_value=memory)
@@ -285,7 +285,7 @@ async def test_blank_search_falls_back_to_list_page(hass, monkeypatch) -> None:
     monkeypatch.setattr(
         management_ui,
         "entry_and_agent",
-        Mock(return_value=(object(), object())),
+        Mock(return_value=(object(), SimpleNamespace(data={}))),
     )
     monkeypatch.setattr(
         management_ui,
@@ -335,7 +335,7 @@ async def test_search_routes_trimmed_query_with_bounded_paging(
     monkeypatch.setattr(
         management_ui,
         "entry_and_agent",
-        Mock(return_value=(object(), object())),
+        Mock(return_value=(object(), SimpleNamespace(data={}))),
     )
     monkeypatch.setattr(
         management_ui,

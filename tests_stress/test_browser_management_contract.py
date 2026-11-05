@@ -10,14 +10,11 @@ import pytest
 
 from homeassistant.core import HomeAssistant
 from tests_real_ha.test_browser_backend_acceptance import (
+    _lazy_browser_client,
     _run_playwright,
     _start_ws_bridge,
 )
-from tests_real_ha.test_management_backend_acceptance import (
-    _admin_client,
-    _entry,
-    _setup_entry,
-)
+from tests_real_ha.test_management_backend_acceptance import _entry, _setup_entry
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("RUN_ENHANCED_MANAGEMENT_CONTRACT") != "1",
@@ -33,7 +30,7 @@ async def test_nightly_management_mutations_cross_real_websocket(
     """Run extended shipped-panel mutations only in the Enhanced campaign."""
     entry = _entry("Nightly Management Browser Acceptance")
     await _setup_entry(hass, entry)
-    client = await _admin_client(hass, hass_ws_client)
+    client = _lazy_browser_client(hass, hass_ws_client)
     runner, backend_url = await _start_ws_bridge(client)
     try:
         await _run_playwright(
@@ -138,7 +135,7 @@ async def test_seeded_management_mutations_cross_real_websocket(
         )
     assert usage.runs and usage.requests
 
-    client = await _admin_client(hass, hass_ws_client)
+    client = _lazy_browser_client(hass, hass_ws_client)
     runner, backend_url = await _start_ws_bridge(client)
     try:
         await _run_playwright(
@@ -182,7 +179,7 @@ async def test_function_repair_mutations_cross_real_websocket(
         conversation_options=data,
     )
     await _setup_entry(hass, entry)
-    client = await _admin_client(hass, hass_ws_client)
+    client = _lazy_browser_client(hass, hass_ws_client)
     runner, backend_url = await _start_ws_bridge(client)
     try:
         await _run_playwright(

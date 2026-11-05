@@ -1,4 +1,4 @@
-import {apiPathSelectable, parameterControlState} from "./model-catalog.js";
+import {apiPathSelectable, modelProviderForPanel, parameterControlState} from "./model-catalog.js";
 
 export function reasoningEffortOptionsForResult(result = {}) {
   const values = result?.model_capabilities?.reasoning_effort_options;
@@ -33,7 +33,7 @@ export function modelCapabilitiesForDraft(panel) {
   const saved = panel?._result?.config;
   const fallback = saved && String(saved.azure_model || saved.chat_model || "") !== model
     ? {} : panel?._result?.model_capabilities || {};
-  if (catalog?.requested_model !== model) return fallback;
+  if (catalog?.requested_model !== model || (catalog.requested_provider && catalog.requested_provider !== modelProviderForPanel(panel))) return fallback;
   if (catalog.model_capabilities) return catalog.model_capabilities;
   // Older catalogue envelopes expose metadata separately from the legacy
   // support flags. Reuse those flags only when they belong to this same model.

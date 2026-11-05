@@ -8,7 +8,7 @@ for (const code of ["invalid_request", "unknown_error", null]) {
       await route.fulfill({
         status:failure ? 400 : 200,
         headers:{"Access-Control-Allow-Origin":"*"},
-        json:failure ? {error:{...(code === null ? {} : {code}), message:"Probe refused"}} : {},
+        json:failure ? {error:{...(code === null ? {} : {code}), message:"Probe refused"}} : request.type === "get_config" ? {time_zone:"UTC"} : {},
       });
     });
     await page.goto("/tests_browser/real-ha-fixture.html?backend=http%3A%2F%2Fbridge.test%2Fcallws");

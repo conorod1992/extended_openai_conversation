@@ -113,7 +113,7 @@ async def test_azure_catalog_validation_uses_underlying_model(hass, monkeypatch,
             "rules": [
                 {
                     "action_type": "model_routing",
-                    "action": {"model": "other-deployment"},
+                    "action": {"model": "other-deployment", "azure_model": "gpt-4.1-mini"},
                 }
             ]
         }

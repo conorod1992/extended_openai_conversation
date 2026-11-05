@@ -293,12 +293,12 @@ for (const bundled of [false, true]) {
 
 
 for (const bundled of [false, true]) {
-  test(`Azure routing edits preserve reasoning through deployment changes (${bundled})`, async ({page}) => {
+  test(`Azure routing edits preserve explicitly bound reasoning through deployment changes (${bundled})`, async ({page}) => {
     const errors = trackPageErrors(page);
     await page.goto(fixtureUrl("capabilities/request-rules", bundled ? "&bundle=1" : ""));
     const panel = panelFor(page);
     await panel.evaluate(host => {
-      host._result = {...host._result, api_provider: "azure", effective_model: "gpt-5.6"};
+      host._result = {...host._result, api_provider: "azure", configured_model: "home-deployment", azure_model: "gpt-5.6", effective_model: "gpt-5.6"};
       const original = host._hass.callWS.bind(host._hass);
       host._hass.callWS = async message => {
         const result = await original(message);
@@ -315,6 +315,9 @@ for (const bundled of [false, true]) {
     await panel.locator("#rule-phrases").fill("switch deployment");
     await panel.locator("#rule-action-type").selectOption("model_routing");
     await panel.locator("#rule-model").fill("home-deployment");
+    // Explicitly bind this route so later custom deployment names keep the
+    // intended capabilities instead of inheriting a different base deployment.
+    await panel.locator("#rule-azure-model").fill("gpt-5.6");
     await expect(panel.locator('#rule-reasoning option[value="high"]')).toHaveCount(1);
     await panel.locator("#rule-reasoning").selectOption("high");
     await panel.locator("#rule-save").click();
@@ -329,6 +332,7 @@ for (const bundled of [false, true]) {
     await panel.locator("#rule-save").click();
     const saved = await page.evaluate(() => browserHarness.getState().requestRules.rules.find(rule => rule.name === "Azure preserved route"));
     expect(saved.action.model).toBe("another-deployment");
+    expect(saved.action.azure_model).toBe("gpt-5.6");
     expect(saved.action.reasoning_effort).toBe("high");
     await expectHarnessClean(page, errors);
   });

@@ -225,6 +225,9 @@ async def test_mixed_ai_tasks_remain_request_isolated_after_concurrency_and_relo
     caller_api.tools = [tool]
     user = MockUser(id="enhanced-task-user", name="Enhanced Task User")
     user.add_to_hass(hass)
+    user.mock_policy({"entities": {"entity_ids": {
+        task_entities["Detailed task"]: {"control": True}
+    }}})
     context = Context(user_id=user.id)
     tool_result = await ai_task.async_generate_data(
         hass,

@@ -831,6 +831,7 @@ async def test_noncompleted_summary_text_is_rejected_and_recovers(
     agent = conversation.async_get_agent(hass, entry.entry_id)
     requests, foreground, summaries = [], 0, 0
     started, release = asyncio.Event(), asyncio.Event()
+    failed_attempts = 2 if outcome in {"incomplete", "length"} else 1
 
     async def send(request, *args, **kwargs):
         nonlocal foreground, summaries
@@ -839,12 +840,12 @@ async def test_noncompleted_summary_text_is_rejected_and_recovers(
         if not body.get("stream"):
             assert foreground >= 3, "Summary started before the usage trigger"
             summaries += 1
-            first = summaries == 1
-            if first:
+            rejected = foreground == 3
+            if summaries == 1:
                 started.set()
                 await release.wait()
-            text = "REJECTED-PARTIAL-SUMMARY" if first else "HEALTHY-RECOVERED-SUMMARY"
-            status = outcome if first else ("completed" if mode == "responses" else "stop")
+            text = "REJECTED-PARTIAL-SUMMARY" if rejected else "HEALTHY-RECOVERED-SUMMARY"
+            status = outcome if rejected else ("completed" if mode == "responses" else "stop")
             if mode == "responses":
                 payload = _response_object("summary", [{"id": "summary-message", "type": "message",
                     "role": "assistant", "status": "completed", "content": [{"type": "output_text",
@@ -893,8 +894,9 @@ async def test_noncompleted_summary_text_is_rejected_and_recovers(
         assert all(run.successful for run in agent._usage.runs)
         release.set()
         await asyncio.wait_for(failed_task, 10)
-        assert agent._usage.totals.failed_request_count == 1
-        assert agent._usage.totals.total_tokens == tokens_before + 10
+        assert summaries == failed_attempts
+        assert agent._usage.totals.failed_request_count == failed_attempts
+        assert agent._usage.totals.total_tokens == tokens_before + 10 * failed_attempts
         assert all(run.successful for run in agent._usage.runs)
         await say("FOLLOWUP")
         context = json.dumps([body for body in requests if body.get("stream")][-1])
@@ -907,8 +909,8 @@ async def test_noncompleted_summary_text_is_rejected_and_recovers(
         context = json.dumps([body for body in requests if body.get("stream")][-1])
         assert "HEALTHY-RECOVERED-SUMMARY" in context
         assert "REJECTED-PARTIAL-SUMMARY" not in context
-        assert summaries == 2
-        assert agent._usage.totals.failed_request_count == 1
+        assert summaries == failed_attempts + 1
+        assert agent._usage.totals.failed_request_count == failed_attempts
         assert all(run.successful for run in agent._usage.runs)
         record(stress_trace, "summary", rejected_summary_cases=1, recovery_summaries=1,
                mode=mode, generation_outcome=outcome, foreground_replies=foreground)

@@ -66,7 +66,7 @@ for(const revisioned of [false,true]) test(`Quiet Hours observed conflict respec
   initializePageDraft(panel);
   panel._hass.callWS=async request => {
     writes.push(structuredClone(request));
-    if(revisioned && request.revision !== "new-policy") throw new Error("Quiet Hours configuration changed; reload before saving");
+    if(revisioned && request.revision !== "new-policy") throw Object.assign(new Error("Quiet Hours configuration changed; reload before saving"), {code:"invalid_request"});
     return {config:request.config,...(revisioned ? {revision:"new-policy"} : {})};
   };
   await assert.rejects(scope.save(),revisioned ? /reload before saving/ : /saved Quiet Hours policy changed/);

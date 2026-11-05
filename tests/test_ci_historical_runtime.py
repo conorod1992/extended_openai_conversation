@@ -40,7 +40,8 @@ def test_generated_fixtures_reject_beta_relabeling_or_wrong_source(
     fixture = GENERATED_FIXTURES[ha_version]
     wheel = tmp_path / "fixtures.whl"
     ha_pin = "2026.10.0b4" if drift == "metadata" else ha_version
-    patch = "0b4" if drift == "fixtures" else ha_version.rsplit(".", 1)[-1]
+    major, minor, released_patch = ha_version.split(".")
+    patch = "0b4" if drift == "fixtures" else released_patch
     provenance = {
         "generator_sha": "b" * 40 if drift == "generator" else fixture.generator_sha,
         "core_sha": "a" * 40 if drift == "provenance" else fixture.core_sha,
@@ -53,7 +54,7 @@ def test_generated_fixtures_reject_beta_relabeling_or_wrong_source(
         )
         package.writestr(
             "pytest_homeassistant_custom_component/const.py",
-            f'MAJOR_VERSION: Final = 2026\nMINOR_VERSION: Final = 10\nPATCH_VERSION: Final = "{patch}"\n',
+            f'MAJOR_VERSION: Final = {major}\nMINOR_VERSION: Final = {minor}\nPATCH_VERSION: Final = "{patch}"\n',
         )
         package.writestr(
             "pytest_homeassistant_custom_component/eoai_source_identity.json",
@@ -182,3 +183,106 @@ def test_generated_bridge_does_not_accept_another_release(monkeypatch, ha_versio
 def test_release_day_bridge_does_not_guess_future_releases():
     with pytest.raises(RuntimeError, match="No published"):
         resolve_ha_test_plugin("2026.10.5", {"releases": {}})
+
+
+@pytest.mark.parametrize("drift", [None, "metadata", "constants"])
+def test_official_fixture_bridge_preserves_source_and_single_plugin(tmp_path, drift):
+    import tomllib
+    from ci.install_ha_test_plugin import prepare_official_fixture_bridge
+
+    fixture = GENERATED_FIXTURES["2026.11.0"]
+    core = tmp_path / "core"
+    source = core / "packages/pytest-homeassistant"
+    package = source / "pytest_homeassistant"
+    package.mkdir(parents=True)
+    plugin = package / "bootstrap.py"
+    plugin.write_text(
+        'import pytest_homeassistant.common\nMARKER = "fixture body"\n',
+        encoding="utf-8",
+    )
+    metadata = source / "pyproject.toml"
+    metadata.write_text(
+        '[project]\nname = "pytest-homeassistant"\nversion = "0.0.0"\n'
+        'dependencies = ["homeassistant",]\n'
+        '[project.entry-points.pytest11]\npytest_homeassistant = "pytest_homeassistant.bootstrap"\n'
+        '[tool.setuptools.packages.find]\ninclude = ["pytest_homeassistant*"]\n',
+        encoding="utf-8",
+    )
+    (core / "homeassistant").mkdir()
+    const = core / "homeassistant/const.py"
+    const.write_text(
+        'MAJOR_VERSION: Final = 2026\nMINOR_VERSION: Final = 11\nPATCH_VERSION: Final = "0"\n',
+        encoding="utf-8",
+    )
+    if drift == "metadata":
+        metadata.write_text(
+            metadata.read_text(encoding="utf-8").replace('"0.0.0"', '"changed"'),
+            encoding="utf-8",
+        )
+    if drift == "constants":
+        const.write_text("MAJOR_VERSION: Final = 2026\n", encoding="utf-8")
+    original = {
+        p.relative_to(core): p.read_bytes() for p in core.rglob("*") if p.is_file()
+    }
+    destination = tmp_path / "bridge"
+    if drift:
+        with pytest.raises(RuntimeError, match="changed"):
+            prepare_official_fixture_bridge(core, destination, fixture)
+    else:
+        prepare_official_fixture_bridge(core, destination, fixture)
+        projected = tomllib.loads(
+            (destination / "pyproject.toml").read_text(encoding="utf-8")
+        )
+        assert projected["project"]["name"] == "pytest-homeassistant-custom-component"
+        assert projected["project"]["version"] == fixture.plugin_version
+        assert projected["project"]["dependencies"] == ["homeassistant==2026.11.0"]
+        assert projected["project"]["entry-points"]["pytest11"] == {
+            "pytest_homeassistant_custom_component": "pytest_homeassistant_custom_component.bootstrap"
+        }
+        relocated = destination / "pytest_homeassistant_custom_component"
+        assert (
+            (relocated / "bootstrap.py").read_text(encoding="utf-8")
+            == 'import pytest_homeassistant_custom_component.common\nMARKER = "fixture body"\n'
+        )
+        assert (relocated / "const.py").read_text(
+            encoding="utf-8"
+        ) == "from typing import Final\n" + const.read_text(encoding="utf-8")
+        assert (
+            json.loads(
+                (relocated / "eoai_source_identity.json").read_text(encoding="utf-8")
+            )
+            == fixture.provenance
+        )
+        assert not (destination / "pytest_homeassistant").exists()
+    assert {
+        p.relative_to(core): p.read_bytes() for p in core.rglob("*") if p.is_file()
+    } == original
+
+
+@pytest.mark.usefixtures("socket_enabled")
+def test_native_coverage_does_not_import_eoai_during_dependency_initialization():
+    """Avoid reentrant package imports while Cython dependencies define enums."""
+    import subprocess
+    import sys
+    from pathlib import Path
+    import configparser
+
+    config = configparser.ConfigParser()
+    config.read("ci/coverage-native-config-flow.ini")
+    assert (
+        config["run"]["include"]
+        == "*/custom_components/extended_openai_conversation_responses/config_flow.py"
+    )
+    assert config["report"]["fail_under"] == "84"
+    script = """
+import coverage, sys
+probe = coverage.Coverage(config_file="ci/coverage-native-config-flow.ini")
+probe.start()
+assert not any(name.startswith("custom_components.extended_openai_conversation_responses") for name in sys.modules)
+import bleak_retry_connector
+probe.stop()
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], cwd=Path.cwd(), capture_output=True, text=True
+    )
+    assert result.returncode == 0, result.stderr

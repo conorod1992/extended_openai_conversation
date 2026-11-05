@@ -142,7 +142,13 @@ async def test_repair_configuration_save_obeys_runtime_eligibility(
         if "title" in updates:
             target.title = updates["title"]
 
-    hass.config_entries = SimpleNamespace(async_update_subentry=persist)
+    hass.config_entries = SimpleNamespace(
+        async_update_subentry=persist, async_get_entry=lambda _: entry
+    )
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.usage.async_get_durable_usage",
+        AsyncMock(return_value=SimpleNamespace(async_prune_details=AsyncMock())),
+    )
     monkeypatch.setattr(
         management_ui, "entry_and_agent", lambda *_, **__: (entry, subentry)
     )

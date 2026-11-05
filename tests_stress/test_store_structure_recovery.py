@@ -25,16 +25,16 @@ from homeassistant.util import dt as dt_util
 from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
 from tests_real_ha.test_corrupt_subsystem_store_startup_isolation import (
     _purge_cached_managers,
-    _real_store_io,  # noqa: F401 - imported fixture is registered for this module
 )
 from tests_stress.conftest import record
+from tests_stress.test_os_storage_faults import real_store_io  # noqa: F401
 
 
 @pytest.mark.no_fail_on_log_exception
 @pytest.mark.asyncio
 async def test_two_corrupt_stores_leave_usage_intact_and_recover_independently(
     hass: HomeAssistant,
-    _real_store_io: None,  # noqa: F811 - genuine Store fixture
+    real_store_io: None,  # noqa: F811 - genuine Store fixture
     stress_trace: list[dict],
 ) -> None:
     """Wrong-shape and future-version stores degrade separately on one cold start."""
@@ -144,7 +144,7 @@ async def test_two_corrupt_stores_leave_usage_intact_and_recover_independently(
 @pytest.mark.asyncio
 async def test_invalid_store_structure_stays_durable_until_repaired(
     hass: HomeAssistant,
-    _real_store_io: None,  # noqa: F811 - fixture name deliberately matches import
+    real_store_io: None,  # noqa: F811 - fixture name deliberately matches import
     stress_trace: list[dict],
 ) -> None:
     """A valid JSON envelope with invalid data degrades only its owner."""
@@ -211,7 +211,7 @@ async def test_invalid_store_structure_stays_durable_until_repaired(
 async def test_knowledge_read_failure_preserves_store_and_sibling_state(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
-    _real_store_io: None,  # noqa: F811 - imported fixture is intentionally reused
+    real_store_io: None,  # noqa: F811 - imported fixture is intentionally reused
     stress_trace: list[dict],
 ) -> None:
     """A disk-like read error must not turn durable sources into an empty save."""
@@ -276,7 +276,7 @@ async def test_knowledge_read_failure_preserves_store_and_sibling_state(
 async def test_knowledge_write_failure_rolls_back_and_survives_reload(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
-    _real_store_io: None,  # noqa: F811 - imported fixture is intentionally reused
+    real_store_io: None,  # noqa: F811 - imported fixture is intentionally reused
     stress_trace: list[dict],
 ) -> None:
     """A failed real Store write leaves its prior complete generation intact."""

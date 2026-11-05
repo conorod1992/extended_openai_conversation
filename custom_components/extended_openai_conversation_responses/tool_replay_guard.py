@@ -12,6 +12,8 @@ import hashlib
 import json
 from typing import Any
 
+import voluptuous as vol
+
 from homeassistant.components import conversation
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
@@ -38,6 +40,35 @@ _PRECISE_EFFECT_KINDS = {
     "file_write",
     "file_edit",
 }
+
+
+def _ha_schema_preserves_values(schema: Any, depth: int = 0) -> bool:
+    """Recognize plain validation without re-running possibly stateful schemas."""
+    if depth > 32:
+        return False
+    if any(schema is kind for kind in (str, int, float, bool, type(None))):
+        return True
+    if schema is None or type(schema) in (str, int, float, bool):
+        return True
+    if type(schema) is vol.Schema:
+        return _ha_schema_preserves_values(schema.schema, depth + 1)
+    if type(schema) is dict:
+        return all(
+            (
+                type(key) is str
+                or (
+                    type(key) in (vol.Optional, vol.Required)
+                    and type(key.schema) is str
+                )
+            )
+            and _ha_schema_preserves_values(value, depth + 1)
+            for key, value in schema.items()
+        )
+    if type(schema) is list:
+        return all(_ha_schema_preserves_values(value, depth + 1) for value in schema)
+    # Custom validators/coercions may happen to return an unchanged preview,
+    # then change the actual native invocation. Equality alone proves nothing.
+    return False
 
 
 @dataclass
@@ -300,6 +331,8 @@ def record_dispatch(
     )
     if ha_parameters is not None:
         spec["_ha_parameters"] = ha_parameters
+    # Capture model-call identity before any future schema/default evaluation.
+    spec["_original_call_signatures"] = frozenset(_signature(item) for item in retained)
     prepared_call = (
         llm.ToolInput(
             tool_name=tool_input.tool_name,
@@ -308,6 +341,14 @@ def record_dispatch(
         )
         if prepared_arguments is not None
         else tool_input
+    )
+    # HA dispatches the original input and its tool owns normalization. If our
+    # preview changes that input, another application (e.g. a callable default)
+    # need not describe the effect's actual arguments. Do not claim precision
+    # after a failed continuation, or apply a non-idempotent schema twice.
+    spec["_effective_arguments_unknown"] = ha_parameters is not None and (
+        _signature(prepared_call) != _signature(tool_input)
+        or not _ha_schema_preserves_values(ha_parameters)
     )
     signature = (
         _signature(prepared_call, spec, prepared=prepared_arguments is not None)
@@ -473,15 +514,29 @@ def remember_unacknowledged_calls(
         # Never evict an unresolved effect and silently permit its replay.
         effects[conversation_id] = {"*"}
     schemas = state.schemas
-    schemas.setdefault(conversation_id, {}).update(dict(records))
+    retained_records = schemas.setdefault(conversation_id, {})
+    for signature, spec in records:
+        previous = retained_records.get(signature, {})
+        retained_records[signature] = {
+            **spec,
+            "_original_call_signatures": frozenset(
+                spec.get("_original_call_signatures", ())
+            )
+            | frozenset(previous.get("_original_call_signatures", ())),
+        }
     uncertain = state.uncertain_tools
     uncertain.setdefault(conversation_id, set()).update(
         call.tool_name
         for content in new_content
         if isinstance(content, conversation.AssistantContent) and content.tool_calls
         for call in content.tool_calls
-        if getattr(entity, "_execution_tool_outcomes", {}).get(id(call))
-        in {"partial", "uncertain"}
+        if (
+            getattr(entity, "_execution_tool_outcomes", {}).get(id(call))
+            in {"partial", "uncertain"}
+            or getattr(entity, "_dispatched_tool_signatures", {})
+            .get(id(call), (None, {}))[1]
+            .get("_effective_arguments_unknown", False)
+        )
         and _needs_tool_wide_guard(entity, call)
     )
     while len(schemas) > _MAX_AMBIGUOUS_CONVERSATIONS:
@@ -507,7 +562,11 @@ def was_unacknowledged_equivalent(
         chat_log.conversation_id, ()
     ):
         return True
-    if _signature(tool_input) in records:
+    raw_signature = _signature(tool_input)
+    if raw_signature in records or any(
+        raw_signature in spec.get("_original_call_signatures", ())
+        for spec in records.values()
+    ):
         return True
     return any(
         _signature(tool_input, spec) == signature for signature, spec in records.items()

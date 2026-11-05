@@ -49,8 +49,11 @@ HELPERS = r'''
 
         // Mobile navigation is a native select named Page. A loose "assistant"
         // match instead opens the separate Editing assistant select on Overview.
-        let pageSelector = webView.buttons
-            .matching(NSPredicate(format: "label == %@", "Page"))
+        // WebKit exposes an HTML select as Button or Other across iOS builds.
+        // Its label and current value identify the control, unlike the separate
+        // static Page label or the Editing assistant select.
+        let pageSelector = webView.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@ AND value == %@", "Page", "Overview"))
             .firstMatch
         wait(for: pageSelector, timeout: Timeout.frontend, "EOAI Page selector")
         pageSelector.tap()
@@ -59,6 +62,10 @@ HELPERS = r'''
             .firstMatch
         wait(for: assistantPage, timeout: Timeout.frontend, "EOAI Assistant page option")
         assistantPage.tap()
+        let selectedAssistantPage = webView.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@ AND value == %@", "Page", "Assistant"))
+            .firstMatch
+        wait(for: selectedAssistantPage, timeout: Timeout.frontend, "selected EOAI Assistant page")
         let basics = webElement(labelContaining: "basics")
         if basics.waitForExistence(timeout: Timeout.optional) && basics.isHittable {
             basics.tap()

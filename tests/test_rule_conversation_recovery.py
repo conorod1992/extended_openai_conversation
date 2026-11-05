@@ -6,6 +6,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+
+from tests.ha_store_test_helpers import disk_write_boundary
 from pytest_homeassistant_custom_component.common import MockUser
 
 from custom_components.extended_openai_conversation_responses import (
@@ -65,14 +67,15 @@ async def test_running_conversation_recovers_rules_without_ai_fallthrough(
     first, _ = await invoke("good night", direct=True)
     assert first.response.speech["plain"]["speech"] == "Known reply"
     assert effects == ["old"] and provider_requests == []
-    write, load = rules._store._write_prepared_data, rules._store.async_load
+    writer, write_name = disk_write_boundary(rules._store)
+    write, load = getattr(writer, write_name), rules._store.async_load
 
     def failed_write(*args):
         if after_write:
             write(*args)
         raise OSError("PRIVATE-RULE-WRITE")
 
-    monkeypatch.setattr(rules._store, "_write_prepared_data", failed_write)
+    monkeypatch.setattr(writer, write_name, failed_write)
     monkeypatch.setattr(
         rules._store, "async_load", AsyncMock(side_effect=OSError("PRIVATE-RULE-READ"))
     )
@@ -104,7 +107,7 @@ async def test_running_conversation_recovers_rules_without_ai_fallthrough(
     unavailable, _ = await invoke("good night", direct=True)
     assert "unavailable" in unavailable.response.speech["plain"]["speech"]
     assert effects == ["old"] and provider_requests == []
-    monkeypatch.setattr(rules._store, "_write_prepared_data", write)
+    monkeypatch.setattr(writer, write_name, write)
     reads = AsyncMock(wraps=load)
     monkeypatch.setattr(rules._store, "async_load", reads)
     fresh = rr.RequestRules(
@@ -214,14 +217,15 @@ async def test_matching_budget_fallback_requires_current_rule_generation(
                     created["id"], updated, expected_revision=rules.revision()
                 )
             else:
-                write, load = rules._store._write_prepared_data, rules._store.async_load
+                writer, write_name = disk_write_boundary(rules._store)
+                write, load = getattr(writer, write_name), rules._store.async_load
 
                 def fail(*args):
                     if outcome == "written":
                         write(*args)
                     raise OSError("write failed")
 
-                monkeypatch.setattr(rules._store, "_write_prepared_data", fail)
+                monkeypatch.setattr(writer, write_name, fail)
                 monkeypatch.setattr(
                     rules._store,
                     "async_load",
@@ -231,7 +235,7 @@ async def test_matching_budget_fallback_requires_current_rule_generation(
                     await rules.async_update(
                         created["id"], updated, expected_revision=rules.revision()
                     )
-                monkeypatch.setattr(rules._store, "_write_prepared_data", write)
+                monkeypatch.setattr(writer, write_name, write)
                 monkeypatch.setattr(rules._store, "async_load", load)
         release.set()
         result, _ = await request

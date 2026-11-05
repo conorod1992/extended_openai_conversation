@@ -44,6 +44,15 @@ for (const bundled of [false, true]) for (const guest of [true, false]) for (con
   // omitted only by the first response's presentation envelope.
   await control.uncheck();
   if (!guest) await panel.locator("#qh-end").fill("08:15");
+  if (partial && !guest) {
+    // An incomplete whole-policy ACK requires a fresh read before another
+    // write. The read must preserve the newer edits and the omitted field.
+    await expect(panel.locator("#save-page")).toBeDisabled();
+    await panel.evaluate(host => host._loadSection(true));
+    await expect(panel.locator("#save-page")).toBeEnabled();
+    await expect(panel.locator("#qh-start")).toHaveValue("23:15");
+    await expect(panel.locator("#qh-end")).toHaveValue("08:15");
+  }
   await panel.locator("#save-page").click();
   await expect.poll(() => panel.evaluate((host, view) => host._unsavedState.scopes.get(view).pending, view)).toBe(false);
   const stored = await page.evaluate(guest => browserHarness.getState()[guest ? "guest" : "quiet"].config, guest);

@@ -9,6 +9,7 @@ from yarl import URL
 
 from custom_components.extended_openai_conversation_responses import backup, transfer
 from custom_components.extended_openai_conversation_responses.agent_config import (
+    AgentConfigError,
     agent_config_snapshot,
 )
 from custom_components.extended_openai_conversation_responses.secret_redaction import (
@@ -39,7 +40,16 @@ def config_for(spelling, persisted, kind):
         "chat_model": "gpt-4o",
         "functions": yaml.safe_dump([tool]) if persisted else [tool],
     }
-    return agent_config_snapshot(config)
+    try:
+        return agent_config_snapshot(config)
+    except AgentConfigError as error:
+        # HA 2026.11 rejects embedded scheme whitespace before export. The
+        # strict rejection is safe too; older HA must still redact what its
+        # URL validator accepts and its HTTP client normalizes.
+        assert spelling in {"https:\n//{}", "\thttps:\r\n\t//{}"}
+        assert "invalid url" in str(error).lower()
+        assert SECRET not in str(error)
+        return None
 
 
 @pytest.mark.parametrize("spelling", SPELLINGS)
@@ -50,6 +60,8 @@ def test_complete_exports_redact_client_normalized_urls(
     hass, spelling, persisted, kind, exporter
 ):
     config = config_for(spelling, persisted, kind)
+    if config is None:
+        return  # The production validator rejected this spelling safely.
     original = deepcopy(config)
     if exporter == "setup":
         document = _portable_document(mode="setup")
@@ -70,6 +82,8 @@ def test_complete_exports_redact_client_normalized_urls(
 @pytest.mark.parametrize("change", [None, "host", "path", "method", "query"])
 def test_normalized_url_recovery_remains_destination_bound(hass, spelling, change):
     config = config_for(spelling, False, "query")
+    if config is None:
+        return  # This spelling cannot reach destination recovery on strict HA.
     public = redact_secrets(config)
     destination = deepcopy(config)
     tools = (

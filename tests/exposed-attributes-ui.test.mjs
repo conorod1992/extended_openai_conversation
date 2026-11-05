@@ -1,10 +1,48 @@
 import assert from "node:assert/strict";
+import test from "node:test";
 
 import {
+  bindExposedAttributeSettings,
   removeExposedAttributePreference,
   renderExposedAttributeSettings,
   updateExposedAttributePreference,
 } from "../custom_components/extended_openai_conversation_responses/frontend/exposed-attributes-ui.js";
+
+for (const layout of ["legacy-combo", "mwc-list-item", "role-listitem", "modern", "modern-combo", "native-role"]) test(`exposed entity picker preserves ${layout} native semantics`, async () => {
+  const legacy = ["legacy-combo", "mwc-list-item", "role-listitem"].includes(layout);
+  const combo = {updateComplete:Promise.resolve(), shadowRoot:{querySelector:selector => layout === "legacy-combo" && selector.includes("li") ? {} : null}};
+  const attributes = new Map(layout === "native-role" ? [["role", "group"], ["aria-label", "Native chooser"]] : []);
+  const field = {
+    updateComplete:Promise.resolve(),
+    shadowRoot:{querySelector:selector => selector === "ha-combo-box-item" && layout.endsWith("-combo") ? combo
+      : selector.split(",").map(part => part.trim()).includes(layout === "role-listitem" ? '[role="listitem"]' : layout) ? {} : null},
+    setAttribute:(key, value) => attributes.set(key, value),
+  };
+  const generic = {updateComplete:Promise.resolve(), shadowRoot:{querySelector:() => field}};
+  const picker = {isConnected:true, updateComplete:Promise.resolve(), shadowRoot:{querySelector:() => generic}, addEventListener() {}};
+  const fallback = {addEventListener() {}};
+  const panel = basePanel();
+  panel._hass = {marker:"native hass"};
+  panel.shadowRoot = {
+    querySelector:selector => ({"#exposed-entity-picker":picker, "#exposed-entity-picker-fallback":fallback})[selector] || null,
+    querySelectorAll:() => [],
+  };
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "customElements");
+  Object.defineProperty(globalThis, "customElements", {configurable:true, value:{get:() => true}});
+  try {
+    bindExposedAttributeSettings(panel);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(picker.hidden, false);
+    assert.equal(fallback.hidden, true);
+    assert.equal(picker.hass, panel._hass);
+    assert.deepEqual(picker.includeEntities, ["light.kitchen", "sensor.registryless"]);
+    assert.deepEqual([...attributes], legacy ? [["role", "list"], ["aria-label", "Entity selection"]]
+      : layout === "native-role" ? [["role", "group"], ["aria-label", "Native chooser"]] : []);
+  } finally {
+    if (previous) Object.defineProperty(globalThis, "customElements", previous);
+    else delete globalThis.customElements;
+  }
+});
 
 {
   const original = {"registry:stable": ["color_temp"]};

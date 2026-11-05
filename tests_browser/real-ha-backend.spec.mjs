@@ -146,6 +146,9 @@ test("real browser creates, edits, reloads, and deletes a Memory through HA", as
   await panel.locator("#memory-expiry").fill(expiry);
   await panel.locator("#memory-save").click();
   await expect(panel.locator(".memory-list")).toContainText("Manual real HA short-term fact");
+  const submittedExpiry = await page.evaluate(() => browserHarness.calls.find(call => call.section === "memories" && call.action === "temporary_add" && call.content === "Manual real HA short-term fact"));
+  expect(submittedExpiry.expires_at).toBe(expiry);
+  expect(submittedExpiry.local_times).toEqual({expires_at:expiry});
   await page.goto(realFixtureUrl("data-memory/memories"));
   panel = page.locator("extended-openai-management-panel");
   await panel.locator('.memory-kind[data-kind="temporary"]').click();
@@ -587,6 +590,8 @@ for (const now of [false, true]) {
     ));
     const before = await updates();
     const original = await panel.evaluate(host => host._call("guest_mode", "get"));
+    const haConfig = await panel.evaluate(host => host.hass.callWS({type:"get_config"}));
+    expect(await panel.evaluate(host => host.hass.config.time_zone)).toBe(haConfig.time_zone);
     const button = panel.locator(now ? "#guest-now" : "#guest-update");
     await panel.locator("#guest-indefinite").uncheck();
     await panel.locator("#guest-end").fill("");
@@ -614,7 +619,8 @@ for (const now of [false, true]) {
     await expect(panel.locator("#toast")).toHaveText("Guest Mode updated");
     const finite = (await updates()).at(-1);
     expect(finite.indefinite).toBe(false);
-    expect(finite.active_until).toBe(expectedEnd);
+    expect(finite.active_until).toBe(end);
+    expect(finite.local_times).toMatchObject({active_until:end});
     const finiteStatus = await panel.evaluate(host => host._call("guest_mode", "get"));
     expect(finiteStatus.status.indefinite).toBe(false);
     expect(new Date(finiteStatus.status.active_until).toISOString()).toBe(expectedEnd);

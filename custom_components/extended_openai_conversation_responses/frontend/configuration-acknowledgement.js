@@ -1,10 +1,11 @@
 import {clone, same, mergeAcknowledgedDraft} from "./unsaved-state.js";
-import {captureVoiceMappingDraft, discardVoiceMappingDraft, acknowledgeVoiceMappingDraft} from "./voice-mapping-draft.js";
+import {captureVoiceMappingDraft, discardVoiceMappingDraft, acknowledgeVoiceMappingDraft, clearVoiceMappingDraft} from "./voice-mapping-draft.js";
 
 import {callMutation, processMutationResponse, requireMutationAcknowledgement, mutationResponseError} from "./mutation-response.js";
 export {callMutation, processMutationResponse, requireMutationAcknowledgement};
 
 const field = (config, key) => Object.hasOwn(config, key) ? [config[key]] : [];
+export const USAGE_RETENTION_FIELDS = ["usage_request_retention_days", "usage_run_retention_days"];
 
 // Authored values survive a temporary identity transition. An operation made
 // before it cannot regain authority merely because the same user returns.
@@ -52,10 +53,12 @@ export function configurationReadOvertookSubmission(panel, submission) {
 
 // A committed replacement consumes the draft it displaced, not later edits.
 // Keep its comparison baseline until an authoritative read can merge that delta.
-export function retireReplacedConfigurationDraft(panel, submission) {
+export function retireReplacedConfigurationDraft(panel, submission, {retainUntilRead = false} = {}) {
   if (!configurationSubmissionIsCurrent(panel, submission)) return;
-  if (same(panel._draft || {}, submission.draft) && panel._draftTitle === submission.title
-      && (panel._eocModelIntent || null) === submission.modelIntent) panel._clearConfigDraft();
+  const voiceUnchanged = same(captureVoiceMappingDraft(panel), submission.voiceMappingRows);
+  if (voiceUnchanged) clearVoiceMappingDraft(panel);
+  if (!retainUntilRead && same(panel._draft || {}, submission.draft) && panel._draftTitle === submission.title
+      && voiceUnchanged && (panel._eocModelIntent || null) === submission.modelIntent) panel._clearConfigDraft();
   else {
     panel._eocRestoredConfiguration = submission;
     panel._configDataStale = true;
@@ -65,6 +68,23 @@ export function retireReplacedConfigurationDraft(panel, submission) {
     panel._eocPendingModelPreparation = null;
     panel._eocModelIntent = null;
   }
+}
+
+export async function recoverCommittedRetention(panel, owner, fields = USAGE_RETENTION_FIELDS) {
+  if (!fields.length || !configurationSubmissionIsCurrent(panel, owner)) return;
+  const previous = panel._eocPendingRetention;
+  const retained = previous && configurationSubmissionIsCurrent(panel, previous) ? previous.fields : [];
+  const pending = {...captureConfigurationOwner(panel), fields:[...new Set([...retained, ...fields])]};
+  panel._eocPendingRetention = pending;
+  // Retain ownership even when the read fails or HA replaces this panel.
+  panel._syncConfigDirty?.();
+  panel._invalidateCleanConfiguration?.(owner.agentId);
+  panel._configDataStale = true;
+  try { await panel._loadConfigDraft({preserveResult:true}); } catch {}
+  // A replacement may already have acquired the operation while we refreshed.
+  if (panel._eocPendingRetention !== pending || !configurationSubmissionIsCurrent(panel, owner)) return;
+  panel._syncConfigDirty?.();
+  panel._render();
 }
 
 function preservesModelPreparation(panel, submission, fields) {
@@ -77,6 +97,15 @@ function preservesModelPreparation(panel, submission, fields) {
 // belong to the latest accepted read.
 export function configurationDraftBaseline(panel, baseline = panel._configData) {
   return panel._eocAcknowledgedConfiguration?.baseline?.(baseline) || baseline;
+}
+
+// A committed overwrite retires the submitted values before its saved values
+// are readable. Compare authoring against that submission, keeping the saved
+// configuration/revision separate for persistence and acknowledgement.
+export function configurationAuthoringBaseline(panel, baseline = panel._configData) {
+  const restored = panel._eocRestoredConfiguration;
+  return restored && configurationSubmissionIsCurrent(panel, restored)
+    ? {config:restored.draft, title:restored.title} : configurationDraftBaseline(panel, baseline);
 }
 
 export function discardConfigurationDraft(panel) {
@@ -100,14 +129,14 @@ export function discardConfigurationDraft(panel) {
     panel._configDataStale = true;
   }
   panel._setConfigDirty(false);
+  // Discard authored edits, while retaining an unfinished retention operation
+  // whose policy already committed and still needs a deletion retry.
+  panel._syncConfigDirty?.();
   return true;
 }
 
 export function mergeConfigurationRead(panel, current, baseline, saved) {
-  const restored = panel._eocRestoredConfiguration;
-  // Restore replaces the submitted draft. Only subsequently authored edits survive.
-  const comparison = restored && configurationSubmissionIsCurrent(panel, restored)
-    ? {config:restored.draft, title:restored.title} : configurationDraftBaseline(panel, baseline);
+  const comparison = configurationAuthoringBaseline(panel, baseline);
   const pending = panel._eocConfigurationSubmission;
   const protectedFields = pending && !pending.acknowledged && configurationSubmissionIsCurrent(panel, pending) ? pending.fields : [];
   panel._eocModelIntent?.acceptReasoningRead?.(panel, saved.config, {comparisonConfig:comparison.config, protectedFields});

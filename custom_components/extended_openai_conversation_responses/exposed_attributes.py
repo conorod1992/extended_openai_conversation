@@ -8,7 +8,7 @@ from io import StringIO
 import json
 from typing import Any
 
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import area_registry as ar, entity_registry as er
 from homeassistant.helpers.template.helpers import resolve_area_id
 
 from . import agent_config
@@ -319,6 +319,23 @@ def _render_grouped_default(
     lines = ["## Available Devices", _csv_row(header)]
     for area_id, entities in grouped.items():
         lines.append(f"area_id={area_id or ''}")
+        if area_id:
+            area = ar.async_get(hass).async_get_area(area_id)
+            if area is not None and isinstance(area.name, str):
+                # Read labels live: renames do not change the cached stable ID.
+                lines.append(_csv_row(["area_name", area.name]))
+                aliases = getattr(area, "aliases", ())
+                if isinstance(aliases, (set, list, tuple)) and aliases:
+                    lines.append(
+                        _csv_row(
+                            [
+                                "area_aliases",
+                                *sorted(
+                                    alias for alias in aliases if isinstance(alias, str)
+                                ),
+                            ]
+                        )
+                    )
         for entity in entities:
             aliases = entity.get("aliases") or []
             row: list[Any] = [

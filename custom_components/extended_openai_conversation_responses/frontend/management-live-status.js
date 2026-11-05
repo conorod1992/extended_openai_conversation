@@ -85,13 +85,16 @@ export function watchTimedFeatureStatus(panel) {
       : boundaryDelay(panel._result?.period_ends_at),
     refresh: async (current) => {
       const loadToken = panel._loadToken;
+      const interval = guest ? panel._unsavedState?.scopes.get("guest-interval") : null;
+      const intervalRead = interval?.captureRead?.();
       const result = await panel._call(guest ? "guest_mode" : "quiet_hours", "get");
       if (!current() || panel._loadToken !== loadToken || panel._guestOperation) return;
       if (guest) {
+        interval?.reconcileRead?.(result.status, intervalRead);
         panel._patchGuestModeStatus(panel._agentId, result.status);
         const status = panel._result?.status || {};
         const node = panel.shadowRoot.querySelector("[data-guest-live-status]");
-        if (node) node.textContent = `${panel._titleCase(String(status.state || "inactive").replaceAll("_", " "))} · ${status.active_from ? `Starts ${panel._formatDate(status.active_from)}${status.active_until ? ` · Ends ${panel._formatDate(status.active_until)}` : " · No expiry"}` : "No interval configured"}`;
+        if (node) node.textContent = `${panel._titleCase(String(status.state || "inactive").replaceAll("_", " "))} · ${status.active_from ? `Starts ${(status.active_from_local?.replace("T", " ") || panel._formatDate(status.active_from))}${status.active_until ? ` · Ends ${(status.active_until_local?.replace("T", " ") || panel._formatDate(status.active_until))}` : " · No expiry"}` : "No interval configured"}`;
       } else {
         panel._result = {...panel._result, active:result.active, period_started_at:result.period_started_at, period_ends_at:result.period_ends_at, owned_controls:result.owned_controls};
         const title = panel.shadowRoot.querySelector("[data-qh-live-title]");

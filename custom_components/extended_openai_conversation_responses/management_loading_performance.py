@@ -65,6 +65,16 @@ def _guest_has_ha_exclusions(options: dict[str, Any]) -> bool:
     )
 
 
+def _overview_guest_status(
+    status: dict[str, Any], options: dict[str, Any]
+) -> dict[str, Any]:
+    """Keep primary, detail and cached Overview status projections complete."""
+    return {
+        **status,
+        "has_home_assistant_exclusions": _guest_has_ha_exclusions(options),
+    }
+
+
 def _agent_snapshot(
     hass: HomeAssistant,
     entry: Any,
@@ -109,7 +119,7 @@ def _agent_snapshot(
         )
     else:
         guest_status = dict(guest_status)
-    guest_status["has_home_assistant_exclusions"] = _guest_has_ha_exclusions(options)
+    guest_status = _overview_guest_status(guest_status, options)
     if performance is not None:
         performance["guest_status_ms"] = _ms(phase)
     snapshot = {
@@ -390,7 +400,11 @@ async def async_overview_detail(
         guest = await async_get_guest_mode(hass, entry_id, subentry_id)
         return {
             "kind": kind,
-            "agent": {"guest_mode": guest.status()},
+            "agent": {
+                "guest_mode": _overview_guest_status(
+                    guest.status(), dict(subentry.data)
+                )
+            },
             "_performance": {"total_ms": _ms(started)},
         }
 
@@ -550,11 +564,12 @@ async def async_overview_summary(
 
 
 def _snapshot_normalized_configuration(
-    config: dict[str, Any], *, validated: bool = False
+    config: dict[str, Any], *, validated: bool = False, provider: str | None = None
 ) -> dict[str, Any]:
     """Project decoded Functions; raw persisted sources use agent_config_snapshot."""
     snapshot = agent_config_value_snapshot(
-        {key: value for key, value in config.items() if key in AGENT_CONFIG_FIELDS}
+        {key: value for key, value in config.items() if key in AGENT_CONFIG_FIELDS},
+        provider=provider,
     )
     configured = snapshot[CONF_FUNCTION_TOOLS]
     if validated:

@@ -119,6 +119,8 @@ async def test_followup_answer_completes_and_next_turn_is_ordinary(
     assert followup_output["conversation_id"] == first_output["conversation_id"]
     assert followup_output["continue_conversation"] is False
     assert hass.states.get(entity_id).state == "1"
+    # Switch from the original parent ID to the canonical ID returned by Assist.
+    conversation_id = first_output["conversation_id"]
     normal = await speak("Another request")
     assert _final_speech(normal) == ordinary
     assert _progressive_text(normal).count(ordinary) == 1
@@ -127,7 +129,10 @@ async def test_followup_answer_completes_and_next_turn_is_ordinary(
     followup_payload = json.dumps(wire.requests[1]["body"])
     assert question in followup_payload
     assert "Yes, please." in followup_payload
-    assert first_output["conversation_id"] == conversation_id
+    normal_output = next(event for event in normal if event["type"] == "intent-end")[
+        "data"
+    ]["intent_output"]
+    assert normal_output["conversation_id"] == first_output["conversation_id"]
 
 
 async def test_speech_cleanup_does_not_change_followup_provider_data(

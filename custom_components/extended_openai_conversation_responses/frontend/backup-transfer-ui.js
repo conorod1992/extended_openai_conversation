@@ -25,11 +25,19 @@ const SECTION_LABELS = Object.freeze(Object.fromEntries(TRANSFER_SECTIONS));
 function selectedAgent(panel) {
   const agent = panel?._selectedAgent?.();
   if (!agent?.entry_id || !agent?.subentry_id) throw new Error("Select a conversation agent first");
-  return Object.freeze({entry_id: agent.entry_id, subentry_id: agent.subentry_id});
+  return transferOwner(panel, agent);
+}
+
+function transferOwner(panel, owner) {
+  // A transfer's transport belongs to its admitting HA connection. In
+  // particular, cleanup must not borrow a replacement account's authority.
+  const callWS = owner.callWS ?? panel?._hass?.callWS?.bind(panel._hass);
+  if (typeof callWS !== "function") throw new Error("Home Assistant connection is unavailable");
+  return Object.freeze({entry_id: owner.entry_id, subentry_id: owner.subentry_id, callWS});
 }
 
 function transferSession(sessionId, owner) {
-  return Object.freeze({session_id: sessionId, owner: Object.freeze({entry_id: owner.entry_id, subentry_id: owner.subentry_id})});
+  return Object.freeze({session_id: sessionId, owner});
 }
 
 function ownsTransfer(panel, session) {
@@ -38,9 +46,8 @@ function ownsTransfer(panel, session) {
 }
 
 export async function callBackupTransfer(panel, action, data = {}, owner = selectedAgent(panel)) {
-  if (!panel?._hass?.callWS) throw new Error("Home Assistant connection is unavailable");
-  const agent = owner;
-  const send = () => panel._hass.callWS({
+  const agent = transferOwner(panel, owner);
+  const send = () => agent.callWS({
     type: WS_BACKUP_TRANSFER,
     action,
     entry_id: agent.entry_id,
@@ -155,9 +162,14 @@ export async function downloadCustomBackup(panel, sections, saveBlob = defaultSa
 }
 
 export async function uploadFullBackup(panel, file, isCurrent = () => true, owner = selectedAgent(panel)) {
-  owner = Object.freeze({entry_id: owner.entry_id, subentry_id: owner.subentry_id});
+  owner = transferOwner(panel, owner);
+  const authenticationIsCurrent = captureAuthentication(panel);
+  const requireCurrent = () => {
+    if (!authenticationIsCurrent() || !isCurrent()) throw new Error("The selected backup was superseded");
+  };
   let sessionId = null;
   try {
+    requireCurrent();
     const manifest = await callBackupTransfer(panel, "import_start", {
       filename: file.name || "backup",
       size: file.size,
@@ -170,19 +182,20 @@ export async function uploadFullBackup(panel, file, isCurrent = () => true, owne
     if (!sessionId || !Number.isInteger(manifest.chunk_size) || manifest.chunk_size < 1 || !Number.isInteger(manifest.chunk_count) || manifest.chunk_count < 1) {
       throw new Error("The backup server returned an invalid upload manifest");
     }
-    if (!isCurrent()) throw new Error("The selected backup was superseded");
+    requireCurrent();
     let sent = 0;
     for (let index = 0; index < manifest.chunk_count; index += 1) {
-      if (!isCurrent()) throw new Error("The selected backup was superseded");
+      requireCurrent();
       const end = Math.min(file.size, sent + manifest.chunk_size);
       const bytes = new Uint8Array(await file.slice(sent, end).arrayBuffer());
+      requireCurrent();
       if (!bytes.byteLength) throw new Error("The selected transfer file ended unexpectedly");
       const result = await callBackupTransfer(panel, "import_chunk", {
         session_id: sessionId,
         index,
         data: bytesToBase64(bytes),
       }, owner);
-      if (!isCurrent()) throw new Error("The selected backup was superseded");
+      requireCurrent();
       sent += bytes.byteLength;
       if (result.session_id !== sessionId || result.next_index !== index + 1 || result.received !== sent) {
         throw new Error("The backup server rejected the upload sequence");
@@ -190,7 +203,7 @@ export async function uploadFullBackup(panel, file, isCurrent = () => true, owne
     }
     if (sent !== file.size) throw new Error("The selected transfer file was not uploaded completely");
     const inspection = await callBackupTransfer(panel, "import_inspect", {session_id: sessionId, inspect_only: true}, owner);
-    if (!isCurrent()) throw new Error("The selected backup was superseded");
+    requireCurrent();
     if (!inspection?.valid) throw new Error("The transfer could not be validated");
     return {...inspection, session_id: sessionId, session: transferSession(sessionId, owner)};
   } catch (err) {

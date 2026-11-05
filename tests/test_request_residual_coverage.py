@@ -72,7 +72,7 @@ def test_provider_snapshot_covers_token_migration_reasoning_and_chat_paths(
     monkeypatch.setattr(
         request,
         "get_model_capabilities",
-        lambda _model: {
+        lambda _model, **_kwargs: {
             "reasoning": {"supported": True},
             "service_tier": True,
             "streaming": True,
@@ -118,7 +118,7 @@ def test_provider_snapshot_ignores_stale_effort_for_non_reasoning_model(
     monkeypatch.setattr(
         request,
         "get_model_capabilities",
-        lambda _model: {
+        lambda _model, **_kwargs: {
             "reasoning": {"supported": False},
             "service_tier": False,
             "streaming": True,

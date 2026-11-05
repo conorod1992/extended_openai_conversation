@@ -36,6 +36,8 @@ The response retains `response`, `conversation_id`, and local-handling metadata.
 
 `change_config` accepts the config entry and any connection fields to update, such as `api_key`, `base_url`, `api_version`, `organization`, `skip_authentication`, or `api_provider`. The updated connection is validated before it is saved; failed validation leaves the existing settings in place. Prefer selecting the config entry from the action UI rather than copying an ID.
 
+A successful update retries setup for an enabled entry whose previous setup failed. Successfully validating an unchanged key also retries setup, allowing recovery after provider-side access is repaired. Disabled entries remain disabled; a changed, loaded entry uses its normal update-listener reload.
+
 ## Request image analysis
 
 `query_image` takes a `config_entry`, `prompt`, and an `images` array of objects with a `url` field. It calls that provider connection directly; it does not run a conversation agent's Request Rules, memory, or custom Function Tools. Set `model` explicitly: its default is `gpt-4.1-mini`, independent of the model saved on a conversation agent. The optional `api_mode` and `max_tokens` default to `auto` and `300`.

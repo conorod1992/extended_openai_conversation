@@ -24,6 +24,7 @@ from custom_components.extended_openai_conversation_responses.conversation_archi
     async_get_archive,
 )
 from homeassistant.components import conversation
+from homeassistant.components.conversation.chat_log import DATA_CHAT_LOGS
 from homeassistant.components.assist_pipeline.pipeline import (
     PipelineEvent,
     PipelineEventType,
@@ -188,7 +189,13 @@ async def test_genuine_assist_prefers_registry_device_voice_identity_when_both_i
     assert session["scope_type"] == "user"
     assert session["scope_source"] == "device_mapping"
     assert session["source_device_id"] == _DEVICE_ID
-    assert session["home_assistant_conversation_id"] == _CONVERSATION_ID
+    assert (
+        session["home_assistant_conversation_id"]
+        == intent_end.data["intent_output"]["conversation_id"]
+    )
+    delivered_id = intent_end.data["intent_output"]["conversation_id"]
+    assert delivered_id in hass.data[DATA_CHAT_LOGS]
+    assert hass.data[DATA_CHAT_LOGS][delivered_id].content[-1].content == _RESPONSE_TEXT
     assert session["turn_count"] == 1
     assert session["retention_state"] == "retained"
 

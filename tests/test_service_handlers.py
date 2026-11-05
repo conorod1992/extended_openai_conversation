@@ -8,7 +8,9 @@ from openai import OpenAIError
 import pytest
 
 from custom_components.extended_openai_conversation_responses import services
-from custom_components.extended_openai_conversation_responses.agent_config import validate_function_tools
+from custom_components.extended_openai_conversation_responses.agent_config import (
+    validate_function_tools,
+)
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_RESPONSES,
     CONF_API_MODE,
@@ -331,7 +333,12 @@ async def test_query_image_rejects_wrong_config_entry(hass) -> None:
 async def test_change_config_validates_and_saves_provider_settings(
     hass, monkeypatch
 ) -> None:
+    from homeassistant.config_entries import ConfigEntryState
+
     entry = SimpleNamespace(
+        entry_id="entry",
+        state=ConfigEntryState.LOADED,
+        disabled_by=None,
         domain=DOMAIN,
         data={CONF_API_KEY: "old", CONF_BASE_URL: "https://custom.test/v1"},
     )

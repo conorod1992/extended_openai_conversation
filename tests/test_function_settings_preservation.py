@@ -125,7 +125,7 @@ def test_function_save_still_validates_actual_provider_settings(hass, monkeypatc
     capabilities = deepcopy(provider_requests.get_model_capabilities("gpt-5.6"))
     capabilities["tools"]["function"]["chat_completions"] = {"support": "never"}
     monkeypatch.setattr(
-        provider_requests, "get_model_capabilities", lambda _model: capabilities
+        provider_requests, "get_model_capabilities", lambda _model, **_kwargs: capabilities
     )
     entry, subentry = _entry_pair()
     subentry.data = {

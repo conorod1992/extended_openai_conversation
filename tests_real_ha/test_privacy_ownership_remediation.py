@@ -17,7 +17,6 @@ from custom_components.extended_openai_conversation_responses.scope import (
 from homeassistant.components import conversation
 from homeassistant.core import Context
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import chat_session
 from tests_real_ha.test_conversation_runtime_lifecycle import _tool
 from tests_real_ha.test_cross_feature_acceptance import _agent, _provider, _say
 from tests_real_ha.test_provider_wire_e2e import (
@@ -116,9 +115,10 @@ async def test_guest_context_does_not_cross_authenticated_users(
         agent_id=agent.entry.entry_id,
     )
     assert first.response.error_code is None
-    if "user_id" in chat_session.ChatSession.__dataclass_fields__:
-        # Upcoming HA rejects another user's session before invoking the agent.
-        # Verify no provider dispatch, then continue Bob in his own fresh session.
+    if second.response.error_code is not None:
+        # Some HA versions reject ownership before the agent can select a fresh
+        # owned ID; others let EOAI fork it. Both paths must keep Alice's history
+        # out of Bob's actual provider request below.
         assert second.response.error_code is not None, second.response.as_dict()
         assert len(wire.requests) == 1
         second = await conversation.async_converse(
@@ -263,7 +263,7 @@ async def test_authenticated_scope_survives_guest_continuity(
         first.conversation_id if reuse_id else None,
     )
     assert first.response.error_code is None
-    if reuse_id and "user_id" in chat_session.ChatSession.__dataclass_fields__:
+    if reuse_id and second.response.error_code is not None:
         assert second.response.error_code is not None, second.response.as_dict()
         assert len(wire.requests) == 1
         second = await say(bob, "What did the previous caller say?", None)

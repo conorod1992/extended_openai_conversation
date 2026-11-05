@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import suppress
 from copy import deepcopy
@@ -67,8 +68,11 @@ from .const import (
     CONF_SHARED_MEMORY_MODE,
     CONF_USAGE_REQUEST_RETENTION_DAYS,
     CONF_USAGE_RUN_RETENTION_DAYS,
+    DEFAULT_CHAT_MODEL,
     DEFAULT_CONVERSATION_TIMEOUT_MINUTES,
     DEFAULT_SHARED_MEMORY_MODE,
+    DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
+    DEFAULT_USAGE_RUN_RETENTION_DAYS,
     DOMAIN,
     GUEST_POLICY_VERSION,
     MANAGEMENT_PANEL_TITLE,
@@ -102,7 +106,7 @@ from .ha_llm_tools import (
     validate_reference,
 )
 from .ha_schema import websocket_command as ha_websocket_command
-from .helpers import get_exposed_entities
+from .helpers import entry_api_provider, get_exposed_entities
 from .knowledge import async_get_knowledge, knowledge_source_as_dict
 from .live_subentry_updates import update_configuration_subentry, update_live_subentry
 from .local_intents import (
@@ -234,13 +238,17 @@ def _configuration_options() -> dict[str, list[dict[str, Any]]]:
 
 
 @lru_cache(maxsize=64)
-def _cached_model_capabilities(model: str, generation: int = 0) -> dict[str, Any]:
+def _cached_model_capabilities(
+    model: str, generation: int = 0, provider: str | None = None
+) -> dict[str, Any]:
     """Cache exact model capabilities within one active catalogue generation."""
-    return model_capabilities(model)
+    return model_capabilities(model, provider=provider)
 
 
-def _configuration_model_capabilities(model: str) -> dict[str, Any]:
-    return deepcopy(_cached_model_capabilities(model, catalog_generation()))
+def _configuration_model_capabilities(
+    model: str, *, provider: str | None = None
+) -> dict[str, Any]:
+    return deepcopy(_cached_model_capabilities(model, catalog_generation(), provider))
 
 
 def _elapsed_ms(start: float) -> float:
@@ -436,12 +444,15 @@ def _redact_export_secrets(value: Any, *, schema: bool = False) -> Any:
     return redact_secrets(value, schema=schema)
 
 
-def _export_agent(subentry, *, reviewed: bool = False) -> dict[str, Any]:
+def _export_agent(
+    subentry, *, reviewed: bool = False, provider: str | None = None
+) -> dict[str, Any]:
     """Build a conservative, versioned public configuration projection."""
     from .sharing import SHARING_VERSION, project_sharing_sections
 
     snapshot = project_agent_config_transfer(
-        dict(subentry.data), agent_config_snapshot(dict(subentry.data))
+        dict(subentry.data),
+        agent_config_snapshot(dict(subentry.data), provider=provider),
     )
     sections, security = project_sharing_sections(
         {"configuration": snapshot}, reviewed=reviewed
@@ -455,7 +466,9 @@ def _export_agent(subentry, *, reviewed: bool = False) -> dict[str, Any]:
     }
 
 
-def _parse_import_document(value: Any, *, destination: Any = None) -> dict[str, Any]:
+def _parse_import_document(
+    value: Any, *, destination: Any = None, provider: str | None = None
+) -> dict[str, Any]:
     if isinstance(value, str):
         try:
             value = json.loads(value)
@@ -500,7 +513,9 @@ def _parse_import_document(value: Any, *, destination: Any = None) -> dict[str, 
         )
     if not isinstance(config, dict):
         raise AgentConfigError("config", "must be an object")
-    normalized = project_agent_config_transfer(config, normalize_agent_config(config))
+    normalized = project_agent_config_transfer(
+        config, normalize_agent_config(config, provider=provider)
+    )
     return {
         "title": validate_agent_title(
             value.get("title"), default="Imported conversation agent"
@@ -929,10 +944,16 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
             for tool in configured_tools
             if function_tool_enabled(tool) and not is_ha_tool(tool)
         ]
+        from .helpers import effective_api_provider
         from .request import capability_model_identity
 
         entry_data = getattr(request.entry, "data", {})
-        snapshot["api_provider"] = entry_data.get(CONF_API_PROVIDER, "openai")
+        snapshot["api_provider"] = effective_api_provider(
+            entry_data.get(CONF_API_PROVIDER), entry_data.get("base_url")
+        )
+        snapshot["configured_model"] = subentry.data.get(
+            CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL
+        )
         # An absent Azure binding means each routed deployment supplies its own
         # capability identity; the base effective model is not a binding.
         snapshot["azure_model"] = subentry.data.get("azure_model") or None
@@ -1214,7 +1235,14 @@ async def async_guest_mode_command(request: _ManagementRequest) -> dict[str, Any
         if set(updates) - guest_fields:
             raise HomeAssistantError("Guest policy contains unknown fields")
         updates[CONF_GUEST_POLICY_VERSION] = GUEST_POLICY_VERSION
-        normalized, snapshot = merge_unchanged_function_configuration(subentry, updates)
+        normalized, snapshot = merge_unchanged_function_configuration(
+            subentry, updates, provider=entry_api_provider(entry)
+        )
+        from .management_loading_performance import _snapshot_normalized_configuration
+
+        snapshot = _snapshot_normalized_configuration(
+            snapshot, validated=True, provider=entry_api_provider(entry)
+        )
         configured_tools = snapshot[CONF_FUNCTION_TOOLS]
         _validated_model_request(snapshot, entry.data, subentry.data)
         policy_config = guest_policy_editor_snapshot(hass, normalized, configured_tools)
@@ -1280,6 +1308,7 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
     timings: dict[str, Any] = {}
     hass, is_admin, message = request.hass, request.is_admin, request.message
     entry, subentry = request.entry, request.subentry
+    provider = entry_api_provider(entry)
     title = message.get("title")
     if title is not None:
         if not isinstance(title, str) or not title.strip():
@@ -1309,7 +1338,9 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
     validated_functions = None
     if is_field_only_configuration_update(updates):
         validation = _validation_result(
-            lambda: merge_unchanged_function_configuration(subentry, updates)[1]
+            lambda: merge_unchanged_function_configuration(
+                subentry, updates, provider=provider
+            )[1]
         )
         repair_state = projection.repair_state
         if projection.snapshot is not None:
@@ -1322,7 +1353,10 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
             validated_functions = (projection.snapshot[CONF_FUNCTION_TOOLS], None)
         validation = _validation_result(
             lambda: merge_agent_config(
-                dict(subentry.data), updates, validated_functions=validated_functions
+                dict(subentry.data),
+                updates,
+                validated_functions=validated_functions,
+                provider=provider,
             )
         )
     timings["function_state_lookup_ms"] = _elapsed_ms(phase)
@@ -1368,12 +1402,15 @@ async def _async_save_configuration(request: _ManagementRequest) -> dict[str, An
     elif validated_functions is not None:
         response_data = dict(normalized)
         response_data[CONF_FUNCTION_TOOLS] = validated_functions[0]
-    snapshot = _snapshot_normalized_configuration(response_data, validated=True)
+    snapshot = _snapshot_normalized_configuration(
+        response_data, validated=True, provider=provider
+    )
     timings["response_snapshot_ms"] = _elapsed_ms(phase)
     phase = perf_counter()
     capability_hits = _cached_model_capabilities.cache_info().hits
     capabilities = _configuration_model_capabilities(
-        str(snapshot.get("azure_model") or snapshot[CONF_CHAT_MODEL])
+        str(snapshot.get("azure_model") or snapshot[CONF_CHAT_MODEL]),
+        provider=provider,
     )
     timings["model_capabilities_ms"] = _elapsed_ms(phase)
     timings["model_capabilities_cache_hit"] = (
@@ -1447,6 +1484,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
     is_admin = request.is_admin
     message = request.message
     entry = request.entry
+    provider = entry_api_provider(entry)
     subentry = request.subentry
     entry_id = request.entry_id
     subentry_id = request.subentry_id
@@ -1535,7 +1573,10 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         try:
             snapshot_diagnostics: dict[str, Any] = {}
             config, snapshot_cache_hit = normalized_persisted_config_snapshot(
-                projection, snapshot_diagnostics, default_snapshot=defaults
+                projection,
+                snapshot_diagnostics,
+                default_snapshot=defaults,
+                provider=provider,
             )
         except AgentConfigError:
             # Retain the normal cached fast path for valid tools. A malformed
@@ -1565,7 +1606,8 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
 
         phase = perf_counter()
         capabilities = _configuration_model_capabilities(
-            str(config.get("azure_model") or config[CONF_CHAT_MODEL])
+            str(config.get("azure_model") or config[CONF_CHAT_MODEL]),
+            provider=provider,
         )
         model_capabilities_ms = _elapsed_ms(phase)
 
@@ -1630,8 +1672,10 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
 
         def validation_candidate() -> dict[str, Any]:
             if field_only:
-                return merge_unchanged_function_configuration(subentry, updates)[1]
-            return merge_agent_config(subentry.data, updates)
+                return merge_unchanged_function_configuration(
+                    subentry, updates, provider=provider
+                )[1]
+            return merge_agent_config(subentry.data, updates, provider=provider)
 
         result = _validation_result(validation_candidate)
         if result["valid"]:
@@ -1649,12 +1693,15 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
                 except HomeAssistantError as err:
                     return {"valid": False, "errors": {CONF_FUNCTION_TOOLS: str(err)}}
             if not field_only:
-                result["config"] = agent_config_snapshot(result["config"])
+                result["config"] = agent_config_snapshot(
+                    result["config"], provider=provider
+                )
             result["model_capabilities"] = model_capabilities(
                 str(
                     result["config"].get("azure_model")
                     or result["config"][CONF_CHAT_MODEL]
-                )
+                ),
+                provider=provider,
             )
         return result
     if action == "update":
@@ -1670,10 +1717,10 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         field_only = is_field_only_configuration_update(updates)
         if field_only:
             _persisted, normalized = merge_unchanged_function_configuration(
-                subentry, updates
+                subentry, updates, provider=provider
             )
         else:
-            normalized = merge_agent_config(subentry.data, updates)
+            normalized = merge_agent_config(subentry.data, updates, provider=provider)
         response_candidate = normalized
         await _async_validate_configuration_request(hass, entry, subentry, normalized)
         _require_agent_config_revision(subentry, message["revision"])
@@ -1695,7 +1742,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         from .management_loading_performance import _snapshot_normalized_configuration
 
         snapshot = _snapshot_normalized_configuration(
-            response_candidate, validated=True
+            response_candidate, validated=True, provider=provider
         )
         result = {
             "valid": True,
@@ -1703,7 +1750,8 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             "title": saved_title,
             "config": snapshot,
             "model_capabilities": model_capabilities(
-                str(snapshot.get("azure_model") or snapshot[CONF_CHAT_MODEL])
+                str(snapshot.get("azure_model") or snapshot[CONF_CHAT_MODEL]),
+                provider=provider,
             ),
         }
         if refresh_local_handling:
@@ -1747,7 +1795,9 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
                     duplicate_source,
                     preserve_agent_model_setting_omissions(
                         duplicate_source,
-                        normalize_persisted_agent_config(duplicate_source),
+                        normalize_persisted_agent_config(
+                            duplicate_source, provider=provider
+                        ),
                     ),
                 )
             ),
@@ -1765,7 +1815,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         }
     if action == "export":
         document = _export_agent(
-            subentry, reviewed=message.get("reviewed_custom") is True
+            subentry, reviewed=message.get("reviewed_custom") is True, provider=provider
         )
         return {
             "document": document,
@@ -1776,6 +1826,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             raise HomeAssistantError("mode must be current or new")
         parsed = _parse_import_document(
             message.get("document"),
+            provider=provider,
             destination=subentry
             if message.get("mode", "current") == "current"
             else None,
@@ -1786,7 +1837,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
                 hass, entry, subentry, parsed["config"]
             )
         preview_config = preserve_agent_model_setting_omissions(
-            parsed["config"], agent_config_snapshot(parsed["config"])
+            parsed["config"], agent_config_snapshot(parsed["config"], provider=provider)
         )
         return {
             "valid": True,
@@ -1807,6 +1858,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         _require_admin(is_admin)
         parsed = _parse_import_document(
             message.get("document"),
+            provider=provider,
             destination=subentry
             if message.get("mode", "current") == "current"
             else None,
@@ -1828,7 +1880,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
             )
 
             snapshot = _snapshot_normalized_configuration(
-                parsed["config"], validated=True
+                parsed["config"], validated=True, provider=provider
             )
             revision = saved_agent_config_revision(
                 subentry, parsed["config"], parsed["title"]
@@ -2906,7 +2958,9 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
         if not isinstance(enabled, bool):
             raise HomeAssistantError("enabled must be a boolean")
         normalized, snapshot = merge_unchanged_function_configuration(
-            request.subentry, {CONF_KNOWLEDGE_ENABLED: enabled}
+            request.subentry,
+            {CONF_KNOWLEDGE_ENABLED: enabled},
+            provider=entry_api_provider(request.entry),
         )
         persisted = normalized
         from .management_loading_performance import _snapshot_normalized_configuration
@@ -2914,7 +2968,9 @@ async def async_knowledge_command(request: _ManagementRequest) -> dict[str, Any]
         response_data = dict(persisted)
         response_data[CONF_FUNCTION_TOOLS] = snapshot[CONF_FUNCTION_TOOLS]
         response_data[CONF_FUNCTION_GROUPS] = snapshot[CONF_FUNCTION_GROUPS]
-        snapshot = _snapshot_normalized_configuration(response_data, validated=True)
+        snapshot = _snapshot_normalized_configuration(
+            response_data, validated=True, provider=entry_api_provider(request.entry)
+        )
         result: dict[str, Any] = {
             "revision": None,
             "knowledge_enabled": bool(persisted.get(CONF_KNOWLEDGE_ENABLED, False)),
@@ -2996,7 +3052,7 @@ async def async_settings_command(request: _ManagementRequest) -> dict[str, Any]:
             )
         _require_agent_config_revision(subentry, message["revision"])
         candidate, _snapshot = merge_unchanged_function_configuration(
-            subentry, normalized
+            subentry, normalized, provider=entry_api_provider(entry)
         )
         await _async_validate_configuration_request(hass, entry, subentry, candidate)
         _require_agent_config_revision(subentry, message["revision"])
@@ -3144,6 +3200,9 @@ async def _async_management_request(
     resolution_started = perf_counter()
     entry, subentry = entry_and_agent(hass, entry_id, subentry_id)
     resolution_ms = _elapsed_ms(resolution_started)
+    from .management_datetime import resolve_management_dates
+
+    message = resolve_management_dates(hass, message)
     request = _ManagementRequest(
         hass, user_id, is_admin, message, entry_id, subentry_id, entry, subentry
     )
@@ -3161,12 +3220,68 @@ async def _async_management_request(
         else None
     )
     dispatch_ms = _elapsed_ms(dispatch_started)
+    retention_fields = {
+        CONF_USAGE_REQUEST_RETENTION_DAYS: DEFAULT_USAGE_REQUEST_RETENTION_DAYS,
+        CONF_USAGE_RUN_RETENTION_DAYS: DEFAULT_USAGE_RUN_RETENTION_DAYS,
+    }
+    previous_retention = tuple(
+        subentry.data.get(key, default) for key, default in retention_fields.items()
+    )
     result = await handler(request)
+    retention_changed = previous_retention != tuple(
+        subentry.data.get(key, default) for key, default in retention_fields.items()
+    )
+    retention_updates = message.get("settings" if section == "settings" else "config")
+    # A failed prune can leave the policy committed. Reapplying that policy is
+    # still meaningful even when the explicit retry makes no configuration delta.
+    # Imports apply the saved destination policy, not a flat config payload; a
+    # newly created assistant must never prune the originally selected assistant.
+    current_import = (
+        (section, action) == ("configuration", "import")
+        and message.get("mode", "current") == "current"
+        and result.get("status") == "updated"
+        and result.get("subentry_id") == subentry_id
+    )
+    if (
+        retention_changed
+        or current_import
+        or (
+            (section, action)
+            in {
+                ("configuration", "save"),
+                ("configuration", "update"),
+                ("function_repair", "configuration_save"),
+                ("settings", "update"),
+            }
+            and result.get("valid") is not False
+            and isinstance(retention_updates, dict)
+            and {CONF_USAGE_REQUEST_RETENTION_DAYS, CONF_USAGE_RUN_RETENTION_DAYS}
+            & retention_updates.keys()
+        )
+    ):
+        from .mutation_outcomes import mark_mutation_failure
+        from .operation_settlement import async_settle_owned_operation
+        from .usage import async_apply_usage_retention
+
+        async def apply_retention() -> None:
+            await async_apply_usage_retention(hass, entry_id, subentry_id)
+
+        try:
+            await async_settle_owned_operation(asyncio.create_task(apply_retention()))
+        except Exception as err:
+            raise mark_mutation_failure(
+                HomeAssistantError(
+                    "Configuration saved, but Usage retention could not be applied; retry saving retention to finish deletion."
+                ),
+                "committed",
+            ) from err
     handler_ms = _elapsed_ms(handler_started) if handler_started is not None else None
 
     committed_result = result
     try:
-        result = dict(result)
+        from .management_datetime import project_management_dates
+
+        result = project_management_dates(hass, section, dict(result))
         if isinstance(result.get("config"), dict):
             # Effective defaults and capabilities depend on installation-wide data,
             # independently of the persisted assistant's configuration revision.
@@ -3290,6 +3405,7 @@ def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
         vol.Optional("kind"): str,
         vol.Optional("start_date"): str,
         vol.Optional("end_date"): str,
+        vol.Optional("local_times"): dict,
         vol.Optional("active_from"): str,
         vol.Optional("active_until"): str,
         vol.Optional("indefinite"): bool,

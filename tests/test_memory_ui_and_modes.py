@@ -96,6 +96,7 @@ async def test_version_four_migration_preserves_agent_content() -> None:
         },
     )
     entry = SimpleNamespace(
+        data={},
         entry_id="entry-1",
         version=4,
         disabled_by=None,
@@ -127,6 +128,7 @@ def _hass_and_agent():
         data={CONF_MEMORY_MODE: MEMORY_MODE_MANUAL},
     )
     entry = SimpleNamespace(
+        data={},
         entry_id="entry-1",
         domain="extended_openai_conversation_responses",
         title="OpenAI",

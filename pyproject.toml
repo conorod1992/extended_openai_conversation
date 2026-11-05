@@ -45,6 +45,10 @@ combine-as-imports = true
 split-on-trailing-comma = false
 
 [tool.pytest.ini_options]
+# HA installs its httpx compatibility alias before its own HTTP mocks load.
+# The independent respx pytest plugin is unused and otherwise imports too early.
+addopts = "-p no:respx"
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 asyncio_mode = "auto"
 

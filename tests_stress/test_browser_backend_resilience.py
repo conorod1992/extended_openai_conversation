@@ -35,6 +35,12 @@ from tests_stress.test_os_storage_faults import real_store_io as real_store_io
 async def ownership_shell(hass, real_ha_shell, real_store_io):
     # The normal shell fixture provides authentication; all persisted manager and
     # config-entry data in this journey use the restored, real atomic Store I/O.
+    raw = json.loads(
+        Path(hass.config.path(".storage", onboarding.STORAGE_KEY)).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert raw["data"]["done"] == list(onboarding.STEPS)
     return real_ha_shell
 
 
@@ -664,9 +670,7 @@ async def test_professional_genuine_browser_transfer_controls_and_locale(
     from custom_components.extended_openai_conversation_responses.knowledge import (
         async_get_knowledge,
     )
-    from tests_real_ha.test_management_backend_acceptance import (
-        _conversation_subentry,
-    )
+    from tests_real_ha.test_management_backend_acceptance import _conversation_subentry
 
     shell = real_ha_shell
     entry = shell["entry"]

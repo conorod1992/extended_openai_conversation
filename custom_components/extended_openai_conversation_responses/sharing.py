@@ -13,8 +13,9 @@ import re
 from typing import Any
 from urllib.parse import unquote, urlsplit, urlunsplit
 
+from .const import CONTEXT_TRUNCATE_STRATEGIES, SERVICE_TIER_OPTIONS
 from .function_yaml import decoded_function_fields
-from .model_catalog import BUNDLED_CATALOG
+from .model_catalog import BUNDLED_CATALOG, REASONING_EFFORT_VALUES
 from .secret_redaction import (
     REDACTED_SECRET_SENTINEL,
     _is_function_tool_schema_root,
@@ -188,9 +189,11 @@ PUBLIC_NUMBERS = frozenset(
 PUBLIC_ENUMS = {
     "chat_model": frozenset(BUNDLED_CATALOG.resolved),
     "api_mode": {"auto", "responses", "chat_completions"},
-    "reasoning_effort": {"", "none", "minimal", "low", "medium", "high", "xhigh"},
-    "service_tier": {"", "auto", "default", "flex", "priority"},
-    "context_truncate_strategy": {"clear", "truncate"},
+    "reasoning_effort": REASONING_EFFORT_VALUES | {""},
+    "service_tier": frozenset(SERVICE_TIER_OPTIONS) | {""},
+    "context_truncate_strategy": frozenset(
+        item["key"] for item in CONTEXT_TRUNCATE_STRATEGIES
+    ),
     "memory_mode": {"off", "manual", "automatic"},
     "guest_knowledge_policy": {"off", "on", "custom"},
     "guest_function_policy": {"off", "on", "custom"},
@@ -615,6 +618,74 @@ def project_sharing_sections(
     return projected, summary
 
 
+def _function_name(tool: Any) -> str | None:
+    spec = tool.get("spec") if isinstance(tool, dict) else None
+    name = spec.get("name") if isinstance(spec, dict) else None
+    return name if isinstance(name, str) else None
+
+
+def _group_members(group: Any) -> list[str]:
+    members = group.get("functions", []) if isinstance(group, dict) else []
+    return (
+        [name for name in members if isinstance(name, str)]
+        if isinstance(members, list)
+        else []
+    )
+
+
+def _project_reviewed_groups(
+    groups: Any,
+    candidates: Any,
+    tools: Any,
+    retained: list[Any],
+    summary: dict[str, Any],
+) -> Any:
+    if not isinstance(groups, list):
+        # Recovery exports may carry an opaque quarantined group collection.
+        if not _unsafe(candidates):
+            return deepcopy(candidates)
+        record_omission(summary, "function_groups")
+        return []
+    source_names = (
+        {_function_name(tool) for tool in tools} if isinstance(tools, list) else set()
+    )
+    retained_names = {_function_name(tool) for tool in retained}
+    omitted_names = source_names - retained_names - {None}
+    projected = []
+    blocked_members: set[str] = set()
+    for index, group in enumerate(groups):
+        present = isinstance(candidates, list) and index < len(candidates)
+        candidate = candidates[index] if present else None
+        if not present or _unsafe(candidate):
+            # Losing metadata must not promote disabled/on-demand members.
+            blocked_members.update(_group_members(group))
+            record_omission(summary, f"function_group_{index + 1}")
+            continue
+        if (
+            not isinstance(candidate, dict)
+            or not isinstance(candidate.get("functions", []), list)
+            or any(not isinstance(name, str) for name in candidate.get("functions", []))
+        ):
+            # Keep safe repair-owned records opaque, rather than fixing their
+            # shape (and potentially activating them) during an export.
+            projected.append(deepcopy(candidate))
+            continue
+        # Remove only references to tools actually omitted by sharing. Unknown
+        # references belong to quarantine and must not be silently repaired.
+        members = [
+            name for name in candidate.get("functions", []) if name not in omitted_names
+        ]
+        if members or not candidate.get("functions"):
+            projected.append({**deepcopy(candidate), "functions": members})
+        else:
+            record_omission(summary, f"function_group_{index + 1}")
+    for tool in retained:
+        if _function_name(tool) in blocked_members:
+            tool["enabled"] = False
+            record_omission(summary, "function_group_member_disabled")
+    return projected
+
+
 def project_configuration(
     config: dict[str, Any], *, reviewed: bool = False
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -645,6 +716,10 @@ def project_configuration(
         )
         if public:
             result[key] = deepcopy(value)
+        elif key == "function_groups":
+            if not reviewed:
+                record_omission(summary, key)
+            continue  # Project coherent groups after their retained members are known.
         elif reviewed and key in AGENT_CONFIG_FIELDS and key != "functions":
             candidate = redacted.get(key)
             if not _unsafe(candidate):
@@ -662,15 +737,55 @@ def project_configuration(
     if isinstance(tools, list):
         candidates = redacted.get("functions", []) if reviewed else []
         for index, _tool in enumerate(tools):
-            candidate = candidates[index] if index < len(candidates) else None
-            if reviewed and candidate is not None and not _unsafe(candidate):
+            present = isinstance(candidates, list) and index < len(candidates)
+            candidate = candidates[index] if present else None
+            if reviewed and present and not _unsafe(candidate):
                 result["functions"].append(deepcopy(candidate))
             else:
                 record_omission(summary, f"function_tool_{index + 1}")
-        if len(result["functions"]) != len(tools):
-            result["function_groups"] = []
     elif tools:
         record_omission(summary, "function_tool")
+    if reviewed:
+        if isinstance(tools, list) and len(result["functions"]) != len(tools):
+            from .function_configuration_repair import (
+                function_configuration_repair_state,
+            )
+
+            repair = function_configuration_repair_state(decoded)
+            if repair is not None and not repair.field_updates_allowed:
+                # Omitting one duplicate/ambiguous definition can make another
+                # executable. Preserve the source's fail-closed collection state.
+                for tool in result["functions"]:
+                    if _function_name(tool) is not None:
+                        tool["enabled"] = False
+                        record_omission(summary, "function_collection_member_disabled")
+        result["function_groups"] = _project_reviewed_groups(
+            decoded.get("function_groups", []),
+            redacted.get("function_groups", []),
+            tools,
+            result["functions"],
+            summary,
+        )
+        if result.get("skills"):
+            from .function_configuration_repair import (
+                function_configuration_repair_state,
+            )
+            from .skill_availability import skill_loader_status
+
+            # Sharing can remove or disable a loader after source validation.
+            # Preserve quarantine, but do not export dangling Skill selections
+            # that the ordinary configuration importer cannot accept.
+            repair = function_configuration_repair_state(result)
+            tools_for_skills = repair.valid if repair else result["functions"]
+            groups_for_skills = repair.groups if repair else result["function_groups"]
+            if not skill_loader_status(
+                result["skills"],
+                tools_for_skills,
+                groups_for_skills,
+                max_function_calls=result.get("max_function_calls_per_conversation"),
+            ).available:
+                record_omission(summary, "skills", count=len(result["skills"]))
+                result["skills"] = []
     # Skills contain arbitrary external/custom content and dependency references.
     if not reviewed:
         result["function_groups"] = []

@@ -180,7 +180,14 @@ async def test_reauth_error_retry_preserves_provider_settings(
     entry.add_to_hass(hass)
 
     authenticate = AsyncMock(side_effect=[_authentication_error(), object()])
-    with patch(f"{CONFIG_FLOW_MODULE}.get_authenticated_client", authenticate):
+    # The flow owns requesting reload. Its activation belongs to separate native
+    # lifecycle tests; starting a real Azure entry here would outlive this probe.
+    with (
+        patch(f"{CONFIG_FLOW_MODULE}.get_authenticated_client", authenticate),
+        patch.object(
+            hass.config_entries, "async_reload", AsyncMock(return_value=True)
+        ) as reload,
+    ):
         result = await entry.start_reauth_flow(hass)
         assert result["type"] is FlowResultType.FORM
         assert result["step_id"] == "reauth_confirm"
@@ -196,6 +203,7 @@ async def test_reauth_error_retry_preserves_provider_settings(
             result["flow_id"], {CONF_API_KEY: "replacement"}
         )
 
+    reload.assert_awaited_once_with(entry.entry_id)
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reauth_successful"
     assert entry.data[CONF_API_KEY] == "replacement"

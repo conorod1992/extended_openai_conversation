@@ -58,8 +58,6 @@ test("Restore rejects corrupt input, supports cancel and requires file reselecti
   await expect.poll(() => page.evaluate(() => browserHarness.calls.filter(call => call.action === "import_cancel").length)).toBeGreaterThan(0);
 
   await panel.locator("#restore-backup-transfer").click();
-  await panel.locator("#backup-file-transfer").setInputFiles(path);
-  await expect(panel.locator("#restore-dialog")).toHaveJSProperty("open", true);
   await page.evaluate(() => {
     const original = browserHarness.hass.callWS;
     window.restoreFailureCalls = 0;
@@ -68,6 +66,8 @@ test("Restore rejects corrupt input, supports cancel and requires file reselecti
       return original(message);
     };
   });
+  await panel.locator("#backup-file-transfer").setInputFiles(path);
+  await expect(panel.locator("#restore-dialog")).toHaveJSProperty("open", true);
   await panel.locator("#restore-transfer-apply").click();
   await acceptConfirmation(panel);
   await expect(panel.getByText(/Re-select the transfer file to retry/)).toBeVisible();

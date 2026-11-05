@@ -18,7 +18,8 @@ import logging
 import math
 from typing import Any, cast
 
-from homeassistant.core import Context, HomeAssistant
+from homeassistant.const import EVENT_CORE_CONFIG_UPDATE
+from homeassistant.core import Context, Event, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import (
@@ -456,6 +457,7 @@ class QuietHoursManager:
         self._stopping = False
         self._config_recovery_pending = False
         self._unsubscribers: list[Callable[[], None]] = []
+        self._timezone_unsubscribe: Callable[[], None] | None = None
 
     @property
     def config(self) -> QuietHoursConfig:
@@ -499,11 +501,17 @@ class QuietHoursManager:
                 self._config_recovery_pending = False
                 self._initialized = True
                 self._reschedule()
+                self._timezone_unsubscribe = self.hass.bus.async_listen(
+                    EVENT_CORE_CONFIG_UPDATE, self._handle_core_config_update
+                )
         await self.async_reconcile()
 
     async def async_shutdown(self) -> None:
         # Unsubscribing cannot retract callbacks already queued on this lock.
         self._stopping = True
+        if self._timezone_unsubscribe is not None:
+            self._timezone_unsubscribe()
+            self._timezone_unsubscribe = None
         # Removal discards this manager after the await. Retain ownership through
         # lock acquisition, restoration and cleanup before forwarding cancellation.
         await _async_settle_store_io(self._async_finish_shutdown())
@@ -2157,6 +2165,23 @@ class QuietHoursManager:
 
     async def _handle_time_transition(self, now: datetime) -> None:
         await self.async_reconcile(now=now)
+
+    async def _handle_core_config_update(self, event: Event) -> None:
+        """Rebind daily wall times and reconcile a runtime HA timezone change."""
+        if "time_zone" not in event.data:
+            return
+        async with self._lock:
+            if self._stopping:
+                return
+            self._reschedule()
+        try:
+            await self.async_reconcile()
+        except (OSError, ValueError, HomeAssistantError) as err:
+            log_handled_failure(
+                logging.getLogger(__name__),
+                "Quiet Hours timezone reconciliation deferred",
+                err,
+            )
 
     async def _handle_discovery_tick(self, now: datetime) -> None:
         await self.async_reconcile(now=now)

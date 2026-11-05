@@ -15,6 +15,23 @@ export function createDataCollectionBackend(size = 100) {
   const scoped = (items, message) => items.filter(item => (!message.scope_id || item.scope_id === message.scope_id) && (!message.subentry_id || (item.subentry_id || "agent-1") === message.subentry_id));
   async function call(message) {
     calls.push(clone(message));
+    if (Object.hasOwn(message.local_times || {}, "expires_at")) {
+      const local = message.local_times.expires_at;
+      if (message.expires_at !== local) throw new Error("Local date does not match the submitted field");
+      // The fixture emulates server-side resolution in HA's zone. These browser
+      // scenarios use unambiguous dates; production DST/gap validation is covered
+      // by the Python resolver tests and the real-HA browser lane.
+      const zone = globalThis.browserHarness?.hass?.config?.time_zone || "UTC";
+      const wall = Date.parse(`${local}Z`);
+      let instant = wall;
+      const format = new Intl.DateTimeFormat("sv-SE", {timeZone:zone, year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit", second:"2-digit", hourCycle:"h23"});
+      for (let step = 0; step < 3; step++) {
+        const fields = Object.fromEntries(format.formatToParts(new Date(instant)).map(part => [part.type, part.value]));
+        const projected = Date.parse(`${fields.year}-${fields.month}-${fields.day}T${fields.hour}:${fields.minute}:${fields.second}Z`);
+        instant += wall - projected;
+      }
+      message = {...message, expires_at:new Date(instant).toISOString()};
+    }
     const section = message.section || "memories";
     const action = message.action;
     if (section === "knowledge") {

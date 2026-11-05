@@ -950,16 +950,41 @@ def normalized_function_call_budget(data: Mapping[str, Any]) -> int:
     return cast(int, scalar[key])
 
 
-def normalize_reasoning_defaults(config: dict[str, Any], *, explicit: bool) -> None:
-    """Apply the same model-aware omitted-value contract to reads and saves."""
-    selected_model = str(
-        config.get("azure_model") or config.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
+def _configuration_reasoning_context(
+    config: Mapping[str, Any], provider: str | None
+) -> tuple[str, str | None, list[str]]:
+    """Separate a connection's provider from its optional deployment binding.
+
+    Portable validation has no parent connection. Preserve explicit effort values
+    supported by either installed provider contract until a destination is known.
+    """
+    provider = provider or ("azure" if config.get("azure_model") else None)
+    model = str(
+        (config.get("azure_model") if provider == "azure" else None)
+        or config.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
     )
-    if not get_reasoning_effort_options(selected_model):
+    options = get_reasoning_effort_options(model, provider=provider)
+    if provider is None:
+        options = list(
+            dict.fromkeys(
+                [*options, *get_reasoning_effort_options(model, provider="azure")]
+            )
+        )
+    return model, provider, options
+
+
+def normalize_reasoning_defaults(
+    config: dict[str, Any], *, explicit: bool, provider: str | None = None
+) -> None:
+    """Apply the same model-aware omitted-value contract to reads and saves."""
+    selected_model, provider, options = _configuration_reasoning_context(
+        config, provider
+    )
+    if not options:
         config.pop(CONF_REASONING_EFFORT, None)
     elif not explicit:
         recommended = (
-            get_model_config(selected_model)
+            get_model_config(selected_model, provider=provider)
             .get("recommended_profile", {})
             .get("reasoning_effort")
         )
@@ -970,7 +995,7 @@ def normalize_reasoning_defaults(config: dict[str, Any], *, explicit: bool) -> N
 
 
 def _agent_config_value_base(
-    data: Mapping[str, Any], *, apply_defaults: bool
+    data: Mapping[str, Any], *, apply_defaults: bool, provider: str | None = None
 ) -> dict[str, Any]:
     """Interpret stored scalar values before either validation or projection."""
     result = agent_config_defaults() if apply_defaults else {}
@@ -978,7 +1003,9 @@ def _agent_config_value_base(
     if result.get(CONF_PROMPT) in LEGACY_DEFAULT_PROMPTS:
         result[CONF_PROMPT] = DEFAULT_PROMPT
     normalize_agent_numeric_values(result)
-    normalize_reasoning_defaults(result, explicit=CONF_REASONING_EFFORT in data)
+    normalize_reasoning_defaults(
+        result, explicit=CONF_REASONING_EFFORT in data, provider=provider
+    )
     return result
 
 
@@ -987,6 +1014,7 @@ def agent_config_value_snapshot(
     *,
     prepared: dict[str, Any] | None = None,
     apply_defaults: bool = True,
+    provider: str | None = None,
 ) -> dict[str, Any]:
     """Project effective values without Function schemas or template compilation.
 
@@ -998,7 +1026,9 @@ def agent_config_value_snapshot(
     result = (
         prepared
         if prepared is not None
-        else _agent_config_value_base(data, apply_defaults=apply_defaults)
+        else _agent_config_value_base(
+            data, apply_defaults=apply_defaults, provider=provider
+        )
     )
     for key in (
         CONF_LOCAL_INTENT_EXCLUSIONS,
@@ -1061,6 +1091,7 @@ def normalize_agent_config(
     | None = None,
     function_tools_as_list: bool = False,
     allow_unavailable_skills: bool = False,
+    provider: str | None = None,
 ) -> dict[str, Any]:
     """Validate config; reuse Function results only for identical Function inputs.
 
@@ -1078,12 +1109,12 @@ def normalize_agent_config(
         raise AgentConfigError(
             "config", "unknown fields: " + ", ".join(sorted(unknown))
         )
-    result = _agent_config_value_base(data, apply_defaults=apply_defaults)
-
-    selected_model = str(
-        result.get("azure_model") or result.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
+    result = _agent_config_value_base(
+        data, apply_defaults=apply_defaults, provider=provider
     )
-    reasoning_options = get_reasoning_effort_options(selected_model)
+    selected_model, provider, reasoning_options = _configuration_reasoning_context(
+        result, provider
+    )
 
     _require_type(
         result,
@@ -1174,7 +1205,9 @@ def normalize_agent_config(
             dict.fromkeys(
                 [
                     DEFAULT_SERVICE_TIER,
-                    *get_model_config(selected_model).get("service_tier_options", []),
+                    *get_model_config(selected_model, provider=provider).get(
+                        "service_tier_options", []
+                    ),
                 ]
             )
         ),
@@ -1293,7 +1326,7 @@ def normalize_agent_config(
         result.get(CONF_SPEECH_REGEX_REPLACEMENTS, [])
     )
     return agent_config_value_snapshot(
-        data, prepared=result, apply_defaults=apply_defaults
+        data, prepared=result, apply_defaults=apply_defaults, provider=provider
     )
 
 
@@ -1304,6 +1337,7 @@ def merge_agent_config(
     validated_functions: tuple[list[dict[str, Any]], list[dict[str, Any]] | None]
     | None = None,
     function_tools_as_list: bool = False,
+    provider: str | None = None,
 ) -> dict[str, Any]:
     """Validate updates against the final merged configuration.
 
@@ -1335,6 +1369,7 @@ def merge_agent_config(
         validated_functions=validated_functions,
         function_tools_as_list=function_tools_as_list,
         allow_unavailable_skills=True,
+        provider=provider,
     )
     if normalized.get(CONF_SKILLS):
         # The candidate is already validated. Decode without applying persisted
@@ -1399,6 +1434,7 @@ def normalize_persisted_agent_config(
     *,
     preparsed_function_tools: bool = False,
     function_tools_as_list: bool = False,
+    provider: str | None = None,
 ) -> dict[str, Any]:
     """Interpret an existing configuration, distinct from a newly submitted edit.
 
@@ -1420,26 +1456,33 @@ def normalize_persisted_agent_config(
         source,
         function_tools_as_list=function_tools_as_list,
         allow_unavailable_skills=True,
+        provider=provider,
     )
 
 
 def agent_config_snapshot(
-    data: dict[str, Any], *, preparsed_function_tools: bool = False
+    data: dict[str, Any],
+    *,
+    preparsed_function_tools: bool = False,
+    provider: str | None = None,
 ) -> dict[str, Any]:
     """Return effective display values, never a scoped persistence payload."""
     return normalize_persisted_agent_config(
         {key: value for key, value in data.items() if key in AGENT_CONFIG_FIELDS},
         preparsed_function_tools=preparsed_function_tools,
         function_tools_as_list=True,
+        provider=provider,
     )
 
 
-def model_capabilities(model: str) -> dict[str, Any]:
+def model_capabilities(model: str, *, provider: str | None = None) -> dict[str, Any]:
     """Return model-specific fields and choices supported by the backend."""
     from .model_capabilities import frontend_capabilities
+    from .model_catalog import model_metadata
 
-    capabilities: dict[str, Any] = frontend_capabilities(model)
-    capabilities["reasoning_effort_options"] = get_reasoning_effort_options(model)
+    capabilities: dict[str, Any] = frontend_capabilities(
+        model, metadata=model_metadata(model, provider=provider)
+    )
     return capabilities
 
 

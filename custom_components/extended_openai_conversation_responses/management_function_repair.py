@@ -83,6 +83,16 @@ class _PersistedProjection:
     repair_state: FunctionConfigurationRepairState | None = None
     repair_snapshot: dict[str, Any] | None = None
     snapshot_generation: int = field(default_factory=catalog_generation)
+    snapshot_provider: str | None = None
+
+
+def _refresh_provider_snapshot(
+    projection: _PersistedProjection, provider: str | None
+) -> None:
+    if projection.snapshot_provider != provider:
+        projection.snapshot = None
+        projection.repair_snapshot = None
+        projection.snapshot_provider = provider
 
 
 def _refresh_catalog_snapshots(projection: _PersistedProjection) -> None:
@@ -281,10 +291,14 @@ def normalized_persisted_config_snapshot(
     *,
     default_snapshot: dict[str, Any] | None = None,
     preparsed_function_tools: Any = _MISSING,
+    provider: str | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """Lazily normalize a full read and isolate the returned frontend data."""
     started = perf_counter()
     _refresh_catalog_snapshots(projection)
+    if provider is None:
+        provider = projection.snapshot_provider
+    _refresh_provider_snapshot(projection, provider)
     hit = projection.snapshot is not None
     if preparsed_function_tools is _MISSING:
         preparsed_function_tools = projection.preparsed_function_tools
@@ -304,10 +318,10 @@ def normalized_persisted_config_snapshot(
             if preparsed_function_tools is not _MISSING:
                 source[CONF_FUNCTION_TOOLS] = preparsed_function_tools
                 projection.snapshot = agent_config_snapshot(
-                    source, preparsed_function_tools=True
+                    source, preparsed_function_tools=True, provider=provider
                 )
             else:
-                projection.snapshot = agent_config_snapshot(source)
+                projection.snapshot = agent_config_snapshot(source, provider=provider)
     if diagnostics is not None:
         diagnostics["default_snapshot_reused"] = reused_defaults
         diagnostics["snapshot_build_ms"] = round((perf_counter() - started) * 1000, 2)
@@ -375,7 +389,11 @@ async def async_prewarm_persisted_config_projection(
         if state is not None:
             return
     try:
-        normalized_persisted_config_snapshot(projection)
+        from .helpers import entry_api_provider
+
+        normalized_persisted_config_snapshot(
+            projection, provider=entry_api_provider(entry)
+        )
     except AgentConfigError:
         state, _ = repair_state_for_projection(projection)
         if state is None:
@@ -386,6 +404,8 @@ def seed_persisted_config_projection(
     entry: Any, subentry: Any, snapshot: dict[str, Any], revision: str
 ) -> None:
     """Seed a successful save from its authoritative normalized response."""
+    from .helpers import entry_api_provider
+
     current = getattr(entry, "subentries", {}).get(subentry.subentry_id, subentry)
     key = id(current)
     previous = _persisted_projections.get(key)
@@ -409,6 +429,7 @@ def seed_persisted_config_projection(
         agent_retention_snapshot(current.data),
         repair_state=repair_state,
         repair_snapshot=deepcopy(snapshot) if repair_state is not None else None,
+        snapshot_provider=entry_api_provider(entry),
     )
     _persisted_projections[key] = projection
     _remember_revision_lineage(current, current.data, current.title, revision)
@@ -481,7 +502,11 @@ def persist_valid_function_configuration(
     response_data = dict(normalized)
     response_data[CONF_FUNCTION_TOOLS] = prepared.tools
     response_data[CONF_FUNCTION_GROUPS] = prepared.groups
-    snapshot = _snapshot_normalized_configuration(response_data, validated=True)
+    from .helpers import entry_api_provider
+
+    snapshot = _snapshot_normalized_configuration(
+        response_data, validated=True, provider=entry_api_provider(entry)
+    )
     response_tools, response_groups = (
         snapshot[CONF_FUNCTION_TOOLS],
         snapshot[CONF_FUNCTION_GROUPS],
@@ -548,11 +573,16 @@ def _safe_configuration_payload(
     title: str | None = None,
 ) -> dict[str, Any]:
     """Return normal management data plus quarantined Function Tool metadata."""
+    from .helpers import entry_api_provider
+
+    provider = entry_api_provider(entry)
     persisted = dict(subentry.data if data is None else data)
     safe, invalid, group_issues, raw_groups, issue = effective_function_configuration(
         persisted
     )
-    config = management_loading_performance._snapshot_normalized_configuration(safe)
+    config = management_loading_performance._snapshot_normalized_configuration(
+        safe, provider=provider
+    )
     defaults = management_loading_performance._snapshot_normalized_configuration(
         agent_config_defaults()
     )
@@ -563,7 +593,8 @@ def _safe_configuration_payload(
         "defaults": defaults,
         "options": management_ui.agent_config_options(),
         "model_capabilities": management_ui.model_capabilities(
-            config[management_ui.CONF_CHAT_MODEL]
+            config.get("azure_model") or config[management_ui.CONF_CHAT_MODEL],
+            provider=provider,
         ),
         "function_types": sorted(management_ui.FUNCTIONS),
         "function_repair": {
@@ -610,9 +641,13 @@ def safe_configuration_payload(
 ) -> dict[str, Any]:
     """Share the existing quarantine read with normal configuration callers."""
     from . import management_loading_performance, management_ui
+    from .helpers import entry_api_provider
+
+    provider = entry_api_provider(entry)
 
     if projection is not None:
         _refresh_catalog_snapshots(projection)
+        _refresh_provider_snapshot(projection, provider)
         state, _cache_hit = repair_state_for_projection(projection)
         if state is None:
             raise HomeAssistantError("Function Tools do not require repair")
@@ -622,7 +657,7 @@ def safe_configuration_payload(
             safe[CONF_FUNCTION_GROUPS] = state.groups
             projection.repair_snapshot = (
                 management_loading_performance._snapshot_normalized_configuration(
-                    safe, validated=True
+                    safe, validated=True, provider=provider
                 )
             )
         config = deepcopy(projection.repair_snapshot)
@@ -633,7 +668,8 @@ def safe_configuration_payload(
             "defaults": deepcopy(_cached_repair_defaults(catalog_generation())),
             "options": management_ui.agent_config_options(),
             "model_capabilities": management_ui._configuration_model_capabilities(
-                config[management_ui.CONF_CHAT_MODEL]
+                config.get("azure_model") or config[management_ui.CONF_CHAT_MODEL],
+                provider=provider,
             ),
             "function_types": sorted(management_ui.FUNCTIONS),
             "function_repair": {

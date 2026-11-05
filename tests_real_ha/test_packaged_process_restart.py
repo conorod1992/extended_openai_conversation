@@ -14,6 +14,7 @@ import sys
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import homeassistant  # Initialize Core HTTP aliases before the child process imports the SDK.
 import httpx
 import pytest
 

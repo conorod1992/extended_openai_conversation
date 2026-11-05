@@ -47,7 +47,7 @@ from .const import (
 from .conversation_archive import archive_tools
 from .conversation_lifecycle import conversation_lifecycle_active
 from .guest_mode import GuestCapabilityPolicy, guest_mode_restrict_tool
-from .helpers import supports_openai_hosted_tools
+from .helpers import effective_api_provider, supports_openai_hosted_tools
 from .knowledge import KNOWLEDGE_TOOL_NAMES, knowledge_tools
 from .memory import MEMORY_TOOL_NAMES, memory_tools
 from .model_capabilities import (
@@ -202,7 +202,10 @@ def build_web_search_tool(
             "use a model for which Auto resolves to Responses."
         )
     if not supports_openai_hosted_tools(
-        entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
+        effective_api_provider(
+            entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
+        ),
+        entry_data.get(CONF_BASE_URL),
     ):
         raise HomeAssistantError(
             "Web Search is available only with the direct OpenAI Responses API; "
@@ -311,7 +314,12 @@ def capability_model_identity(
 ) -> str:
     """Resolve model metadata independently of an Azure deployment name."""
     model = str(options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
-    if entry_data.get(CONF_API_PROVIDER) == "azure":
+    if (
+        effective_api_provider(
+            entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
+        )
+        == "azure"
+    ):
         return str(options.get("azure_model") or model)
     return model
 
@@ -325,14 +333,25 @@ def request_model_capabilities(
     capabilities = (
         model_capabilities
         if model_capabilities is not None
-        else get_model_capabilities(capability_model_identity(options, entry_data))
+        else get_model_capabilities(
+            capability_model_identity(options, entry_data),
+            provider=effective_api_provider(
+                entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
+            ),
+        )
     )
     if (
         capabilities.get("status") == "unknown"
-        and entry_data.get(CONF_API_PROVIDER) != "azure"
+        and effective_api_provider(
+            entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
+        )
+        != "azure"
         and entry_data.get(CONF_BASE_URL)
         and not supports_openai_hosted_tools(
-            entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
+            effective_api_provider(
+                entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
+            ),
+            entry_data.get(CONF_BASE_URL),
         )
     ):
         # Unknown third-party Chat Completions models use the broadly
@@ -369,6 +388,46 @@ def auxiliary_output_token_limit(
     return result
 
 
+def context_summary_request_settings(
+    model: str,
+    api_mode: str,
+    options: Mapping[str, Any],
+    entry_data: Mapping[str, Any],
+    *,
+    retry: bool = False,
+) -> dict[str, Any]:
+    """Bound auxiliary output deliberately, including the model's hidden reasoning."""
+    capabilities = request_model_capabilities(
+        {**options, CONF_CHAT_MODEL: model}, entry_data
+    )
+    with model_capability_snapshot(model, capabilities):
+        effort = None
+        if capabilities["reasoning"]["supported"]:
+            raw_effort = options.get(CONF_REASONING_EFFORT)
+            if raw_effort is None:
+                raw_effort = recommended_reasoning_effort(model)
+            effort = validate_reasoning_effort(model, raw_effort, api_mode)
+        # The visible summary is prompted to stay short. Reasoning shares the
+        # output allowance, so a reasoning request needs substantially more room.
+        reasons = capabilities.get(
+            "uses_reasoning_tokens", capabilities["reasoning"]["supported"]
+        )
+        limit = 8192 if reasons and effort != "none" else 512
+        limit = min(
+            limit * (2 if retry else 1), capabilities["limits"]["max_output_tokens"]
+        )
+        field, value = auxiliary_output_token_limit(
+            model, api_mode, limit, options, entry_data
+        )
+    kwargs: dict[str, Any] = {field: value}
+    if effort is not None:
+        if api_mode == API_MODE_RESPONSES:
+            kwargs["reasoning"] = {"effort": effort}
+        else:
+            kwargs["reasoning_effort"] = effort
+    return kwargs
+
+
 def build_provider_request_snapshot(
     options: Mapping[str, Any],
     entry_data: Mapping[str, Any],
@@ -385,7 +444,13 @@ def build_provider_request_snapshot(
     options = dict(options)
     normalize_agent_numeric_values(options)
     model = str(options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
-    if options.get("azure_model") and entry_data.get(CONF_API_PROVIDER) != "azure":
+    if (
+        options.get("azure_model")
+        and effective_api_provider(
+            entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
+        )
+        != "azure"
+    ):
         raise HomeAssistantError(
             "Azure underlying model is only supported with Azure; clear the setting for this provider."
         )
@@ -610,7 +675,12 @@ def validate_runtime_readiness(
     )
     # Unbounded providers need no catalogue traversal at mutation boundaries.
     if (
-        provider_tool_limit(entry_data.get(CONF_API_PROVIDER), snapshot.api_mode)
+        provider_tool_limit(
+            effective_api_provider(
+                entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
+            ),
+            snapshot.api_mode,
+        )
         is None
     ):
         return snapshot
@@ -656,7 +726,9 @@ def validate_runtime_readiness(
     )
     validate_provider_tool_count(
         len(tools) + len(snapshot.provider_tools),
-        entry_data.get(CONF_API_PROVIDER),
+        effective_api_provider(
+            entry_data.get(CONF_API_PROVIDER), entry_data.get(CONF_BASE_URL)
+        ),
         snapshot.api_mode,
     )
     return snapshot

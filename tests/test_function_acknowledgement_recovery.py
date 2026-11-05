@@ -7,6 +7,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+
+from tests.ha_store_test_helpers import disk_write_boundary
 import yaml
 
 from custom_components.extended_openai_conversation_responses import management_ui as ui
@@ -121,7 +123,8 @@ async def test_retained_rename_is_uncertain_through_websocket_and_next_action(
     route,
 ):
     hass, _, subentry, _rules, store = function_agent
-    original_write = store._write_prepared_data
+    writer, write_name = disk_write_boundary(store)
+    original_write = getattr(writer, write_name)
     original_load = store.async_load
 
     def fail(*data):
@@ -131,7 +134,7 @@ async def test_retained_rename_is_uncertain_through_websocket_and_next_action(
             subentry.data = {**subentry.data, "prompt": "Concurrent owner edit"}
         raise OSError("directory sync failed")
 
-    monkeypatch.setattr(store, "_write_prepared_data", fail)
+    monkeypatch.setattr(writer, write_name, fail)
     if fault == "unreadable":
         monkeypatch.setattr(
             store, "async_load", AsyncMock(side_effect=OSError("read failed"))
@@ -160,7 +163,7 @@ async def test_retained_rename_is_uncertain_through_websocket_and_next_action(
         yaml.safe_load(subentry.data["functions"])[0]["spec"]["name"] == "renamed_probe"
     )
     assert subentry.data["function_groups"][0]["functions"] == ["renamed_probe"]
-    monkeypatch.setattr(store, "_write_prepared_data", original_write)
+    monkeypatch.setattr(writer, write_name, original_write)
     monkeypatch.setattr(store, "async_load", original_load)
     fresh = RequestRules(RequestRuleStore(hass, STORAGE_VERSION, store.key))
     await fresh.async_initialize()

@@ -1,6 +1,26 @@
 import {expect} from "@playwright/test";
 import {waitForManagementRouteReady} from "../ci/frontend_latency/routes.mjs";
 
+export async function selectNativePickerOption(picker, label) {
+  // New HA exposes option semantics; older releases put a button in the item.
+  // Both paths still operate the real native control and its value events.
+  const option = picker.getByRole("option").filter({hasText:label});
+  const legacy = picker.locator("ha-combo-box-item").filter({hasText:label}).locator("button");
+  const item = option.or(legacy).first();
+  await item.waitFor({state:"visible"});
+  const combo = picker.locator("ha-picker-combo-box");
+  if (await combo.count()) {
+    // HA 2026.11 renders rows to size its popup before wa-after-show. Its
+    // subsequent search focus can scroll/reposition those still-visible rows.
+    // Older HA renders them after opening and has no public shown property.
+    if (await combo.evaluate(element => "shown" in element)) {
+      await expect(combo).toHaveJSProperty("shown", true);
+    }
+    await expect.poll(() => combo.evaluate(element => element.matches(":focus-within"))).toBe(true);
+  }
+  await item.click();
+}
+
 export async function openColdHaRoute(context, page, route) {
   const baseUrl = process.env.REAL_HA_FRONTEND_URL;
   const auth = JSON.parse(process.env.REAL_HA_FRONTEND_AUTH);

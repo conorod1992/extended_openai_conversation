@@ -20,6 +20,10 @@ FRONTEND_PREFIXES = (
     "playwright", "scripts/generate-management-", "scripts/generate-agent-config-",
 )
 FRONTEND_EXACT = {
+    "ci/check_browser_collection.py", "ci/playwright_execution.mjs",
+    "tests/test_browser_collection_contract.py",
+    "tests_stress/browser_partition_contract.json",
+    "tests_stress/nightly_execution_contract.json",
     "requirements_test.txt", "pyproject.toml", ".github/workflows/frontend.yml",
     "ci/check_frontend_bundle.py", "ci/prepare_playwright_host.sh",
     "scripts/run-frontend-standalone-tests.mjs",

@@ -124,7 +124,9 @@ async def _start_management_bridge(
             message = json.loads(await request.text())
             if not isinstance(message, dict):
                 raise HomeAssistantError("Management message must be an object")
-            if message.get("type") == WS_CATALOG:
+            if message.get("type") == "get_config":
+                result = hass.config.as_dict()
+            elif message.get("type") == WS_CATALOG:
                 result = await _model_catalog_result(hass, message)
             else:
                 result = await async_management_command(hass, user_id, True, message)

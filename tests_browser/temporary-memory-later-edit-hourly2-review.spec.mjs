@@ -67,7 +67,8 @@ test("Short-term Memory acknowledges the submitted values while preserving later
     await expect(panel.locator("#temporary-memory-dialog")).toHaveJSProperty("open",false);
     const sent=await page.evaluate(()=>dataCollectionBackend.calls.filter(call=>call.action==="temporary_update"));
     expect(sent.map(call=>[call.content,call.category])).toEqual([["Submitted short-term fact","general"],["Newer short-term fact typed while saving","newer"]]);
-    expect(sent.map(call=>call.expires_at)).toEqual(["2099-09-01T12:00:00Z",laterISO]);
+    expect(sent.map(call=>call.expires_at)).toEqual(["2099-09-01T12:00:00Z",laterExpiry]);
+    expect(sent[1].local_times).toEqual({expires_at:laterExpiry});
     expect(await page.evaluate(()=>dataCollectionBackend.state.temporary[0].content)).toBe("Newer short-term fact typed while saving");
     expect(await page.evaluate(()=>dataCollectionBackend.state.temporary[0].expires_at)).toBe(laterISO);
   } else {

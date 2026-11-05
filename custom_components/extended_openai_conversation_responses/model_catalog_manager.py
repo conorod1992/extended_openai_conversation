@@ -14,17 +14,19 @@ import voluptuous as vol
 from homeassistant.components import websocket_api
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
 
 from .const import (
-    CONF_CHAT_MODEL,
+    CONF_CHAT_MODEL as CONF_CHAT_MODEL,
     CONF_REASONING_EFFORT,
     DEFAULT_CHAT_MODEL as DEFAULT_CHAT_MODEL,
     DOMAIN,
 )
 from .ha_schema import websocket_command as ha_websocket_command
+from .helpers import effective_api_provider
 from .model_capabilities import frontend_capabilities
 from .model_catalog import (
     BUNDLED_CATALOG,
@@ -43,6 +45,7 @@ from .model_catalog import (
     validate_or_migrate_catalog,
 )
 from .model_lifecycle import sync_all_model_lifecycles
+from .model_routing import routed_model_override
 from .operational_errors import log_handled_failure
 from .request_rules import SLOT_REFERENCE, async_get_request_rules
 from .strict_store import PropagatingWriteStore
@@ -250,6 +253,10 @@ class ModelCatalogManager:
         )
 
         for entry in self.hass.config_entries.async_entries(DOMAIN):
+            entry_data = getattr(entry, "data", {})
+            provider = effective_api_provider(
+                entry_data.get("api_provider"), entry_data.get("base_url")
+            )
             for subentry in entry.subentries.values():
                 if subentry.subentry_type not in {"conversation", "ai_task_data"}:
                     continue
@@ -264,7 +271,9 @@ class ModelCatalogManager:
                             if subentry.subentry_type == "conversation"
                             else False
                         ),
-                        model_capabilities=catalog_model_metadata(candidate, model),
+                        model_capabilities=catalog_model_metadata(
+                            candidate, model, provider=provider
+                        ),
                     )
                 except Exception:
                     return False
@@ -273,7 +282,26 @@ class ModelCatalogManager:
                 rules = await async_get_request_rules(
                     self.hass, entry.entry_id, subentry.subentry_id
                 )
-                for rule in rules.snapshot()["rules"]:
+                saved_rules = rules.snapshot()["rules"]
+                inherited_efforts = set()
+                configured_effort = options.get(CONF_REASONING_EFFORT)
+                if isinstance(configured_effort, str) and configured_effort:
+                    inherited_efforts.add(configured_effort)
+                for saved_rule in saved_rules:
+                    saved_action = saved_rule.get("action", {})
+                    saved_effort = saved_action.get("reasoning_effort")
+                    if (
+                        saved_rule.get("enabled", True)
+                        and saved_rule.get("action_type") == "model_routing"
+                        and not saved_action.get("reset")
+                        and saved_action.get("scope", "conversation") == "conversation"
+                        and isinstance(saved_effort, str)
+                        and saved_effort
+                        and not SLOT_REFERENCE.search(saved_effort)
+                    ):
+                        inherited_efforts.add(saved_effort)
+                continued_efforts: set[str] = set()
+                for rule in saved_rules:
                     if (
                         not rule.get("enabled", True)
                         or rule.get("action_type") != "model_routing"
@@ -284,24 +312,139 @@ class ModelCatalogManager:
                         continue
                     routed_model = action.get("model")
                     routed_effort = action.get("reasoning_effort")
-                    if routed_model and SLOT_REFERENCE.search(str(routed_model)):
+                    routed_binding = action.get("azure_model")
+                    if (
+                        action.get("scope") == "request"
+                        and rule.get("continue_matching")
+                        and not action.get("continue_to_ai")
+                        and isinstance(routed_effort, str)
+                        and routed_effort
+                        and not SLOT_REFERENCE.search(routed_effort)
+                    ):
+                        # Only later rules in this ordered snapshot can inherit
+                        # a request-only setting through continued matching.
+                        continued_efforts.add(routed_effort)
+                    if routed_binding and SLOT_REFERENCE.search(str(routed_binding)):
                         continue
-                    if routed_effort and SLOT_REFERENCE.search(str(routed_effort)):
+                    if (
+                        routed_model
+                        and SLOT_REFERENCE.search(str(routed_model))
+                        and not (provider == "azure" and routed_binding)
+                    ):
                         continue
+                    dynamic_effort = bool(
+                        routed_effort and SLOT_REFERENCE.search(str(routed_effort))
+                    )
                     if not routed_model and not routed_effort:
                         continue
-                    effective = dict(options)
-                    if routed_model:
-                        effective[CONF_CHAT_MODEL] = routed_model
-                    if routed_effort:
-                        effective[CONF_REASONING_EFFORT] = routed_effort
                     try:
+                        effective = {
+                            **options,
+                            **routed_model_override(
+                                options,
+                                routed_model,
+                                routed_binding,
+                                entry_data,
+                                model_is_known=(
+                                    catalog_model_metadata(
+                                        candidate, routed_model, provider=provider
+                                    )["status"]
+                                    != "unknown"
+                                    if routed_model
+                                    else None
+                                ),
+                            ),
+                        }
+                        if routed_effort:
+                            effective[CONF_REASONING_EFFORT] = routed_effort
                         routed_metadata = catalog_model_metadata(
                             candidate,
-                            capability_model_identity(
-                                effective, getattr(entry, "data", {})
-                            ),
+                            capability_model_identity(effective, entry_data),
+                            provider=provider,
                         )
+                        possible_efforts = inherited_efforts | continued_efforts
+                        if not routed_effort and possible_efforts:
+                            # A model-only rule can inherit explicit reasoning
+                            # from the agent or a previous conversation route.
+                            current_metadata = catalog_model_metadata(
+                                self.catalog,
+                                capability_model_identity(effective, entry_data),
+                                provider=provider,
+                            )
+                            for inherited_effort in possible_efforts:
+                                if (
+                                    not current_metadata["reasoning"]["supported"]
+                                    or inherited_effort
+                                    not in current_metadata["reasoning"]["efforts"]
+                                ):
+                                    continue
+                                inherited_options = {
+                                    **effective,
+                                    CONF_REASONING_EFFORT: inherited_effort,
+                                }
+                                try:
+                                    build_provider_request_snapshot(
+                                        inherited_options,
+                                        entry_data,
+                                        tools_required=conversation_tools_required(
+                                            effective
+                                        ),
+                                        model_capabilities=current_metadata,
+                                    )
+                                except HomeAssistantError:
+                                    continue  # This combination was already unusable.
+                                if (
+                                    not routed_metadata["reasoning"]["supported"]
+                                    or inherited_effort
+                                    not in routed_metadata["reasoning"]["efforts"]
+                                ):
+                                    return False
+                                build_provider_request_snapshot(
+                                    inherited_options,
+                                    entry_data,
+                                    tools_required=conversation_tools_required(
+                                        effective
+                                    ),
+                                    model_capabilities=routed_metadata,
+                                )
+                        if dynamic_effort:
+                            # Defer the captured value, not the fixed model's
+                            # recognition or previously available effort support.
+                            current_metadata = catalog_model_metadata(
+                                self.catalog,
+                                capability_model_identity(effective, entry_data),
+                                provider=provider,
+                            )
+                            if (
+                                current_metadata["reasoning"]["supported"]
+                                and not routed_metadata["reasoning"]["supported"]
+                            ):
+                                return False
+                            # A captured effort must not hide fixed API, tool,
+                            # tier or output requirements. Try the finite effort
+                            # set rather than assuming the recommendation: a
+                            # conditional capability can require another value.
+                            for possible_effort in routed_metadata["reasoning"][
+                                "efforts"
+                            ] or [None]:
+                                try:
+                                    build_provider_request_snapshot(
+                                        {
+                                            **effective,
+                                            CONF_REASONING_EFFORT: possible_effort,
+                                        },
+                                        entry_data,
+                                        tools_required=conversation_tools_required(
+                                            effective
+                                        ),
+                                        model_capabilities=routed_metadata,
+                                    )
+                                except HomeAssistantError:
+                                    continue
+                                break
+                            else:
+                                return False
+                            continue
                         # Explicit Rule efforts are validated at execution; the
                         # request builder may omit stale agent-only preferences.
                         if routed_effort and (
@@ -448,6 +591,10 @@ class ModelCatalogManager:
 
         bundled_efforts = set(catalog_reasoning_efforts(None))
         for entry in self.hass.config_entries.async_entries(DOMAIN):
+            entry_data = getattr(entry, "data", {})
+            provider = effective_api_provider(
+                entry_data.get("api_provider"), entry_data.get("base_url")
+            )
             for subentry in entry.subentries.values():
                 if subentry.subentry_type not in {"conversation", "ai_task_data"}:
                     continue
@@ -456,12 +603,14 @@ class ModelCatalogManager:
                     subentry.data, getattr(entry, "data", {})
                 )
                 configured_effort = subentry.data.get(CONF_REASONING_EFFORT)
-                metadata = catalog_model_metadata(None, configured_model)
+                metadata = catalog_model_metadata(
+                    None, configured_model, provider=provider
+                )
                 bundled_config_efforts = metadata["reasoning"]["efforts"]
                 # A legacy value omitted by both request builders is inactive.
                 # Still protect reasoning that the active catalogue actually uses.
                 current_metadata = catalog_model_metadata(
-                    self.catalog, configured_model
+                    self.catalog, configured_model, provider=provider
                 )
                 if (
                     isinstance(configured_effort, str)
@@ -499,18 +648,42 @@ class ModelCatalogManager:
                     ):
                         continue
                     model = action.get("model")
-                    if isinstance(model, str) and SLOT_REFERENCE.search(model):
+                    binding = action.get("azure_model")
+                    if (
+                        isinstance(binding, str) and SLOT_REFERENCE.search(binding)
+                    ) or (
+                        isinstance(model, str)
+                        and SLOT_REFERENCE.search(model)
+                        and not (provider == "azure" and binding)
+                    ):
                         if effort not in bundled_efforts:
                             return True
                         continue
-                    effective = {**subentry.data, CONF_REASONING_EFFORT: effort}
-                    if isinstance(model, str) and model:
-                        effective[CONF_CHAT_MODEL] = model
+                    try:
+                        effective = {
+                            **subentry.data,
+                            **routed_model_override(
+                                subentry.data,
+                                model,
+                                binding,
+                                entry_data,
+                                model_is_known=(
+                                    catalog_model_metadata(
+                                        None, model, provider=provider
+                                    )["status"]
+                                    != "unknown"
+                                    if model
+                                    else None
+                                ),
+                            ),
+                            CONF_REASONING_EFFORT: effort,
+                        }
+                    except HomeAssistantError:
+                        return True
                     metadata = catalog_model_metadata(
                         None,
-                        capability_model_identity(
-                            effective, getattr(entry, "data", {})
-                        ),
+                        capability_model_identity(effective, entry_data),
+                        provider=provider,
                     )
                     if (
                         not metadata["reasoning"]["supported"]
@@ -570,6 +743,7 @@ class ModelCatalogManager:
             ("status", "lookup", "check", "update", "apply", "reset")
         ),
         vol.Optional("model", default=""): vol.All(str, vol.Length(max=128)),
+        vol.Optional("provider"): vol.In(["openai", "azure"]),
     }
 )
 @websocket_api.require_admin
@@ -604,7 +778,7 @@ async def websocket_catalog(
             )
             return
 
-    metadata = model_metadata(msg["model"])
+    metadata = model_metadata(msg["model"], provider=msg.get("provider"))
     capabilities = frontend_capabilities(msg["model"], metadata=metadata)
     connection.send_result(
         msg["id"],

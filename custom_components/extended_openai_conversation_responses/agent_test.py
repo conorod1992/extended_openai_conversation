@@ -38,7 +38,12 @@ from .const import (
 from .functions import get_function
 from .guest_mode import get_loaded_guest_mode, resolve_guest_policy
 from .ha_llm_tools import is_ha_tool, validate_reference
-from .helpers import get_api_mode, get_exposed_entities, supports_openai_hosted_tools
+from .helpers import (
+    effective_api_provider,
+    get_api_mode,
+    get_exposed_entities,
+    supports_openai_hosted_tools,
+)
 from .memory import async_get_memory, memory_enabled
 from .model_capabilities import (
     capability_allowed,
@@ -147,7 +152,13 @@ async def async_test_agent(
         )
         return AgentTestResult(_overall(checks), checks)
     underlying_model = subentry.data.get("azure_model")
-    if underlying_model and entry.data.get(CONF_API_PROVIDER) != "azure":
+    if (
+        underlying_model
+        and effective_api_provider(
+            entry.data.get(CONF_API_PROVIDER), entry.data.get(CONF_BASE_URL)
+        )
+        != "azure"
+    ):
         checks.append(
             _check(
                 "Configuration",

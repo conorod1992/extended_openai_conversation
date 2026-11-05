@@ -110,10 +110,10 @@ def test_web_search_checks_selected_model_without_another_lookup(
     calls = 0
     original = request.get_model_capabilities
 
-    def counted(model_id):
+    def counted(model_id, **kwargs):
         nonlocal calls
         calls += 1
-        return original(model_id)
+        return original(model_id, **kwargs)
 
     monkeypatch.setattr(request, "get_model_capabilities", counted)
     with pytest.raises(

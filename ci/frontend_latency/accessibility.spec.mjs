@@ -3,7 +3,7 @@ import {dirname} from "node:path";
 import {createRequire} from "node:module";
 import {expect, test} from "@playwright/test";
 import {LATENCY_ROUTES, waitForManagementRouteReady} from "./routes.mjs";
-import {openColdHaRoute} from "../../tests_browser/real-ha-shell-helpers.mjs";
+import {openColdHaRoute, selectNativePickerOption} from "../../tests_browser/real-ha-shell-helpers.mjs";
 import {replaceNativeYaml} from "../../tests_browser/real-ha-shell-helpers.mjs";
 import {openFunctionAddMenu} from "../../tests_browser/browser-helpers.mjs";
 const require = createRequire(import.meta.url);
@@ -173,13 +173,22 @@ test("scan genuine HA route and editor accessibility semantics", async ({browser
           }
           if (route.name === "assistant-prompt-context") {
             const picker = panel.locator("#exposed-entity-picker");
-            await expect(picker.locator("ha-picker-field")).toHaveAttribute("role", "list");
+            const expectPickerSemantics = async () => {
+              const field = picker.locator("ha-picker-field");
+              const legacy = await field.getByRole("listitem").count() > 0;
+              if (legacy) await expect(field).toHaveAttribute("role", "list");
+              else {
+                await expect(field).not.toHaveAttribute("role", "list");
+                await expect(field.getByRole("button").first()).toBeVisible();
+              }
+            };
+            await expectPickerSemantics();
             await picker.locator("ha-picker-field").click();
-            await picker.locator("ha-combo-box-item").filter({hasText:"sensor.cold_attribute_kitchen"}).locator("button").click();
+            await selectNativePickerOption(picker, "sensor.cold_attribute_kitchen");
             await expect(panel.locator("[data-exposed-editor]")).toContainText("sensor.cold_attribute_kitchen");
-            // Selecting replaces the EOAI section and hydrates a fresh native
-            // field. Its collapsed item must retain the list parent too.
-            await expect(panel.locator("#exposed-entity-picker ha-picker-field")).toHaveAttribute("role", "list");
+            // Selecting replaces the section and hydrates a fresh native field.
+            // Both HA structures must retain correct semantics after replacement.
+            await expectPickerSemantics();
             await panel.locator("[data-close-exposed-editor]").click();
           }
           if (route.name === "capabilities-functions") {
@@ -269,7 +278,7 @@ test("scan genuine HA route and editor accessibility semantics", async ({browser
             await panel.locator('[data-config="voice_unmapped_policy"]').selectOption("default_user");
             const picker = panel.locator("#config-voice_default_user_picker");
             await picker.locator("ha-picker-field").click();
-            await picker.locator("ha-combo-box-item").filter({hasText:process.env.REAL_HA_PICKER_USER_NAME}).locator("button").click();
+            await selectNativePickerOption(picker, process.env.REAL_HA_PICKER_USER_NAME);
             await expect(picker).toContainText(process.env.REAL_HA_PICKER_USER_NAME);
             await scan("picker-populated");
             await panel.locator("#revert-config").click();

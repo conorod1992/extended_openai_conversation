@@ -43,19 +43,23 @@ def get_api_mode(
     return select_api_path(model, configured_mode, tools_required, effort, web_search)
 
 
-def get_model_config(model: str) -> dict[str, Any]:
+def get_model_config(model: str, *, provider: str | None = None) -> dict[str, Any]:
     """Return legacy-compatible booleans derived from v2 capability data.
 
     `supports_max_tokens` is deliberately always false. Older call sites that still
     branch on this helper therefore normalize onto max_completion_tokens instead of
     ever emitting the deprecated max_tokens field.
     """
-    return compatibility_capabilities(model)
+    return compatibility_capabilities(
+        model, metadata=model_metadata(model, provider=provider)
+    )
 
 
-def get_reasoning_effort_options(model: str) -> list[str]:
+def get_reasoning_effort_options(
+    model: str, *, provider: str | None = None
+) -> list[str]:
     """Return the exact model-specific reasoning enum from the active catalogue."""
-    return list(model_metadata(model)["reasoning"]["efforts"])
+    return list(model_metadata(model, provider=provider)["reasoning"]["efforts"])
 
 
 def get_exposed_entities(hass: HomeAssistant) -> list[dict[str, Any]]:
@@ -94,6 +98,21 @@ def is_azure_url(base_url: str | None) -> bool:
         hostname == domain or hostname.endswith(f".{domain}")
         for domain in AZURE_DOMAINS
     )
+
+
+def effective_api_provider(api_provider: str | None, base_url: str | None) -> str:
+    """Use the same Azure hostname inference for clients and capability consumers."""
+    return (
+        "azure"
+        if api_provider == "azure" or is_azure_url(base_url)
+        else (api_provider or DEFAULT_API_PROVIDER)
+    )
+
+
+def entry_api_provider(entry: Any) -> str:
+    """Resolve capability context from the parent connection, never its model."""
+    data = getattr(entry, "data", {})
+    return effective_api_provider(data.get("api_provider"), data.get("base_url"))
 
 
 def supports_openai_hosted_tools(
@@ -165,7 +184,7 @@ async def get_authenticated_client(
     # Match HA core: retain its shared HTTPX client and TLS/connection policy.
     # SDK 3 supports this client at runtime, while typing targets HTTPX2.
     client: AsyncClient
-    if base_url and (is_azure_url(base_url) or api_provider == "azure"):
+    if base_url and effective_api_provider(api_provider, base_url) == "azure":
         client = AsyncAzureOpenAI(
             api_key=api_key,
             azure_endpoint=base_url,

@@ -1,6 +1,8 @@
 {
   "schema": "eoai-nightly-execution-contract/v1",
   "pytest": [
+    "tests_real_ha/test_usage_accounting_failure_recovery.py::test_recovered_storage_policy_updates_live_volatile_manager[0]",
+    "tests_real_ha/test_usage_accounting_failure_recovery.py::test_recovered_storage_policy_updates_live_volatile_manager[30]",
     "tests_real_ha/test_optional_startup_ownership.py::test_already_cancelling_sibling_finishes_cleanup_before_owner_returns",
     "tests_real_ha/test_optional_startup_ownership.py::test_cleanup_failure_preserves_original_startup_cancellation[caller]",
     "tests_real_ha/test_optional_startup_ownership.py::test_cleanup_failure_preserves_original_startup_cancellation[child]",
@@ -20,6 +22,18 @@
     "tests_real_ha/test_agent_registration_ownership.py::test_owned_reload_settles_after_cancellation_and_keeps_new_registration[restore]",
     "tests_real_ha/test_agent_registration_ownership.py::test_owned_reload_settles_after_cancellation_and_keeps_new_registration[listener]",
     "tests_real_ha/test_fixture_store_isolation.py::test_core_config_store_and_fresh_reader_share_physical_path",
+    "tests_stress/test_fixture_store_isolation.py::test_normal_storage_cases_retain_the_in_memory_fixture",
+    "tests_real_ha/test_fixture_store_isolation.py::test_store_cache_invalidation_uses_native_owner_and_only_target_key",
+    "tests_real_ha/test_fixture_store_isolation.py::test_prepared_write_fault_preserves_native_disk_semantics[False-False-False]",
+    "tests_real_ha/test_fixture_store_isolation.py::test_prepared_write_fault_preserves_native_disk_semantics[False-False-True]",
+    "tests_real_ha/test_fixture_store_isolation.py::test_prepared_write_fault_preserves_native_disk_semantics[False-True-False]",
+    "tests_real_ha/test_fixture_store_isolation.py::test_prepared_write_fault_preserves_native_disk_semantics[False-True-True]",
+    "tests_real_ha/test_fixture_store_isolation.py::test_prepared_write_fault_preserves_native_disk_semantics[True-False-False]",
+    "tests_real_ha/test_fixture_store_isolation.py::test_prepared_write_fault_preserves_native_disk_semantics[True-False-True]",
+    "tests_real_ha/test_fixture_store_isolation.py::test_prepared_write_fault_preserves_native_disk_semantics[True-True-False]",
+    "tests_real_ha/test_fixture_store_isolation.py::test_prepared_write_fault_preserves_native_disk_semantics[True-True-True]",
+    "tests_real_ha/test_fixture_store_isolation.py::test_prepared_write_gate_waits_for_native_disk_settlement[False]",
+    "tests_real_ha/test_fixture_store_isolation.py::test_prepared_write_gate_waits_for_native_disk_settlement[True]",
     "tests_stress/test_fixture_store_isolation.py::test_core_config_store_and_fresh_reader_share_physical_path",
     "tests_real_ha/test_provider_cleanup_file_recovery.py::test_consumed_chat_control_does_not_relax_same_round_id_validation[chat_completions]",
     "tests_real_ha/test_provider_cleanup_file_recovery.py::test_consumed_chat_control_does_not_relax_same_round_id_validation[responses]",
@@ -1481,6 +1495,8 @@
     "tests_stress/test_agent_subentry_lifecycle_isolation.py::test_backup_snapshot_of_one_agent_is_stable_while_sibling_mutates",
     "tests_stress/test_agent_subentry_lifecycle_isolation.py::test_duplicate_and_imported_agents_start_config_only_then_diverge_durably",
     "tests_stress/test_agent_subentry_lifecycle_isolation.py::test_one_conversation_initialization_failure_does_not_poison_healthy_sibling",
+    "tests_stress/test_ai_task_continuity.py::test_caller_task_without_entity_control_never_reaches_provider[chat_completions]",
+    "tests_stress/test_ai_task_continuity.py::test_caller_task_without_entity_control_never_reaches_provider[responses]",
     "tests_stress/test_ai_task_continuity.py::test_image_and_owner_survive_caller_tool_continuation_then_isolate_next_task[chat_completions]",
     "tests_stress/test_ai_task_continuity.py::test_image_and_owner_survive_caller_tool_continuation_then_isolate_next_task[responses]",
     "tests_stress/test_ai_task_continuity.py::test_overlapping_caller_tools_keep_context_and_cancellation_request_local[chat_completions]",
@@ -3058,7 +3074,11 @@
     "tests_real_ha/test_trigger_capture_sensor_isolation.py::test_saved_rule_native_wait_selects_only_its_entity[True-grouped-numeric_state]",
     "tests_real_ha/test_trigger_capture_sensor_isolation.py::test_saved_rule_native_wait_selects_only_its_entity[True-grouped-state]",
     "tests_real_ha/test_trigger_capture_sensor_isolation.py::test_saved_rule_native_wait_selects_only_its_entity[True-options-numeric_state]",
-    "tests_real_ha/test_trigger_capture_sensor_isolation.py::test_saved_rule_native_wait_selects_only_its_entity[True-options-state]"
+    "tests_real_ha/test_trigger_capture_sensor_isolation.py::test_saved_rule_native_wait_selects_only_its_entity[True-options-state]",
+    "tests_real_ha/test_quiet_hours_timezone.py::test_timezone_update_reconciles_public_state_controls_and_deadlines[False]",
+    "tests_real_ha/test_quiet_hours_timezone.py::test_timezone_update_reconciles_public_state_controls_and_deadlines[True]",
+    "tests_real_ha/test_quiet_hours_timezone.py::test_timezone_listener_preserves_overlapping_ownership_and_retires_on_shutdown[False]",
+    "tests_real_ha/test_quiet_hours_timezone.py::test_timezone_listener_preserves_overlapping_ownership_and_retires_on_shutdown[True]"
   ],
   "browser": {
     "browser": [
@@ -3263,6 +3283,12 @@
       "tests_browser/quiet-hours-lifecycle.stress.mjs::chromium::quiet-hours-lifecycle.stress.mjs::nightly Quiet Hours satellite overrides clear to pending automatic resolution and preserve other drafts",
       "tests_browser/quiet-hours-lifecycle.stress.mjs::chromium::quiet-hours-lifecycle.stress.mjs::nightly Quiet Hours schedule controls round-trip through save, route reopen, and fresh load",
       "tests_browser/quiet-hours-lifecycle.stress.mjs::chromium::quiet-hours-lifecycle.stress.mjs::nightly Quiet Hours surfaces unavailable and changing satellite candidates while editing",
+      "tests_browser/quiet-hours-lifecycle.stress.mjs::chromium::quiet-hours-lifecycle.stress.mjs::nightly Quiet Hours uncertain save requires an accepted read; outcome=after-commit, bundle=false",
+      "tests_browser/quiet-hours-lifecycle.stress.mjs::chromium::quiet-hours-lifecycle.stress.mjs::nightly Quiet Hours uncertain save requires an accepted read; outcome=after-commit, bundle=true",
+      "tests_browser/quiet-hours-lifecycle.stress.mjs::chromium::quiet-hours-lifecycle.stress.mjs::nightly Quiet Hours uncertain save requires an accepted read; outcome=before-commit, bundle=false",
+      "tests_browser/quiet-hours-lifecycle.stress.mjs::chromium::quiet-hours-lifecycle.stress.mjs::nightly Quiet Hours uncertain save requires an accepted read; outcome=before-commit, bundle=true",
+      "tests_browser/quiet-hours-lifecycle.stress.mjs::chromium::quiet-hours-lifecycle.stress.mjs::nightly Quiet Hours uncertain save requires an accepted read; outcome=malformed-reply, bundle=false",
+      "tests_browser/quiet-hours-lifecycle.stress.mjs::chromium::quiet-hours-lifecycle.stress.mjs::nightly Quiet Hours uncertain save requires an accepted read; outcome=malformed-reply, bundle=true",
       "tests_browser/real-ha-adversarial-content.spec.mjs::chromium::real-ha-adversarial-content.spec.mjs::hostile managed records stay inert in real HA frontend and after reload",
       "tests_browser/real-ha-backend.spec.mjs::chromium::real-ha-backend.spec.mjs::Guest Mode activation respects the explicit end choice through genuine HA",
       "tests_browser/real-ha-backend.spec.mjs::chromium::real-ha-backend.spec.mjs::Guest Mode interval update respects the explicit end choice through genuine HA",
@@ -3384,6 +3410,10 @@
       "tests_browser/voice-mapping-fresh-read-review.spec.mjs::chromium::voice-mapping-fresh-read-review.spec.mjs::fresh configuration read preserves newer valid Voice row edits",
       "tests_browser/voice-mapping-fresh-read-review.spec.mjs::chromium::voice-mapping-fresh-read-review.spec.mjs::fresh configuration read updates clean hydrated Voice assignments",
       "tests_browser/voice-mapping-retained.spec.mjs::chromium::voice-mapping-retained.spec.mjs::duplicate Voice rows survive route changes and remount until corrected without losing another mapping",
+      "tests_browser/voice-mapping-retained.spec.mjs::chromium::voice-mapping-retained.spec.mjs::already committed Voice recovery stays clean and editable; bundle=false",
+      "tests_browser/voice-mapping-retained.spec.mjs::chromium::voice-mapping-retained.spec.mjs::already committed Voice recovery stays clean and editable; bundle=true",
+      "tests_browser/voice-mapping-retained.spec.mjs::chromium::voice-mapping-retained.spec.mjs::off-route deferred Voice recovery after Discard saves the displayed mapping; bundle=false",
+      "tests_browser/voice-mapping-retained.spec.mjs::chromium::voice-mapping-retained.spec.mjs::off-route deferred Voice recovery after Discard saves the displayed mapping; bundle=true",
       "tests_browser/voice-mapping-retained.spec.mjs::chromium::voice-mapping-retained.spec.mjs::empty and pending Voice rows stay dirty off route and Discard retires late registry completions",
       "tests_browser/voice-mapping-retained.spec.mjs::chromium::voice-mapping-retained.spec.mjs::failed Voice lookup remains editable after navigation and remount and blocks global Save",
       "tests_browser/voice-recovery-hourly-review.spec.mjs::chromium::voice-recovery-hourly-review.spec.mjs::Voice recovery publishes invalid rows into an already edited replacement panel",
@@ -4382,7 +4412,8 @@
       "tests_stress/test_quiet_hours_multi_satellite.py",
       "tests_stress/test_quiet_hours_ownership_time.py",
       "tests_real_ha/test_quiet_hours_generation_recovery.py",
-      "tests_real_ha/test_quiet_hours_identity_shutdown.py"
+      "tests_real_ha/test_quiet_hours_identity_shutdown.py",
+      "tests_real_ha/test_quiet_hours_timezone.py"
     ],
     "request-rules": [
       "tests_real_ha/test_request_rules_script_semantics.py",

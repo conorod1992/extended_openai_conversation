@@ -79,7 +79,9 @@ def _empty_prompt_metadata(_hass, _entity_id) -> SimpleNamespace:
 
 
 @pytest.mark.asyncio
-async def test_agent_config_stores_only_stable_references_and_attribute_names(hass) -> None:
+async def test_agent_config_stores_only_stable_references_and_attribute_names(
+    hass,
+) -> None:
     normalized = normalize_agent_config(
         {
             CONF_EXPOSED_ENTITY_ATTRIBUTES: {
@@ -113,7 +115,9 @@ def test_invalid_or_mutable_preferences_are_rejected(value) -> None:
 
 
 @pytest.mark.asyncio
-async def test_import_export_round_trip_preserves_preferences_without_live_values(hass) -> None:
+async def test_import_export_round_trip_preserves_preferences_without_live_values(
+    hass,
+) -> None:
     data = agent_config_defaults()
     data[CONF_EXPOSED_ENTITY_ATTRIBUTES] = {
         "registry:stable": ["brightness", "color_temp"]
@@ -308,6 +312,11 @@ def test_catalog_separates_current_registryless_and_inactive_preferences(
 def test_maintained_default_formats_include_only_live_selected_values(
     hass, monkeypatch
 ) -> None:
+    monkeypatch.setattr(
+        exposed_attributes.ar,
+        "async_get",
+        lambda _: SimpleNamespace(async_get_area=lambda _: None),
+    )
     monkeypatch.setattr(
         exposed_attributes,
         "get_entity_prompt_metadata",

@@ -2,7 +2,7 @@
 
 from copy import deepcopy
 from dataclasses import replace
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -12,6 +12,7 @@ from custom_components.extended_openai_conversation_responses import (
     management_ui as ui,
     model_catalog as catalog,
     model_catalog_manager as runtime,
+    usage,
 )
 from custom_components.extended_openai_conversation_responses.request import (
     build_provider_request_snapshot,
@@ -32,6 +33,8 @@ def isolated_catalog():
 @pytest.mark.parametrize("explicit", [False, True])
 async def test_public_import_read_apply_read_reset(monkeypatch, explicit, hass):
     hass, entry, original = _hass_with_agent()
+    retention = SimpleNamespace(async_prune_details=AsyncMock())
+    monkeypatch.setattr(usage, "async_get_durable_usage", AsyncMock(return_value=retention))
     subentry = ConfigSubentry(
         data=MappingProxyType(original.data),
         subentry_type="conversation",
@@ -82,6 +85,7 @@ async def test_public_import_read_apply_read_reset(monkeypatch, explicit, hass):
         },
     )
     subentry = entry.subentries[subentry.subentry_id]
+    retention.async_prune_details.assert_awaited_once()
     saved = dict(subentry.data)
     update_count = hass.config_entries.updates
     monkeypatch.setattr(

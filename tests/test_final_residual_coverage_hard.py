@@ -46,7 +46,7 @@ def test_repair_persistence_reuses_tools_while_preserving_absence(monkeypatch, h
     monkeypatch.setattr(
         loading,
         "_snapshot_normalized_configuration",
-        lambda value, validated=False: dict(value),
+        lambda value, validated=False, provider=None: dict(value),
     )
 
     result = repair.persist_valid_function_configuration(

@@ -35,6 +35,7 @@ async def test_configuration_update_rejects_mixed_invalid_function_tools_atomica
 ) -> None:
     """Reject one bad tool without partially saving valid siblings, then recover."""
     entry = MagicMock()
+    entry.data = {}
     entry.domain = DOMAIN
     entry.entry_id = "entry-1"
 

@@ -215,3 +215,9 @@ assert.doesNotMatch(
   /management-overview-health-clarity/,
   "Overview implementation must not statically pull Model Data/catalog work into first useful paint",
 );
+
+
+for (const flag of [undefined,null,true,false]) {
+  const markup=renderOverview(panel,{...agent,guest_mode:{currently_active:true,state:"active_indefinitely",has_home_assistant_exclusions:flag}});
+  assert.equal(markup.includes("Guest Mode is active without configured Home Assistant exclusions."),flag===false);
+}

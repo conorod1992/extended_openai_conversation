@@ -1,6 +1,6 @@
 import {waitForManagementRouteReady} from "../ci/frontend_latency/routes.mjs";
 import {expect, test} from "@playwright/test";
-import {expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
+import {acceptConfirmation, expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers.mjs";
 
 const routes = [
   "assistant/basics", "assistant/conversation", "assistant/model-responses", "assistant/prompt-context",
@@ -112,8 +112,17 @@ test("nightly assistant configuration control matrix edits, saves, and reloads e
     const visibleBeforeSave = await controlValues(panel);
     const expected = [...edits.values()]
       .map(field => ({...field, expected: expectedValue(field)}));
+    const savesBefore = await page.evaluate(() => browserHarness.calls.filter(call => call.section === "configuration" && call.action === "save").length);
     await panel.locator("#save-config").click();
+    if (route === "usage-maintenance/retention") {
+      // Disabled retention is a destructive write. Exercise its confirmation,
+      // rather than waiting for a save that the user has not yet authorized.
+      await expect(panel.locator("#confirm-dialog")).toContainText("Delete stored usage details?");
+      expect(await page.evaluate(() => browserHarness.calls.filter(call => call.section === "configuration" && call.action === "save").length)).toBe(savesBefore);
+      await acceptConfirmation(panel);
+    }
     await expect(panel.locator("#save-config")).toHaveCount(0);
+    expect(await page.evaluate(() => browserHarness.calls.filter(call => call.section === "configuration" && call.action === "save").length)).toBe(savesBefore + 1);
     const saved = await panel.evaluate(host => ({
       config:structuredClone(host._configData?.config || host._result?.config || {}),
       title:host._configData?.title,

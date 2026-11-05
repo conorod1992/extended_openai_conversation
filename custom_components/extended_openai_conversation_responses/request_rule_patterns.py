@@ -173,6 +173,27 @@ class CompiledSentencePattern:
         sentence_end = len(folded)
         while sentence_end and folded[sentence_end - 1] in _SENTENCE_END:
             sentence_end -= 1
+        # A separator before STT punctuation may disappear only when the suffix
+        # can finish without a capture. Explicit punctuation literals still use
+        # normal matching, including after omitted optional words.
+        reverse: dict[int, list[int]] = {}
+        punctuation_suffix: set[int] = set()
+        for index, node in enumerate(self.states):
+            if node.kind == "match":
+                punctuation_suffix.add(index)
+            elif node.kind in {"split", "space"} or (
+                node.kind == "literal"
+                and all(char in _SENTENCE_END for char in node.value or "")
+            ):
+                for target in (node.out, node.out1, node.out2):
+                    if target is not None:
+                        reverse.setdefault(target, []).append(index)
+        pending = list(punctuation_suffix)
+        while pending:
+            for index in reverse.get(pending.pop(), ()):
+                if index not in punctuation_suffix:
+                    punctuation_suffix.add(index)
+                    pending.append(index)
         nonspace = [0]
         for char in folded:
             nonspace.append(nonspace[-1] + (char != " "))
@@ -357,8 +378,10 @@ class CompiledSentencePattern:
                 # syntax work without allowing required middle separators to vanish.
                 if pos < len(folded) and folded[pos] == " ":
                     push(state.out, pos + 1, starts, lengths, values, penalty)
-                if pos in {0, sentence_end, len(folded)} or (
-                    pos > 0 and folded[pos - 1] == " "
+                if (
+                    pos in {0, len(folded)}
+                    or (pos == sentence_end and state.out in punctuation_suffix)
+                    or (pos > 0 and folded[pos - 1] == " ")
                 ):
                     push(state.out, pos, starts, lengths, values, penalty)
                 continue

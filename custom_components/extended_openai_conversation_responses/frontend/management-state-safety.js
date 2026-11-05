@@ -2,8 +2,9 @@ import {getRouteFeature} from "./management-route.js";
 import {pageCoordinator, currentPageScope} from "./management-page-drafts.js";
 import {same, clone} from "./unsaved-state.js";
 import {SECTION_CACHE_TTL_MS} from "./management-cache.js";
-import {configurationDraftBaseline} from "./configuration-acknowledgement.js";
-import {editorControls, dialogState, setDialogBaseline} from "./management-dialogs.js";
+import {configurationDraftBaseline, configurationSubmissionIsCurrent, captureConfigurationOwner} from "./configuration-acknowledgement.js";
+import {editorControls, dialogState, setDialogBaseline, showRecoveredDraftCopy} from "./management-dialogs.js";
+export {showRecoveredDraftCopy, reviewRecoveredScope, scopeNeedsRecoveryReview} from "./management-dialogs.js";
 import {voiceMappingDraftDirty} from "./voice-mapping-draft.js";
 export {SECTION_CACHE_TTL_MS};
 
@@ -42,10 +43,16 @@ function configBaselineReady(panel) {
 
 function configKeyChanged(panel, key) {
   if (!configBaselineReady(panel)) return false;
+  if (pendingRetentionFields(panel).includes(key)) return true;
   const baseline = configurationDraftBaseline(panel);
   if (key === "__title") return panel._draftTitle !== baseline.title;
   if (key === "voice_device_mappings" && voiceMappingDraftDirty(panel)) return true;
   return !same(panel._draft[key], baseline.config[key]);
+}
+
+export function pendingRetentionFields(panel) {
+  const pending = panel._eocPendingRetention;
+  return pending && configurationSubmissionIsCurrent(panel, pending) ? pending.fields : [];
 }
 
 export function rebuildConfigDirtyKeys(panel) {
@@ -60,6 +67,7 @@ export function rebuildConfigDirtyKeys(panel) {
     }
     if (panel._draftTitle !== snapshot.title) changed.add("__title");
     if (voiceMappingDraftDirty(panel)) changed.add("voice_device_mappings");
+    for (const key of pendingRetentionFields(panel)) changed.add(key);
   }
   panel._eocDirtyConfigKeys = changed;
   return changed;
@@ -181,43 +189,6 @@ function modifiedOpenDialog(panel) {
   return null;
 }
 
-export function showRecoveredDraftCopy(panel, {
-  title = "Recovered unsaved editor",
-  description = "The saved definition could not be safely reopened. Copy your recovered edits before opening the current definition.",
-  values,
-  label = "Recovered editor values",
-  canDiscard = () => false,
-  onDiscard = () => {},
-}) {
-  const recovery = document.createElement("dialog");
-  recovery.className = "editor-dialog";
-  recovery.dataset.eocRecoveredEditor = "";
-  const heading = document.createElement("h2");
-  heading.textContent = title;
-  const explanation = document.createElement("p");
-  explanation.textContent = description;
-  const text = document.createElement("textarea");
-  text.value = JSON.stringify(values, null, 2);
-  text.readOnly = true;
-  text.setAttribute("aria-label", label);
-  const close = document.createElement("button");
-  close.textContent = "Keep draft for later";
-  close.onclick = () => recovery.close();
-  const discard = document.createElement("button");
-  discard.textContent = "Discard recovered edits";
-  discard.onclick = () => {
-    if (recovery.open && canDiscard()) onDiscard();
-    recovery.close();
-  };
-  recovery.addEventListener("close", () => {
-    close.onclick = discard.onclick = null;
-    recovery.remove();
-  }, {once:true});
-  recovery.append(heading, explanation, text, close, discard);
-  panel.shadowRoot.append(recovery);
-  recovery.showModal();
-  return recovery;
-}
 
 function showRecoveredEditorValues(panel, old, values, ownsSource) {
   showRecoveredDraftCopy(panel, {

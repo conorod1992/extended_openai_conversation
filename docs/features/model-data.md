@@ -1,6 +1,6 @@
 # Model data catalogue
 
-Extended OpenAI ships a JSON catalogue for OpenAI conversational and reasoning models and the provider capabilities this integration uses. Configuration, Request Rules, previews, and live requests use the same active capabilities. This is deliberately narrower than OpenAI's full model and product directory.
+Extended OpenAI ships a JSON catalogue for OpenAI conversational and reasoning models and the provider capabilities this integration uses. Configuration, Request Rules, previews, and live requests use the same active capabilities. Catalogue apply/reset safeguards also resolve Azure deployments with each route’s own underlying model and provider profile. Captured deployment names with a fixed underlying model receive the same checks; fully dynamic bindings remain validated when the rule runs. This is deliberately narrower than OpenAI's full model and product directory.
 
 ## Updating and resetting
 
@@ -8,7 +8,7 @@ In **Assistant → Model & responses → Model parameters**, administrators can 
 
 An hourly background timer checks whether 24 hours have elapsed since the last attempt. The first automatic check runs within an hour of integration setup; startup never waits for a network request. Attempt time is persisted, including after failures, to avoid repeated checks across restarts. Manual updates bypass the interval. Reset removes the downloaded override and ETag and postpones the next automatic check for 24 hours; it does not permanently disable updates.
 
-If returning to bundled model data would invalidate a saved agent request or Request Rule, including API, tools, Web Search, output limits or reasoning choices, reset is blocked and the downloaded data remains active. Change the affected saved setting/rule first, or install a newer integration whose bundled catalogue supports it. This prevents an administrative reset from making durable configuration invalid.
+If returning to bundled model data would invalidate a saved agent request or Request Rule, including API, tools, Web Search, output limits or reasoning choices, reset is blocked and the downloaded data remains active. This includes an Azure route that implicitly identifies its model using a downloaded-only catalogue entry: reset must preserve recognition for a fresh conversation. An explicit route binding can keep a custom deployment usable when its request settings are compatible with bundled data. Captured reasoning values remain checked when a rule runs, while reset still preserves its fixed model’s recognition and previously available support for adjustable reasoning, along with fixed request requirements such as the processing tier. Model-only routes also preserve explicit reasoning inherited from the assistant or an enabled conversation-scoped rule when that combination is currently usable. Request-scoped settings are checked for later rules in the same continued-matching chain; they are not treated as retained conversation choices. Change the affected saved setting/rule first, or install a newer integration whose bundled catalogue supports it. This prevents an administrative reset from making durable configuration invalid.
 
 The fixed HTTPS source is this repository's `develop` branch:
 
@@ -88,3 +88,7 @@ configured output limit. Models listed in the catalog use their exact mapping;
 OpenAI and Azure retain `max_completion_tokens`. Responses uses `max_output_tokens`.
 Catalog schema 8 also permits a model to specify `chat_completions: max_tokens`
 with `legacy_max_tokens: chat_completions_only`. Older schema catalogs remain readable.
+
+### Implicit reasoning and provider-specific effort
+
+Reasoning-token consumption is separate from an adjustable reasoning-effort parameter. Both OpenAI and Azure o3-pro use the reasoning summary budget, including the documented `o3-pro-2025-06-10` snapshot. Azure offers its documented `low`, `medium`, and `high` choices. OpenAI’s model-specific documentation does not establish that same adjustable enumeration, so EOAI retains its conservative effort controls for OpenAI while budgeting for implicit reasoning. These provider projections do not change the downloadable catalogue schema.

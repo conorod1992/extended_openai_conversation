@@ -130,7 +130,7 @@ async def test_management_test_actions_never_delegate_to_real_processing(
     monkeypatch.setattr(
         management_ui,
         "entry_and_agent",
-        lambda _hass, _entry_id, _subentry_id: (object(), object()),
+        lambda _hass, _entry_id, _subentry_id: (object(), SimpleNamespace(data={})),
     )
 
     async def get_rules(_hass, _entry_id, _subentry_id):
@@ -177,7 +177,7 @@ async def test_match_preview_reports_bounded_match_failure(
     monkeypatch.setattr(
         management_ui,
         "entry_and_agent",
-        lambda _hass, _entry_id, _subentry_id: (object(), object()),
+        lambda _hass, _entry_id, _subentry_id: (object(), SimpleNamespace(data={})),
     )
 
     async def get_rules(_hass, _entry_id, _subentry_id):

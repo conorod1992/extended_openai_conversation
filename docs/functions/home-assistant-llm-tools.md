@@ -46,6 +46,17 @@ Functions or retain request-owned tool/API objects for background execution. A
 source can implement its own scheduling capability as part of its native behavior.
 Both Responses and Chat Completions use the same live capability adapter.
 
+If a tool fails after it may have acted, a later turn in the same conversation
+cannot retry it with changed arguments until the unresolved exchange is
+acknowledged. A returned HA error result has the same protection as an exception.
+The same conservative guard applies after a failed provider continuation when
+schema normalization changed the submitted arguments or uses validators whose
+value preservation cannot be established. The native tool owns its own
+normalization, so defaults or transformations may produce a different actual
+invocation. This can also block a distinct follow-up call. A successful provider
+response clears the recovery guard; starting a new conversation also provides a
+fresh scope. Normal successful repetitions remain possible.
+
 Unavailable or renamed tools remain saved. They are omitted from model requests,
 and the management preview marks them unavailable. No similar-name replacement is
 chosen. When the exact saved identity returns, the tool becomes usable again.

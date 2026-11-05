@@ -106,13 +106,16 @@ from .continuity import (
     GUEST_CONTINUITY_NAMESPACE,
     ConversationContinuity,
     async_get_continuity,
+    chat_log_admission_scope,
     forward_chat_log_deltas,
     processing_conversation_scope,
 )
 from .conversation_archive import ArchiveSession, ConversationArchive, async_get_archive
 from .conversation_id_ownership import (
+    bind_parent_conversation_id,
     claim_conversation_id,
     register_conversation_id_cleanup,
+    resolve_parent_conversation_id,
 )
 from .conversation_lifecycle import (
     ConversationLifecycleToken,
@@ -157,6 +160,7 @@ from .functions.security import (
     classify_tool,
     contains_indirect_service_call,
 )
+from .guest_function_tools import filter_guest_tools_and_groups
 from .guest_mode import (
     EXECUTION_FAILED,
     GUEST_MODE_UNAVAILABLE,
@@ -180,7 +184,7 @@ from .ha_llm_tools import (
 )
 from .ha_permissions import bind_active_ha_context
 from .ha_tool_result_compat import make_tool_result_content
-from .helpers import get_exposed_entities
+from .helpers import effective_api_provider, get_exposed_entities
 from .knowledge import KnowledgeLibrary, async_get_knowledge, search_result_as_dict
 from .legacy_agent_alias import register_legacy_agent, unregister_legacy_agent
 from .local_intents import LocalIntentResult, async_try_handle_local_intent
@@ -745,48 +749,57 @@ class ExtendedOpenAIAgentEntity(
         surround debug capture, request caches, Voice Identity and reconciliation.
         No installer may replace this method or any of its request-entry owners.
         """
-        ready = self._agent_ready
-        if ready is not None:
-            await ready.wait()
-            if self._agent_ready is not ready or self._agent_initialization_failed:
-                return self._agent_not_ready_result(user_input)
-        if not user_input.text.strip():
-            response = intent.IntentResponse(language=user_input.language)
-            response.async_set_speech("")
-            return ConversationResult(
-                response=response,
-                conversation_id=user_input.conversation_id,
-                continue_conversation=False,
-            )
-
-        with (
-            bind_active_ha_context(user_input.context),
-            bind_request_satellite(getattr(user_input, "satellite_id", None)),
+        with chat_log_admission_scope(
+            current_chat_log.get(), user_input.conversation_id, user_input.text
         ):
-            async with conversation_request_lease(self):
-                with conversation_debug_trace(self, user_input) as trace:
-                    with formatted_tool_cache():
-                        config_token = _ACTIVE_REQUEST_CONFIG_DATA.set(
-                            self.subentry.data
-                        )
-                        try:
-                            async with voice_identity_scope(self, user_input):
-                                await async_reconcile_runtime_configuration(self)
-                                reconciled_token = _ACTIVE_RUNTIME_RECONCILED.set(True)
-                                try:
-                                    await async_prepare_runtime_function_tools(
-                                        self.hass, self.subentry.data
+            ready = self._agent_ready
+            if ready is not None:
+                await ready.wait()
+                if self._agent_ready is not ready or self._agent_initialization_failed:
+                    return self._agent_not_ready_result(user_input)
+            if not user_input.text.strip():
+                response = intent.IntentResponse(language=user_input.language)
+                response.async_set_speech("")
+                return ConversationResult(
+                    response=response,
+                    conversation_id=user_input.conversation_id,
+                    continue_conversation=False,
+                )
+
+            with (
+                bind_active_ha_context(user_input.context),
+                bind_request_satellite(getattr(user_input, "satellite_id", None)),
+            ):
+                async with conversation_request_lease(self):
+                    with conversation_debug_trace(self, user_input) as trace:
+                        with formatted_tool_cache():
+                            config_token = _ACTIVE_REQUEST_CONFIG_DATA.set(
+                                self.subentry.data
+                            )
+                            try:
+                                async with voice_identity_scope(self, user_input):
+                                    await async_reconcile_runtime_configuration(self)
+                                    reconciled_token = _ACTIVE_RUNTIME_RECONCILED.set(
+                                        True
                                     )
-                                    result = await self._async_process_with_continuity(
-                                        user_input
-                                    )
-                                finally:
-                                    _ACTIVE_RUNTIME_RECONCILED.reset(reconciled_token)
-                        finally:
-                            _ACTIVE_REQUEST_CONFIG_DATA.reset(config_token)
-                    if trace is not None:
-                        trace.result = result
-                    return result
+                                    try:
+                                        await async_prepare_runtime_function_tools(
+                                            self.hass, self.subentry.data
+                                        )
+                                        result = (
+                                            await self._async_process_with_continuity(
+                                                user_input
+                                            )
+                                        )
+                                    finally:
+                                        _ACTIVE_RUNTIME_RECONCILED.reset(
+                                            reconciled_token
+                                        )
+                            finally:
+                                _ACTIVE_REQUEST_CONFIG_DATA.reset(config_token)
+                        if trace is not None:
+                            trace.result = result
+                        return result
 
     async def _async_process_with_continuity(
         self, user_input: ConversationInput
@@ -828,7 +841,14 @@ class ExtendedOpenAIAgentEntity(
                     continuity_mode,
                     scope,
                     source_device_id,
-                    user_input.conversation_id,
+                    resolve_parent_conversation_id(
+                        getattr(self, "hass", None),
+                        getattr(getattr(self, "subentry", None), "subentry_id", None),
+                        scope,
+                        user_input.conversation_id,
+                        guest_active=request_policy.guest_active,
+                        context=user_input.context,
+                    ),
                     timeout_minutes,
                     namespace=(
                         GUEST_CONTINUITY_NAMESPACE
@@ -902,13 +922,22 @@ class ExtendedOpenAIAgentEntity(
         continuity = self._continuity
         assert continuity is not None
         assist_chat_log = current_chat_log.get()
+        incoming_conversation_id = user_input.conversation_id
         user_input.conversation_id = resolution.conversation_id
         with (
             async_get_chat_session(
                 self.hass, resolution.conversation_id, context=user_input.context
             ) as session,
             async_get_chat_log(self.hass, session, user_input) as chat_log,
-            forward_chat_log_deltas(assist_chat_log, chat_log, user_input.text),
+            forward_chat_log_deltas(
+                assist_chat_log,
+                chat_log,
+                user_input.text,
+                rerouted_input=(
+                    assist_chat_log is not None
+                    and assist_chat_log.conversation_id == incoming_conversation_id
+                ),
+            ),
             processing_conversation_scope(
                 continuity, chat_log.conversation_id, resolution.conversation_id
             ),
@@ -933,6 +962,9 @@ class ExtendedOpenAIAgentEntity(
                 )
                 register_conversation_id_cleanup(
                     session, self.hass, claimed_id, claim_owner
+                )
+                bind_parent_conversation_id(
+                    self.hass, incoming_conversation_id, claimed_id, claim_owner
                 )
             if resolution.discard_history:
                 # A restore preserves only the private Archive identity. Core may
@@ -2122,7 +2154,12 @@ class ExtendedOpenAIAgentEntity(
             )
             entry_data = getattr(getattr(self, "entry", None), "data", {})
             limit = None
-            if entry_data.get("api_provider") == "azure":
+            if (
+                effective_api_provider(
+                    entry_data.get("api_provider"), entry_data.get("base_url")
+                )
+                == "azure"
+            ):
                 snapshot = build_provider_request_snapshot(
                     self.subentry.data, entry_data, tools_required=True
                 )
@@ -2155,38 +2192,7 @@ class ExtendedOpenAIAgentEntity(
         groups: list[dict[str, Any]],
         policy: GuestCapabilityPolicy,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        """Apply the resolved Guest function policy without orphaning members."""
-        if not policy.guest_active:
-            return configured_tools, groups
-        membership = {
-            name: group for group in groups for name in group.get("functions", [])
-        }
-        configured_tools = [
-            tool
-            for tool in configured_tools
-            if not is_ha_tool(tool)
-            and policy.allows_configured_tool(tool["spec"]["name"])
-            and (
-                not policy.legacy_function_flags
-                or (
-                    tool["spec"]["name"] not in membership
-                    or membership[tool["spec"]["name"]].get("guest_allowed") is True
-                )
-            )
-        ]
-        allowed_names = {tool["spec"]["name"] for tool in configured_tools}
-        guest_groups = [
-            {
-                **group,
-                "functions": [
-                    name for name in group["functions"] if name in allowed_names
-                ],
-            }
-            for group in groups
-            if (not policy.legacy_function_flags or group.get("guest_allowed") is True)
-            and any(name in allowed_names for name in group.get("functions", []))
-        ]
-        return configured_tools, guest_groups
+        return filter_guest_tools_and_groups(configured_tools, groups, policy)
 
     async def _execute_function_tool(
         self,

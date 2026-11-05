@@ -83,10 +83,10 @@ def test_provider_request_resolves_model_capabilities_once(monkeypatch):
     calls = 0
     original = request_module.get_model_capabilities
 
-    def resolve(model):
+    def resolve(model, **kwargs):
         nonlocal calls
         calls += 1
-        return original(model)
+        return original(model, **kwargs)
 
     monkeypatch.setattr(request_module, "get_model_capabilities", resolve)
     snapshot = request_module.build_provider_request_snapshot(

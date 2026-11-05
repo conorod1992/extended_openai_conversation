@@ -144,7 +144,7 @@ async def test_neighbour_shared_client_and_native_script_survive_final_removal(
 
     async def setup_neighbour(runtime, config_entry):
         runtime.data["shared_neighbour"] = get_async_client(runtime)
-        return True
+        # Built-in fixture integrations use Core's None-on-success contract.
 
     mock_integration(
         hass, MockModule("shared_neighbour", async_setup_entry=setup_neighbour)
@@ -156,7 +156,9 @@ async def test_neighbour_shared_client_and_native_script_survive_final_removal(
     mock_platform(hass, "shared_neighbour.config_flow")
     neighbour = MockConfigEntry(domain="shared_neighbour")
     neighbour.add_to_hass(hass)
-    assert await hass.config_entries.async_setup(neighbour.entry_id)
+    assert await hass.config_entries.async_setup(neighbour.entry_id), (
+        neighbour.state, neighbour.reason
+    )
     client = hass.data["shared_neighbour"]
 
     async def effect(call):

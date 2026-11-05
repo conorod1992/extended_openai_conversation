@@ -34,6 +34,7 @@ from custom_components.extended_openai_conversation_responses.request_rules impo
     get_request_rule_runtime,
 )
 from custom_components.extended_openai_conversation_responses.scope import user_scope
+from homeassistant.core import Context
 from homeassistant.components import conversation
 from homeassistant.helpers import intent
 from homeassistant.exceptions import HomeAssistantError
@@ -88,6 +89,7 @@ async def test_missing_continuity_manager_returns_retryable_assist_error(
         lambda *_args: SimpleNamespace(device_id=None),
     )
     user_input = SimpleNamespace(
+        context=Context(),
         as_llm_context=lambda _domain: SimpleNamespace(context=None),
         conversation_id="conversation-2",
         language="en",
@@ -134,6 +136,7 @@ async def test_claimed_conversation_id_collision_is_replaced_and_released(
         lambda *_args, **_kwargs: "replacement",
     )
     user_input = SimpleNamespace(
+        context=Context(),
         as_llm_context=lambda _domain: SimpleNamespace(context=None),
         conversation_id="shared",
     )

@@ -6,10 +6,10 @@ assert.equal(requestRuleCapabilityModel(panel, "gpt-5-pro"), "gpt-5-pro");
 assert.equal(requestRuleCapabilityModel(panel, "{model}"), "{model}");
 assert.equal(requestRuleCapabilityModel({_result:{config:{azure_model:"gpt-4.1",chat_model:"deployment"}}}), "gpt-4.1");
 
-const azure = {_result: {api_provider: "azure", effective_model: "gpt-5.6"}};
-for (const deployment of ["home-deployment", "another-deployment", "{deployment}", ""]) {
-  assert.equal(requestRuleCapabilityModel(azure, deployment), "gpt-5.6");
-}
+const azure = {_result: {api_provider: "azure", configured_model:"home-deployment", azure_model:"gpt-5.6", effective_model: "gpt-5.6"}};
+for (const deployment of ["home-deployment", ""]) assert.equal(requestRuleCapabilityModel(azure, deployment), "gpt-5.6");
+for (const deployment of ["another-deployment", "{deployment}", "gpt-4.1-mini"]) assert.equal(requestRuleCapabilityModel(azure, deployment), deployment);
+assert.equal(requestRuleCapabilityModel(azure,"another-deployment","gpt-4.1-mini"),"gpt-4.1-mini");
 assert.equal(requestRuleCapabilityModel({_result: {api_provider: "openai", effective_model: "gpt-5.6"}}, "gpt-4o"), "gpt-4o");
 
 const {isFunctionServiceAction} = await import("../custom_components/extended_openai_conversation_responses/frontend/script-payload.js");
@@ -30,4 +30,4 @@ for (const binding of [null, ""]) {
   assert.equal(requestRuleCapabilityModel(unbound, "{deployment}"), "{deployment}");
   assert.equal(requestRuleCapabilityModel(unbound), "gpt-4.1");
 }
-assert.equal(requestRuleCapabilityModel({_result:{api_provider:"azure", effective_model:"gpt-5.6", azure_model:"gpt-5.6"}}, "deployment"), "gpt-5.6");
+assert.equal(requestRuleCapabilityModel({_result:{api_provider:"azure", configured_model:"deployment", effective_model:"gpt-5.6", azure_model:"gpt-5.6"}}, "deployment"), "gpt-5.6");

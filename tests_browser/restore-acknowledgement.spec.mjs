@@ -15,8 +15,6 @@ for (const bundle of [false, true]) for (const fault of ["cache", "modal", "lost
     await panel.getByRole("button", {name:"Save changes", exact:true}).click();
     await expect.poll(() => page.evaluate(() => browserHarness.getState().configuration.title)).toBe("Changed after backup");
     await panel.evaluate(host => host._navigate("usage-maintenance", "backup-restore"));
-    await panel.locator("#backup-file-transfer").setInputFiles(path);
-    await expect(panel.locator("#restore-transfer-apply")).toBeEnabled();
     await panel.evaluate((host, fault) => {
       window.restoreWrites = 0;
       window.restoreNotices = [];
@@ -40,6 +38,8 @@ for (const bundle of [false, true]) for (const fault of ["cache", "modal", "lost
       }
       if (fault === "modal") host.shadowRoot.querySelector("#restore-dialog").close = () => { throw new Error("modal failed after restore"); };
     }, fault);
+    await panel.locator("#backup-file-transfer").setInputFiles(path);
+    await expect(panel.locator("#restore-transfer-apply")).toBeEnabled();
     await panel.locator("#restore-transfer-apply").click();
     await acceptConfirmation(panel);
     await expect.poll(() => page.evaluate(() => browserHarness.getState().configuration.title)).toBe("Jarvis");
@@ -72,8 +72,6 @@ for (const bundle of [false, true]) for (const outcome of ["acknowledged", "lost
   const downloading = page.waitForEvent("download");
   await panel.locator("#create-backup-transfer").click();
   const path = await (await downloading).path();
-  await panel.locator("#backup-file-transfer").setInputFiles(path);
-  await expect(panel.locator("#restore-transfer-apply")).toBeEnabled();
   await panel.evaluate((host, outcome) => {
     window.restoreWrites = 0;
     window.restoreNotices = [];
@@ -90,6 +88,8 @@ for (const bundle of [false, true]) for (const outcome of ["acknowledged", "lost
       return result;
     };
   }, outcome);
+  await panel.locator("#backup-file-transfer").setInputFiles(path);
+  await expect(panel.locator("#restore-transfer-apply")).toBeEnabled();
   await panel.locator("#restore-transfer-apply").click();
   await expect(panel.locator("#confirm-dialog")).toHaveJSProperty("open", true);
   await panel.evaluate(host => {

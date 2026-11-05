@@ -485,3 +485,40 @@ async def test_real_service_registry_rechecks_revoked_guest_control(
         )
     assert not result.successful, calls
     assert calls == []
+
+@pytest.mark.parametrize("ending", ["", ".", "...", "?", "!", "。", "؟", "\uff01", "\uff1f"])
+async def test_incomplete_sentence_never_dispatches_native_action(tmp_path, ending):
+    from homeassistant.core import HomeAssistant
+    from tests.test_request_rules import local_rule
+
+    real = HomeAssistant(str(tmp_path))
+    calls = []
+
+    async def record(call):
+        calls.append(dict(call.data))
+
+    real.services.async_register("todo", "add_item", record)
+    real.states.async_set("todo.shopping_list", "0")
+    rule = local_rule(
+        phrases=["add to shopping list {item}"], match_type="sentence_pattern"
+    )
+    rule["action"]["actions"] = [
+        {
+            "action": "todo.add_item",
+            "target": {"entity_id": "todo.shopping_list"},
+            "data": {"item": "{item}"},
+        }
+    ]
+    rules = RequestRules(MemoryStore(rule))
+    await rules.async_initialize()
+    result = await async_evaluate_rule(
+        real, rules, RequestRuleRuntime(), "add to shopping list" + ending, "native"
+    )
+    assert result is None
+    assert calls == []
+    # The same native Script and registered service must still accept a full command.
+    result = await async_evaluate_rule(
+        real, rules, RequestRuleRuntime(), "add to shopping list milk.", "native"
+    )
+    assert result.successful
+    assert calls == [{"item": "milk", "entity_id": ["todo.shopping_list"]}]

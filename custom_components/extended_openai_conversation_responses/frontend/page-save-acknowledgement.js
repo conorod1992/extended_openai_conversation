@@ -7,10 +7,40 @@ export const PAGE_SAVE_READ_EVENT = "eoc-page-save-read-changed";
 export const PAGE_SAVE_READ_MESSAGE = "The saved policy is still being refreshed. Refresh this section before saving.";
 
 const notifyReadState = panel => panel.shadowRoot?.dispatchEvent?.(new Event(PAGE_SAVE_READ_EVENT));
+const transportFor = panel => ({connection:panel.hass?.connection, callWS:panel.hass?.callWS, connected:panel.hass?.connection?.connected});
+
+export function retryPageSaveReadsOnTransport(panel) {
+  // A failed read may have used a now-closed socket. Reconnect grants one fresh
+  // read attempt, never another policy mutation or an unowned error dismissal.
+  const obligations = readObligations.get(panel);
+  if (!obligations?.size || panel.isConnected === false || panel._eocPresentationBlocked || !panel._data?.is_admin) return false;
+  const transport = transportFor(panel), retries = [];
+  for (const entry of obligations) {
+    const state = entry.state, previous = state.transport;
+    if (state.failedVisit !== panel._loadToken || state.view !== panel._viewKey?.()
+        || !entry.acknowledgement.owns() || !configurationSubmissionIsCurrent(panel, state.owner)) continue;
+    if (transport.connected === false) {state.transport = transport; continue;}
+    const changed = previous && (transport.connection && transport.connection !== previous.connection
+      || !transport.connection && !previous.connection && transport.callWS !== previous.callWS
+      || previous.connected === false && transport.connected === true);
+    if (!changed) continue;
+    state.failedVisit = null;
+    retries.push(entry);
+  }
+  if (!retries.length) return false;
+  const owner = captureConfigurationOwner(panel), visit = panel._loadToken, view = panel._viewKey?.();
+  panel._error = null;
+  queueMicrotask(() => {
+    if (panel.isConnected !== false && panel._data?.is_admin && !panel._eocPresentationBlocked && configurationSubmissionIsCurrent(panel, owner)
+        && panel._loadToken === visit && panel._viewKey?.() === view) for (const entry of retries) entry.retry?.();
+  });
+  return true;
+}
 
 export function capturePageRead(panel, view = panel._viewKey?.()) {
   return VIEWS.has(view) ? {owner:captureConfigurationOwner(panel), view,
-    visit:panel._loadToken, generation:panel._cacheGeneration} : null;
+    visit:panel._loadToken, generation:panel._cacheGeneration,
+    interval:view === "capabilities/guest-mode" ? panel._unsavedState?.scopes.get("guest-interval")?.captureRead?.() : null} : null;
 }
 
 function currentRead(panel, read) {
@@ -48,6 +78,8 @@ export function acceptPageRead(panel, result, read) {
   if (read.view !== "capabilities/request-rules") requireMutationAcknowledgement(Boolean(projection), "loading the saved policy");
   if (!projection) return false;
   acceptedReads.set(panel, {...read, projection, sequence:(acceptedReads.get(panel)?.sequence || 0) + 1});
+  if (ownsScope) scope.reconcileUncertainRead?.(result);
+  if (read.view === "capabilities/guest-mode") panel._unsavedState?.scopes.get("guest-interval")?.reconcileRead?.(result.status, read.interval);
   const obligations = readObligations.get(panel);
   for (const entry of obligations || []) {
     if (!entry.acknowledgement.owns()) obligations.delete(entry);
@@ -75,7 +107,8 @@ export function hasPageSaveAcknowledgement(panel) {
 
 export function hasPendingPageSaveRead(panel) {
   const obligations = readObligations.get(panel);
-  let pending = false;
+  const scope = panel._unsavedState?.scopes.get(panel._viewKey?.());
+  let pending = Boolean(scope?.isCurrent?.() && scope.uncertainSubmission);
   for (const entry of obligations || []) {
     if (!entry.acknowledgement.owns() || freshPageRead(panel, entry.state)) obligations.delete(entry);
     else if (configurationSubmissionIsCurrent(panel, entry.state.owner)
@@ -84,13 +117,14 @@ export function hasPendingPageSaveRead(panel) {
   return pending;
 }
 
-// The policy save callback records this before draftScope clears pending. A
-// clean detached source still owns the obligation to refresh its replacement.
-export function retainPageSaveAcknowledgement(source, scope, submission, view) {
-  if (source.isConnected !== false || !VIEWS.has(view)
+// Successful detached saves and uncertain saves retain a read obligation.
+// Uncertainty can outlive a connected error and a later panel replacement.
+export function retainPageSaveAcknowledgement(source, scope, submission, view, {uncertain = false} = {}) {
+  if ((!uncertain && source.isConnected !== false) || !VIEWS.has(view)
       || !configurationSubmissionIsCurrent(source, submission)) return;
   const states = new WeakMap();
   const ownsSource = () => configurationSubmissionIsCurrent(source, submission)
+    && (!uncertain || Boolean(scope.uncertainSubmission))
     && source._unsavedState?.scopes.get(view) === scope && scope.acknowledgedSave === acknowledgement;
   const ownsDestination = panel => panel.isConnected !== false && panel._data?.is_admin
     && configurationOwnerIsCurrent(panel, submission) && panel._viewKey?.() === view;
@@ -98,14 +132,17 @@ export function retainPageSaveAcknowledgement(source, scope, submission, view) {
     if (!ownsSource()) return {accepted:true, refreshing:false};
     if (!ownsDestination(destination) || source.isConnected !== false) return {accepted:false, refreshing:false};
     let state = states.get(destination);
-    if (state && freshPageRead(destination, state)) return {accepted:true, refreshing:false};
+    if (state && freshPageRead(destination, state)) {
+      if (uncertain) scope.reconcileUncertainRead?.(destination._result);
+      return {accepted:true, refreshing:false};
+    }
     if (state && !state.isCurrent()) state = null;
     if (state?.running) return {accepted:false, refreshing:true};
     if (state?.failedVisit === destination._loadToken) return {accepted:false, refreshing:false};
     const owner = captureConfigurationOwner(destination);
     // The refresh attempt retires on authentication changes. Its obligation
     // still belongs to this draft and requires a fresh accepted policy read.
-    state = {view, sequence:acceptedReads.get(destination)?.sequence || 0, running:true,
+    state = {view, sequence:acceptedReads.get(destination)?.sequence || 0, running:true, transport:transportFor(destination),
       owner:captureConfigurationDraftOwner(destination),
       isCurrent:() => configurationSubmissionIsCurrent(destination, owner)};
     states.set(destination, state);
@@ -126,7 +163,8 @@ export function retainPageSaveAcknowledgement(source, scope, submission, view) {
       state.running = false;
       if (stillOwned() && !freshPageRead(destination, state)) {
         state.failedVisit = destination._loadToken;
-        destination._toast?.("Changes saved, but the policy could not be refreshed. Refresh this section to retry.", true);
+        if (!retryPageSaveReadsOnTransport(destination)) destination._toast?.(uncertain ? "The policy save outcome is unknown. Refresh this section to recover your edits."
+          : "Changes saved, but the policy could not be refreshed. Refresh this section to retry.", true);
       }
       retry?.();
     });

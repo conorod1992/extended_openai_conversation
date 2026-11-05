@@ -23,17 +23,31 @@ export function observeCatalogGeneration(panel, result = {}, forceInvalidate = f
   panel._settingsSearchConfigErrorAgentId = null;
 }
 
+export function modelProviderForPanel(panel) {
+  return panel._result?.api_provider || panel._configData?.api_provider
+    || (panel._draft?.azure_model || panel._configData?.config?.azure_model ? "azure" : "openai");
+}
+
 export async function lookupModelData(panel, model = "", action = "lookup", isCurrent = () => true) {
-  const result = await panel._hass.callWS({
-    type: "extended_openai_conversation_responses/model_catalog", action, model,
-  });
+  const request={type:"extended_openai_conversation_responses/model_catalog",action,model};
+  const provider = modelProviderForPanel(panel);
+  if(provider === "azure") request.provider="azure";
+  let result;
+  try { result=await panel._hass.callWS(request); }
+  catch(error) {
+    // Older HA backends reject an unknown field before dispatching the action.
+    // Retry only that typed schema rejection, never an uncertain operation.
+    if(!request.provider || error?.code!=="invalid_format" || !String(error.message).includes("provider")) throw error;
+    const {provider: _provider,...legacy}=request;
+    result=await panel._hass.callWS(legacy);
+  }
   // A committed global mutation invalidates caches even if its initiating
   // editor no longer owns the returned model-specific presentation.
   const current = isCurrent();
   const mutation = ["apply", "reset"].includes(action);
   if (panel && result && !result.last_error && (current || mutation)) observeCatalogGeneration(panel, result, mutation);
   if (panel && result && current) {
-    panel._modelCatalogData = {...result, requested_model: String(model || "")};
+    panel._modelCatalogData = {...result, requested_model: String(model || ""), requested_provider: provider};
     if (panel._result && result.model_capabilities) panel._result.model_capabilities = result.model_capabilities;
   }
   return result;

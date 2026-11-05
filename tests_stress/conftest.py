@@ -23,6 +23,7 @@ from ci.enhanced_evidence import (  # noqa: E402
 )
 from tests_real_ha.conftest import (  # noqa: F401,E402
     hass_config_dir,
+    hass_storage,
     real_ha_prerequisites,
 )
 
