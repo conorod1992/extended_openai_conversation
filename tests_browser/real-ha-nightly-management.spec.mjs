@@ -116,7 +116,7 @@ test("Guest save acknowledgement survives a failed refresh and edits in flight t
     let reject=true, gate=true, failDetails=true;
     host._hass.callWS = async message => {
       if (message.section==="guest_mode" && message.action==="save_policy") {
-        if (reject) { reject=false; throw Error("Rejected before commit"); }
+        if (reject) { reject=false; throw Object.assign(Error("Rejected before commit"), {code:"eoai_mutation_rejected"}); }
         if (gate) { gate=false; await new Promise(resolve => { window.releaseGuestCommit=resolve; }); }
       }
       if (message.section==="guest_mode" && message.action==="policy" && window.releaseGuestCommit && failDetails) {
@@ -129,6 +129,7 @@ test("Guest save acknowledgement survives a failed refresh and edits in flight t
   await panel.locator("#save-page").click();
   await expect(panel.locator("#toast")).toContainText("Rejected before commit");
   expect(await panel.evaluate(host => host._unsavedState.scopes.get("capabilities/guest-mode").revision)).toBe(initial.revision);
+  await expect(panel.locator("#save-page")).toBeEnabled();
   await panel.locator("#save-page").click();
   await page.waitForFunction(() => typeof window.releaseGuestCommit==="function");
   const exclusions = panel.locator('ha-selector[data-guest-key="guest_excluded_domains"]');

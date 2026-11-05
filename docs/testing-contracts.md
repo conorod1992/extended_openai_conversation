@@ -152,6 +152,17 @@ suite's conditional `hass_storage` fixture and canonical `real_store_io` opt-in,
 so Core's early Stores and later recovery readers share physical I/O from their
 construction. Tests without that opt-in retain the normal in-memory fixture.
 
+Browser fault injection must distinguish a server-confirmed rejected mutation
+from a lost or malformed acknowledgement. Only the rejected case permits a
+direct retry; uncertain policy saves require an accepted read first, preserving
+edits authored after submission. Destructive retention saves include the actual
+confirmation step and prove that no write precedes it. Shell bootstrap seeds
+onboarding through HA's Store API so mocked and native I/O receive the same
+state. Native picker journeys use the shared option/legacy-button adapter and
+continue asserting the resulting values and real backend effects. Browser bridge
+clients may authenticate lazily on first use, but never reconnect or replay a
+command after a later disconnect.
+
 The Function representation corpus in `tests/fixtures/function_configuration_representations.json`
 is shared by dependency, migration, serialized restore and journal-recovery checks.
 It distinguishes legacy raw empty values from explicitly empty serialized

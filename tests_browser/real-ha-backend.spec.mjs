@@ -146,6 +146,9 @@ test("real browser creates, edits, reloads, and deletes a Memory through HA", as
   await panel.locator("#memory-expiry").fill(expiry);
   await panel.locator("#memory-save").click();
   await expect(panel.locator(".memory-list")).toContainText("Manual real HA short-term fact");
+  const submittedExpiry = await page.evaluate(() => browserHarness.calls.find(call => call.section === "memories" && call.action === "temporary_add" && call.content === "Manual real HA short-term fact"));
+  expect(submittedExpiry.expires_at).toBe(expiry);
+  expect(submittedExpiry.local_times).toEqual({expires_at:expiry});
   await page.goto(realFixtureUrl("data-memory/memories"));
   panel = page.locator("extended-openai-management-panel");
   await panel.locator('.memory-kind[data-kind="temporary"]').click();

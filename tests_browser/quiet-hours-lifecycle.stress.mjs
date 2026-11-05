@@ -137,7 +137,7 @@ test("nightly Quiet Hours retries a failed save and protects agent selection whi
     host._hass.callWS = async message => {
       if (message.section !== "quiet_hours" || message.action !== "update") return original(message);
       window.quietSaveCalls++;
-      if (window.quietSaveCalls === 1) throw new Error("Quiet Hours save unavailable");
+      if (window.quietSaveCalls === 1) throw Object.assign(new Error("Quiet Hours save unavailable"), {code:"eoai_mutation_rejected"});
       if (window.quietSaveCalls === 3) await new Promise(resolve => { window.releaseQuietSave = resolve; });
       return original(message);
     };
@@ -146,6 +146,8 @@ test("nightly Quiet Hours retries a failed save and protects agent selection whi
   await panel.locator("#save-page").click();
   await expect(panel.locator("#toast")).toContainText("Unable to save changes: Quiet Hours save unavailable");
   await expect(panel.locator("#qh-enabled")).toBeChecked();
+  await expect(panel.locator("#save-page")).toBeEnabled();
+  expect(await page.evaluate(() => window.quietSaveCalls)).toBe(1);
   await panel.locator("#save-page").click();
   await expect(panel.locator(".save-bar")).toHaveCount(0);
 
@@ -158,3 +160,62 @@ test("nightly Quiet Hours retries a failed save and protects agent selection whi
   await expect(panel.locator("#qh-start")).toHaveValue("21:00");
   await expectHarnessClean(page, errors);
 });
+
+for (const bundled of [false, true]) for (const outcome of ["before-commit", "after-commit", "malformed-reply"]) {
+  test(`nightly Quiet Hours uncertain save requires an accepted read; outcome=${outcome}, bundle=${bundled}`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    await page.goto(fixtureUrl("capabilities/quiet-hours", bundled ? "&bundle=1" : ""));
+    const panel = panelFor(page);
+    await expect(panel.locator("#qh-enabled")).toBeVisible();
+    await panel.evaluate((host, outcome) => {
+      const send = host.hass.callWS.bind(host.hass);
+      window.quietUncertainty = {attempts:0, commits:0, reads:0};
+      host.hass.callWS = async request => {
+        if (request.section !== "quiet_hours") return send(request);
+        if (request.action === "get") quietUncertainty.reads++;
+        if (request.action !== "update") return send(request);
+        quietUncertainty.attempts++;
+        if (quietUncertainty.attempts === 1 && outcome === "before-commit") throw Error("Controlled unknown outcome");
+        const result = await send(request);
+        quietUncertainty.commits++;
+        if (quietUncertainty.attempts === 1) {
+          if (outcome === "malformed-reply") return {...result, config:null};
+          throw Error("Controlled lost acknowledgement");
+        }
+        return result;
+      };
+    }, outcome);
+    await panel.locator("#qh-enabled").check();
+    await panel.locator("#save-page").click();
+    await expect(panel.locator("#toast")).toContainText(/outcome is unknown/);
+    await panel.locator("#qh-start").fill("21:15");
+    await expect(panel.locator("#save-page")).toBeDisabled();
+    const retry = await panel.evaluate(async host => {
+      try { await host._unsavedState.scopes.get("capabilities/quiet-hours").save(); return "unexpected save"; }
+      catch (error) { return error.message; }
+    });
+    expect(retry).toContain("still being refreshed");
+    expect(await page.evaluate(() => quietUncertainty)).toEqual({attempts:1, commits:outcome === "before-commit" ? 0 : 1, reads:0});
+    // Use the production route loader, not a direct result assignment: only an
+    // accepted read may reconcile the unknown commit and unlock another write.
+    await panel.evaluate(host => host._loadSection(true));
+    await expect(panel.locator("#save-page")).toBeEnabled();
+    await expect(panel.locator("#qh-enabled")).toBeChecked();
+    await expect(panel.locator("#qh-start")).toHaveValue("21:15");
+    const reconciled = await panel.evaluate(host => ({
+      baseline:host._unsavedState.scopes.get("capabilities/quiet-hours").baseline,
+      durable:browserHarness.getState().quiet.config,
+    }));
+    expect(reconciled.baseline).toEqual(reconciled.durable);
+    expect(reconciled.baseline.enabled).toBe(outcome !== "before-commit");
+    expect(await page.evaluate(() => quietUncertainty.attempts)).toBe(1);
+    await panel.locator("#save-page").click();
+    await expect(panel.locator(".save-bar")).toHaveCount(0);
+    expect(await page.evaluate(() => quietUncertainty.attempts)).toBe(2);
+    expect(await page.evaluate(() => browserHarness.getState().quiet.config)).toMatchObject({enabled:true, start:"21:15"});
+    await page.goto(fixtureUrl("capabilities/quiet-hours", bundled ? "&bundle=1" : ""));
+    await expect(panel.locator("#qh-start")).toHaveValue("21:15");
+    await expect(panel.locator("#qh-enabled")).toBeChecked();
+    await expectHarnessClean(page, errors);
+  });
+}

@@ -1,6 +1,6 @@
 import {expect, test} from "@playwright/test";
 import {managementRouteState, waitForManagementRouteReady} from "../ci/frontend_latency/routes.mjs";
-import {openColdHaRoute, replaceNativeYaml} from "./real-ha-shell-helpers.mjs";
+import {openColdHaRoute, replaceNativeYaml, selectNativePickerOption} from "./real-ha-shell-helpers.mjs";
 import {retentionGrowth, sampleRetainedRuntime} from "./browser-retention-metrics.mjs";
 import {mkdir, readFile, writeFile} from "node:fs/promises";
 import {dirname} from "node:path";
@@ -141,13 +141,13 @@ test.describe("nightly ownership", () => {
     const row = panel.locator("[data-voice-mapping-row]").last();
     const picker = row.locator("ha-entity-picker");
     await picker.locator("ha-picker-field").click();
-    await picker.locator("ha-combo-box-item").filter({hasText:"Replacement Kitchen device"}).locator("button").click();
+    await selectNativePickerOption(picker, "Replacement Kitchen device");
     await expect(picker).toHaveJSProperty("value", "assist_satellite.ownership_kitchen");
     await expect(row.locator(".voice-device-id")).toHaveValue(process.env.REAL_HA_NEW_DEVICE);
     await row.locator(".voice-owner-type").selectOption("user");
     const user = row.locator("ha-user-picker");
     await user.locator("ha-picker-field").click();
-    await user.locator("ha-combo-box-item").filter({hasText:process.env.REAL_HA_PICKER_USER_NAME}).locator("button").click();
+    await selectNativePickerOption(user, process.env.REAL_HA_PICKER_USER_NAME);
     await panel.locator("#save-config").click();
     await expect(panel.locator(".save-bar")).toHaveCount(0);
     const payloads = await page.evaluate(() => window.__voicePayloads);
@@ -192,7 +192,7 @@ test.describe("nightly ownership", () => {
     await expect(row.locator(".voice-device-id")).toHaveValue(process.env.REAL_HA_OLD_DEVICE);
     const picker = row.locator("ha-entity-picker");
     await picker.locator("ha-picker-field").click();
-    await picker.locator("ha-combo-box-item").filter({hasText:"Replacement Kitchen device"}).locator("button").click();
+    await selectNativePickerOption(picker, "Replacement Kitchen device");
     await expect(picker).toHaveJSProperty("value", "assist_satellite.ownership_kitchen");
     await expect(row.locator(".voice-device-id")).toHaveValue(process.env.REAL_HA_NEW_DEVICE);
     await expect(row.locator(".voice-satellite-warning")).toBeHidden();
@@ -352,14 +352,14 @@ test.describe("nightly native", () => {
       const picker = panel.locator("#config-voice_default_user_picker");
       await expect.poll(() => picker.evaluate((element, id) => element.users?.some(user => user.id === id), process.env.REAL_HA_SMOKE_USER_ID)).toBe(true);
       await picker.locator("ha-picker-field").click();
-      await picker.locator("ha-combo-box-item").filter({hasText:process.env.REAL_HA_PICKER_USER_NAME}).locator("button").click();
+      await selectNativePickerOption(picker, process.env.REAL_HA_PICKER_USER_NAME);
       await expect(picker).toHaveJSProperty("value", process.env.REAL_HA_SMOKE_USER_ID);
       await panel.locator("#revert-config").click();
       await nativeRoute(panel, "assistant/prompt-context");
       await panel.locator('[data-config="exposed_entities_enabled"]').check();
       const entity = panel.locator("#exposed-entity-picker");
       await entity.locator("ha-picker-field").click();
-      await entity.locator("ha-combo-box-item").filter({hasText:"sensor.cold_attribute_kitchen"}).locator("button").click();
+      await selectNativePickerOption(entity, "sensor.cold_attribute_kitchen");
       await expect(panel.locator("[data-exposed-editor]")).toContainText("sensor.cold_attribute_kitchen");
       await panel.locator('[data-exposed-attribute][data-attribute="battery_level"]').check();
       await panel.locator("[data-close-exposed-editor]").click();
@@ -1035,13 +1035,6 @@ test("genuine HA YAML keyboard saves reject invalid YAML before persisting the c
   await panel.locator("#confirm-accept").click();
   await expect(card).toHaveCount(0);
 });
-
-async function selectNativePickerOption(picker, label) {
-  // New HA uses option semantics; older releases put a button inside the item.
-  const option = picker.getByRole("option").filter({hasText: label});
-  const legacyButton = picker.locator("ha-combo-box-item").filter({hasText: label}).locator("button");
-  await option.or(legacyButton).first().click();
-}
 
 test("cold Quiet Hours loads native entity pickers and saves both manual selections", async ({context,page}) => {
   await authenticate(context);

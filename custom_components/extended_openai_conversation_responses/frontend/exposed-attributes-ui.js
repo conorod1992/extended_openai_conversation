@@ -103,6 +103,7 @@ export function renderExposedAttributeSettings(panel) {
   return `<div class="exposed-attribute-settings" data-setting data-search="exposed entity attributes additional state context brightness color temperature live values">
     <style>
       .exposed-attribute-settings{display:grid;gap:14px;padding:16px 0 4px;border-top:1px solid var(--divider-color)}
+      #exposed-entity-picker{--secondary-text-color:var(--primary-text-color)}
       .exposed-attribute-heading{display:flex;justify-content:space-between;gap:18px;align-items:start}.exposed-attribute-heading h3,.exposed-attribute-heading p{margin:0}.exposed-attribute-heading p{margin-top:5px;color:var(--secondary-text-color);line-height:1.45}
       .exposed-picker-wrap{display:grid;gap:6px}.exposed-picker-wrap>label{font-weight:600}.exposed-picker-wrap small{color:var(--secondary-text-color);line-height:1.4}.exposed-picker-fallback{width:100%;min-height:42px}
       .exposed-attribute-editor{display:grid;gap:10px;padding:14px;border:1px solid var(--divider-color);border-radius:10px;background:var(--card-background-color)}
@@ -182,15 +183,20 @@ function bindEntityPicker(panel, entities) {
     picker.includeEntities = entityIds;
     if (panel?._hass) picker.hass = panel._hass;
     picker.value = panel?._exposedAttributeEntityId || undefined;
-    // HA's collapsed field displays a Material list item containing the chooser
-    // button. Give that displayed item its list parent without changing the
-    // native button, popup options, or selection events.
+    // Older HA fields contain a Material list item that needs its list parent.
+    // New fields render a button directly: wrapping that in list semantics
+    // creates an invalid accessibility tree. Keep their native semantics.
     void (async () => {
       await picker.updateComplete;
       const generic = picker.shadowRoot?.querySelector("ha-generic-picker");
       await generic?.updateComplete;
       const field = generic?.shadowRoot?.querySelector("ha-picker-field");
-      if (picker.isConnected && field) {
+      await field?.updateComplete;
+      const combo = field?.shadowRoot?.querySelector("ha-combo-box-item");
+      await combo?.updateComplete;
+      const legacyItem = field?.shadowRoot?.querySelector('mwc-list-item, [role="listitem"]')
+        || combo?.shadowRoot?.querySelector('li, [role="listitem"]');
+      if (picker.isConnected && legacyItem) {
         field.setAttribute("role", "list");
         field.setAttribute("aria-label", "Entity selection");
       }
