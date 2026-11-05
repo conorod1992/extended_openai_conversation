@@ -7,7 +7,9 @@ from dataclasses import dataclass
 import json
 import re
 import sys
+from time import sleep
 from typing import Any
+from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 # Release-day bridge: the upstream daily generator has not published fixtures
@@ -72,8 +74,20 @@ def _numeric_version(value: str) -> tuple[int, ...] | None:
 
 def _get_json(url: str) -> dict[str, Any]:
     request = Request(url, headers={"User-Agent": "EOAI-CI-environment-resolver/1"})
-    with urlopen(request, timeout=20) as response:
-        return json.load(response)
+    attempt = 0
+    while True:
+        try:
+            with urlopen(request, timeout=20) as response:
+                return json.load(response)
+        except (TimeoutError, URLError) as error:
+            # urllib wraps TLS handshake timeouts in URLError. Retry this
+            # read-only fetch, retaining HTTP/metadata errors and a hard limit.
+            if attempt >= 2 or not isinstance(
+                getattr(error, "reason", error), TimeoutError
+            ):
+                raise
+            attempt += 1
+            sleep(attempt)
 
 
 def resolve_ha_test_plugin(
