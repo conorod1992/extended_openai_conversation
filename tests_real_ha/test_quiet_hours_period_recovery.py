@@ -26,8 +26,9 @@ def real_store_io():
 
 @pytest.mark.parametrize("kind", ["volume", "switch"])
 @pytest.mark.parametrize("restart", [False, True])
+@pytest.mark.parametrize("returned_quiet", [False, True])
 async def test_offline_control_rejoins_later_period_with_durable_baseline(
-    hass, monkeypatch, real_store_io, kind, restart
+    hass, monkeypatch, real_store_io, kind, restart, returned_quiet
 ):
     await hass.config.async_set_time_zone("UTC")
     now = datetime(2026, 11, 1, 22, 30, tzinfo=UTC)
@@ -60,8 +61,10 @@ async def test_offline_control_rejoins_later_period_with_durable_baseline(
         now = now.replace(hour=23, minute=30)
         hass.states.async_set(
             entity,
-            "idle" if kind == "volume" else "on",
-            {"volume_level": 0.8} if kind == "volume" else {},
+            "idle" if kind == "volume" else "off" if returned_quiet else "on",
+            {"volume_level": 0.2 if returned_quiet else 0.8}
+            if kind == "volume"
+            else {},
         )
         for _ in range(3):
             await manager.async_reconcile(now=now)
@@ -69,9 +72,14 @@ async def test_offline_control_rejoins_later_period_with_durable_baseline(
             assert hass.states.get(entity).attributes["volume_level"] == 0.2
         else:
             assert hass.states.get(entity).state == "off"
-        assert calls == [("volume_set" if kind == "volume" else "turn_off", entity)]
+        assert calls == (
+            []
+            if returned_quiet
+            else [("volume_set" if kind == "volume" else "turn_off", entity)]
+        )
         disk = json.loads(store_path.read_text(encoding="utf-8"))["data"]
         assert disk["active"]["controls"][entity]["original_value"] == original
+        assert not disk["active"]["controls"][entity].get("restore_before_apply")
         now = (now + timedelta(days=1)).replace(hour=8)
         await manager.async_reconcile(now=now)
         if kind == "volume":

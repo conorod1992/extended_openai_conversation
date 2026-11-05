@@ -732,7 +732,7 @@ async def test_reconcile_handles_uninitialized_inactive_and_period_rollover(
 
     await manager.async_reconcile(now=now)
 
-    manager._async_restore_locked.assert_awaited_once_with()
+    manager._async_restore_locked.assert_awaited_once_with(period_ended=True)
     assert manager._active is not None
     assert manager._active["period_started_at"] == period.start.isoformat()
     manager._async_save_locked.assert_awaited_once_with()

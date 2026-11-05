@@ -1151,10 +1151,21 @@ class QuietHoursManager:
         controls = self._active.get("controls", {})
         for entity_id, control in list(controls.items()):
             if control.get("restore_before_apply"):
-                # This ownership predates the current occurrence. Settle its
-                # restoration before interpreting a returned value as a new
-                # same-period adjustment or adopting a new baseline.
-                continue
+                # A changed return value belongs to neither our old effect nor
+                # a current-period observation. Let the pending restore settle
+                # it before adopting a new baseline. An attained old effect can
+                # carry forward directly, without briefly restoring loud audio.
+                current = (
+                    _current_volume(self.hass, entity_id)
+                    if control["kind"] == "volume"
+                    else _current_switch(self.hass, entity_id)
+                )
+                if control.get("application_state") != "applied" or not (
+                    self._control_values_equal(
+                        control["kind"], current, self._attained_quiet_value(control)
+                    )
+                ):
+                    continue
             if "pending_quiet_value" not in control and self._observe_owned_volume(
                 entity_id, control
             ):
@@ -1232,6 +1243,8 @@ class QuietHoursManager:
                 continue
             if value == control["quiet_value"] and "pending_quiet_value" not in control:
                 control.pop("restoration_pending", None)
+                if control.pop("restore_before_apply", False):
+                    await self._async_save_control_state_locked()
                 await self._async_correct_volume_ceiling_locked(entity_id, control)
                 continue
             control["pending_quiet_value"] = value
@@ -1239,6 +1252,7 @@ class QuietHoursManager:
             # previous Quiet Hours action while the new intent is still pending.
             control["pending_application_context_id"] = Context().id
             control.pop("restoration_pending", None)
+            control.pop("restore_before_apply", None)
             await self._async_save_control_state_locked()
             # Saving can yield to a manual adjustment or an unavailable device.
             current = (
