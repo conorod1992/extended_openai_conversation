@@ -12,6 +12,9 @@ export default {
     "enhanced-endurance.stress.mjs",
     "management-crud.spec.mjs",
     "frontend-resilience.spec.mjs",
+    "broadcast-retry.spec.mjs",
+    "configuration-import-uncertain.spec.mjs",
+    "request-rule-sharing-retained.spec.mjs",
     "management-lazy-ownership.spec.mjs",
     "stale-response-ordering.spec.mjs",
     "backend-reconnect.spec.mjs",
@@ -22,7 +25,7 @@ export default {
     "accessibility-contracts.stress.mjs",
     "browser-lifecycle-resilience.stress.mjs",
   ],
-  grep: /200% and 400% reflow|browser document closure|clearing browser storage|management remains usable|keyboard-only|malformed browser-local|major management pages|large text and long names|one mounted panel survives a long seeded route journey|persistent memories support create|failed Memory save|server-rejected general configuration save|a cold lazy import failure|search into a cold configuration route|older backend response|mounted management panel recovers|repeated mount cycles plus offline and browser restoration|malformed management response|IME composition interrupted|stylesheet failure|very slow mutation|live light-dark theme changes|portrait-landscape-portrait|coarse-pointer context|live language metadata changes|native YAML initialization fails|forced colours|reduced motion|screen-reader announcement|contain keyboard focus|touch-target floor|suspend-resume simulation|clipboard denial|mounted frontend recovers from integration removal|deleting the currently viewed HA user|deleted and recreated subentry|mounted native action selector|mounted native selector receives/,
+  grep: /200% and 400% reflow|browser document closure|clearing browser storage|management remains usable|keyboard-only|malformed browser-local|major management pages|large text and long names|one mounted panel survives a long seeded route journey|persistent memories support create|failed Memory save|server-rejected general configuration save|a cold lazy import failure|search into a cold configuration route|older backend response|mounted management panel recovers|repeated mount cycles plus offline and browser restoration|malformed management response|IME composition interrupted|stylesheet failure|very slow mutation|live light-dark theme changes|portrait-landscape-portrait|coarse-pointer context|live language metadata changes|native YAML initialization fails|forced colours|reduced motion|screen-reader announcement|contain keyboard focus|touch-target floor|suspend-resume simulation|clipboard denial|mounted frontend recovers from integration removal|deleting the currently viewed HA user|deleted and recreated subentry|mounted native action selector|mounted native selector receives|Broadcast retains admitted send ownership|Broadcast retains an uncertain operation|an uncertain new-agent import retains edited source|Rule Sharing preserves its reviewed file|failed Sharing initialization can retry|repeated Request Rules binding keeps/,
   timeout: 180_000,
   workers: 1,
   projects: [

@@ -163,6 +163,15 @@ continue asserting the resulting values and real backend effects. Browser bridge
 clients may authenticate lazily on first use, but never reconnect or replay a
 command after a later disconnect.
 
+Regular frontend CI also collects the complete Enhanced static suite, its
+targeted recheck and curated Firefox/WebKit suites using the existing execution
+reporter. It launches no browser,
+keeps collect-only ledgers in an isolated temporary directory, and compares exact
+execution counts against the partition inventory and mandatory case catalog.
+Adding a test without reviewing both catalogs fails this short preflight before
+the longer browser campaigns. The final certificate still requires actual
+passing executions from both static and native partitions.
+
 The Function representation corpus in `tests/fixtures/function_configuration_representations.json`
 is shared by dependency, migration, serialized restore and journal-recovery checks.
 It distinguishes legacy raw empty values from explicitly empty serialized
