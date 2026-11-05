@@ -868,7 +868,7 @@ class QuietHoursManager:
             )
             self._publish_state(period)
             if period is None:
-                await self._async_restore_locked()
+                await self._async_restore_locked(period_ended=True)
                 if (
                     not self._config.enabled
                     and self._active is None
@@ -883,7 +883,7 @@ class QuietHoursManager:
                 and self._active.get("period_started_at") != period_id
             ):
                 if not self._active_period_overlaps(period):
-                    await self._async_restore_locked()
+                    await self._async_restore_locked(period_ended=True)
                 if self._active is not None:
                     self._active.update(
                         {
@@ -1150,6 +1150,11 @@ class QuietHoursManager:
                 )
         controls = self._active.get("controls", {})
         for entity_id, control in list(controls.items()):
+            if control.get("restore_before_apply"):
+                # This ownership predates the current occurrence. Settle its
+                # restoration before interpreting a returned value as a new
+                # same-period adjustment or adopting a new baseline.
+                continue
             if "pending_quiet_value" not in control and self._observe_owned_volume(
                 entity_id, control
             ):
@@ -1710,7 +1715,11 @@ class QuietHoursManager:
         return left is right
 
     async def _async_restore_locked(
-        self, *, pending_only: bool = False, preserve_released: bool = False
+        self,
+        *,
+        pending_only: bool = False,
+        preserve_released: bool = False,
+        period_ended: bool = False,
     ) -> None:
         if not await self._async_recover_configuration_locked():
             return
@@ -1762,6 +1771,8 @@ class QuietHoursManager:
                 original = raw.get("original_value")
                 quiet = self._attained_quiet_value(raw)
                 raw["restoration_pending"] = True
+                if period_ended:
+                    raw["restore_before_apply"] = True
                 try:
                     if (
                         kind == "volume"
@@ -2024,6 +2035,8 @@ class QuietHoursManager:
                 }
             if entity_id in controls and raw.get("restoration_pending") is True:
                 controls[entity_id]["restoration_pending"] = True
+                if raw.get("restore_before_apply") is True:
+                    controls[entity_id]["restore_before_apply"] = True
             if entity_id in controls and kind == "volume":
                 attempts = raw.get("ceiling_attempts")
                 target = raw.get("ceiling_target")

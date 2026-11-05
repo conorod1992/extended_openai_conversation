@@ -676,7 +676,7 @@ async def test_reconcile_handles_uninitialized_inactive_and_period_rollover(
     manager._unsubscribers = [Mock()]
     await manager.async_reconcile(now=now)
     manager._publish_state.assert_called_once_with(None)
-    manager._async_restore_locked.assert_awaited_once_with()
+    manager._async_restore_locked.assert_awaited_once_with(period_ended=True)
     manager._reschedule.assert_called_once_with()
 
     manager._publish_state.reset_mock()
@@ -688,7 +688,7 @@ async def test_reconcile_handles_uninitialized_inactive_and_period_rollover(
         "observed_controls": [],
     }
 
-    async def restore() -> None:
+    async def restore(*, period_ended=False) -> None:
         manager._active = None
 
     manager._async_restore_locked = AsyncMock(side_effect=restore)
@@ -1197,7 +1197,7 @@ async def test_reconcile_covers_disabled_new_and_stale_periods(monkeypatch) -> N
     manager._async_restore_locked = AsyncMock()
     await manager.async_reconcile(now=datetime(2026, 9, 13, 23, tzinfo=UTC))
     manager._publish_state.assert_called_once_with(None)
-    manager._async_restore_locked.assert_awaited_once_with()
+    manager._async_restore_locked.assert_awaited_once_with(period_ended=True)
 
     manager._config = runtime.QuietHoursConfig(
         enabled=True,
@@ -1233,13 +1233,13 @@ async def test_reconcile_covers_disabled_new_and_stale_periods(monkeypatch) -> N
     }
     manager._active = old
 
-    async def restore():
+    async def restore(*, period_ended=False):
         manager._active = None
 
     manager._async_restore_locked = AsyncMock(side_effect=restore)
     monkeypatch.setattr(runtime, "discover_satellite_capabilities", lambda *_args: [])
     await manager.async_reconcile(now=datetime(2026, 9, 13, 23, tzinfo=UTC))
-    manager._async_restore_locked.assert_awaited_once_with()
+    manager._async_restore_locked.assert_awaited_once_with(period_ended=True)
     assert manager._active is not None
     assert manager._active["period_started_at"].startswith("2026-09-13T22:00")
 
