@@ -1765,6 +1765,10 @@ class QuietHoursManager:
                     # unacknowledged intent happens to match an independent effect.
                     controls.pop(entity_id)
                     released.add(entity_id)
+                    if pending_only and control.get("restore_before_apply"):
+                        observed = self._active.get("observed_controls", [])
+                        if entity_id in observed:
+                            observed.remove(entity_id)
         if self._active is None:
             return
         controls = self._active.get("controls", {})

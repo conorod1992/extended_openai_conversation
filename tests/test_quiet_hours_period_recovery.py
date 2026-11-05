@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
@@ -94,3 +95,31 @@ async def test_carry_forward_cannot_reclaim_a_later_manual_choice_after_restart(
     assert writes == []
     assert media not in manager.active["controls"]
     assert media in manager.active["observed_controls"]
+
+
+@pytest.mark.parametrize("returned", [0.8, 0.6])
+async def test_expired_unacknowledged_application_does_not_suppress_new_period(
+    hass, monkeypatch, returned
+):
+    _install_registry(monkeypatch, "bedroom")
+    manager = _stateful_public_manager(hass)
+    _seed_room(hass, "bedroom", volume=0.8)
+    manager._config = _config(wake_sound="unchanged")
+    writes, _ = await _install_services(hass)
+    now = datetime(2026, 11, 1, 22, 30, tzinfo=UTC)
+    await manager.async_reconcile(now=now)
+    media = "media_player.bedroom"
+    # A service effect may precede the durable acknowledgement of its intent.
+    manager._active["controls"][media]["application_state"] = "prepared"
+    hass.states.async_set(media, "unavailable")
+    await manager.async_reconcile(now=now + timedelta(hours=10))
+    await manager.async_reconcile(now=now + timedelta(days=1))
+    manager._active = manager._normalize_active(deepcopy(manager.active))
+    writes.clear()
+    hass.states.async_set(media, "idle", {"volume_level": returned})
+    hass.states.get(media).context = SimpleNamespace(id="returned-state")
+    for _ in range(3):
+        await manager.async_reconcile(now=now + timedelta(days=1, hours=1))
+    assert hass.states.get(media).attributes["volume_level"] == 0.2
+    assert writes == [(media, 0.2)]
+    assert manager.active["controls"][media]["original_value"] == returned

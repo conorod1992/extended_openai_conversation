@@ -1,6 +1,14 @@
 {
   "schema": "eoai-nightly-execution-contract/v1",
   "pytest": [
+    "tests_real_ha/test_quiet_hours_period_recovery.py::test_offline_control_rejoins_later_period_with_durable_baseline[False-False-volume]",
+    "tests_real_ha/test_quiet_hours_period_recovery.py::test_offline_control_rejoins_later_period_with_durable_baseline[False-False-switch]",
+    "tests_real_ha/test_quiet_hours_period_recovery.py::test_offline_control_rejoins_later_period_with_durable_baseline[False-True-volume]",
+    "tests_real_ha/test_quiet_hours_period_recovery.py::test_offline_control_rejoins_later_period_with_durable_baseline[False-True-switch]",
+    "tests_real_ha/test_quiet_hours_period_recovery.py::test_offline_control_rejoins_later_period_with_durable_baseline[True-False-volume]",
+    "tests_real_ha/test_quiet_hours_period_recovery.py::test_offline_control_rejoins_later_period_with_durable_baseline[True-False-switch]",
+    "tests_real_ha/test_quiet_hours_period_recovery.py::test_offline_control_rejoins_later_period_with_durable_baseline[True-True-volume]",
+    "tests_real_ha/test_quiet_hours_period_recovery.py::test_offline_control_rejoins_later_period_with_durable_baseline[True-True-switch]",
     "tests_real_ha/test_ai_task_provider_wire.py::test_change_config_azure_task_keeps_original_number_bounds[chat-canonical]",
     "tests_real_ha/test_ai_task_provider_wire.py::test_change_config_azure_task_keeps_original_number_bounds[chat-legacy]",
     "tests_real_ha/test_ai_task_provider_wire.py::test_change_config_azure_task_keeps_original_number_bounds[responses-canonical]",
@@ -4417,7 +4425,8 @@
       "tests_stress/test_quiet_hours_ownership_time.py",
       "tests_real_ha/test_quiet_hours_generation_recovery.py",
       "tests_real_ha/test_quiet_hours_identity_shutdown.py",
-      "tests_real_ha/test_quiet_hours_timezone.py"
+      "tests_real_ha/test_quiet_hours_timezone.py",
+      "tests_real_ha/test_quiet_hours_period_recovery.py"
     ],
     "request-rules": [
       "tests_real_ha/test_request_rules_script_semantics.py",
