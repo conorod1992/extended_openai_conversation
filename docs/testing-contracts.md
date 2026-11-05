@@ -136,6 +136,22 @@ acceptance is required by these deterministic checks.
 
 ## PR regressions and Enhanced certification scope
 
+Prepared-write fault injection selects the native writer through
+`tests/ha_store_test_helpers.py`. The adapter binds to the target Store instance:
+legacy Core delegates through `_write_prepared_data`, while newer Core owns the
+writer in its I/O backend. Unknown layouts fail explicitly. Physical-file
+calibration covers both serialization modes, atomic and non-atomic writes,
+failure before writing, lost acknowledgement after writing, a held writer,
+unaffected sibling storage, fresh readers and recovery after removing a fault.
+Quiet Hours stress scenarios retain their original failure-phase, service-call,
+ownership and restart assertions; compatibility changes do not replace native
+serialization or writing with an in-memory store.
+Read-fault tests invalidate the native cache through the same shared helper,
+without assuming that Store owns the cache object. Stress tests reuse the native
+suite's conditional `hass_storage` fixture and canonical `real_store_io` opt-in,
+so Core's early Stores and later recovery readers share physical I/O from their
+construction. Tests without that opt-in retain the normal in-memory fixture.
+
 The Function representation corpus in `tests/fixtures/function_configuration_representations.json`
 is shared by dependency, migration, serialized restore and journal-recovery checks.
 It distinguishes legacy raw empty values from explicitly empty serialized

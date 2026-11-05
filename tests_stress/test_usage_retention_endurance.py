@@ -16,12 +16,10 @@ from custom_components.extended_openai_conversation_responses.usage import Usage
 from homeassistant.components import conversation
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.util import dt as dt_util
-from tests_real_ha.test_corrupt_subsystem_store_startup_isolation import (
-    _real_store_io,  # noqa: F401 - register the genuine Store fixture for this module
-)
 from tests_real_ha.test_cross_feature_acceptance import _agent
 from tests_real_ha.test_provider_wire_e2e import _chat_sse_text, _install_wire
 from tests_stress.conftest import record
+from tests_stress.test_os_storage_faults import real_store_io  # noqa: F401
 
 
 async def _say(hass: HomeAssistant, agent: Any, user_id: str, index: int) -> Any:
@@ -39,7 +37,7 @@ async def _say(hass: HomeAssistant, agent: Any, user_id: str, index: int) -> Any
 async def test_concurrent_usage_writes_survive_retention_jumps_and_reload(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
-    _real_store_io: None,  # noqa: F811 - the imported fixture name is intentional
+    real_store_io: None,  # noqa: F811 - the imported fixture name is intentional
     stress_seed: int,
     stress_scale: int,
     stress_trace: list[dict],
@@ -176,13 +174,14 @@ async def test_concurrent_usage_writes_survive_retention_jumps_and_reload(
 
 
 async def test_mixed_foreground_failure_detached_summary_accounting_survives_prune_reload(
-    hass, monkeypatch, _real_store_io, stress_trace
+    hass, monkeypatch, real_store_io, stress_trace  # noqa: F811 - imported fixture
 ):
     """A detached completion adds its own request, never tokens to a finished run."""
     from copy import deepcopy
     from dataclasses import asdict
-    from tests_stress.test_extreme_context_matrix import _pending_summary_journey, _say
+
     from tests_real_ha.test_provider_wire_e2e import _speech
+    from tests_stress.test_extreme_context_matrix import _pending_summary_journey, _say
 
     state = await _pending_summary_journey(hass, monkeypatch, title="Mixed accounting")
     agent, entry = state["agent"], state["entry"]

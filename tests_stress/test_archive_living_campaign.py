@@ -21,6 +21,7 @@ from custom_components.extended_openai_conversation_responses.scope import (
     user_scope,
 )
 from homeassistant.core import HomeAssistant
+from tests.ha_store_test_helpers import invalidate_store_cache
 from tests_real_ha.test_acceptance_lifecycle import (
     _conversation_subentry,
     _make_entry,
@@ -390,7 +391,7 @@ async def test_cached_archive_retries_native_partition_interruption(
         storage._metadata,
         *(storage._partition_store(f"2026-{m}") for m in ("07", "08", "09")),
     ]:
-        store._manager.async_invalidate(store.key)
+        invalidate_store_cache(store)
     target = Path(storage._partition_store(month).path)
     reached, release = threading.Event(), threading.Event()
     load_json = ha_storage.json_util.load_json
