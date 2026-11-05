@@ -1095,15 +1095,31 @@ test("cold Voice user pickers select a secondary HA user and keep its name after
   await expect.poll(()=>panel.evaluate(host=>host._configDirty)).toBe(false);
   await page.reload();
   await expect(defaultPicker.locator('ha-generic-picker')).toHaveCount(1);
-  await defaultPicker.locator('ha-picker-field').click();
-  await selectNativePickerOption(defaultPicker,secondaryName);
-  await expect(defaultPicker).toHaveJSProperty('value',secondaryId);
+  const selectUser = async picker => {
+    // Observe native lifecycle/gestures without dispatching synthetic choices.
+    await picker.evaluate(element => {
+      element.__selectionOpening = {opened:false, gestures:[]};
+      element.addEventListener("picker-opened", () => { element.__selectionOpening.opened = true; });
+      element.addEventListener("pointerdown", event => {
+        if (!event.composedPath().some(node => node.matches?.('[role="option"],ha-combo-box-item'))) return;
+        const generic = element.shadowRoot.querySelector("ha-generic-picker");
+        const combo = generic?.shadowRoot.querySelector("ha-picker-combo-box");
+        element.__selectionOpening.gestures.push({
+          opened:element.__selectionOpening.opened,
+          focused:combo?.matches(":focus-within") || false,
+        });
+      }, true);
+    });
+    await picker.locator('ha-picker-field').click();
+    await selectNativePickerOption(picker,secondaryName);
+    expect(await picker.evaluate(element => element.__selectionOpening.gestures)).toEqual([{opened:true,focused:true}]);
+    await expect(picker).toHaveJSProperty('value',secondaryId);
+  };
+  await selectUser(defaultPicker);
   const mappingPicker=panel.locator('.voice-owner-user-picker');
   await panel.locator('.voice-owner-type').selectOption('user');
   await expect(mappingPicker.locator('ha-generic-picker')).toHaveCount(1);
-  await mappingPicker.locator('ha-picker-field').click();
-  await selectNativePickerOption(mappingPicker,secondaryName);
-  await expect(mappingPicker).toHaveJSProperty('value',secondaryId);
+  await selectUser(mappingPicker);
   await panel.locator('#save-config').click();
   await expect.poll(()=>panel.evaluate(host=>host._configDirty)).toBe(false);
   await page.reload();
