@@ -7,7 +7,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tarfile
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 
 import pytest
 import yaml
@@ -15,7 +15,7 @@ import yaml
 from ci import install_ha_test_plugin as installer
 
 
-@pytest.mark.parametrize("status", [429, 503])
+@pytest.mark.parametrize("status", [429, 503, "dns"])
 def test_source_download_retries_same_pin_then_extracts(tmp_path, monkeypatch, status):
     sha = "a" * 40
     payload = io.BytesIO()
@@ -28,6 +28,8 @@ def test_source_download_retries_same_pin_then_extracts(tmp_path, monkeypatch, s
     def download(url, *, timeout):
         calls.append((url, timeout))
         if len(calls) < 3:
+            if status == "dns":
+                raise URLError("No address associated with hostname")
             raise HTTPError(url, status, "transient", {}, io.BytesIO())
         return io.BytesIO(payload.getvalue())
 
@@ -43,7 +45,7 @@ def test_source_download_retries_same_pin_then_extracts(tmp_path, monkeypatch, s
     assert sleeps == [5, 10]
 
 
-@pytest.mark.parametrize("status,attempts", [(404, 1), (429, 4)])
+@pytest.mark.parametrize("status,attempts", [(404, 1), (429, 4), ("dns", 4)])
 def test_source_download_failure_is_bounded_and_does_not_extract(
     tmp_path, monkeypatch, status, attempts
 ):
@@ -51,14 +53,19 @@ def test_source_download_failure_is_bounded_and_does_not_extract(
 
     def download(url, *, timeout):
         calls.append(url)
+        if status == "dns":
+            raise URLError("No address associated with hostname")
         raise HTTPError(url, status, "unavailable", {}, io.BytesIO())
 
     monkeypatch.setattr(installer, "urlopen", download)
     monkeypatch.setattr(installer, "sleep", sleeps.append)
     destination = tmp_path / "core"
-    with pytest.raises(HTTPError) as error:
+    with pytest.raises(URLError) as error:
         installer.extract_source("home-assistant/core", "b" * 40, destination)
-    assert error.value.code == status
+    if isinstance(error.value, HTTPError):
+        assert error.value.code == status
+    else:
+        assert status == "dns"
     assert len(calls) == attempts
     assert sleeps == [5, 10, 20][: attempts - 1]
     assert list(tmp_path.iterdir()) == []

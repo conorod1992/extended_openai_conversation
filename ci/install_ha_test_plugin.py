@@ -15,7 +15,7 @@ import sys
 import tarfile
 import tempfile
 from time import sleep
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 import venv
 import zipfile
@@ -46,9 +46,12 @@ def extract_source(repository: str, sha: str, destination: Path) -> None:
             ) as response:
                 archive.write_bytes(response.read())
             break
-        except HTTPError as error:
-            error.close()
-            if error.code not in {429, 500, 502, 503, 504} or attempt == 3:
+        except URLError as error:
+            if isinstance(error, HTTPError):
+                error.close()
+                if error.code not in {429, 500, 502, 503, 504}:
+                    raise
+            if attempt == 3:
                 raise
             # Retry the same immutable source, never a moving branch or a
             # substitute runtime. Permanent failures still fail closed.
