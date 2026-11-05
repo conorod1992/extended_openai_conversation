@@ -146,6 +146,14 @@ data does not authorize replacement; unrelated programming, I/O and cancellation
 failures still propagate. The native process-crash journey also checks quarantine
 and healthy-sibling operation after recovery and another clean restart.
 
+Reviewed Setup sharing also round-trips safe quarantined Function records and
+malformed Group collections through serialized import. Group membership projection
+removes references only to omitted Functions; existing unknown references remain
+repair-owned. Credential omissions must not activate an ambiguous Tool collection
+or promote members out of disabled/on-demand groups. Unit boundary cases and the
+native backup-transfer export collector cover these contracts without mutating
+the source configuration.
+
 Mutation wire tests serialize actual backend results and feed them to production
 JavaScript acknowledgement consumers, including Function, Group and Rule deletion.
 Rejection requires evidence that no write

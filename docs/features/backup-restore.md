@@ -21,6 +21,8 @@ The configuration editor's **Export configuration** is also for sharing configur
 
 Exports use saved configuration. Save any draft settings first if you want them included.
 
+Shareable Setup with reviewed custom content retains quarantined Function Tool and Group definitions for repair after import, subject to the usual sharing omissions. Export does not silently repair malformed records or missing references. If omitting private content would make an ambiguous Function collection executable, its retained Functions are disabled and that change is listed in the omission summary. Usable disabled and load-when-needed groups retain their availability restrictions.
+
 ## What a full backup includes
 
 A full backup contains the selected agent's:

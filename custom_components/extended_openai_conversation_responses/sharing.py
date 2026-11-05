@@ -618,6 +618,74 @@ def project_sharing_sections(
     return projected, summary
 
 
+def _function_name(tool: Any) -> str | None:
+    spec = tool.get("spec") if isinstance(tool, dict) else None
+    name = spec.get("name") if isinstance(spec, dict) else None
+    return name if isinstance(name, str) else None
+
+
+def _group_members(group: Any) -> list[str]:
+    members = group.get("functions", []) if isinstance(group, dict) else []
+    return (
+        [name for name in members if isinstance(name, str)]
+        if isinstance(members, list)
+        else []
+    )
+
+
+def _project_reviewed_groups(
+    groups: Any,
+    candidates: Any,
+    tools: Any,
+    retained: list[Any],
+    summary: dict[str, Any],
+) -> Any:
+    if not isinstance(groups, list):
+        # Recovery exports may carry an opaque quarantined group collection.
+        if not _unsafe(candidates):
+            return deepcopy(candidates)
+        record_omission(summary, "function_groups")
+        return []
+    source_names = (
+        {_function_name(tool) for tool in tools} if isinstance(tools, list) else set()
+    )
+    retained_names = {_function_name(tool) for tool in retained}
+    omitted_names = source_names - retained_names - {None}
+    projected = []
+    blocked_members: set[str] = set()
+    for index, group in enumerate(groups):
+        present = isinstance(candidates, list) and index < len(candidates)
+        candidate = candidates[index] if present else None
+        if not present or _unsafe(candidate):
+            # Losing metadata must not promote disabled/on-demand members.
+            blocked_members.update(_group_members(group))
+            record_omission(summary, f"function_group_{index + 1}")
+            continue
+        if (
+            not isinstance(candidate, dict)
+            or not isinstance(candidate.get("functions", []), list)
+            or any(not isinstance(name, str) for name in candidate.get("functions", []))
+        ):
+            # Keep safe repair-owned records opaque, rather than fixing their
+            # shape (and potentially activating them) during an export.
+            projected.append(deepcopy(candidate))
+            continue
+        # Remove only references to tools actually omitted by sharing. Unknown
+        # references belong to quarantine and must not be silently repaired.
+        members = [
+            name for name in candidate.get("functions", []) if name not in omitted_names
+        ]
+        if members or not candidate.get("functions"):
+            projected.append({**deepcopy(candidate), "functions": members})
+        else:
+            record_omission(summary, f"function_group_{index + 1}")
+    for tool in retained:
+        if _function_name(tool) in blocked_members:
+            tool["enabled"] = False
+            record_omission(summary, "function_group_member_disabled")
+    return projected
+
+
 def project_configuration(
     config: dict[str, Any], *, reviewed: bool = False
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -669,41 +737,35 @@ def project_configuration(
     if isinstance(tools, list):
         candidates = redacted.get("functions", []) if reviewed else []
         for index, _tool in enumerate(tools):
-            candidate = candidates[index] if index < len(candidates) else None
-            if reviewed and candidate is not None and not _unsafe(candidate):
+            present = isinstance(candidates, list) and index < len(candidates)
+            candidate = candidates[index] if present else None
+            if reviewed and present and not _unsafe(candidate):
                 result["functions"].append(deepcopy(candidate))
             else:
                 record_omission(summary, f"function_tool_{index + 1}")
     elif tools:
         record_omission(summary, "function_tool")
     if reviewed:
-        groups = decoded.get("function_groups", [])
-        candidates = redacted.get("function_groups", [])
-        names = {tool["spec"]["name"] for tool in result["functions"]}
-        blocked_members: set[str] = set()
-        for index, group in enumerate(groups):
-            candidate = (
-                candidates[index]
-                if isinstance(candidates, list) and index < len(candidates)
-                else None
+        if isinstance(tools, list) and len(result["functions"]) != len(tools):
+            from .function_configuration_repair import (
+                function_configuration_repair_state,
             )
-            if not isinstance(candidate, dict) or _unsafe(candidate):
-                # Losing an unsafe group's metadata must not promote its members
-                # from disabled/on-demand to immediately available tools.
-                blocked_members.update(group.get("functions", []))
-                record_omission(summary, f"function_group_{index + 1}")
-                continue
-            members = [name for name in candidate.get("functions", []) if name in names]
-            if members or not group.get("functions"):
-                result["function_groups"].append(
-                    {**deepcopy(candidate), "functions": members}
-                )
-            else:
-                record_omission(summary, f"function_group_{index + 1}")
-        for tool in result["functions"]:
-            if tool["spec"]["name"] in blocked_members:
-                tool["enabled"] = False
-                record_omission(summary, "function_group_member_disabled")
+
+            repair = function_configuration_repair_state(decoded)
+            if repair is not None and not repair.field_updates_allowed:
+                # Omitting one duplicate/ambiguous definition can make another
+                # executable. Preserve the source's fail-closed collection state.
+                for tool in result["functions"]:
+                    if _function_name(tool) is not None:
+                        tool["enabled"] = False
+                        record_omission(summary, "function_collection_member_disabled")
+        result["function_groups"] = _project_reviewed_groups(
+            decoded.get("function_groups", []),
+            redacted.get("function_groups", []),
+            tools,
+            result["functions"],
+            summary,
+        )
     # Skills contain arbitrary external/custom content and dependency references.
     if not reviewed:
         result["function_groups"] = []
