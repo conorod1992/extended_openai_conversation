@@ -100,7 +100,7 @@ async def async_require_unreferenced_state_control_rename(
         item.entry_id: item for item in hass.config_entries.async_entries(DOMAIN)
     }
     entries[entry.entry_id] = entry
-    consumers = []
+    consumers: list[str] = []
     for owner in entries.values():
         for source in owner.subentries.values():
             if source.subentry_type != "conversation":
