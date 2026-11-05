@@ -92,6 +92,8 @@ async def test_image_and_owner_survive_caller_tool_continuation_then_isolate_nex
     beta = MockUser(id="image-task-owner-beta", name="Independent owner Beta")
     alpha.add_to_hass(hass)
     beta.add_to_hass(hass)
+    for user in (alpha, beta):
+        user.mock_policy({"entities": {"entity_ids": {entity_id: {"control": True}}}})
     context = Context(user_id=alpha.id)
     call_id = f"image-continuation-{mode}"
     tool_value = "ALPHA_ASSOCIATED_TOOL_RESULT"
@@ -252,6 +254,8 @@ async def test_overlapping_caller_tools_keep_context_and_cancellation_request_lo
     bravo_user = MockUser(id="overlap-task-bravo", name="Overlap Bravo")
     alpha_user.add_to_hass(hass)
     bravo_user.add_to_hass(hass)
+    for user in (alpha_user, bravo_user):
+        user.mock_policy({"entities": {"entity_ids": {entity_id: {"control": True}}}})
     alpha_context = Context(user_id=alpha_user.id)
     bravo_context = Context(user_id=bravo_user.id)
 

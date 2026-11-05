@@ -156,7 +156,9 @@ async def test_neighbour_shared_client_and_native_script_survive_final_removal(
     mock_platform(hass, "shared_neighbour.config_flow")
     neighbour = MockConfigEntry(domain="shared_neighbour")
     neighbour.add_to_hass(hass)
-    assert await hass.config_entries.async_setup(neighbour.entry_id)
+    assert await hass.config_entries.async_setup(neighbour.entry_id), (
+        neighbour.state, neighbour.reason
+    )
     client = hass.data["shared_neighbour"]
 
     async def effect(call):

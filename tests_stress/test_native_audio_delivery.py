@@ -190,7 +190,9 @@ async def _install_audio_entities(
         )
     entry = MockConfigEntry(domain=_AUDIO_DOMAIN, title="Software audio boundary")
     entry.add_to_hass(hass)
-    assert await hass.config_entries.async_setup(entry.entry_id)
+    assert await hass.config_entries.async_setup(entry.entry_id), (
+        entry.state, entry.reason
+    )
     await hass.async_block_till_done()
     assert all(
         entity.entity_id and hass.states.get(entity.entity_id)
