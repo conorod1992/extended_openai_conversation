@@ -1495,6 +1495,8 @@
     "tests_stress/test_agent_subentry_lifecycle_isolation.py::test_backup_snapshot_of_one_agent_is_stable_while_sibling_mutates",
     "tests_stress/test_agent_subentry_lifecycle_isolation.py::test_duplicate_and_imported_agents_start_config_only_then_diverge_durably",
     "tests_stress/test_agent_subentry_lifecycle_isolation.py::test_one_conversation_initialization_failure_does_not_poison_healthy_sibling",
+    "tests_stress/test_ai_task_continuity.py::test_caller_task_without_entity_control_never_reaches_provider[chat_completions]",
+    "tests_stress/test_ai_task_continuity.py::test_caller_task_without_entity_control_never_reaches_provider[responses]",
     "tests_stress/test_ai_task_continuity.py::test_image_and_owner_survive_caller_tool_continuation_then_isolate_next_task[chat_completions]",
     "tests_stress/test_ai_task_continuity.py::test_image_and_owner_survive_caller_tool_continuation_then_isolate_next_task[responses]",
     "tests_stress/test_ai_task_continuity.py::test_overlapping_caller_tools_keep_context_and_cancellation_request_local[chat_completions]",
