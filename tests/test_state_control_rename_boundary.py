@@ -171,3 +171,23 @@ async def test_cross_agent_consumers_are_checked_and_storage_failure_propagates(
             hass, entry, target, "functions", "old_tool", "new_tool", get_rules=getter
         )
     hass.config_entries.async_update_subentry.assert_not_called()
+
+
+async def test_existing_rule_owner_is_reused_for_rename_validation(hass):
+    entry, target = _setup_entry(hass)
+    manager = SimpleNamespace(async_backup_data=AsyncMock(return_value={"rules": []}))
+    getter = AsyncMock(
+        side_effect=AssertionError("Rule owner was unnecessarily reloaded")
+    )
+    await async_require_unreferenced_state_control_rename(
+        hass,
+        entry,
+        target,
+        "functions",
+        "old_tool",
+        "new_tool",
+        get_rules=getter,
+        rules_manager=manager,
+    )
+    getter.assert_not_called()
+    manager.async_backup_data.assert_awaited_once()

@@ -1947,6 +1947,9 @@ async def _async_validate_configuration_dependencies(
     """Validate retained rules against the exact replacement configuration."""
     from .transfer import _async_validate_request_rule_function_dependencies
 
+    rules = rules_manager or await async_get_request_rules(
+        hass, entry.entry_id, subentry.subentry_id
+    )
     if renamed_function is not None:
         from .function_dependency_integrity import (
             async_require_unreferenced_state_control_rename,
@@ -1959,10 +1962,8 @@ async def _async_validate_configuration_dependencies(
             "functions",
             *renamed_function,
             get_rules=async_get_request_rules,
+            rules_manager=rules,
         )
-    rules = rules_manager or await async_get_request_rules(
-        hass, entry.entry_id, subentry.subentry_id
-    )
     rules_revision = rules.revision()
     document = await rules.async_backup_data()
     from .request_rules import validate_saved_model_routes

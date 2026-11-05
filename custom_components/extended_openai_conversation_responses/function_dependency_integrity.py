@@ -80,6 +80,7 @@ async def async_require_unreferenced_state_control_rename(
     new: str,
     *,
     get_rules: Any,
+    rules_manager: Any = None,
 ) -> None:
     """Refuse dependent renames before any write, including cross-agent rules."""
     if old == new:
@@ -105,7 +106,13 @@ async def async_require_unreferenced_state_control_rename(
         for source in owner.subentries.values():
             if source.subentry_type != "conversation":
                 continue
-            manager = await get_rules(hass, owner.entry_id, source.subentry_id)
+            manager = (
+                rules_manager
+                if rules_manager is not None
+                and owner.entry_id == entry.entry_id
+                and source.subentry_id == subentry.subentry_id
+                else await get_rules(hass, owner.entry_id, source.subentry_id)
+            )
             document = await manager.async_backup_data()
             names = state_control_references(
                 document.get("rules", []),
