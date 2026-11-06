@@ -732,7 +732,7 @@ async def test_reconcile_handles_uninitialized_inactive_and_period_rollover(
 
     await manager.async_reconcile(now=now)
 
-    manager._async_restore_locked.assert_awaited_once_with(period_ended=True)
+    manager._async_restore_locked.assert_not_awaited()
     assert manager._active is not None
     assert manager._active["period_started_at"] == period.start.isoformat()
     manager._async_save_locked.assert_awaited_once_with()
@@ -1239,7 +1239,7 @@ async def test_reconcile_covers_disabled_new_and_stale_periods(monkeypatch) -> N
     manager._async_restore_locked = AsyncMock(side_effect=restore)
     monkeypatch.setattr(runtime, "discover_satellite_capabilities", lambda *_args: [])
     await manager.async_reconcile(now=datetime(2026, 9, 13, 23, tzinfo=UTC))
-    manager._async_restore_locked.assert_awaited_once_with(period_ended=True)
+    manager._async_restore_locked.assert_not_awaited()
     assert manager._active is not None
     assert manager._active["period_started_at"].startswith("2026-09-13T22:00")
 

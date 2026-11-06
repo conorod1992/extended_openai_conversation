@@ -97,6 +97,38 @@ async def test_carry_forward_cannot_reclaim_a_later_manual_choice_after_restart(
     assert media in manager.active["observed_controls"]
 
 
+@pytest.mark.parametrize("required", [False, True])
+@pytest.mark.parametrize("restart", [False, True])
+async def test_available_controls_carry_or_restore_after_skipped_period_end(
+    hass, monkeypatch, required, restart
+):
+    _install_registry(monkeypatch, "bedroom")
+    manager = _stateful_public_manager(hass)
+    _seed_room(hass, "bedroom", volume=0.8)
+    manager._config = _config()
+    writes, switches = await _install_services(hass)
+    now = datetime(2026, 11, 1, 22, 30, tzinfo=UTC)
+    await manager.async_reconcile(now=now)
+    if restart:
+        saved = deepcopy(manager._store.async_save.call_args.args[0])
+        replacement = _stateful_public_manager(hass)
+        replacement._config = runtime._config_from_data(saved["config"])
+        replacement._active = replacement._normalize_active(saved["active"])
+        manager = replacement
+    if not required:
+        monkeypatch.setattr(manager, "_discover_capabilities", lambda: [])
+    writes.clear()
+    switches.clear()
+    for _ in range(3):
+        await manager.async_reconcile(now=now + timedelta(days=1))
+    assert writes == ([] if required else [("media_player.bedroom", 0.8)])
+    assert switches == ([] if required else [("switch.bedroom_wake_sound", True)])
+    if required:
+        assert (
+            manager.active["controls"]["media_player.bedroom"]["original_value"] == 0.8
+        )
+
+
 @pytest.mark.parametrize(
     "returned,attributed", [(0.8, False), (0.6, False), (0.2, False), (0.2, True)]
 )

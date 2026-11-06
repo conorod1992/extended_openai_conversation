@@ -883,7 +883,23 @@ class QuietHoursManager:
                 and self._active.get("period_started_at") != period_id
             ):
                 if not self._active_period_overlaps(period):
-                    await self._async_restore_locked(period_ended=True)
+                    # Expire observations, not the still-required quiet effect.
+                    # Discovery below decides which controls can carry forward
+                    # and which must restore before a fresh application.
+                    controls = self._active.get("controls", {})
+                    for control in controls.values():
+                        control.update(
+                            restoration_pending=True, restore_before_apply=True
+                        )
+                    self._active["observed_controls"] = sorted(controls)
+                    self._active["pending_controls"] = {}
+                    self._active["observed_identities"] = {
+                        key: identity
+                        for key, identity in self._active.get(
+                            "observed_identities", {}
+                        ).items()
+                        if key in controls
+                    }
                 if self._active is not None:
                     self._active.update(
                         {

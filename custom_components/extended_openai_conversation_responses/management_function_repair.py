@@ -709,9 +709,8 @@ def _function_fields_unchanged(
     return True
 
 
-def group_collection_repair_metadata(options: dict[str, Any]) -> dict[str, Any]:
-    """Expose the complete source when Group identities cannot address each row."""
-    raw = options.get(CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS))
+def group_collection_is_addressable(raw: Any) -> bool:
+    """Share the cheap identity boundary used by repair and catalogue counts."""
     ids = (
         [group.get("id") if isinstance(group, dict) else None for group in raw]
         if isinstance(raw, list)
@@ -722,8 +721,14 @@ def group_collection_repair_metadata(options: dict[str, Any]) -> dict[str, Any]:
     )
     if addressable:
         addressable = len(ids) == len(set(ids))
+    return addressable
+
+
+def group_collection_repair_metadata(options: dict[str, Any]) -> dict[str, Any]:
+    """Expose the complete source when Group identities cannot address each row."""
+    raw = options.get(CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS))
     return {
-        "group_collection_repair": not addressable,
+        "group_collection_repair": not group_collection_is_addressable(raw),
         "groups_yaml": dump_yaml(raw, sort_keys=False),
         "guest_allowed_group_ids": deepcopy(
             options.get(CONF_GUEST_ALLOWED_GROUP_IDS, [])

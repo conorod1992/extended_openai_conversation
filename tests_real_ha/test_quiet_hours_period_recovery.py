@@ -89,3 +89,68 @@ async def test_offline_control_rejoins_later_period_with_durable_baseline(
         assert manager.active is None
     finally:
         await manager.async_shutdown()
+
+
+@pytest.mark.parametrize("deferred", [False, True])
+@pytest.mark.parametrize("restart", [False, True])
+async def test_available_quiet_effect_carries_across_missed_daytime_boundary(
+    hass, monkeypatch, real_store_io, deferred, restart
+):
+    """No daytime-volume command is valid while the same ceiling is required."""
+    await hass.config.async_set_time_zone("UTC")
+    now = datetime(2026, 11, 1, 22, 30, tzinfo=UTC)
+    monkeypatch.setattr(runtime.dt_util, "now", lambda: now)
+    _, media, _ = _install_satellite_entities(hass, volume=0.8)
+    calls, pending = [], []
+
+    def report(value, context):
+        hass.states.async_set(media, "idle", {"volume_level": value}, context=context)
+
+    async def volume_set(call):
+        value = call.data["volume_level"]
+        calls.append(value)
+        if deferred:
+            pending.append((value, call.context))
+        else:
+            report(value, call.context)
+
+    def feedback():
+        for value, context in pending:
+            report(value, context)
+        pending.clear()
+
+    hass.services.async_register("media_player", "volume_set", volume_set)
+    manager = QuietHoursManager(hass)
+    manager._initialized = True
+    manager._config = runtime.QuietHoursConfig(enabled=True, wake_sound="unchanged")
+    try:
+        await manager.async_reconcile(now=now)
+        feedback()
+        assert calls == [0.2]
+        calls.clear()
+        now += timedelta(days=1)
+        if restart:
+            # Crash-style replacement: no shutdown restoration or daytime read.
+            manager = QuietHoursManager(hass)
+            await manager.async_setup()
+        for _ in range(4):
+            await manager.async_reconcile(now=now)
+            feedback()
+            assert calls == []
+            assert hass.states.get(media).attributes["volume_level"] == 0.2
+            assert manager.active["controls"][media]["original_value"] == 0.8
+            now += timedelta(minutes=5)
+        disk = json.loads(
+            Path(hass.config.path(".storage", runtime._STORAGE_KEY)).read_text(
+                encoding="utf-8"
+            )
+        )["data"]
+        assert disk["active"]["controls"][media]["original_value"] == 0.8
+        now = (now + timedelta(days=1)).replace(hour=8)
+        await manager.async_reconcile(now=now)
+        feedback()
+        assert calls == [0.8]
+        assert hass.states.get(media).attributes["volume_level"] == 0.8
+        assert manager.active is None
+    finally:
+        await manager.async_shutdown()

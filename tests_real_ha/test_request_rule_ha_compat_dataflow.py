@@ -134,6 +134,85 @@ async def _agent_after_reload(hass, entry_id):
     return agent
 
 
+@pytest.mark.parametrize("key", ["result_alias", "step_id"])
+@pytest.mark.parametrize("payload_field", ["data", "data_template"])
+@pytest.mark.parametrize("shipped", [False, True])
+async def test_alias_rename_preserves_metadata_named_function_arguments(hass, monkeypatch, key, payload_field, shipped):
+    from copy import deepcopy
+
+    from tests.test_result_alias_payload_boundary import rename_with_frontend
+
+    tools = [
+        {
+            "spec": {
+                "name": "produce",
+                "parameters": {"type": "object", "properties": {}},
+            },
+            "function": {
+                "type": "template",
+                "parse_result": True,
+                "value_template": "{{ {'value':'working'} }}",
+            },
+        },
+        {
+            "spec": {
+                "name": "consume",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        key: {"type": "string"},
+                        "ordinary_key": {"type": "string"},
+                    },
+                },
+            },
+            "function": {
+                "type": "script",
+                "sequence": [
+                    {
+                        "action": "rule_probe.record",
+                        "data": {
+                            "special": "{{ " + key + " }}",
+                            "ordinary": "{{ ordinary_key }}",
+                        },
+                    }
+                ],
+            },
+        },
+    ]
+    agent = await _agent(hass, **{CONF_FUNCTION_TOOLS: tools})
+    _provider(monkeypatch, agent, [])
+    observed = []
+
+    async def record(call):
+        observed.append(dict(call.data))
+
+    hass.services.async_register("rule_probe", "record", record)
+    actions = [
+        {
+            "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+            "data": {"function": "produce", "arguments": {}, "result_alias": "lookup"},
+        },
+        {
+            "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+            payload_field: {
+                "function": "consume",
+                "arguments": {key: "{lookup.value}", "ordinary_key": "{lookup.value}"},
+            },
+        },
+    ]
+    saved = await agent._request_rules.async_create(_local(actions))
+    assert _speech(await _say(hass, agent, "run rule")) == "Done"
+    assert observed == [{"special": "working", "ordinary": "working"}]
+    edited = deepcopy(saved)
+    edited["action"]["actions"][0]["data"]["result_alias"] = "updated"
+    edited["action"]["actions"] = rename_with_frontend(
+        edited["action"]["actions"], shipped=shipped
+    )
+    await agent._request_rules.async_update(saved["id"], edited)
+    assert _speech(await _say(hass, agent, "run rule")) == "Done"
+    assert observed == [{"special": "working", "ordinary": "working"}] * 2
+
+
 # A deliberately independent oracle: no production lookup/templating helpers.
 def _lookup(value, path):
     current = value

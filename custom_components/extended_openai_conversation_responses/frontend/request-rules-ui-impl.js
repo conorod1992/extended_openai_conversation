@@ -234,7 +234,9 @@ export function renameResultReferenceMap(value, mapping) {
   if (typeof value === "string") return value.replace(/(?<!\{)\{[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_0-9][A-Za-z0-9_]*)*\}(?!\})/g,
     (whole) => { const body=whole.slice(1,-1), alias=body.split(".",1)[0]; return mapping.has(alias) ? `{${mapping.get(alias)}${body.slice(alias.length)}}` : whole; });
   if (Array.isArray(value)) return value.map((item) => renameResultReferenceMap(item, mapping));
-  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, key === "result_alias" ? item : renameResultReferenceMap(item, mapping)]));
+  // Alias declarations are bare identifiers, not {references}. Payload keys
+  // named result_alias/step_id have no special meaning and must be traversed.
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, renameResultReferenceMap(item, mapping)]));
   return value;
 }
 

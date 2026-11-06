@@ -32,6 +32,7 @@ from ..execution_outcomes import (
     owns_read_only_execution_receipts,
 )
 from ..function_execution import backend_failure
+from ..model_tool_results import bounded_text_page
 from ..operation_settlement import (
     async_settle_owned_operation as _async_settle_native_edit,
 )
@@ -272,6 +273,7 @@ class ReadFileFunction(FileFunction):
         schema = vol.Schema(
             {
                 vol.Required("path"): cv.template,
+                vol.Optional("page_offset"): cv.template,
                 vol.Optional("allow_dir"): vol.All(cv.ensure_list, [cv.template]),
                 vol.Optional("restrict_to_allow_dir", default=False): bool,
             }
@@ -283,6 +285,8 @@ class ReadFileFunction(FileFunction):
         hass: HomeAssistant,
         path_str: str,
         allow_dirs: list[str],
+        *,
+        page_offset: int | None = None,
     ) -> dict[str, Any]:
         """Resolve and read one bounded file through the existing security checks."""
         try:
@@ -299,7 +303,15 @@ class ReadFileFunction(FileFunction):
         except Exception as err:
             log_handled_failure(_LOGGER, "Function Tool file read failed", err)
             return backend_failure(str(err), err)
-        return {"content": content, "size": file_size}
+        result = {"content": content, "size": file_size}
+        if page_offset is not None:
+            try:
+                return await hass.async_add_executor_job(
+                    bounded_text_page, result, page_offset
+                )
+            except ValueError as err:
+                return backend_failure(str(err), err)
+        return result
 
     @owns_read_only_execution_receipts
     async def execute(
@@ -312,6 +324,18 @@ class ReadFileFunction(FileFunction):
     ):
         """Read file contents."""
         path_template = function_config.get("path")
+        page_offset = None
+        if offset_template := function_config.get("page_offset"):
+            try:
+                page_offset = int(
+                    offset_template.async_render(arguments, parse_result=False)
+                )
+                if not 0 <= page_offset <= FILE_READ_SIZE_LIMIT:
+                    raise ValueError(
+                        "File offset is outside the supported character range"
+                    )
+            except (ValueError, HomeAssistantError) as err:
+                return backend_failure(str(err), err)
         template_source = str(getattr(path_template, "template", ""))
 
         # Skill templates render under the publish/remove boundary. Capture the
@@ -333,7 +357,10 @@ class ReadFileFunction(FileFunction):
                     return backend_failure(str(err), err)
                 if directories:
                     return await self._async_read(
-                        hass, path_str, [str(path) for path in directories]
+                        hass,
+                        path_str,
+                        [str(path) for path in directories],
+                        page_offset=page_offset,
                     )
             # A literal or comment mentioning the helper grants no Skill access.
         else:
@@ -350,7 +377,9 @@ class ReadFileFunction(FileFunction):
             arguments,
             include_defaults=not function_config.get("restrict_to_allow_dir", False),
         )
-        return await self._async_read(hass, path_str, allow_dirs)
+        return await self._async_read(
+            hass, path_str, allow_dirs, page_offset=page_offset
+        )
 
 
 class WriteFileFunction(FileFunction):
