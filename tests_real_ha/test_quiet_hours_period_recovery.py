@@ -188,13 +188,16 @@ class NativeTransitionDriver:
         self.departed = False
 
         async def service(call):
-            assert call.data["entity_id"] == self.entity
             value = (
-                call.data["volume_level"]
-                if kind == "volume"
+                call.data.get("volume_level")
+                if call.domain == "media_player"
                 else call.service == "turn_on"
             )
-            self.commands.append(value)
+            self.commands.append(
+                (call.domain, call.service, call.data["entity_id"], value)
+            )
+            assert call.data["entity_id"] == self.entity
+            assert call.domain == ("media_player" if kind == "volume" else "switch")
             if self.lose_ack:
                 self.lose_ack = False
                 self.report(value, call.context)
@@ -204,11 +207,9 @@ class NativeTransitionDriver:
             else:
                 self.report(value, call.context)
 
-        if kind == "volume":
-            hass.services.async_register("media_player", "volume_set", service)
-        else:
-            hass.services.async_register("switch", "turn_on", service)
-            hass.services.async_register("switch", "turn_off", service)
+        hass.services.async_register("media_player", "volume_set", service)
+        hass.services.async_register("switch", "turn_on", service)
+        hass.services.async_register("switch", "turn_off", service)
 
     def report(self, value, context=None):
         if self.kind == "volume":

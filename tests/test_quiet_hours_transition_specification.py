@@ -90,11 +90,12 @@ class MemoryTransitionDriver:
         )
 
     async def service(self, domain, service, data, **kwargs):
-        assert data["entity_id"] == self.entity
         value = (
             data["volume_level"] if domain == "media_player" else service == "turn_on"
         )
-        self.commands.append(value)
+        self.commands.append((domain, service, data["entity_id"], value))
+        assert data["entity_id"] == self.entity
+        assert domain == ("media_player" if self.kind == "volume" else "switch")
         if self.lose_ack:
             self.lose_ack = False
             self.report(value, kwargs.get("context"))

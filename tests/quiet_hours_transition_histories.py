@@ -164,6 +164,13 @@ async def exercise_history(driver, history):
             assert driver.policy_active() == (0 <= step.value % 24 < 8.5), (index, step)
         if step.state is not None:
             assert driver.current() == driver.values.get(step.state), (index, step)
-        assert driver.commands[before:] == [
-            driver.values[name] for name in step.commands
-        ], (index, step, driver.commands)
+        expected = []
+        for name in step.commands:
+            value = driver.values[name]
+            domain, service = (
+                ("media_player", "volume_set")
+                if driver.kind == "volume"
+                else ("switch", "turn_on" if value else "turn_off")
+            )
+            expected.append((domain, service, driver.entity, value))
+        assert driver.commands[before:] == expected, (index, step, driver.commands)

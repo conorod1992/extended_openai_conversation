@@ -18,12 +18,13 @@ device does not imply that Home Assistant missed its daytime callback.
 | Service error follows an attributed effect | Reconcile its prepared receipt against the actual report. Neither replay the effect nor lose its baseline on restart. |
 | Repeated reconciliations without relevant new input | Converge: no repeated command, restore/apply oscillation or baseline drift. |
 
-Application admission for volume and wake-sound controls has one production
-owner, `_control_application_suppressed()`. Reconciliation handles existing
+Early application admission for volume and wake-sound controls has one shared
+implementation, `_control_application_suppressed()`. Reconciliation handles existing
 ownership; an observed unowned choice stays released in the occurrence, while
 prepared/pending work may resume. Period orchestration owns observation expiry.
 This extraction does not change stored fields, ordering of prepared-intent saves,
 service dispatch, context attribution, cancellation or acknowledgement settlement.
+Final preparation retains its authoritative ownership and baseline validation.
 Other comparisons and restoration decisions remain in their current owners.
 
 `tests/quiet_hours_transition_histories.py` supplies twelve independently authored
@@ -31,7 +32,7 @@ histories. It imports no production decision helper or ownership flag. Literal
 command expectations cover regular end, missed callbacks, manager progress while
 offline, return before/after restart, independent choices, departing devices and
 an acknowledged device report followed by a lost service acknowledgement. Each
-checkpoint compares the complete command delta, settled public control value and
+checkpoint compares the complete domain/service/entity/value command delta, settled public control value and
 published active entity, including when the policy is active but owns no control.
 Final restoration commands check the meaning of the retained baseline.
 
