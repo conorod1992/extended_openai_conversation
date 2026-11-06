@@ -28,7 +28,8 @@ async def test_catalogue_accepts_recoverable_null_groups(hass):
         "function_groups": None,
     }
     result = await async_agent_catalog(fake, "admin", True)
-    assert result["agents"][0]["function_group_count"] == 0
+    assert result["agents"][0]["function_group_count"] is None
+    assert result["agents"][0]["metadata_errors"][0]["key"] == "function_groups"
     assert subentry.data["function_groups"] is None
 
 

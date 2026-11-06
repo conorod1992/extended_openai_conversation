@@ -166,7 +166,9 @@ def _agent_snapshot(
         "function_group_count": (
             len(groups)
             if group_collection_is_addressable(
-                groups := options.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS)
+                groups := options.get(
+                    CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS)
+                )
             )
             else None
         ),

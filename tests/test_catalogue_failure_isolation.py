@@ -113,6 +113,14 @@ async def test_catalogue_does_not_swallow_cancellation(monkeypatch):
         await loading.async_agent_catalog(hass, "admin", True)
 
 
+async def test_missing_groups_use_the_known_empty_default_not_a_repair_state():
+    hass, _, assistant = _hass_with_agent()
+    assistant.data.pop("function_groups", None)
+    row = (await loading.async_agent_catalog(hass, "admin", True))["agents"][0]
+    assert row["function_group_count"] == 0
+    assert row["metadata_errors"] == []
+
+
 @pytest.mark.parametrize("subsystem", ["knowledge", "guest"])
 async def test_failed_native_store_initialization_cannot_block_catalogue(
     tmp_path, monkeypatch, subsystem

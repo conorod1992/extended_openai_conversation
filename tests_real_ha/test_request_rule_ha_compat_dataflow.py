@@ -136,11 +136,10 @@ async def _agent_after_reload(hass, entry_id):
 
 @pytest.mark.parametrize("key", ["result_alias", "step_id"])
 @pytest.mark.parametrize("payload_field", ["data", "data_template"])
-@pytest.mark.parametrize("shipped", [False, True])
-async def test_alias_rename_preserves_metadata_named_function_arguments(hass, monkeypatch, key, payload_field, shipped):
+async def test_alias_rename_preserves_metadata_named_function_arguments(hass, monkeypatch, key, payload_field):
     from copy import deepcopy
 
-    from tests.test_result_alias_payload_boundary import rename_with_frontend
+    from tests.test_result_alias_payload_boundary import renamed_actions_fixture
 
     tools = [
         {
@@ -190,7 +189,7 @@ async def test_alias_rename_preserves_metadata_named_function_arguments(hass, mo
     actions = [
         {
             "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
-            "data": {"function": "produce", "arguments": {}, "result_alias": "lookup"},
+            "data": {"function": "produce", "arguments": {}, "result_alias": "lookup", "step_id": "1" * 32},
         },
         {
             "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
@@ -204,10 +203,9 @@ async def test_alias_rename_preserves_metadata_named_function_arguments(hass, mo
     assert _speech(await _say(hass, agent, "run rule")) == "Done"
     assert observed == [{"special": "working", "ordinary": "working"}]
     edited = deepcopy(saved)
-    edited["action"]["actions"][0]["data"]["result_alias"] = "updated"
-    edited["action"]["actions"] = rename_with_frontend(
-        edited["action"]["actions"], shipped=shipped
-    )
+    # The fast suite checks this exact emission against source and shipped JS;
+    # the native HA container need not install a second language runtime.
+    edited["action"]["actions"] = renamed_actions_fixture(key, payload_field)
     await agent._request_rules.async_update(saved["id"], edited)
     assert _speech(await _say(hass, agent, "run rule")) == "Done"
     assert observed == [{"special": "working", "ordinary": "working"}] * 2

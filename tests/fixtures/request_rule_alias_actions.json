@@ -1,0 +1,86 @@
+{
+  "data/result_alias": [
+    {
+      "action": "extended_openai_conversation_responses.call_function",
+      "data": {
+        "function": "produce",
+        "arguments": {},
+        "result_alias": "updated",
+        "step_id": "11111111111111111111111111111111"
+      }
+    },
+    {
+      "action": "extended_openai_conversation_responses.call_function",
+      "data": {
+        "function": "consume",
+        "arguments": {
+          "result_alias": "{updated.value}",
+          "ordinary_key": "{updated.value}"
+        }
+      }
+    }
+  ],
+  "data/step_id": [
+    {
+      "action": "extended_openai_conversation_responses.call_function",
+      "data": {
+        "function": "produce",
+        "arguments": {},
+        "result_alias": "updated",
+        "step_id": "11111111111111111111111111111111"
+      }
+    },
+    {
+      "action": "extended_openai_conversation_responses.call_function",
+      "data": {
+        "function": "consume",
+        "arguments": {
+          "step_id": "{updated.value}",
+          "ordinary_key": "{updated.value}"
+        }
+      }
+    }
+  ],
+  "data_template/result_alias": [
+    {
+      "action": "extended_openai_conversation_responses.call_function",
+      "data": {
+        "function": "produce",
+        "arguments": {},
+        "result_alias": "updated",
+        "step_id": "11111111111111111111111111111111"
+      }
+    },
+    {
+      "action": "extended_openai_conversation_responses.call_function",
+      "data_template": {
+        "function": "consume",
+        "arguments": {
+          "result_alias": "{updated.value}",
+          "ordinary_key": "{updated.value}"
+        }
+      }
+    }
+  ],
+  "data_template/step_id": [
+    {
+      "action": "extended_openai_conversation_responses.call_function",
+      "data": {
+        "function": "produce",
+        "arguments": {},
+        "result_alias": "updated",
+        "step_id": "11111111111111111111111111111111"
+      }
+    },
+    {
+      "action": "extended_openai_conversation_responses.call_function",
+      "data_template": {
+        "function": "consume",
+        "arguments": {
+          "step_id": "{updated.value}",
+          "ordinary_key": "{updated.value}"
+        }
+      }
+    }
+  ]
+}

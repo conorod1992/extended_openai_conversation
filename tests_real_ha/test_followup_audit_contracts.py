@@ -1144,7 +1144,8 @@ async def test_registered_catalogue_null_recovered_groups(hass, hass_ws_client):
         healthy.entry.entry_id,
     }
     row = next(row for row in result if row["entry_id"] == agent.entry.entry_id)
-    assert row["function_group_count"] == 0
+    assert row["function_group_count"] is None
+    assert any(error["key"] == "function_groups" for error in row["metadata_errors"])
     payload = await _management_call(
         client, entry=agent.entry, section="configuration", action="get"
     )

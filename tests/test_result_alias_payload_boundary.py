@@ -15,6 +15,13 @@ from tests.test_request_rules import local_rule
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def renamed_actions_fixture(key, payload_field):
+    """Shared producer/consumer contract, checked against source and shipped JS."""
+    return json.loads(
+        (ROOT / "tests/fixtures/request_rule_alias_actions.json").read_text()
+    )[f"{payload_field}/{key}"]
+
+
 def rename_with_frontend(value, *, shipped=False):
     source = (
         ROOT
@@ -43,31 +50,40 @@ process.stdout.write(JSON.stringify(renameResultReferenceMap(JSON.parse(text),ne
 
 @pytest.mark.parametrize("key", ["result_alias", "step_id"])
 @pytest.mark.parametrize("shipped", [False, True])
-def test_renamed_references_under_metadata_named_argument_keys_validate(key, shipped):
+@pytest.mark.parametrize("payload_field", ["data", "data_template"])
+def test_renamed_references_under_metadata_named_argument_keys_validate(
+    key, shipped, payload_field
+):
     rule = local_rule()
     rule["action"]["actions"] = [
         {
             "action": "extended_openai_conversation_responses.call_function",
-            "data": {"function": "produce", "arguments": {}, "result_alias": "updated"},
+            "data": {
+                "function": "produce",
+                "arguments": {},
+                "result_alias": "updated",
+                "step_id": "1" * 32,
+            },
         },
         {
             "action": "extended_openai_conversation_responses.call_function",
-            "data": {
+            payload_field: {
                 "function": "consume",
                 "arguments": {key: "{lookup.value}", "ordinary_key": "{lookup.value}"},
             },
         },
     ]
     stale = deepcopy(rule)
-    stale["action"]["actions"][1]["data"]["arguments"].pop("ordinary_key")
+    stale["action"]["actions"][1][payload_field]["arguments"].pop("ordinary_key")
     with pytest.raises(ValueError, match="earlier step"):
         rules.validate_rule(stale)
     rule["action"]["actions"] = rename_with_frontend(
         rule["action"]["actions"], shipped=shipped
     )
+    assert rule["action"]["actions"] == renamed_actions_fixture(key, payload_field)
     checked = rules.validate_rule(rule)
     assert checked["action"]["actions"][0]["data"]["result_alias"] == "updated"
-    assert checked["action"]["actions"][1]["data"]["arguments"] == {
+    assert checked["action"]["actions"][1][payload_field]["arguments"] == {
         key: "{updated.value}",
         "ordinary_key": "{updated.value}",
     }
