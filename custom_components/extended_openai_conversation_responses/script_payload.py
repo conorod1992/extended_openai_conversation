@@ -6,14 +6,19 @@ from typing import Any
 from .const import DOMAIN, SERVICE_CALL_FUNCTION
 
 
+def literal_service_name(action: Mapping[str, Any]) -> str | None:
+    """Read the winning service selector using HA's case normalization."""
+    name = action.get("action", action.get("service", action.get("service_template")))
+    return name.lower() if isinstance(name, str) else None
+
+
 def is_function_service_action(action: Mapping[str, Any]) -> bool:
     """Recognize a literal Function service name using HA's case normalization.
 
     Inspect only the action selector; names in payloads and templates are data.
     Keep the authored service spelling and Function name intact.
     """
-    name = action.get("action", action.get("service", action.get("service_template")))
-    return isinstance(name, str) and name.lower() == f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
+    return literal_service_name(action) == f"{DOMAIN}.{SERVICE_CALL_FUNCTION}"
 
 
 def effective_service_payload(action: Mapping[str, Any]) -> dict[str, Any] | None:

@@ -14,12 +14,9 @@ from . import request_rules
 from .agent_config import function_tool_enabled
 from .const import CONF_GUEST_ALLOWED_GROUP_IDS, DOMAIN
 from .function_execution import async_validate_function_arguments, inferred_schema_type
+from .function_reference_inspection import inspect_function_references
 from .mutation_outcomes import mark_mutation_failure
-from .script_payload import (
-    effective_service_payload,
-    is_function_service_action,
-    set_effective_service_field,
-)
+from .script_payload import set_effective_service_field
 from .script_structure import iter_script_actions
 
 _TEMPLATE_MARKERS = ("{{", "{%", "{#")
@@ -34,18 +31,13 @@ def state_control_references(
     resolve_agent: Callable[[str], tuple[str, str] | None],
 ) -> list[str]:
     """Find known or unresolved state-control consumers without rendering templates."""
-    suffix = "tools" if field == "functions" else "groups"
-    services = {f"{DOMAIN}.{verb}_function_{suffix}" for verb in ("enable", "disable")}
     references = []
     sought = {name} if isinstance(name, str) else set(name)
     for rule in rules:
-        for action in _rule_script_actions(rule):
-            service = action.get(
-                "action", action.get("service", action.get("service_template"))
-            )
-            if not isinstance(service, str) or service.lower() not in services:
+        for reference in inspect_function_references(_rule_script_actions(rule)):
+            if reference.field != field or reference.operation == "call":
                 continue
-            data = effective_service_payload(action)
+            data = reference.payload
             if data is not None and not any(_contains_template(key) for key in data):
                 target_entry = data.get("config_entry")
                 if (
@@ -489,10 +481,10 @@ def recursive_function_references(
     references: list[dict[str, str]] = []
     for rule in manager._rules:
         if any(
-            is_function_service_action(action)
-            and isinstance(data := effective_service_payload(action), Mapping)
-            and data.get("function") == function_name
-            for action in _rule_script_actions(rule)
+            reference.operation == "call"
+            and reference.payload is not None
+            and reference.payload.get("function") == function_name
+            for reference in inspect_function_references(_rule_script_actions(rule))
         ):
             references.append({"id": rule["id"], "name": rule["name"]})
     return references
@@ -514,13 +506,13 @@ async def async_rename_function_reference_recursive(
         updated_rules: list[dict[str, Any]] = []
         for rule in manager._rules:
             updated = deepcopy(rule)
-            for action in _rule_script_actions(updated):
-                data = effective_service_payload(action)
+            for reference in inspect_function_references(_rule_script_actions(updated)):
                 if (
-                    is_function_service_action(action)
-                    and isinstance(data, Mapping)
-                    and data.get("function") == old_name
+                    reference.operation == "call"
+                    and reference.payload is not None
+                    and reference.payload.get("function") == old_name
                 ):
+                    action = reference.action
                     if not isinstance(action, dict):
                         raise ValueError("Request Rule action is not mutable")
                     set_effective_service_field(action, "function", new_name)
@@ -564,10 +556,10 @@ async def async_validate_request_rule_functions(
         for tool in configured_tools
         if not require_ready or allow_disabled or function_tool_enabled(tool)
     }
-    for action in _rule_script_actions(rule):
-        if not is_function_service_action(action):
+    for reference in inspect_function_references(_rule_script_actions(rule)):
+        if reference.operation != "call":
             continue
-        data = effective_service_payload(action)
+        data = reference.payload
         if not isinstance(data, Mapping) or not isinstance(data.get("function"), str):
             raise HomeAssistantError("Configured Function action is invalid")
         arguments = data.get("arguments", {})
