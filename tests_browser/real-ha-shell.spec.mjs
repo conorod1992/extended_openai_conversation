@@ -407,12 +407,16 @@ test.describe("nightly native", () => {
     const panel = await openColdHaRoute(context, page, "assistant/basics");
     const choices = await panel.locator("#agent option").evaluateAll(nodes => nodes.map(node => node.value));
     expect(choices).toHaveLength(2);
+    const initialTitles = new Map(await panel.locator("#agent option").evaluateAll(nodes => nodes.map(node => [node.value, node.textContent])));
     const expected = new Map();
     const seed = Number(process.env.STRESS_SEED || 97000);
     for (let step = 0; step < 6; step++) {
       const identity = choices[(step + seed) % 2];
       await panel.locator("#agent").selectOption(identity);
       await expect(panel.locator("#agent")).toBeEnabled();
+      // Selecting an option does not await its configuration read. Wait for
+      // this assistant's known saved title before authoring the next change.
+      await expect(panel.locator('[data-config="__title"]')).toHaveValue(expected.get(identity) ?? initialTitles.get(identity));
       const title = `Native owner ${identity.slice(-5)} step ${step}`;
       await panel.locator('[data-config="__title"]').fill(title);
       if (step === 2) {
