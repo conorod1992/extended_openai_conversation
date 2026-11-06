@@ -373,19 +373,6 @@ async def _persist_function_configuration(
     # Legacy callers may omit a revision. Still bind this operation to the state
     # used to prepare its Tool/Group edit before dependency validation yields.
     operation_revision = persisted_config_projection(subentry).revision
-    if renamed_group is not None:
-        from .function_dependency_integrity import (
-            async_require_unreferenced_state_control_rename,
-        )
-
-        await async_require_unreferenced_state_control_rename(
-            hass,
-            entry,
-            subentry,
-            "function_groups",
-            *renamed_group,
-            get_rules=async_get_request_rules,
-        )
     _valid, invalid, _issue = isolated_function_tools(dict(subentry.data))
     editable = editable_function_tools(dict(subentry.data)) if invalid else []
     candidate_tools = [*tools, *(editable[item["index"]] for item in invalid)]
@@ -1950,22 +1937,20 @@ async def _async_validate_configuration_dependencies(
     rules = rules_manager or await async_get_request_rules(
         hass, entry.entry_id, subentry.subentry_id
     )
-    if renamed_function is not None:
-        from .function_dependency_integrity import (
-            async_require_unreferenced_state_control_rename,
-        )
-
-        await async_require_unreferenced_state_control_rename(
-            hass,
-            entry,
-            subentry,
-            "functions",
-            *renamed_function,
-            get_rules=async_get_request_rules,
-            rules_manager=rules,
-        )
     rules_revision = rules.revision()
     document = await rules.async_backup_data()
+    from .function_dependency_integrity import async_validate_disappearing_identifiers
+
+    await async_validate_disappearing_identifiers(
+        hass,
+        entry,
+        subentry,
+        subentry.data,
+        config,
+        get_rules=async_get_request_rules,
+        retained_document=document,
+    )
+
     from .request_rules import validate_saved_model_routes
 
     validate_saved_model_routes(document.get("rules", []), config, entry.data)

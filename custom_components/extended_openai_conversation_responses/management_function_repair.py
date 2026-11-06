@@ -1110,6 +1110,10 @@ async def async_function_repair(
                 editable,
                 _remove_group_function_name(groups, old_name),
             )
+            await management_ui._async_validate_configuration_dependencies(
+                hass, entry, subentry, persisted
+            )
+            require_repair_revision(subentry, operation_revision)
             payload = _safe_configuration_payload(
                 hass,
                 management_ui,

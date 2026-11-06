@@ -28,7 +28,7 @@ _TEMPLATE_MARKERS = ("{{", "{%", "{#")
 def state_control_references(
     rules: Sequence[Mapping[str, Any]],
     field: str,
-    name: str,
+    name: str | Collection[str],
     entry_id: str,
     agent_id: str,
     resolve_agent: Callable[[str], tuple[str, str] | None],
@@ -37,6 +37,7 @@ def state_control_references(
     suffix = "tools" if field == "functions" else "groups"
     services = {f"{DOMAIN}.{verb}_function_{suffix}" for verb in ("enable", "disable")}
     references = []
+    sought = {name} if isinstance(name, str) else set(name)
     for rule in rules:
         for action in _rule_script_actions(rule):
             service = action.get(
@@ -62,8 +63,10 @@ def state_control_references(
                 ):
                     continue
                 values = data.get(field, [])
-                if not _contains_template(values) and name not in (
-                    values if isinstance(values, list) else [values]
+                if not _contains_template(values) and not any(
+                    value in sought
+                    for value in (values if isinstance(values, list) else [values])
+                    if isinstance(value, str)
                 ):
                     continue
             references.append(str(rule.get("name", rule.get("id", "unnamed rule"))))
@@ -85,6 +88,92 @@ async def async_require_unreferenced_state_control_rename(
     """Refuse dependent renames before any write, including cross-agent rules."""
     if old == new:
         return
+    await _async_require_unreferenced_state_controls(
+        hass,
+        entry,
+        subentry,
+        {field: {old}},
+        get_rules=get_rules,
+        rules_manager=rules_manager,
+        operation="rename",
+    )
+
+
+def _configuration_identifiers(config: Mapping[str, Any]) -> dict[str, set[str]]:
+    """Read identifiable saved targets, including disabled/quarantined siblings."""
+    import yaml
+
+    from .agent_config import parse_configured_function_tools
+
+    try:
+        tools = parse_configured_function_tools(config)
+    except HomeAssistantError, yaml.YAMLError, TypeError, ValueError:
+        tools = []  # Undecodable collections have no addressable identifiers.
+    groups = config.get("function_groups", [])
+    return {
+        "functions": {
+            spec["name"]
+            for tool in tools
+            if isinstance(tool, Mapping)
+            and isinstance(spec := tool.get("spec"), Mapping)
+            and isinstance(spec.get("name"), str)
+            and spec["name"]
+        }
+        if isinstance(tools, list)
+        else set(),
+        "function_groups": {
+            group["id"]
+            for group in groups
+            if isinstance(group, Mapping)
+            and isinstance(group.get("id"), str)
+            and group["id"]
+        }
+        if isinstance(groups, list)
+        else set(),
+    }
+
+
+async def async_validate_disappearing_identifiers(
+    hass: HomeAssistant,
+    entry: Any,
+    subentry: Any,
+    current: Mapping[str, Any],
+    proposed: Mapping[str, Any],
+    *,
+    get_rules: Any,
+    retained_document: Mapping[str, Any],
+) -> None:
+    """No edit may newly strand a retained state-control dependency."""
+    before, after = (
+        _configuration_identifiers(current),
+        _configuration_identifiers(proposed),
+    )
+    removed = {field: names - after[field] for field, names in before.items()}
+    if not any(removed.values()):
+        return
+    await _async_require_unreferenced_state_controls(
+        hass,
+        entry,
+        subentry,
+        removed,
+        get_rules=get_rules,
+        retained_document=retained_document,
+        operation="remove identifiers",
+    )
+
+
+async def _async_require_unreferenced_state_controls(
+    hass: HomeAssistant,
+    entry: Any,
+    subentry: Any,
+    removed: Mapping[str, set[str]],
+    *,
+    get_rules: Any,
+    rules_manager: Any = None,
+    retained_document: Mapping[str, Any] | None = None,
+    operation: str,
+) -> None:
+    """Inspect each consumer document once, against the intended final owner rules."""
     from homeassistant.helpers import entity_registry as er
 
     def resolve_agent(reference: str) -> tuple[str, str] | None:
@@ -106,26 +195,42 @@ async def async_require_unreferenced_state_control_rename(
         for source in owner.subentries.values():
             if source.subentry_type != "conversation":
                 continue
+            local = (
+                owner.entry_id == entry.entry_id
+                and source.subentry_id == subentry.subentry_id
+            )
             manager = (
                 rules_manager
                 if rules_manager is not None
                 and owner.entry_id == entry.entry_id
                 and source.subentry_id == subentry.subentry_id
+                else None
+                if local and retained_document is not None
                 else await get_rules(hass, owner.entry_id, source.subentry_id)
             )
-            document = await manager.async_backup_data()
-            names = state_control_references(
-                document.get("rules", []),
-                field,
-                old,
-                entry.entry_id,
-                subentry.subentry_id,
-                resolve_agent,
+            document = (
+                retained_document
+                if local and retained_document is not None
+                else await manager.async_backup_data()
             )
-            consumers.extend(f"{source.title}: {name}" for name in names)
+            names = set()
+            for field, identifiers in removed.items():
+                if not identifiers:
+                    continue
+                names.update(
+                    state_control_references(
+                        document.get("rules", []),
+                        field,
+                        identifiers,
+                        entry.entry_id,
+                        subentry.subentry_id,
+                        resolve_agent,
+                    )
+                )
+            consumers.extend(f"{source.title}: {name}" for name in sorted(names))
     if consumers:
         raise HomeAssistantError(
-            "Cannot rename while Request Rules contain static or unresolved "
+            f"Cannot {operation} while Request Rules contain static or unresolved "
             "enable/disable references. Update these actions first, then retry: "
             + "; ".join(consumers)
         )
