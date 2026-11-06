@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 
+globalThis.customElements = {get:name => name === "ha-selector" ? class {} : undefined};
+
 const frontend = (name) => new URL(
   `../custom_components/extended_openai_conversation_responses/frontend/${name}`,
   import.meta.url,

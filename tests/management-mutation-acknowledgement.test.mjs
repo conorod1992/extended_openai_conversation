@@ -7,7 +7,7 @@ globalThis.window = {location:{pathname:"/extended-openai/data-memory/knowledge"
 globalThis.history = {pushState() {}};
 globalThis.localStorage = {getItem() { return null; }, setItem() {}};
 globalThis.HTMLElement = class { attachShadow() { this.shadowRoot = {}; } };
-globalThis.customElements = {define() {}, get() {}, whenDefined() { return Promise.resolve(); }};
+globalThis.customElements = {define() {}, get(name) { return name === "ha-selector" ? HTMLElement : undefined; }, whenDefined() { return Promise.resolve(); }};
 
 const frontend = new URL("../custom_components/extended_openai_conversation_responses/frontend/", import.meta.url);
 const {ExtendedOpenAIManagementPanel:Panel} = await import(new URL("management-panel.js", frontend));

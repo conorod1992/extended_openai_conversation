@@ -5,6 +5,7 @@ import {readOptionalStorage, writeOptionalStorage} from "./browser-storage.js";
 import {SECTION_CACHE_TTL_MS} from "./management-cache.js";
 import {captureCatalogLoad, catalogMayPublish, catalogMaySelect, catalogIntentIsCurrent, catalogHasAuthoredWork, captureCatalogContinuation, catalogContinuationIsCurrent, retireAssistantDraft} from "./management-catalog-ownership.js";
 import {updateAgentPicker} from "./management-renderer.js";
+import {ensureNativePicker} from "./native-picker-loader.js";
 const REQUEST_RULES_VIEW = "capabilities/request-rules";
 const CONFIG_TRACE_PREFIX = "extended-openai:config-read";
 const CONFIG_TRACE_LIMIT = 100;
@@ -97,6 +98,8 @@ const DATA_FEATURES = new Set([
   "capabilities/quiet-hours",
   "usage-maintenance/request-debug",
 ]);
+// Publish these editors only after HA has registered their native controls.
+const selectorFeature = pending => Promise.all([pending, ensureNativePicker("ha-selector")]).then(([module]) => module);
 const featureLoaders = {
   "agent-config": () => import("./agent-config-editor.js"),
   "agent-config-sections-primary": () => import("./agent-config-sections-primary.js"),
@@ -111,8 +114,8 @@ const featureLoaders = {
   "memory-browser": () => import("./guest-mode-ui.js"),
   "data-memory/memories": () => import("./management-memory-feature.js"),
   "data-memory/knowledge": () => import("./management-knowledge-feature.js"),
-  "capabilities/guest-mode": () => import("./management-guest-feature.js"),
-  "capabilities/request-rules": () => import("./request-rules-ui.js"),
+  "capabilities/guest-mode": () => selectorFeature(import("./management-guest-feature.js")),
+  "capabilities/request-rules": () => selectorFeature(import("./request-rules-ui.js")),
   "capabilities/quiet-hours": () => import("./quiet-hours-ui.js"),
   "capabilities/functions": () => import("./management-function-repair.js"),
   "data-memory/conversations": () => import("./management-history-pagination.js"),

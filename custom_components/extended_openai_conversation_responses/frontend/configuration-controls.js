@@ -72,6 +72,9 @@ export function applyConfigurationControl(panel, control) {
   if (key === "voice_device_mappings" && value === undefined) return {key, changed:voiceMappingDraftDirty(panel)};
   const target = key === "__title" ? panel : panel._draft;
   const property = key === "__title" ? "_draftTitle" : key;
+  // Native textarea line-ending normalization is not a new authored value.
+  if (["prompt", "current_datetime_template", "exposed_entities_template"].includes(key)
+      && value === String(target[property] ?? "").replace(/\r\n?/g, "\n")) return {key, changed:false};
   const changed = !same(target[property], value);
   if (changed) target[property] = value;
   // Correcting an invalid row can restore the baseline without changing the
@@ -80,7 +83,8 @@ export function applyConfigurationControl(panel, control) {
     && (voiceMappingDraftDirty(panel) || Boolean(panel._eocDirtyConfigKeys?.has(key))))};
 }
 
-export function readConfigurationDraft(panel) {
+// A noncommitting read is a preview snapshot, preserving draft/model ownership.
+export function readConfigurationDraft(panel, commit = true) {
   const root = panel.shadowRoot;
   const state = {_draft:clone(panel._draft || panel._result?.config || {}), _draftTitle:panel._draftTitle, _configData:panel._configData};
   if (root.querySelector("#local-intent-list")) state._draft.local_intent_exclusions = [];
@@ -89,8 +93,10 @@ export function readConfigurationDraft(panel) {
       clone(state._draft.speech_regex_replacements?.[index] || {pattern:"", replacement:""}));
   }
   root.querySelectorAll(CONFIGURATION_CONTROLS).forEach((control) => applyConfigurationControl(state, control));
-  panel._eocPendingModelPreparation?.rebindDraft?.(panel._draft, state._draft);
-  panel._draft = state._draft;
-  panel._draftTitle = state._draftTitle;
-  return panel._draft;
+  if (commit) {
+    panel._eocPendingModelPreparation?.rebindDraft?.(panel._draft, state._draft);
+    panel._draft = state._draft;
+    panel._draftTitle = state._draftTitle;
+  }
+  return state._draft;
 }

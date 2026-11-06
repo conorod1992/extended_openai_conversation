@@ -38,7 +38,9 @@ DIST = Path("custom_components/extended_openai_conversation_responses/frontend/d
 # indefinite choice. The local validation adds 243 reviewed JS bytes.
 # Azure route binding controls, provider-aware lookups and bounded Rule Pack
 # download preparation add about 1.1 KiB. Keep the entry and CSS limits intact.
-CEILINGS = {"javascript": 881_900, "css": 65_000, "management_entry": 120_000}
+# Native-selector route admission and lossless context snapshots add 189 JS bytes.
+# Budget 200 bytes for these correctness fixes; entry and CSS limits stay fixed.
+CEILINGS = {"javascript": 882_100, "css": 65_000, "management_entry": 120_000}
 
 
 def measure(dist: Path) -> dict[str, int]:

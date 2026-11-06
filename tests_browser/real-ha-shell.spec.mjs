@@ -550,6 +550,18 @@ async function openFunctionsFromOverview(page) {
 
 test("cold native Guest and Request Rule editors receive HA context and discard cancelled YAML", async ({context,page}) => {
   await authenticate(context);
+  // A second fresh document must load native editors through EOAI itself.
+  // Opening an HA automation page first would conceal missing registration.
+  const cold = await context.newPage();
+  try {
+    const rules = await openColdHaRoute(context, cold, "capabilities/request-rules");
+    await rules.locator("#rule-add").click();
+    await rules.locator("#rule-add-conditions").click();
+    for (const id of ["rule-action-sequence-host", "rule-condition-host"]) {
+      const selector = rules.locator(`#${id} > ha-selector`);
+      await expect.poll(() => selector.evaluate((element, kind) => Boolean(element.shadowRoot?.querySelector(`ha-selector-${kind}`)?.shadowRoot?.firstElementChild), id === "rule-action-sequence-host" ? "action" : "condition")).toBe(true);
+    }
+  } finally { await cold.close(); }
   const panel=await openAssistantFromOverview(page);
   // The pristine HA fixture emits unrelated startup websocket rejections.
   // Capture every error throughout the native interactions under test.
@@ -560,6 +572,7 @@ test("cold native Guest and Request Rule editors receive HA context and discard 
   if (await panel.locator("#guest-review-converted").count()) await panel.locator("#guest-review-converted").click();
   expect(await panel.evaluate(host=>host.hass===host._hass)).toBe(true);
   const guestSelector=panel.locator("ha-selector[data-guest-key]").first();
+  await expect.poll(()=>guestSelector.evaluate(selector=>Boolean(selector.shadowRoot?.firstElementChild))).toBe(true);
   expect(await guestSelector.evaluate(selector=>Boolean(selector.hass?.locale&&selector.hass?.localize))).toBe(true);
   await panel.evaluate(host=>host._navigate("capabilities","request-rules"));
   await expect(panel.locator("#rule-add")).toBeVisible();

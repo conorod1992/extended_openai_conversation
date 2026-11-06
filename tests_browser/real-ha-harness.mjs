@@ -1,3 +1,4 @@
+import "/tests_browser/native-selector-fixture.mjs";
 const params = new URLSearchParams(location.search);
 const route = params.get("route") || "assistant/basics";
 const backendUrl = params.get("backend");
