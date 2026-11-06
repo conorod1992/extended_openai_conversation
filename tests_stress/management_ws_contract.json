@@ -32,7 +32,7 @@
     {"journey": "request_rules", "section": "request_rules", "action": "settings", "keys": ["defaults", "wording_groups", "revision"]},
     {"journey": "request_rules_empty", "section": "request_rules", "action": "settings", "keys": ["defaults", "wording_groups", "revision"], "contains": {"wording_groups": []}},
     {"journey": "request_rules", "section": "request_rules", "action": "test_match", "keys": ["text"]},
-    {"journey": "rule_pack", "section": "request_rules", "action": "rule_pack_export", "keys": ["selection", "group_id", "rule_ids", "reviewed_custom"], "equals": {"selection": "all", "group_id": null, "rule_ids": null, "reviewed_custom": true}},
+    {"journey": "rule_pack", "section": "request_rules", "action": "rule_pack_export", "keys": ["selection", "group_id", "rule_ids", "reviewed_custom", "export_text"], "equals": {"selection": "all", "group_id": null, "rule_ids": null, "reviewed_custom": true, "export_text": true}},
     {"journey": "rule_pack", "section": "request_rules", "action": "rule_pack_review", "keys": ["pack"]},
     {"journey": "rule_pack", "section": "request_rules", "action": "rule_pack_import", "keys": ["pack", "revision", "review_token", "confirm"]},
     {"journey": "functions", "section": "tools", "action": "save", "keys": ["yaml", "revision"], "optional_keys": ["original_name"]},

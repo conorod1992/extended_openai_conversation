@@ -17,7 +17,7 @@ from homeassistant.helpers.script import Script, async_validate_actions_config
 
 from .. import ha_actions
 from ..const import DOMAIN
-from ..script_lifecycle import async_cleanup_script
+from ..script_lifecycle import async_cleanup_script, async_run_script
 from ..script_structure import iter_unvalidated_script_actions
 from ..template_diagnostics import private_template_diagnostics
 from .base import Function, copy_runtime_function_config
@@ -203,7 +203,8 @@ class ScriptFunction(Function):
                     trace.script_execution_cv.reset,
                     trace.script_execution_cv.set(outcome),
                 )
-                result = await script.async_run(
+                result = await async_run_script(
+                    script,
                     run_variables=arguments, context=context
                 )
                 if result is None or outcome.script_execution == "cancelled":

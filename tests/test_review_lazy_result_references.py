@@ -1,6 +1,7 @@
 """Result references fail only when reached, and fail the whole native rule."""
 
 import asyncio
+import gc
 
 import pytest
 
@@ -11,6 +12,95 @@ from custom_components.extended_openai_conversation_responses.const import DOMAI
 from homeassistant.core import Context, HomeAssistant, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
 from tests.test_request_rules import local_rule, manager
+
+
+@pytest.mark.parametrize("cancels", [1, 3])
+async def test_cancellation_collects_native_result_reference_failure(
+    tmp_path, monkeypatch, cancels
+):
+    """A reached failure and caller cancellation must not orphan HA's run task."""
+    hass = HomeAssistant(str(tmp_path))
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    unhandled = []
+    effects = []
+    failures = []
+    scripts = []
+    task = None
+    original_script = rules.Script
+    original_render = rules._ResultReferenceTemplate.async_render_to_info
+
+    def report(loop, context):
+        unhandled.append(context)
+        if previous_handler is not None:
+            previous_handler(loop, context)
+        else:
+            loop.default_exception_handler(context)
+
+    def capture_script(*args, **kwargs):
+        script = original_script(*args, **kwargs)
+        scripts.append(script)
+        return script
+
+    def render(template, *args, **kwargs):
+        try:
+            return original_render(template, *args, **kwargs)
+        except rules.RuleResponseValueError:
+            failures.append(True)
+            for _ in range(cancels):
+                loop.call_soon(task.cancel, "cancel failed native wait")
+            raise
+
+    async def capture(call):
+        return {"result": await rules.async_call_active_function("lookup", {}, "lookup")}
+
+    async def record(call):
+        effects.append(True)
+        # Keep HA's outer async_run awaiting its shielded native run when the
+        # later wait fails; an entirely synchronous script has no detached task.
+        await asyncio.sleep(0)
+
+    async def execute(*_):
+        return {}
+
+    loop.set_exception_handler(report)
+    monkeypatch.setattr(rules, "Script", capture_script)
+    monkeypatch.setattr(rules._ResultReferenceTemplate, "async_render_to_info", render)
+    hass.services.async_register(
+        DOMAIN, "call_function", capture, supports_response=SupportsResponse.ONLY
+    )
+    hass.services.async_register("review_probe", "record", record)
+    rule = local_rule(phrases=["run"])
+    rule["action"]["actions"] = [
+        {"action": "review_probe.record"},
+        {
+            "action": f"{DOMAIN}.call_function",
+            "data": {"function": "lookup", "arguments": {}, "result_alias": "lookup"},
+        },
+        {"wait_template": "{lookup.missing}"},
+        {"action": "review_probe.record"},
+    ]
+    try:
+        task = asyncio.create_task(rules.async_evaluate_rule(
+            hass, await manager(rule), rules.RequestRuleRuntime(), "run", "session",
+            function_executor=execute, context=Context(),
+        ))
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await hass.async_block_till_done()
+        gc.collect()
+        await asyncio.sleep(0)
+        assert failures == [True]
+        assert effects == [True]  # The action after the failed wait never ran.
+        assert scripts and all(script.runs == 0 for script in scripts)
+        assert not unhandled
+    finally:
+        if task is not None:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        await hass.async_stop(force=True)
+        loop.set_exception_handler(previous_handler)
 
 
 @pytest.mark.parametrize("consumer", ["if", "choose", "service"])

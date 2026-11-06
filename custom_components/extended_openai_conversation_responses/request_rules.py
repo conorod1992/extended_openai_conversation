@@ -81,7 +81,7 @@ from .request_rule_patterns import (
     sentence_capture_names,
     validate_match_input,
 )
-from .script_lifecycle import async_cleanup_script
+from .script_lifecycle import async_cleanup_script, async_run_script
 from .script_payload import (
     effective_service_payload,
     is_function_service_action,
@@ -3770,7 +3770,8 @@ async def _async_evaluate_matched_rule(
             execution_token = script_execution_cv.set(execution)
             cancelled = False
             try:
-                run_result = await script.async_run(
+                run_result = await async_run_script(
+                    script,
                     {**match.slots, "request": {"slots": dict(match.slots)}},
                     context,
                 )

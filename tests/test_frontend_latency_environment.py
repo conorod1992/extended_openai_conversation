@@ -26,6 +26,67 @@ def test_different_ranges_accept_same_installed_version():
         assert environment.compatibility_errors(declared, packages) == []
 
 
+@pytest.mark.parametrize("baseline_ceiling", ["3.10.0", "3.26.0"])
+def test_ha_pinned_sdk_rejects_old_baseline_without_relaxing_constraints(
+    tmp_path, monkeypatch, baseline_ceiling
+):
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text("pytest>=8\n", encoding="utf-8")
+    manifests = []
+    for label, ceiling in (("baseline", baseline_ceiling), ("current", "3.26.0")):
+        manifest = tmp_path / f"{label}.json"
+        manifest.write_text(json.dumps({
+            "requirements": [f"openai>=2.21.0,<={ceiling}"],
+        }), encoding="utf-8")
+        manifests.append(manifest)
+    output = tmp_path / "environment.json"
+    monkeypatch.setattr(sys, "argv", [
+        "environment", "--baseline-requirements", str(requirements),
+        "--current-requirements", str(requirements),
+        "--baseline-manifest", str(manifests[0]),
+        "--current-manifest", str(manifests[1]), "--output", str(output),
+    ])
+    packages = {
+        "openai": "3.26.0", "pytest": "9", "homeassistant": "2026.11.0",
+        "pytest-homeassistant-custom-component": "0.13.400",
+    }
+    monkeypatch.setattr(environment, "version", packages.__getitem__)
+    monkeypatch.setattr(environment, "installed_packages", lambda: packages)
+    monkeypatch.setattr(environment, "environment_identity", lambda: {"python_packages": packages})
+    monkeypatch.setattr(environment, "_requirements", lambda path: (
+        ["pytest>=8"] if path == requirements else ["openai==3.26.0"]
+    ))
+    run = Mock()
+    monkeypatch.setattr(environment.subprocess, "run", run)
+    if baseline_ceiling == "3.10.0":
+        run.side_effect = subprocess.CalledProcessError(1, "pip")
+        with pytest.raises(SystemExit, match="baseline was not changed"):
+            environment.main()
+        requested = run.call_args.args[0]
+        assert "openai==3.26.0" in requested
+        assert "openai<=3.10.0,>=2.21.0" in requested
+        assert "homeassistant==2026.11.0" in requested
+        assert not output.exists()
+    else:
+        environment.main()
+        run.assert_called_once_with([sys.executable, "-m", "pip", "check"], check=True)
+        identity = json.loads(output.read_text(encoding="utf-8"))
+        assert identity["environment"]["python_packages"] == packages
+        assert any(value == "openai==3.26.0" for _, value in identity["validated_declarations"])
+
+
+def test_reviewed_latency_baseline_is_pre_pr_and_keeps_existing_gates():
+    policy = json.loads((Path(__file__).resolve().parents[1]
+                         / "ci/frontend_latency/overnight_policy.json").read_text(encoding="utf-8"))
+    # PR 1278's merge predates every PR 1279 change and accepts SDK 3.26.0.
+    assert policy["baseline_sha"] == "40bd2c5fcf6937bb821a1a974e220c229396d100"
+    assert "8e4c4fc6b7c12054414fe48a2e96c36ae37b743d" in policy["baseline_review"]
+    assert policy["ready_regression"] == {"absolute_ms": 1000, "relative": 0.5}
+    assert policy["backend_regression"] == {"absolute_ms": 100, "relative": 1.0}
+    assert policy["accessibility_allowances"] == []
+    assert policy["accessibility_baseline"] == "accessibility_baseline.json"
+
+
 def test_incompatible_and_missing_dependencies_name_source_and_pin():
     errors = environment.compatibility_errors(
         [
