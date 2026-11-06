@@ -112,7 +112,7 @@ async def test_cumulative_restore_oracle_detects_increasing_meter_fault(
         UsageSensor, "_attr_state_class", SensorStateClass.TOTAL_INCREASING
     )
     with pytest.raises(
-        AssertionError, match=r"Cumulative usage sum .*restored counter 0 at window 2$"
+        AssertionError, match=r"(?m)^Cumulative usage sum .*restored counter 0 at window 2$"
     ):
         await test_cumulative_restore_corrects_recorder_sum_without_new_meter_cycle(
             hass, freezer, 0, False
