@@ -35,12 +35,12 @@ export function bindRuleSharing(panel, host) {
     const current=captureAuthentication(panel);
     const selection=q("#rule-pack-selection").value;
     try{
-      const pack=await panel._call("request_rules","rule_pack_export",{selection,group_id:selection==="group"?(groupSelect.value||null):null,rule_ids:ruleIds,reviewed_custom:Boolean(q("#rule-pack-reviewed-custom")?.checked)});
+      const pack=await panel._call("request_rules","rule_pack_export",{selection,group_id:selection==="group"?(groupSelect.value||null):null,rule_ids:ruleIds,reviewed_custom:Boolean(q("#rule-pack-reviewed-custom")?.checked),export_text:true});
       if(!current())return;
       const download=prepareRulePackDownload(pack);
-      if(!await reviewSharingExport(panel,{json:download.json,security:pack.security}))return;
+      if(!await reviewSharingExport(panel,{json:download.json,security:download.security}))return;
       if(!current())return;
-      downloadPack(download.blob);setMessage(`${pack.rules.length} rules exported.`);
+      downloadPack(download.blob);setMessage(`${download.count} rules exported.`);
     }catch(err){setMessage(err.message||String(err));}
   };
   const selectDialog=q("#rule-pack-select-dialog");

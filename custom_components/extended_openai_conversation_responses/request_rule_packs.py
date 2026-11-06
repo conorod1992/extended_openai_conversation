@@ -22,6 +22,14 @@ PACK_VERSION = 1
 MAX_PACK_BYTES = 2 * 1024 * 1024
 
 
+def serialize_rule_pack(pack: Mapping[str, Any]) -> str:
+    """Serialize the exact portable artifact and enforce its UTF-8 byte budget."""
+    text = json.dumps(pack, ensure_ascii=False)
+    if len(text.encode("utf-8")) > MAX_PACK_BYTES:
+        raise ValueError("Rule pack exceeds the 2 MB safety limit")
+    return text
+
+
 def export_rule_pack(
     manager: RequestRules,
     selection: str | None,
@@ -84,8 +92,7 @@ def export_rule_pack(
     }
     if not portable_rules:
         raise ValueError("Choose at least one rule to export")
-    if len(json.dumps(pack, ensure_ascii=False).encode("utf-8")) > MAX_PACK_BYTES:
-        raise ValueError("Rule pack exceeds the 2 MB safety limit")
+    serialize_rule_pack(pack)
     sections, security = project_sharing_sections(
         {"request_rules": pack}, reviewed=reviewed
     )
@@ -97,8 +104,7 @@ def export_rule_pack(
         "groups": projected["groups"],
         "security": security,
     }
-    if len(json.dumps(pack, ensure_ascii=False).encode("utf-8")) > MAX_PACK_BYTES:
-        raise ValueError("Rule pack exceeds the 2 MB safety limit")
+    serialize_rule_pack(pack)
     return pack
 
 

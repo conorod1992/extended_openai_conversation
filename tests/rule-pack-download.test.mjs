@@ -1,0 +1,12 @@
+import assert from "node:assert/strict";
+import {prepareRulePackDownload} from "../custom_components/extended_openai_conversation_responses/frontend/rule-pack-download.js";
+const text='{"format":"extended_openai_request_rule_pack","version":2,"groups":[],"rules":[{"counter":9007199254740993}],"security":{"review_required":true,"omitted":[]}}';
+const download=prepareRulePackDownload({json:text,security:{review_required:false}});
+assert.equal(download.json,text);
+assert.equal(await download.blob.text(),text);
+assert.equal(download.security.review_required,true);
+assert.equal(download.count,1);
+for(const result of [{rules:[]},{json:null},{json:""}]) assert.throws(()=>prepareRulePackDownload(result),/Reload Management/);
+for(const security of [undefined,{}, {review_required:"false"}]) assert.throws(()=>prepareRulePackDownload({json:JSON.stringify({format:"extended_openai_request_rule_pack",groups:[],rules:[],security})}),/incomplete/);
+assert.throws(()=>prepareRulePackDownload({json:"{not json"}),SyntaxError);
+assert.throws(()=>prepareRulePackDownload({json:"x".repeat(2*1024*1024+1)}),/2 MB/);

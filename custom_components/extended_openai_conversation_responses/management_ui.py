@@ -171,6 +171,7 @@ from .request_rule_packs import (
     async_append_rule_pack,
     export_rule_pack,
     prepare_rule_pack,
+    serialize_rule_pack,
     validate_prepared_rule_pack as validate_rule_pack,
 )
 from .request_rules import (
@@ -902,13 +903,16 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
         return await async_request_rule_match_preview(hass, rules, text)
     rules = await async_get_request_rules(hass, entry_id, subentry_id)
     if action == "rule_pack_export":
-        return export_rule_pack(
+        pack = export_rule_pack(
             rules,
             message.get("selection"),
             message.get("group_id"),
             message.get("rule_ids"),
             reviewed=message.get("reviewed_custom") is True,
         )
+        if message.get("export_text") is True:
+            return {"json": serialize_rule_pack(pack)}
+        return pack
     if action in {"rule_pack_review", "rule_pack_import"}:
         parsed = await hass.async_add_executor_job(
             prepare_rule_pack, message.get("pack")
@@ -3409,6 +3413,7 @@ def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
         vol.Optional("yaml"): str,
         vol.Optional("document"): vol.Any(str, dict),
         vol.Optional("reviewed_custom"): bool,
+        vol.Optional("export_text"): bool,
         vol.Optional("sample_text"): str,
         vol.Optional("mode"): str,
         vol.Optional("subject"): str,
