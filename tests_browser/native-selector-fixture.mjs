@@ -11,7 +11,9 @@ if (!customElements.get("ha-panel-config")) customElements.define("ha-panel-conf
     if (selectorFixture.fail) throw new Error("Controlled native selector load failure");
     if (!customElements.get("ha-selector-condition")) customElements.define("ha-selector-condition",class extends HTMLElement {});
     if (!customElements.get("ha-selector")) customElements.define("ha-selector",class extends HTMLElement {
-      constructor() {super(); this.attachShadow({mode:"open"});}
+      // A registered native control has a visible host box. Keep this stub's
+      // footprint while genuine control rendering is checked in the HA shell.
+      constructor() {super(); this.attachShadow({mode:"open"}).innerHTML='<style>:host{display:block;min-height:32px}:host([hidden]){display:none}</style>';}
       get updateComplete() {return Promise.resolve();}
       set hass(value) {this._hass=value;} get hass() {return this._hass;}
       set selector(value) {this._selector=value;} get selector() {return this._selector;}
