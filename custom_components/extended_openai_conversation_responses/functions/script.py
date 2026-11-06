@@ -204,8 +204,7 @@ class ScriptFunction(Function):
                     trace.script_execution_cv.set(outcome),
                 )
                 result = await async_run_script(
-                    script,
-                    run_variables=arguments, context=context
+                    script, run_variables=arguments, context=context
                 )
                 if result is None or outcome.script_execution == "cancelled":
                     raise HomeAssistantError("Script Function did not complete")

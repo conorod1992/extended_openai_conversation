@@ -39,7 +39,7 @@ async def async_run_script(script: Any, *args: Any, **kwargs: Any) -> Any:
         await async_wait_owned_cleanup(stopping)
         try:
             stopping.result()
-        except (asyncio.CancelledError, Exception):
+        except asyncio.CancelledError, Exception:
             _LOGGER.warning("Script stop failed during cancellation")
         raise
 
