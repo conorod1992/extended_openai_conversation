@@ -136,7 +136,7 @@ export function commonCapturedSlotNames(text) {
   return required(variants[0]).filter((name) => variants.every((variant) => required(variant).includes(name)));
 }
 
-const setFuzzyState = (root, prefix) => { const toggle = root.querySelector(`#${prefix}-fuzzy`), select = root.querySelector(`#${prefix}-threshold`); if (!toggle || !select) return; select.disabled = !toggle.checked; select.closest(".fuzzy-sensitivity")?.classList.toggle("is-disabled", !toggle.checked); };
+const setFuzzyState = (root, prefix) => { const toggle = root.querySelector(`#${prefix}-fuzzy`), select = root.querySelector(`#${prefix}-threshold`); if (!toggle || !select) return; select.disabled = !toggle.checked || Boolean(select.closest(".matching-settings")?.hidden); select.closest(".fuzzy-sensitivity")?.classList.toggle("is-disabled", !toggle.checked); };
 
 
 const editorTranslations = new WeakMap();
@@ -269,7 +269,7 @@ function renderResultAliases(panel, selector) {
     const alias = data.result_alias || "";
     const suggestion = suggestResultAlias(data.function, suggested);
     suggested.add(suggestion);
-    return `<label>Result alias for ${panel._e(data.function)} (step ${index + 1})<input class="rule-result-alias" data-index="${index}" value="${panel._e(alias)}" placeholder="${panel._e(suggestion)}" pattern="[A-Za-z_][A-Za-z0-9_]*"><small>Optional unique name for this result, usable in later steps or the local response.</small></label>`;
+    return `<label>Result alias for ${panel._e(data.function)} (step ${index + 1})<input class="rule-result-alias" data-index="${index}" value="${panel._e(alias)}" placeholder="${panel._e(suggestion)}" pattern="[A-Za-z_][A-Za-z0-9_]*"><small>Optional unique result name for later steps or the local response.</small></label>`;
   }).join("");
   syncResultAliasMode(panel.shadowRoot);
   host.querySelectorAll(".rule-result-alias").forEach((input) => input.addEventListener("change", () => {
@@ -362,6 +362,7 @@ function refreshEditor(panel) {
   q("#rule-action-slot-list").textContent=slots.length?slots.map((name)=>`{{ ${name} }}`).join(", "):"";
   q("#rule-matching-behavior").disabled=grammar;
   q("#rule-matching-controls").hidden=grammar||q("#rule-matching-behavior").value!=="custom";
+  setFuzzyState(root,"rule");
   const handoff=local ? q("#rule-local-continue-to-ai").checked : continueToAi;
   q("#rule-response-reference").hidden=handoff;
   const aiSettings=q("#rule-ai-input-settings"), mode=q("#rule-ai-input-mode"), capture=q("#rule-ai-input-capture"), label=q("#rule-ai-capture-label"), help=q("#rule-ai-input-help");
