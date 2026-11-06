@@ -13,7 +13,11 @@ from homeassistant.exceptions import HomeAssistantError
 from . import request_rules
 from .agent_config import function_tool_enabled
 from .const import CONF_GUEST_ALLOWED_GROUP_IDS, DOMAIN
-from .function_execution import async_validate_function_arguments, inferred_schema_type
+from .function_execution import (
+    async_validate_function_arguments,
+    inferred_schema_type,
+    patterned_object_keys,
+)
 from .function_reference_inspection import inspect_function_references
 from .mutation_outcomes import mark_mutation_failure
 from .script_payload import set_effective_service_field
@@ -273,6 +277,7 @@ def _mask_dynamic_schema(value: Any, schema: Mapping[str, Any]) -> dict[str, Any
     if isinstance(value, Mapping) and "object" in types:
         properties = schema.get("properties", {})
         additional = schema.get("additionalProperties", True)
+        patterned_keys = patterned_object_keys(value, schema)
         masked_properties = (
             deepcopy(dict(properties)) if isinstance(properties, Mapping) else {}
         )
@@ -282,7 +287,7 @@ def _mask_dynamic_schema(value: Any, schema: Mapping[str, Any]) -> dict[str, Any
             )
             if isinstance(child_schema, Mapping):
                 masked_properties[key] = _mask_dynamic_schema(item, child_schema)
-            elif isinstance(additional, Mapping):
+            elif key not in patterned_keys and isinstance(additional, Mapping):
                 # Promote current additional keys to individual properties so one
                 # dynamic value does not weaken validation for its static siblings.
                 masked_properties[str(key)] = _mask_dynamic_schema(item, additional)
@@ -327,12 +332,17 @@ async def _async_validate_static_descendants(
     if isinstance(value, Mapping) and "object" in types:
         properties = schema.get("properties", {})
         additional = schema.get("additionalProperties", True)
+        patterned_keys = await hass.async_add_executor_job(
+            patterned_object_keys, value, schema
+        )
         for key, item in value.items():
             child_schema = (
                 properties.get(key) if isinstance(properties, Mapping) else None
             )
-            if not isinstance(child_schema, Mapping) and isinstance(
-                additional, Mapping
+            if (
+                key not in patterned_keys
+                and not isinstance(child_schema, Mapping)
+                and isinstance(additional, Mapping)
             ):
                 child_schema = additional
             if isinstance(child_schema, Mapping):
@@ -365,7 +375,9 @@ async def async_validate_static_function_arguments(
     if not isinstance(parameters, Mapping):
         raise HomeAssistantError("Function input schema is invalid")
     masked_spec = dict(spec)
-    masked_spec["parameters"] = _mask_dynamic_schema(arguments, parameters)
+    masked_spec["parameters"] = await hass.async_add_executor_job(
+        _mask_dynamic_schema, arguments, parameters
+    )
     await async_validate_function_arguments(hass, masked_spec, arguments)
     if _contains_template(arguments):
         await _async_validate_static_descendants(hass, arguments, parameters)

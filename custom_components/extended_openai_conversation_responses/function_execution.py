@@ -591,10 +591,15 @@ def _collect_pattern_checks(
     if "object" in expected_types and isinstance(value, Mapping):
         properties = schema.get("properties", {})
         additional = schema.get("additionalProperties", True)
+        patterned_keys = patterned_object_keys(value, schema)
         if isinstance(properties, Mapping):
             for key, item in value.items():
                 child = properties.get(key)
-                if child is None and isinstance(additional, Mapping):
+                if (
+                    child is None
+                    and key not in patterned_keys
+                    and isinstance(additional, Mapping)
+                ):
                     child = additional
                 if isinstance(child, Mapping):
                     _collect_pattern_checks(
@@ -636,7 +641,9 @@ async def async_validate_function_arguments(
     )
 
     checks: list[tuple[str, str, str, int]] = []
-    _collect_pattern_checks("", validated, schema, checks)
+    await hass.async_add_executor_job(
+        _collect_pattern_checks, "", validated, schema, checks
+    )
     if not checks:
         return validated
 
@@ -881,6 +888,39 @@ def _validate_length_constraint(
         )
 
 
+def patterned_object_keys(
+    value: Mapping[str, Any], schema: Mapping[str, Any]
+) -> set[str]:
+    """Resolve patterned membership in an executor; value assertions stay provider-owned."""
+    properties = schema.get("properties", {})
+    additional = schema.get("additionalProperties", True)
+    patterned_keys: set[str] = set()
+    patterns = schema.get("patternProperties", {})
+    if patterns and (
+        additional is False or (isinstance(additional, Mapping) and bool(additional))
+    ):
+        if not isinstance(properties, Mapping):
+            raise _schema_error("properties must be an object")
+        if not isinstance(patterns, Mapping) or not all(
+            isinstance(pattern, str) for pattern in patterns
+        ):
+            raise _schema_error("patternProperties must be an object with string keys")
+        keys = [key for key in value if isinstance(key, str) and key not in properties]
+        from .regex_execution import match_configured_property_keys
+
+        try:
+            matches = match_configured_property_keys(keys, list(patterns))
+        except HomeAssistantError as err:
+            # A missing worker proof is infrastructure failure, not invalid
+            # model arguments that the recovery loop should attempt to repair.
+            raise FunctionValidationInfrastructureError(str(err)) from err
+        patterned_keys = {
+            key for key, matched in zip(keys, matches, strict=True) if matched
+        }
+
+    return patterned_keys
+
+
 def _validate_object(
     name: str, value: Mapping[str, Any], schema: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -904,6 +944,10 @@ def _validate_object(
     if not isinstance(additional, (bool, Mapping)):
         raise _schema_error("additionalProperties must be boolean or an object schema")
 
+    # Membership controls additionalProperties even when patterned value
+    # assertions are left to the provider with the existing schema warning.
+    patterned_keys = patterned_object_keys(value, schema)
+
     result: dict[str, Any] = {}
     unknown: list[str] = []
     for key, item in value.items():
@@ -912,6 +956,9 @@ def _validate_object(
         child_name = _field_name(name, key)
         child_schema = properties.get(key)
         if child_schema is None:
+            if key in patterned_keys:
+                result[key] = item
+                continue
             if additional is False:
                 unknown.append(child_name)
                 continue

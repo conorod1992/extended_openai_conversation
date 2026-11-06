@@ -1,6 +1,11 @@
 {
   "schema": "eoai-nightly-execution-contract/v1",
   "pytest": [
+    "tests_real_ha/test_usage_period_statistics.py::test_cumulative_restore_oracle_detects_increasing_meter_fault",
+    "tests_real_ha/test_usage_period_statistics.py::test_cumulative_restore_corrects_recorder_sum_without_new_meter_cycle[False-0]",
+    "tests_real_ha/test_usage_period_statistics.py::test_cumulative_restore_corrects_recorder_sum_without_new_meter_cycle[False-503]",
+    "tests_real_ha/test_usage_period_statistics.py::test_cumulative_restore_corrects_recorder_sum_without_new_meter_cycle[True-0]",
+    "tests_real_ha/test_usage_period_statistics.py::test_cumulative_restore_corrects_recorder_sum_without_new_meter_cycle[True-503]",
     "tests/test_script_cleanup_settlement.py::test_cancelled_run_settles_native_execution_and_stop[1-success-success]",
     "tests/test_script_cleanup_settlement.py::test_cancelled_run_settles_native_execution_and_stop[1-success-error]",
     "tests/test_script_cleanup_settlement.py::test_cancelled_run_settles_native_execution_and_stop[1-success-cancel]",

@@ -51,6 +51,14 @@ Regex constraints apply at schema nodes; keys inside literal `const`, `enum`,
 default and example values are preserved. Configured regex matching uses the
 bounded regex worker after other argument validation and normalization.
 
+Advanced JSON Schema vocabulary is preserved for the provider and produces a
+warning when EOAI does not enforce its value assertions locally. In particular,
+`patternProperties` key matches are recognized when applying `additionalProperties`,
+so a matching key is not rejected as unknown. This key classification uses the
+same bounded regex worker; it does not add local validation or coercion of the
+patterned value schemas. Declared `properties`, unmatched additional keys and
+other supported constraints retain their existing local validation.
+
 If a Function Tool is edited, disabled, deleted, or removed from an available Function Group while a provider request is outstanding, a call from that old request is rejected. EOAI does not bind arguments generated for the old definition to a new implementation with the same name. The next request advertises the current definition. HA-owned tools keep their request-round schema and still pass through Home Assistant's live permission and schema checks before execution.
 
 ## Optional function groups

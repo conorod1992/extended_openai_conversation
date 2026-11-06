@@ -1,6 +1,43 @@
 import {test, expect} from "@playwright/test";
 import {fixtureUrl} from "./browser-helpers.mjs";
 
+for (const bundled of [false, true]) for (const actionType of ["local_action", "model_routing"]) for (const suffix of [0, 1, 2]) {
+  test(`Rule response CRLF survives unrelated repeated saves: ${actionType} ${suffix} bundle=${bundled}`, async ({page}) => {
+    const url = fixtureUrl("capabilities/request-rules", bundled ? "&bundle=1" : "");
+    await page.goto(url);
+    const panel = page.locator("extended-openai-management-panel");
+    await expect(panel.locator(".rule-edit").first()).toBeVisible();
+    const responses = {success_response:`left\nright\r\nlast ${suffix}`, failure_response:`failed\r\nlast ${suffix}`};
+    await panel.evaluate(async (host, {responses, actionType}) => {
+      const rule = structuredClone(host._result.rules[0]);
+      rule.match_type = "contains";
+      rule.action_type = actionType;
+      rule.action = actionType === "local_action"
+        ? {actions:[{action:"light.turn_off",target:{entity_id:"light.bedroom_lamp"}}],continue_to_ai:false,...responses}
+        : {model:"gpt-4.1-mini",reasoning_effort:null,scope:"request",reset:false,continue_to_ai:true,success_response:responses.success_response};
+      await host._call("request_rules","update",{rule_id:rule.id,rule,revision:host._result.revision});
+    }, {responses, actionType});
+    for (let save = 0; save < 2; save++) {
+      await page.goto(url);
+      await panel.locator(".rule-edit").first().click();
+      await panel.locator("#rule-name").fill(`Preserved ${save}`);
+      await panel.locator("#rule-save").click();
+      await expect(panel.locator("#rule-dialog")).not.toHaveJSProperty("open",true);
+      const saved = await page.evaluate(() => browserHarness.getState().requestRules.rules[0].action);
+      expect(saved.success_response).toBe(responses.success_response);
+      if (actionType === "local_action") expect(saved.failure_response).toBe(responses.failure_response);
+    }
+    // An intentional visible edit remains authored text rather than being
+    // replaced with the older CRLF snapshot on the next save.
+    await panel.locator(".rule-edit").first().click();
+    if (actionType === "model_routing") await panel.locator("#rule-continue-to-ai").uncheck();
+    await panel.locator(actionType === "local_action" ? "#rule-success" : "#rule-routing-success").fill("New\nresponse");
+    await panel.locator("#rule-save").click();
+    await expect(panel.locator("#rule-dialog")).not.toHaveJSProperty("open",true);
+    expect(await page.evaluate(() => browserHarness.getState().requestRules.rules[0].action.success_response)).toBe("New\nresponse");
+  });
+}
+
 test("name-only rule edits preserve one multiline trigger and both responses", async ({page}) => {
   await page.goto(fixtureUrl("capabilities/request-rules"));
   let panel = page.locator("extended-openai-management-panel");

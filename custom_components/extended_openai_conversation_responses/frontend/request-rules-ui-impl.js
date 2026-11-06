@@ -15,6 +15,16 @@ export const phraseEditorText = phrases => phrases.map(value => value.replace(/\
 export const phraseEditorValues = (text, original = []) => text === phraseEditorText(original)
   ? [...original] : text.split("\n").map(value => value.trim()).filter(Boolean);
 
+// Compare against the DOM's newline representation without rewriting an
+// unchanged imported response. Native textareas expose CR/CRLF as LF.
+export const ruleResponseValue = (text, original) => typeof original === "string"
+  && text === original.replace(/\r\n?/g, "\n") ? original : text;
+
+function syncResultAliasMode(root) {
+  const inactive = root.querySelector("#rule-action-type").value !== "local_action";
+  root.querySelectorAll(".rule-result-alias").forEach(input => { input.disabled = inactive; });
+}
+
 export function applySentencePatternHelper(value, selectionStart, selectionEnd, kind) {
   const start = Math.max(0, Math.min(Number(selectionStart) || 0, value.length));
   const end = Math.max(start, Math.min(Number(selectionEnd) || start, value.length));
@@ -261,6 +271,7 @@ function renderResultAliases(panel, selector) {
     suggested.add(suggestion);
     return `<label>Result alias for ${panel._e(data.function)} (step ${index + 1})<input class="rule-result-alias" data-index="${index}" value="${panel._e(alias)}" placeholder="${panel._e(suggestion)}" pattern="[A-Za-z_][A-Za-z0-9_]*"><small>Optional. Name the result to use it in later steps or the local response. Each captured result needs a unique alias.</small></label>`;
   }).join("");
+  syncResultAliasMode(panel.shadowRoot);
   host.querySelectorAll(".rule-result-alias").forEach((input) => input.addEventListener("change", () => {
     const index = Number(input.dataset.index), actions = structuredClone(selector.value || []);
     if (!actions[index]) return;
@@ -337,6 +348,7 @@ function refreshEditor(panel) {
   const grammar=q("#rule-match").value==="sentence_pattern";
   const slots=capturedSlotNames(q("#rule-phrases").value);
   q("#rule-local-config").hidden=!local;
+  syncResultAliasMode(root);
   q("#rule-routing-config").hidden=local;
   q("#rule-local-responses").hidden=!local || q("#rule-local-continue-to-ai").checked;
   const continueToAi=q("#rule-continue-to-ai")?.checked ?? true;
@@ -452,10 +464,10 @@ export function bindRequestRuleEditor(panel) {
         }
       }
       actions=renameResultReferenceMap(actions,aliasMappings);
-      const successResponse=renameResultReferenceMap(q("#rule-success").value,aliasMappings);
+      const successResponse=renameResultReferenceMap(ruleResponseValue(q("#rule-success").value, previous?.action?.success_response),aliasMappings);
       const rules=panel._result?.rules||[];
       if(q("#rule-ai-input-mode").value==="capture" && (q("#rule-ai-input-settings").hidden || q("#rule-ai-input-capture").getAttribute("aria-invalid")==="true")) throw new Error(q("#rule-ai-input-help").textContent || "Choose a capture available in every trigger.");
-      const rule={ai_input_mode:q("#rule-ai-input-mode").value,ai_input_capture:q("#rule-ai-input-mode").value==="capture"?q("#rule-ai-input-capture").value:null,name:q("#rule-name").value,enabled:previous?.enabled??true,phrases:phraseEditorValues(q("#rule-phrases").value,state.originalPhrases),match_type:q("#rule-match").value,action_type:actionType,action:actionType==="local_action"?{actions,success_response:successResponse,failure_response:q("#rule-failure").value,continue_to_ai:q("#rule-local-continue-to-ai").checked}:{model:q("#rule-model").value,...(q("#rule-azure-model")?.value.trim()?{azure_model:q("#rule-azure-model").value.trim()}:{}),reasoning_effort:q("#rule-reasoning").value,scope:q("#rule-scope").value,reset:q("#rule-reset").checked,continue_to_ai:q("#rule-continue-to-ai").checked,success_response:q("#rule-routing-success").value},matching_behavior:q("#rule-matching-behavior").value,matching:{word_forms:q("#rule-word-forms").checked,wording_alternatives:q("#rule-wording").checked,fuzzy:q("#rule-fuzzy").checked,fuzzy_threshold:fuzzyThresholdValue(q("#rule-threshold").value)},order:rules.find((item)=>item.id===panel._editingRuleId)?.order??rules.length,conditions:state.conditionSelector.value||[],group_id:q("#rule-group").value||null,continue_matching:q("#rule-continue-matching").checked};
+      const rule={ai_input_mode:q("#rule-ai-input-mode").value,ai_input_capture:q("#rule-ai-input-mode").value==="capture"?q("#rule-ai-input-capture").value:null,name:q("#rule-name").value,enabled:previous?.enabled??true,phrases:phraseEditorValues(q("#rule-phrases").value,state.originalPhrases),match_type:q("#rule-match").value,action_type:actionType,action:actionType==="local_action"?{actions,success_response:successResponse,failure_response:ruleResponseValue(q("#rule-failure").value,previous?.action?.failure_response),continue_to_ai:q("#rule-local-continue-to-ai").checked}:{model:q("#rule-model").value,...(q("#rule-azure-model")?.value.trim()?{azure_model:q("#rule-azure-model").value.trim()}:{}),reasoning_effort:q("#rule-reasoning").value,scope:q("#rule-scope").value,reset:q("#rule-reset").checked,continue_to_ai:q("#rule-continue-to-ai").checked,success_response:ruleResponseValue(q("#rule-routing-success").value,previous?.action?.success_response)},matching_behavior:q("#rule-matching-behavior").value,matching:{word_forms:q("#rule-word-forms").checked,wording_alternatives:q("#rule-wording").checked,fuzzy:q("#rule-fuzzy").checked,fuzzy_threshold:fuzzyThresholdValue(q("#rule-threshold").value)},order:rules.find((item)=>item.id===panel._editingRuleId)?.order??rules.length,conditions:state.conditionSelector.value||[],group_id:q("#rule-group").value||null,continue_matching:q("#rule-continue-matching").checked};
       const action=panel._editingRuleId?"update":"create";
       const ruleId=panel._editingRuleId, revision=state.revision, baseline=panel._result;
       const submitted=dialogState(dialog);
