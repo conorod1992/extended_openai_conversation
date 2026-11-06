@@ -83,6 +83,10 @@
       "required": false,
       "kind": "string"
     },
+    "export_text": {
+      "required": false,
+      "kind": "boolean"
+    },
     "group": {
       "required": false,
       "kind": "object"
