@@ -47,3 +47,20 @@ for(const bundled of [false,true]) for(const mixed of [false,true]) for(const ac
     await expectHarnessClean(page,errors);
   });
 }
+
+for(const bundled of [false,true]) test(`explicit prompt reset uses the exact default bytes bundle=${bundled}`,async ({page})=>{
+  const url=fixtureUrl("assistant/prompt-context",bundled?"&bundle=1":"");
+  await page.goto(url);
+  const panel=page.locator("extended-openai-management-panel"), canonical="Default first\nDefault second";
+  await expect(panel.locator("#prompt-editor")).toBeVisible();
+  await panel.evaluate(async(host,prompt)=>host._call("configuration","save",{revision:host._configData.revision,config:{prompt,current_datetime_enabled:false,exposed_entities_enabled:false,current_datetime_template:"Custom date",exposed_entities_template:"Custom entities"}}),canonical.replace(/\n/g,"\r\n"));
+  await page.goto(url);
+  await expect(panel.locator("#prompt-editor")).toHaveValue(canonical);
+  await panel.evaluate((host,prompt)=>{host._result.defaults.prompt=prompt;},canonical);
+  await panel.locator("#reset-prompt").click();
+  await panel.locator("#save-config").click();
+  await expect(panel.locator("#save-config")).toHaveCount(0);
+  const saved=await page.evaluate(()=>browserHarness.calls.filter(call=>call.section==="configuration"&&call.action==="save").at(-1));
+  expect(saved.config).toEqual({prompt:canonical,current_datetime_enabled:true,exposed_entities_enabled:true,current_datetime_template:"",exposed_entities_template:""});
+  expect(await page.evaluate(()=>browserHarness.getState().configuration.config.prompt)).toBe(canonical);
+});

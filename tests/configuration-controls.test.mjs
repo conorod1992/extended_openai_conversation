@@ -67,6 +67,10 @@ for (const key of ["prompt", "current_datetime_template", "exposed_entities_temp
     _eocPendingModelPreparation:{rebindDraft(){rebinds++;}},
     shadowRoot:{querySelector:()=>null,querySelectorAll:()=>[control]}};
   assert.deepEqual(applyConfigurationControl(panel,control),{key,changed:false});
+  const explicit={_draft:{[key]:original}};
+  assert.deepEqual(applyConfigurationControl(explicit,control,false),{key,changed:true});
+  assert.equal(explicit._draft[key],control.value,"An explicit reset may intentionally replace equivalent CRLF bytes");
+  assert.deepEqual(applyConfigurationControl(explicit,control,false),{key,changed:false},"An exact reset remains idempotent");
   const snapshot=readConfigurationDraft(panel,false);
   assert.notEqual(snapshot,draft);
   assert.deepEqual(snapshot,draft);

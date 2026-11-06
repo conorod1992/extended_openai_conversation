@@ -42,7 +42,7 @@ export function configurationControlValue(control) {
 
 // The full reader and delegated edits share both parsing and assignment rules.
 // Compound controls touch only their own field/row, never the rest of the form.
-export function applyConfigurationControl(panel, control) {
+export function applyConfigurationControl(panel, control, preserveText = true) {
   if (!panel._draft || !control) return null;
   const key = configKeyForControl(control);
   let value = configurationControlValue(control);
@@ -72,8 +72,8 @@ export function applyConfigurationControl(panel, control) {
   if (key === "voice_device_mappings" && value === undefined) return {key, changed:voiceMappingDraftDirty(panel)};
   const target = key === "__title" ? panel : panel._draft;
   const property = key === "__title" ? "_draftTitle" : key;
-  // Native textarea line-ending normalization is not a new authored value.
-  if (["prompt", "current_datetime_template", "exposed_entities_template"].includes(key)
+  // Untouched normalization is not authoring; explicit resets use exact values.
+  if (preserveText && ["prompt", "current_datetime_template", "exposed_entities_template"].includes(key)
       && value === String(target[property] ?? "").replace(/\r\n?/g, "\n")) return {key, changed:false};
   const changed = !same(target[property], value);
   if (changed) target[property] = value;

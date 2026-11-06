@@ -316,11 +316,11 @@ export function bindConfiguration(panel) {
       if (!input) continue;
       if (input.type === "checkbox") input.checked = true;
       else input.value = key === "prompt" ? panel._result.defaults.prompt : "";
-      updateConfigurationControl(panel, input);
+      updateConfigurationControl(panel, input, "reset");
     }
     root.querySelector("#prompt-editor").focus();
   });
-  root.querySelectorAll(".reset-context-template").forEach((button)=>button.addEventListener("click",()=>{const input=root.querySelector(`[data-config="${button.dataset.templateKey}"]`);if(input){input.value="";updateConfigurationControl(panel,input);input.focus();}}));
+  root.querySelectorAll(".reset-context-template").forEach((button)=>button.addEventListener("click",()=>{const input=root.querySelector(`[data-config="${button.dataset.templateKey}"]`);if(input){input.value="";updateConfigurationControl(panel,input,"reset");input.focus();}}));
   root.querySelector("#preview-request")?.addEventListener("click", async () => {
     const dialog=root.querySelector("#prompt-preview-dialog");
     const status=root.querySelector("#prompt-preview-status");
