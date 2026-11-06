@@ -376,17 +376,34 @@ async def _persist_function_configuration(
     _valid, invalid, _issue = isolated_function_tools(dict(subentry.data))
     editable = editable_function_tools(dict(subentry.data)) if invalid else []
     candidate_tools = [*tools, *(editable[item["index"]] for item in invalid)]
+    candidate = {
+        **subentry.data,
+        CONF_FUNCTION_TOOLS: dump_yaml(deepcopy(candidate_tools), sort_keys=False),
+        CONF_FUNCTION_GROUPS: groups,
+    }
+    from .function_configuration_mutations import (
+        prepare_quarantined_function_configuration,
+    )
+    from .function_configuration_repair import function_configuration_repair_state
+
+    state = function_configuration_repair_state(dict(subentry.data))
+    if state is not None:
+        candidate = prepare_quarantined_function_configuration(
+            dict(subentry.data),
+            tools,
+            groups,
+            state,
+            extra_updates=extra_updates,
+            renamed_function=renamed_function,
+            renamed_group=renamed_group,
+            deleted_group=deleted_group,
+            repaired_group=repaired_group,
+        ).persisted
     await _async_validate_configuration_dependencies(
         hass,
         entry,
         subentry,
-        {
-            **subentry.data,
-            # This is a decoded edit, including an explicitly empty collection.
-            # Use its persistence form before the dependency reader interprets it.
-            CONF_FUNCTION_TOOLS: dump_yaml(deepcopy(candidate_tools), sort_keys=False),
-            CONF_FUNCTION_GROUPS: groups,
-        },
+        candidate,
         renamed_function=renamed_function,
         rules_manager=rules_manager,
     )

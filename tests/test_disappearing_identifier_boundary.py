@@ -205,3 +205,37 @@ async def test_quarantine_delete_obeys_shared_guard(hass, monkeypatch, verb):
         )
     assert agent.data == before
     hass.config_entries.async_update_subentry.assert_not_called()
+
+
+async def test_unrelated_deletion_keeps_quarantined_group_references(hass, monkeypatch):
+    entry, agent = _setup_entry(hass)
+    agent.data["guest_allowed_function_names"] = []
+    agent.data["functions"] = yaml.safe_dump(
+        [_native_tool("old_tool"), _native_tool("survivor")]
+    )
+    agent.data["function_groups"][0]["loading_mode"] = "needs-repair"
+    original_groups = deepcopy(agent.data["function_groups"])
+    manager = await manager_for("function_groups", "enable", "group")
+    monkeypatch.setattr(ui, "async_get_request_rules", AsyncMock(return_value=manager))
+    await ui.async_management_command(
+        hass,
+        "admin",
+        True,
+        {
+            "entry_id": entry.entry_id,
+            "subentry_id": agent.subentry_id,
+            "section": "tools",
+            "action": "delete",
+            "name": "old_tool",
+            "confirm": True,
+        },
+    )
+    updated = hass.config_entries.async_update_subentry.call_args.kwargs["data"]
+    assert updated["function_groups"][0]["id"] == "group"
+    assert (
+        updated["function_groups"][0]["loading_mode"]
+        == original_groups[0]["loading_mode"]
+    )
+    assert [tool["spec"]["name"] for tool in yaml.safe_load(updated["functions"])] == [
+        "survivor"
+    ]
