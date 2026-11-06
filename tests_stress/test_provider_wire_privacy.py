@@ -23,6 +23,13 @@ from tests_stress.conftest import record
 from tests_stress.health import HealthChecks, assert_enhanced_health
 
 
+def _private_memory_marker(user: str, seed: int) -> str:
+    # A decimal seed next to the numeric user suffix can form a Luhn-valid
+    # payment-card number. These are isolation labels, not privacy test inputs.
+    seed_label = str(seed).translate(str.maketrans("0123456789", "abcdefghij"))
+    return f"PRIVATE-MEMORY-{user}-{seed_label}"
+
+
 async def _say(hass: HomeAssistant, entry_id: str, user_id: str, text: str):
     return await conversation.async_converse(
         hass=hass,
@@ -45,7 +52,7 @@ async def test_concurrent_users_never_cross_private_provider_wire(
     for user in users:
         MockUser(id=user, name=user, is_owner=True).add_to_hass(hass)
     entry, agent = await _memory_agent(hass, API_MODE_CHAT_COMPLETIONS)
-    markers = {user: f"PRIVATE-MEMORY-{user}-{stress_seed}" for user in users}
+    markers = {user: _private_memory_marker(user, stress_seed) for user in users}
     for user, marker in markers.items():
         await agent._memory.async_add(
             user,
