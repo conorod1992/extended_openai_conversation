@@ -1443,22 +1443,33 @@ class QuietHoursManager:
             or getattr(getattr(state, "context", None), "id", None) == context_id
         )
 
-    async def _async_apply_volume_locked(
-        self,
-        satellite_entity_id: str,
-        entity_id: str,
-        controls: dict[str, Any],
-    ) -> None:
+    def _control_application_suppressed(
+        self, entity_id: str, controls: Mapping[str, Any]
+    ) -> bool:
+        """Share application admission for volume and wake-sound controls.
+
+        Existing ownership is reconciled elsewhere. An observed, unowned choice
+        stays released for this occurrence; prepared or pending work may resume.
+        Period rollover owns observation expiry, not this admission decision.
+        """
         observed = (self._active or {}).get("observed_controls", [])
         pending = (self._active or {}).get("pending_controls", {})
-        if (
+        return (
             entity_id in controls
             and controls[entity_id].get("application_state") != "prepared"
         ) or (
             entity_id in observed
             and entity_id not in pending
             and entity_id not in controls
-        ):
+        )
+
+    async def _async_apply_volume_locked(
+        self,
+        satellite_entity_id: str,
+        entity_id: str,
+        controls: dict[str, Any],
+    ) -> None:
+        if self._control_application_suppressed(entity_id, controls):
             return
         original = _current_volume(self.hass, entity_id)
         if original is None:
@@ -1518,16 +1529,7 @@ class QuietHoursManager:
         desired: bool,
         controls: dict[str, Any],
     ) -> None:
-        observed = (self._active or {}).get("observed_controls", [])
-        pending = (self._active or {}).get("pending_controls", {})
-        if (
-            entity_id in controls
-            and controls[entity_id].get("application_state") != "prepared"
-        ) or (
-            entity_id in observed
-            and entity_id not in pending
-            and entity_id not in controls
-        ):
+        if self._control_application_suppressed(entity_id, controls):
             return
         original = _current_switch(self.hass, entity_id)
         if original is None:
