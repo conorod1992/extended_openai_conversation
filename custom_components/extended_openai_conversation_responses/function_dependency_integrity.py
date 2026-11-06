@@ -199,20 +199,15 @@ async def _async_require_unreferenced_state_controls(
                 owner.entry_id == entry.entry_id
                 and source.subentry_id == subentry.subentry_id
             )
-            manager = (
-                rules_manager
-                if rules_manager is not None
-                and owner.entry_id == entry.entry_id
-                and source.subentry_id == subentry.subentry_id
-                else None
-                if local and retained_document is not None
-                else await get_rules(hass, owner.entry_id, source.subentry_id)
-            )
-            document = (
-                retained_document
-                if local and retained_document is not None
-                else await manager.async_backup_data()
-            )
+            if local and retained_document is not None:
+                document = retained_document
+            else:
+                manager = (
+                    rules_manager
+                    if local and rules_manager is not None
+                    else await get_rules(hass, owner.entry_id, source.subentry_id)
+                )
+                document = await manager.async_backup_data()
             names = set()
             for field, identifiers in removed.items():
                 if not identifiers:
