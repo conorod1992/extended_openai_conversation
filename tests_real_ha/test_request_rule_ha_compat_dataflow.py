@@ -406,3 +406,30 @@ async def test_generated_two_step_dataflow_preserves_nested_value(
     result = await _say(hass, agent, "run rule")
     assert _speech(result) == "Result: " + expected
     assert seen == [int(expected) if expected.isdigit() else expected == "True"]
+
+
+@pytest.mark.parametrize("field,target", [("functions", "controlled_tool"), ("function_groups", "controlled-group")])
+@pytest.mark.parametrize("verb", ["enable", "disable"])
+async def test_state_control_rule_survives_refused_target_deletion(hass, monkeypatch, field, target, verb):
+    from custom_components.extended_openai_conversation_responses.management_ui import async_management_command
+    from custom_components.extended_openai_conversation_responses.management_function_repair import persisted_config_projection
+    from homeassistant.exceptions import HomeAssistantError
+    tool = {"enabled": verb == "disable", "spec": {"name":"controlled_tool", "parameters":{"type":"object", "properties":{}}}, "function":{"type":"template", "value_template":"Safe"}}
+    group = {"id":"controlled-group", "name":"Controlled", "description":"Controlled group", "enabled":verb == "disable", "functions":["controlled_tool"], "loading_mode":"always"}
+    agent = await _agent(hass, functions=[tool], function_groups=[group])
+    _provider(monkeypatch, agent, [])
+    suffix = "tools" if field == "functions" else "groups"
+    await agent._request_rules.async_create(_local([{
+        "action":f"{DOMAIN}.{verb}_function_{suffix}",
+        "data":{"config_entry":agent.entry.entry_id, "agent_id":agent.subentry.subentry_id, field:[target]},
+    }]))
+    assert _speech(await _say(hass,agent,"run rule")) == "Done"
+    revision = persisted_config_projection(agent.subentry).revision
+    with pytest.raises(HomeAssistantError, match="Acceptance rule"):
+        await async_management_command(hass,"admin",True,{
+            "section":"tools", "action":"delete" if field == "functions" else "delete_group",
+            "entry_id":agent.entry.entry_id, "subentry_id":agent.subentry.subentry_id,
+            "confirm":True, "name":target, "group_id":target, "revision":revision,
+        })
+    assert persisted_config_projection(agent.subentry).revision == revision
+    assert _speech(await _say(hass,agent,"run rule")) == "Done"
