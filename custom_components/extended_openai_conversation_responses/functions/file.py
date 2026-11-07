@@ -7,8 +7,8 @@ from contextlib import suppress
 from decimal import Decimal, InvalidOperation
 import logging
 import os
-import re
 from pathlib import Path
+import re
 import stat
 import tempfile
 from typing import Any, cast
