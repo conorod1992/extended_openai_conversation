@@ -159,9 +159,7 @@ class StreamingSpeechSanitizer:
             self._last_output = self._last_output[:-held]
         return index - held
 
-    def _discard_suppressed_opener(
-        self, output: list[str], marker: str
-    ) -> bool:
+    def _discard_suppressed_opener(self, output: list[str], marker: str) -> bool:
         """Remove an adjacent opener still pending in either parsing stage.
 
         A directly adjacent removed link is the only missing span content.
@@ -184,7 +182,7 @@ class StreamingSpeechSanitizer:
             remaining -= count
         if remaining:
             self._format_buffer = self._format_buffer[:-remaining]
-        self._last_output = self._last_output[:-len(marker)]
+        self._last_output = self._last_output[: -len(marker)]
         return True
 
     def _resolve_suppression_boundary(
@@ -336,9 +334,7 @@ class StreamingSpeechSanitizer:
             # because the provider split them across multiple deltas.
             if char.isspace() and not final and text[index:].isspace():
                 break
-            skip = self._resolve_suppression_boundary(
-                output, text, index, final=final
-            )
+            skip = self._resolve_suppression_boundary(output, text, index, final=final)
             if skip is None:
                 break
             if skip:
