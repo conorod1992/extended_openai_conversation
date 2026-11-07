@@ -4,14 +4,15 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-from homeassistant.config_entries import ConfigEntryState
-from homeassistant.exceptions import HomeAssistantError
+
 from custom_components.extended_openai_conversation_responses.config_flow import (
     ExtendedOpenAIAITaskSubentryFlowHandler,
 )
 from custom_components.extended_openai_conversation_responses.request import (
     build_provider_request_snapshot,
 )
+from homeassistant.config_entries import ConfigEntryState
+from homeassistant.exceptions import HomeAssistantError
 
 
 @pytest.mark.parametrize("bound", [False, True])
