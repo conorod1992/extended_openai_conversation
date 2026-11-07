@@ -764,14 +764,7 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                 validation_error = str(err)
                 # A failed clear must remain reversible on a retry. The saved
                 # baseline is never overwritten by an uncommitted candidate.
-                form_values = {
-                    **candidate,
-                    **{
-                        control: user_input[control]
-                        for control in _AI_TASK_CLEAR_FIELDS
-                        if control in user_input
-                    },
-                }
+                form_values = {**self.options, **user_input}
             else:
                 if self._is_new:
                     title = candidate.get(CONF_NAME, DEFAULT_AI_TASK_NAME)
@@ -925,7 +918,10 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                 errors["base"] = "invalid_request"
                 validation_error = str(err)
                 self._temp_data = submitted
-                effective_options = final_data
+                # Keep the user's visible draft while explicit reset controls
+                # own deletion. Unchecking after an error restores the shown
+                # prior value rather than an implicit selector default.
+                effective_options = {**self.options, **edited}
                 display_effort = effective_effort
             else:
                 if self._is_new:
