@@ -9,6 +9,7 @@ import pytest
 from custom_components.extended_openai_conversation_responses.request_rule_packs import (
     MAX_PACK_BYTES,
     export_rule_pack,
+    serialize_rule_pack,
     validate_rule_pack,
 )
 from custom_components.extended_openai_conversation_responses.request_rules import (
@@ -43,7 +44,7 @@ async def test_verbose_valid_pack_is_importable_after_frontend_serialization(
     pack = export_rule_pack(manager, "all", reviewed=True)
     result = subprocess.run(
         ["node", str(Path(__file__).with_name("rule-pack-download-wire.mjs"))],
-        input=json.dumps(pack),
+        input=json.dumps({"json": serialize_rule_pack(pack)}),
         capture_output=True,
         text=True,
         check=True,
@@ -51,7 +52,8 @@ async def test_verbose_valid_pack_is_importable_after_frontend_serialization(
     wire = json.loads(result.stdout)
     assert wire["pretty_size"] > MAX_PACK_BYTES
     assert wire["size"] == len(wire["json"].encode("utf-8")) <= MAX_PACK_BYTES
-    imported = validate_rule_pack(wire["json"])
+    assert wire["downloaded"] == wire["json"] == serialize_rule_pack(pack)
+    imported = validate_rule_pack(wire["downloaded"])
     assert len(imported["rules"]) == 310
     assert all(len(rule["action"]["actions"]) == 20 for rule in imported["rules"])
 
@@ -60,7 +62,7 @@ def test_final_byte_guard_rejects_oversized_frontend_payload():
     pack = {"rules": [{"content": "🧠" * (MAX_PACK_BYTES // 4)}]}
     result = subprocess.run(
         ["node", str(Path(__file__).with_name("rule-pack-download-wire.mjs"))],
-        input=json.dumps(pack),
+        input=json.dumps({"json": json.dumps(pack, ensure_ascii=False)}),
         capture_output=True,
         text=True,
         check=True,

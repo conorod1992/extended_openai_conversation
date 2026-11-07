@@ -5,7 +5,7 @@ globalThis.window = {location:{pathname:"/extended-openai/assistant/basics"}, ad
 globalThis.history = {pushState() {}};
 globalThis.localStorage = {getItem() {return null;}, setItem() {}};
 globalThis.HTMLElement = class {constructor() {this.style={};} attachShadow() {this.shadowRoot = new TestEventTarget();}};
-globalThis.customElements = {define() {}, get() {}};
+globalThis.customElements = {define() {}, get(name) { return name === "ha-selector" ? HTMLElement : undefined; }};
 globalThis.CSS = {escape:value => value};
 
 export const {ExtendedOpenAIManagementPanel} = await import("../custom_components/extended_openai_conversation_responses/frontend/management-panel.js");

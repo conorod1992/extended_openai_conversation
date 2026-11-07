@@ -13,7 +13,7 @@ import json
 import logging
 from time import monotonic, perf_counter
 from types import MappingProxyType
-from typing import Any, Final
+from typing import Any, Final, cast
 from uuid import uuid4
 
 import voluptuous as vol
@@ -91,6 +91,7 @@ from .function_dependency_integrity import (
     group_reference_updates,
 )
 from .function_groups import get_function_group_runtime
+from .function_reference_inspection import inspect_function_references
 from .functions import FUNCTIONS
 from .functions.security import FunctionSecurity, classify_tool
 from .guest_mode import (
@@ -170,6 +171,7 @@ from .request_rule_packs import (
     async_append_rule_pack,
     export_rule_pack,
     prepare_rule_pack,
+    serialize_rule_pack,
     validate_prepared_rule_pack as validate_rule_pack,
 )
 from .request_rules import (
@@ -179,11 +181,7 @@ from .request_rules import (
     validate_rule,
 )
 from .scope import SHARED_HOUSEHOLD_SCOPE_ID
-from .script_payload import (
-    effective_service_payload,
-    is_function_service_action,
-    set_effective_service_field,
-)
+from .script_payload import is_function_service_action, set_effective_service_field
 from .secret_redaction import is_redacted_secret, redact_secrets
 from .temporary_memory import async_get_temporary_memory, temporary_memory_as_dict
 from .usage import async_get_usage
@@ -376,17 +374,34 @@ async def _persist_function_configuration(
     _valid, invalid, _issue = isolated_function_tools(dict(subentry.data))
     editable = editable_function_tools(dict(subentry.data)) if invalid else []
     candidate_tools = [*tools, *(editable[item["index"]] for item in invalid)]
+    candidate = {
+        **subentry.data,
+        CONF_FUNCTION_TOOLS: dump_yaml(deepcopy(candidate_tools), sort_keys=False),
+        CONF_FUNCTION_GROUPS: groups,
+    }
+    from .function_configuration_mutations import (
+        prepare_quarantined_function_configuration,
+    )
+    from .function_configuration_repair import function_configuration_repair_state
+
+    state = function_configuration_repair_state(dict(subentry.data))
+    if state is not None:
+        candidate = prepare_quarantined_function_configuration(
+            dict(subentry.data),
+            tools,
+            groups,
+            state,
+            extra_updates=extra_updates,
+            renamed_function=renamed_function,
+            renamed_group=renamed_group,
+            deleted_group=deleted_group,
+            repaired_group=repaired_group,
+        ).persisted
     await _async_validate_configuration_dependencies(
         hass,
         entry,
         subentry,
-        {
-            **subentry.data,
-            # This is a decoded edit, including an explicitly empty collection.
-            # Use its persistence form before the dependency reader interprets it.
-            CONF_FUNCTION_TOOLS: dump_yaml(deepcopy(candidate_tools), sort_keys=False),
-            CONF_FUNCTION_GROUPS: groups,
-        },
+        candidate,
         renamed_function=renamed_function,
         rules_manager=rules_manager,
     )
@@ -560,10 +575,10 @@ def _request_rule_function_tools(
     from .function_dependency_integrity import _rule_script_actions
 
     names = set()
-    for step in _rule_script_actions(rule):
-        if not is_function_service_action(step):
+    for reference in inspect_function_references(_rule_script_actions(rule)):
+        if reference.operation != "call":
             continue
-        call = effective_service_payload(step)
+        call = reference.payload
         if not isinstance(call, Mapping) or not isinstance(call.get("function"), str):
             raise HomeAssistantError("Configured Function action is invalid")
         names.add(call["function"])
@@ -686,11 +701,11 @@ async def _review_rule_pack(
         actions = list(_rule_script_actions(rule))
         function_names = sorted(
             {
-                str(data["function"])
-                for action in actions
-                if is_function_service_action(action)
-                and isinstance(data := effective_service_payload(action), Mapping)
-                and isinstance(data.get("function"), str)
+                str(reference.payload["function"])
+                for reference in inspect_function_references(actions)
+                if reference.operation == "call"
+                and reference.payload is not None
+                and isinstance(reference.payload.get("function"), str)
             }
         )
         missing_functions = sorted(set(function_names) - available)
@@ -888,13 +903,16 @@ async def async_request_rules_command(request: _ManagementRequest) -> dict[str, 
         return await async_request_rule_match_preview(hass, rules, text)
     rules = await async_get_request_rules(hass, entry_id, subentry_id)
     if action == "rule_pack_export":
-        return export_rule_pack(
+        pack = export_rule_pack(
             rules,
             message.get("selection"),
             message.get("group_id"),
             message.get("rule_ids"),
             reviewed=message.get("reviewed_custom") is True,
         )
+        if message.get("export_text") is True:
+            return {"json": serialize_rule_pack(pack)}
+        return pack
     if action in {"rule_pack_review", "rule_pack_import"}:
         parsed = await hass.async_add_executor_job(
             prepare_rule_pack, message.get("pack")
@@ -1939,6 +1957,18 @@ async def _async_validate_configuration_dependencies(
     )
     rules_revision = rules.revision()
     document = await rules.async_backup_data()
+    from .function_dependency_integrity import async_validate_disappearing_identifiers
+
+    await async_validate_disappearing_identifiers(
+        hass,
+        entry,
+        subentry,
+        subentry.data,
+        config,
+        get_rules=async_get_request_rules,
+        retained_document=document,
+    )
+
     from .request_rules import validate_saved_model_routes
 
     validate_saved_model_routes(document.get("rules", []), config, entry.data)
@@ -1948,14 +1978,15 @@ async def _async_validate_configuration_dependencies(
         document = deepcopy(document)
         old_name, new_name = renamed_function
         for rule in document.get("rules", []):
-            for action in _rule_script_actions(rule):
-                data = effective_service_payload(action)
+            for reference in inspect_function_references(_rule_script_actions(rule)):
                 if (
-                    is_function_service_action(action)
-                    and isinstance(data, Mapping)
-                    and data.get("function") == old_name
+                    reference.operation == "call"
+                    and reference.payload is not None
+                    and reference.payload.get("function") == old_name
                 ):
-                    set_effective_service_field(action, "function", new_name)
+                    set_effective_service_field(
+                        cast(dict[str, Any], reference.action), "function", new_name
+                    )
     # Keep the persistence representation intact: serialized [] is an explicit
     # empty collection, while legacy raw [] retains its default-tool semantics.
     # The dependency validator already permits retained disabled definitions;
@@ -3382,6 +3413,7 @@ def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
         vol.Optional("yaml"): str,
         vol.Optional("document"): vol.Any(str, dict),
         vol.Optional("reviewed_custom"): bool,
+        vol.Optional("export_text"): bool,
         vol.Optional("sample_text"): str,
         vol.Optional("mode"): str,
         vol.Optional("subject"): str,

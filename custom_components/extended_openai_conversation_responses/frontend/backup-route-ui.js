@@ -1,5 +1,6 @@
 import {updateDialogs} from "./management-dialogs.js";
 import {renderBackupTransferPanel} from "./backup-transfer-shell.js";
+import {ensureCompactChoiceStyle} from "./compact-choice-styles.js";
 
 export {renderBackupTransferPanel};
 
@@ -21,6 +22,8 @@ async function activateTransfer(panel) {
 }
 
 export function bindBackupTransfer(panel) {
+  // These choices exist before the lazily loaded transfer UI and its dialogs.
+  ensureCompactChoiceStyle(panel);
   if (panel._backupTransferModule) {
     panel._backupTransferModule.bindBackupTransfer(panel, panel._backupSummaryLines);
     return;

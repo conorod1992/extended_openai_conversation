@@ -298,11 +298,13 @@ export function createStateBackend({partialOverview = false, failConfigurationOn
     if (key === "request_rules/list") return clone(state.requestRules);
     if (key === "request_rules/rule_pack_export") {
       const selected=message.selection==="group" ? state.requestRules.rules.filter(rule=>rule.group_id===(message.group_id||null)) : message.selection==="selected" ? state.requestRules.rules.filter(rule=>message.rule_ids?.includes(rule.id)) : state.requestRules.rules;
-      return {format:"extended_openai_request_rule_pack",version:1,groups:clone(state.requestRules.groups.filter(group=>selected.some(rule=>rule.group_id===group.id))),rules:clone(selected.map((rule,order)=>({...rule,order,continue_matching:rule.continue_matching??false,ai_input_mode:rule.ai_input_mode||"original",ai_input_capture:rule.ai_input_capture||null,conditions:rule.conditions||[],group_id:rule.group_id||null})))};
+      const pack={format:"extended_openai_request_rule_pack",version:1,groups:clone(state.requestRules.groups.filter(group=>selected.some(rule=>rule.group_id===group.id))),rules:clone(selected.map((rule,order)=>({...rule,order,continue_matching:rule.continue_matching??false,ai_input_mode:rule.ai_input_mode||"original",ai_input_capture:rule.ai_input_capture||null,conditions:rule.conditions||[],group_id:rule.group_id||null})))};
+      if(message.export_text===true) return {json:JSON.stringify({...pack,version:2,security:{review_required:Boolean(message.reviewed_custom),omitted:[]}})};
+      return pack;
     }
     if (key === "request_rules/rule_pack_review" || key === "request_rules/rule_pack_import") {
       const pack=JSON.parse(message.pack);
-      if(pack.format!=="extended_openai_request_rule_pack"||pack.version!==1||!Array.isArray(pack.rules))throw new Error("Invalid rule pack");
+      if(pack.format!=="extended_openai_request_rule_pack"||![1,2].includes(pack.version)||!Array.isArray(pack.rules))throw new Error("Invalid rule pack");
       const review={review_token:"fixture-review",count:pack.rules.length,ready:pack.rules.length,needs_attention:0,will_append:true,will_disable:true,new_groups:pack.groups.length,revision:state.requestRules.revision,rules:pack.rules.map(rule=>({name:rule.name,triggers:rule.phrases,group:pack.groups.find(group=>group.id===rule.group_id)?.name||"Ungrouped",action_type:rule.action_type,conditions:rule.conditions?.length||0,function_tools:[],entities:[],services:[],missing_dependencies:[],continue_to_ai:Boolean(rule.action?.continue_to_ai),continue_matching:Boolean(rule.continue_matching),ai_input_mode:rule.ai_input_mode||"original",ai_input_capture:rule.ai_input_capture||null,status:"ready"}))};
       if(key.endsWith("review"))return review;
       if(!message.confirm||message.review_token!=="fixture-review"||message.revision!==state.requestRules.revision)throw new Error("Review again");

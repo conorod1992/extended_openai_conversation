@@ -52,6 +52,9 @@ class MemoryJournalStore:
 
 
 class FakeConfigEntries:
+    def async_entries(self, _domain):
+        return []
+
     def __init__(self) -> None:
         self.updates: list[tuple[str, dict, str]] = []
 
@@ -82,8 +85,9 @@ def _states():
 def _identity():
     entry = SimpleNamespace(entry_id="entry-1")
     subentry = SimpleNamespace(
-        subentry_id="agent-new", title="Before restore", data={"prompt": "old"}
+        subentry_id="agent-new", subentry_type="conversation", title="Before restore", data={"prompt": "old"}
     )
+    entry.subentries = {subentry.subentry_id: subentry}
     return entry, subentry
 
 

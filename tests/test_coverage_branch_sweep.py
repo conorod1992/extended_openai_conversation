@@ -1072,7 +1072,7 @@ def test_request_rule_result_step_id_assignment_handles_non_action_shapes(value)
         assert result is value
 
 
-def test_request_rule_result_references_recurse_but_ignore_identity_fields() -> None:
+def test_request_rule_result_references_recurse_through_identity_named_payloads() -> None:
     from custom_components.extended_openai_conversation_responses import request_rules
 
     value = {
@@ -1089,6 +1089,8 @@ def test_request_rule_result_references_recurse_but_ignore_identity_fields() -> 
         "first",
         "second",
         "third",
+        "ignored",
+        "also_ignored",
     }
 
 

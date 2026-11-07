@@ -71,10 +71,10 @@ export function renderOverview(panel, agent) {
   const guest = agent.guest_mode || {};
   const warnings = [];
   if (["active", "active_indefinitely"].includes(guest.state) && guest.has_home_assistant_exclusions === false) warnings.push("Guest Mode is active without configured Home Assistant exclusions.");
-  for (const issue of result.load_errors || []) warnings.push(`${issue.label} could not be loaded. Other overview information is still available.`);
+  for (const issue of new Map([...(result.load_errors || []), ...(agent.metadata_errors || [])].map((item) => [item.key, item])).values()) warnings.push(`${issue.label} could not be loaded. Other overview information is still available.`);
   const loading = result.loading || {};
   const memoryCount = Number(agent.memory_count || 0).toLocaleString();
-  const knowledgeCount = Number(agent.knowledge_source_count || 0).toLocaleString();
+  const knowledgeCount = agent.knowledge_source_count == null ? "Unknown" : Number(agent.knowledge_source_count).toLocaleString();
   const archiveTone = agent.archive_enabled ? "positive" : "neutral";
   const guestTone = ["active", "active_indefinitely", "scheduled"].includes(guest.state) ? "warning" : "neutral";
   return `<style>
@@ -103,7 +103,7 @@ export function renderOverview(panel, agent) {
     ${warnings.length ? `<section class="overview-warnings" aria-label="Actionable warnings">${warnings.map((warning) => `<div class="notice warning"><strong>Review recommended</strong><p>${panel._e(warning)}</p></div>`).join("")}</section>` : ""}
     <section class="dashboard-grid" aria-label="Assistant overview">
       ${card(panel,"Assistant",`${agent.provider} · ${agent.model}`,"Model, responses, conversation behavior, prompt, and voice.","assistant","basics","Configure","mdi:robot-outline")}
-      ${card(panel,"Capabilities",`${agent.function_count == null ? "Loading…" : `${Number(agent.function_count).toLocaleString()} functions`} · ${Number(agent.function_group_count || 0).toLocaleString()} groups`,"Home Assistant access, custom functions, and visitor restrictions.","capabilities","home-assistant","Manage","mdi:tools")}
+      ${card(panel,"Capabilities",`${agent.function_count == null ? "Loading…" : `${Number(agent.function_count).toLocaleString()} functions`} · ${agent.function_group_count == null ? "Unknown" : Number(agent.function_group_count).toLocaleString()} groups`,"Home Assistant access, custom functions, and visitor restrictions.","capabilities","home-assistant","Manage","mdi:tools")}
       ${card(panel,"Memory & Knowledge",panel._titleCase(agent.memory_mode),loading.memory || loading.knowledge ? "Stored-data counts are loading." : `${memoryCount} memories · ${knowledgeCount} Knowledge sources`,"data-memory","memories","Manage","mdi:brain")}
       ${card(panel,"Conversation history",agent.archive_enabled ? "Archive enabled" : "Archive disabled",result.load_errors?.some((issue) => issue.key === "conversations") ? "Retention unavailable" : `Retention: ${conversations.archive_retention_days || 30} days`,"data-memory","conversations","View","mdi:message-text-clock-outline",archiveTone)}
       ${card(panel,"Guest Mode",loading.guest_mode ? "Loading…" : panel._titleCase(String(guest.state || "inactive").replaceAll("_"," ")),loading.guest_mode ? "Loading current Guest Mode status." : "Integration-enforced visitor access and data restrictions.","capabilities","guest-mode","Configure","mdi:account-lock-outline",guestTone)}

@@ -663,6 +663,35 @@ def _ai_task_form_fields(schema: dict[Any, Any], *, create: bool) -> dict[Any, A
     return fields
 
 
+# The HA native flow omits empty strings. Explicit clear controls distinguish
+# deletion from untouched/hidden fields, which must remain lossless.
+_AI_TASK_CLEAR_FIELDS = {
+    "clear_azure_model": "azure_model",
+    "clear_temperature": CONF_TEMPERATURE,
+    "clear_top_p": CONF_TOP_P,
+}
+
+
+def _ai_task_apply_form_edits(
+    original: dict[str, Any], submission: dict[str, Any]
+) -> tuple[dict[str, Any], set[str], dict[str, Any]]:
+    """Resolve explicit field deletions without projecting form-only controls."""
+    edits = {
+        key: value
+        for key, value in submission.items()
+        if key not in _AI_TASK_CLEAR_FIELDS
+    }
+    cleared = {
+        field
+        for control, field in _AI_TASK_CLEAR_FIELDS.items()
+        if submission.get(control) is True
+    }
+    candidate = {**original, **edits}
+    for field in cleared:
+        candidate.pop(field, None)
+    return candidate, cleared, edits
+
+
 class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
     """Flow for managing AI Task subentries."""
 
@@ -694,12 +723,13 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
         """Manage the options."""
         errors: dict[str, str] = {}
         validation_error = ""
+        form_values = self.options
         # Abort if entry is not loaded
         if self._get_entry().state != ConfigEntryState.LOADED:
             return self.async_abort(reason="entry_not_loaded")
 
         if user_input is not None:
-            candidate = {**self.options, **user_input}
+            candidate, _, _ = _ai_task_apply_form_edits(self.options, user_input)
             # Check if advanced options is enabled
             if user_input.get(CONF_ADVANCED_OPTIONS, False):
                 # Store data and move to advanced step
@@ -732,7 +762,15 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
             except HomeAssistantError as err:
                 errors["base"] = "invalid_request"
                 validation_error = str(err)
-                self.options = candidate
+                if self._is_new:
+                    # Preserve existing creation-flow normalization across a
+                    # validation retry (including a newly recommended effort).
+                    self.options = candidate
+                    form_values = candidate
+                else:
+                    # Reconfigure starts from a durable saved baseline. A failed
+                    # clear must remain reversible without losing the original.
+                    form_values = {**self.options, **user_input}
             else:
                 if self._is_new:
                     title = candidate.get(CONF_NAME, DEFAULT_AI_TASK_NAME)
@@ -759,6 +797,15 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                     default=DEFAULT_CHAT_MODEL,
                 ): str,
                 vol.Optional("azure_model", default=""): str,
+                **(
+                    {
+                        vol.Optional(
+                            "clear_azure_model", default=False
+                        ): BooleanSelector()
+                    }
+                    if not self._is_new
+                    else {}
+                ),
                 vol.Optional(
                     CONF_API_MODE,
                     default=DEFAULT_API_MODE,
@@ -795,7 +842,7 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                     schema_for_ha(
                         vol.Schema(_ai_task_form_fields(schema, create=self._is_new))
                     ),
-                    self.options,
+                    form_values,
                 )
             ),
         )
@@ -806,7 +853,9 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
         """Handle advanced model options from exact catalogue capabilities."""
         errors: dict[str, str] = {}
         validation_error = ""
-        effective_options = {**self.options, **(self._temp_data or {})}
+        effective_options, _, _ = _ai_task_apply_form_edits(
+            self.options, self._temp_data or {}
+        )
         chat_model = str(effective_options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL))
         capability_model = str(effective_options.get("azure_model") or chat_model)
         entry_data = self._get_entry().data
@@ -828,7 +877,9 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
 
         if user_input is not None:
             submitted = {**(self._temp_data or {}), **user_input}
-            final_data = {**self.options, **submitted}
+            final_data, cleared, edited = _ai_task_apply_form_edits(
+                self.options, submitted
+            )
             configured_effort = final_data.get(CONF_REASONING_EFFORT, display_effort)
             if self._is_new:
                 final_data[CONF_REASONING_EFFORT] = configured_effort
@@ -844,7 +895,7 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                     final_data.pop(parameter, None)
 
             if not self._is_new:
-                owned = set(submitted)
+                owned = set(edited) | cleared
                 model_changed = capability_model != str(
                     self.options.get("azure_model")
                     or self.options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL)
@@ -873,7 +924,12 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                 errors["base"] = "invalid_request"
                 validation_error = str(err)
                 self._temp_data = submitted
-                effective_options = final_data
+                # Creation retains its original retry candidate. Reconfigure
+                # must keep the saved visible values so a failed reset can be
+                # unchecked without adopting an implicit selector default.
+                effective_options = (
+                    final_data if self._is_new else {**self.options, **edited}
+                )
                 display_effort = effective_effort
             else:
                 if self._is_new:
@@ -899,6 +955,8 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                     default=DEFAULT_TOP_P,
                 )
             ] = NumberSelector(NumberSelectorConfig(min=0, max=1, step=0.05))
+            if not self._is_new:
+                schema[vol.Optional("clear_top_p", default=False)] = BooleanSelector()
 
         if parameter_is_allowed(capability_model, CONF_TEMPERATURE, display_effort):
             schema[
@@ -907,6 +965,10 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                     default=DEFAULT_TEMPERATURE,
                 )
             ] = NumberSelector(NumberSelectorConfig(min=0, max=2, step=0.05))
+            if not self._is_new:
+                schema[vol.Optional("clear_temperature", default=False)] = (
+                    BooleanSelector()
+                )
 
         if reasoning["supported"]:
             default_effort = display_effort or reasoning["efforts"][0]
@@ -966,6 +1028,10 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                         **effective_options,
                         CONF_REASONING_EFFORT: display_effort,
                         CONF_SERVICE_TIER: display_tier,
+                        **{
+                            control: bool((self._temp_data or {}).get(control))
+                            for control in _AI_TASK_CLEAR_FIELDS
+                        },
                     },
                 )
             ),

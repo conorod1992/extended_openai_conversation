@@ -827,7 +827,7 @@ _KNOWLEDGE_MANAGERS = f"{DOMAIN}.knowledge_managers"
 def get_loaded_knowledge(
     hass: HomeAssistant, entry_id: str, subentry_id: str
 ) -> KnowledgeLibrary | None:
-    """Return an already initialized library without creating runtime state."""
+    """Return a cached library without initializing it; check availability before use."""
     return cast(
         KnowledgeLibrary | None,
         hass.data.get(_KNOWLEDGE_MANAGERS, {}).get((entry_id, subentry_id)),

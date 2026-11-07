@@ -81,7 +81,7 @@ from .request_rule_patterns import (
     sentence_capture_names,
     validate_match_input,
 )
-from .script_lifecycle import async_cleanup_script
+from .script_lifecycle import async_cleanup_script, async_run_script
 from .script_payload import (
     effective_service_payload,
     is_function_service_action,
@@ -1040,7 +1040,15 @@ class RequestRules:
             self._rules.insert(target, moved)
             for order, rule in enumerate(self._rules):
                 rule["order"] = order
-            self._reorder_matching_snapshot()
+            # When a retained legacy rule was excluded, order changes can
+            # change which patterns fit the aggregate state budget. Reapply
+            # loader admission and diagnostics instead of sorting only the
+            # previously admitted subset. Healthy collections keep the
+            # zero-recompile fast path and compiled pattern identities.
+            if self._diagnostics:
+                self._sort_and_compile()
+            else:
+                self._reorder_matching_snapshot()
             await self._async_save_locked()
             return dict(self._rules[target])
 
@@ -2278,9 +2286,10 @@ def _result_references(value: Any) -> set[str]:
         return {match.group(1) for match in RESULT_REFERENCE.finditer(value)}
     if isinstance(value, Mapping):
         result: set[str] = set()
-        for key, item in value.items():
-            if key not in {"result_alias", "step_id"}:
-                result.update(_result_references(item))
+        # Declaration aliases and step IDs are validated bare identifiers, so
+        # cannot match reference syntax. Ordinary payloads may use either key.
+        for item in value.values():
+            result.update(_result_references(item))
         return result
     if isinstance(value, list):
         result = set()
@@ -3769,7 +3778,8 @@ async def _async_evaluate_matched_rule(
             execution_token = script_execution_cv.set(execution)
             cancelled = False
             try:
-                run_result = await script.async_run(
+                run_result = await async_run_script(
+                    script,
                     {**match.slots, "request": {"slots": dict(match.slots)}},
                     context,
                 )

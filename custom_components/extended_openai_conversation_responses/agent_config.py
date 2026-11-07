@@ -668,6 +668,9 @@ def parse_configured_function_tools(data: Mapping[str, Any]) -> Any:
 def _configured_function_tools_from_data(data: Any) -> list[dict[str, Any]]:
     """Parse fully validated production Function Tools from agent data."""
     tools = validate_function_tools(parse_configured_function_tools(data))
+    from .skill_loader_contract import upgrade_skill_loader_paging
+
+    tools = [upgrade_skill_loader_paging(tool) for tool in tools]
     for tool in tools:
         if is_ha_tool(tool):
             continue

@@ -154,6 +154,24 @@ def test_shipped_frontend_mutation_actions_are_reviewed() -> None:
     assert ("function_repair", "configuration_save") in covered
 
 
+def test_rule_pack_browser_contract_requires_authoritative_export_text() -> None:
+    """The enhanced exact-field gate must accept the shipped export protocol."""
+    document = json.loads(CONTRACT.read_text(encoding="utf-8"))
+    entry, = (
+        item for item in document["actions"]
+        if item["journey"] == "rule_pack" and item["action"] == "rule_pack_export"
+    )
+    assert set(entry["keys"]) == {
+        "selection", "group_id", "rule_ids", "reviewed_custom", "export_text",
+    }
+    assert entry["equals"] == {
+        "selection": "all", "group_id": None, "rule_ids": None,
+        "reviewed_custom": True, "export_text": True,
+    }
+    source = (FRONTEND_DIR / "request-rule-sharing-ui.js").read_text(encoding="utf-8")
+    assert 'export_text:true' in source
+
+
 def test_reviewed_browser_payloads_are_accepted_by_websocket_schemas() -> None:
     """New UI keys cannot quietly miss the manually maintained HA allow-list."""
     document = json.loads(CONTRACT.read_text(encoding="utf-8"))

@@ -1,3 +1,4 @@
+import "/tests_browser/native-selector-fixture.mjs";
 import {createBackupTransferBackend} from "/tests_browser/backup-transfer-harness.mjs";
 import {createStateBackend} from "/tests_browser/harness-state.mjs";
 

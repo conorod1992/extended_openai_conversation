@@ -72,3 +72,42 @@ test("Shared provider restoration is opt-in, previewed and configuration-depende
   expect(await page.evaluate(() => browserHarness.calls.filter(call => call.action === "import_restore").at(-1)?.data?.restore_provider_connection)).toBe(true);
   await expectHarnessClean(page, errors);
 });
+
+
+for (const bundled of [false, true]) {
+  test(`Rule Pack review and download use identical server text (${bundled})`, async ({page}) => {
+    const errors=trackPageErrors(page);
+    await page.goto(fixtureUrl("capabilities/request-rules",bundled ? "&bundle=1" : ""));
+    const panel=page.locator("extended-openai-management-panel");
+    await panel.locator("#rule-sharing summary").click();
+    const text=await panel.evaluate(host=>{
+      const rule={...host._result.rules[0],action_type:"local_action",action:{actions:[{action:"rule_probe.record",data:{counter:"RAW_INTEGER"}}],continue_to_ai:false,success_response:"Done",failure_response:"Failed"}};
+      const json=JSON.stringify({format:"extended_openai_request_rule_pack",version:2,groups:[],rules:[rule],security:{review_required:true,omitted:[]}}).replace('"RAW_INTEGER"','9007199254740993');
+      const call=host._call.bind(host);
+      host._call=async(section,action,data)=>{
+        if(section==="request_rules" && action==="rule_pack_export") {
+          if(data.export_text!==true) throw new Error("Authoritative export was not requested");
+          return {json,security:{review_required:false}};
+        }
+        return call(section,action,data);
+      };
+      return json;
+    });
+    const downloads=[];page.on("download",download=>downloads.push(download));
+    await panel.locator("#rule-pack-export").click();
+    await expect(panel.locator("[data-artifact]")).toHaveValue(text);
+    await expect(panel.locator("[data-download]")).toBeDisabled();
+    await panel.locator("[data-cancel]").click();
+    expect(downloads).toHaveLength(0);
+    await panel.locator("#rule-pack-export").click();
+    await expect(panel.locator("[data-download]")).toBeDisabled();
+    await panel.locator("[data-ack]").check();
+    const pending=page.waitForEvent("download");
+    await panel.locator("[data-download]").click();
+    const download=await pending;
+    const {readFile}=await import("node:fs/promises");
+    expect(await readFile(await download.path(),"utf8")).toBe(text);
+    expect(download.suggestedFilename()).toBe("request-rule-pack.json");
+    await expectHarnessClean(page,errors);
+  });
+}

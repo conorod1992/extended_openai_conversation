@@ -134,6 +134,83 @@ async def _agent_after_reload(hass, entry_id):
     return agent
 
 
+@pytest.mark.parametrize("key", ["result_alias", "step_id"])
+@pytest.mark.parametrize("payload_field", ["data", "data_template"])
+async def test_alias_rename_preserves_metadata_named_function_arguments(hass, monkeypatch, key, payload_field):
+    from copy import deepcopy
+
+    from tests.test_result_alias_payload_boundary import renamed_actions_fixture
+
+    tools = [
+        {
+            "spec": {
+                "name": "produce",
+                "parameters": {"type": "object", "properties": {}},
+            },
+            "function": {
+                "type": "template",
+                "parse_result": True,
+                "value_template": "{{ {'value':'working'} }}",
+            },
+        },
+        {
+            "spec": {
+                "name": "consume",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        key: {"type": "string"},
+                        "ordinary_key": {"type": "string"},
+                    },
+                },
+            },
+            "function": {
+                "type": "script",
+                "sequence": [
+                    {
+                        "action": "rule_probe.record",
+                        "data": {
+                            "special": "{{ " + key + " }}",
+                            "ordinary": "{{ ordinary_key }}",
+                        },
+                    }
+                ],
+            },
+        },
+    ]
+    agent = await _agent(hass, **{CONF_FUNCTION_TOOLS: tools})
+    _provider(monkeypatch, agent, [])
+    observed = []
+
+    async def record(call):
+        observed.append(dict(call.data))
+
+    hass.services.async_register("rule_probe", "record", record)
+    actions = [
+        {
+            "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+            "data": {"function": "produce", "arguments": {}, "result_alias": "lookup", "step_id": "1" * 32},
+        },
+        {
+            "action": f"{DOMAIN}.{SERVICE_CALL_FUNCTION}",
+            payload_field: {
+                "function": "consume",
+                "arguments": {key: "{lookup.value}", "ordinary_key": "{lookup.value}"},
+            },
+        },
+    ]
+    saved = await agent._request_rules.async_create(_local(actions))
+    assert _speech(await _say(hass, agent, "run rule")) == "Done"
+    assert observed == [{"special": "working", "ordinary": "working"}]
+    edited = deepcopy(saved)
+    # The fast suite checks this exact emission against source and shipped JS;
+    # the native HA container need not install a second language runtime.
+    edited["action"]["actions"] = renamed_actions_fixture(key, payload_field)
+    await agent._request_rules.async_update(saved["id"], edited)
+    assert _speech(await _say(hass, agent, "run rule")) == "Done"
+    assert observed == [{"special": "working", "ordinary": "working"}] * 2
+
+
 # A deliberately independent oracle: no production lookup/templating helpers.
 def _lookup(value, path):
     current = value
@@ -329,3 +406,30 @@ async def test_generated_two_step_dataflow_preserves_nested_value(
     result = await _say(hass, agent, "run rule")
     assert _speech(result) == "Result: " + expected
     assert seen == [int(expected) if expected.isdigit() else expected == "True"]
+
+
+@pytest.mark.parametrize("field,target", [("functions", "controlled_tool"), ("function_groups", "controlled-group")])
+@pytest.mark.parametrize("verb", ["enable", "disable"])
+async def test_state_control_rule_survives_refused_target_deletion(hass, monkeypatch, field, target, verb):
+    from custom_components.extended_openai_conversation_responses.management_ui import async_management_command
+    from custom_components.extended_openai_conversation_responses.management_function_repair import persisted_config_projection
+    from homeassistant.exceptions import HomeAssistantError
+    tool = {"enabled": verb == "disable", "spec": {"name":"controlled_tool", "parameters":{"type":"object", "properties":{}}}, "function":{"type":"template", "value_template":"Safe"}}
+    group = {"id":"controlled-group", "name":"Controlled", "description":"Controlled group", "enabled":verb == "disable", "functions":["controlled_tool"], "loading_mode":"always"}
+    agent = await _agent(hass, functions=[tool], function_groups=[group])
+    _provider(monkeypatch, agent, [])
+    suffix = "tools" if field == "functions" else "groups"
+    await agent._request_rules.async_create(_local([{
+        "action":f"{DOMAIN}.{verb}_function_{suffix}",
+        "data":{"config_entry":agent.entry.entry_id, "agent_id":agent.subentry.subentry_id, field:[target]},
+    }]))
+    assert _speech(await _say(hass,agent,"run rule")) == "Done"
+    revision = persisted_config_projection(agent.subentry).revision
+    with pytest.raises(HomeAssistantError, match="Acceptance rule"):
+        await async_management_command(hass,"admin",True,{
+            "section":"tools", "action":"delete" if field == "functions" else "delete_group",
+            "entry_id":agent.entry.entry_id, "subentry_id":agent.subentry.subentry_id,
+            "confirm":True, "name":target, "group_id":target, "revision":revision,
+        })
+    assert persisted_config_projection(agent.subentry).revision == revision
+    assert _speech(await _say(hass,agent,"run rule")) == "Done"

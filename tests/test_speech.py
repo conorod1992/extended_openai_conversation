@@ -277,6 +277,64 @@ def test_streaming_real_trace_shape() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "original,expected",
+    [
+        (
+            "Summary.\n\n[Source](https://example.com)\n\n## Next steps\n- Take a coat.",
+            "Summary.\nNext steps\nTake a coat.",
+        ),
+        (
+            "Answer.\n[Source](https://example.com)\n- First\n2. Second\n> Note",
+            "Answer.\nFirst\nSecond\nNote",
+        ),
+        (
+            "The result is **[here](https://example.com)**.",
+            "The result is.",
+        ),
+        (
+            "The result is *[here](https://example.com)*.",
+            "The result is.",
+        ),
+        (
+            "Answer. [Source](https://example.com)\n\nMore.",
+            "Answer. More.",
+        ),
+        (
+            "Answer. [Source](https://example.com) ## literal inline heading",
+            "Answer. ## literal inline heading",
+        ),
+        (
+            "Answer. [Source](https://example.com)\n#hashtag stays literal",
+            "Answer. #hashtag stays literal",
+        ),
+        (
+            "The answer is 2**3. [Source](https://example.com)\n2**3 again",
+            "The answer is 2**3. 2**3 again",
+        ),
+        (
+            "Read **details [here](https://example.com) now**.",
+            "Read details now.",
+        ),
+    ],
+)
+def test_link_suppression_preserves_real_markdown_boundaries_at_all_splits(
+    original, expected
+):
+    assert process_speech_text(original, _config()) == expected
+    # Progressive speech intentionally does not run the completed response's
+    # punctuation/blank-line whitespace normalizer.
+    streamed = [_stream([original]), _stream(list(original))]
+    streamed.extend(
+        _stream([original[:split], original[split:]])
+        for split in range(len(original) + 1)
+    )
+    for index, result in enumerate(streamed):
+        assert speech._final_whitespace_cleanup(result) == expected, index
+        if "## Next steps" in original or "\n- First" in original:
+            assert result == expected, index
+
+
 def test_streaming_common_markdown_formatting() -> None:
     assert (
         _stream(["# Head", "ing\n- **First** item\n2", ". `Second` item"])
@@ -530,8 +588,15 @@ def test_suppress_and_hold_whitespace_cover_trailing_chunks() -> None:
 
     output = ["x", " ", "\t"]
     sanitizer._last_output = "x \t"
-    assert sanitizer._hold_preceding_whitespace(output, 5) == 3
+    assert sanitizer._hold_preceding_whitespace(output) == " \t"
     assert output == ["x"]
+    assert sanitizer._last_output == "x"
+
+    # A whitespace-only output chunk may contain multiple actual characters.
+    output = ["prefix", " \t", "\n"]
+    sanitizer._last_output = "x \t\n"
+    assert sanitizer._hold_preceding_whitespace(output) == " \t\n"
+    assert output == ["prefix"]
     assert sanitizer._last_output == "x"
 
 
@@ -749,3 +814,43 @@ def test_literal_operators_and_code_survive_all_stream_splits(text, expected):
     for split in range(len(text) + 1):
         assert _stream([text[:split], text[split:]]).strip() == expected
     assert _stream(list(text)).strip() == expected
+
+
+@pytest.mark.parametrize(
+    "citation",
+    [
+        "**[source](https://example.com)**",
+        "*[source](https://example.com)*",
+        "([source](https://example.com))",
+        "[source](https://example.com)",
+    ],
+)
+@pytest.mark.parametrize("spacing", [" ", "   ", "        ", "\t \t", "\n\n"])
+def test_removed_citation_before_pending_url_never_replays_source(
+    citation: str, spacing: str
+) -> None:
+    # A previously removed link must not re-enter the raw buffer when the next
+    # URL reaches a provider boundary. Output whitespace is not a raw offset.
+    original = f"Hello{spacing}{citation} https://example.org"
+    assert process_speech_text(original, _config()) == "Hello"
+    for chunks in ([original], list(original)):
+        streamed = _stream(chunks)
+        assert speech._final_whitespace_cleanup(streamed) == "Hello", chunks
+    for split in range(len(original) + 1):
+        streamed = _stream([original[:split], original[split:]])
+        assert speech._final_whitespace_cleanup(streamed) == "Hello", split
+
+
+@pytest.mark.parametrize("continuation", ["httx next", "www.example next"])
+def test_pending_url_prefix_after_removed_citation_keeps_literal_text(
+    continuation: str,
+) -> None:
+    # If the apparent URL becomes ordinary prose, replay only held whitespace,
+    # not parts of the already suppressed citation.
+    original = f"Hello **[source](https://example.com)** {continuation}"
+    expected = f"Hello {continuation}"
+    assert process_speech_text(original, _config()) == expected
+    for split in range(len(original) + 1):
+        streamed = _stream([original[:split], original[split:]])
+        assert speech._final_whitespace_cleanup(streamed) == expected, split
+    assert speech._final_whitespace_cleanup(_stream(list(original))) == expected

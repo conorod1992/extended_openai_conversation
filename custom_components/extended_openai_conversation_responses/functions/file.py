@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
+from decimal import Decimal, InvalidOperation
 import logging
 import os
 from pathlib import Path
+import re
 import stat
 import tempfile
 from typing import Any, cast
@@ -32,6 +34,7 @@ from ..execution_outcomes import (
     owns_read_only_execution_receipts,
 )
 from ..function_execution import backend_failure
+from ..model_tool_results import bounded_text_page
 from ..operation_settlement import (
     async_settle_owned_operation as _async_settle_native_edit,
 )
@@ -264,6 +267,46 @@ class FileFunction(Function):
         return all_allow_dirs
 
 
+_DECIMAL_FILE_OFFSET = re.compile(
+    r"[+-]?(?:[0-9]+(?:[.][0-9]*)?|[.][0-9]+)(?:[eE][+-]?[0-9]+)?"
+)
+
+
+def _parse_file_page_offset(rendered: str) -> int:
+    """Interpret an integer offset after HA's text-only template rendering.
+
+    JSON integer values may arrive as integral floats (e.g. 1e3 -> 1000.0).
+    Keep the existing integer-text behavior and accept only exact finite,
+    bounded decimal integer values as a fallback.
+    """
+    try:
+        offset = int(rendered)
+    except ValueError:
+        # Limit fallback parsing of untrusted template text. Decimal avoids
+        # rounding, overflow, and truncation from float-based conversion.
+        numeric_text = rendered.strip()
+        if len(numeric_text) > 128 or not _DECIMAL_FILE_OFFSET.fullmatch(numeric_text):
+            raise ValueError("File offset must be a finite integer") from None
+        try:
+            numeric = Decimal(numeric_text)
+        except InvalidOperation as err:
+            raise ValueError("File offset must be a finite integer") from err
+        if not numeric.is_finite():
+            raise ValueError("File offset must be a finite integer") from None
+        if not 0 <= numeric <= FILE_READ_SIZE_LIMIT:
+            raise ValueError(
+                "File offset is outside the supported character range"
+            ) from None
+        if numeric != numeric.to_integral_value():
+            raise ValueError("File offset must be an integer") from None
+        offset = int(numeric)
+    if not 0 <= offset <= FILE_READ_SIZE_LIMIT:
+        raise ValueError(
+            "File offset is outside the supported character range"
+        ) from None
+    return offset
+
+
 class ReadFileFunction(FileFunction):
     """Read file contents."""
 
@@ -272,6 +315,7 @@ class ReadFileFunction(FileFunction):
         schema = vol.Schema(
             {
                 vol.Required("path"): cv.template,
+                vol.Optional("page_offset"): cv.template,
                 vol.Optional("allow_dir"): vol.All(cv.ensure_list, [cv.template]),
                 vol.Optional("restrict_to_allow_dir", default=False): bool,
             }
@@ -283,6 +327,8 @@ class ReadFileFunction(FileFunction):
         hass: HomeAssistant,
         path_str: str,
         allow_dirs: list[str],
+        *,
+        page_offset: int | None = None,
     ) -> dict[str, Any]:
         """Resolve and read one bounded file through the existing security checks."""
         try:
@@ -299,7 +345,15 @@ class ReadFileFunction(FileFunction):
         except Exception as err:
             log_handled_failure(_LOGGER, "Function Tool file read failed", err)
             return backend_failure(str(err), err)
-        return {"content": content, "size": file_size}
+        result = {"content": content, "size": file_size}
+        if page_offset is not None:
+            try:
+                return await hass.async_add_executor_job(
+                    bounded_text_page, result, page_offset
+                )
+            except ValueError as err:
+                return backend_failure(str(err), err)
+        return result
 
     @owns_read_only_execution_receipts
     async def execute(
@@ -312,6 +366,14 @@ class ReadFileFunction(FileFunction):
     ):
         """Read file contents."""
         path_template = function_config.get("path")
+        page_offset = None
+        if offset_template := function_config.get("page_offset"):
+            try:
+                page_offset = _parse_file_page_offset(
+                    offset_template.async_render(arguments, parse_result=False)
+                )
+            except (ValueError, HomeAssistantError) as err:
+                return backend_failure(str(err), err)
         template_source = str(getattr(path_template, "template", ""))
 
         # Skill templates render under the publish/remove boundary. Capture the
@@ -333,7 +395,10 @@ class ReadFileFunction(FileFunction):
                     return backend_failure(str(err), err)
                 if directories:
                     return await self._async_read(
-                        hass, path_str, [str(path) for path in directories]
+                        hass,
+                        path_str,
+                        [str(path) for path in directories],
+                        page_offset=page_offset,
                     )
             # A literal or comment mentioning the helper grants no Skill access.
         else:
@@ -350,7 +415,9 @@ class ReadFileFunction(FileFunction):
             arguments,
             include_defaults=not function_config.get("restrict_to_allow_dir", False),
         )
-        return await self._async_read(hass, path_str, allow_dirs)
+        return await self._async_read(
+            hass, path_str, allow_dirs, page_offset=page_offset
+        )
 
 
 class WriteFileFunction(FileFunction):

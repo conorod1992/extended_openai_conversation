@@ -119,9 +119,17 @@ async def test_quarantine_allows_management_registration(hass, monkeypatch):
     assert manager._quarantined and saved == original
 
 
-async def test_unrelated_storage_errors_still_propagate(hass, monkeypatch):
-    manager, _, _ = await oversized_manager(hass, monkeypatch)
+async def test_unreadable_storage_quarantines_without_erasing_jobs(hass, monkeypatch):
+    manager, saved, original = await oversized_manager(hass, monkeypatch)
     manager._store.async_load.side_effect = OSError("unreadable store")
-    with pytest.raises(OSError, match="unreadable store"):
-        await manager.async_setup()
-    assert not manager._setup_complete and not manager._quarantined
+    await manager.async_setup()
+    assert manager._setup_complete and manager._quarantined
+    assert manager._quarantine_reason == "saved storage is unreadable or malformed"
+    assert saved == original
+    manager._store.async_save.assert_not_awaited()
+    manager._handle_started()
+    assert not manager._started and not manager._tasks
+    with pytest.raises(HomeAssistantError, match="unreadable or malformed"):
+        await manager.async_schedule(agent(), "tool", {"delay": 60}, None)
+    await manager.async_setup()
+    manager._store.async_load.assert_awaited_once()

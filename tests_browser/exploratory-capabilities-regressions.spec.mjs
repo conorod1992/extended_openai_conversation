@@ -122,9 +122,8 @@ test("Speech preview clears a successful result when regex validation fails", as
 
 test("native Request Rule add-condition button has an accessible name and still opens its selector", async ({page}) => {
   const errors = trackPageErrors(page);
-  await page.goto(fixtureUrl("capabilities/request-rules"));
   // Model HA's nested Lit render boundary, including an icon-only add button.
-  await page.evaluate(() => {
+  await page.addInitScript(() => {
     class NativeButton extends HTMLElement {
       constructor() {
         super();
@@ -158,6 +157,7 @@ test("native Request Rule add-condition button has an accessible name and still 
     customElements.define("ha-automation-condition", Conditions);
     customElements.define("ha-selector", Selector);
   });
+  await page.goto(fixtureUrl("capabilities/request-rules"));
   const panel = panelFor(page);
   await panel.getByRole("button", {name:"Create rule", exact:true}).first().click();
   await panel.getByRole("button", {name:"Add conditions — optional", exact:true}).click();

@@ -63,7 +63,7 @@ async def test_management_dependency_validation_matches_persisted_collection(
     operation = ui._async_validate_configuration_dependencies(
         hass,
         SimpleNamespace(data={}),
-        SimpleNamespace(),
+        SimpleNamespace(data=deepcopy(config)),
         config,
         rules_manager=retained_rules(),
     )
@@ -250,7 +250,7 @@ async def test_retained_disabled_tool_is_checked_without_being_enabled(hass):
     await ui._async_validate_configuration_dependencies(
         hass,
         SimpleNamespace(data={}),
-        SimpleNamespace(),
+        SimpleNamespace(data=deepcopy(config)),
         config,
         rules_manager=retained_rules(),
     )

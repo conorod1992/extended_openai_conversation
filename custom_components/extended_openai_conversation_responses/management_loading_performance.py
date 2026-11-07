@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable
+import logging
 from time import perf_counter
 from typing import Any, TypeVar
 
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 
 from .agent_config import (
     AGENT_CONFIG_FIELDS,
@@ -35,6 +37,7 @@ from .feature_status import management_feature_status
 from .guest_mode import async_get_guest_mode, get_loaded_guest_mode
 from .knowledge import async_get_knowledge, get_loaded_knowledge
 from .management_function_repair import (
+    group_collection_is_addressable,
     management_function_tool_health,
     peek_function_tool_health,
 )
@@ -42,11 +45,27 @@ from .management_history_queries import usage_summary
 from .management_projections import async_scope_catalog_projection, settings_snapshot
 from .management_setup_health import add_setup_health, build_setup_health_facts
 from .memory import async_get_memory, get_memory_mode
+from .operational_errors import log_handled_failure
 from .temporary_memory import async_get_temporary_memory
 from .usage import async_get_usage
 from .yaml_serialization import load_yaml_or_json
 
 _T = TypeVar("_T")
+_LOGGER = logging.getLogger(__name__)
+
+
+def _agent_identity(
+    entry: Any, subentry: Any, options: dict[str, Any]
+) -> dict[str, Any]:
+    """Catalogue membership is configuration identity, not subsystem health."""
+    return {
+        "entry_id": entry.entry_id,
+        "entry_title": entry.title,
+        "subentry_id": subentry.subentry_id,
+        "title": subentry.title,
+        "provider": entry.data.get(CONF_API_PROVIDER, DEFAULT_API_PROVIDER),
+        "model": options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL),
+    }
 
 
 def _ms(start: float) -> float:
@@ -93,6 +112,7 @@ def _agent_snapshot(
     """Build the cheap frontend metadata shared by bootstrap and overview."""
     started = perf_counter()
     options = config if config is not None else dict(subentry.data)
+    metadata_errors: list[dict[str, str]] = []
     if function_tools_health is None:
         function_tools_health = peek_function_tool_health(options)
     if function_tools_health is None and config is not None:
@@ -112,23 +132,25 @@ def _agent_snapshot(
     phase = perf_counter()
     if guest_status is None:
         loaded_guest = get_loaded_guest_mode(hass, entry.entry_id, subentry.subentry_id)
-        guest_status = (
-            dict(loaded_guest.status())
-            if loaded_guest is not None
-            else {"state": "unloaded", "currently_active": False}
-        )
+        try:
+            if loaded_guest is not None and not loaded_guest.initialized:
+                raise HomeAssistantError("Guest Mode status is not initialized")
+            guest_status = (
+                dict(loaded_guest.status())
+                if loaded_guest is not None
+                else {"state": "unloaded", "currently_active": False}
+            )
+        except HomeAssistantError, ValueError, OSError:
+            guest_status = {"state": "unavailable", "currently_active": None}
+            metadata_errors.append({"key": "guest_mode", "label": "Guest Mode"})
     else:
         guest_status = dict(guest_status)
     guest_status = _overview_guest_status(guest_status, options)
     if performance is not None:
         performance["guest_status_ms"] = _ms(phase)
     snapshot = {
-        "entry_id": entry.entry_id,
-        "entry_title": entry.title,
-        "subentry_id": subentry.subentry_id,
+        **_agent_identity(entry, subentry, options),
         "title": title if title is not None else subentry.title,
-        "provider": entry.data.get(CONF_API_PROVIDER, DEFAULT_API_PROVIDER),
-        "model": options.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL),
         "memory_mode": get_memory_mode(options),
         "temporary_memory": options.get(
             CONF_TEMPORARY_MEMORY, DEFAULT_TEMPORARY_MEMORY
@@ -141,8 +163,14 @@ def _agent_snapshot(
             if function_tools_health is not None
             else None
         ),
-        "function_group_count": len(
-            options.get(CONF_FUNCTION_GROUPS, DEFAULT_FUNCTION_GROUPS) or []
+        "function_group_count": (
+            len(groups)
+            if group_collection_is_addressable(
+                groups := options.get(
+                    CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS)
+                )
+            )
+            else None
         ),
         "archive_enabled": bool(
             options.get(CONF_ARCHIVE_ENABLED, DEFAULT_ARCHIVE_ENABLED)
@@ -153,12 +181,36 @@ def _agent_snapshot(
     if knowledge_source_count == 0:
         loaded = get_loaded_knowledge(hass, entry.entry_id, subentry.subentry_id)
         if loaded is not None:
-            knowledge_source_count = int(loaded.source_count)
-            snapshot["knowledge_source_count"] = knowledge_source_count
+            try:
+                if not loaded.initialized:
+                    raise RuntimeError("Knowledge Library has not been initialized")
+                knowledge_source_count = int(loaded.source_count)
+                snapshot["knowledge_source_count"] = knowledge_source_count
+            except HomeAssistantError, RuntimeError, ValueError, OSError:
+                snapshot["knowledge_source_count"] = None
+                metadata_errors.append(
+                    {"key": "knowledge", "label": "Knowledge Library"}
+                )
     phase = perf_counter()
     snapshot["feature_status"] = management_feature_status(
         options, knowledge_source_count=knowledge_source_count
     )
+    if snapshot["knowledge_source_count"] is None:
+        snapshot["feature_status"]["knowledge"].update(
+            state="unavailable",
+            label="Unavailable",
+            available=False,
+            source_count=None,
+            summary="Knowledge status is unavailable; stored data is retained.",
+            detail="Knowledge status could not be read. Review Knowledge Library recovery before relying on its availability.",
+        )
+    if snapshot["function_group_count"] is None:
+        metadata_errors.append(
+            {"key": "function_groups", "label": "Function Groups (repair required)"}
+        )
+    # Explicitly clear old warnings when frontend projections merge a recovered
+    # snapshot into an existing catalogue row.
+    snapshot["metadata_errors"] = metadata_errors
     if performance is not None:
         performance["feature_status_ms"] = _ms(phase)
     if function_issue is not None:
@@ -185,8 +237,8 @@ async def async_agent_catalog(
             if subentry.subentry_type != "conversation":
                 continue
             timing: dict[str, float] = {}
-            agents.append(
-                _agent_snapshot(
+            try:
+                snapshot = _agent_snapshot(
                     hass,
                     entry,
                     subentry,
@@ -195,7 +247,25 @@ async def async_agent_catalog(
                     ),
                     performance=timing,
                 )
-            )
+            except Exception as err:
+                # This read-only presentation boundary must preserve navigation
+                # and repair access even for an unforeseen metadata failure.
+                # Cancellation and other BaseExceptions still propagate.
+                log_handled_failure(
+                    _LOGGER, "Assistant catalogue metadata unavailable", err
+                )
+                snapshot = {
+                    **_agent_identity(entry, subentry, dict(subentry.data)),
+                    "metadata_errors": [
+                        {"key": "metadata", "label": "Assistant status"}
+                    ],
+                    "guest_mode": {"state": "unavailable", "currently_active": None},
+                    "knowledge_source_count": None,
+                    "function_group_count": None,
+                    "function_count": None,
+                    "feature_status": {},
+                }
+            agents.append(snapshot)
             snapshot_timings.append(timing)
     timings: dict[str, Any] = {
         "total_ms": _ms(started),
@@ -299,7 +369,7 @@ async def async_overview_primary(
             entry,
             subentry,
             memory_available=False,
-            knowledge_source_count=int(agent.get("knowledge_source_count", 0)),
+            knowledge_source_count=int(agent.get("knowledge_source_count") or 0),
             knowledge_available=False,
             is_admin=is_admin,
             function_tools_health=function_tools_health,

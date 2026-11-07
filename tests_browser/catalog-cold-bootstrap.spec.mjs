@@ -77,6 +77,9 @@ for(const bundled of [false,true]) {
     await expect.poll(() => panel.evaluate(host => host._busy)).toBe(false);
     expect(await page.evaluate(() => coldCatalog.reads)).toBe(2);
     await expect(panel.locator(".route-error-state")).toHaveCount(0);
+    // This control reconnects a completed bootstrap. The busy flag can clear
+    // while its first route is still loading; that interrupted case may retry.
+    await expect.poll(() => panel.evaluate(host => host._eocCatalogBootstrap?.pending)).toBe(false);
     await panel.evaluate(host => {const parent=host.parentElement;host.remove();parent.append(host);});
     await expect.poll(() => panel.evaluate(host => host._selectedAgent()?.subentry_id)).toBe("agent-1");
     await expect.poll(() => panel.evaluate(host => host._busy)).toBe(false);

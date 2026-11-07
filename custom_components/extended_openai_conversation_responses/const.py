@@ -1,6 +1,7 @@
 """Constants for the Extended OpenAI Conversation (Responses) integration."""
 
 from .native_function_schema_migration import migrate_legacy_stock_native_function_tools
+from .skill_loader_contract import upgrade_skill_loader_paging
 
 CONF_EXPOSED_ENTITY_ATTRIBUTES = "exposed_entity_attributes"
 
@@ -546,6 +547,9 @@ _LEGACY_DEFAULT_CONF_FUNCTION_TOOLS = [
 DEFAULT_CONF_FUNCTION_TOOLS, _ = migrate_legacy_stock_native_function_tools(
     _LEGACY_DEFAULT_CONF_FUNCTION_TOOLS
 )
+DEFAULT_CONF_FUNCTION_TOOLS = [
+    upgrade_skill_loader_paging(tool) for tool in DEFAULT_CONF_FUNCTION_TOOLS
+]
 
 # Spoken-response post-processing. These options never mutate the visual response.
 CONF_SPEECH_PROCESSING_ENABLED = "speech_processing_enabled"

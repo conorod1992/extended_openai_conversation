@@ -1,7 +1,7 @@
 {
   "schema": "eoai-overnight-frontend-policy/v1",
-  "baseline_sha": "8e4c4fc6b7c12054414fe48a2e96c36ae37b743d",
-  "baseline_review": "Develop before PRs 1136–1139, after the zstandard dependency addition; matching dependency inputs and successful same-run latency/accessibility measurements reviewed in run 37637075200.",
+  "baseline_sha": "40bd2c5fcf6937bb821a1a974e220c229396d100",
+  "baseline_review": "Develop immediately before PR 1279. The former baseline 8e4c4fc6b7c12054414fe48a2e96c36ae37b743d requires openai<=3.10.0, incompatible with HA's pinned openai==3.26.0 in run 42223644131. This pre-PR baseline accepts 3.26.0; both revisions must still pass joint dependency resolution and immutable environment checks. Performance thresholds and the independently reviewed accessibility baseline are unchanged.",
   "performance_mode": "reporting-only",
   "ready_regression": {
     "absolute_ms": 1000,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import importlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -160,7 +161,7 @@ def _assert_obsolete_modules_not_loaded() -> None:
 
 async def _ensure_hacs(hass: Any) -> Any:
     """Set up HACS through its real config flow, faking only human OAuth consent."""
-    from homeassistant.config_entries import ConfigEntryState, SOURCE_USER
+    from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
     from homeassistant.data_entry_flow import FlowResultType
 
     entries = hass.config_entries.async_entries(HACS_DOMAIN)
@@ -273,6 +274,7 @@ async def _install_release(hass: Any, config_dir: Path) -> None:
         "release": release,
         "candidate_ref": os.environ[_CANDIDATE_REF_ENV],
         "hacs_repository_id": str(repository.data.id),
+        "hacs_entry_id": hass.config_entries.async_entries(HACS_DOMAIN)[0].entry_id,
         "release_digest": _tree_digest(installed),
         "obsolete_files": list(_OBSOLETE_RELEASE_FILES),
     }
@@ -348,9 +350,75 @@ async def _update_to_candidate(hass: Any, config_dir: Path) -> None:
     )
 
 
+def _repository_owner_domain() -> str:
+    """Core Marketplace replaces custom HACS on versions that provide it."""
+    return (
+        "marketplace"
+        if importlib.util.find_spec("homeassistant.components.marketplace") is not None
+        else HACS_DOMAIN
+    )
+
+
+async def _assert_repository_owner(hass: Any, config_dir: Path, phase: str) -> None:
+    """Verify existing ownership; never recreate an owner or register lost data."""
+    from homeassistant.config_entries import ConfigEntryState
+
+    await hass.async_block_till_done()
+    state_path = config_dir / _HACS_STATE_FILE
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    domain = _repository_owner_domain()
+    entries = hass.config_entries.async_entries(domain)
+    assert len(entries) == 1, f"Expected one retained {domain} entry"
+    entry = entries[0]
+    assert entry.entry_id == state["hacs_entry_id"], (
+        "Repository owner entry was replaced"
+    )
+    assert entry.state is ConfigEntryState.LOADED, (domain, entry.state, entry.reason)
+    assert entry.data.get("token") == os.environ[_TOKEN_ENV], (
+        "Owner credentials were not retained"
+    )
+    if domain == "marketplace":
+        assert not hass.config_entries.async_entries(HACS_DOMAIN), (
+            "Legacy HACS entry was not handed over"
+        )
+        assert not (config_dir / "custom_components" / HACS_DOMAIN).exists(), (
+            "Legacy HACS was unexpectedly retained or recreated"
+        )
+        assert (config_dir / ".storage/marketplace.repositories").is_file(), (
+            "Native repositories were not made durable"
+        )
+        manager = entry.runtime_data
+    else:
+        manager = hass.data[HACS_DOMAIN]
+    assert not manager.system.disabled, "Repository owner is disabled"
+    repository = manager.repositories.get_by_full_name(REPOSITORY)
+    assert repository is not None, "Installed EOAI repository was lost"
+    data = repository.data
+    assert data.full_name == REPOSITORY
+    assert (
+        str(data.id)
+        == state["hacs_repository_id"]
+        == state["repository_id_after_update"]
+    )
+    assert data.installed, "EOAI installation is no longer registered"
+    assert data.installed_commit == state["installed_commit_after_update"]
+    assert data.installed_version == state["installed_version_after_update"]
+    state.setdefault("owner_checkpoints", {})[phase] = {
+        "domain": domain,
+        "entry_id": entry.entry_id,
+        "repository_id": str(data.id),
+        "installed_commit": data.installed_commit,
+        "installed_version": data.installed_version,
+    }
+    state_path.write_text(
+        json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
+
 async def _candidate_migrate(hass: Any, config_dir: Path) -> None:
     """Restart onto the HACS-installed candidate and prove populated state."""
-    await _ensure_hacs(hass)
+    await _assert_repository_owner(hass, config_dir, "candidate-migrate")
     _assert_obsolete_modules_not_loaded()
     _candidate_tree_status(config_dir)
     _assert_obsolete_files_inert(config_dir)
@@ -359,7 +427,7 @@ async def _candidate_migrate(hass: Any, config_dir: Path) -> None:
 
 async def _candidate_restart(hass: Any, config_dir: Path) -> None:
     """One more cold boot proves the HACS update is durably healthy."""
-    await _ensure_hacs(hass)
+    await _assert_repository_owner(hass, config_dir, "candidate-restart")
     _assert_obsolete_modules_not_loaded()
     _candidate_tree_status(config_dir)
     _assert_obsolete_files_inert(config_dir)
@@ -447,9 +515,10 @@ def _write_evidence(config_dir: Path) -> None:
     target = os.environ.get(_EVIDENCE_ENV)
     if not target:
         return
-    hacs_state = json.loads(
-        (config_dir / _HACS_STATE_FILE).read_text(encoding="utf-8")
-    )
+    hacs_state = json.loads((config_dir / _HACS_STATE_FILE).read_text(encoding="utf-8"))
+    assert set(hacs_state.get("owner_checkpoints", {})) == {
+        "candidate-migrate", "candidate-restart"
+    }, "Both retained repository-owner cold-boot checks are required"
     eoai_state = json.loads((config_dir / _STATE_FILE).read_text(encoding="utf-8"))
     payload = {
         "candidate_sha": os.environ.get("GITHUB_SHA"),
@@ -459,6 +528,7 @@ def _write_evidence(config_dir: Path) -> None:
         "repository_id_after_update": hacs_state["repository_id_after_update"],
         "release_digest": hacs_state["release_digest"],
         "candidate_digest": hacs_state["candidate_digest"],
+        "owner_checkpoints": hacs_state["owner_checkpoints"],
         "obsolete_files": hacs_state["obsolete_files"],
         "retained_orphans": hacs_state["retained_orphans"],
         "retained_selected_obsolete_files": hacs_state[

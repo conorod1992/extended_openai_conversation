@@ -42,7 +42,7 @@ export function configurationControlValue(control) {
 
 // The full reader and delegated edits share both parsing and assignment rules.
 // Compound controls touch only their own field/row, never the rest of the form.
-export function applyConfigurationControl(panel, control) {
+export function applyConfigurationControl(panel, control, preserveText = true) {
   if (!panel._draft || !control) return null;
   const key = configKeyForControl(control);
   let value = configurationControlValue(control);
@@ -61,6 +61,9 @@ export function applyConfigurationControl(panel, control) {
     const rule = panel._draft[key]?.[index];
     if (!Number.isInteger(index) || index < 0 || !rule) return null;
     const field = control.classList.contains("regex-pattern") ? "pattern" : "replacement";
+    // Native textareas normalize CR/CRLF to LF. An untouched control must not
+    // rewrite an imported regex (or replacement) just because its row moves.
+    if (value === String(rule[field] ?? "").replace(/\r\n?/g, "\n")) return {key, changed:false};
     const changed = rule[field] !== value;
     if (changed) rule[field] = value;
     return {key, changed};
@@ -69,6 +72,9 @@ export function applyConfigurationControl(panel, control) {
   if (key === "voice_device_mappings" && value === undefined) return {key, changed:voiceMappingDraftDirty(panel)};
   const target = key === "__title" ? panel : panel._draft;
   const property = key === "__title" ? "_draftTitle" : key;
+  // Untouched normalization is not authoring; explicit resets use exact values.
+  if (preserveText && ["prompt", "current_datetime_template", "exposed_entities_template"].includes(key)
+      && value === String(target[property] ?? "").replace(/\r\n?/g, "\n")) return {key, changed:false};
   const changed = !same(target[property], value);
   if (changed) target[property] = value;
   // Correcting an invalid row can restore the baseline without changing the
@@ -77,16 +83,20 @@ export function applyConfigurationControl(panel, control) {
     && (voiceMappingDraftDirty(panel) || Boolean(panel._eocDirtyConfigKeys?.has(key))))};
 }
 
-export function readConfigurationDraft(panel) {
+// A noncommitting read is a preview snapshot, preserving draft/model ownership.
+export function readConfigurationDraft(panel, commit = true) {
   const root = panel.shadowRoot;
   const state = {_draft:clone(panel._draft || panel._result?.config || {}), _draftTitle:panel._draftTitle, _configData:panel._configData};
   if (root.querySelector("#local-intent-list")) state._draft.local_intent_exclusions = [];
   if (root.querySelector("#regex-rules")) {
-    state._draft.speech_regex_replacements = [...root.querySelectorAll(".rule-row")].map(() => ({pattern:"", replacement:""}));
+    state._draft.speech_regex_replacements = [...root.querySelectorAll(".rule-row")].map((_, index) =>
+      clone(state._draft.speech_regex_replacements?.[index] || {pattern:"", replacement:""}));
   }
   root.querySelectorAll(CONFIGURATION_CONTROLS).forEach((control) => applyConfigurationControl(state, control));
-  panel._eocPendingModelPreparation?.rebindDraft?.(panel._draft, state._draft);
-  panel._draft = state._draft;
-  panel._draftTitle = state._draftTitle;
-  return panel._draft;
+  if (commit) {
+    panel._eocPendingModelPreparation?.rebindDraft?.(panel._draft, state._draft);
+    panel._draft = state._draft;
+    panel._draftTitle = state._draftTitle;
+  }
+  return state._draft;
 }

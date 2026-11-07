@@ -126,14 +126,12 @@ def _remember_tool() -> dict:
 
 
 def _entry_and_subentry(config: dict | None = None):
-    return (
-        SimpleNamespace(entry_id="entry-1"),
-        SimpleNamespace(
-            subentry_id="agent-1",
-            title="Jarvis",
-            data=config or agent_config_defaults(),
-        ),
+    subentry = SimpleNamespace(
+        subentry_id="agent-1", subentry_type="conversation", title="Jarvis",
+        data=config or agent_config_defaults(),
     )
+    return SimpleNamespace(entry_id="entry-1", subentries={"agent-1": subentry}), subentry
+
 
 
 @pytest.mark.parametrize("entrypoint", ["document", "json"])

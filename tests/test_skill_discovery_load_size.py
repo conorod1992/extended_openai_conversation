@@ -44,12 +44,23 @@ async def skill_loader(hass, tmp_path, monkeypatch):
     function = get_function(preset["type"])
     config = function.validate_schema(preset)
 
-    async def load(name):
+    async def load(name, file="SKILL.md", offset=0):
         return await function.execute(
-            hass, config, {"name": name, "file": "SKILL.md"}, None, []
+            hass, config, {"name": name, "file": file, "offset": offset}, None, []
         )
 
     return manager, root, load
+
+
+async def _complete_file(load, name):
+    pages, offset = [], 0
+    while True:
+        result = await load(name, offset=offset)
+        pages.append(result["content"])
+        if not result.get("has_more"):
+            return "".join(pages)
+        assert result["next_offset"] > offset
+        offset = result["next_offset"]
 
 
 def _write(root: Path, name: str, content: bytes) -> Path:
@@ -67,8 +78,7 @@ async def test_discovered_skill_loads_at_reader_boundary(skill_loader, size):
     await manager.async_load_skills()
 
     assert manager.get_skill("boundary") is not None
-    result = await load("boundary")
-    assert result == {"content": content.decode(), "size": size}
+    assert await _complete_file(load, "boundary") == content.decode()
 
 
 @pytest.mark.parametrize(
@@ -107,7 +117,7 @@ async def test_growing_discovered_skill_is_bounded_then_removed_on_reload(skill_
     path.write_bytes(content)
     await manager.async_load_skills()
     assert manager.get_skill("growing") is not None
-    assert (await load("growing"))["content"] == content.decode()
+    assert await _complete_file(load, "growing") == content.decode()
 
 
 @pytest.mark.parametrize("replace_existing", [False, True])

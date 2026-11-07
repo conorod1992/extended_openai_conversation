@@ -98,6 +98,14 @@ if op == "search_many":
             results.append(False)
             invalid.append([index, str(err)])
     output = {"results": results, "invalid": invalid}
+elif op == "match_keys":
+    keys = payload.get("keys", [])
+    try:
+        patterns = [re.compile(pattern) for pattern in payload.get("patterns", [])]
+        output = {"results": [any(pattern.search(key) is not None for pattern in patterns)
+                              for key in keys], "invalid": []}
+    except re.error as err:
+        output = {"results": [False] * len(keys), "invalid": [[0, str(err)]]}
 elif op == "sub_many":
     original = payload.get("text", "")
     text = original
@@ -224,6 +232,19 @@ async def async_search_configured_patterns(
         ],
     }
     result = await hass.async_add_executor_job(_run_regex_worker, payload)
+    return _checked_search_results(result, len(checks))
+
+
+def match_configured_property_keys(keys: list[str], patterns: list[str]) -> list[bool]:
+    """Classify object keys in one bounded worker without a Cartesian payload."""
+    if not keys:
+        return []
+    result = _run_regex_worker({"op": "match_keys", "keys": keys, "patterns": patterns})
+    return _checked_search_results(result, len(keys))
+
+
+def _checked_search_results(result: dict[str, Any], count: int) -> list[bool]:
+    """Apply the same fail-closed worker contract to sync and async callers."""
     invalid = result.get("invalid")
     if isinstance(invalid, list) and invalid:
         first = invalid[0]
@@ -238,7 +259,7 @@ async def async_search_configured_patterns(
         isinstance(item, bool) for item in matches
     ):
         raise HomeAssistantError("Configured regular expression returned invalid data")
-    if len(matches) != len(checks):
+    if len(matches) != count:
         raise HomeAssistantError(
             "Configured regular expression returned incomplete data"
         )

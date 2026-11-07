@@ -456,8 +456,19 @@ class QuietHoursManager:
         self._initialized = False
         self._stopping = False
         self._config_recovery_pending = False
+        # Cold-start corruption is distinct from an uncertain in-process save.
+        # Do not attempt autonomous readback or device reconciliation in this state.
+        self._startup_unavailable_reason: str | None = None
         self._unsubscribers: list[Callable[[], None]] = []
         self._timezone_unsubscribe: Callable[[], None] | None = None
+
+    @property
+    def startup_unavailable(self) -> bool:
+        return getattr(self, "_startup_unavailable_reason", None) is not None
+
+    def _require_startup_available(self) -> None:
+        if reason := getattr(self, "_startup_unavailable_reason", None):
+            raise HomeAssistantError(reason)
 
     @property
     def config(self) -> QuietHoursConfig:
@@ -478,7 +489,7 @@ class QuietHoursManager:
 
     async def async_setup(self) -> None:
         async with self._lock:
-            if getattr(self, "_stopping", False):
+            if getattr(self, "_stopping", False) or self.startup_unavailable:
                 return
             if getattr(self, "_config_recovery_pending", False):
                 # A public getter may revisit an invalidated live manager. Its
@@ -489,15 +500,43 @@ class QuietHoursManager:
             elif self._initialized:
                 return
             else:
-                raw = await _async_settle_store_io(self._store.async_load()) or {}
+                # Parse a complete generation before installing any of it. Missing
+                # storage is a legitimate fresh install; a malformed saved payload
+                # must never become default configuration with lost restore baselines.
                 try:
-                    self._config = _config_from_data(raw.get("config"))
-                except ValueError:
-                    self._config = QuietHoursConfig()
-                self._selection_identities = self._normalize_selection_identities(
-                    raw.get("selection_identities"), self._config
-                )
-                self._active = self._normalize_active(raw.get("active"))
+                    stored = await _async_settle_store_io(self._store.async_load())
+                    if stored is not None and not isinstance(stored, Mapping):
+                        raise ValueError("Quiet Hours storage must be an object")
+                    raw = stored if stored is not None else {}
+                    config = _config_from_data(raw.get("config"))
+                    identities = self._normalize_selection_identities(
+                        raw.get("selection_identities"), config
+                    )
+                    active = self._normalize_active(raw.get("active"))
+                    if raw.get("active") is not None and active is None:
+                        raise ValueError("Quiet Hours saved ownership is invalid")
+                except (
+                    HomeAssistantError,
+                    OSError,
+                    ValueError,
+                    TypeError,
+                    AttributeError,
+                ) as err:
+                    # The feature remains unavailable for this process. In particular,
+                    # neither an empty state nor speculative controls may be persisted.
+                    self._startup_unavailable_reason = (
+                        "Quiet Hours saved storage is unreadable or malformed. "
+                        "Its data is preserved; repair it while Home Assistant is "
+                        "stopped, then restart Home Assistant."
+                    )
+                    logging.getLogger(__name__).error(
+                        "Quiet Hours disabled: saved storage needs repair (%s)",
+                        type(err).__name__,
+                    )
+                    return
+                self._config = config
+                self._selection_identities = identities
+                self._active = active
                 self._config_recovery_pending = False
                 self._initialized = True
                 self._reschedule()
@@ -520,7 +559,8 @@ class QuietHoursManager:
         async with self._lock:
             self._cancel_scheduled_callbacks()
             try:
-                await self._async_restore_locked(preserve_released=True)
+                if not self.startup_unavailable:
+                    await self._async_restore_locked(preserve_released=True)
             finally:
                 # Recovery can rearm an authoritative generation while stopping.
                 self._cancel_scheduled_callbacks()
@@ -624,6 +664,8 @@ class QuietHoursManager:
         ).hexdigest()
 
     def snapshot(self) -> dict[str, Any]:
+        if reason := getattr(self, "_startup_unavailable_reason", None):
+            return {"available": False, "error": reason}
         now = dt_util.now()
         period = (
             quiet_period_for(now, self._config.start, self._config.end)
@@ -643,6 +685,7 @@ class QuietHoursManager:
 
     async def async_set_enabled(self, enabled: bool) -> dict[str, Any]:
         """Enable or disable the daily schedule without changing its policy."""
+        self._require_startup_available()
         if not isinstance(enabled, bool):
             raise ValueError("enabled must be a boolean")
         async with self._lock:
@@ -665,6 +708,7 @@ class QuietHoursManager:
     async def async_update_config(
         self, value: Any, *, expected_revision: str | None = None
     ) -> dict[str, Any]:
+        self._require_startup_available()
         candidate = _config_from_data(value)
         failure: BaseException | None = None
         async with self._lock:
@@ -786,6 +830,8 @@ class QuietHoursManager:
 
     async def _async_recover_configuration_locked(self) -> bool:
         """Suspend device changes until an ambiguous config write is read back."""
+        if self.startup_unavailable:
+            return False
         if not getattr(self, "_config_recovery_pending", False):
             self._config_recovery_pending = False
             return True
@@ -852,7 +898,7 @@ class QuietHoursManager:
         """Reconcile the scheduled policy using cross-version-safe discovery."""
         now = dt_util.now() if now is None else dt_util.as_local(now)
         async with self._lock:
-            if getattr(self, "_stopping", False):
+            if getattr(self, "_stopping", False) or self.startup_unavailable:
                 return
             recovering = getattr(self, "_config_recovery_pending", False)
             if not self._initialized and not recovering:
@@ -868,7 +914,7 @@ class QuietHoursManager:
             )
             self._publish_state(period)
             if period is None:
-                await self._async_restore_locked()
+                await self._async_restore_locked(period_ended=True)
                 if (
                     not self._config.enabled
                     and self._active is None
@@ -883,7 +929,23 @@ class QuietHoursManager:
                 and self._active.get("period_started_at") != period_id
             ):
                 if not self._active_period_overlaps(period):
-                    await self._async_restore_locked()
+                    # Expire observations, not the still-required quiet effect.
+                    # Discovery below decides which controls can carry forward
+                    # and which must restore before a fresh application.
+                    controls = self._active.get("controls", {})
+                    for control in controls.values():
+                        control.update(
+                            restoration_pending=True, restore_before_apply=True
+                        )
+                    self._active["observed_controls"] = sorted(controls)
+                    self._active["pending_controls"] = {}
+                    self._active["observed_identities"] = {
+                        key: identity
+                        for key, identity in self._active.get(
+                            "observed_identities", {}
+                        ).items()
+                        if key in controls
+                    }
                 if self._active is not None:
                     self._active.update(
                         {
@@ -1150,6 +1212,20 @@ class QuietHoursManager:
                 )
         controls = self._active.get("controls", {})
         for entity_id, control in list(controls.items()):
+            if control.get("restore_before_apply"):
+                # A changed return value belongs to neither our old effect nor
+                # a current-period observation. Let the pending restore settle
+                # it before adopting a new baseline. An attained old effect can
+                # carry forward directly, without briefly restoring loud audio.
+                current = (
+                    _current_volume(self.hass, entity_id)
+                    if control["kind"] == "volume"
+                    else _current_switch(self.hass, entity_id)
+                )
+                if not self._control_values_equal(
+                    control["kind"], current, self._attained_quiet_value(control)
+                ):
+                    continue
             if "pending_quiet_value" not in control and self._observe_owned_volume(
                 entity_id, control
             ):
@@ -1227,6 +1303,8 @@ class QuietHoursManager:
                 continue
             if value == control["quiet_value"] and "pending_quiet_value" not in control:
                 control.pop("restoration_pending", None)
+                if control.pop("restore_before_apply", False):
+                    await self._async_save_control_state_locked()
                 await self._async_correct_volume_ceiling_locked(entity_id, control)
                 continue
             control["pending_quiet_value"] = value
@@ -1234,6 +1312,7 @@ class QuietHoursManager:
             # previous Quiet Hours action while the new intent is still pending.
             control["pending_application_context_id"] = Context().id
             control.pop("restoration_pending", None)
+            control.pop("restore_before_apply", None)
             await self._async_save_control_state_locked()
             # Saving can yield to a manual adjustment or an unavailable device.
             current = (
@@ -1410,22 +1489,33 @@ class QuietHoursManager:
             or getattr(getattr(state, "context", None), "id", None) == context_id
         )
 
-    async def _async_apply_volume_locked(
-        self,
-        satellite_entity_id: str,
-        entity_id: str,
-        controls: dict[str, Any],
-    ) -> None:
+    def _control_application_suppressed(
+        self, entity_id: str, controls: Mapping[str, Any]
+    ) -> bool:
+        """Share application admission for volume and wake-sound controls.
+
+        Existing ownership is reconciled elsewhere. An observed, unowned choice
+        stays released for this occurrence; prepared or pending work may resume.
+        Period rollover owns observation expiry, not this admission decision.
+        """
         observed = (self._active or {}).get("observed_controls", [])
         pending = (self._active or {}).get("pending_controls", {})
-        if (
+        return (
             entity_id in controls
             and controls[entity_id].get("application_state") != "prepared"
         ) or (
             entity_id in observed
             and entity_id not in pending
             and entity_id not in controls
-        ):
+        )
+
+    async def _async_apply_volume_locked(
+        self,
+        satellite_entity_id: str,
+        entity_id: str,
+        controls: dict[str, Any],
+    ) -> None:
+        if self._control_application_suppressed(entity_id, controls):
             return
         original = _current_volume(self.hass, entity_id)
         if original is None:
@@ -1485,16 +1575,7 @@ class QuietHoursManager:
         desired: bool,
         controls: dict[str, Any],
     ) -> None:
-        observed = (self._active or {}).get("observed_controls", [])
-        pending = (self._active or {}).get("pending_controls", {})
-        if (
-            entity_id in controls
-            and controls[entity_id].get("application_state") != "prepared"
-        ) or (
-            entity_id in observed
-            and entity_id not in pending
-            and entity_id not in controls
-        ):
+        if self._control_application_suppressed(entity_id, controls):
             return
         original = _current_switch(self.hass, entity_id)
         if original is None:
@@ -1710,7 +1791,11 @@ class QuietHoursManager:
         return left is right
 
     async def _async_restore_locked(
-        self, *, pending_only: bool = False, preserve_released: bool = False
+        self,
+        *,
+        pending_only: bool = False,
+        preserve_released: bool = False,
+        period_ended: bool = False,
     ) -> None:
         if not await self._async_recover_configuration_locked():
             return
@@ -1742,6 +1827,10 @@ class QuietHoursManager:
                     # unacknowledged intent happens to match an independent effect.
                     controls.pop(entity_id)
                     released.add(entity_id)
+                    if pending_only and control.get("restore_before_apply"):
+                        observed = self._active.get("observed_controls", [])
+                        if entity_id in observed:
+                            observed.remove(entity_id)
         if self._active is None:
             return
         controls = self._active.get("controls", {})
@@ -1762,6 +1851,8 @@ class QuietHoursManager:
                 original = raw.get("original_value")
                 quiet = self._attained_quiet_value(raw)
                 raw["restoration_pending"] = True
+                if period_ended:
+                    raw["restore_before_apply"] = True
                 try:
                     if (
                         kind == "volume"
@@ -2024,6 +2115,8 @@ class QuietHoursManager:
                 }
             if entity_id in controls and raw.get("restoration_pending") is True:
                 controls[entity_id]["restoration_pending"] = True
+                if raw.get("restore_before_apply") is True:
+                    controls[entity_id]["restore_before_apply"] = True
             if entity_id in controls and kind == "volume":
                 attempts = raw.get("ceiling_attempts")
                 target = raw.get("ceiling_target")
@@ -2127,7 +2220,7 @@ class QuietHoursManager:
 
     def _reschedule(self) -> None:
         self._cancel_scheduled_callbacks()
-        if getattr(self, "_stopping", False):
+        if getattr(self, "_stopping", False) or self.startup_unavailable:
             return
         if getattr(self, "_config_recovery_pending", False):
             self._unsubscribers.append(

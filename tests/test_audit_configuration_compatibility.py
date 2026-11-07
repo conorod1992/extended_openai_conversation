@@ -74,7 +74,7 @@ async def test_configuration_replacement_rejects_retained_rule_dependency(hass, 
         return rules
     monkeypatch.setattr(management_ui, "async_get_request_rules", load)
     with pytest.raises(Exception, match="retained_function"):
-        await management_ui._async_validate_configuration_dependencies(hass, SimpleNamespace(entry_id="entry", data={}), SimpleNamespace(subentry_id="agent"), {"functions": []})
+        await management_ui._async_validate_configuration_dependencies(hass, SimpleNamespace(entry_id="entry", data={}), SimpleNamespace(subentry_id="agent", data={"functions": []}), {"functions": []})
 
 
 async def test_fast_save_uses_canonical_title_limit():
