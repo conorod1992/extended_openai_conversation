@@ -281,12 +281,12 @@ def test_streaming_real_trace_shape() -> None:
     "original,expected",
     [
         (
-            "Summary.\\n\\n[Source](https://example.com)\\n\\n## Next steps\\n- Take a coat.",
-            "Summary.\\nNext steps\\nTake a coat.",
+            "Summary.\n\n[Source](https://example.com)\n\n## Next steps\n- Take a coat.",
+            "Summary.\nNext steps\nTake a coat.",
         ),
         (
-            "Answer.\\n[Source](https://example.com)\\n- First\\n2. Second\\n> Note",
-            "Answer.\\nFirst\\nSecond\\nNote",
+            "Answer.\n[Source](https://example.com)\n- First\n2. Second\n> Note",
+            "Answer.\nFirst\nSecond\nNote",
         ),
         (
             "The result is **[here](https://example.com)**.",
@@ -297,7 +297,7 @@ def test_streaming_real_trace_shape() -> None:
             "The result is.",
         ),
         (
-            "Answer. [Source](https://example.com)\\n\\nMore.",
+            "Answer. [Source](https://example.com)\n\nMore.",
             "Answer. More.",
         ),
         (
@@ -305,11 +305,11 @@ def test_streaming_real_trace_shape() -> None:
             "Answer. ## literal inline heading",
         ),
         (
-            "Answer. [Source](https://example.com)\\n#hashtag stays literal",
+            "Answer. [Source](https://example.com)\n#hashtag stays literal",
             "Answer. #hashtag stays literal",
         ),
         (
-            "The answer is 2**3. [Source](https://example.com)\\n2**3 again",
+            "The answer is 2**3. [Source](https://example.com)\n2**3 again",
             "The answer is 2**3. 2**3 again",
         ),
         (
