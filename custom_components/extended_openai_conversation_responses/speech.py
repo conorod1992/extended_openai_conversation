@@ -162,9 +162,7 @@ class StreamingSpeechSanitizer:
                 if not self._last_output.endswith(opener):
                     continue
                 preceding = self._last_output[-len(opener) - 1 : -len(opener)]
-                if preceding and (
-                    preceding.isalnum() or preceding in ".,;:!?)]}"
-                ):
+                if preceding and (preceding.isalnum() or preceding in ".,;:!?)]}"):
                     continue
                 self._suppressed_opener = opener
                 self._suppressed_closer = closer
@@ -364,9 +362,7 @@ class StreamingSpeechSanitizer:
             if (
                 self.markdown
                 and text[markdown_start : markdown_start + 1] == "["
-                and not self._is_escaped(
-                    text, markdown_start, self._link_backslashes
-                )
+                and not self._is_escaped(text, markdown_start, self._link_backslashes)
             ):
                 status, link_end = self._markdown_link_end(text, markdown_start, final)
                 if status == "incomplete":
@@ -726,9 +722,7 @@ class StreamingSpeechSanitizer:
                     or not self._format_buffer[index + 2].isalnum()
                 ):
                     already_open = (
-                        self._strong_open
-                        if pair == "**"
-                        else self._paired_open[pair]
+                        self._strong_open if pair == "**" else self._paired_open[pair]
                     )
                     if not already_open and not self._has_closer(
                         self._format_buffer,
@@ -811,9 +805,7 @@ class StreamingSpeechSanitizer:
                 return "strip", end - start
         elif marker in "0123456789":
             while (
-                end < len(text)
-                and text[end] in "0123456789"
-                and end - whitespace < 9
+                end < len(text) and text[end] in "0123456789" and end - whitespace < 9
             ):
                 end += 1
             if end < len(text) and text[end] in "0123456789":
