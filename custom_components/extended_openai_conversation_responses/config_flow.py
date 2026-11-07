@@ -762,9 +762,15 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
             except HomeAssistantError as err:
                 errors["base"] = "invalid_request"
                 validation_error = str(err)
-                # A failed clear must remain reversible on a retry. The saved
-                # baseline is never overwritten by an uncommitted candidate.
-                form_values = {**self.options, **user_input}
+                if self._is_new:
+                    # Preserve existing creation-flow normalization across a
+                    # validation retry (including a newly recommended effort).
+                    self.options = candidate
+                    form_values = candidate
+                else:
+                    # Reconfigure starts from a durable saved baseline. A failed
+                    # clear must remain reversible without losing the original.
+                    form_values = {**self.options, **user_input}
             else:
                 if self._is_new:
                     title = candidate.get(CONF_NAME, DEFAULT_AI_TASK_NAME)
@@ -918,10 +924,14 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                 errors["base"] = "invalid_request"
                 validation_error = str(err)
                 self._temp_data = submitted
-                # Keep the user's visible draft while explicit reset controls
-                # own deletion. Unchecking after an error restores the shown
-                # prior value rather than an implicit selector default.
-                effective_options = {**self.options, **edited}
+                # Creation retains its original retry candidate. Reconfigure
+                # must keep the saved visible values so a failed reset can be
+                # unchecked without adopting an implicit selector default.
+                effective_options = (
+                    final_data
+                    if self._is_new
+                    else {**self.options, **edited}
+                )
                 display_effort = effective_effort
             else:
                 if self._is_new:
