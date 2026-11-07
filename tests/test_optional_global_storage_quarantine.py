@@ -37,7 +37,7 @@ async def test_quiet_hours_invalid_generation_is_never_published_or_saved(hass, 
     await manager.async_setup()
     assert manager.startup_unavailable
     assert manager.snapshot()["available"] is False
-    assert manager.snapshot()["config"] if False else True
+    assert "config" not in manager.snapshot()
     assert manager.active is None
     manager._reschedule.assert_not_called()
     manager.async_reconcile.assert_not_awaited()
