@@ -104,3 +104,57 @@ async def test_missing_global_stores_still_start_normally(hass, monkeypatch):
     assert not delayed._quarantined
     assert delayed._setup_complete
     assert not delayed._records
+
+
+async def test_optional_corruption_does_not_block_component_or_management_startup(
+    hass, monkeypatch
+):
+    """Actual global manager getters stay callable after a quarantined load."""
+    from unittest.mock import Mock
+
+    import custom_components.extended_openai_conversation_responses as integration
+    from custom_components.extended_openai_conversation_responses import (
+        quiet_hours,
+        transfer_staging,
+    )
+    from custom_components.extended_openai_conversation_responses.const import DOMAIN
+
+    unavailable = OSError("private file details must never be published")
+    quiet = quiet_hours.QuietHoursManager(hass)
+    quiet._store = SimpleNamespace(
+        async_load=AsyncMock(side_effect=unavailable),
+        async_save=AsyncMock(),
+    )
+    delayed = delayed_tools.DelayedToolManager(hass)
+    delayed._store = SimpleNamespace(
+        async_load=AsyncMock(side_effect=unavailable),
+        async_save=AsyncMock(),
+    )
+    hass.data.setdefault(DOMAIN, {})["quiet_hours_manager"] = quiet
+    hass.data[DOMAIN][delayed_tools.DATA_DELAYED_TOOL_MANAGER] = delayed
+    monkeypatch.setattr(delayed_tools, "_async_repair_private_store_mode", AsyncMock())
+    for name in (
+        "async_setup_model_catalog",
+        "async_migrate_integration",
+        "async_recover_pending_restores",
+        "async_setup_ha_permissions",
+        "async_setup_services",
+        "async_setup_intercom_services",
+        "async_setup_debug_ui",
+        "async_setup_management_ui",
+    ):
+        monkeypatch.setattr(integration, name, AsyncMock())
+    for name in (
+        "apply_openai_compatibility",
+        "setup_provider_credentials_websocket",
+        "setup_backup_transfer_websocket",
+    ):
+        monkeypatch.setattr(integration, name, Mock())
+    monkeypatch.setattr(transfer_staging, "async_get_transfer_staging", AsyncMock())
+
+    assert await integration.async_setup(hass, {}) is True
+    assert quiet.startup_unavailable and delayed._quarantined
+    integration.async_setup_services.assert_awaited_once_with(hass, {})
+    integration.async_setup_management_ui.assert_awaited_once_with(hass)
+    quiet._store.async_save.assert_not_awaited()
+    delayed._store.async_save.assert_not_awaited()
