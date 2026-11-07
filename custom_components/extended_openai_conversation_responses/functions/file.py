@@ -294,12 +294,16 @@ def _parse_file_page_offset(rendered: str) -> int:
         if not numeric.is_finite():
             raise ValueError("File offset must be a finite integer") from None
         if not 0 <= numeric <= FILE_READ_SIZE_LIMIT:
-            raise ValueError("File offset is outside the supported character range") from None
+            raise ValueError(
+                "File offset is outside the supported character range"
+            ) from None
         if numeric != numeric.to_integral_value():
             raise ValueError("File offset must be an integer") from None
         offset = int(numeric)
     if not 0 <= offset <= FILE_READ_SIZE_LIMIT:
-        raise ValueError("File offset is outside the supported character range") from None
+        raise ValueError(
+            "File offset is outside the supported character range"
+        ) from None
     return offset
 
 
