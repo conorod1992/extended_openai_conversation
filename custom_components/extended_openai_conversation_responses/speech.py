@@ -645,7 +645,9 @@ class StreamingSpeechSanitizer:
                         end = -1
                         continue
                     if not self._format_buffer[end - 1].isspace() and (
-                        not after or (not after.isalnum() and after != char)
+                        not after
+                        or (not after.isalnum() and after != char)
+                        or closes_nested_outer
                     ):
                         break
                     end = -1
