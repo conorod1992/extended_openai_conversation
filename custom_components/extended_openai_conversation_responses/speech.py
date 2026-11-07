@@ -149,15 +149,15 @@ class StreamingSpeechSanitizer:
         self.suppressed_constructs += 1
         return end
 
-    def _hold_preceding_whitespace(self, output: list[str], index: int) -> int:
-        """Move locally emitted whitespace back into the unresolved input tail."""
-        held = 0
+    def _hold_preceding_whitespace(self, output: list[str]) -> str:
+        """Hold emitted whitespace without rewinding consumed source characters."""
+        held: list[str] = []
         while output and output[-1].isspace():
-            output.pop()
-            held += 1
-        if held:
-            self._last_output = self._last_output[:-held]
-        return index - held
+            held.append(output.pop())
+        whitespace = "".join(reversed(held))
+        if whitespace:
+            self._last_output = self._last_output[:-len(whitespace)]
+        return whitespace
 
     def _discard_suppressed_opener(self, output: list[str], marker: str) -> bool:
         """Remove an adjacent opener still pending in either parsing stage.
@@ -228,6 +228,7 @@ class StreamingSpeechSanitizer:
         text = self._buffer
         output: list[str] = []
         index = 0
+        held_whitespace = ""
 
         while index < len(text):
             char = text[index]
@@ -257,11 +258,11 @@ class StreamingSpeechSanitizer:
                 if link_start < len(text) and text[link_start] == "[":
                     status, link_end = self._markdown_link_end(text, link_start, final)
                     if status == "incomplete":
-                        index = self._hold_preceding_whitespace(output, index)
+                        held_whitespace = self._hold_preceding_whitespace(output)
                         break
                     if status == "complete":
                         if link_end == len(text) and not final:
-                            index = self._hold_preceding_whitespace(output, index)
+                            held_whitespace = self._hold_preceding_whitespace(output)
                             break
                         end = link_end + (
                             link_end < len(text) and text[link_end] == ")"
@@ -269,7 +270,7 @@ class StreamingSpeechSanitizer:
                         index = self._suppress(output, end)
                         continue
                 elif link_start >= len(text) and not final:
-                    index = self._hold_preceding_whitespace(output, index)
+                    held_whitespace = self._hold_preceding_whitespace(output)
                     break
 
             markdown_start = index
@@ -281,7 +282,7 @@ class StreamingSpeechSanitizer:
             if self.markdown and text[markdown_start : markdown_start + 1] == "[":
                 status, link_end = self._markdown_link_end(text, markdown_start, final)
                 if status == "incomplete":
-                    index = self._hold_preceding_whitespace(output, index)
+                    held_whitespace = self._hold_preceding_whitespace(output)
                     break
                 if status == "complete":
                     index = self._suppress(output, link_end)
@@ -304,7 +305,7 @@ class StreamingSpeechSanitizer:
                     and not final
                     and any(prefix.startswith(remaining) for prefix in _URL_PREFIXES)
                 ):
-                    index = self._hold_preceding_whitespace(output, index)
+                    held_whitespace = self._hold_preceding_whitespace(output)
                     break
                 preceding = text[index - 1] if index else self._link_previous
                 if matching_prefix is not None and not (
@@ -318,7 +319,7 @@ class StreamingSpeechSanitizer:
                     ):
                         end += 1
                     if end == len(text) and not final:
-                        index = self._hold_preceding_whitespace(output, index)
+                        held_whitespace = self._hold_preceding_whitespace(output)
                         break
                     if matching_prefix == "www." and not _WWW_ADDRESS.match(
                         text[index:end]
@@ -345,7 +346,7 @@ class StreamingSpeechSanitizer:
 
         if index:
             self._link_previous = text[index - 1]
-        self._buffer = text[index:]
+        self._buffer = held_whitespace + text[index:]
         if not final and len(self._buffer) > self.max_buffer_chars:
             # A malformed construct or exceptionally long URL must not stall TTS.
             overflow = self._buffer
