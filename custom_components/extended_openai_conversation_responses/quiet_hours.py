@@ -148,7 +148,11 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
             entity_id,
             "on" if period is not None else "off",
             {
-                "friendly_name": "Quiet Hours",
+                "friendly_name": (
+                    entry.name
+                    if entry is not None and isinstance(entry.name, str) and entry.name.strip()
+                    else "Quiet Hours"
+                ),
                 "icon": "mdi:weather-night",
                 "enabled": self._config.enabled,
                 "start": self._config.start,

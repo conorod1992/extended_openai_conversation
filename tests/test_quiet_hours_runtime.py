@@ -2247,3 +2247,29 @@ async def test_timezone_callback_preserves_failure_and_cancellation_contracts(fa
         await manager._handle_core_config_update(event)
     manager._reschedule.assert_called_once_with()
     manager.async_reconcile.assert_awaited_once_with()
+
+
+def test_public_state_uses_custom_registry_name_without_changing_state(
+    hass, monkeypatch
+) -> None:
+    """A custom name reaches state consumers; clearing it restores the original."""
+    manager = _stateful_public_manager(hass)
+    registry_entry = SimpleNamespace(disabled_by=None, name="Night silence")
+    registry = SimpleNamespace(
+        async_get_entity_id=lambda *_args: "binary_sensor.extended_openai_quiet_hours",
+        async_get=lambda _entity_id: registry_entry,
+    )
+    monkeypatch.setattr(quiet_hours.er, "async_get", lambda _hass: registry)
+
+    manager._publish_state(None)
+    original = hass.states.get("binary_sensor.extended_openai_quiet_hours")
+    assert original.state == "off"
+    assert original.attributes["friendly_name"] == "Night silence"
+    assert original.attributes["max_volume"] == 0.2
+
+    registry_entry.name = None
+    manager._publish_state(None)
+    fallback = hass.states.get("binary_sensor.extended_openai_quiet_hours")
+    assert fallback.state == "off"
+    assert fallback.attributes["friendly_name"] == "Quiet Hours"
+    assert fallback.attributes["max_volume"] == original.attributes["max_volume"]
