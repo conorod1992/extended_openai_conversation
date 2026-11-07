@@ -166,6 +166,10 @@ async def test_native_ai_task_failed_clear_is_reversible(hass):
         "max_tokens": 500,
     }
     flow, _ = _reconfigure_task(original)
+    presented = []
+    flow.add_suggested_values_to_schema = (
+        lambda schema, values: presented.append(dict(values)) or schema
+    )
     with patch(
         "custom_components.extended_openai_conversation_responses.request."
         "build_provider_request_snapshot",
@@ -176,9 +180,46 @@ async def test_native_ai_task_failed_clear_is_reversible(hass):
         )
     assert failed["errors"]["base"] == "invalid_request"
     assert flow.options == original
+    assert presented[-1]["azure_model"] == "o3-pro"
+    assert presented[-1]["clear_azure_model"] is True
 
     # A subsequent unchecked control must recover the original saved binding.
     accepted = await ExtendedOpenAIAITaskSubentryFlowHandler.async_step_init(
         flow, {"chat_model": "gpt-4o", "clear_azure_model": False}
     )
     assert accepted["data"]["azure_model"] == "o3-pro"
+
+
+async def test_native_ai_task_sampling_reset_retry_keeps_visible_previous_value(hass):
+    original = {
+        "chat_model": "gpt-4o",
+        "api_mode": "auto",
+        "temperature": 0.2,
+        "top_p": 0.8,
+        "max_tokens": 500,
+    }
+    flow, _ = _reconfigure_task(original)
+    flow._temp_data = {"advanced_options": True}
+    presented = []
+    flow.add_suggested_values_to_schema = (
+        lambda schema, values: presented.append(dict(values)) or schema
+    )
+    with patch(
+        "custom_components.extended_openai_conversation_responses.request."
+        "build_provider_request_snapshot",
+        side_effect=HomeAssistantError("simulated invalid request"),
+    ):
+        failed = await ExtendedOpenAIAITaskSubentryFlowHandler.async_step_advanced(
+            flow, {"clear_temperature": True}
+        )
+    assert failed["errors"]["base"] == "invalid_request"
+    assert flow.options == original
+    assert presented[-1]["temperature"] == 0.2
+    assert presented[-1]["clear_temperature"] is True
+
+    accepted = await ExtendedOpenAIAITaskSubentryFlowHandler.async_step_advanced(
+        flow, {"clear_temperature": False}
+    )
+    assert accepted["data"]["temperature"] == 0.2
+    assert accepted["data"]["top_p"] == 0.8
+    assert not any(key.startswith("clear_") for key in accepted["data"])
