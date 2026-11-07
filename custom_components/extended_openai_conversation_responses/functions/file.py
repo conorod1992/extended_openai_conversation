@@ -7,6 +7,7 @@ from contextlib import suppress
 from decimal import Decimal, InvalidOperation
 import logging
 import os
+import re
 from pathlib import Path
 import stat
 import tempfile
@@ -266,6 +267,11 @@ class FileFunction(Function):
         return all_allow_dirs
 
 
+_DECIMAL_FILE_OFFSET = re.compile(
+    r"[+-]?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?"
+)
+
+
 def _parse_file_page_offset(rendered: str) -> int:
     """Interpret an integer offset after HA's text-only template rendering.
 
@@ -278,10 +284,11 @@ def _parse_file_page_offset(rendered: str) -> int:
     except ValueError:
         # Limit fallback parsing of untrusted template text. Decimal avoids
         # rounding, overflow, and truncation from float-based conversion.
-        if len(rendered) > 128:
+        numeric_text = rendered.strip()
+        if len(numeric_text) > 128 or not _DECIMAL_FILE_OFFSET.fullmatch(numeric_text):
             raise ValueError("File offset must be a finite integer") from None
         try:
-            numeric = Decimal(rendered)
+            numeric = Decimal(numeric_text)
         except InvalidOperation as err:
             raise ValueError("File offset must be a finite integer") from err
         if not numeric.is_finite():

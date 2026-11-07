@@ -150,7 +150,7 @@ async def test_skill_discovery_advertisement_execution_and_wire_pages(
 
 @pytest.mark.parametrize(
     "offset",
-    [-1, 1048577, "invalid", 1.5, False, "1.5", "NaN", "Infinity", "1e1000"],
+    [-1, 1048577, "invalid", 1.5, False, "1.5", "NaN", "Infinity", "1e1000", "1__2", "1e+_3"],
 )
 async def test_invalid_file_page_offset_fails_without_truncated_instructions(
     skill_loader, offset
