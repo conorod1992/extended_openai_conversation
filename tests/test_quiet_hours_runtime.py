@@ -1139,7 +1139,7 @@ def test_discovery_skips_disabled_and_handles_unregistered_satellite(
     assert discovered[0].media_player_entity_id is None
 
 
-async def test_setup_recovers_invalid_storage_and_is_idempotent() -> None:
+async def test_setup_quarantines_invalid_storage_without_reconciliation() -> None:
     manager = _runtime_manager(initialized=False)
     manager._store.async_load.return_value = {
         "config": {"max_volume": 2},
@@ -1149,13 +1149,16 @@ async def test_setup_recovers_invalid_storage_and_is_idempotent() -> None:
     manager.async_reconcile = AsyncMock()
 
     await manager.async_setup()
+    assert manager.startup_unavailable
     assert manager.config == runtime.QuietHoursConfig()
     assert manager.active is None
-    manager._reschedule.assert_called_once_with()
-    manager.async_reconcile.assert_awaited_once_with()
+    assert manager.snapshot()["available"] is False
+    manager._reschedule.assert_not_called()
+    manager.async_reconcile.assert_not_awaited()
+    manager._store.async_save.assert_not_awaited()
 
     await manager.async_setup()
-    manager._reschedule.assert_called_once_with()
+    manager._store.async_load.assert_awaited_once()
 
 
 async def test_update_config_rolls_back_then_succeeds() -> None:

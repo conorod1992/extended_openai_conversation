@@ -464,11 +464,11 @@ class QuietHoursManager:
 
     @property
     def startup_unavailable(self) -> bool:
-        return self._startup_unavailable_reason is not None
+        return getattr(self, "_startup_unavailable_reason", None) is not None
 
     def _require_startup_available(self) -> None:
-        if self._startup_unavailable_reason is not None:
-            raise HomeAssistantError(self._startup_unavailable_reason)
+        if reason := getattr(self, "_startup_unavailable_reason", None):
+            raise HomeAssistantError(reason)
 
     @property
     def config(self) -> QuietHoursConfig:
@@ -658,8 +658,8 @@ class QuietHoursManager:
         ).hexdigest()
 
     def snapshot(self) -> dict[str, Any]:
-        if self._startup_unavailable_reason is not None:
-            return {"available": False, "error": self._startup_unavailable_reason}
+        if reason := getattr(self, "_startup_unavailable_reason", None):
+            return {"available": False, "error": reason}
         now = dt_util.now()
         period = (
             quiet_period_for(now, self._config.start, self._config.end)
