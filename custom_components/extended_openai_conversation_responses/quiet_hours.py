@@ -150,7 +150,9 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
             {
                 "friendly_name": (
                     entry.name
-                    if entry is not None and isinstance(entry.name, str) and entry.name.strip()
+                    if entry is not None
+                    and isinstance(entry.name, str)
+                    and entry.name.strip()
                     else "Quiet Hours"
                 ),
                 "icon": "mdi:weather-night",

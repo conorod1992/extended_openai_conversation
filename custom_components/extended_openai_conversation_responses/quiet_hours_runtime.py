@@ -515,7 +515,13 @@ class QuietHoursManager:
                     active = self._normalize_active(raw.get("active"))
                     if raw.get("active") is not None and active is None:
                         raise ValueError("Quiet Hours saved ownership is invalid")
-                except (HomeAssistantError, OSError, ValueError, TypeError, AttributeError) as err:
+                except (
+                    HomeAssistantError,
+                    OSError,
+                    ValueError,
+                    TypeError,
+                    AttributeError,
+                ) as err:
                     # The feature remains unavailable for this process. In particular,
                     # neither an empty state nor speculative controls may be persisted.
                     self._startup_unavailable_reason = (

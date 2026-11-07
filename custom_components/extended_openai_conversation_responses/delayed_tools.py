@@ -367,7 +367,9 @@ class DelayedToolManager:
         raw_data = await _async_settle_store_io(self._store.async_load())
         if raw_data is None or raw_data == {}:
             raw_calls = []
-        elif not isinstance(raw_data, dict) or not isinstance(raw_data.get("calls"), list):
+        elif not isinstance(raw_data, dict) or not isinstance(
+            raw_data.get("calls"), list
+        ):
             raise ValueError("Persisted delayed Function Tool queue is malformed")
         else:
             raw_calls = raw_data["calls"]
