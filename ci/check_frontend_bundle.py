@@ -40,7 +40,10 @@ DIST = Path("custom_components/extended_openai_conversation_responses/frontend/d
 # download preparation add about 1.1 KiB. Keep the entry and CSS limits intact.
 # Native-selector admission and lossless context/reset handling add 225 JS bytes.
 # Budget 250 bytes for these correctness fixes; entry and CSS limits stay fixed.
-CEILINGS = {"javascript": 882_150, "css": 65_000, "management_entry": 120_000}
+# Scoped compact-choice styling and Quiet Hours unavailable messaging add 650
+# measured JS bytes (882,120 -> 882,770). Budget 700 bytes, retaining the
+# independently fixed management entry and CSS ceilings.
+CEILINGS = {"javascript": 882_850, "css": 65_000, "management_entry": 120_000}
 
 
 def measure(dist: Path) -> dict[str, int]:
