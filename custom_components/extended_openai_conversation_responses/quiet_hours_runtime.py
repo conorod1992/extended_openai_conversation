@@ -523,7 +523,7 @@ class QuietHoursManager:
                         "Its data is preserved; repair it while Home Assistant is "
                         "stopped, then restart Home Assistant."
                     )
-                    _LOGGER.error(
+                    logging.getLogger(__name__).error(
                         "Quiet Hours disabled: saved storage needs repair (%s)",
                         type(err).__name__,
                     )
