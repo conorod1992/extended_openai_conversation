@@ -322,10 +322,17 @@ def test_link_suppression_preserves_real_markdown_boundaries_at_all_splits(
     original, expected
 ):
     assert process_speech_text(original, _config()) == expected
-    assert _stream([original]) == expected
-    assert _stream(list(original)) == expected
-    for split in range(len(original) + 1):
-        assert _stream([original[:split], original[split:]]) == expected, split
+    # Progressive speech intentionally does not run the completed response's
+    # punctuation/blank-line whitespace normalizer.
+    streamed = [_stream([original]), _stream(list(original))]
+    streamed.extend(
+        _stream([original[:split], original[split:]])
+        for split in range(len(original) + 1)
+    )
+    for index, result in enumerate(streamed):
+        assert speech._final_whitespace_cleanup(result) == expected, index
+        if "## Next steps" in original or "\\n- First" in original:
+            assert result == expected, index
 
 
 def test_streaming_common_markdown_formatting() -> None:

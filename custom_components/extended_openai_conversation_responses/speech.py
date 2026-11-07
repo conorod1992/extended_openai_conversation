@@ -159,26 +159,56 @@ class StreamingSpeechSanitizer:
             self._last_output = self._last_output[:-held]
         return index - held
 
+    def _discard_suppressed_opener(
+        self, output: list[str], marker: str
+    ) -> bool:
+        """Remove an adjacent opener still pending in either parsing stage.
+
+        A directly adjacent removed link is the only missing span content.
+        Its delimiter has not been released: the formatter buffers an
+        unfinished marker at the end of a streamed delta.
+        """
+        tail = ""
+        for part in reversed(output):
+            if len(tail) >= len(marker):
+                break
+            tail = part[-(len(marker) - len(tail)) :] + tail
+        if not (self._format_buffer[-len(marker) :] + tail).endswith(marker):
+            return False
+        remaining = len(marker)
+        while remaining and output:
+            count = min(remaining, len(output[-1]))
+            output[-1] = output[-1][:-count]
+            if not output[-1]:
+                output.pop()
+            remaining -= count
+        if remaining:
+            self._format_buffer = self._format_buffer[:-remaining]
+        self._last_output = self._last_output[:-len(marker)]
+        return True
+
     def _resolve_suppression_boundary(
         self, output: list[str], text: str, index: int, *, final: bool
-    ) -> bool:
-        """Return True if an ambiguous post-link prefix needs more input.
+    ) -> int | None:
+        """Return None if a post-link prefix needs more input; else chars to skip.
 
         Ordinary citations still collapse to a space. Retain an original line
         boundary only when the next characters form a Markdown block prefix.
         """
         if not self._needs_separator or text[index].isspace():
-            return False
+            return 0
         closer = self._suppressed_closer
         if closer and text[index] == closer[0]:
             remaining = text[index:]
             if len(remaining) < len(closer) and not final:
-                return True
-            if remaining.startswith(closer):
+                return None
+            if remaining.startswith(closer) and self._discard_suppressed_opener(
+                output, closer
+            ):
                 self._needs_separator = False
                 self._suppressed_line_break = False
                 self._suppressed_closer = None
-                return False
+                return len(closer)
         if (
             self.markdown
             and self._suppressed_line_break
@@ -187,14 +217,14 @@ class StreamingSpeechSanitizer:
             action, _ = self._line_prefix(text, final, index)
             if action == "incomplete" and not final:
                 if len(text) - index <= _FORMAT_PREFIX_LIMIT:
-                    return True
+                    return None
             elif action == "strip":
                 self._needs_separator = False
                 self._suppressed_line_break = False
                 self._suppressed_closer = None
                 if self._last_output and not self._last_output.endswith("\n"):
                     self._emit(output, "\n")
-        return False
+        return 0
 
     def _drain_links(self, *, final: bool) -> str:
         text = self._buffer
@@ -301,10 +331,19 @@ class StreamingSpeechSanitizer:
                     index = self._suppress(output, end)
                     continue
 
-            if char.isspace() and not final and index + 1 == len(text):
+            # Keep a whitespace-only tail unresolved until meaningful input
+            # arrives, so a citation cannot leak preceding blank lines solely
+            # because the provider split them across multiple deltas.
+            if char.isspace() and not final and text[index:].isspace():
                 break
-            if self._resolve_suppression_boundary(output, text, index, final=final):
+            skip = self._resolve_suppression_boundary(
+                output, text, index, final=final
+            )
+            if skip is None:
                 break
+            if skip:
+                index += skip
+                continue
             self._emit(output, char)
             index += 1
 
