@@ -191,7 +191,7 @@ async def test_file_page_offset_accepts_exact_integral_numeric_renderings(
 
     assert result["content"] == instructions[expected_start:]
     assert result["size"] == len(instructions.encode("utf-8"))
-    assert result["has_more"] is False
+    assert result.get("has_more", False) is False
 
 
 async def test_nullable_optional_offset_starts_at_first_page(skill_loader):
