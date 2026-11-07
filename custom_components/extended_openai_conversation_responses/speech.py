@@ -156,7 +156,7 @@ class StreamingSpeechSanitizer:
             held.append(output.pop())
         whitespace = "".join(reversed(held))
         if whitespace:
-            self._last_output = self._last_output[:-len(whitespace)]
+            self._last_output = self._last_output[: -len(whitespace)]
         return whitespace
 
     def _discard_suppressed_opener(self, output: list[str], marker: str) -> bool:
