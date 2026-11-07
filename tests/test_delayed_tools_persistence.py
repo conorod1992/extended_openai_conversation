@@ -13,11 +13,8 @@ from custom_components.extended_openai_conversation_responses.delayed_tools impo
 from tests.test_delayed_tools import _record
 
 
-@pytest.mark.parametrize("invalidated_runtime", (False, True))
-async def test_store_load_failure_quarantines_until_fresh_manager(
-    hass, invalidated_runtime
-) -> None:
-    """Unreadable startup and invalidated queues require a fresh manager."""
+async def test_initial_store_load_failure_quarantines_until_fresh_manager(hass) -> None:
+    """An unreadable queue cannot be silently retried in the same runtime."""
     manager = DelayedToolManager(hass)
     store = SimpleNamespace(
         async_load=AsyncMock(
@@ -26,16 +23,6 @@ async def test_store_load_failure_quarantines_until_fresh_manager(
         async_save=AsyncMock(),
     )
     manager._store = store
-    if invalidated_runtime:
-        # After a failed transaction and readback, the manager can retry
-        # initialization, but an unreadable *setup* load must quarantine it.
-        pending = _record()
-        manager._records[pending.call_id] = pending
-        manager._setup_complete = True
-        manager._started = True
-        manager._invalidate_after_unreadable_store()
-        assert not manager._setup_complete and not manager._started
-        assert not manager._records and not manager._quarantined
 
     await manager.async_setup()
     assert manager._setup_complete is True
@@ -54,6 +41,30 @@ async def test_store_load_failure_quarantines_until_fresh_manager(
     assert restarted._quarantined is False
     assert restarted._records == {}
     assert store.async_load.await_count == 2
+
+
+async def test_invalidated_scheduler_quarantines_on_unreadable_setup(hass) -> None:
+    """A failed runtime readback permits retry, but not an unsafe setup load."""
+    manager = DelayedToolManager(hass)
+    pending = _record()
+    manager._records[pending.call_id] = pending
+    manager._setup_complete = True
+    manager._started = True
+    manager._invalidate_after_unreadable_store()
+    assert not manager._setup_complete and not manager._started
+    assert not manager._records and not manager._quarantined
+
+    store = SimpleNamespace(
+        async_load=AsyncMock(side_effect=OSError("storage unavailable")),
+        async_save=AsyncMock(),
+    )
+    manager._store = store
+    await manager.async_setup()
+    assert manager._setup_complete and manager._quarantined
+    assert not manager._records and not manager._tasks
+    await manager.async_setup()
+    store.async_load.assert_awaited_once()
+    store.async_save.assert_not_awaited()
 
 
 async def test_failed_cancellation_keeps_due_call_retryable(hass, monkeypatch) -> None:
