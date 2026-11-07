@@ -45,7 +45,7 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
 
     async def async_setup(self) -> None:
         await super().async_setup()
-        if self._stopping:
+        if self._stopping or self.startup_unavailable:
             return
         if self._registry_unsubscribe is None:
             self._registry_unsubscribe = self.hass.bus.async_listen(

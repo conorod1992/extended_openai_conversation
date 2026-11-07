@@ -456,8 +456,19 @@ class QuietHoursManager:
         self._initialized = False
         self._stopping = False
         self._config_recovery_pending = False
+        # Cold-start corruption is distinct from an uncertain in-process save.
+        # Do not attempt autonomous readback or device reconciliation in this state.
+        self._startup_unavailable_reason: str | None = None
         self._unsubscribers: list[Callable[[], None]] = []
         self._timezone_unsubscribe: Callable[[], None] | None = None
+
+    @property
+    def startup_unavailable(self) -> bool:
+        return self._startup_unavailable_reason is not None
+
+    def _require_startup_available(self) -> None:
+        if self._startup_unavailable_reason is not None:
+            raise HomeAssistantError(self._startup_unavailable_reason)
 
     @property
     def config(self) -> QuietHoursConfig:
@@ -478,7 +489,7 @@ class QuietHoursManager:
 
     async def async_setup(self) -> None:
         async with self._lock:
-            if getattr(self, "_stopping", False):
+            if getattr(self, "_stopping", False) or self.startup_unavailable:
                 return
             if getattr(self, "_config_recovery_pending", False):
                 # A public getter may revisit an invalidated live manager. Its
@@ -489,15 +500,37 @@ class QuietHoursManager:
             elif self._initialized:
                 return
             else:
-                raw = await _async_settle_store_io(self._store.async_load()) or {}
+                # Parse a complete generation before installing any of it. Missing
+                # storage is a legitimate fresh install; a malformed saved payload
+                # must never become default configuration with lost restore baselines.
                 try:
-                    self._config = _config_from_data(raw.get("config"))
-                except ValueError:
-                    self._config = QuietHoursConfig()
-                self._selection_identities = self._normalize_selection_identities(
-                    raw.get("selection_identities"), self._config
-                )
-                self._active = self._normalize_active(raw.get("active"))
+                    stored = await _async_settle_store_io(self._store.async_load())
+                    if stored is not None and not isinstance(stored, Mapping):
+                        raise ValueError("Quiet Hours storage must be an object")
+                    raw = stored if stored is not None else {}
+                    config = _config_from_data(raw.get("config"))
+                    identities = self._normalize_selection_identities(
+                        raw.get("selection_identities"), config
+                    )
+                    active = self._normalize_active(raw.get("active"))
+                    if raw.get("active") is not None and active is None:
+                        raise ValueError("Quiet Hours saved ownership is invalid")
+                except (HomeAssistantError, OSError, ValueError, TypeError, AttributeError) as err:
+                    # The feature remains unavailable for this process. In particular,
+                    # neither an empty state nor speculative controls may be persisted.
+                    self._startup_unavailable_reason = (
+                        "Quiet Hours saved storage is unreadable or malformed. "
+                        "Its data is preserved; repair it while Home Assistant is "
+                        "stopped, then restart Home Assistant."
+                    )
+                    _LOGGER.error(
+                        "Quiet Hours disabled: saved storage needs repair (%s)",
+                        type(err).__name__,
+                    )
+                    return
+                self._config = config
+                self._selection_identities = identities
+                self._active = active
                 self._config_recovery_pending = False
                 self._initialized = True
                 self._reschedule()
@@ -520,7 +553,8 @@ class QuietHoursManager:
         async with self._lock:
             self._cancel_scheduled_callbacks()
             try:
-                await self._async_restore_locked(preserve_released=True)
+                if not self.startup_unavailable:
+                    await self._async_restore_locked(preserve_released=True)
             finally:
                 # Recovery can rearm an authoritative generation while stopping.
                 self._cancel_scheduled_callbacks()
@@ -624,6 +658,8 @@ class QuietHoursManager:
         ).hexdigest()
 
     def snapshot(self) -> dict[str, Any]:
+        if self._startup_unavailable_reason is not None:
+            return {"available": False, "error": self._startup_unavailable_reason}
         now = dt_util.now()
         period = (
             quiet_period_for(now, self._config.start, self._config.end)
@@ -643,6 +679,7 @@ class QuietHoursManager:
 
     async def async_set_enabled(self, enabled: bool) -> dict[str, Any]:
         """Enable or disable the daily schedule without changing its policy."""
+        self._require_startup_available()
         if not isinstance(enabled, bool):
             raise ValueError("enabled must be a boolean")
         async with self._lock:
@@ -665,6 +702,7 @@ class QuietHoursManager:
     async def async_update_config(
         self, value: Any, *, expected_revision: str | None = None
     ) -> dict[str, Any]:
+        self._require_startup_available()
         candidate = _config_from_data(value)
         failure: BaseException | None = None
         async with self._lock:
@@ -786,6 +824,8 @@ class QuietHoursManager:
 
     async def _async_recover_configuration_locked(self) -> bool:
         """Suspend device changes until an ambiguous config write is read back."""
+        if self.startup_unavailable:
+            return False
         if not getattr(self, "_config_recovery_pending", False):
             self._config_recovery_pending = False
             return True
@@ -852,7 +892,7 @@ class QuietHoursManager:
         """Reconcile the scheduled policy using cross-version-safe discovery."""
         now = dt_util.now() if now is None else dt_util.as_local(now)
         async with self._lock:
-            if getattr(self, "_stopping", False):
+            if getattr(self, "_stopping", False) or self.startup_unavailable:
                 return
             recovering = getattr(self, "_config_recovery_pending", False)
             if not self._initialized and not recovering:
@@ -2174,7 +2214,7 @@ class QuietHoursManager:
 
     def _reschedule(self) -> None:
         self._cancel_scheduled_callbacks()
-        if getattr(self, "_stopping", False):
+        if getattr(self, "_stopping", False) or self.startup_unavailable:
             return
         if getattr(self, "_config_recovery_pending", False):
             self._unsubscribers.append(

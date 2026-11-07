@@ -308,10 +308,10 @@ class DelayedToolManager:
         self._started = False
         self._setup_complete = False
         self._quarantined = False
+        self._quarantine_reason: str | None = None
 
     async def async_setup(self) -> None:
         """Load persisted calls and arm recovery once Home Assistant is running."""
-        await _async_repair_private_store_mode(self._store)
         if self._setup_complete:
             return
         async with self._setup_lock:
@@ -333,13 +333,11 @@ class DelayedToolManager:
 
             async with self._lock:
                 try:
+                    await _async_repair_private_store_mode(self._store)
                     await self._async_load_locked()
                 except _DelayedQueueLimitError as err:
-                    # Keep the authoritative store intact and allow the rest of EOAI
-                    # to load. Empty runtime records must never overwrite this queue.
-                    self._records.clear()
-                    self._quarantined = True
-                    self._setup_complete = True
+                    # Valid but oversized queues retain the existing repair policy.
+                    self._quarantine("saved queue exceeds its limits")
                     _LOGGER.error(
                         "Delayed Function Tool scheduler disabled: %s. Saved jobs "
                         "are preserved; remove affected agents in Management or "
@@ -347,14 +345,35 @@ class DelayedToolManager:
                         "then restart Home Assistant to retry recovery",
                         err,
                     )
+                except (HomeAssistantError, OSError, ValueError, TypeError) as err:
+                    # Do not interpret unreadable jobs as an empty queue or arm any
+                    # previously saved work. A later setup call must not retry.
+                    self._quarantine("saved storage is unreadable or malformed")
+                    _LOGGER.error(
+                        "Delayed Function Tool scheduler disabled: saved storage "
+                        "needs repair (%s). Jobs are preserved; repair the storage "
+                        "while Home Assistant is stopped, then restart to retry",
+                        type(err).__name__,
+                    )
+
+    def _quarantine(self, reason: str) -> None:
+        self._records.clear()
+        self._quarantined = True
+        self._quarantine_reason = reason
+        self._setup_complete = True
 
     async def _async_load_locked(self) -> None:
         """Publish startup recovery without overlapping another store owner."""
-        raw_data = await _async_settle_store_io(self._store.async_load()) or {}
-        raw_calls = raw_data.get("calls", []) if isinstance(raw_data, dict) else []
-        dirty = not isinstance(raw_calls, list)
+        raw_data = await _async_settle_store_io(self._store.async_load())
+        if raw_data is None or raw_data == {}:
+            raw_calls = []
+        elif not isinstance(raw_data, dict) or not isinstance(raw_data.get("calls"), list):
+            raise ValueError("Persisted delayed Function Tool queue is malformed")
+        else:
+            raw_calls = raw_data["calls"]
+        dirty = False
         recovered: dict[str, DelayedToolCall] = {}
-        for raw in raw_calls if isinstance(raw_calls, list) else []:
+        for raw in raw_calls:
             try:
                 record = DelayedToolCall.from_dict(raw)
             except ValueError as err:
@@ -407,8 +426,9 @@ class DelayedToolManager:
         """Persist a delayed call before exposing it as scheduled."""
         if self._quarantined:
             raise HomeAssistantError(
-                "Delayed Function Tool scheduler is disabled because the saved queue "
-                "exceeds its limits; resolve the saved queue and restart Home Assistant"
+                "Delayed Function Tool scheduler is disabled because the "
+                f"{self._quarantine_reason or 'saved queue is unavailable'}; "
+                "repair the saved data and restart Home Assistant"
             )
         if not self._setup_complete:
             raise HomeAssistantError("Delayed Function Tool scheduler is unavailable")
