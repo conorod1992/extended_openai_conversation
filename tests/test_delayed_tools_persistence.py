@@ -13,8 +13,11 @@ from custom_components.extended_openai_conversation_responses.delayed_tools impo
 from tests.test_delayed_tools import _record
 
 
-async def test_initial_store_load_failure_quarantines_until_fresh_manager(hass) -> None:
-    """An unreadable queue cannot be silently retried in the same runtime."""
+@pytest.mark.parametrize("invalidated_runtime", (False, True))
+async def test_store_load_failure_quarantines_until_fresh_manager(
+    hass, invalidated_runtime
+) -> None:
+    """Unreadable startup and invalidated queues require a fresh manager."""
     manager = DelayedToolManager(hass)
     store = SimpleNamespace(
         async_load=AsyncMock(
@@ -23,6 +26,16 @@ async def test_initial_store_load_failure_quarantines_until_fresh_manager(hass) 
         async_save=AsyncMock(),
     )
     manager._store = store
+    if invalidated_runtime:
+        # After a failed transaction and readback, the manager can retry
+        # initialization, but an unreadable *setup* load must quarantine it.
+        pending = _record()
+        manager._records[pending.call_id] = pending
+        manager._setup_complete = True
+        manager._started = True
+        manager._invalidate_after_unreadable_store()
+        assert not manager._setup_complete and not manager._started
+        assert not manager._records and not manager._quarantined
 
     await manager.async_setup()
     assert manager._setup_complete is True
