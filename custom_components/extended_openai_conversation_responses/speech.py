@@ -625,12 +625,21 @@ class StreamingSpeechSanitizer:
                     combined_close = self._format_buffer[
                         max(index + 1, end - 2) : end
                     ] == char * 2 and (end < 3 or self._format_buffer[end - 3] != char)
+                    closes_nested_outer = (
+                        after == char
+                        and self._format_buffer.startswith(char * 3, end)
+                        and (
+                            self._strong_open
+                            if char == "*"
+                            else self._paired_open["__"]
+                        )
+                    )
                     if (
                         self._is_escaped(
                             self._format_buffer, end, self._format_backslashes
                         )
                         or (self._format_buffer[end - 1] == char and not combined_close)
-                        or after == char
+                        or (after == char and not closes_nested_outer)
                     ):
                         # A nested strong delimiter cannot close single emphasis.
                         end = -1

@@ -948,3 +948,28 @@ def test_long_unmatched_speech_delimiter_has_bounded_fallback() -> None:
     result = sanitizer.feed(source) + sanitizer.finish()
     assert result == source
     assert sanitizer.buffered_chars == 0
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        ("**bold *italics***", "bold italics"),
+        ("__bold _italics___", "bold italics"),
+        ("*italic **both***", "italic both"),
+        ("**a **b** c**", "a b c"),
+        ("word**bold**word", "wordboldword"),
+        ("2**3", "2**3"),
+        ("2**3**", "23"),
+        ("2**3**2", "2**3**2"),
+    ],
+)
+def test_nested_speech_emphasis_and_numeric_compatibility(
+    source: str, expected: str
+) -> None:
+    assert process_speech_text(source, _config()) == expected
+    for chunks in ([source], list(source)):
+        assert speech._final_whitespace_cleanup(_stream(chunks)) == expected
+    for split in range(len(source) + 1):
+        assert speech._final_whitespace_cleanup(
+            _stream([source[:split], source[split:]])
+        ) == expected, split
