@@ -331,7 +331,7 @@ def test_link_suppression_preserves_real_markdown_boundaries_at_all_splits(
     )
     for index, result in enumerate(streamed):
         assert speech._final_whitespace_cleanup(result) == expected, index
-        if "## Next steps" in original or "\\n- First" in original:
+        if "## Next steps" in original or "\n- First" in original:
             assert result == expected, index
 
 
