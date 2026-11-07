@@ -163,7 +163,9 @@ class StreamingSpeechSanitizer:
                     continue
                 preceding = self._last_output[-len(opener) - 1 : -len(opener)]
                 if preceding and (preceding.isalnum() or preceding in ".,;:!?)]}"):
-                    continue
+                    # A rejected closing ** must not turn into an opening *
+                    # just because the shorter marker is also a suffix.
+                    break
                 self._suppressed_opener = opener
                 self._suppressed_closer = closer
                 break
