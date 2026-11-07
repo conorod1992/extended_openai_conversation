@@ -958,9 +958,9 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                 )
             ] = NumberSelector(NumberSelectorConfig(min=0, max=2, step=0.05))
             if not self._is_new:
-                schema[
-                    vol.Optional("clear_temperature", default=False)
-                ] = BooleanSelector()
+                schema[vol.Optional("clear_temperature", default=False)] = (
+                    BooleanSelector()
+                )
 
         if reasoning["supported"]:
             default_effort = display_effort or reasoning["efforts"][0]
