@@ -274,8 +274,8 @@ class StreamingSpeechSanitizer:
         cursor = start
         code = 0
         while cursor < len(text):
-            if text[cursor] == "`" and not cls._is_escaped(
-                text, cursor, preceding_backslashes
+            if text[cursor] == "`" and (
+                code or not cls._is_escaped(text, cursor, preceding_backslashes)
             ):
                 end = cursor
                 while end < len(text) and text[end] == "`":

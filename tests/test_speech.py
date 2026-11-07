@@ -961,6 +961,7 @@ def test_long_unmatched_speech_delimiter_has_bounded_fallback() -> None:
         ("2**3", "2**3"),
         ("2**3**", "23"),
         ("2**3**2", "2**3**2"),
+        (r"**before `a\` after**", r"before a\ after"),
     ],
 )
 def test_nested_speech_emphasis_and_numeric_compatibility(
