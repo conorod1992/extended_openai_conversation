@@ -328,6 +328,48 @@ async def test_backup_preserves_over_budget_patterns_and_enforces_new_saves(
     assert manager.match("second long command").rule["id"] == "rule-1"
 
 
+async def test_reorder_recalculates_retained_pattern_budget_and_survives_reload(
+    monkeypatch,
+) -> None:
+    """A move must admit the same rules as reloading its persisted new order."""
+    from custom_components.extended_openai_conversation_responses import (
+        request_rules as module,
+    )
+
+    monkeypatch.setattr(module, "MAX_AGENT_PATTERN_STATES", 8)
+    store = MemoryStore()
+    manager = RequestRules(store)
+    await manager.async_replace_backup(
+        {"rules": [_rule(0, "first long command"), _rule(1, "second long command")]}
+    )
+    assert set(manager.snapshot()["diagnostics"]) == {"rule-1"}
+    assert manager.match("first long command").rule["id"] == "rule-0"
+    assert manager.match("second long command") is None
+
+    await manager.async_move("rule-1", "top")
+    assert [rule["id"] for rule in manager.snapshot()["rules"]] == [
+        "rule-1",
+        "rule-0",
+    ]
+    assert set(manager.snapshot()["diagnostics"]) == {"rule-0"}
+    assert manager.match("first long command") is None
+    assert manager.match("second long command").rule["id"] == "rule-1"
+    committed = deepcopy(store.data)
+    reloaded = RequestRules(MemoryStore(committed))
+    await reloaded.async_initialize()
+    assert store.data == committed
+    assert reloaded.snapshot()["rules"] == manager.snapshot()["rules"]
+    assert reloaded.snapshot()["diagnostics"] == manager.snapshot()["diagnostics"]
+    assert reloaded.match("second long command").rule["id"] == "rule-1"
+    assert reloaded.match("first long command") is None
+
+    # Reversing the move must immediately restore the original admission.
+    await manager.async_move("rule-1", "bottom")
+    assert set(manager.snapshot()["diagnostics"]) == {"rule-1"}
+    assert manager.match("first long command").rule["id"] == "rule-0"
+    assert manager.match("second long command") is None
+
+
 async def test_aggregate_work_budget_spans_nonmatching_patterns(monkeypatch) -> None:
     from custom_components.extended_openai_conversation_responses import (
         request_rules as module,
