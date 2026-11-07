@@ -71,11 +71,19 @@ class StreamingSpeechSanitizer:
         self._line_start = True
         self._needs_separator = False
         self._last_output = ""
+        # A four-character raw suffix can lose the last real word behind
+        # a whitespace run. Retain significant output independently.
+        self._recent_nonspace = ""
         self._link_previous = ""
+        self._link_backslashes = 0
+        self._format_backslashes = 0
+        self._paired_open = {"__": False, "~~": False}
+        self._triple_open = {"*": False, "_": False}
         # A removed link may separate a real Markdown line prefix or a
         # matching emphasis closer. Resolve only that boundary, not all prose.
         self._suppressed_line_break = False
         self._suppressed_closer: str | None = None
+        self._suppressed_opener: str | None = None
 
     @property
     def buffered_chars(self) -> int:
@@ -111,9 +119,10 @@ class StreamingSpeechSanitizer:
             self._needs_separator = False
             self._suppressed_line_break = False
             self._suppressed_closer = None
+            self._suppressed_opener = None
             if (
-                self._last_output
-                and not self._last_output[-1].isspace()
+                (self._recent_nonspace or self._last_output)
+                and not self._last_output[-1:].isspace()
                 and not text[0].isspace()
                 and text[0] not in ",.;:!?)]}"
             ):
@@ -121,24 +130,45 @@ class StreamingSpeechSanitizer:
                 self._last_output += " "
         output.append(text)
         self._last_output += text
+        significant = "".join(char for char in text if not char.isspace())
+        if significant:
+            self._recent_nonspace = (self._recent_nonspace + significant)[-16:]
         if len(self._last_output) > 4:
             self._last_output = self._last_output[-4:]
 
     def _suppress(self, output: list[str], end: int) -> int:
-        # Remember only an adjacent opener. A following matching closer must
-        # not be separated from it by a space manufactured by link removal.
-        self._suppressed_closer = (
-            next(
-                (
-                    marker
-                    for marker in ("***", "___", "**", "__", "~~", "*", "_")
-                    if self._last_output.endswith(marker)
-                ),
-                None,
+        # A closing delimiter (such as the final ** in **Result**) must not
+        # be treated as the opener of an empty wrapper around this citation.
+        # Longer nested wrappers are tested before shorter suffixes.
+        self._suppressed_opener = None
+        self._suppressed_closer = None
+        if self.markdown:
+            wrappers = (
+                ("**_", "_**"),
+                ("__*", "*__"),
+                ("_**", "**_"),
+                ("*__", "__*"),
+                ("*_", "_*"),
+                ("_*", "*_"),
+                ("***", "***"),
+                ("___", "___"),
+                ("**", "**"),
+                ("__", "__"),
+                ("~~", "~~"),
+                ("*", "*"),
+                ("_", "_"),
             )
-            if self.markdown
-            else None
-        )
+            for opener, closer in wrappers:
+                if not self._last_output.endswith(opener):
+                    continue
+                preceding = self._last_output[-len(opener) - 1 : -len(opener)]
+                if preceding and (
+                    preceding.isalnum() or preceding in ".,;:!?)]}"
+                ):
+                    continue
+                self._suppressed_opener = opener
+                self._suppressed_closer = closer
+                break
         self._suppressed_line_break = False
         while output and output[-1] and output[-1][-1].isspace():
             output[-1] = output[-1].rstrip()
@@ -183,6 +213,7 @@ class StreamingSpeechSanitizer:
         if remaining:
             self._format_buffer = self._format_buffer[:-remaining]
         self._last_output = self._last_output[: -len(marker)]
+        self._recent_nonspace = self._recent_nonspace[: -len(marker)]
         return True
 
     def _resolve_suppression_boundary(
@@ -201,11 +232,12 @@ class StreamingSpeechSanitizer:
             if len(remaining) < len(closer) and not final:
                 return None
             if remaining.startswith(closer) and self._discard_suppressed_opener(
-                output, closer
+                output, self._suppressed_opener or closer
             ):
                 self._needs_separator = False
                 self._suppressed_line_break = False
                 self._suppressed_closer = None
+                self._suppressed_opener = None
                 return len(closer)
         if (
             self.markdown
@@ -220,19 +252,69 @@ class StreamingSpeechSanitizer:
                 self._needs_separator = False
                 self._suppressed_line_break = False
                 self._suppressed_closer = None
-                if self._last_output and not self._last_output.endswith("\n"):
+                self._suppressed_opener = None
+                if self._recent_nonspace and not self._last_output.endswith("\n"):
                     self._emit(output, "\n")
         return 0
+
+    @staticmethod
+    def _is_escaped(text: str, index: int, preceding_backslashes: int = 0) -> bool:
+        """Whether a syntax character has an odd-length backslash prefix."""
+        cursor = index - 1
+        while cursor >= 0 and text[cursor] == "\\":
+            cursor -= 1
+        count = index - 1 - cursor
+        if cursor < 0:
+            count += preceding_backslashes
+        return bool(count % 2)
+
+    @classmethod
+    def _has_closer(
+        cls, text: str, start: int, marker: str, preceding_backslashes: int = 0
+    ) -> bool:
+        """Find an unescaped matching delimiter outside inline code."""
+        cursor = start
+        code = 0
+        while cursor < len(text):
+            if text[cursor] == "`" and not cls._is_escaped(
+                text, cursor, preceding_backslashes
+            ):
+                end = cursor
+                while end < len(text) and text[end] == "`":
+                    end += 1
+                width = end - cursor
+                if not code:
+                    code = width
+                elif width == code:
+                    code = 0
+                cursor = end
+                continue
+            if (
+                not code
+                and text.startswith(marker, cursor)
+                and not cls._is_escaped(text, cursor, preceding_backslashes)
+            ):
+                return True
+            cursor += 1
+        return False
 
     def _drain_links(self, *, final: bool) -> str:
         text = self._buffer
         output: list[str] = []
         index = 0
         held_whitespace = ""
+        trailing_whitespace_start = len(text.rstrip())
 
         while index < len(text):
             char = text[index]
-            if self.markdown and char == "`":
+            if (
+                self.markdown
+                and char == "`"
+                and (
+                    self._link_code
+                    or not self._is_escaped(text, index, self._link_backslashes)
+                )
+            ):
                 end = index
                 while end < len(text) and text[end] == "`":
                     end += 1
@@ -279,7 +361,13 @@ class StreamingSpeechSanitizer:
                     break
                 if index + 1 < len(text) and text[index + 1] == "[":
                     markdown_start += 1
-            if self.markdown and text[markdown_start : markdown_start + 1] == "[":
+            if (
+                self.markdown
+                and text[markdown_start : markdown_start + 1] == "["
+                and not self._is_escaped(
+                    text, markdown_start, self._link_backslashes
+                )
+            ):
                 status, link_end = self._markdown_link_end(text, markdown_start, final)
                 if status == "incomplete":
                     held_whitespace = self._hold_preceding_whitespace(output)
@@ -333,7 +421,7 @@ class StreamingSpeechSanitizer:
             # Keep a whitespace-only tail unresolved until meaningful input
             # arrives, so a citation cannot leak preceding blank lines solely
             # because the provider split them across multiple deltas.
-            if char.isspace() and not final and text[index:].isspace():
+            if char.isspace() and not final and index >= trailing_whitespace_start:
                 break
             skip = self._resolve_suppression_boundary(output, text, index, final=final)
             if skip is None:
@@ -346,6 +434,13 @@ class StreamingSpeechSanitizer:
 
         if index:
             self._link_previous = text[index - 1]
+            consumed = text[:index]
+            trailing = len(consumed) - len(consumed.rstrip("\\"))
+            self._link_backslashes = (
+                self._link_backslashes + trailing
+                if trailing == len(consumed)
+                else trailing
+            )
         self._buffer = held_whitespace + text[index:]
         if not final and len(self._buffer) > self.max_buffer_chars:
             # A malformed construct or exceptionally long URL must not stall TTS.
@@ -398,7 +493,19 @@ class StreamingSpeechSanitizer:
         unresolved_emphasis = False
 
         while index < len(self._format_buffer):
-            if self._format_buffer[index] == "`":
+            char = self._format_buffer[index]
+            if (
+                not self._format_code
+                and char in "`*_~"
+                and self._is_escaped(
+                    self._format_buffer, index, self._format_backslashes
+                )
+            ):
+                output.append(char)
+                index += 1
+                self._line_start = False
+                continue
+            if char == "`":
                 end = index
                 while (
                     end < len(self._format_buffer) and self._format_buffer[end] == "`"
@@ -462,13 +569,37 @@ class StreamingSpeechSanitizer:
                     )
                 )
             ):
+                # An unmatched run is literal content (operators, identifiers,
+                # or deliberately typed punctuation), not disposable styling.
+                # An already-open strong span can legitimately end in ***.
+                can_close = self._triple_open[char] or (
+                    char == "*" and self._strong_open
+                )
+                if not can_close and not self._has_closer(
+                    self._format_buffer,
+                    index + 3,
+                    char * 3,
+                    self._format_backslashes,
+                ):
+                    if not final:
+                        unresolved_emphasis = True
+                        break
+                    output.append(char * 3)
+                    index += 3
+                    continue
+                if self._triple_open[char]:
+                    self._triple_open[char] = False
+                elif char == "*" and self._strong_open:
+                    self._strong_open = False
+                else:
+                    self._triple_open[char] = True
                 index += 3
                 continue
             if (
                 char in "*_"
                 and pair not in _FORMAT_MARKERS
                 and not previous.isalnum()
-                and previous not in ("\\", char)
+                and previous != char
                 and len(pair) == 2
                 and not pair[1].isspace()
             ):
@@ -495,7 +626,9 @@ class StreamingSpeechSanitizer:
                         max(index + 1, end - 2) : end
                     ] == char * 2 and (end < 3 or self._format_buffer[end - 3] != char)
                     if (
-                        self._format_buffer[end - 1] == "\\"
+                        self._is_escaped(
+                            self._format_buffer, end, self._format_backslashes
+                        )
                         or (self._format_buffer[end - 1] == char and not combined_close)
                         or after == char
                     ):
@@ -581,8 +714,27 @@ class StreamingSpeechSanitizer:
                     or index + 2 == len(self._format_buffer)
                     or not self._format_buffer[index + 2].isalnum()
                 ):
+                    already_open = (
+                        self._strong_open
+                        if pair == "**"
+                        else self._paired_open[pair]
+                    )
+                    if not already_open and not self._has_closer(
+                        self._format_buffer,
+                        index + 2,
+                        pair,
+                        self._format_backslashes,
+                    ):
+                        if not final:
+                            unresolved_emphasis = True
+                            break
+                        output.append(pair)
+                        index += 2
+                        continue
                     if pair == "**":
                         self._strong_open = not self._strong_open
+                    else:
+                        self._paired_open[pair] = not self._paired_open[pair]
                     index += 2
                     continue
             if not final and index == len(self._format_buffer) - 1 and char in "*_~":
@@ -592,6 +744,13 @@ class StreamingSpeechSanitizer:
 
         if index:
             self._format_previous = self._format_buffer[index - 1]
+            consumed = self._format_buffer[:index]
+            trailing = len(consumed) - len(consumed.rstrip("\\"))
+            self._format_backslashes = (
+                self._format_backslashes + trailing
+                if trailing == len(consumed)
+                else trailing
+            )
         self._format_buffer = self._format_buffer[index:]
         buffer_limit = (
             self.max_buffer_chars if unresolved_emphasis else _FORMAT_PREFIX_LIMIT
@@ -599,6 +758,13 @@ class StreamingSpeechSanitizer:
         if not final and len(self._format_buffer) > buffer_limit:
             output.append(self._format_buffer)
             self._format_previous = self._format_buffer[-1]
+            overflow = self._format_buffer
+            trailing = len(overflow) - len(overflow.rstrip("\\"))
+            self._format_backslashes = (
+                self._format_backslashes + trailing
+                if trailing == len(overflow)
+                else trailing
+            )
             self._format_buffer = ""
             self._line_start = False
         elif final and self._format_buffer:
@@ -632,9 +798,15 @@ class StreamingSpeechSanitizer:
                 while end < len(text) and text[end] in " \t":
                     end += 1
                 return "strip", end - start
-        elif marker.isdigit():
-            while end < len(text) and text[end].isdigit():
+        elif marker in "0123456789":
+            while (
+                end < len(text)
+                and text[end] in "0123456789"
+                and end - whitespace < 9
+            ):
                 end += 1
+            if end < len(text) and text[end] in "0123456789":
+                return "none", 0
             if end == len(text):
                 return ("none", 0) if final else ("incomplete", 0)
             if text[end] in ".)":

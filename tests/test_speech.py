@@ -854,3 +854,97 @@ def test_pending_url_prefix_after_removed_citation_keeps_literal_text(
         streamed = _stream([original[:split], original[split:]])
         assert speech._final_whitespace_cleanup(streamed) == expected, split
     assert speech._final_whitespace_cleanup(_stream(list(original))) == expected
+
+
+@pytest.mark.parametrize(
+    "original,expected",
+    [
+        (
+            "The lights are off    [source](https://example.com) and the door is locked.",
+            "The lights are off and the door is locked.",
+        ),
+        (
+            "Summary.\n\n  [source](https://example.com)\n\n## Next steps\n- Take a coat.",
+            "Summary.\nNext steps\nTake a coat.",
+        ),
+        (
+            "**Result**[source](https://example.com) **Explanation**.",
+            "Result Explanation.",
+        ),
+        (
+            "Hello **_[source](https://example.com)_** world.",
+            "Hello world.",
+        ),
+    ],
+)
+def test_removed_citations_keep_spoken_boundaries_and_formatting(
+    original: str, expected: str
+) -> None:
+    assert process_speech_text(original, _config()) == expected
+    chunks = [[original], list(original)]
+    chunks.extend(
+        [original[:split], original[split:]]
+        for split in range(len(original) + 1)
+    )
+    for position, parts in enumerate(chunks):
+        assert speech._final_whitespace_cleanup(_stream(parts)) == expected, position
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        ("Pass **kwargs to the function.", "Pass **kwargs to the function."),
+        (
+            "Use sensor.__temperature for the reading.",
+            "Use sensor.__temperature for the reading.",
+        ),
+        ("A ***unfinished span", "A ***unfinished span"),
+        ("A ~~unfinished span", "A ~~unfinished span"),
+        ("**This is bold** and __this too__.", "This is bold and this too."),
+        (r"A \*literal\* and **bold**.", r"A \*literal\* and bold."),
+        (r"A \_literal\_ and __strong__.", r"A \_literal\_ and strong."),
+        (
+            r"A \` literal; **important**. See https://example.com now.",
+            r"A \` literal; important. See now.",
+        ),
+        (r"Type \[name](target) literally.", r"Type \[name](target) literally."),
+        (
+            "0871234567. That is the contact number.",
+            "0871234567. That is the contact number.",
+        ),
+        ("123456789. This is an ordered item.", "This is an ordered item."),
+        (
+            "1234567890. This is not an ordered item.",
+            "1234567890. This is not an ordered item.",
+        ),
+    ],
+)
+def test_speech_literal_syntax_is_not_silently_deleted(
+    source: str, expected: str
+) -> None:
+    assert process_speech_text(source, _config()) == expected
+    assert speech._final_whitespace_cleanup(_stream([source])) == expected
+    assert speech._final_whitespace_cleanup(_stream(list(source))) == expected
+    for split in range(len(source) + 1):
+        assert speech._final_whitespace_cleanup(
+            _stream([source[:split], source[split:]])
+        ) == expected, split
+
+
+def test_url_only_speech_cleanup_keeps_boundary_after_long_whitespace() -> None:
+    source = "The lights are off    https://example.com and the door is locked."
+    cfg = _config(speech_strip_markdown=False)
+    expected = "The lights are off and the door is locked."
+    assert process_speech_text(source, cfg) == expected
+    for split in range(len(source) + 1):
+        assert speech._final_whitespace_cleanup(
+            _stream([source[:split], source[split:]], markdown=False)
+        ) == expected, split
+
+
+def test_long_unmatched_speech_delimiter_has_bounded_fallback() -> None:
+    sanitizer = StreamingSpeechSanitizer(max_buffer_chars=64)
+    source = "before **" + ("x" * 80)
+    result = sanitizer.feed(source) + sanitizer.finish()
+    assert result == source
+    assert sanitizer.buffered_chars == 0
