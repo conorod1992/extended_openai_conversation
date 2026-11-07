@@ -1,0 +1,40 @@
+name: Temporary EOAI PR bundle rebuild
+
+on:
+  push:
+    branches:
+      - fix/lossless-editors-rule-rename
+
+permissions:
+  contents: write
+
+concurrency:
+  group: eoai-pr-bundle-rebuild-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rebuild:
+    if: github.repository == 'conorod1992/extended_openai_conversation'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+      - name: Commit exact generated assets to the same PR branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- custom_components/extended_openai_conversation_responses/frontend/dist/
+          if ! git diff --cached --quiet; then
+            git commit -m "Rebuild tracked frontend assets for optional-store and UI fixes"
+            git push origin HEAD:"$GITHUB_REF_NAME"
+          fi
