@@ -928,9 +928,7 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                 # must keep the saved visible values so a failed reset can be
                 # unchecked without adopting an implicit selector default.
                 effective_options = (
-                    final_data
-                    if self._is_new
-                    else {**self.options, **edited}
+                    final_data if self._is_new else {**self.options, **edited}
                 )
                 display_effort = effective_effort
             else:
