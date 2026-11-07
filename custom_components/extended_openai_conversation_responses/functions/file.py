@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
+from decimal import Decimal, InvalidOperation
 import logging
 import os
 from pathlib import Path
@@ -265,6 +266,36 @@ class FileFunction(Function):
         return all_allow_dirs
 
 
+def _parse_file_page_offset(rendered: str) -> int:
+    """Interpret an integer offset after HA's text-only template rendering.
+
+    JSON integer values may arrive as integral floats (e.g. 1e3 -> 1000.0).
+    Keep the existing integer-text behavior and accept only exact finite,
+    bounded decimal integer values as a fallback.
+    """
+    try:
+        offset = int(rendered)
+    except ValueError:
+        # Limit fallback parsing of untrusted template text. Decimal avoids
+        # rounding, overflow, and truncation from float-based conversion.
+        if len(rendered) > 128:
+            raise ValueError("File offset must be a finite integer") from None
+        try:
+            numeric = Decimal(rendered)
+        except InvalidOperation as err:
+            raise ValueError("File offset must be a finite integer") from err
+        if not numeric.is_finite():
+            raise ValueError("File offset must be a finite integer")
+        if not 0 <= numeric <= FILE_READ_SIZE_LIMIT:
+            raise ValueError("File offset is outside the supported character range")
+        if numeric != numeric.to_integral_value():
+            raise ValueError("File offset must be an integer")
+        offset = int(numeric)
+    if not 0 <= offset <= FILE_READ_SIZE_LIMIT:
+        raise ValueError("File offset is outside the supported character range")
+    return offset
+
+
 class ReadFileFunction(FileFunction):
     """Read file contents."""
 
@@ -327,13 +358,9 @@ class ReadFileFunction(FileFunction):
         page_offset = None
         if offset_template := function_config.get("page_offset"):
             try:
-                page_offset = int(
+                page_offset = _parse_file_page_offset(
                     offset_template.async_render(arguments, parse_result=False)
                 )
-                if not 0 <= page_offset <= FILE_READ_SIZE_LIMIT:
-                    raise ValueError(
-                        "File offset is outside the supported character range"
-                    )
             except (ValueError, HomeAssistantError) as err:
                 return backend_failure(str(err), err)
         template_source = str(getattr(path_template, "template", ""))

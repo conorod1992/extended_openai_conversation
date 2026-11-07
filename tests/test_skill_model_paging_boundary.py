@@ -148,7 +148,10 @@ async def test_skill_discovery_advertisement_execution_and_wire_pages(
     assert "".join(pages) == (instructions if filename == "SKILL.md" else body)
 
 
-@pytest.mark.parametrize("offset", [-1, 1048577, "invalid", 1.5, False])
+@pytest.mark.parametrize(
+    "offset",
+    [-1, 1048577, "invalid", 1.5, False, "1.5", "NaN", "Infinity", "1e1000"],
+)
 async def test_invalid_file_page_offset_fails_without_truncated_instructions(
     skill_loader, offset
 ):
@@ -157,6 +160,26 @@ async def test_invalid_file_page_offset_fails_without_truncated_instructions(
     await manager.async_load_skills()
     result = await load("small", offset=offset)
     assert "error" in result
+
+
+@pytest.mark.parametrize(
+    "offset,expected_start",
+    [(0.0, 0), (1000.0, 1000), ("1e3", 1000), ("1000.000", 1000)],
+)
+async def test_file_page_offset_accepts_exact_integral_numeric_renderings(
+    skill_loader, offset, expected_start
+):
+    """Text rendering must not reject valid JSON integer-valued floats."""
+    manager, root, load = skill_loader
+    instructions = "---\\ndescription: Offset test\\n---\\n" + "x" * 1600
+    _write(root, "offset-value", instructions.encode("utf-8"))
+    await manager.async_load_skills()
+
+    result = await load("offset-value", offset=offset)
+
+    assert result["content"] == instructions[expected_start:]
+    assert result["size"] == len(instructions.encode("utf-8"))
+    assert result["has_more"] is False
 
 
 async def test_nullable_optional_offset_starts_at_first_page(skill_loader):
