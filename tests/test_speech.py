@@ -277,6 +277,57 @@ def test_streaming_real_trace_shape() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "original,expected",
+    [
+        (
+            "Summary.\\n\\n[Source](https://example.com)\\n\\n## Next steps\\n- Take a coat.",
+            "Summary.\\nNext steps\\nTake a coat.",
+        ),
+        (
+            "Answer.\\n[Source](https://example.com)\\n- First\\n2. Second\\n> Note",
+            "Answer.\\nFirst\\nSecond\\nNote",
+        ),
+        (
+            "The result is **[here](https://example.com)**.",
+            "The result is.",
+        ),
+        (
+            "The result is *[here](https://example.com)*.",
+            "The result is.",
+        ),
+        (
+            "Answer. [Source](https://example.com)\\n\\nMore.",
+            "Answer. More.",
+        ),
+        (
+            "Answer. [Source](https://example.com) ## literal inline heading",
+            "Answer. ## literal inline heading",
+        ),
+        (
+            "Answer. [Source](https://example.com)\\n#hashtag stays literal",
+            "Answer. #hashtag stays literal",
+        ),
+        (
+            "The answer is 2**3. [Source](https://example.com)\\n2**3 again",
+            "The answer is 2**3. 2**3 again",
+        ),
+        (
+            "Read **details [here](https://example.com) now**.",
+            "Read details now.",
+        ),
+    ],
+)
+def test_link_suppression_preserves_real_markdown_boundaries_at_all_splits(
+    original, expected
+):
+    assert process_speech_text(original, _config()) == expected
+    assert _stream([original]) == expected
+    assert _stream(list(original)) == expected
+    for split in range(len(original) + 1):
+        assert _stream([original[:split], original[split:]]) == expected, split
+
+
 def test_streaming_common_markdown_formatting() -> None:
     assert (
         _stream(["# Head", "ing\n- **First** item\n2", ". `Second` item"])

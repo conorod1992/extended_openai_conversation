@@ -72,6 +72,10 @@ class StreamingSpeechSanitizer:
         self._needs_separator = False
         self._last_output = ""
         self._link_previous = ""
+        # A removed link may separate a real Markdown line prefix or a
+        # matching emphasis closer. Resolve only that boundary, not all prose.
+        self._suppressed_line_break = False
+        self._suppressed_closer: str | None = None
 
     @property
     def buffered_chars(self) -> int:
@@ -101,8 +105,12 @@ class StreamingSpeechSanitizer:
             return
         if self._needs_separator:
             if text.isspace():
+                if "\n" in text:
+                    self._suppressed_line_break = True
                 return
             self._needs_separator = False
+            self._suppressed_line_break = False
+            self._suppressed_closer = None
             if (
                 self._last_output
                 and not self._last_output[-1].isspace()
@@ -117,6 +125,21 @@ class StreamingSpeechSanitizer:
             self._last_output = self._last_output[-4:]
 
     def _suppress(self, output: list[str], end: int) -> int:
+        # Remember only an adjacent opener. A following matching closer must
+        # not be separated from it by a space manufactured by link removal.
+        self._suppressed_closer = (
+            next(
+                (
+                    marker
+                    for marker in ("***", "___", "**", "__", "~~", "*", "_")
+                    if self._last_output.endswith(marker)
+                ),
+                None,
+            )
+            if self.markdown
+            else None
+        )
+        self._suppressed_line_break = False
         while output and output[-1] and output[-1][-1].isspace():
             output[-1] = output[-1].rstrip()
             if not output[-1]:
@@ -135,6 +158,43 @@ class StreamingSpeechSanitizer:
         if held:
             self._last_output = self._last_output[:-held]
         return index - held
+
+    def _resolve_suppression_boundary(
+        self, output: list[str], text: str, index: int, *, final: bool
+    ) -> bool:
+        """Return True if an ambiguous post-link prefix needs more input.
+
+        Ordinary citations still collapse to a space. Retain an original line
+        boundary only when the next characters form a Markdown block prefix.
+        """
+        if not self._needs_separator or text[index].isspace():
+            return False
+        closer = self._suppressed_closer
+        if closer and text[index] == closer[0]:
+            remaining = text[index:]
+            if len(remaining) < len(closer) and not final:
+                return True
+            if remaining.startswith(closer):
+                self._needs_separator = False
+                self._suppressed_line_break = False
+                self._suppressed_closer = None
+                return False
+        if (
+            self.markdown
+            and self._suppressed_line_break
+            and text[index] in "#>-+*0123456789"
+        ):
+            action, _ = self._line_prefix(text, final, index)
+            if action == "incomplete" and not final:
+                if len(text) - index <= _FORMAT_PREFIX_LIMIT:
+                    return True
+            elif action == "strip":
+                self._needs_separator = False
+                self._suppressed_line_break = False
+                self._suppressed_closer = None
+                if self._last_output and not self._last_output.endswith("\n"):
+                    self._emit(output, "\n")
+        return False
 
     def _drain_links(self, *, final: bool) -> str:
         text = self._buffer
@@ -242,6 +302,8 @@ class StreamingSpeechSanitizer:
                     continue
 
             if char.isspace() and not final and index + 1 == len(text):
+                break
+            if self._resolve_suppression_boundary(output, text, index, final=final):
                 break
             self._emit(output, char)
             index += 1
