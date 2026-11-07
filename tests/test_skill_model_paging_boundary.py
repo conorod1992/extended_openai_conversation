@@ -150,7 +150,19 @@ async def test_skill_discovery_advertisement_execution_and_wire_pages(
 
 @pytest.mark.parametrize(
     "offset",
-    [-1, 1048577, "invalid", 1.5, False, "1.5", "NaN", "Infinity", "1e1000", "1__2", "1e+_3"],
+    [
+        -1,
+        1048577,
+        "invalid",
+        1.5,
+        False,
+        "1.5",
+        "NaN",
+        "Infinity",
+        "1e1000",
+        "1__2",
+        "1e+_3",
+    ],
 )
 async def test_invalid_file_page_offset_fails_without_truncated_instructions(
     skill_loader, offset
@@ -171,7 +183,7 @@ async def test_file_page_offset_accepts_exact_integral_numeric_renderings(
 ):
     """Text rendering must not reject valid JSON integer-valued floats."""
     manager, root, load = skill_loader
-    instructions = "---\\ndescription: Offset test\\n---\\n" + "x" * 1600
+    instructions = "---\ndescription: Offset test\n---\n" + "x" * 1600
     _write(root, "offset-value", instructions.encode("utf-8"))
     await manager.async_load_skills()
 
