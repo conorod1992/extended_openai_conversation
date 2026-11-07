@@ -1040,7 +1040,15 @@ class RequestRules:
             self._rules.insert(target, moved)
             for order, rule in enumerate(self._rules):
                 rule["order"] = order
-            self._reorder_matching_snapshot()
+            # When a retained legacy rule was excluded, order changes can
+            # change which patterns fit the aggregate state budget. Reapply
+            # loader admission and diagnostics instead of sorting only the
+            # previously admitted subset. Healthy collections keep the
+            # zero-recompile fast path and compiled pattern identities.
+            if self._diagnostics:
+                self._sort_and_compile()
+            else:
+                self._reorder_matching_snapshot()
             await self._async_save_locked()
             return dict(self._rules[target])
 
