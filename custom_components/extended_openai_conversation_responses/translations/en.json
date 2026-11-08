@@ -1,5 +1,9 @@
 {
     "config": {
+        "abort": {
+            "reauth_successful": "Provider credentials updated successfully.",
+            "reauth_failed": "The provider connection could not be found. Reopen its settings and try again."
+        },
         "error": {
             "cannot_connect": "Failed to connect",
             "invalid_auth": "Invalid authentication",
@@ -149,6 +153,8 @@
                 }
             },
             "abort": {
+                "entry_not_loaded": "The integration entry is not loaded. Enable or repair the provider connection and try again.",
+                "reconfigure_successful": "Conversation agent reconfigured successfully.",
                 "agent_configuration_managed_in_panel": "Conversation-agent behaviour is managed from Extended OpenAI > Configuration in the sidebar."
             },
             "error": {
@@ -199,6 +205,10 @@
             "shorten_tool_call_id": "Required for Mistral AI cloud API compatibility. Enable only if your provider requires short (9-character) tool call IDs. Keep disabled for OpenAI and most other providers."
                     }
                 }
+            },
+            "abort": {
+                "entry_not_loaded": "The integration entry is not loaded. Enable or repair the provider connection and try again.",
+                "reconfigure_successful": "AI Task agent reconfigured successfully."
             }
         }
     },
@@ -382,11 +392,11 @@
                     "description": "The API key."
                 },
                 "base_url": {
-                    "name": "Base Url",
+                    "name": "Base URL",
                     "description": "The base URL."
                 },
                 "api_version": {
-                    "name": "Api Version",
+                    "name": "API Version",
                     "description": "The API version."
                 },
                 "organization": {
@@ -398,7 +408,7 @@
                     "description": "Skip authentication."
                 },
                 "api_provider": {
-                    "name": "Api Provider",
+                    "name": "API Provider",
                     "description": "The API provider. (OpenAI or Azure)"
                 }
             }

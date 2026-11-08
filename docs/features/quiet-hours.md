@@ -2,13 +2,13 @@
 
 Configure Quiet Hours from **Extended OpenAI → Capabilities → Quiet Hours**.
 
-Quiet Hours gives Assist satellites a daily night-time schedule. During that period, Extended OpenAI can lower a satellite's speaker volume to a maximum level and optionally change its wake-word sound where Home Assistant exposes a compatible switch.
+Quiet Hours gives Assist satellites a daily night-time schedule. When that period starts, Extended OpenAI can lower louder satellites' speaker volumes to a starting limit and optionally change their wake-word sound where Home Assistant exposes a compatible switch.
 
 ## Volume behaviour
 
-Think of the configured volume as a **maximum**, not a fixed value. A satellite that is louder is turned down; a satellite that is already quieter is left alone.
+Think of the configured volume as a **starting volume limit**, not a ceiling that is continuously enforced. When Quiet Hours starts, a louder satellite is turned down and an already quieter satellite is left alone. Satellites that become available later can also be adjusted.
 
-When Extended OpenAI changes a speaker, it remembers the earlier volume. At the end of Quiet Hours it restores that earlier value only if the speaker still has the value Quiet Hours set. If you or another automation changes the volume in the meantime, that newer change is preserved.
+When Extended OpenAI changes a speaker, it remembers the earlier volume. If you or an automation changes the volume afterwards, Quiet Hours respects that independent change for the rest of that quiet period instead of continually lowering it again. When Quiet Hours ends, the earlier volume is restored only if the speaker has not been independently changed.
 
 If Home Assistant starts or restarts while the current time is already inside the saved Quiet Hours period, the integration catches up and applies the active settings.
 
@@ -43,7 +43,7 @@ These actions simply turn the saved daily schedule on or off; they do not create
 
 ## Practical notes
 
-- The configured maximum applies to the satellite media player, so other audio from the same speaker may also be quieter during the period.
+- The starting volume adjustment applies to the satellite media player, so other audio from the same speaker may also be quieter during the period.
 - Quiet Hours does not overwrite a newer user or automation volume change merely to restore an older value.
 - A satellite discovered later can be picked up without recreating the schedule.
 - LEDs and other vendor-specific night-mode settings are intentionally left to ordinary Home Assistant automations using the Quiet Hours entity.

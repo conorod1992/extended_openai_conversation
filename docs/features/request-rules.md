@@ -131,6 +131,8 @@ set brightness to {level=0..100}
 
 `set brightness to 73` captures `level = 73`; `set brightness to 173` does not match.
 
+A number range **validates** an integer, but the captured value is still **text**: `73` is captured as `"73"`, not the integer `73`. The original spelling (including a permitted leading sign or leading zeros) is preserved. To use it in a Home Assistant template for numeric comparisons or arithmetic, convert it explicitly, for example `{{ level | int > 50 }}`.
+
 Free-text captures may contain multiple words. The matcher chooses the shortest capture that still allows the complete pattern to succeed. For example:
 
 ```text
