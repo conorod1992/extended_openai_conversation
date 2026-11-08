@@ -489,6 +489,32 @@ async def test_rule_condition_truth_table(phrase, text, expected):
 
 
 @pytest.mark.parametrize(
+    ("singular", "plural"),
+    [
+        ("house", "houses"),
+        ("size", "sizes"),
+        ("noise", "noises"),
+        ("movie", "movies"),
+        ("cookie", "cookies"),
+        ("brownie", "brownies"),
+        ("bus", "buses"),
+        ("gas", "gases"),
+        ("quiz", "quizzes"),
+        ("party", "parties"),
+        ("box", "boxes"),
+        ("glass", "glasses"),
+    ],
+)
+async def test_word_form_normalization_preserves_common_plural_pairs(
+    singular, plural
+):
+    rules = await manager(rule("word", singular))
+    match = rules.match(plural)
+    assert match is not None and match.rule["id"] == "word"
+    assert not match.fuzzy
+
+
+@pytest.mark.parametrize(
     "pattern,text,slots",
     [
         pytest.param("set {level=10..20}", "set ten", None, id="non-numeric"),

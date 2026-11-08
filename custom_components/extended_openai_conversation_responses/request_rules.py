@@ -2696,10 +2696,21 @@ def _lookup_result_value(token: str, results: Mapping[str, Any]) -> Any:
     return current
 
 
+def _rule_response_text(value: Any) -> str:
+    """Render spoken structured results as JSON rather than Python repr."""
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False, default=str, allow_nan=False)
+
+
 def resolve_result_values(
-    value: Any, slots: Mapping[str, str], results: Mapping[str, Any]
+    value: Any,
+    slots: Mapping[str, str],
+    results: Mapping[str, Any],
+    *,
+    stringify: Callable[[Any], str] = str,
 ) -> Any:
-    """Resolve exact result paths, keeping captures in their own namespace."""
+    """Resolve result paths while preserving native script argument values."""
 
     def lookup(token: str) -> Any:
         return _lookup_result_value(token, results)
@@ -2714,8 +2725,8 @@ def resolve_result_values(
         def replace_reference(match: re.Match[str]) -> str:
             token = match.group(0)[1:-1]
             if "." in token:
-                return str(lookup(token))
-            return str(results[token]) if token in results else slots[token]
+                return stringify(lookup(token))
+            return stringify(results[token]) if token in results else slots[token]
 
         # Scan only authored references: substituted tool data is opaque text.
         return re.sub(
@@ -2725,11 +2736,14 @@ def resolve_result_values(
         )
     if isinstance(value, Mapping):
         return {
-            key: resolve_result_values(item, slots, results)
+            key: resolve_result_values(item, slots, results, stringify=stringify)
             for key, item in value.items()
         }
     if isinstance(value, list):
-        return [resolve_result_values(item, slots, results) for item in value]
+        return [
+            resolve_result_values(item, slots, results, stringify=stringify)
+            for item in value
+        ]
     return value
 
 
@@ -3846,9 +3860,12 @@ async def _async_evaluate_matched_rule(
             )
         try:
             response = resolve_result_values(
-                action["success_response"], match.slots, result_values
+                action["success_response"],
+                match.slots,
+                result_values,
+                stringify=_rule_response_text,
             )
-            response = str(response)
+            response = _rule_response_text(response)
         except (ValueError, KeyError, TypeError) as err:
             # These actions have already occurred. Never rerun the script or
             # misrepresent this as an action failure to the user.
@@ -4114,9 +4131,25 @@ def _singularize(token: str) -> str:
         or token.endswith(("ss", "us", "is"))
     ):
         return token
+    # Common -ie + s plurals must keep the final e; do not apply the
+    # otherwise useful party -> parties transformation indiscriminately.
+    if token in {
+        "movies",
+        "cookies",
+        "brownies",
+        "zombies",
+        "smoothies",
+        "selfies",
+    }:
+        return token[:-1]
+    if token == "quizzes":
+        return "quiz"
     if len(token) > 4 and token.endswith("ies"):
         return token[:-3] + "y"
-    if token.endswith(("ches", "shes", "xes", "zes", "ses")):
+    # "houses", "sizes" and "noises" are -se + s, not -s + es.
+    if token.endswith(("sses", "ches", "shes", "xes", "zzes")):
+        return token[:-2]
+    if token in {"buses", "gases"}:
         return token[:-2]
     if token.endswith("s"):
         return token[:-1]
