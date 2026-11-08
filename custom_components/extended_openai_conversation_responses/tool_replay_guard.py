@@ -302,14 +302,12 @@ def _requires_patterned_key_classification(schema: Any) -> bool:
         return False
     additional = schema.get("additionalProperties", True)
     if schema.get("patternProperties") and (
-        additional is False
-        or (isinstance(additional, Mapping) and bool(additional))
+        additional is False or (isinstance(additional, Mapping) and bool(additional))
     ):
         return True
     properties = schema.get("properties")
     if isinstance(properties, Mapping) and any(
-        _requires_patterned_key_classification(child)
-        for child in properties.values()
+        _requires_patterned_key_classification(child) for child in properties.values()
     ):
         return True
     items = schema.get("items")
