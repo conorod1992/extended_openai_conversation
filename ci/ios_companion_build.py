@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import hashlib
 import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import tarfile
 import tempfile
+import time
 from urllib.parse import urlencode
 import zipfile
 
@@ -29,7 +32,7 @@ def digest_files(paths: list[Path]) -> str:
 def build_identity(ios: Path) -> dict:
     """Everything capable of changing the native binaries or their load paths."""
     return {
-        "schema": 1,
+        "schema": 2,
         "ios_source_sha": os.environ["IOS_SOURCE_SHA"],
         "architecture": platform.machine(),
         "xcode": subprocess.check_output(["xcodebuild", "-version"], text=True).strip(),
@@ -41,10 +44,7 @@ def build_identity(ios: Path) -> dict:
         "scheme": "Tests-UI",
         "inputs": digest_files(
             [
-                ROOT / WORKFLOW,
                 ROOT / "ci/patch_ios_companion_e2e.py",
-                ROOT / "ci/prepare_ios_build_tools.sh",
-                Path(__file__),
                 *[
                     ios / name
                     for name in subprocess.check_output(
@@ -59,6 +59,46 @@ def build_identity(ios: Path) -> dict:
 
 def identity_key(identity: dict) -> str:
     return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+
+
+def cache_identities(ios: Path, identity: dict) -> dict[str, str]:
+    """Incremental state is rebuilt; unlike executable artifacts it may fall back."""
+    compatibility = identity_key(
+        {
+            key: identity[key]
+            for key in (
+                "xcode",
+                "sdk",
+                "architecture",
+                "checkout",
+                "configuration",
+                "scheme",
+            )
+        }
+    )
+    locks = [
+        ios / name
+        for name in subprocess.check_output(
+            ["git", "-C", str(ios), "ls-files", "*Package.resolved"], text=True
+        ).splitlines()
+    ]
+    tools = [
+        path
+        for path in (
+            ios / "BuildTools/Package.swift",
+            ios / "BuildTools/Package.resolved",
+            ios / "Tools/build_tool",
+            ROOT / "ci/prepare_ios_build_tools.sh",
+        )
+        if path.is_file()
+    ]
+    return {
+        "IOS_BUILD_CACHE_ID": identity_key(identity),
+        "IOS_CACHE_COMPATIBILITY": compatibility,
+        "IOS_INCREMENTAL_CACHE_ID": f"{compatibility}-{identity['ios_source_sha']}-{digest_files(locks)}",
+        "IOS_PACKAGES_CACHE_ID": digest_files(locks),
+        "IOS_TOOLS_CACHE_ID": f"{compatibility}-{digest_files(tools)}",
+    }
 
 
 def gh_json(endpoint: str) -> dict:
@@ -105,6 +145,7 @@ def validate_products(ios: Path, expected: dict) -> None:
 
 
 def restore(ios: Path, identity: dict) -> bool:
+    started = time.monotonic()
     repository = os.environ["GITHUB_REPOSITORY"]
     name = f"ios-native-{identity_key(identity)}"
     try:
@@ -146,6 +187,7 @@ def restore(ios: Path, identity: dict) -> bool:
     print(
         f"Restored compiled iOS artifact {artifact['id']} from run {artifact['workflow_run']['id']}"
     )
+    print(f"Native artifact restore took {time.monotonic() - started:.1f}s")
     return True
 
 
@@ -156,15 +198,87 @@ def package(ios: Path, identity: dict) -> None:
     with tarfile.open(ios / "native-products.tar", "w") as packed:
         packed.add(bundle / "identity.json", arcname="identity.json")
         packed.add(bundle / "Build/Products", arcname="Build/Products")
+    print(
+        f"Native product archive: {(ios / 'native-products.tar').stat().st_size / 1024**2:.1f} MiB"
+    )
+
+
+def prune_artifacts(repository: str, keep: int = 2) -> None:
+    """Retain two reproducible native builds, never acceptance evidence."""
+    candidates = []
+    for page in range(1, 11):
+        artifacts = gh_json(
+            f"repos/{repository}/actions/artifacts?per_page=100&page={page}"
+        )["artifacts"]
+        candidates.extend(
+            artifact
+            for artifact in artifacts
+            if re.fullmatch(r"ios-native-[a-f0-9]{64}", artifact["name"])
+            and not artifact["expired"]
+        )
+        if len(artifacts) < 100:
+            break
+    candidates.sort(key=lambda artifact: artifact["created_at"], reverse=True)
+    for artifact in candidates[keep:]:
+        run = gh_json(
+            f"repos/{repository}/actions/runs/{artifact['workflow_run']['id']}"
+        )
+        if run["path"] != WORKFLOW or run["head_repository"]["full_name"] != repository:
+            continue
+        subprocess.run(
+            [
+                "gh",
+                "api",
+                "--method",
+                "DELETE",
+                f"repos/{repository}/actions/artifacts/{artifact['id']}",
+            ],
+            check=True,
+        )
+
+
+def report_timings(repository: str, run_id: str) -> None:
+    jobs = gh_json(
+        f"repos/{repository}/actions/runs/{run_id}/jobs?filter=latest&per_page=100"
+    )["jobs"]
+    rows = []
+    for job in jobs:
+        for step in job.get("steps", []):
+            if step.get("started_at") and step.get("completed_at"):
+                elapsed = (
+                    datetime.fromisoformat(step["completed_at"])
+                    - datetime.fromisoformat(step["started_at"])
+                ).total_seconds()
+                rows.append(
+                    {
+                        "step": step["name"],
+                        "seconds": elapsed,
+                        "conclusion": step["conclusion"],
+                    }
+                )
+    Path("ios-companion-timings.json").write_text(json.dumps(rows, indent=2) + "\n")
+    with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as stream:
+        stream.write("\n| Step | Seconds | Result |\n|---|---:|---|\n")
+        for row in rows:
+            stream.write(
+                f"| {row['step']} | {row['seconds']:.0f} | {row['conclusion']} |\n"
+            )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "command", choices=["identity", "restore", "package", "validate"]
+        "command",
+        choices=["identity", "restore", "package", "validate", "prune", "report"],
     )
     parser.add_argument("checkout", type=Path)
     args = parser.parse_args()
+    if args.command == "prune":
+        prune_artifacts(os.environ["GITHUB_REPOSITORY"])
+        return
+    if args.command == "report":
+        report_timings(os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_RUN_ID"])
+        return
     identity = build_identity(args.checkout)
     if args.command != "identity" and os.environ.get(
         "IOS_BUILD_CACHE_ID"
@@ -173,24 +287,9 @@ def main() -> None:
     if args.command == "identity":
         key = identity_key(identity)
         # Dependencies do not change when only the UI journey changes.
-        gems = digest_files([args.checkout / "Gemfile", args.checkout / "Gemfile.lock"])
-        tools = digest_files(
-            [
-                path
-                for path in (
-                    args.checkout / "BuildTools/Package.swift",
-                    args.checkout / "BuildTools/Package.resolved",
-                    args.checkout / "Tools/build_tool",
-                    ROOT / "ci/prepare_ios_build_tools.sh",
-                )
-                if path.is_file()
-            ]
-        )
         with open(os.environ["GITHUB_ENV"], "a") as stream:
-            stream.write(f"IOS_BUILD_CACHE_ID={key}\nIOS_GEMS_CACHE_ID={gems}\n")
-            stream.write(
-                f"IOS_TOOLS_CACHE_ID={identity['xcode'].splitlines()[-1].replace(' ', '-')}-{identity['architecture']}-{tools}\n"
-            )
+            for name, value in cache_identities(args.checkout, identity).items():
+                stream.write(f"{name}={value}\n")
         print(f"Native identity: {key}")
     elif args.command == "restore":
         hit = restore(args.checkout, identity)

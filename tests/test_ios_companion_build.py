@@ -156,10 +156,45 @@ def test_native_identity_changes_with_toolchain_and_patch_not_candidate(
 
     monkeypatch.setattr(native.subprocess, "check_output", command)
     first = native.identity_key(native.build_identity(ios))
+    before_cache = native.cache_identities(ios, native.build_identity(ios))
     monkeypatch.setenv("GITHUB_SHA", "candidate-b")
+    assert native.identity_key(native.build_identity(ios)) == first
+    (root / native.WORKFLOW).write_text("changed only the evidence upload")
     assert native.identity_key(native.build_identity(ios)) == first
     xcode = "Xcode 27.0\nBuild version 27A2"
     assert native.identity_key(native.build_identity(ios)) != first
     xcode = "Xcode 27.0\nBuild version 27A1"
     (root / "ci/patch_ios_companion_e2e.py").write_text("new journey")
     assert native.identity_key(native.build_identity(ios)) != first
+    after_cache = native.cache_identities(ios, native.build_identity(ios))
+    assert (
+        after_cache["IOS_CACHE_COMPATIBILITY"]
+        == before_cache["IOS_CACHE_COMPATIBILITY"]
+    )
+    assert (
+        after_cache["IOS_INCREMENTAL_CACHE_ID"]
+        == before_cache["IOS_INCREMENTAL_CACHE_ID"]
+    )
+
+
+def test_incremental_prefix_never_crosses_toolchain_or_architecture(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(native.subprocess, "check_output", lambda *a, **kw: "")
+    identity = {
+        "xcode": "27A",
+        "sdk": "27.0",
+        "architecture": "arm64",
+        "checkout": "/ios",
+        "configuration": "Debug",
+        "scheme": "Tests-UI",
+        "ios_source_sha": "source-a",
+    }
+    first = native.cache_identities(tmp_path, identity)
+    identity["ios_source_sha"] = "source-b"
+    second = native.cache_identities(tmp_path, identity)
+    assert first["IOS_CACHE_COMPATIBILITY"] == second["IOS_CACHE_COMPATIBILITY"]
+    assert first["IOS_INCREMENTAL_CACHE_ID"] != second["IOS_INCREMENTAL_CACHE_ID"]
+    for field, value in (("xcode", "27B"), ("architecture", "x86_64")):
+        changed = native.cache_identities(tmp_path, {**identity, field: value})
+        assert changed["IOS_CACHE_COMPATIBILITY"] != second["IOS_CACHE_COMPATIBILITY"]

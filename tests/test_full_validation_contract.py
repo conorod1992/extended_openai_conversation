@@ -15,6 +15,7 @@ DEV_SHA = "a" * 40
 
 
 def _driver(monkeypatch, tmp_path):
+    monkeypatch.delenv("FULL_VALIDATION_EXPLICIT_SEED", raising=False)
     for key, value in {
         "GH_API_URL": "https://api.github.com",
         "GH_REPOSITORY": "owner/repository",
@@ -380,3 +381,41 @@ def test_replay_pin_is_passed_to_resolver(monkeypatch, tmp_path):
     with pytest.raises(ValueError, match="stop before dispatch"):
         driver.main()
     driver.resolve_ha_dev_sha.assert_called_once_with(DEV_SHA)
+
+
+def test_duplicate_pinned_cohort_does_not_dispatch_or_certify(monkeypatch, tmp_path):
+    driver = _driver(monkeypatch, tmp_path)
+    monkeypatch.setenv("FULL_VALIDATION_EXPLICIT_SEED", "42")
+    monkeypatch.setenv("FULL_VALIDATION_HA_DEV_SHA", DEV_SHA)
+    earlier = {
+        "id": 100,
+        "head_sha": driver.TARGET_SHA,
+        "display_title": f"Full validation · full · seed=42 · dev={DEV_SHA}",
+        "status": "in_progress",
+        "html_url": "https://example.test/earlier",
+    }
+    api = Mock(return_value={"workflow_runs": [earlier]})
+    monkeypatch.setattr(driver, "api", api)
+    dispatched = Mock()
+    monkeypatch.setattr(driver, "dispatch", dispatched)
+    monkeypatch.chdir(tmp_path)
+    assert driver.main() == 1
+    dispatched.assert_not_called()
+    assert api.call_count == 1
+    cohort = json.loads(Path("full-validation-cohort.json").read_text())
+    assert cohort["passed"] is False
+    assert cohort["duplicate_of"] == 100
+    assert "earlier" in driver.SUMMARY_PATH.read_text()
+
+
+def test_unseeded_or_unpinned_cohorts_are_not_treated_as_duplicates(
+    monkeypatch, tmp_path
+):
+    driver = _driver(monkeypatch, tmp_path)
+    api = Mock()
+    monkeypatch.setattr(driver, "api", api)
+    assert driver.duplicate_cohort() is None
+    monkeypatch.setenv("FULL_VALIDATION_EXPLICIT_SEED", "42")
+    monkeypatch.delenv("FULL_VALIDATION_HA_DEV_SHA", raising=False)
+    assert driver.duplicate_cohort() is None
+    api.assert_not_called()

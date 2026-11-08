@@ -3,6 +3,11 @@ name: iOS Companion app acceptance
 # Warm default-branch caches for immutable Full validation candidate branches.
 on:
   workflow_dispatch:
+    inputs:
+      warm_only:
+        description: Prepare native artifacts without issuing acceptance evidence
+        type: boolean
+        default: false
   push:
     branches: [develop]
     paths:
@@ -10,18 +15,21 @@ on:
       - ci/patch_ios_companion_e2e.py
       - ci/prepare_ios_build_tools.sh
       - ci/ios_companion_build.py
+      - ci/ios_companion_runtime.py
   schedule:
     - cron: "35 5 * * 1,4"
+    - cron: "35 5 * * 0,2,3,5,6"
 
 permissions:
   contents: read
-  actions: read
+  actions: write
 
+# Queue before allocating a macOS runner. A completed artifact is visible before
+# the next candidate starts, preventing duplicate cold builds across branches.
 concurrency:
-  group: ios-companion-${{ github.ref }}
-  # Finish native builds and save their branch-scoped cache before the next
-  # immutable candidate starts. Cancelling a cold build repeatedly loses it.
+  group: ios-companion-native-xcode27
   cancel-in-progress: false
+  queue: max
 
 jobs:
   companion:
@@ -38,7 +46,7 @@ jobs:
       FASTLANE_SKIP_UPDATE_CHECK: "true"
       FASTLANE_XCODE_LIST_TIMEOUT: "80"
       FASTLANE_XCODEBUILD_SETTINGS_TIMEOUT: "80"
-      BUNDLE_PATH: "vendor/bundle"
+      IOS_WARM_ONLY: ${{ inputs.warm_only || github.event.schedule == '35 5 * * 0,2,3,5,6' }}
 
     steps:
       - name: Checkout exact EOAI candidate
@@ -52,17 +60,46 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Install stable Home Assistant runtime
+      - name: Start fresh iOS simulator in background
+        if: env.IOS_WARM_ONLY != 'true'
+        run: python ci/ios_companion_runtime.py simulator-start
+
+      - name: Resolve stable Home Assistant version
+        id: ha-version
+        if: env.IOS_WARM_ONLY != 'true'
         run: |
-          set -euo pipefail
-          python -m pip install --upgrade pip
           VERSION="$(curl -fsSL https://pypi.org/pypi/homeassistant/json | python -c 'import json,sys; print(json.load(sys.stdin)["info"]["version"])')"
-          pip install "homeassistant==$VERSION"
-          python ci/install_ha_dependencies.py --manifest custom_components/extended_openai_conversation_responses/manifest.json
-          python -m pip check
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "EOAI_EXPECTED_HA_VERSION=$VERSION" >> "$GITHUB_ENV"
 
+      - name: Restore Python wheel cache
+        id: ha-pip-cache
+        if: env.IOS_WARM_ONLY != 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/Library/Caches/pip
+          key: ios-ha-pip-v1-${{ runner.os }}-${{ runner.arch }}-py314-${{ steps.ha-version.outputs.version }}-${{ hashFiles('custom_components/extended_openai_conversation_responses/manifest.json', 'ci/install_ha_dependencies.py') }}
+          restore-keys: |
+            ios-ha-pip-v1-${{ runner.os }}-${{ runner.arch }}-py314-${{ steps.ha-version.outputs.version }}-
+
+      - name: Install stable Home Assistant runtime
+        id: ha-install
+        if: env.IOS_WARM_ONLY != 'true'
+        run: |
+          set -euo pipefail
+          python -m pip install "homeassistant==$EOAI_EXPECTED_HA_VERSION"
+          python ci/install_ha_dependencies.py --manifest custom_components/extended_openai_conversation_responses/manifest.json
+          python -m pip check
+
+      - name: Save Python wheel cache
+        if: github.ref_name == github.event.repository.default_branch && steps.ha-install.outcome == 'success' && steps.ha-pip-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/Library/Caches/pip
+          key: ios-ha-pip-v1-${{ runner.os }}-${{ runner.arch }}-py314-${{ steps.ha-version.outputs.version }}-${{ hashFiles('custom_components/extended_openai_conversation_responses/manifest.json', 'ci/install_ha_dependencies.py') }}
+
       - name: Start disposable Home Assistant
+        if: env.IOS_WARM_ONLY != 'true'
         run: |
           set -euo pipefail
           READY="$RUNNER_TEMP/companion-ready.json"
@@ -73,24 +110,14 @@ jobs:
             --ready "$READY" \
             > "$RUNNER_TEMP/companion-ha.log" 2>&1 &
           echo $! > "$RUNNER_TEMP/companion-ha.pid"
-          for _ in {1..180}; do
-            if [[ -s "$READY" ]] && curl -fsS http://127.0.0.1:8123/ >/dev/null; then
-              exit 0
-            fi
-            if ! kill -0 "$(cat "$RUNNER_TEMP/companion-ha.pid")" 2>/dev/null; then
-              cat "$RUNNER_TEMP/companion-ha.log"
-              exit 1
-            fi
-            sleep 1
-          done
-          cat "$RUNNER_TEMP/companion-ha.log"
-          exit 1
 
       - name: Clone pinned Home Assistant iOS source
         run: |
           set -euo pipefail
           IOS_DIR="$RUNNER_TEMP/home-assistant-ios"
-          git clone --filter=blob:none "$IOS_SOURCE_REPOSITORY" "$IOS_DIR"
+          git init "$IOS_DIR"
+          git -C "$IOS_DIR" remote add origin "$IOS_SOURCE_REPOSITORY"
+          git -C "$IOS_DIR" fetch --depth 1 origin "$IOS_SOURCE_SHA"
           git -C "$IOS_DIR" checkout --detach "$IOS_SOURCE_SHA"
           test "$(git -C "$IOS_DIR" rev-parse HEAD)" = "$IOS_SOURCE_SHA"
           echo "IOS_DIR=$IOS_DIR" >> "$GITHUB_ENV"
@@ -113,8 +140,12 @@ jobs:
         if: steps.ios-native.outputs.hit != 'true'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ env.IOS_DIR }}/eoai-native
-          key: ios-e2e-deriveddata-v3-${{ runner.os }}-${{ env.IOS_BUILD_CACHE_ID }}
+          path: |
+            ${{ env.IOS_DIR }}/eoai-native/Build
+            ${{ env.IOS_DIR }}/eoai-native/ModuleCache.noindex
+          key: ios-e2e-deriveddata-v4-${{ runner.os }}-${{ env.IOS_INCREMENTAL_CACHE_ID }}
+          restore-keys: |
+            ios-e2e-deriveddata-v4-${{ runner.os }}-${{ env.IOS_CACHE_COMPATIBILITY }}-
 
       - name: Patch pinned iOS E2E journey for EOAI
         run: |
@@ -131,43 +162,45 @@ jobs:
           path: |
             ${{ env.IOS_DIR }}/BuildTools/.build
             ${{ env.IOS_DIR }}/.build
-          key: ios-e2e-buildtools-v2-${{ runner.os }}-${{ env.IOS_TOOLS_CACHE_ID }}
+          key: ios-e2e-buildtools-v3-${{ runner.os }}-${{ env.IOS_TOOLS_CACHE_ID }}
+          restore-keys: |
+            ios-e2e-buildtools-v3-${{ runner.os }}-${{ env.IOS_CACHE_COMPATIBILITY }}-
 
-      - name: Set up Ruby 4.0.7
+      # Bundler's small, ABI-aware cache is managed by setup-ruby. Large native
+      # and package caches below are written only by the default branch.
+      - name: Set up Ruby 4.0.7 and cached gems
         uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1
         with:
           ruby-version: "4.0.7"
+          working-directory: ${{ env.IOS_DIR }}
+          bundler-cache: true
 
-      - name: Restore Bundler cache
-        id: ios-gems-cache
+      - name: Restore Swift package downloads
+        id: ios-packages-cache
+        if: steps.ios-native.outputs.hit != 'true'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ env.IOS_DIR }}/vendor/bundle
-          key: ios-e2e-gems-v3-${{ runner.os }}-${{ runner.arch }}-${{ env.IOS_GEMS_CACHE_ID }}-ruby-4.0.7
+          path: ${{ env.IOS_DIR }}/eoai-source-packages
+          key: ios-spm-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.IOS_PACKAGES_CACHE_ID }}
+          restore-keys: |
+            ios-spm-v1-${{ runner.os }}-${{ runner.arch }}-
 
-      - name: Install pinned iOS build dependencies
+      - name: Resolve pinned Swift packages
+        id: ios-packages-resolve
+        if: steps.ios-native.outputs.hit != 'true'
         working-directory: ${{ env.IOS_DIR }}
         run: |
-          set -euo pipefail
-          bundle config set path vendor/bundle
-          if [[ "${{ steps.ios-gems-cache.outputs.cache-hit }}" != "true" ]]; then
-            bundle install --jobs 4 --retry 3
-          fi
-          if [[ "${{ steps.ios-native.outputs.hit }}" != "true" ]]; then
-            xcodebuild -resolvePackageDependencies \
-              -project HomeAssistant.xcodeproj \
-              -scheme Tests-UI \
-              -onlyUsePackageVersionsFromResolvedFile
-          fi
+          xcodebuild -resolvePackageDependencies \
+            -project HomeAssistant.xcodeproj -scheme Tests-UI \
+            -clonedSourcePackagesDirPath "$IOS_DIR/eoai-source-packages" \
+            -onlyUsePackageVersionsFromResolvedFile
 
-      # Save completed dependencies before a slow build/test can fail. Only the
-      # default branch writes caches: all candidate branches can restore these.
-      - name: Save Bundler cache
-        if: github.ref_name == github.event.repository.default_branch && steps.ios-gems-cache.outputs.cache-hit != 'true'
+      - name: Save Swift package downloads
+        if: github.ref_name == github.event.repository.default_branch && steps.ios-packages-resolve.outcome == 'success' && steps.ios-packages-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ env.IOS_DIR }}/vendor/bundle
-          key: ios-e2e-gems-v3-${{ runner.os }}-${{ runner.arch }}-${{ env.IOS_GEMS_CACHE_ID }}-ruby-4.0.7
+          path: ${{ env.IOS_DIR }}/eoai-source-packages
+          key: ios-spm-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.IOS_PACKAGES_CACHE_ID }}
 
       - name: Prepare pinned iOS host build tools
         id: ios-buildtools-prepare
@@ -182,7 +215,7 @@ jobs:
           path: |
             ${{ env.IOS_DIR }}/BuildTools/.build
             ${{ env.IOS_DIR }}/.build
-          key: ios-e2e-buildtools-v2-${{ runner.os }}-${{ env.IOS_TOOLS_CACHE_ID }}
+          key: ios-e2e-buildtools-v3-${{ runner.os }}-${{ env.IOS_TOOLS_CACHE_ID }}
 
       - name: Build pinned iOS app and test runner once
         id: ios-native-build
@@ -201,29 +234,43 @@ jobs:
           name: ios-native-${{ env.IOS_BUILD_CACHE_ID }}
           path: ${{ env.IOS_DIR }}/native-products.tar
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7
           overwrite: true
 
       - name: Save iOS DerivedData cache
         if: github.ref_name == github.event.repository.default_branch && steps.ios-native-build.outcome == 'success' && steps.ios-deriveddata-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ env.IOS_DIR }}/eoai-native
-          key: ios-e2e-deriveddata-v3-${{ runner.os }}-${{ env.IOS_BUILD_CACHE_ID }}
+          path: |
+            ${{ env.IOS_DIR }}/eoai-native/Build
+            ${{ env.IOS_DIR }}/eoai-native/ModuleCache.noindex
+          key: ios-e2e-deriveddata-v4-${{ runner.os }}-${{ env.IOS_INCREMENTAL_CACHE_ID }}
+
+      - name: Retain two reusable native build variants
+        if: steps.ios-native-build.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python ci/ios_companion_build.py prune "$IOS_DIR"
 
       - name: Validate native identity and report reuse
         env:
           NATIVE_REUSED: ${{ steps.ios-native.outputs.hit }}
-          GEMS_REUSED: ${{ steps.ios-gems-cache.outputs.cache-hit }}
         run: |
           python ci/ios_companion_build.py validate "$IOS_DIR"
           {
             echo "Native build identity: $IOS_BUILD_CACHE_ID"
             echo "Compiled artifact reused: $NATIVE_REUSED"
-            echo "Bundler cache hit: $GEMS_REUSED"
+            echo "DerivedData exact hit: ${{ steps.ios-deriveddata-cache.outputs.cache-hit }}"
+            echo "Swift package exact hit: ${{ steps.ios-packages-cache.outputs.cache-hit }}"
+            du -sh "$IOS_DIR/eoai-native/Build/Products"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Wait for fresh simulator and Home Assistant
+        if: env.IOS_WARM_ONLY != 'true'
+        run: python ci/ios_companion_runtime.py ready
+
       - name: Run genuine iOS Companion journey
+        if: env.IOS_WARM_ONLY != 'true'
         working-directory: ${{ env.IOS_DIR }}
         run: |
           set -euo pipefail
@@ -233,7 +280,7 @@ jobs:
             password:"$E2E_HOME_ASSISTANT_PASSWORD"
 
       - name: Record source-bound iOS Companion evidence
-        if: success()
+        if: success() && env.IOS_WARM_ONLY != 'true'
         env:
           CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
@@ -283,7 +330,7 @@ jobs:
           PY
 
       - name: Export iOS screen recordings
-        if: always()
+        if: always() && env.IOS_WARM_ONLY != 'true'
         run: |
           set -euo pipefail
           XCRESULT="$IOS_DIR/fastlane/test_output/e2e/Tests-UI.xcresult"
@@ -294,14 +341,14 @@ jobs:
           fi
 
       - name: Stop disposable Home Assistant
-        if: always()
+        if: always() && env.IOS_WARM_ONLY != 'true'
         run: |
           if [[ -f "$RUNNER_TEMP/companion-ha.pid" ]]; then
             kill "$(cat "$RUNNER_TEMP/companion-ha.pid")" 2>/dev/null || true
           fi
 
       - name: Upload iOS Companion evidence
-        if: always()
+        if: always() && env.IOS_WARM_ONLY != 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ios-companion-app-evidence
@@ -317,8 +364,24 @@ jobs:
           include-hidden-files: true
           path: |
             ${{ runner.temp }}/companion-ha.log
+            ${{ runner.temp }}/ios-simulator-boot.log
             ${{ runner.temp }}/ios-companion-recording/
             ${{ env.IOS_DIR }}/fastlane/test_output/e2e/
             ~/Library/Logs/scan/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Report completed step timings
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python ci/ios_companion_build.py report "${IOS_DIR:-$RUNNER_TEMP}"
+
+      - name: Upload iOS timing measurements
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ios-companion-timings
+          path: ios-companion-timings.json
           if-no-files-found: warn
           retention-days: 14

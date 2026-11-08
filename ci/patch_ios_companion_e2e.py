@@ -193,11 +193,17 @@ def main() -> None:
     boot_anchor = '  sh("xcrun simctl erase #{udid}")\n'
     if boot_anchor not in e2e_lane:
         raise SystemExit("Pinned iOS E2E lane no longer has the expected simulator erase")
-    boot_replacement = boot_anchor + r'''  # Finish first boot before compilation and XCTest's app launch handshake.
-  sh("xcrun simctl boot #{udid}")
-  sh("python3 -c \"import subprocess; subprocess.run(['xcrun', 'simctl', 'bootstatus', '#{udid}', '-b'], check=True, timeout=300)\"")
-'''
-    lane_text = earlier_lanes + lane_marker + patched_e2e.replace(boot_anchor, boot_replacement, 1)
+    shutdown_anchor = '  sh("xcrun simctl shutdown #{udid} || true")\n'
+    if shutdown_anchor not in patched_e2e:
+        raise SystemExit("Pinned iOS E2E lane no longer has the expected simulator shutdown")
+    # The workflow erases and boots once, before preparation/compilation. Never
+    # erase that ready simulator a second time here.
+    patched_e2e = patched_e2e.replace(
+        "  udid = newest_simulator(model, 'iOS')",
+        "  udid = ENV.fetch('IOS_SIMULATOR_UDID')",
+        1,
+    ).replace(shutdown_anchor, "", 1).replace(boot_anchor, "", 1)
+    lane_text = earlier_lanes + lane_marker + patched_e2e
     # A separate build-for-testing avoids the upstream lane's `build test`
     # double compilation and makes Products reusable without DerivedData state.
     lane_text += r'''
@@ -212,7 +218,8 @@ lane :eoai_build do
     build_for_testing: true,
     skip_package_dependencies_resolution: true,
     skip_detect_devices: true,
-    xcargs: 'COMPILER_INDEX_STORE_ENABLE=NO',
+    cloned_source_packages_path: File.join(ENV.fetch('IOS_DIR'), 'eoai-source-packages'),
+    xcargs: 'COMPILER_INDEX_STORE_ENABLE=NO -onlyUsePackageVersionsFromResolvedFile',
     destination: "platform=iOS Simulator,id=#{newest_simulator('iPhone 17', 'iOS')}"
   )
 end

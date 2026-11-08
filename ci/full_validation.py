@@ -160,7 +160,9 @@ def wait_for_workflows(launched: list[dict]) -> list[tuple[dict, dict]]:
     return results
 
 
-def programme_inputs(results: list[tuple[dict, dict]], ha_dev_sha: str) -> dict[str, str]:
+def programme_inputs(
+    results: list[tuple[dict, dict]], ha_dev_sha: str
+) -> dict[str, str]:
     """Use the HA version actually certified by this cohort, never a new lookup."""
     try:
         from ci.release_certification import GitHubActions
@@ -213,7 +215,62 @@ def programme_inputs(results: list[tuple[dict, dict]], ha_dev_sha: str) -> dict[
     }
 
 
+def duplicate_cohort() -> dict | None:
+    """Do not dispatch the same explicitly pinned stress cohort twice.
+
+    Unseeded cohorts intentionally sample new races, and an unresolved dev ref
+    can move: neither is eligible for deduplication.
+    """
+    seed = os.environ.get("FULL_VALIDATION_EXPLICIT_SEED", "")
+    dev = os.environ.get("FULL_VALIDATION_HA_DEV_SHA", "")
+    if not seed or not dev:
+        return None
+    title = f"Full validation · {MODE} · seed={seed} · dev={dev}"
+    query = urlencode(
+        {"head_sha": TARGET_SHA, "event": "workflow_dispatch", "per_page": 100}
+    )
+    runs = api("GET", f"actions/workflows/full-validation.yml/runs?{query}")[
+        "workflow_runs"
+    ]
+    return next(
+        (
+            run
+            for run in runs
+            if int(run["id"]) < int(RUN_ID)
+            and run.get("head_sha") == TARGET_SHA
+            and run.get("display_title") == title
+            and run.get("status")
+            in {"queued", "pending", "in_progress", "waiting", "requested"}
+        ),
+        None,
+    )
+
+
 def main() -> int:
+    duplicate = duplicate_cohort()
+    if duplicate:
+        url = duplicate["html_url"]
+        SUMMARY_PATH.write_text(
+            f"An identical pinned cohort is already running: [follow it here]({url}).\nNo duplicate test workflows were dispatched.\n",
+            encoding="utf-8",
+        )
+        Path("full-validation-cohort.json").write_text(
+            json.dumps(
+                {
+                    "schema": 1,
+                    "passed": False,
+                    "candidate_sha": TARGET_SHA,
+                    "run_id": RUN_ID,
+                    "duplicate_of": duplicate["id"],
+                    "runs": [],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        # This run provides no independent certification evidence.
+        print(f"Identical cohort already running: {url}", flush=True)
+        return 1
     workflows = tuple(
         (workflow, dict(inputs))
         for workflow, inputs in TEST_WORKFLOWS
@@ -244,11 +301,15 @@ def main() -> int:
                 f"Could not dispatch {workflow}: {error}", file=sys.stderr, flush=True
             )
     results = wait_for_workflows(launched)
-    if MODE == "full" and not launch_errors and all(
-        run.get("conclusion") == "success" for _, run in results
+    if (
+        MODE == "full"
+        and not launch_errors
+        and all(run.get("conclusion") == "success" for _, run in results)
     ):
         try:
-            certification = dispatch(CERTIFICATION_WORKFLOW, programme_inputs(results, ha_dev_sha))
+            certification = dispatch(
+                CERTIFICATION_WORKFLOW, programme_inputs(results, ha_dev_sha)
+            )
             results.extend(wait_for_workflows([certification]))
         except Exception as error:
             launch_errors.append((CERTIFICATION_WORKFLOW, str(error)))
@@ -282,7 +343,10 @@ def main() -> int:
     ]
     result_by_name = {item["workflow"]: (run, item) for item, run in results}
     for workflow, _ in (*TEST_WORKFLOWS, (CERTIFICATION_WORKFLOW, {})):
-        if MODE == "quick" and workflow in {"ios-companion-app.yml", CERTIFICATION_WORKFLOW}:
+        if MODE == "quick" and workflow in {
+            "ios-companion-app.yml",
+            CERTIFICATION_WORKFLOW,
+        }:
             lines.append(f"| `{workflow}` | skipped | quick mode |")
         elif workflow in result_by_name:
             run, item = result_by_name[workflow]
@@ -299,22 +363,30 @@ def main() -> int:
     SUMMARY_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
     # Persist the exact cohort even after its temporary branch is cleaned up.
     Path("full-validation-cohort.json").write_text(
-        json.dumps({
-            "schema": 1,
-            "mode": MODE,
-            "candidate_sha": TARGET_SHA,
-            "ha_dev_sha": ha_dev_sha,
-            "stress_seed": STRESS_SEED,
-            "validation_ref": REF_NAME,
-            "run_id": RUN_ID,
-            "run_attempt": RUN_ATTEMPT,
-            "passed": not failures,
-            "runs": [
-                {"workflow": item["workflow"], "run_id": item["run_id"],
-                 "run_attempt": run.get("run_attempt", 1)}
-                for item, run in results
-            ],
-        }, indent=2) + "\n", encoding="utf-8",
+        json.dumps(
+            {
+                "schema": 1,
+                "mode": MODE,
+                "candidate_sha": TARGET_SHA,
+                "ha_dev_sha": ha_dev_sha,
+                "stress_seed": STRESS_SEED,
+                "validation_ref": REF_NAME,
+                "run_id": RUN_ID,
+                "run_attempt": RUN_ATTEMPT,
+                "passed": not failures,
+                "runs": [
+                    {
+                        "workflow": item["workflow"],
+                        "run_id": item["run_id"],
+                        "run_attempt": run.get("run_attempt", 1),
+                    }
+                    for item, run in results
+                ],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
     )
     return 1 if failures else 0
 
