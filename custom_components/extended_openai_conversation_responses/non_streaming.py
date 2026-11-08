@@ -71,6 +71,9 @@ async def completed_chat_chunks(
             content=getattr(message, "content", None),
             refusal=getattr(message, "refusal", None),
             tool_calls=tool_calls,
+            # Preserve deprecated payload evidence so the shared parser can
+            # reject it explicitly. Omitting it would silently accept a call.
+            function_call=getattr(message, "function_call", None),
         )
         yield SimpleNamespace(
             choices=[SimpleNamespace(delta=delta, finish_reason=choice.finish_reason)],

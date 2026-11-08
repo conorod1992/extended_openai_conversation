@@ -164,3 +164,26 @@ async def test_completed_chat_chunks_handle_missing_tools_usage_and_empty_choice
     assert chunks[0].choices[0].finish_reason == "stop"
 
     assert await _collect(completed_chat_chunks(SimpleNamespace())) == []
+
+
+
+async def test_completed_chat_adapter_keeps_legacy_function_payload_for_rejection() -> None:
+    """A non-streaming provider must not discard legacy call evidence."""
+    legacy = SimpleNamespace(name="old_function", arguments="{}")
+    choice = SimpleNamespace(
+        message=SimpleNamespace(
+            content=None,
+            refusal=None,
+            function_call=legacy,
+            tool_calls=None,
+        ),
+        finish_reason="function_call",
+    )
+    events = await _collect(
+        completed_chat_chunks(SimpleNamespace(choices=[choice], usage=None))
+    )
+    assert len(events) == 1
+    delta = events[0].choices[0].delta
+    assert delta.function_call is legacy
+    assert delta.tool_calls == []
+    assert events[0].choices[0].finish_reason == "function_call"

@@ -52,6 +52,8 @@ def _chat_chunk(
     content: str | None = None,
     refusal: str | None = None,
     finish_reason: str | None = None,
+    tool_calls: Any = None,
+    function_call: Any = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         choices=[
@@ -59,7 +61,8 @@ def _chat_chunk(
                 delta=SimpleNamespace(
                     content=content,
                     refusal=refusal,
-                    tool_calls=None,
+                    tool_calls=tool_calls,
+                    function_call=function_call,
                 ),
                 finish_reason=finish_reason,
             )
@@ -382,3 +385,100 @@ async def test_malformed_stream_values_are_not_logged(field, caplog):
     assert "PRIVATE_STREAM_MARKER" not in "\n".join(
         logging.Formatter().format(record) for record in caplog.records
     )
+
+
+
+async def test_chat_legacy_finish_marker_forwards_complete_modern_tool_calls() -> None:
+    """A compatibility server may use the old terminal with new tool deltas."""
+    tool_delta = SimpleNamespace(
+        index=0,
+        id="call-1",
+        function=SimpleNamespace(name="do_thing", arguments='{"value":3}'),
+    )
+    stream = FakeStream(
+        [
+            _chat_chunk(tool_calls=[tool_delta]),
+            _chat_chunk(finish_reason="function_call"),
+        ]
+    )
+    deltas = [
+        delta
+        async for delta in _entity()._transform_chat_stream(
+            SimpleNamespace(), stream
+        )
+    ]
+    assert deltas[0] == {"role": "assistant"}
+    assert len(deltas) == 2
+    assert len(deltas[1]["tool_calls"]) == 1
+    call = deltas[1]["tool_calls"][0]
+    assert (call.id, call.tool_name, call.tool_args, call.external) == (
+        "call-1", "do_thing", {"value": 3}, True,
+    )
+
+
+async def test_chat_legacy_finish_marker_preserves_existing_argument_errors() -> None:
+    tool_delta = SimpleNamespace(
+        index=0,
+        id="call-1",
+        function=SimpleNamespace(name="do_thing", arguments="{invalid"),
+    )
+    stream = FakeStream(
+        [
+            _chat_chunk(tool_calls=[tool_delta]),
+            _chat_chunk(finish_reason="function_call"),
+        ]
+    )
+    with pytest.raises(HomeAssistantError, match="parse|arguments|Parse"):
+        _ = [
+            delta
+            async for delta in _entity()._transform_chat_stream(
+                SimpleNamespace(), stream
+            )
+        ]
+
+
+@pytest.mark.parametrize("terminal", [None, "function_call", "stop"])
+async def test_chat_rejects_deprecated_function_call_payload_without_dispatch(
+    terminal: str | None,
+) -> None:
+    stream = FakeStream(
+        [
+            _chat_chunk(
+                function_call=SimpleNamespace(
+                    name="legacy_action", arguments='{"value":3}'
+                ),
+                finish_reason=terminal,
+            ),
+        ]
+    )
+    emitted = []
+    with pytest.raises(ProviderStreamError, match="unsupported legacy"):
+        async for delta in _entity()._transform_chat_stream(
+            SimpleNamespace(), stream
+        ):
+            emitted.append(delta)
+    assert not any("tool_calls" in delta for delta in emitted)
+
+
+async def test_chat_rejects_mixed_legacy_and_modern_tool_payloads() -> None:
+    modern = SimpleNamespace(
+        index=0,
+        id="call-1",
+        function=SimpleNamespace(name="modern", arguments="{}"),
+    )
+    stream = FakeStream(
+        [
+            _chat_chunk(tool_calls=[modern]),
+            _chat_chunk(
+                function_call=SimpleNamespace(name="legacy", arguments="{}"),
+                finish_reason="function_call",
+            ),
+        ]
+    )
+    seen = []
+    with pytest.raises(ProviderStreamError, match="unsupported legacy"):
+        async for delta in _entity()._transform_chat_stream(
+            SimpleNamespace(), stream
+        ):
+            seen.append(delta)
+    assert seen == [{"role": "assistant"}]

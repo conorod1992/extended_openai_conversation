@@ -1980,6 +1980,17 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 if refusal_value:
                     yield {"content": refusal_value}
 
+            # The deprecated delta.function_call format has no externally
+            # supplied call ID and cannot use the current result/history/replay
+            # protocol. Reject it explicitly instead of accepting a terminal
+            # marker while silently discarding the requested action.
+            if getattr(delta, "function_call", None) is not None:
+                await async_recover_trailing_usage(result, request_usage)
+                raise ProviderStreamError(
+                    "Provider returned unsupported legacy Chat Completions function_call payload",
+                    error_type="unsupported_function_call",
+                )
+
             if delta.tool_calls:
                 for tool_call_delta in delta.tool_calls:
                     idx = tool_call_delta.index
@@ -2007,7 +2018,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                 tool_call_delta.function.arguments
                             )
 
-            if current_tool_calls and (finish_reason in {"tool_calls", "stop"}):
+            if current_tool_calls and finish_reason in {
+                "tool_calls",
+                "stop",
+                "function_call",
+            }:
                 # Yield all accumulated tool calls (marked as external since we handle them ourselves)
                 tool_calls_list = []
                 for idx in sorted(current_tool_calls.keys()):
