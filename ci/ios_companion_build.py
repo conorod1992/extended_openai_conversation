@@ -102,7 +102,22 @@ def cache_identities(ios: Path, identity: dict) -> dict[str, str]:
 
 
 def gh_json(endpoint: str) -> dict:
-    return json.loads(subprocess.check_output(["gh", "api", endpoint], text=True))
+    """Retry bounded, read-only requests when the API/CLI returns a bad response."""
+    for attempt in range(3):
+        try:
+            return json.loads(
+                subprocess.check_output(["gh", "api", endpoint], text=True, timeout=60)
+            )
+        except (
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+            json.JSONDecodeError,
+        ):
+            if attempt == 2:
+                raise
+            print(f"::warning::GitHub API read failed; retrying ({attempt + 1}/2)")
+            time.sleep(2 ** (attempt + 1))
+    raise AssertionError("unreachable")
 
 
 def find_artifact(repository: str, name: str) -> dict | None:
@@ -150,13 +165,23 @@ def restore(ios: Path, identity: dict) -> bool:
     name = f"ios-native-{identity_key(identity)}"
     try:
         artifact = find_artifact(repository, name)
-    except subprocess.CalledProcessError:
+    except (
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+        json.JSONDecodeError,
+    ):
+        if os.environ.get("IOS_REQUIRE_NATIVE_ARTIFACT") == "true":
+            raise
         # An unavailable artifact service must not suppress the cold build/test.
         print(
             "::warning::Native artifact lookup unavailable; building from pinned source"
         )
         return False
     if artifact is None:
+        if os.environ.get("IOS_REQUIRE_NATIVE_ARTIFACT") == "true":
+            raise RuntimeError(
+                "Required native artifact unavailable; refusing a cold build"
+            )
         print("No matching native artifact; building from pinned source")
         return False
     with tempfile.TemporaryDirectory() as scratch:

@@ -8,6 +8,10 @@ on:
         description: Prepare native artifacts without issuing acceptance evidence
         type: boolean
         default: false
+      require_native_artifact:
+        description: Fail rather than compile when a reusable native artifact is unavailable
+        type: boolean
+        default: false
   push:
     branches: [develop]
     paths:
@@ -47,6 +51,7 @@ jobs:
       FASTLANE_XCODE_LIST_TIMEOUT: "80"
       FASTLANE_XCODEBUILD_SETTINGS_TIMEOUT: "80"
       IOS_WARM_ONLY: ${{ inputs.warm_only || github.event.schedule == '35 5 * * 0,2,3,5,6' }}
+      IOS_REQUIRE_NATIVE_ARTIFACT: ${{ inputs.require_native_artifact || false }}
 
     steps:
       - name: Checkout exact EOAI candidate
@@ -246,12 +251,6 @@ jobs:
             ${{ env.IOS_DIR }}/eoai-native/ModuleCache.noindex
           key: ios-e2e-deriveddata-v4-${{ runner.os }}-${{ env.IOS_INCREMENTAL_CACHE_ID }}
 
-      - name: Retain two reusable native build variants
-        if: steps.ios-native-build.outcome == 'success'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python ci/ios_companion_build.py prune "$IOS_DIR"
-
       - name: Validate native identity and report reuse
         env:
           NATIVE_REUSED: ${{ steps.ios-native.outputs.hit }}
@@ -288,6 +287,7 @@ jobs:
             password:"$E2E_HOME_ASSISTANT_PASSWORD"
 
       - name: Record source-bound iOS Companion evidence
+        id: ios-evidence
         if: success() && env.IOS_WARM_ONLY != 'true'
         env:
           CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -356,7 +356,7 @@ jobs:
           fi
 
       - name: Upload iOS Companion evidence
-        if: always() && env.IOS_WARM_ONLY != 'true'
+        if: always() && steps.ios-evidence.outcome == 'success'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ios-companion-app-evidence
@@ -379,8 +379,17 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      # Housekeeping must never prevent the real journey or evidence upload.
+      - name: Retain two reusable native build variants
+        if: always() && steps.ios-native-build.outcome == 'success'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python ci/ios_companion_build.py prune "$IOS_DIR"
+
       - name: Report completed step timings
         if: always()
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: python ci/ios_companion_build.py report "${IOS_DIR:-$RUNNER_TEMP}"

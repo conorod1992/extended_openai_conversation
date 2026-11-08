@@ -61,6 +61,11 @@ a new identity and causes a cold build. The step summary and timing artifact
 report completed step durations, reuse and cache hits. Fresh certification evidence records the candidate SHA, native identity
 and reused artifact ID (when applicable), and still requires the expected agent
 title to exist in this run's newly created Home Assistant storage.
+Retention and timing reports run after the journey and evidence upload and are
+non-blocking maintenance. Read-only GitHub API calls have bounded retries for
+truncated responses and transport failures. A failed journey still fails the job;
+evidence upload runs only after successful evidence generation and still treats
+missing expected files as an error.
 
 ## Startup and duplicate work
 
@@ -92,3 +97,6 @@ dispatch it on a different branch at the same commit. The second run must report
 preparation, run the full UI test, and generate fresh source-bound evidence.
 Compare the two job step timings to measure savings. Do not reuse a certification
 artifact as evidence for another EOAI candidate.
+For a validation retry after successful native publication, set
+`require_native_artifact: true` to refuse a cold compilation if lookup or reuse
+is unavailable. This does not skip any acceptance tests.

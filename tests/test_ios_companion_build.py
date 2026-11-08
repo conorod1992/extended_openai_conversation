@@ -109,6 +109,21 @@ def test_lookup_failure_falls_back_to_a_cold_build(tmp_path, monkeypatch):
     assert not native.restore(tmp_path, {"sdk": "27"})
 
 
+def test_artifact_required_retry_never_falls_back_to_compilation(tmp_path, monkeypatch):
+    monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+    monkeypatch.setenv("IOS_REQUIRE_NATIVE_ARTIFACT", "true")
+    monkeypatch.setattr(native, "find_artifact", lambda *_: None)
+    with pytest.raises(RuntimeError, match="refusing a cold build"):
+        native.restore(tmp_path, {})
+
+    def unavailable(*_):
+        raise subprocess.CalledProcessError(1, "gh")
+
+    monkeypatch.setattr(native, "find_artifact", unavailable)
+    with pytest.raises(subprocess.CalledProcessError):
+        native.restore(tmp_path, {})
+
+
 def test_restore_rejects_tar_path_escape(tmp_path, monkeypatch):
     archive = io.BytesIO()
     with tarfile.open(fileobj=archive, mode="w") as packed:

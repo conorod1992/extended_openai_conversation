@@ -1,9 +1,37 @@
 """Retention must never remove source-bound acceptance evidence."""
 
 import json
+import subprocess
 from unittest.mock import Mock
 
+import pytest
+
 from ci import ios_companion_build as native
+
+
+def test_api_reads_recover_from_truncated_responses_and_cli_failures(monkeypatch):
+    response = Mock(
+        side_effect=[
+            subprocess.CalledProcessError(1, "gh"),
+            '{"artifacts":',
+            '{"artifacts": []}',
+        ]
+    )
+    monkeypatch.setattr(native.subprocess, "check_output", response)
+    sleep = Mock()
+    monkeypatch.setattr(native.time, "sleep", sleep)
+    assert native.gh_json("repos/owner/repo/actions/artifacts") == {"artifacts": []}
+    assert response.call_count == 3
+    assert [call.args[0] for call in sleep.call_args_list] == [2, 4]
+
+
+def test_api_read_retries_are_bounded(monkeypatch):
+    response = Mock(side_effect=subprocess.TimeoutExpired("gh", 60))
+    monkeypatch.setattr(native.subprocess, "check_output", response)
+    monkeypatch.setattr(native.time, "sleep", Mock())
+    with pytest.raises(subprocess.TimeoutExpired):
+        native.gh_json("repos/owner/repo/actions/artifacts")
+    assert response.call_count == 3
 
 
 def test_retention_deletes_only_old_reproducible_native_products(monkeypatch):

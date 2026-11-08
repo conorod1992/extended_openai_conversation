@@ -288,3 +288,23 @@ def test_services_start_before_compilation_but_readiness_gates_testing():
     ha = steps[names.index("Start disposable Home Assistant")]["run"]
     assert "sleep" not in ha
     assert "--classic-dashboard" in ha
+
+
+def test_housekeeping_cannot_block_the_journey_or_hide_its_failure():
+    steps = _workflow()["jobs"]["companion"]["steps"]
+    by_name = {step.get("name"): step for step in steps}
+    journey = by_name["Run genuine iOS Companion journey"]
+    evidence = by_name["Upload iOS Companion evidence"]
+    assert "continue-on-error" not in journey
+    assert evidence["if"] == "always() && steps.ios-evidence.outcome == 'success'"
+    assert evidence["with"]["if-no-files-found"] == "error"
+    record = by_name["Record source-bound iOS Companion evidence"]
+    assert record["id"] == "ios-evidence"
+    assert record["if"].startswith("success()")
+    for name in (
+        "Retain two reusable native build variants",
+        "Report completed step timings",
+    ):
+        maintenance = by_name[name]
+        assert maintenance["continue-on-error"] is True
+        assert steps.index(maintenance) > steps.index(evidence) > steps.index(journey)
