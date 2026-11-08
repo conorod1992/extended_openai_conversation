@@ -458,3 +458,33 @@ async def archive_get_page(
     result["next_offset"] = result.get("next_start_turn")
     result["start_turn"] = safe_start
     return result
+
+
+async def archive_get_before_page(
+    archive: Any,
+    scope_id: str,
+    session_id: str,
+    *,
+    before_turn: int,
+    before_text_offset: int = 0,
+    limit: int = MANAGEMENT_ARCHIVE_TURN_PAGE_MAX,
+) -> dict[str, Any]:
+    """Read the nearest preceding page from an exclusive cursor."""
+    safe_limit = max(1, min(int(limit), MANAGEMENT_ARCHIVE_TURN_PAGE_MAX))
+    result: dict[str, Any] = await archive.async_get_before(
+        scope_id,
+        session_id,
+        before_turn,
+        safe_limit,
+        before_text_offset=before_text_offset,
+    )
+    result.update(
+        page_metadata(
+            offset=result["start_turn"],
+            limit=safe_limit,
+            returned=len(result["turns"]),
+            has_more=result["has_more"],
+            total=int(result.get("session", {}).get("turn_count", 0)),
+        )
+    )
+    return result

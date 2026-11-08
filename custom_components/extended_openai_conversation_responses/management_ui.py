@@ -144,6 +144,7 @@ from .management_function_repair import (
     seed_persisted_config_projection,
 )
 from .management_history_queries import (
+    archive_get_before_page,
     archive_get_page,
     archive_list_page,
     archive_search_page,
@@ -2686,6 +2687,15 @@ async def async_conversations_command(request: _ManagementRequest) -> dict[str, 
             text_offset=int(message.get("text_offset", 0)),
             limit=int(message.get("limit", 20)),
         )
+    if action == "get_before":
+        return await archive_get_before_page(
+            archive,
+            scope_id,
+            str(message.get("session_id", "")),
+            before_turn=int(message.get("before_turn", 0)),
+            before_text_offset=int(message.get("before_text_offset", 0)),
+            limit=int(message.get("limit", 20)),
+        )
     if action == "delete":
         return await archive.async_delete_session(
             scope_id, str(message.get("session_id", ""))
@@ -3445,6 +3455,8 @@ def _validate_settings(settings: dict[str, Any]) -> dict[str, Any]:
         vol.Optional("offset"): int,
         vol.Optional("start_turn"): int,
         vol.Optional("text_offset"): int,
+        vol.Optional("before_turn"): int,
+        vol.Optional("before_text_offset"): int,
         vol.Optional("successful"): bool,
         vol.Optional("confirm"): bool,
     }

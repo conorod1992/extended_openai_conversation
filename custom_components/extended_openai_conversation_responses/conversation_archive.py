@@ -915,6 +915,99 @@ class ConversationArchive:
         result.update(has_more=more, next_start_turn=next_turn if more else None)
         return result
 
+    async def async_get_before(
+        self,
+        scope_id: str,
+        session_id: str,
+        before_turn: int,
+        limit: int = 6,
+        *,
+        before_text_offset: int = 0,
+    ) -> dict[str, Any]:
+        """Read the nearest earlier fragments without changing forward paging.
+
+        The exclusive (turn, text-offset) cursor is authoritative. Iterate
+        backwards and return fragments in chronological order with an exact
+        starting cursor for the next backwards request.
+        """
+        session = self._require_owned_session(scope_id, session_id)
+        turns = self._turns.get(session_id, [])
+        before_turn = max(0, int(before_turn))
+        before_text_offset = max(0, int(before_text_offset))
+        limit = max(1, min(limit, MAX_GET_LIMIT))
+        if before_turn > len(turns) or (
+            before_turn == len(turns) and before_text_offset
+        ):
+            raise ValueError("Invalid archive backward cursor")
+        if before_turn < len(turns):
+            turn = turns[before_turn]
+            if before_text_offset > len(turn.user_text) + len(turn.assistant_text):
+                raise ValueError("Invalid archive backward text offset")
+
+        result: dict[str, Any] = {
+            "session": asdict(session),
+            "turns": [],
+            "start_turn": before_turn,
+            "limit": limit,
+            "text_offset": before_text_offset,
+            "has_more": before_turn < len(turns),
+            "next_start_turn": before_turn,
+            "next_text_offset": before_text_offset,
+        }
+        budget = MAX_MODEL_TOOL_RESULT_CHARACTERS - 1024
+        index = before_turn if before_text_offset else before_turn - 1
+        for _ in range(limit):
+            if index < 0:
+                break
+            turn = turns[index]
+            user_length = len(turn.user_text)
+            end = (
+                before_text_offset
+                if index == before_turn
+                else user_length + len(turn.assistant_text)
+            )
+            payload = _turn_payload(turn)
+
+            def chunk(start: int) -> dict[str, Any]:
+                return {
+                    **payload,
+                    "user_text": turn.user_text[
+                        min(start, user_length) : min(end, user_length)
+                    ],
+                    "assistant_text": turn.assistant_text[
+                        max(0, start - user_length) : max(0, end - user_length)
+                    ],
+                }
+
+            prior_start = result["start_turn"]
+            prior_offset = result["text_offset"]
+            result["turns"].insert(0, chunk(0))
+            result["start_turn"] = index
+            result["text_offset"] = 0
+            if len(json.dumps(result, ensure_ascii=False)) > budget:
+                if len(result["turns"]) > 1:
+                    result["turns"].pop(0)
+                    result["start_turn"] = prior_start
+                    result["text_offset"] = prior_offset
+                    break
+                # Choose the longest fitting suffix, with positive progress.
+                low, high = 0, end
+                while low < high:
+                    start = (low + high) // 2
+                    result["turns"][0] = chunk(start)
+                    result["text_offset"] = start
+                    if len(json.dumps(result, ensure_ascii=False)) <= budget:
+                        high = start
+                    else:
+                        low = start + 1
+                if low == end:
+                    raise ValueError("archive page metadata exceeds result limit")
+                result["turns"][0] = chunk(low)
+                result["text_offset"] = low
+                break
+            index -= 1
+        return result
+
     async def async_list_sessions(
         self, scope_id: str, *, limit: int = 50, offset: int = 0
     ) -> dict[str, Any]:
