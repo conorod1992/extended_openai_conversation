@@ -129,6 +129,7 @@
         "delete_range",
         "end_active",
         "get",
+        "get_before",
         "list",
         "search",
         "settings"
@@ -143,6 +144,7 @@
         "delete_range": "destructive_mutation",
         "end_active": "ephemeral_mutation",
         "get": "read_only",
+        "get_before": "read_only",
         "list": "read_only",
         "search": "read_only",
         "settings": "read_only"
@@ -154,6 +156,7 @@
         "delete_range": "authenticated_user_scoped",
         "end_active": "admin_only",
         "get": "authenticated_user_scoped",
+        "get_before": "authenticated_user_scoped",
         "list": "authenticated_user_scoped",
         "search": "authenticated_user_scoped",
         "settings": "authenticated_user_scoped"
@@ -165,6 +168,7 @@
         "delete_range": "tests/test_management_ui.py::test_conversation_memory_and_knowledge_dispatch",
         "end_active": "tests/test_management_ui.py::test_conversation_memory_and_knowledge_dispatch",
         "get": "tests_real_ha/test_user_ownership_privacy.py::test_known_cross_user_record_ids_cannot_be_read_or_modified",
+        "get_before": "tests/test_archive_search_navigation.py::test_get_before_search_result_pages_back_to_start_without_skipping_turns",
         "list": "tests_real_ha/test_user_ownership_privacy.py::test_management_websocket_lists_only_the_authenticated_users_personal_data",
         "search": "tests/test_management_ui.py::test_conversation_memory_and_knowledge_dispatch",
         "settings": "tests/test_management_ui.py::test_conversation_memory_and_knowledge_dispatch"

@@ -161,7 +161,7 @@ async def test_search_card_and_view_open_matching_size_limited_turn(
 
 
 @pytest.mark.parametrize("count", [1, 2, 27, 85])
-async def test_search_result_pages_back_to_start_without_skipping_turns(count):
+async def test_get_before_search_result_pages_back_to_start_without_skipping_turns(count):
     """Reverse pages reconstruct each retained turn before a search hit."""
     archive = ConversationArchive(FakeArchiveStorage(), "agent")
     await archive.async_initialize()
