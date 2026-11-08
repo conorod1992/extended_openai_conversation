@@ -392,6 +392,59 @@ async def test_targeted_broadcast_queues_resolved_target_with_origin_context(
 
 
 @pytest.mark.asyncio
+async def test_targeted_broadcast_with_no_other_speaker_returns_local_explanation(
+    hass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sends: list[str] = []
+    resolved: list[dict[str, Any]] = []
+
+    async def send(message: str, **_kwargs: Any) -> None:
+        sends.append(message)
+
+    def resolve_targets(**kwargs: Any) -> list[str]:
+        resolved.append(kwargs)
+        return []
+
+    manager = SimpleNamespace(
+        enabled=True,
+        async_send=send,
+        resolve_targets=resolve_targets,
+    )
+
+    async def get_manager(_hass):
+        return manager
+
+    monkeypatch.setattr(local_intents, "async_get_intercom", get_manager)
+    monkeypatch.setattr(
+        local_intents,
+        "parse_targeted_broadcast",
+        lambda _text, _manager: ({"whole_home": True}, "Dinner is ready"),
+    )
+    user_input = cast(
+        Any,
+        SimpleNamespace(
+            text="Tell everyone dinner is ready",
+            satellite_id="assist_satellite.kitchen",
+            device_id="device-kitchen",
+            context=SimpleNamespace(user_id="owner"),
+            language="en-IE",
+        ),
+    )
+    result = await local_intents._async_try_targeted_broadcast(hass, user_input)
+    assert result is not None
+    assert result.intent_name == "ExtendedBroadcast"
+    assert "another available speaker" in result.response.speech["plain"]["speech"]
+    assert not sends
+    assert resolved == [
+        {
+            "whole_home": True,
+            "origin_entity_id": "assist_satellite.kitchen",
+            "origin_device_id": "device-kitchen",
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_missing_home_assistant_intent_handler_falls_through(
     hass, monkeypatch: pytest.MonkeyPatch
 ) -> None:

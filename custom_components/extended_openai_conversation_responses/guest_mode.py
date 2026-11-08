@@ -397,7 +397,13 @@ class GuestModeManager:
                     if existing.active_until is not None
                     else None
                 )
-                start = min(existing_start, requested_start)
+                # Omitting the start while extending an existing restriction
+                # must not activate a future window ahead of schedule.
+                start = (
+                    min(existing_start, requested_start)
+                    if active_from is not None
+                    else existing_start
+                )
                 if existing_end is None or make_indefinite:
                     end = None
                 elif requested_end is None:
@@ -794,7 +800,10 @@ def guest_mode_restrict_tool() -> dict[str, Any]:
                 "properties": {
                     "active_from": {
                         "type": "string",
-                        "description": "ISO 8601 start time; omit to start now.",
+                        "description": (
+                            "ISO 8601 start time. Omit to preserve an existing "
+                            "active or scheduled start, or start now if none exists."
+                        ),
                     },
                     "active_until": {
                         "type": "string",

@@ -127,6 +127,44 @@ async def test_llm_restriction_is_monotonic(hass) -> None:
     assert manager.schedule.active_until is None
 
 
+async def test_llm_extension_without_start_preserves_scheduled_window(hass) -> None:
+    manager = _manager(hass)
+    now = _time("2026-08-21T15:00:00")
+    await manager.async_update_trusted(
+        active_from="2026-08-21T18:00:00+00:00",
+        active_until="2026-08-21T23:00:00+00:00",
+        now=now,
+    )
+
+    extended = await manager.async_restrict(
+        active_until="2026-08-21T23:30:00+00:00", now=now
+    )
+    assert extended["state"] == "scheduled"
+    assert extended["active_from"] == "2026-08-21T18:00:00+00:00"
+    assert extended["active_until"] == "2026-08-21T23:30:00+00:00"
+    assert not extended["currently_active"]
+
+    # Explicit earlier starts remain a permitted widening operation.
+    earlier = await manager.async_restrict(
+        active_from="2026-08-21T14:30:00+00:00",
+        active_until="2026-08-22T00:00:00+00:00",
+        now=now,
+    )
+    assert earlier["currently_active"]
+    assert earlier["active_from"] == "2026-08-21T14:30:00+00:00"
+    assert earlier["active_until"] == "2026-08-22T00:00:00+00:00"
+
+
+async def test_llm_omitted_start_uses_now_when_no_live_schedule(hass) -> None:
+    manager = _manager(hass)
+    now = _time("2026-08-21T15:00:00")
+    enabled = await manager.async_restrict(
+        active_until="2026-08-21T23:00:00+00:00", now=now
+    )
+    assert enabled["currently_active"]
+    assert enabled["active_from"] == "2026-08-21T15:00:00+00:00"
+
+
 def test_resolved_policy_intersects_read_and_control(hass, monkeypatch) -> None:
     manager = _manager(hass)
     manager._schedule = SimpleNamespace(

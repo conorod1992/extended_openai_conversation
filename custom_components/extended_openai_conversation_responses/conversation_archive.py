@@ -67,18 +67,38 @@ def _scope_retention_allowed(
 
 _STOP_WORDS = {
     "a",
+    "about",
     "an",
     "and",
     "are",
+    "did",
+    "do",
+    "does",
     "for",
     "from",
+    "how",
+    "i",
     "in",
     "is",
     "it",
+    "me",
+    "my",
     "of",
     "on",
+    "our",
+    "said",
+    "say",
+    "tell",
     "the",
     "to",
+    "we",
+    "what",
+    "when",
+    "where",
+    "who",
+    "why",
+    "you",
+    "your",
 }
 
 
@@ -155,6 +175,7 @@ class HomeAssistantArchiveStorage:
             f"{prefix}.metadata",
             private=True,
             atomic_writes=True,
+            serialize_in_event_loop=False,
         ).bind_agent(entry_id, subentry_id)
 
     def _partition_store(self, partition: str) -> Store[dict[str, Any]]:
