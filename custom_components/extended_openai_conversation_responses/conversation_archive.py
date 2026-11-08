@@ -966,6 +966,7 @@ class ConversationArchive:
                 if index == before_turn
                 else user_length + len(turn.assistant_text)
             )
+
             def chunk(
                 start: int, source: ArchiveTurn = turn, end_offset: int = end
             ) -> dict[str, Any]:
