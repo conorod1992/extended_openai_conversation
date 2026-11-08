@@ -16,6 +16,7 @@ import voluptuous as vol
 
 from homeassistant.components import conversation
 from homeassistant.components.conversation import ConversationInput
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import (
     HomeAssistant,
@@ -341,6 +342,13 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             entry = hass.config_entries.async_get_entry(call.data["config_entry"])
             if entry is None or entry.domain != DOMAIN:
                 raise HomeAssistantError("Config entry not found")
+            if getattr(entry, "state", None) is not ConfigEntryState.LOADED:
+                raise HomeAssistantError("Config entry is not loaded")
+            # Setup can fail before assigning a runtime client. Do not parse
+            # images or make a provider request for an unavailable connection.
+            client = getattr(entry, "runtime_data", None)
+            if client is None:
+                raise HomeAssistantError("Config entry client is unavailable")
             with model_capability_snapshot(
                 model,
                 request_model_capabilities(
@@ -358,8 +366,6 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             image_params = await hass.async_add_executor_job(
                 prepare_image_params, hass, call.data["images"]
             )
-
-            client = entry.runtime_data
 
             if api_mode == API_MODE_RESPONSES:
                 messages = [
