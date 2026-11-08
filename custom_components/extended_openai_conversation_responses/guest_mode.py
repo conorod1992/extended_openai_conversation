@@ -282,6 +282,8 @@ class GuestModeManager:
         def decode_time(value: str, field: str) -> tuple[str, Any]:
             utc = _parse_timestamp(self.hass, value, field)
             original = dt_util.parse_datetime(value)
+            if original is None:
+                raise ValueError(f"{field} must be an ISO 8601 timestamp")
             return (
                 utc.isoformat() if original.tzinfo is None else value,
                 utc,
