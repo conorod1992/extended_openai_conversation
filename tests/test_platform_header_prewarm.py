@@ -1,8 +1,8 @@
 """OpenAI SDK platform metadata must be prepared outside the HA event loop."""
 
 import asyncio
-from types import SimpleNamespace
 from threading import get_ident
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
