@@ -656,7 +656,7 @@ async def async_was_unacknowledged_equivalent(
             candidate = llm.ToolInput(
                 id=tool_input.id,
                 tool_name=tool_input.tool_name,
-                tool_args=deepcopy(dict(tool_input.tool_args)),
+                tool_args=deepcopy(tool_input.tool_args),
                 external=tool_input.external,
             )
             try:

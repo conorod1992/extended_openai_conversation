@@ -642,7 +642,10 @@ async def async_execute_tool_exchange(
             if await async_was_unacknowledged_equivalent(entity, chat_log, call):
                 repeated = True
                 break
-    except HomeAssistantError as err:
+    except BaseException as err:
+        # The regex comparison can now be cancelled while calls are retained.
+        # Nothing in this batch has dispatched: settle pending calls before
+        # propagating the original cancellation or validation error.
         append_unresolved_tool_results(
             chat_log, entity.entity_id, pending_tool_calls, error=err
         )
