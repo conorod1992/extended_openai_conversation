@@ -297,6 +297,35 @@ async def test_non_card_identifier_remains_allowed() -> None:
     assert result["status"] == "created"
 
 
+async def test_key_promotion_preserves_an_existing_keyed_sibling() -> None:
+    memory = await _memory()
+    sibling = await memory.async_upsert(
+        "alice", "Oscar is a Cavachon.", "pets", "explicit", key="pet.oscar.breed"
+    )
+    unkeyed = await memory.async_add(
+        "alice", "Temporary note.", "pets", "explicit", subject="Oscar"
+    )
+    await memory.async_update(
+        "alice", unkeyed["memory"]["memory_id"], content="Oscar is a Cavachon."
+    )
+
+    promoted = await memory.async_upsert(
+        "alice",
+        "Oscar is a Cavachon.",
+        "pets",
+        "explicit",
+        subject="Oscar",
+        key="pet.oscar.description",
+    )
+    assert promoted["status"] == "updated"
+    assert promoted["memory"]["memory_id"] == unkeyed["memory"]["memory_id"]
+    records = {record.memory_id: record for record in await memory.async_list("alice")}
+    assert len(records) == 2
+    assert records[sibling["memory"]["memory_id"]].key == "pet.oscar.breed"
+    assert records[sibling["memory"]["memory_id"]].content == "Oscar is a Cavachon."
+    assert records[unkeyed["memory"]["memory_id"]].key == "pet.oscar.description"
+
+
 async def test_new_keyed_upsert_does_not_merge_with_another_key() -> None:
     memory = await _memory()
     first = await memory.async_upsert(

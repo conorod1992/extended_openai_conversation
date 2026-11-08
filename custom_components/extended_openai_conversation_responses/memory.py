@@ -543,9 +543,7 @@ class PersistentMemory:
                     user_id,
                     content,
                     cleaned_subject if isinstance(cleaned_subject, str) else None,
-                    cleaned_valid_from
-                    if isinstance(cleaned_valid_from, str)
-                    else None,
+                    cleaned_valid_from if isinstance(cleaned_valid_from, str) else None,
                 )
                 if duplicate is not None:
                     if duplicate.source == "explicit" and source == "implicit":
