@@ -874,7 +874,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             effective_output_limit = next(
                 (
                     api_kwargs[name]
-                    for name in ("max_output_tokens", "max_completion_tokens", "max_tokens")
+                    for name in (
+                        "max_output_tokens",
+                        "max_completion_tokens",
+                        "max_tokens",
+                    )
                     if type(api_kwargs.get(name)) is int
                 ),
                 None,
