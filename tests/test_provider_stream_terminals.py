@@ -113,8 +113,14 @@ async def test_chat_allows_empty_post_terminal_accounting_choices(
     deltas = [
         delta
         async for delta in _entity()._transform_chat_stream(
-            SimpleNamespace(),
-            FakeStream([_chat_chunk(content="Done"), _chat_chunk(finish_reason=finish_reason), trailing]),
+            SimpleNamespace(async_trace=lambda _data: None),
+            FakeStream(
+                [
+                    _chat_chunk(content="Done"),
+                    _chat_chunk(finish_reason=finish_reason),
+                    trailing,
+                ]
+            ),
             usage,
         )
     ]
@@ -179,12 +185,14 @@ async def test_chat_rejects_changed_terminal_reason_and_extra_choices() -> None:
 
 async def test_chat_length_terminal_still_fails_after_accounting_tail() -> None:
     trailing = _chat_chunk(finish_reason="length")
-    trailing.usage = SimpleNamespace(prompt_tokens=1, completion_tokens=3, total_tokens=4)
+    trailing.usage = SimpleNamespace(
+        prompt_tokens=1, completion_tokens=3, total_tokens=4
+    )
     with pytest.raises(TokenLengthExceededError):
         _ = [
             delta
             async for delta in _entity()._transform_chat_stream(
-                SimpleNamespace(),
+                SimpleNamespace(async_trace=lambda _data: None),
                 FakeStream([_chat_chunk(finish_reason="length"), trailing]),
             )
         ]
