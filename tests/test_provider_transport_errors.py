@@ -56,9 +56,14 @@ def test_standard_transport_errors_normalize_safely(
 async def test_authentication_probe_timeout_normalizes_before_config_callers() -> None:
     """Raw timeout from the models probe should enter the OpenAIError-compatible path."""
     hass = SimpleNamespace(
-        async_add_executor_job=AsyncMock(side_effect=TimeoutError("socket timed out"))
+        async_add_executor_job=AsyncMock(
+            side_effect=[{}, TimeoutError("socket timed out")]
+        )
     )
-    client = SimpleNamespace(models=SimpleNamespace(list=MagicMock()))
+    client = SimpleNamespace(
+        platform_headers=MagicMock(return_value={}),
+        models=SimpleNamespace(list=MagicMock()),
+    )
 
     with (
         patch(

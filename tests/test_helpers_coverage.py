@@ -153,6 +153,7 @@ class _AsyncPage:
 
 def _fake_client(page=None):
     return SimpleNamespace(
+        platform_headers=Mock(return_value={"X-Stainless-OS": "Linux"}),
         models=SimpleNamespace(list=Mock(return_value=page or _AsyncPage([object()])))
     )
 
@@ -188,6 +189,7 @@ async def test_authenticated_client_builds_azure_client_and_can_skip_authenticat
         http_client=sentinel.http_client,
     )
     client.models.list.assert_not_called()
+    client.platform_headers.assert_called_once_with()
 
 
 @pytest.mark.asyncio
@@ -222,7 +224,9 @@ async def test_authenticated_client_builds_standard_client_and_validates_models(
         http_client=sentinel.http_client,
     )
     client.models.list.assert_called_once_with(timeout=10)
-    executor.assert_awaited_once()
+    client.platform_headers.assert_called_once_with()
+    assert executor.await_count == 2
+    assert executor.await_args_list[0].args[0] is client.platform_headers
 
 
 @pytest.mark.asyncio
@@ -233,10 +237,15 @@ async def test_authenticated_client_normalizes_transport_failures(
     client = _fake_client()
     monkeypatch.setattr(helpers, "AsyncOpenAI", Mock(return_value=client))
     monkeypatch.setattr(helpers, "get_async_client", lambda _hass: sentinel.http_client)
+    async def executor_job(function):
+        if function is client.platform_headers:
+            return function()
+        raise error
+
     monkeypatch.setattr(
         hass,
         "async_add_executor_job",
-        AsyncMock(side_effect=error),
+        AsyncMock(side_effect=executor_job),
     )
 
     with pytest.raises(ProviderTransportError) as exc_info:
