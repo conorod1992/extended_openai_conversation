@@ -32,7 +32,6 @@
     "tests_real_ha/test_quiet_hours_period_recovery.py::test_native_transition_specification[False-switch-attributed-effect-lost-ack]",
     "tests_real_ha/test_quiet_hours_period_recovery.py::test_native_transition_specification[True-volume-attributed-effect-lost-ack]",
     "tests_real_ha/test_quiet_hours_period_recovery.py::test_native_transition_specification[True-switch-attributed-effect-lost-ack]",
-
     "tests_real_ha/test_quiet_hours_period_recovery.py::test_native_transition_specification[False-volume-steady]",
     "tests_real_ha/test_quiet_hours_period_recovery.py::test_native_transition_specification[False-volume-manual-observed-before-crash]",
     "tests_real_ha/test_quiet_hours_period_recovery.py::test_native_transition_specification[False-volume-manual-unobserved-before-crash]",
@@ -77,12 +76,10 @@
     "tests_real_ha/test_quiet_hours_period_recovery.py::test_native_transition_specification[True-switch-departing-owned]",
     "tests_real_ha/test_quiet_hours_period_recovery.py::test_native_transition_specification[True-switch-departing-manual]",
     "tests_real_ha/test_quiet_hours_period_recovery.py::test_native_transition_specification[True-switch-pending-daytime-restoration]",
-
     "tests_real_ha/test_request_rule_ha_compat_dataflow.py::test_state_control_rule_survives_refused_target_deletion[enable-functions-controlled_tool]",
     "tests_real_ha/test_request_rule_ha_compat_dataflow.py::test_state_control_rule_survives_refused_target_deletion[enable-function_groups-controlled-group]",
     "tests_real_ha/test_request_rule_ha_compat_dataflow.py::test_state_control_rule_survives_refused_target_deletion[disable-functions-controlled_tool]",
     "tests_real_ha/test_request_rule_ha_compat_dataflow.py::test_state_control_rule_survives_refused_target_deletion[disable-function_groups-controlled-group]",
-
     "tests_real_ha/test_request_rule_ha_compat_dataflow.py::test_alias_rename_preserves_metadata_named_function_arguments[data-result_alias]",
     "tests_real_ha/test_request_rule_ha_compat_dataflow.py::test_alias_rename_preserves_metadata_named_function_arguments[data-step_id]",
     "tests_real_ha/test_request_rule_ha_compat_dataflow.py::test_alias_rename_preserves_metadata_named_function_arguments[data_template-result_alias]",
@@ -3178,7 +3175,8 @@
     "tests_real_ha/test_quiet_hours_timezone.py::test_timezone_update_reconciles_public_state_controls_and_deadlines[False]",
     "tests_real_ha/test_quiet_hours_timezone.py::test_timezone_update_reconciles_public_state_controls_and_deadlines[True]",
     "tests_real_ha/test_quiet_hours_timezone.py::test_timezone_listener_preserves_overlapping_ownership_and_retires_on_shutdown[False]",
-    "tests_real_ha/test_quiet_hours_timezone.py::test_timezone_listener_preserves_overlapping_ownership_and_retires_on_shutdown[True]"
+    "tests_real_ha/test_quiet_hours_timezone.py::test_timezone_listener_preserves_overlapping_ownership_and_retires_on_shutdown[True]",
+    "tests/test_conversation_archive.py::test_archive_search_discards_question_filler_without_losing_literal_queries"
   ],
   "browser": {
     "browser": [

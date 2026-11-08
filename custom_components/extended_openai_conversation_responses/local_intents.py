@@ -108,14 +108,21 @@ async def _async_try_targeted_broadcast(
     if parsed is None:
         return None
     target, message = parsed
-    origin = {
-        "origin_entity_id": getattr(user_input, "satellite_id", None),
-        "origin_device_id": getattr(user_input, "device_id", None),
-    }
+    origin_entity_id = getattr(user_input, "satellite_id", None)
+    origin_device_id = getattr(user_input, "device_id", None)
     # A destination can be named in the catalog but still be ineligible when
     # the speaking satellite itself is excluded. No send has been attempted:
     # respond locally rather than retrying an announcement through the AI.
-    eligible = manager.resolve_targets(**target, **origin)
+    eligible = manager.resolve_targets(
+        whole_home=target.get("whole_home", False),
+        entity_ids=target.get("entity_ids"),
+        device_ids=target.get("device_ids"),
+        area_ids=target.get("area_ids"),
+        floor_ids=target.get("floor_ids"),
+        label_ids=target.get("label_ids"),
+        origin_entity_id=origin_entity_id,
+        origin_device_id=origin_device_id,
+    )
     response = ha_intent.IntentResponse(
         language=getattr(user_input, "language", None) or "en"
     )
@@ -130,7 +137,8 @@ async def _async_try_targeted_broadcast(
     await manager.async_send(
         message,
         **target,
-        **origin,
+        origin_entity_id=origin_entity_id,
+        origin_device_id=origin_device_id,
         source="local_voice",
         context=user_input.context,
     )
