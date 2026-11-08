@@ -974,3 +974,33 @@ def test_nested_speech_emphasis_and_numeric_compatibility(
         assert speech._final_whitespace_cleanup(
             _stream([source[:split], source[split:]])
         ) == expected, split
+
+
+
+@pytest.mark.parametrize(
+    "prefix,suffix,initial,continuation",
+    [
+        ("Compute 2**10", "; then the lights are on.", "Compute 2", "**10; then the lights are on."),
+        ("Result 2**(3)", "; next step.", "Result 2**(3)", "; next step."),
+        ("The value is 2**3", "**2; continue.", "The value is 2", "**3**2; continue."),
+    ],
+)
+def test_literal_numeric_marker_releases_progressive_speech_once_disambiguated(
+    prefix: str, suffix: str, initial: str, continuation: str
+) -> None:
+    sanitizer = StreamingSpeechSanitizer()
+    assert sanitizer.feed(prefix) == initial
+    assert sanitizer.feed(suffix) == continuation
+    assert sanitizer.finish() == ""
+    assert sanitizer.buffered_chars == 0
+
+
+def test_numeric_marker_waits_only_for_a_viable_closing_prefix() -> None:
+    sanitizer = StreamingSpeechSanitizer()
+    assert sanitizer.feed("Compute 2**3") == "Compute 2"
+    assert sanitizer.feed("*") == ""
+    # A second asterisk completes the closer, but following text can still
+    # distinguish a bold number from a literal mathematical operator.
+    assert sanitizer.feed("*") == ""
+    assert sanitizer.feed("2; more text.") == "**3**2; more text."
+    assert sanitizer.finish() == ""

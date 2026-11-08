@@ -32,6 +32,9 @@ _WWW_ADDRESS = re.compile(
 )
 _FORMAT_MARKERS = ("**", "__", "~~")
 _EMPHASIS_TOKENS = {"*": re.compile(r"`+|\*"), "_": re.compile(r"`+|_")}
+# Only a viable prefix of the existing numeric emphasis grammar can delay
+# progressive speech, including a split closing asterisk pair.
+_NUMERIC_EMPHASIS_PREFIX = re.compile(r"[+-]?(?:\d+(?:\.\d*)?)?\*{0,2}\Z")
 
 DEFAULT_STREAMING_BUFFER_LIMIT = 4096
 COMPLETED_SPEECH_EXECUTOR_THRESHOLD = 4096
@@ -680,12 +683,25 @@ class StreamingSpeechSanitizer:
                             self._format_buffer[index + 2 :],
                         )
                         if not final and (
-                            closer is None
-                            or index + 2 + closer.end() == len(self._format_buffer)
+                            (
+                                closer is None
+                                and _NUMERIC_EMPHASIS_PREFIX.fullmatch(
+                                    self._format_buffer[index + 2 :]
+                                )
+                                is not None
+                            )
+                            or (
+                                closer is not None
+                                and index + 2 + closer.end()
+                                == len(self._format_buffer)
+                            )
                         ):
+                            # Wait only while more input might complete the marker.
                             unresolved_emphasis = True
                             break
                         if closer is None:
+                            # The current suffix makes numeric emphasis impossible.
+                            # Do not fall into the generic emphasis lookahead.
                             output.append(pair)
                             index += 2
                             continue
