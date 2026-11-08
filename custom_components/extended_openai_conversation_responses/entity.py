@@ -872,6 +872,15 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 )
             }
             api_kwargs = dict(provider_snapshot.api_kwargs)
+            # Use the effective wire request, not a saved setting that may differ.
+            effective_output_limit = next(
+                (
+                    api_kwargs[name]
+                    for name in ("max_output_tokens", "max_completion_tokens", "max_tokens")
+                    if type(api_kwargs.get(name)) is int
+                ),
+                None,
+            )
             model = str(api_kwargs["model"])
             api_mode = provider_snapshot.api_mode
             max_function_calls = options.get(
@@ -1166,7 +1175,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                 response, request_usage
                             )
                         transformed_stream = self._transform_responses_stream(
-                            chat_log, response_events, request_usage
+                            chat_log,
+                            response_events,
+                            request_usage,
+                            effective_output_limit=effective_output_limit,
                         )
                     else:
                         response = await self._client.chat.completions.create(
@@ -1184,7 +1196,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                 response, request_usage
                             )
                         transformed_stream = self._transform_chat_stream(
-                            chat_log, response_chunks, request_usage
+                            chat_log,
+                            response_chunks,
+                            request_usage,
+                            effective_output_limit=effective_output_limit,
                         )
 
                     with (
@@ -1911,6 +1926,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         chat_log: conversation.ChatLog,
         result: AsyncStream[ChatCompletionChunk],
         request_usage: RequestTokenMeasurements | None = None,
+        *,
+        effective_output_limit: int | None = None,
     ) -> AsyncGenerator[
         conversation.AssistantContentDeltaDict | conversation.ToolResultContentDeltaDict
     ]:
@@ -2104,9 +2121,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             # stream_options.include_usage can deliver their final usage-only chunk.
 
         if token_limit_reached:
-            raise TokenLengthExceededError(
-                self.subentry.data.get(CONF_MAX_TOKENS, DEFAULT_MAX_TOKENS)
-            )
+            raise TokenLengthExceededError(effective_output_limit)
         if not terminal_finish_seen:
             raise HomeAssistantError(
                 "OpenAI Chat Completions stream ended before a terminal finish reason"
@@ -2121,6 +2136,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         chat_log: conversation.ChatLog,
         result: AsyncStream[Any],
         request_usage: RequestTokenMeasurements | None = None,
+        *,
+        effective_output_limit: int | None = None,
     ) -> AsyncGenerator[
         conversation.AssistantContentDeltaDict | conversation.ToolResultContentDeltaDict
     ]:
@@ -2129,7 +2146,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         try:
             async with aclosing(
                 ExtendedOpenAIBaseLLMEntity._transform_responses_stream_events(
-                    self, chat_log, result, request_usage
+                    self,
+                    chat_log,
+                    result,
+                    request_usage,
+                    effective_output_limit=effective_output_limit,
                 )
             ) as events:
                 async for delta in events:
@@ -2149,6 +2170,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         chat_log: conversation.ChatLog,
         result: AsyncStream[Any],
         request_usage: RequestTokenMeasurements | None = None,
+        *,
+        effective_output_limit: int | None = None,
     ) -> AsyncGenerator[
         conversation.AssistantContentDeltaDict | conversation.ToolResultContentDeltaDict
     ]:
@@ -2330,11 +2353,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             else "unknown reason"
                         )
                         if reason == "max_output_tokens":
-                            raise TokenLengthExceededError(
-                                self.subentry.data.get(
-                                    CONF_MAX_TOKENS, DEFAULT_MAX_TOKENS
-                                )
-                            )
+                            raise TokenLengthExceededError(effective_output_limit)
                         raise HomeAssistantError(
                             f"OpenAI response incomplete: {reason}"
                         )

@@ -198,6 +198,67 @@ async def test_chat_length_terminal_still_fails_after_accounting_tail() -> None:
         ]
 
 
+@pytest.mark.parametrize(
+    ("sent_limit", "expected_fragment"),
+    [
+        (512, "512 tokens"),
+        (None, "Maximum response length reached"),
+    ],
+)
+async def test_chat_length_error_reports_request_limit_not_saved_settings(
+    sent_limit: int | None, expected_fragment: str
+) -> None:
+    entity = _entity()
+    entity.subentry.data["max_tokens"] = 999
+    stream = FakeStream([_chat_chunk(finish_reason="length")])
+    with pytest.raises(TokenLengthExceededError) as exc:
+        _ = [
+            delta
+            async for delta in entity._transform_chat_stream(
+                SimpleNamespace(), stream,
+                effective_output_limit=sent_limit,
+            )
+        ]
+    assert expected_fragment in str(exc.value)
+    assert "999" not in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    ("sent_limit", "expected_fragment"),
+    [
+        (128, "128 tokens"),
+        (None, "Maximum response length reached"),
+    ],
+)
+async def test_responses_length_error_reports_request_limit_not_saved_settings(
+    sent_limit: int | None, expected_fragment: str
+) -> None:
+    entity = _entity()
+    entity.subentry.data["max_tokens"] = 999
+    stream = FakeStream(
+        [
+            _event(
+                "response.incomplete",
+                response=SimpleNamespace(
+                    usage=None,
+                    incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+                ),
+            )
+        ]
+    )
+    with pytest.raises(TokenLengthExceededError) as exc:
+        _ = [
+            delta
+            async for delta in entity._transform_responses_stream(
+                SimpleNamespace(),
+                stream,
+                effective_output_limit=sent_limit,
+            )
+        ]
+    assert expected_fragment in str(exc.value)
+    assert "999" not in str(exc.value)
+
+
 async def test_chat_premature_eof_is_error() -> None:
     """Chat EOF without a finish reason is not accepted as a completed response."""
     stream = FakeStream([_chat_chunk(content="Partial answer")])

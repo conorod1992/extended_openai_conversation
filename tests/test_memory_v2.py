@@ -62,6 +62,42 @@ async def _memory(data=None) -> PersistentMemory:
     return memory
 
 
+@pytest.mark.parametrize(
+    ("word", "other", "stem"),
+    [
+        ("calling", "call", "call"),
+        ("falling", "fall", "fall"),
+        ("filling", "fill", "fill"),
+        ("rolling", "roll", "roll"),
+        ("pressing", "press", "press"),
+        ("dressing", "dress", "dress"),
+        ("spelling", "spell", "spell"),
+        ("breed", "breeds", "breed"),
+        ("speed", "speeds", "speed"),
+        ("running", "run", "run"),
+        ("shopping", "shop", "shop"),
+    ],
+)
+def test_memory_stemmer_preserves_real_word_endings(word, other, stem) -> None:
+    from custom_components.extended_openai_conversation_responses.memory import _stem
+
+    assert _stem(word) == _stem(other) == stem
+
+
+async def test_memory_search_recovers_call_and_breed_families() -> None:
+    memory = await _memory()
+    call = await memory.async_add(
+        "alice", "Calling the plumber tomorrow", "reminders", "explicit"
+    )
+    breed = await memory.async_add(
+        "alice", "Breed information is on the vet form", "pets", "explicit"
+    )
+    found_call = await memory.async_search("alice", "call")
+    found_breed = await memory.async_search("alice", "breeds")
+    assert any(row.memory_id == call["memory"]["memory_id"] for row in found_call)
+    assert any(row.memory_id == breed["memory"]["memory_id"] for row in found_breed)
+
+
 async def test_metadata_defaults_and_backup_round_trip() -> None:
     memory = await _memory()
     created = await memory.async_add(

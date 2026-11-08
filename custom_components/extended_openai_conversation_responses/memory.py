@@ -1666,10 +1666,14 @@ def _stem(token: str) -> str:
         return f"{token[:-3]}y"
     if len(token) > 5 and token.endswith("ing"):
         root = token[:-3]
-        if len(root) > 2 and root[-1] == root[-2]:
+        if (
+            len(root) > 2
+            and root[-1] == root[-2]
+            and not root.endswith(("ll", "ss", "ff", "zz", "ee"))
+        ):
             root = root[:-1]
         return root
-    if len(token) > 4 and token.endswith("ed"):
+    if len(token) > 4 and token.endswith("ed") and not token.endswith("eed"):
         return token[:-2]
     if len(token) > 5 and token.endswith(("ches", "shes", "xes", "zes", "oes")):
         return token[:-2]
