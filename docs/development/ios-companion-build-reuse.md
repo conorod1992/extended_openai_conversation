@@ -75,6 +75,9 @@ Each acceptance job erases and boots its simulator once before preparing HA and
 native dependencies, and starts HA without blocking. Both continue starting while
 the native app compiles. Bounded simulator and HTTP/process readiness checks gate
 the journey; the upstream login check still runs. The lane does not erase again.
+The test step supplies Fastlane's device, deployment target and log name explicitly
+and prohibits build-settings discovery. That prevents a settings query from
+resolving packages again when executing an already-built `.xctestrun` bundle.
 
 Full validation declines duplicate *in-progress* cohorts only when candidate,
 mode, explicitly supplied stress seed and explicitly supplied HA dev SHA match.
