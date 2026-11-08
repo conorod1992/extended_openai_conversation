@@ -123,27 +123,13 @@ def test_ios_cache_warms_default_branch_and_uses_exact_build_identity():
         for step in steps
         if step.get("name") == "Resolve exact native build cache identity"
     )
-    for required in (
-        "xcodebuild",
-        "iphonesimulator",
-        "platform.machine()",
-        "IOS_SOURCE_SHA",
-        "patch_ios_companion_e2e.py",
-        "Package.resolved",
-    ):
-        assert required in identity
-    caches = [
-        step["with"]
-        for step in steps
-        if step.get("uses", "").startswith("actions/cache/")
-    ]
-    assert len(caches) == 6
-    assert all(
-        "IOS_BUILD_CACHE_ID" in cache["key"] and "restore-keys" not in cache
-        for cache in caches
-    )
-    # Pair by action and identity, rather than relying on step order: a host
-    # tool cache is restored before Bundler and saved after Bundler.
+    assert 'python ci/ios_companion_build.py identity "$IOS_DIR"' in identity
+    # Executable identity is verified by the native artifact helper. Incremental
+    # caches have their own compatibility keys and intentionally allow restores.
+    artifact = next(step for step in steps if step.get("id") == "ios-native")
+    assert 'ios_companion_build.py restore "$IOS_DIR"' in artifact["run"]
+    validate = next(step for step in steps if step.get("name") == "Validate native identity and report reuse")
+    assert 'ios_companion_build.py validate "$IOS_DIR"' in validate["run"]
     restored = {
         step["with"]["key"]: step["with"]["path"]
         for step in steps
@@ -154,8 +140,11 @@ def test_ios_cache_warms_default_branch_and_uses_exact_build_identity():
         for step in steps
         if step.get("uses", "").startswith("actions/cache/save@")
     }
-    assert len(restored) == len(saved) == 3
+    assert len(restored) == len(saved) == 4
     assert restored == saved
+    for step in steps:
+        if step.get("uses", "").startswith("actions/cache/save@"):
+            assert "github.event.repository.default_branch" in step["if"]
 
 
 @pytest.mark.parametrize(

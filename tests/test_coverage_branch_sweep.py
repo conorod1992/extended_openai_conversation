@@ -15,6 +15,7 @@ from custom_components.extended_openai_conversation_responses.entity import (
     _make_schema_nullable,
     _normalize_function_result,
     _normalize_url_citation,
+    _schema_explicitly_allows_null,
 )
 from custom_components.extended_openai_conversation_responses.strict_store import (
     RecoveryGuardedStore,
