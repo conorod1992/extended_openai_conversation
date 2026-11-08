@@ -429,9 +429,7 @@ class PersistentMemory:
                     _set_updated_at_if_substantive(
                         duplicate, promotion_changes, timestamp
                     )
-                    updated = self._replace_record(
-                        duplicate, **promotion_changes
-                    )
+                    updated = self._replace_record(duplicate, **promotion_changes)
                     await self._async_save_locked()
                     return "updated", updated
             if key is None:
@@ -569,9 +567,7 @@ class PersistentMemory:
                     _set_updated_at_if_substantive(
                         duplicate, promotion_changes, timestamp
                     )
-                    updated = self._replace_record(
-                        duplicate, **promotion_changes
-                    )
+                    updated = self._replace_record(duplicate, **promotion_changes)
                     await self._async_save_locked()
                     return {
                         "status": "updated",

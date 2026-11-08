@@ -173,10 +173,17 @@ async def test_ambiguous_unkeyed_duplicates_are_not_promoted(operation: str) -> 
         key="home.kitchen.light",
     )
     assert result["status"] == "created"
-    assert all(r.key is None for r in await memory.async_list("alice") if r.memory_id in {
+    original_ids = {
         first["memory"]["memory_id"],
         second["memory"]["memory_id"],
-    })
+    }
+    original_records = [
+        record
+        for record in await memory.async_list("alice")
+        if record.memory_id in original_ids
+    ]
+    assert len(original_records) == 2
+    assert all(record.key is None for record in original_records)
     assert len(await memory.async_list("alice")) == 3
 
 
