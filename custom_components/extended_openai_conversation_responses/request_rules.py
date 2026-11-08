@@ -4133,10 +4133,99 @@ def _deterministic_match(text: str, phrase: str, match_type: str) -> bool:
     return text == phrase or f" {phrase} " in f" {text} "
 
 
+# A fuzzy candidate must keep command polarity, negation and quantities exact.
+# This is intentionally conservative: a typo in an action word must not
+# accidentally choose a different action. Names of short targets are likewise
+# too ambiguous to substitute safely (for example, hall versus wall).
+_FUZZY_EXACT_WORDS = frozenset({
+    "on", "off", "no", "not", "never", "without",
+    "don't", "dont", "didn't", "didnt", "can't", "cant",
+    "cannot", "won't", "wont",
+    "lock", "unlock", "locked", "unlocked", "locking", "unlocking",
+    "open", "close", "opened", "closed", "opening", "closing",
+    "arm", "disarm", "armed", "disarmed", "arming", "disarming",
+    "enable", "disable", "enabled", "disabled", "enabling", "disabling",
+    "start", "stop", "started", "stopped", "starting", "stopping",
+    "mute", "unmute", "muted", "unmuted", "muting", "unmuting",
+    "play", "pause", "resume", "cancel", "uncancel",
+    "increase", "decrease", "raise", "lower", "up", "down",
+    "heat", "cool", "add", "remove", "delete", "create",
+    "zero", "one", "two", "three", "four", "five", "six", "seven",
+    "eight", "nine", "ten", "eleven", "twelve", "thirteen",
+    "fourteen", "fifteen", "sixteen", "seventeen", "eighteen",
+    "nineteen", "twenty", "thirty", "forty", "fifty", "sixty",
+    "seventy", "eighty", "ninety", "hundred", "thousand",
+})
+_FUZZY_OPTIONAL_ARTICLES = frozenset({"a", "an", "the"})
+
+
+def _fuzzy_word_is_typo(expected: str, observed: str) -> bool:
+    """Permit small spelling errors, not unrelated or sensitive word changes."""
+    if expected == observed:
+        return True
+    if (
+        expected in _FUZZY_EXACT_WORDS
+        or observed in _FUZZY_EXACT_WORDS
+        or any(char.isdigit() for char in expected + observed)
+        or (len(expected) <= 4 and len(observed) <= 4)
+        or expected[0] != observed[0]
+        or abs(len(expected) - len(observed)) > 1
+    ):
+        return False
+    matcher = SequenceMatcher(None, expected, observed, autojunk=False)
+    if matcher.ratio() < 0.7:
+        return False
+    edits = 0
+    for kind, a_start, a_end, b_start, b_end in matcher.get_opcodes():
+        if kind != "equal":
+            edits += max(a_end - a_start, b_end - b_start)
+            if edits > 2:
+                return False
+    return True
+
+
+def _fuzzy_words_compatible(phrase: str, candidate: str) -> bool:
+    """Require aligned words; retain one harmless article insertion/deletion."""
+    expected, observed = phrase.split(), candidate.split()
+    if abs(len(expected) - len(observed)) > 1:
+        return False
+    skip_expected = len(expected) > len(observed)
+    skip_observed = len(observed) > len(expected)
+    i = j = 0
+    while i < len(expected) and j < len(observed):
+        if expected[i] == observed[j]:
+            i += 1
+            j += 1
+        elif skip_expected and expected[i] in _FUZZY_OPTIONAL_ARTICLES:
+            i += 1
+            skip_expected = False
+        elif skip_observed and observed[j] in _FUZZY_OPTIONAL_ARTICLES:
+            j += 1
+            skip_observed = False
+        elif _fuzzy_word_is_typo(expected[i], observed[j]):
+            i += 1
+            j += 1
+        else:
+            return False
+    if i < len(expected):
+        return (
+            skip_expected
+            and i == len(expected) - 1
+            and expected[i] in _FUZZY_OPTIONAL_ARTICLES
+        )
+    if j < len(observed):
+        return (
+            skip_observed
+            and j == len(observed) - 1
+            and observed[j] in _FUZZY_OPTIONAL_ARTICLES
+        )
+    return True
+
+
 def _fuzzy_score(
     text: str, phrase: str, match_type: str, budget: MatchBudget | None = None
 ) -> float:
-    """Rank candidates with a shared bound on worst-case comparison work."""
+    """Score only word-safe candidates, retaining existing ranking and work bounds."""
     if budget is None:
         budget = MatchBudget()
     budget.consume(len(text) + len(phrase))
@@ -4165,7 +4254,11 @@ def _fuzzy_score(
         matcher = SequenceMatcher(None, phrase, candidate)
         if matcher.real_quick_ratio() <= best or matcher.quick_ratio() <= best:
             continue
+        # This charge already bounds the word-local comparisons as well as
+        # the final whole-phrase ratio; both reuse the same request budget.
         budget.consume(max(1, len(candidate) * len(phrase)))
+        if not _fuzzy_words_compatible(phrase, candidate):
+            continue
         best = max(best, matcher.ratio())
         if best == 1:
             break

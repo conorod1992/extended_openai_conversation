@@ -199,6 +199,112 @@ async def test_strict_broad_match_beats_fuzzy_equals():
     assert match.score == 100
 
 
+@pytest.mark.parametrize("match_type", ["equals", "starts_with", "ends_with", "contains"])
+@pytest.mark.parametrize(
+    ("phrase", "utterance"),
+    [
+        ("turn on the kitchen lights", "turn off the kitchen lights"),
+        ("unlock the front door", "lock the front door"),
+        ("open the garage door", "close the garage door"),
+        ("arm the security system", "disarm the security system"),
+        ("enable the kitchen alarm", "disable the kitchen alarm"),
+        ("turn up the bedroom lights", "turn down the bedroom lights"),
+        ("set bedroom temperature to 20", "set bedroom temperature to 30"),
+        ("set bedroom temperature to twenty", "set bedroom temperature to thirty"),
+        ("turn on the hall lights", "turn on the wall lights"),
+        ("turn on kitchen lights", "turn on garden lights"),
+    ],
+)
+async def test_fuzzy_never_substitutes_command_number_or_target(
+    hass, phrase, utterance, match_type
+):
+    rules = await manager(
+        rule(
+            "unsafe",
+            phrase,
+            match_type,
+            matching={"fuzzy": True, "fuzzy_threshold": 70},
+        )
+    )
+    assert rules.match(utterance) is None
+    assert await rules.async_match(hass, utterance) is None
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "do not turn on the kitchen lights",
+        "never turn on the kitchen lights",
+        "turn on the kitchen lights not",
+    ],
+)
+async def test_fuzzy_equals_rejects_inserted_negation(hass, utterance):
+    rules = await manager(
+        rule(
+            "unsafe",
+            "turn on the kitchen lights",
+            matching={"fuzzy": True, "fuzzy_threshold": 70},
+        )
+    )
+    assert rules.match(utterance) is None
+    assert await rules.async_match(hass, utterance) is None
+
+
+@pytest.mark.parametrize(
+    ("match_type", "utterance"),
+    [
+        ("equals", "turn on the kitchn lights"),
+        ("starts_with", "turn on the kitchn lights please"),
+        ("ends_with", "please turn on the kitchn lights"),
+        ("contains", "please turn on the kitchn lights now"),
+    ],
+)
+async def test_fuzzy_preserves_typo_matching_in_all_text_modes(
+    hass, match_type, utterance
+):
+    rules = await manager(
+        rule(
+            "command",
+            "turn on the kitchen lights",
+            match_type,
+            matching={"fuzzy": True, "fuzzy_threshold": 90},
+        )
+    )
+    direct = rules.match(utterance)
+    eligible = await rules.async_match(hass, utterance)
+    assert direct is not None and direct.fuzzy
+    assert eligible is not None and eligible.fuzzy
+    assert direct.rule["id"] == eligible.rule["id"] == "command"
+    assert direct.score == eligible.score >= 90
+
+
+async def test_fuzzy_preserves_optional_article_and_inherited_safety(hass):
+    rules = await manager(
+        rule("command", "turn on kitchen light"),
+        defaults={"fuzzy": True, "fuzzy_threshold": 90},
+    )
+    match = rules.match("turn on the kitchen light")
+    assert match is not None and match.fuzzy
+    assert 90 <= match.score < 100
+    assert (await rules.async_match(hass, "turn on the kitchen light")) == match
+    assert rules.match("turn off kitchen light") is None
+    assert await rules.async_match(hass, "turn off kitchen light") is None
+
+
+async def test_strict_contains_semantics_are_not_rewritten_by_fuzzy_guard():
+    rules = await manager(
+        rule(
+            "broad",
+            "turn on the kitchen lights",
+            "contains",
+            matching={"fuzzy": True, "fuzzy_threshold": 70},
+        )
+    )
+    match = rules.match("do not turn on the kitchen lights")
+    assert match is not None and match.rule["id"] == "broad"
+    assert match.fuzzy is False
+
+
 @pytest.mark.parametrize("threshold,expected", [(79, True), (80, True), (81, False)])
 async def test_fuzzy_threshold_is_inclusive(threshold, expected):
     # One substituted letter in five gives 80%, exactly representable; no mock
