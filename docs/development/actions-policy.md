@@ -60,7 +60,8 @@ suites no longer repeat on every merge into `develop`.
 | Mutation, native architecture, resource constraints | Weekly | Full |
 | Recovery, IPv6, frontend/backend skew, HA upgrade, HACS lifecycle | Weekly and relevant PRs | Full |
 | Android Companion | Narrowly relevant PRs and weekly | Full |
-| iOS Companion | Manual | Full |
+| iOS Companion | Weekly, native-input pushes and manual | Full |
+| Generator proofs | Weekly and relevant PRs | Once |
 | Official HA Container | amd64 daily; both architectures weekly | Both |
 
 Lint, typing, and unit coverage remain enabled. Python management dependencies
@@ -69,13 +70,21 @@ frontend and harness changes. Stable CI image builds track actual image inputs.
 The stable public-journey PR matrix no longer duplicates the stable acceptance
 job, and HA dev remains a scheduled compatibility signal.
 
-Full Validation defaults to full coverage for release candidates and deliberate
-comprehensive checks. For faster manual checks, its `quick` mode skips Enhanced
-long-lifetime and iOS, along with the final release certification that requires
-their evidence. Enhanced also offers `all-except-long-lifetime` independently.
+Full Validation defaults to `quick` for iteration. Explicit `full` mode retains
+all release-candidate coverage. Quick mode skips Enhanced long-lifetime, iOS,
+generator proofs and the final release certification that requires their
+evidence. Enhanced also offers `all-except-long-lifetime` independently.
 See [Full validation](full-validation.md) for selection and reproduction commands.
 Target individual workflows for specialist troubleshooting. Its coordinator still
 waits on a runner; replacing that coordinator with asynchronous completion is a
 separate change. Measure runner minutes and missed/late detections after rollout
 before considering rotating normal Enhanced campaigns or less frequent latency
 checks.
+
+## Avoiding repeated execution
+
+Full Validation defaults to quick mode. Full release candidates explicitly retain
+iOS, long-lifetime and generator-proof coverage. iOS acceptance is scheduled
+weekly; expensive generator proofs run weekly and for changed inputs. The
+completion listener collects results without an idle polling runner. See
+[Full validation](full-validation.md) for ownership, recovery and evidence rules.

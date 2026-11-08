@@ -1,0 +1,44 @@
+name: Generator proofs
+on:
+  workflow_call:
+  workflow_dispatch:
+  schedule:
+    - cron: "45 2 * * 0"
+permissions:
+  contents: read
+  packages: read
+concurrency:
+  group: generator-proofs-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  proofs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Reconcile test requirements
+        run: |
+          VERSION="$(python -c 'import json,urllib.request; print(json.load(urllib.request.urlopen("https://pypi.org/pypi/homeassistant/json",timeout=30))["info"]["version"])')"
+          PLUGIN_VERSION="$(python ci/resolve_ha_test_plugin.py "$VERSION")"
+          export EOAI_EXPECTED_HA_VERSION="$VERSION"
+          export EOAI_EXPECTED_HA_TEST_PLUGIN_VERSION="$PLUGIN_VERSION"
+          bash ci/reconcile_stable_environment.sh
+      - name: Prove generator completeness and reproducibility once
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: python -m pytest --noconftest ci/test_generated_valid_state_proofs.py -q --timeout=900 --junitxml=generator-proofs.xml
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: generator-proofs
+          path: generator-proofs.xml
+          if-no-files-found: error
+          retention-days: 14

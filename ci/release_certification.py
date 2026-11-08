@@ -334,6 +334,50 @@ class GitHubActions:
             return json.loads(zipped.read(matching[0]))
 
 
+def completed_async_cohort(actions, parent, launch):
+    """Resolve a completed collector proof without treating dispatch as success."""
+    name = f"full-validation-result-{parent['id']}-{parent['run_attempt']}"
+    artifacts = actions.get("actions/artifacts", name=name, per_page=100).get(
+        "artifacts", []
+    )
+    if len(artifacts) != 1 or artifacts[0].get("expired"):
+        raise RuntimeError("Asynchronous Full Validation has no unique live result")
+    artifact = artifacts[0]
+    run = actions.get(f"actions/runs/{artifact['workflow_run']['id']}")
+    workflow = actions.get("actions/workflows/full-validation-collect.yml")
+    if (
+        run.get("workflow_id") != workflow["id"]
+        or run.get("status") != "completed"
+        or run.get("conclusion") != "success"
+        or run.get("event") not in {"workflow_run", "workflow_dispatch"}
+        or run.get("head_repository", {}).get("full_name") != actions.repository
+    ):
+        raise RuntimeError(
+            "Full Validation result is not from a successful trusted collector"
+        )
+    proof = actions.artifact_json(artifact, "full-validation-cohort.json")
+    if (
+        proof.get("schema") != 2
+        or proof.get("state") != "completed"
+        or str(proof.get("collector_run_id")) != str(run["id"])
+        or any(
+            proof.get(key) != launch.get(key)
+            for key in (
+                "candidate_sha",
+                "run_id",
+                "run_attempt",
+                "validation_ref",
+                "ha_dev_sha",
+                "stress_seed",
+                "mode",
+                "check_id",
+            )
+        )
+    ):
+        raise RuntimeError("Collector proof differs from its parent dispatch manifest")
+    return proof
+
+
 def full_validation_cohort(actions: GitHubActions, source_sha: str) -> dict | None:
     """Bind release evidence to one successful develop parent and exact child attempts."""
     workflow_id, runs = actions.workflow_runs("full-validation.yml", source_sha)
@@ -364,9 +408,13 @@ def full_validation_cohort(actions: GitHubActions, source_sha: str) -> dict | No
                     "Exactly one live Full Validation cohort artifact is required"
                 )
             proof = actions.artifact_json(artifacts[0], "full-validation-cohort.json")
+            if proof.get("mode") == "quick":
+                continue  # Deliberately not a release candidate.
+            if proof.get("schema") == 2:
+                proof = completed_async_cohort(actions, parent, proof)
             ref = f"full-validation-{parent['id']}-{parent['run_attempt']}"
             if (
-                proof.get("schema") != 1
+                proof.get("schema") not in {1, 2}
                 or proof.get("passed") is not True
                 or proof.get("candidate_sha") != source_sha
                 or proof.get("validation_ref") != ref
@@ -495,7 +543,8 @@ def certify(actions: GitHubActions, source_sha: str) -> dict[str, str]:
             )
         ]
         validation_errors = []
-        if filename in {*SPECIALIST_CERTIFICATION_WORKFLOWS,
+        if filename in {
+            *SPECIALIST_CERTIFICATION_WORKFLOWS,
             "enhanced-stress.yml",
             "upgrade-acceptance.yml",
             "openai-sdk-compatibility.yml",
@@ -513,7 +562,9 @@ def certify(actions: GitHubActions, source_sha: str) -> dict[str, str]:
                     }
                     artifacts = actions.run_artifacts(run["id"])
                     if filename in SPECIALIST_CERTIFICATION_WORKFLOWS:
-                        collect_specialist(actions, artifacts, jobs, filename, source_sha, run)
+                        collect_specialist(
+                            actions, artifacts, jobs, filename, source_sha, run
+                        )
                         errors = []
                     elif filename == "enhanced-stress.yml":
                         if not complete_heavy_nightly(run, jobs):
@@ -560,7 +611,8 @@ def certify(actions: GitHubActions, source_sha: str) -> dict[str, str]:
                             selected = [
                                 item
                                 for item in artifacts
-                                if item["name"] == f"official-ha-container-{arch}-evidence"
+                                if item["name"]
+                                == f"official-ha-container-{arch}-evidence"
                             ]
                             if len(selected) != 1:
                                 errors.append(

@@ -183,18 +183,47 @@ def main() -> None:
     e2e_anchor = "xcargs: 'COMPILER_INDEX_STORE_ENABLE=NO',"
     # The pinned Fastlane predates its collect_test_diagnostics option. xcargs
     # forwards the supported Xcode flag without requiring a Gemfile update.
-    e2e_replacement = "xcargs: 'COMPILER_INDEX_STORE_ENABLE=NO -collect-test-diagnostics never',"
+    e2e_replacement = """xcargs: 'COMPILER_INDEX_STORE_ENABLE=NO -collect-test-diagnostics never',
+    derived_data_path: File.join(ENV.fetch('IOS_DIR'), 'eoai-native'),
+    xctestrun: Dir[File.join(ENV.fetch('IOS_DIR'), 'eoai-native/Build/Products/*.xctestrun')].fetch(0),
+    test_without_building: true,"""
     if e2e_anchor not in e2e_lane:
         raise SystemExit("Pinned iOS E2E Fastlane lane no longer has the expected run_tests options")
     patched_e2e = e2e_lane.replace(e2e_anchor, e2e_replacement, 1)
     boot_anchor = '  sh("xcrun simctl erase #{udid}")\n'
     if boot_anchor not in e2e_lane:
         raise SystemExit("Pinned iOS E2E lane no longer has the expected simulator erase")
-    boot_replacement = boot_anchor + r'''  # Finish first boot before compilation and XCTest's app launch handshake.
-  sh("xcrun simctl boot #{udid}")
-  sh("python3 -c \"import subprocess; subprocess.run(['xcrun', 'simctl', 'bootstatus', '#{udid}', '-b'], check=True, timeout=300)\"")
+    shutdown_anchor = '  sh("xcrun simctl shutdown #{udid} || true")\n'
+    if shutdown_anchor not in patched_e2e:
+        raise SystemExit("Pinned iOS E2E lane no longer has the expected simulator shutdown")
+    # The workflow erases and boots once, before preparation/compilation. Never
+    # erase that ready simulator a second time here.
+    patched_e2e = patched_e2e.replace(
+        "  udid = newest_simulator(model, 'iOS')",
+        "  udid = ENV.fetch('IOS_SIMULATOR_UDID')",
+        1,
+    ).replace(shutdown_anchor, "", 1).replace(boot_anchor, "", 1)
+    lane_text = earlier_lanes + lane_marker + patched_e2e
+    # A separate build-for-testing avoids the upstream lane's `build test`
+    # double compilation and makes Products reusable without DerivedData state.
+    lane_text += r'''
+
+desc 'Build the pinned EOAI onboarding journey without running or onboarding it'
+lane :eoai_build do
+  run_tests(
+    project: 'HomeAssistant.xcodeproj',
+    scheme: 'Tests-UI',
+    configuration: 'Debug',
+    derived_data_path: File.join(ENV.fetch('IOS_DIR'), 'eoai-native'),
+    build_for_testing: true,
+    skip_package_dependencies_resolution: true,
+    skip_detect_devices: true,
+    cloned_source_packages_path: File.join(ENV.fetch('IOS_DIR'), 'eoai-source-packages'),
+    xcargs: 'COMPILER_INDEX_STORE_ENABLE=NO -onlyUsePackageVersionsFromResolvedFile',
+    destination: "platform=iOS Simulator,id=#{newest_simulator('iPhone 17', 'iOS')}"
+  )
+end
 '''
-    lane_text = earlier_lanes + lane_marker + patched_e2e.replace(boot_anchor, boot_replacement, 1)
     testing_lane.write_text(lane_text, encoding="utf-8")
 
     assert text.count("openExtendedOpenAIAndEditAgent()") == 2

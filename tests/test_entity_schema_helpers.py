@@ -37,6 +37,15 @@ def test_shorten_tool_call_id_is_deterministic_alphanumeric() -> None:
         ({"allOf": []}, False),
         ({"anyOf": ["not-a-schema", {"type": "string"}]}, False),
         ({"type": "string"}, False),
+        ({"nullable": True}, True),
+        ({"enum": ["a", None]}, True),
+        ({"const": None}, True),
+        ({"enum": ["a"]}, False),
+        ({"const": "a"}, False),
+        ({"anyOf": [{"type": "string"}, {"type": "number"}]}, False),
+        ({"oneOf": [{"type": "string"}, {"type": "null"}]}, True),
+        ({"oneOf": [{"type": "null"}, {"const": None}]}, False),
+        ({"allOf": [{"type": "null"}, {"const": None}]}, True),
     ],
 )
 def test_schema_explicitly_allows_null(
@@ -68,6 +77,12 @@ def test_schema_explicitly_allows_null(
                     {"type": "null"},
                 ]
             },
+        ),
+        ({"enum": ["a", "b"]}, {"anyOf": [{"enum": ["a", "b"]}, {"type": "null"}]}),
+        ({"const": "a"}, {"anyOf": [{"const": "a"}, {"type": "null"}]}),
+        (
+            {"anyOf": [{"type": "string"}]},
+            {"anyOf": [{"anyOf": [{"type": "string"}]}, {"type": "null"}]},
         ),
     ],
 )

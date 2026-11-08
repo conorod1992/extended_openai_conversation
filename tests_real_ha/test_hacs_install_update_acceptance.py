@@ -163,6 +163,26 @@ async def _ensure_hacs(hass: Any) -> Any:
     from homeassistant.config_entries import ConfigEntryState, SOURCE_USER
     from homeassistant.data_entry_flow import FlowResultType
 
+    # Core 2026.11 adopts HACS entries/storage into the built-in Marketplace
+    # and removes the old custom component. Verify that real migration rather
+    # than trying to import or reinstall a component that Core now blocks.
+    marketplace_entries = hass.config_entries.async_entries("marketplace")
+    if marketplace_entries:
+        assert len(marketplace_entries) == 1
+        await hass.async_block_till_done()
+        entry = marketplace_entries[0]
+        assert entry.state is ConfigEntryState.LOADED
+        assert entry.data["token"] == os.environ[_TOKEN_ENV]
+        marketplace = entry.runtime_data
+        assert marketplace.system.disabled_reason is None
+        repository = marketplace.repositories.get_by_full_name(REPOSITORY)
+        assert repository is not None and repository.data.installed
+        state = json.loads(
+            Path(hass.config.path(_HACS_STATE_FILE)).read_text(encoding="utf-8")
+        )
+        assert str(repository.data.id) == state["hacs_repository_id"]
+        return marketplace
+
     entries = hass.config_entries.async_entries(HACS_DOMAIN)
     if entries:
         assert len(entries) == 1
