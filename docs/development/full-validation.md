@@ -1,57 +1,79 @@
 # Full validation
 
-For manual runs, select **mode: quick** in the Full validation Actions form.
-Quick mode runs the same test workflows and heavy intensity, except it skips the
-iOS Companion workflow and uses Enhanced's **all-except-long-lifetime** campaign.
-The summary and cohort artifact record the selected mode and skipped workflows.
-Quick mode also skips nightly programme release certification, which requires
-the complete test inventory. A successful quick run cannot certify a release.
-The default **full** mode retains all coverage and release certification.
+Manual validation defaults to **quick**. It runs the ordinary workflows and
+heavy Enhanced campaigns, excluding iOS, long-lifetime soaks, generator proofs
+and release certification. Use this mode while iterating. A successful quick
+run cannot certify a release.
 
-To run Enhanced alone without the soak, select **campaign:
-all-except-long-lifetime** in its Actions form. It retains all other Python
-campaigns, persistence preparation, external Recorder checks, browser engines,
-and oldest/stable/dev lifecycle checks at the selected intensity. Scheduled runs
-and the existing **all** campaign keep their current coverage.
+Select **full** explicitly for a settled release candidate. It retains native
+iOS acceptance, both long-lifetime partitions and the full generator proofs.
+After all 28 test workflows pass, programme certification checks both official
+Container architectures and the complete candidate-bound execution evidence.
+The stable HA version comes from this cohort's Enhanced certification artifact.
+HA dev is resolved once and passed to every dev consumer as an immutable SHA.
 
 ```sh
-gh workflow run enhanced-stress.yml -f campaign=all-except-long-lifetime -f intensity=heavy
 gh workflow run full-validation.yml -f mode=quick
+gh workflow run full-validation.yml -f mode=full -f seed=42 -f ha_dev_sha=FULL_SHA
 ```
 
-Full validation dispatches 27 non-live test workflows for one immutable candidate.
-This includes genuine iOS and Android Companion journeys, all six targeted
-mutation campaigns, HACS/hassfest validation, and the heavy enhanced campaign.
-After every test workflow succeeds, it dispatches nightly programme certification
-with both official Container architectures required. The stable HA version comes
-from that run's enhanced certification artifact, rather than another version lookup.
-The dispatcher resolves Home Assistant dev once before launching workflows. CI,
-real-HA acceptance, Enhanced lifecycle and native browser compatibility receive
-the same full commit through `ha_dev_sha`; Python selection, dependency metadata,
-images and source installs use that immutable source. Standalone scheduled/manual
-runs may omit the input and resolve current dev locally. An invalid supplied pin
-fails rather than falling back to the moving branch.
-Certification checks actual dev evidence against the dispatcher's pin as well as
-checking agreement between workflows, so agreeing on a different source still fails.
-Certification selects evidence only from that Full Validation cohort's branch;
-a newer daily run of the same commit cannot replace its architecture evidence.
-Certification failure fails Full validation. Temporary candidate refs are removed
-by the parent workflow's cleanup job after certification finishes.
+## Completion without idle runners
+
+The dispatch workflow creates an isolated `full-validation-RUN-ATTEMPT` branch,
+launches the selected children, records their IDs in a pending manifest and
+exits. Its success only means dispatch succeeded. Follow the **Full validation
+results** check on the candidate commit for the actual result.
+
+`full-validation-collect.yml` handles completion events. Each invocation checks
+the recorded children once and exits if any are still running. Once all tests
+pass, it dispatches programme certification once; its completion event finishes
+the cohort. A repository-wide collector queue serializes callbacks before
+allocating runners. Child source SHA, workflow, branch and run attempt must
+match the manifest. Failures and cancellation produce a failed result.
+
+The listener must exist on the default branch for automatic completion events
+to run. Before that merge, candidate dispatches cannot finalize automatically.
+After installation, a missed event can be recovered without rerunning tests:
+
+```sh
+gh workflow run full-validation-collect.yml -f parent_run_id=DISPATCH_RUN_ID
+```
+
+The parent uploads a pending `full-validation-cohort` manifest. The collector
+uploads `full-validation-result-RUN-ATTEMPT` with the completed proof, then
+publishes the result check and deletes the temporary branch. Release
+certification verifies the successful collector workflow, parent/attempt
+binding, exact child inventory and attempts, and programme evidence. A pending
+dispatch, quick cohort, missing artifact, failed collector, expired evidence or
+superseded child attempt cannot authorize a release. Legacy completed cohorts
+remain readable.
+
+If collection fails before recording a result, fix the issue and use the
+recovery command. The temporary ref is retained for inspection until completion.
+Rerunning a child attempt changes its provenance: dispatch a new cohort instead
+of silently replacing a recorded attempt.
+
+## Test ownership and cadence
+
+Daily Enhanced coverage retains generated configurations exercised through real
+HA and the SDK, plus the cheap field/enum classification smoke test. The full
+fixed-seed generator completeness/reproducibility proofs run weekly, on PRs
+that change their inputs, on explicit dispatch, and in full candidate validation.
+They run once, independently of the normal/heavy campaign multiplier.
+
+`ci/campaign_owners.json` assigns overlapping files to one same-environment
+campaign. The reviewed execution contract assigns their semantic counters to
+that owner too. Standalone campaigns run their owned cases; consult this map
+when selecting specialists (for example, restore recovery belongs to
+`persistence`, process-kill restart tests to `process-chaos`).
+
+The programme coverage guard preserves the pre-consolidation union of mandatory
+cases and all semantic minimums. Different HA versions, browser engines, and
+reload/uninterrupted lifetime processes remain separate coverage boundaries.
+Long-lifetime partitions remain scheduled weekly; daily Enhanced excludes them.
+iOS full acceptance runs weekly, on native-input pushes, explicit dispatch and
+full candidate validation. Build-only warming remains available with
+`warm_only=true`, alongside the existing exact native artifact reuse.
 
 Live OpenAI workflows remain separate because they call paid external providers.
-Weekly/manual multi-seed race amplification supplements existing enhanced tests
-and remains separate. Release publishing, CI image publishing, and Actions-history
-cleanup are operational workflows, not candidate acceptance lanes.
-
-The inventory regression test accounts for every current workflow file. New lanes
-must be included or deliberately classified before that check will pass.
-
-The parent uploads `full-validation-cohort.json`, recording its candidate SHA,
-HA dev SHA, parent run and attempt, temporary ref, and every child run and attempt. Release
-certification rechecks that complete inventory and the programme certificate,
-including stable/dev environment identity, executed cases, and both architectures.
-Expired artifacts, missing lanes, failed children, or superseded attempts fail closed.
-Use Full validation for release candidates and deliberate comprehensive checks;
-dispatch individual specialist workflows when diagnosing one area.
-
-See [Actions execution policy](actions-policy.md) for PR enforcement and scheduled cadence.
+See [Actions execution policy](actions-policy.md) for PR selection and cadence.

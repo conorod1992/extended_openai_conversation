@@ -9,6 +9,7 @@ TEST_WORKFLOWS = (
     # shorter child runs. Preserve all lanes and their existing inputs.
     ("ios-companion-app.yml", {}),
     ("enhanced-stress.yml", {"campaign": "all", "intensity": "heavy"}),
+    ("generator-proofs.yml", {}),
     ("ci.yml", {}),
     ("post-merge-smoke.yml", {}),
     ("frontend.yml", {}),

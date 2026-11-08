@@ -2019,9 +2019,7 @@
     "tests_stress/test_generated_state_lifecycle.py::test_populated_feature_combinations_work_live_and_after_reload[chat_completions]",
     "tests_stress/test_generated_state_lifecycle.py::test_populated_feature_combinations_work_live_and_after_reload[responses]",
     "tests_stress/test_generated_state_lifecycle.py::test_populated_feature_interactions_survive_live_retained_transitions",
-    "tests_stress/test_generated_valid_states.py::test_covering_generator_is_valid_complete_bounded_and_reproducible",
     "tests_stress/test_generated_valid_states.py::test_every_persistent_field_and_enum_is_classified",
-    "tests_stress/test_generated_valid_states.py::test_seed_changes_equivalent_covering_choice",
     "tests_stress/test_generated_valid_transitions.py::test_major_feature_contract_has_static_transition_and_journey_evidence",
     "tests_stress/test_generated_valid_transitions.py::test_transition_paths_cover_every_enterable_value_with_valid_aba_returns",
     "tests_stress/test_generated_valid_transitions.py::test_transition_seed_reproduces_and_changes_equivalent_paths",
@@ -3881,7 +3879,8 @@
       "continuity_wire_checks": 24,
       "continuity_serialized_overlaps": 9,
       "pre_gc_resource_samples": 5,
-      "genuine_management_websocket_commands": 20
+      "genuine_management_websocket_commands": 20,
+      "debug_export_privacy_cases": 1
     },
     "functions": {
       "actual_function_executions": 1,
@@ -4056,15 +4055,7 @@
       "downstream_websocket_cases": 2
     },
     "backup": {
-      "rollback_phases": 1,
-      "retention_restore_ownership_cases": 1,
-      "restore_pending_cases": 2,
-      "restore_journal_fault_cases": 5,
-      "restore_recovery_cold_cases": 1,
-      "rejected_recovery_operations": 37,
-      "process_fresh_boots": 5,
-      "native_restore_faults": 5,
-      "restore_manager_settlement_cases": 2
+      "retention_restore_ownership_cases": 1
     },
     "backup-transfer": {
       "backup_chunks_transferred": 1,
@@ -4105,7 +4096,6 @@
       "permission_cache_churn_cases": 1,
       "restricted_context_probes": 11,
       "permission_group_updates": 3,
-      "debug_export_privacy_cases": 1,
       "catalog_ai_task_reset_rejections": 1,
       "catalog_ai_task_resets": 1,
       "catalog_ai_task_wire_checks": 3,
@@ -4125,12 +4115,6 @@
       "mixed_maintenance_contention_cases": 1,
       "cancelled_maintenance_waiters": 1,
       "storage_failure_recoveries": 1,
-      "archive_first_intent_failure_cases": 2,
-      "archive_first_intent_disk_commits": 1,
-      "archive_intent_reload_checks": 2,
-      "pending_publication_failure_cases": 2,
-      "pending_publication_retry_checks": 2,
-      "pending_publication_actual_tool_calls": 4,
       "restore_pending_cases": 2,
       "restore_journal_fault_cases": 5,
       "restore_recovery_cold_cases": 1,
@@ -4143,12 +4127,11 @@
       "delayed_recovered_service_effects": 7,
       "delayed_healthy_retry_effects": 6,
       "delayed_indeterminate_replay_rejections": 1,
-      "retained_manager_recoveries": 4,
-      "compound_optional_manager_faults": 4,
       "shared_durable_schedules": 20,
       "consumer_first_recoveries": 4,
       "integrated_calendar_journeys": 4,
-      "delayed_worker_settlement_checks": 4
+      "delayed_worker_settlement_checks": 4,
+      "rollback_phases": 1
     },
     "diagnostics": {
       "artifact_privacy_probes": 4
@@ -4229,10 +4212,7 @@
     ],
     "backup": [
       "tests_stress/test_restore_journal_writer_reader_contract.py",
-      "tests_stress/test_restore_recovery_safety.py",
-      "tests_stress/test_restore_recovery_process.py",
       "tests_stress/test_restore_background_ownership.py::test_installed_retention_waits_for_restored_policy",
-      "tests_stress/test_backup_fault_matrix.py",
       "tests_stress/test_backup_live_overlap.py",
       "tests_stress/test_backup_inventory.py",
       "tests_stress/test_historical_backup.py",
@@ -4289,11 +4269,9 @@
       "tests_real_ha/test_local_intent_exclusions.py",
       "tests_real_ha/test_model_catalog_live_refresh.py",
       "tests_real_ha/test_populated_feature_assist_journey.py",
-      "tests_real_ha/test_usage_accounting_failure_recovery.py",
       "tests_real_ha/test_usage_period_statistics.py",
       "tests_stress/test_cross_subsystem_reconciliation.py",
       "tests_stress/test_cross_subsystem_state_machine.py",
-      "tests_stress/test_evidence_manifest.py",
       "tests_stress/test_exposure_churn_endurance.py",
       "tests_stress/test_generated_valid_transitions.py",
       "tests_stress/test_local_intent_mixed_campaign.py",
@@ -4358,13 +4336,10 @@
       "tests_stress/test_identity_privacy_continuity.py"
     ],
     "large-installation": [
-      "tests_stress/test_archive_living_campaign.py",
       "tests_stress/test_extreme_context_matrix.py",
       "tests_stress/test_generated_state_lifecycle.py",
       "tests_stress/test_generated_valid_states.py",
       "tests_stress/test_large_installation.py",
-      "tests_stress/test_memory_knowledge_scale.py",
-      "tests_stress/test_provider_wire_privacy.py",
       "tests_stress/test_responses_scale_fairness.py"
     ],
     "lifecycle": [
@@ -4372,7 +4347,6 @@
       "tests_real_ha/test_agent_store_ownership.py",
       "tests_real_ha/test_optional_startup_ownership.py",
       "tests_real_ha/test_agent_registration_ownership.py",
-      "tests_real_ha/test_config_flow_lifecycle_contracts.py",
       "tests_real_ha/test_multi_entry_lifecycle.py",
       "tests_real_ha/test_partial_platform_setup_retry.py",
       "tests_stress/test_active_removal_races.py",
@@ -4444,19 +4418,15 @@
     ],
     "persistence": [
       "tests_real_ha/test_corrupt_subsystem_store_startup_isolation.py",
-      "tests_real_ha/test_delayed_tool_process_restart.py",
       "tests_real_ha/test_pending_store_write_shutdown_recovery.py",
       "tests_real_ha/test_persistent_memory_shutdown_recovery.py",
       "tests_real_ha/test_release_upgrade_acceptance.py",
-      "tests_real_ha/test_store_write_process_crash.py",
       "tests_stress/test_acknowledgement_loss.py",
-      "tests_stress/test_archive_living_campaign.py::test_archive_first_intent_failure_cannot_be_erased_by_session_publication",
       "tests_stress/test_backup_fault_matrix.py",
       "tests_stress/test_management_transaction_matrix.py",
       "tests_stress/test_os_storage_faults.py",
       "tests_stress/test_fixture_store_isolation.py",
       "tests_real_ha/test_fixture_store_isolation.py",
-      "tests_stress/test_pending_retrieval_publication.py",
       "tests_stress/test_persistence_forward_and_clock.py",
       "tests_stress/test_published_downgrade_boundary.py",
       "tests_stress/test_restore_recovery_process.py",
@@ -4470,7 +4440,6 @@
       "tests_real_ha/test_immediate_tool_process_crash.py",
       "tests_real_ha/test_restore_transaction_process_crash.py",
       "tests_real_ha/test_store_write_process_crash.py",
-      "tests_stress/test_backup_inventory.py",
       "tests_stress/test_delayed_backlog.py",
       "tests_stress/test_filesystem_process_recovery.py"
     ],
@@ -4535,7 +4504,6 @@
       "tests_real_ha/test_provider_serialization_invariants.py",
       "tests_real_ha/test_runtime_recovery_journey.py",
       "tests_real_ha/test_scoped_configuration_writes.py",
-      "tests_stress/test_backup_inventory.py",
       "tests_stress/test_conversation_id_collision.py",
       "tests_stress/test_evidence_manifest.py",
       "tests_stress/test_execution_contract.py",
@@ -4555,7 +4523,6 @@
       "tests_stress/test_process_resource_soak.py::test_resource_tripwires_reject_growth_or_lost_responsiveness[storage_bytes]",
       "tests_real_ha/test_entry_point_contract_matrix.py",
       "tests_real_ha/test_provider_boundary_contracts.py",
-      "tests_real_ha/test_provider_input_history.py",
       "tests_real_ha/test_state_transition_contracts.py",
       "tests_real_ha/test_archive_private_activity.py",
       "tests_stress/test_independent_critical_outcomes.py",
@@ -4566,7 +4533,6 @@
       "tests_real_ha/test_config_flow_edges.py",
       "tests_real_ha/test_config_flow_lifecycle_contracts.py",
       "tests_real_ha/test_packaged_release.py",
-      "tests_stress/test_backup_inventory.py",
       "tests_stress/test_provider_endpoint_selection.py",
       "tests_stress/test_reauth_active_traffic.py"
     ],

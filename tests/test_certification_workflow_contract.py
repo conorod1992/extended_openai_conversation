@@ -158,11 +158,11 @@ def test_full_validation_form_passes_mode_to_dispatcher():
     triggers = data.get("on", data.get(True))
     mode = triggers["workflow_dispatch"]["inputs"]["mode"]
     assert mode["type"] == "choice"
-    assert mode["default"] == "full"
+    assert mode["default"] == "quick"
     assert mode["options"] == ["full", "quick"]
     step = next(
         step
-        for step in data["jobs"]["dispatch-and-wait"]["steps"]
+        for step in data["jobs"]["dispatch"]["steps"]
         if step.get("run") == "python3 ci/full_validation.py"
     )
     assert step["env"]["FULL_VALIDATION_MODE"] == "${{ inputs.mode }}"
