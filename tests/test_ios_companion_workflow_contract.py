@@ -50,6 +50,7 @@ def test_ios_companion_workflow_warms_default_branch_without_pr_builds():
             ".github/workflows/ios-companion-app.yml",
             "ci/patch_ios_companion_e2e.py",
             "ci/prepare_ios_build_tools.sh",
+            "ci/ios_companion_build.py",
         ],
     }
     assert triggers["schedule"] == [{"cron": "35 5 * * 1,4"}]
@@ -64,6 +65,8 @@ def test_ios_companion_uses_official_xcuitest_harness_and_fails_closed():
         if step.get("name") == "Run genuine iOS Companion journey"
     )
     assert "bundle exec fastlane e2e" in journey["run"]
+    assert "if" not in journey
+    assert "continue-on-error" not in journey
 
     evidence = next(
         step
@@ -99,9 +102,15 @@ def test_ios_e2e_patcher_extends_the_upstream_onboarding_test():
     assert "-collect-test-diagnostics never" in patcher
     assert "until: settings" in patcher
     assert "sidebarScrolls < 6" in patcher
-    assert 'let pageSelector = webView.descendants(matching: .any)' in patcher
-    assert 'NSPredicate(format: "label == %@ AND value == %@", "Page", "Overview")' in patcher
-    assert 'NSPredicate(format: "label == %@ AND value == %@", "Page", "Assistant")' in patcher
+    assert "let pageSelector = webView.descendants(matching: .any)" in patcher
+    assert (
+        'NSPredicate(format: "label == %@ AND value == %@", "Page", "Overview")'
+        in patcher
+    )
+    assert (
+        'NSPredicate(format: "label == %@ AND value == %@", "Page", "Assistant")'
+        in patcher
+    )
     assert 'NSPredicate(format: "label == %@", "Assistant")' in patcher
     assert 'tapWebElement(labelContaining: "assistant"' not in patcher
 
@@ -121,24 +130,27 @@ def test_ios_companion_caches_expensive_build_state_across_retries():
         step for step in steps if step.get("name") == "Restore Bundler cache"
     )
     assert restore_gems["uses"].startswith("actions/cache/restore@")
-    assert "IOS_BUILD_CACHE_ID" in restore_gems["with"]["key"]
+    assert "IOS_GEMS_CACHE_ID" in restore_gems["with"]["key"]
     identity = next(
         step["run"]
         for step in steps
         if step.get("name") == "Resolve exact native build cache identity"
     )
-    assert 'os.environ["IOS_SOURCE_SHA"]' in identity
-    assert "patch_ios_companion_e2e.py" in identity
+    assert 'ios_companion_build.py identity "$IOS_DIR"' in identity
 
     save_derived = next(
         step for step in steps if step.get("name") == "Save iOS DerivedData cache"
     )
     assert save_derived["uses"].startswith("actions/cache/save@")
-    assert "always()" in save_derived["if"]
+    assert "github.event.repository.default_branch" in save_derived["if"]
+    assert "steps.ios-native-build.outcome == 'success'" in save_derived["if"]
 
     save_gems = next(step for step in steps if step.get("name") == "Save Bundler cache")
     assert save_gems["uses"].startswith("actions/cache/save@")
-    assert "always()" in save_gems["if"]
+    assert "github.event.repository.default_branch" in save_gems["if"]
+    assert steps.index(save_gems) < next(
+        i for i, step in enumerate(steps) if step.get("id") == "ios-native-build"
+    )
 
     install = next(
         step
@@ -149,7 +161,7 @@ def test_ios_companion_caches_expensive_build_state_across_retries():
     assert "xcodebuild -resolvePackageDependencies" in install["run"]
 
 
-def test_ios_host_tools_are_prepared_even_on_cache_hits_before_the_journey():
+def test_ios_host_tools_are_prepared_for_cold_builds_before_the_journey():
     steps = _workflow()["jobs"]["companion"]["steps"]
     preparation = next(
         step for step in steps if step.get("id") == "ios-buildtools-prepare"
@@ -161,7 +173,7 @@ def test_ios_host_tools_are_prepared_even_on_cache_hits_before_the_journey():
     )
     assert "prepare_ios_build_tools.sh" in preparation["run"]
     assert preparation["timeout-minutes"] == 20
-    assert "if" not in preparation
+    assert preparation["if"] == "steps.ios-native.outputs.hit != 'true'"
     assert steps.index(preparation) < steps.index(journey)
     assert "continue-on-error" not in journey
     restored = next(step for step in steps if step.get("id") == "ios-buildtools-cache")
@@ -169,7 +181,7 @@ def test_ios_host_tools_are_prepared_even_on_cache_hits_before_the_journey():
         step for step in steps if step.get("name") == "Save iOS host build-tool cache"
     )
     assert restored["with"] == saved["with"]
-    assert "IOS_BUILD_CACHE_ID" in restored["with"]["key"]
+    assert "IOS_TOOLS_CACHE_ID" in restored["with"]["key"]
     assert "BuildTools/.build" in restored["with"]["path"]
     assert "${{ env.IOS_DIR }}/.build" in restored["with"]["path"]
     assert "steps.ios-buildtools-prepare.outcome == 'success'" in saved["if"]
@@ -179,6 +191,35 @@ def test_ios_host_tools_are_prepared_even_on_cache_hits_before_the_journey():
         if step.get("name") == "Record source-bound iOS Companion evidence"
     )
     assert record["if"] == "success()"
+
+
+def test_compiled_artifact_reuse_does_not_reuse_acceptance_evidence():
+    workflow = _workflow()
+    assert workflow["permissions"]["actions"] == "read"
+    steps = workflow["jobs"]["companion"]["steps"]
+    build = next(step for step in steps if step.get("id") == "ios-native-build")
+    assert build["if"] == "steps.ios-native.outputs.hit != 'true'"
+    assert build["run"] == "bundle exec fastlane eoai_build"
+    publish = next(
+        step
+        for step in steps
+        if step.get("name") == "Publish reusable compiled iOS test artifact"
+    )
+    assert publish["with"]["path"].endswith("/native-products.tar")
+    journey = next(
+        step
+        for step in steps
+        if step.get("name") == "Run genuine iOS Companion journey"
+    )
+    assert steps.index(publish) < steps.index(journey)
+    assert "if" not in journey
+    record = next(
+        step
+        for step in steps
+        if step.get("name") == "Record source-bound iOS Companion evidence"
+    )
+    assert record["if"] == "success()"
+    assert '"native_build_identity"' in record["run"]
 
 
 def test_ios_fixture_uses_a_dashboard_with_an_unobstructed_header(tmp_path):
@@ -231,3 +272,7 @@ def test_diagnostics_patch_targets_e2e_instead_of_the_first_unit_lane(tmp_path):
     assert 'sh("xcrun simctl boot #{udid}")' in e2e
     assert "'bootstatus', '#{udid}', '-b'" in e2e
     assert "timeout=300" in e2e
+    assert "test_without_building: true" in e2e
+    assert "build_for_testing: true" in e2e
+    assert "lane :eoai_build do" in e2e
+    assert "derived_data_path:" in e2e

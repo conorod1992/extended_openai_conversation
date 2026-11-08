@@ -9,11 +9,13 @@ on:
       - .github/workflows/ios-companion-app.yml
       - ci/patch_ios_companion_e2e.py
       - ci/prepare_ios_build_tools.sh
+      - ci/ios_companion_build.py
   schedule:
     - cron: "35 5 * * 1,4"
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: ios-companion-${{ github.ref }}
@@ -96,27 +98,23 @@ jobs:
       - name: Resolve exact native build cache identity
         run: |
           set -euo pipefail
-          python - <<'PY'
-          import hashlib, os, platform, subprocess
-          from pathlib import Path
-          digest = hashlib.sha256()
-          for command in (["xcodebuild", "-version"], ["xcrun", "--sdk", "iphonesimulator", "--show-sdk-version"]):
-              digest.update(subprocess.check_output(command))
-          digest.update(platform.machine().encode())
-          digest.update(os.environ["IOS_SOURCE_SHA"].encode())
-          digest.update(Path("ci/patch_ios_companion_e2e.py").read_bytes())
-          for path in sorted(Path(os.environ["IOS_DIR"]).rglob("Package.resolved")):
-              digest.update(path.read_bytes())
-          with open(os.environ["GITHUB_ENV"], "a") as stream:
-              stream.write(f"IOS_BUILD_CACHE_ID={digest.hexdigest()}\n")
-          PY
+          python ci/ios_companion_build.py identity "$IOS_DIR"
+
+      # Artifacts can be reused across immutable validation branches, including
+      # when no default-branch cache is warm yet. Acceptance is always rerun.
+      - name: Restore exact compiled iOS test artifact
+        id: ios-native
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python ci/ios_companion_build.py restore "$IOS_DIR"
 
       - name: Restore iOS DerivedData cache
         id: ios-deriveddata-cache
+        if: steps.ios-native.outputs.hit != 'true'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/Library/Developer/Xcode/DerivedData
-          key: ios-e2e-deriveddata-v2-${{ runner.os }}-${{ env.IOS_BUILD_CACHE_ID }}
+          path: ${{ env.IOS_DIR }}/eoai-native
+          key: ios-e2e-deriveddata-v3-${{ runner.os }}-${{ env.IOS_BUILD_CACHE_ID }}
 
       - name: Patch pinned iOS E2E journey for EOAI
         run: |
@@ -127,12 +125,13 @@ jobs:
 
       - name: Restore iOS host build-tool cache
         id: ios-buildtools-cache
+        if: steps.ios-native.outputs.hit != 'true'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ${{ env.IOS_DIR }}/BuildTools/.build
             ${{ env.IOS_DIR }}/.build
-          key: ios-e2e-buildtools-v1-${{ runner.os }}-${{ env.IOS_BUILD_CACHE_ID }}
+          key: ios-e2e-buildtools-v2-${{ runner.os }}-${{ env.IOS_TOOLS_CACHE_ID }}
 
       - name: Set up Ruby 4.0.7
         uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1
@@ -144,7 +143,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.IOS_DIR }}/vendor/bundle
-          key: ios-e2e-gems-v2-${{ runner.os }}-${{ env.IOS_BUILD_CACHE_ID }}-ruby-4.0.7
+          key: ios-e2e-gems-v3-${{ runner.os }}-${{ runner.arch }}-${{ env.IOS_GEMS_CACHE_ID }}-ruby-4.0.7
 
       - name: Install pinned iOS build dependencies
         working-directory: ${{ env.IOS_DIR }}
@@ -154,14 +153,75 @@ jobs:
           if [[ "${{ steps.ios-gems-cache.outputs.cache-hit }}" != "true" ]]; then
             bundle install --jobs 4 --retry 3
           fi
-          xcodebuild -resolvePackageDependencies \
-            -project HomeAssistant.xcodeproj \
-            -scheme Tests-UI
+          if [[ "${{ steps.ios-native.outputs.hit }}" != "true" ]]; then
+            xcodebuild -resolvePackageDependencies \
+              -project HomeAssistant.xcodeproj \
+              -scheme Tests-UI \
+              -onlyUsePackageVersionsFromResolvedFile
+          fi
+
+      # Save completed dependencies before a slow build/test can fail. Only the
+      # default branch writes caches: all candidate branches can restore these.
+      - name: Save Bundler cache
+        if: github.ref_name == github.event.repository.default_branch && steps.ios-gems-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.IOS_DIR }}/vendor/bundle
+          key: ios-e2e-gems-v3-${{ runner.os }}-${{ runner.arch }}-${{ env.IOS_GEMS_CACHE_ID }}-ruby-4.0.7
 
       - name: Prepare pinned iOS host build tools
         id: ios-buildtools-prepare
+        if: steps.ios-native.outputs.hit != 'true'
         timeout-minutes: 20
         run: bash ci/prepare_ios_build_tools.sh "$IOS_DIR"
+
+      - name: Save iOS host build-tool cache
+        if: github.ref_name == github.event.repository.default_branch && steps.ios-buildtools-prepare.outcome == 'success' && steps.ios-buildtools-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ env.IOS_DIR }}/BuildTools/.build
+            ${{ env.IOS_DIR }}/.build
+          key: ios-e2e-buildtools-v2-${{ runner.os }}-${{ env.IOS_TOOLS_CACHE_ID }}
+
+      - name: Build pinned iOS app and test runner once
+        id: ios-native-build
+        if: steps.ios-native.outputs.hit != 'true'
+        working-directory: ${{ env.IOS_DIR }}
+        run: bundle exec fastlane eoai_build
+
+      - name: Package compiled iOS test products
+        if: steps.ios-native.outputs.hit != 'true'
+        run: python ci/ios_companion_build.py package "$IOS_DIR"
+
+      - name: Publish reusable compiled iOS test artifact
+        if: steps.ios-native.outputs.hit != 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ios-native-${{ env.IOS_BUILD_CACHE_ID }}
+          path: ${{ env.IOS_DIR }}/native-products.tar
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: true
+
+      - name: Save iOS DerivedData cache
+        if: github.ref_name == github.event.repository.default_branch && steps.ios-native-build.outcome == 'success' && steps.ios-deriveddata-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.IOS_DIR }}/eoai-native
+          key: ios-e2e-deriveddata-v3-${{ runner.os }}-${{ env.IOS_BUILD_CACHE_ID }}
+
+      - name: Validate native identity and report reuse
+        env:
+          NATIVE_REUSED: ${{ steps.ios-native.outputs.hit }}
+          GEMS_REUSED: ${{ steps.ios-gems-cache.outputs.cache-hit }}
+        run: |
+          python ci/ios_companion_build.py validate "$IOS_DIR"
+          {
+            echo "Native build identity: $IOS_BUILD_CACHE_ID"
+            echo "Compiled artifact reused: $NATIVE_REUSED"
+            echo "Bundler cache hit: $GEMS_REUSED"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run genuine iOS Companion journey
         working-directory: ${{ env.IOS_DIR }}
@@ -208,6 +268,8 @@ jobs:
                       "platform": "ios-simulator",
                       "ios_source_sha": os.environ["IOS_SOURCE_SHA"],
                       "xcode": os.environ["DEVELOPER_DIR"],
+                      "native_build_identity": os.environ["IOS_BUILD_CACHE_ID"],
+                      "reused_native_artifact_id": os.environ.get("IOS_NATIVE_ARTIFACT_ID"),
                       "onboarding": True,
                       "management_edit_save": True,
                       "background_resume": True,
@@ -260,26 +322,3 @@ jobs:
             ~/Library/Logs/scan/
           if-no-files-found: warn
           retention-days: 14
-
-      - name: Save Bundler cache
-        if: always() && steps.ios-gems-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ env.IOS_DIR }}/vendor/bundle
-          key: ios-e2e-gems-v2-${{ runner.os }}-${{ env.IOS_BUILD_CACHE_ID }}-ruby-4.0.7
-
-      - name: Save iOS host build-tool cache
-        if: always() && steps.ios-buildtools-prepare.outcome == 'success' && steps.ios-buildtools-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ${{ env.IOS_DIR }}/BuildTools/.build
-            ${{ env.IOS_DIR }}/.build
-          key: ios-e2e-buildtools-v1-${{ runner.os }}-${{ env.IOS_BUILD_CACHE_ID }}
-
-      - name: Save iOS DerivedData cache
-        if: always() && steps.ios-deriveddata-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/Library/Developer/Xcode/DerivedData
-          key: ios-e2e-deriveddata-v2-${{ runner.os }}-${{ env.IOS_BUILD_CACHE_ID }}
