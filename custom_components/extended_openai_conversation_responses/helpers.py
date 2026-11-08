@@ -200,6 +200,11 @@ async def get_authenticated_client(
             http_client=cast(Any, get_async_client(hass)),
         )
 
+    # The SDK lazily reads OS metadata while constructing its first request.
+    # Prime cached platform headers off-loop even with authentication skipped,
+    # so the first provider request cannot perform that disk read on HA's loop.
+    await hass.async_add_executor_job(client.platform_headers)
+
     if skip_authentication:
         return client
 
