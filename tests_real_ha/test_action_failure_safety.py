@@ -241,7 +241,7 @@ async def test_origin_only_targeted_broadcast_is_handled_failure(hass, monkeypat
     assert len(agent._usage.runs) == 1
     assert agent._usage.runs[0].successful is True
     assert len(finished) == 1
-    assert finished[0].data["status"] == "success"
+    assert finished[0].data["status"] == "local"
     assert finished[0].data["handled_locally"] is True
     turns = [turn for values in agent._archive._turns.values() for turn in values]
     assert len(turns) == 1
