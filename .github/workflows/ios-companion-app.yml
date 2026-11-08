@@ -21,8 +21,7 @@ on:
       - ci/ios_companion_build.py
       - ci/ios_companion_runtime.py
   schedule:
-    - cron: "35 5 * * 1,4"
-    - cron: "35 5 * * 0,2,3,5,6"
+    - cron: "35 5 * * 1"
 
 permissions:
   contents: read
@@ -50,7 +49,7 @@ jobs:
       FASTLANE_SKIP_UPDATE_CHECK: "true"
       FASTLANE_XCODE_LIST_TIMEOUT: "80"
       FASTLANE_XCODEBUILD_SETTINGS_TIMEOUT: "80"
-      IOS_WARM_ONLY: ${{ inputs.warm_only || github.event.schedule == '35 5 * * 0,2,3,5,6' }}
+      IOS_WARM_ONLY: ${{ inputs.warm_only || false }}
       IOS_REQUIRE_NATIVE_ARTIFACT: ${{ inputs.require_native_artifact || false }}
 
     steps:

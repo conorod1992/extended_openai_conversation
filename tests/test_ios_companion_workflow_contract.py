@@ -56,8 +56,7 @@ def test_ios_companion_workflow_warms_default_branch_without_pr_builds():
         ],
     }
     assert triggers["schedule"] == [
-        {"cron": "35 5 * * 1,4"},
-        {"cron": "35 5 * * 0,2,3,5,6"},
+        {"cron": "35 5 * * 1"},
     ]
     assert "if" not in data["jobs"]["companion"]
     assert data["concurrency"]["queue"] == "max"

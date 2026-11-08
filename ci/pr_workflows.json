@@ -362,5 +362,23 @@
       "ci/pr_workflows.json",
       ".github/workflows/pr-validation.yml"
     ]
+  },
+  "generator-proofs": {
+    "workflow": "generator-proofs.yml",
+    "paths": [
+      ".github/workflows/generator-proofs.yml",
+      "ci/test_generated_valid_state_proofs.py",
+      "tests_stress/generated_valid_states.py",
+      "tests_stress/test_generated_valid_states.py",
+      "tests_stress/agent_field_contract.json",
+      "tests_stress/reviewed_valid_coverage.json",
+      "custom_components/extended_openai_conversation_responses/agent_config*.py",
+      "custom_components/extended_openai_conversation_responses/const.py",
+      "custom_components/extended_openai_conversation_responses/model_catalog*",
+      "requirements_test.txt",
+      "pyproject.toml",
+      "custom_components/extended_openai_conversation_responses/model_capabilities.py",
+      "custom_components/extended_openai_conversation_responses/request*.py"
+    ]
   }
 }

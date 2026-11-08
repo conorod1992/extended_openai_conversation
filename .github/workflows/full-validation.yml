@@ -1,6 +1,6 @@
 name: Full validation
 
-run-name: Full validation · ${{ inputs.mode || 'full' }} · seed=${{ inputs.seed || 'random' }} · dev=${{ inputs.ha_dev_sha || 'resolve' }}
+run-name: Full validation Â· ${{ inputs.mode || 'full' }} Â· seed=${{ inputs.seed || 'random' }} Â· dev=${{ inputs.ha_dev_sha || 'resolve' }}
 
 on:
   workflow_dispatch:
@@ -9,7 +9,7 @@ on:
         description: Full coverage or quick (skip Enhanced long-lifetime and iOS; no release certification)
         required: true
         type: choice
-        default: full
+        default: quick
         options: [full, quick]
       seed:
         description: Optional reproducible seed for enhanced stress
@@ -24,23 +24,24 @@ on:
 permissions:
   actions: write
   contents: write
+  checks: write
 
 concurrency:
   group: full-validation-${{ github.run_id }}-${{ github.run_attempt }}
   cancel-in-progress: false
 
 jobs:
-  dispatch-and-wait:
-    name: Dispatch and monitor selected CI test lanes
+  dispatch:
+    name: Dispatch selected CI test lanes
     runs-on: ubuntu-latest
-    timeout-minutes: 345
+    timeout-minutes: 15
     steps:
       - name: Check out the selected commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
 
-      - name: Dispatch test workflows and wait for their results
+      - name: Dispatch test workflows and record the pending cohort
         env:
           GH_API_URL: ${{ github.api_url }}
           GH_REPOSITORY: ${{ github.repository }}
@@ -53,6 +54,7 @@ jobs:
           FULL_VALIDATION_HA_DEV_SHA: ${{ inputs.ha_dev_sha }}
           FULL_VALIDATION_MODE: ${{ inputs.mode }}
           FULL_VALIDATION_EXPLICIT_SEED: ${{ inputs.seed }}
+          FULL_VALIDATION_ASYNC: "1"
         run: python3 ci/full_validation.py
       - name: Preserve exact validation cohort for release certification
         if: always()
@@ -62,30 +64,3 @@ jobs:
           path: full-validation-cohort.json
           if-no-files-found: error
           retention-days: 14
-
-  cleanup-ref:
-    name: Remove temporary validation ref
-    if: always()
-    needs: dispatch-and-wait
-    runs-on: ubuntu-latest
-    steps:
-      - name: Delete temporary ref
-        env:
-          GH_API_URL: ${{ github.api_url }}
-          GH_REPOSITORY: ${{ github.repository }}
-          GH_TOKEN: ${{ github.token }}
-          GH_RUN_ID: ${{ github.run_id }}
-          GH_RUN_ATTEMPT: ${{ github.run_attempt }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          REF="full-validation-${GH_RUN_ID}-${GH_RUN_ATTEMPT}"
-          STATUS="$(curl -sS -o /dev/null -w '%{http_code}' \
-            -X DELETE \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H 'Accept: application/vnd.github+json' \
-            "${GH_API_URL}/repos/${GH_REPOSITORY}/git/refs/heads/${REF}")"
-          if [[ "$STATUS" != 204 && "$STATUS" != 404 ]]; then
-            echo "Temporary ref cleanup returned HTTP ${STATUS}" >&2
-            exit 1
-          fi

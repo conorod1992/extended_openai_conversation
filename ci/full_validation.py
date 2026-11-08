@@ -215,6 +215,49 @@ def programme_inputs(
     }
 
 
+def cohort_is_running(run: dict) -> bool:
+    if run.get("status") in {
+        "queued",
+        "pending",
+        "in_progress",
+        "waiting",
+        "requested",
+    }:
+        return True
+    if run.get("status") != "completed":
+        return False
+    # A completed dispatcher can still own an unfinished asynchronous cohort.
+    try:
+        from ci.release_certification import GitHubActions
+    except ModuleNotFoundError:
+        from release_certification import GitHubActions
+
+    actions = GitHubActions(REPOSITORY, TOKEN)
+    artifacts = [
+        a
+        for a in actions.run_artifacts(run["id"])
+        if a["name"] == "full-validation-cohort" and not a.get("expired")
+    ]
+    if len(artifacts) != 1:
+        return False
+    state = actions.artifact_json(artifacts[0], "full-validation-cohort.json")
+    if (
+        state.get("schema") != 2
+        or state.get("state") != "dispatched"
+        or state.get("candidate_sha") != TARGET_SHA
+        or str(state.get("run_id")) != str(run["id"])
+        or str(state.get("run_attempt")) != str(run["run_attempt"])
+        or type(state.get("check_id")) is not int
+    ):
+        return False
+    check = actions.get(f"check-runs/{state['check_id']}")
+    return (
+        check.get("status") != "completed"
+        and check.get("head_sha") == TARGET_SHA
+        and check.get("external_id") == f"{run['id']}-{run['run_attempt']}"
+    )
+
+
 def duplicate_cohort() -> dict | None:
     """Do not dispatch the same explicitly pinned stress cohort twice.
 
@@ -239,8 +282,7 @@ def duplicate_cohort() -> dict | None:
             if int(run["id"]) < int(RUN_ID)
             and run.get("head_sha") == TARGET_SHA
             and run.get("display_title") == title
-            and run.get("status")
-            in {"queued", "pending", "in_progress", "waiting", "requested"}
+            and cohort_is_running(run)
         ),
         None,
     )
@@ -274,7 +316,8 @@ def main() -> int:
     workflows = tuple(
         (workflow, dict(inputs))
         for workflow, inputs in TEST_WORKFLOWS
-        if MODE != "quick" or workflow != "ios-companion-app.yml"
+        if MODE != "quick"
+        or workflow not in {"ios-companion-app.yml", "generator-proofs.yml"}
     )
     if MODE == "quick":
         for workflow, inputs in workflows:
@@ -289,6 +332,21 @@ def main() -> int:
     api("POST", "git/refs", {"ref": f"refs/heads/{REF_NAME}", "sha": TARGET_SHA})
     launched: list[dict] = []
     launch_errors: list[tuple[str, str]] = []
+    asynchronous = os.environ.get("FULL_VALIDATION_ASYNC") == "1"
+    check = (
+        api(
+            "POST",
+            "check-runs",
+            {
+                "name": "Full validation results",
+                "head_sha": TARGET_SHA,
+                "status": "in_progress",
+                "external_id": f"{RUN_ID}-{RUN_ATTEMPT}",
+            },
+        )
+        if asynchronous
+        else {}
+    )
     for workflow, inputs in workflows:
         try:
             pinned_inputs = dict(inputs)
@@ -300,6 +358,37 @@ def main() -> int:
             print(
                 f"Could not dispatch {workflow}: {error}", file=sys.stderr, flush=True
             )
+    if asynchronous:
+        Path("full-validation-cohort.json").write_text(
+            json.dumps(
+                {
+                    "schema": 2,
+                    "state": "dispatched",
+                    "passed": False,
+                    "mode": MODE,
+                    "candidate_sha": TARGET_SHA,
+                    "ha_dev_sha": ha_dev_sha,
+                    "stress_seed": STRESS_SEED,
+                    "validation_ref": REF_NAME,
+                    "run_id": RUN_ID,
+                    "run_attempt": RUN_ATTEMPT,
+                    "check_id": check["id"],
+                    "runs": launched,
+                    "launch_errors": launch_errors,
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        SUMMARY_PATH.write_text(
+            f"Dispatched **{MODE}** validation for `{TARGET_SHA}`.\n\n"
+            "The **Full validation results** check reports the final outcome. "
+            "This dispatch result is not release certification. "
+            "Completion events collect results without an idle runner.\n",
+            encoding="utf-8",
+        )
+        return 1 if launch_errors else 0
     results = wait_for_workflows(launched)
     if (
         MODE == "full"
@@ -345,6 +434,7 @@ def main() -> int:
     for workflow, _ in (*TEST_WORKFLOWS, (CERTIFICATION_WORKFLOW, {})):
         if MODE == "quick" and workflow in {
             "ios-companion-app.yml",
+            "generator-proofs.yml",
             CERTIFICATION_WORKFLOW,
         }:
             lines.append(f"| `{workflow}` | skipped | quick mode |")

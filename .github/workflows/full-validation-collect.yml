@@ -1,0 +1,145 @@
+name: Collect Full validation
+
+# This listener must be on the default branch. Its recovery input can collect
+# missed completion events after the listener is installed.
+on:
+  workflow_run:
+    workflows:
+      - "Full validation"
+      - "iOS Companion app acceptance"
+      - "Enhanced nightly acceptance and stress"
+      - "Generator proofs"
+      - "ci"
+      - "Post-merge stable smoke"
+      - "Frontend"
+      - "Real HA Acceptance"
+      - "Release Artifact Smoke"
+      - "Cross-browser smoke"
+      - "Release Upgrade Acceptance"
+      - "Frontend backend version-skew acceptance"
+      - "Home Assistant version-upgrade acceptance"
+      - "Genuine HACS install and update acceptance"
+      - "Deployment recovery boundaries"
+      - "Side-by-side Integration Isolation"
+      - "IPv6-only networking acceptance"
+      - "HA native browser compatibility"
+      - "Android Companion app acceptance"
+      - "Targeted mutation testing"
+      - "hacs"
+      - "Frontend Latency Diagnostics"
+      - "Home Assistant OS Supervisor VM acceptance"
+      - "Official Home Assistant Container acceptance"
+      - "EOAI constrained resource acceptance"
+      - "EOAI deployment architecture acceptance"
+      - "Documentation"
+      - "OpenAI SDK Compatibility"
+      - "Version metadata"
+      - "Nightly programme certification"
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      parent_run_id:
+        description: Completed Full validation dispatch run to collect
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  actions: write
+  checks: write
+
+concurrency:
+  group: full-validation-collector
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  collect:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'workflow_dispatch' &&
+       (github.event.workflow_run.name == 'Full validation' ||
+        startsWith(github.event.workflow_run.head_branch, 'full-validation-')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Validate same-repository dispatch provenance
+        id: parent
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea9 # v7
+        env:
+          REQUESTED_PARENT: ${{ inputs.parent_run_id }}
+        with:
+          script: |
+            const child = context.payload.workflow_run;
+            let id = process.env.REQUESTED_PARENT;
+            let attempt;
+            if (!id && child.name === 'Full validation') {
+              id = String(child.id);
+              attempt = child.run_attempt;
+            } else if (!id) {
+              const match = /^full-validation-([0-9]+)-([0-9]+)$/.exec(child.head_branch);
+              if (!match) throw new Error('Invalid cohort ref');
+              [, id, attempt] = match;
+            }
+            if (!/^[0-9]+$/.test(id)) throw new Error('Invalid parent ID');
+            const {data: parent} = await github.rest.actions.getWorkflowRun({...context.repo, run_id: Number(id)});
+            const repository = `${context.repo.owner}/${context.repo.repo}`;
+            if (parent.path !== '.github/workflows/full-validation.yml' ||
+                parent.event !== 'workflow_dispatch' ||
+                parent.head_repository.full_name !== repository ||
+                !/^[0-9a-f]{40}$/.test(parent.head_sha) ||
+                (attempt && Number(attempt) !== parent.run_attempt) ||
+                (child && (child.head_repository.full_name !== repository || child.head_sha !== parent.head_sha))) {
+              throw new Error('Parent source, repository or attempt differs');
+            }
+            // Child events can arrive before the launch manifest is uploaded.
+            // The parent completion event will collect those cohorts later.
+            if (parent.status !== 'completed') return;
+            const {data: jobs} = await github.rest.actions.listJobsForWorkflowRun({...context.repo, run_id: parent.id});
+            if (!jobs.jobs.some(job => job.name === 'Dispatch selected CI test lanes')) return;
+            core.setOutput('id', id);
+            core.setOutput('sha', parent.head_sha);
+            core.setOutput('attempt', String(parent.run_attempt));
+            core.setOutput('branch', parent.head_branch);
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: steps.parent.outputs.id != ''
+        with:
+          ref: ${{ steps.parent.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        if: steps.parent.outputs.id != ''
+        with:
+          python-version: "3.14"
+      - name: Collect completed children without waiting
+        id: collect
+        if: steps.parent.outputs.id != ''
+        env:
+          GH_API_URL: ${{ github.api_url }}
+          GH_REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          GH_SHA: ${{ steps.parent.outputs.sha }}
+          GH_REF: ${{ steps.parent.outputs.branch }}
+          GH_RUN_ID: ${{ steps.parent.outputs.id }}
+          GH_RUN_ATTEMPT: ${{ steps.parent.outputs.attempt }}
+          COHORT_PARENT_ID: ${{ steps.parent.outputs.id }}
+        run: python -m ci.full_validation_collect
+      - name: Preserve completed cohort proof
+        if: steps.collect.outputs.complete == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.collect.outputs.artifact }}
+          path: full-validation-cohort.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Publish result and remove temporary ref
+        if: steps.collect.outputs.complete == 'true'
+        env:
+          GH_API_URL: ${{ github.api_url }}
+          GH_REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          GH_SHA: ${{ steps.parent.outputs.sha }}
+          GH_REF: ${{ steps.parent.outputs.branch }}
+          GH_RUN_ID: ${{ steps.parent.outputs.id }}
+          GH_RUN_ATTEMPT: ${{ steps.parent.outputs.attempt }}
+          COHORT_PARENT_ID: ${{ steps.parent.outputs.id }}
+        run: python -m ci.full_validation_collect finish

@@ -10,8 +10,8 @@ shared; acceptance results and Home Assistant storage are never shared.
 Only `develop` (the default branch) writes large build, host-tool, Swift-package
 and Python-wheel caches. Validation branches
 can restore default-branch caches but cannot restore sibling-branch caches.
-The workflow runs the full journey on native-input pushes and Monday/Thursday.
-The other days perform native warming only, to detect runner toolchain updates
+The workflow runs the full journey on native-input pushes and Mondays.
+Build-only warming is available with `warm_only=true` to detect runner toolchain updates
 without issuing acceptance evidence. To warm explicitly, dispatch **iOS Companion
 app acceptance** on `develop` with `warm_only: true`. Let that run finish before starting a validation
 cohort if you want dependency cache hits on its first native build.

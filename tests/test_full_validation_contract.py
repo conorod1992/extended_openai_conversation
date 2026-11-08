@@ -16,6 +16,7 @@ DEV_SHA = "a" * 40
 
 def _driver(monkeypatch, tmp_path):
     monkeypatch.delenv("FULL_VALIDATION_EXPLICIT_SEED", raising=False)
+    monkeypatch.delenv("FULL_VALIDATION_ASYNC", raising=False)
     for key, value in {
         "GH_API_URL": "https://api.github.com",
         "GH_REPOSITORY": "owner/repository",
@@ -81,6 +82,7 @@ def test_validation_mode_dispatches_expected_inventory(
     expected = {name for name, _ in original}
     if mode == "quick":
         expected.remove("ios-companion-app.yml")
+        expected.remove("generator-proofs.yml")
     elif not failed:
         expected.add(driver.CERTIFICATION_WORKFLOW)
     assert set(calls) == expected
@@ -195,7 +197,7 @@ def test_full_validation_includes_specialists_and_accounts_for_all_workflows():
     ios = (root / ".github/workflows/ios-companion-app.yml").read_text()
     assert "workflow_dispatch:" in ios
     # Default-branch cache warming coexists with candidate-bound manual runs.
-    assert 'cron: "35 5 * * 1,4"' in ios
+    assert 'cron: "35 5 * * 1"' in ios
     assert "branches: [develop]" in ios
     assert "pull_request:" not in ios
     assert {
@@ -209,6 +211,7 @@ def test_full_validation_includes_specialists_and_accounts_for_all_workflows():
     assert all((root / ".github" / "workflows" / name).is_file() for name in workflows)
     excluded = {
         "full-validation.yml",
+        "full-validation-collect.yml",
         "pr-validation.yml",
         "release.yml",
         "ci-image-stable.yml",

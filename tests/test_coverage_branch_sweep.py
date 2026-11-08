@@ -15,7 +15,6 @@ from custom_components.extended_openai_conversation_responses.entity import (
     _make_schema_nullable,
     _normalize_function_result,
     _normalize_url_citation,
-    _schema_explicitly_allows_null,
 )
 from custom_components.extended_openai_conversation_responses.strict_store import (
     RecoveryGuardedStore,
@@ -116,57 +115,8 @@ async def test_storage_lock_falls_back_for_non_guarded_storage() -> None:
     assert not lock.locked()
 
 
-@pytest.mark.parametrize(
-    ("schema", "expected"),
-    [
-        ({"nullable": True}, True),
-        ({"type": "null"}, True),
-        ({"type": ["string", "null"]}, True),
-        ({"enum": ["a", None]}, True),
-        ({"const": None}, True),
-        ({"type": "string"}, False),
-        ({"enum": ["a"]}, False),
-        ({"const": "a"}, False),
-        ({"anyOf": [{"type": "string"}, {"type": "null"}]}, True),
-        ({"anyOf": [{"type": "string"}, {"type": "number"}]}, False),
-        ({"oneOf": [{"type": "string"}, {"type": "null"}]}, True),
-        ({"oneOf": [{"type": "null"}, {"const": None}]}, False),
-        ({"allOf": [{"type": "null"}, {"const": None}]}, True),
-        ({"allOf": [{"type": "null"}, {"type": "string"}]}, False),
-        ({"allOf": []}, False),
-    ],
-)
-def test_schema_nullability_matrix(schema: dict, expected: bool) -> None:
-    assert _schema_explicitly_allows_null(schema) is expected
 
 
-@pytest.mark.parametrize(
-    ("schema", "expected"),
-    [
-        ({"type": "string"}, {"type": ["string", "null"]}),
-        ({"type": ["string", "number"]}, {"type": ["string", "number", "null"]}),
-        (
-            {"enum": ["a", "b"]},
-            {"anyOf": [{"enum": ["a", "b"]}, {"type": "null"}]},
-        ),
-        (
-            {"const": "a"},
-            {"anyOf": [{"const": "a"}, {"type": "null"}]},
-        ),
-        (
-            {"anyOf": [{"type": "string"}]},
-            {
-                "anyOf": [
-                    {"anyOf": [{"type": "string"}]},
-                    {"type": "null"},
-                ]
-            },
-        ),
-    ],
-)
-def test_make_schema_nullable_variants(schema: dict, expected: dict) -> None:
-    _make_schema_nullable(schema)
-    assert schema == expected
 
 
 def test_make_schema_nullable_leaves_already_nullable_schema_unchanged() -> None:

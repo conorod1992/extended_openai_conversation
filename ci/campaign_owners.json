@@ -1,0 +1,16 @@
+{
+  "tests_stress/test_restore_recovery_safety.py": "persistence",
+  "tests_stress/test_restore_recovery_process.py": "persistence",
+  "tests_stress/test_backup_fault_matrix.py": "persistence",
+  "tests_stress/test_backup_inventory.py": "backup",
+  "tests_stress/test_archive_living_campaign.py": "archive",
+  "tests_stress/test_memory_knowledge_scale.py": "memory-knowledge",
+  "tests_stress/test_provider_wire_privacy.py": "memory-knowledge",
+  "tests_stress/test_pending_retrieval_publication.py": "memory-knowledge",
+  "tests_real_ha/test_provider_input_history.py": "functions",
+  "tests_real_ha/test_usage_accounting_failure_recovery.py": "provider-resilience",
+  "tests_real_ha/test_config_flow_lifecycle_contracts.py": "setup",
+  "tests_stress/test_evidence_manifest.py": "runtime",
+  "tests_real_ha/test_delayed_tool_process_restart.py": "process-chaos",
+  "tests_real_ha/test_store_write_process_crash.py": "process-chaos"
+}

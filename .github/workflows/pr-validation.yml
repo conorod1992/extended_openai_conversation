@@ -167,10 +167,15 @@ jobs:
     if: ${{ fromJSON(needs.select.outputs.plan)['version-check'] }}
     uses: ./.github/workflows/version-check.yml
 
+  generator-proofs:
+    needs: select
+    if: ${{ fromJSON(needs.select.outputs.plan)['generator-proofs'] }}
+    uses: ./.github/workflows/generator-proofs.yml
+
   validation:
     name: PR validation
     if: always()
-    needs: [select, android-companion-app, ci-image-dev, ci-image-stable, ci, cross-browser-smoke, deployment-recovery, docs, frontend-backend-version-skew, frontend, ha-browser-compatibility, ha-version-upgrade-acceptance, hacs-install-update-acceptance, hacs, haos-supervisor-vm-acceptance, ipv6-only-networking-acceptance, openai-sdk-compatibility, official-ha-container, real-ha, release-smoke, resource-constrained, side-by-side-isolation, upgrade-acceptance, version-check]
+    needs: [select, generator-proofs, android-companion-app, ci-image-dev, ci-image-stable, ci, cross-browser-smoke, deployment-recovery, docs, frontend-backend-version-skew, frontend, ha-browser-compatibility, ha-version-upgrade-acceptance, hacs-install-update-acceptance, hacs, haos-supervisor-vm-acceptance, ipv6-only-networking-acceptance, openai-sdk-compatibility, official-ha-container, real-ha, release-smoke, resource-constrained, side-by-side-isolation, upgrade-acceptance, version-check]
     runs-on: ubuntu-latest
     permissions:
       contents: read
