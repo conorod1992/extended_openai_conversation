@@ -43,7 +43,9 @@ DIST = Path("custom_components/extended_openai_conversation_responses/frontend/d
 # Scoped compact-choice styling and Quiet Hours unavailable messaging add 650
 # measured JS bytes (882,120 -> 882,770). Budget 700 bytes, retaining the
 # independently fixed management entry and CSS ceilings.
-CEILINGS = {"javascript": 882_850, "css": 65_000, "management_entry": 120_000}
+# Bounded reverse transcript paging adds 358 minified JS bytes to 882,770.
+# Allow 400 reviewed bytes; the management-entry and CSS limits stay unchanged.
+CEILINGS = {"javascript": 883_250, "css": 65_000, "management_entry": 120_000}
 
 
 def measure(dist: Path) -> dict[str, int]:
