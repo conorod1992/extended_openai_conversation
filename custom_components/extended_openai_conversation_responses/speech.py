@@ -577,9 +577,7 @@ class StreamingSpeechSanitizer:
         index = 0
         while index < len(text):
             char = text[index]
-            if char == "`" and (
-                code_width or not cls._is_escaped(text, index)
-            ):
+            if char == "`" and (code_width or not cls._is_escaped(text, index)):
                 end = index + 1
                 while end < len(text) and text[end] == "`":
                     end += 1
@@ -590,9 +588,7 @@ class StreamingSpeechSanitizer:
                     code_width = 0
                 index = end
                 continue
-            if not code_width and char in "*_~" and not cls._is_escaped(
-                text, index
-            ):
+            if not code_width and char in "*_~" and not cls._is_escaped(text, index):
                 for marker in ("**", "__", "~~", "***", "___"):
                     if text.startswith(marker, index):
                         last[marker] = index
