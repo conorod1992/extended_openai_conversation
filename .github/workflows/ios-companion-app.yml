@@ -65,10 +65,6 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Start fresh iOS simulator in background
-        if: env.IOS_WARM_ONLY != 'true'
-        run: python ci/ios_companion_runtime.py simulator-start
-
       - name: Resolve stable Home Assistant version
         id: ha-version
         if: env.IOS_WARM_ONLY != 'true'
@@ -76,14 +72,16 @@ jobs:
           VERSION="$(curl -fsSL https://pypi.org/pypi/homeassistant/json | python -c 'import json,sys; print(json.load(sys.stdin)["info"]["version"])')"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "EOAI_EXPECTED_HA_VERSION=$VERSION" >> "$GITHUB_ENV"
+          python ci/ios_companion_runtime.py python-cache-key
 
       - name: Restore Python wheel cache
         id: ha-pip-cache
         if: env.IOS_WARM_ONLY != 'true'
+        continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/Library/Caches/pip
-          key: ios-ha-pip-v1-${{ runner.os }}-${{ runner.arch }}-py314-${{ steps.ha-version.outputs.version }}-${{ hashFiles('custom_components/extended_openai_conversation_responses/manifest.json', 'ci/install_ha_dependencies.py') }}
+          key: ios-ha-pip-v1-${{ runner.os }}-${{ runner.arch }}-py314-${{ steps.ha-version.outputs.version }}-${{ env.IOS_PIP_CACHE_ID }}
           restore-keys: |
             ios-ha-pip-v1-${{ runner.os }}-${{ runner.arch }}-py314-${{ steps.ha-version.outputs.version }}-
 
@@ -98,10 +96,11 @@ jobs:
 
       - name: Save Python wheel cache
         if: github.ref_name == github.event.repository.default_branch && steps.ha-install.outcome == 'success' && steps.ha-pip-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/Library/Caches/pip
-          key: ios-ha-pip-v1-${{ runner.os }}-${{ runner.arch }}-py314-${{ steps.ha-version.outputs.version }}-${{ hashFiles('custom_components/extended_openai_conversation_responses/manifest.json', 'ci/install_ha_dependencies.py') }}
+          key: ios-ha-pip-v1-${{ runner.os }}-${{ runner.arch }}-py314-${{ steps.ha-version.outputs.version }}-${{ env.IOS_PIP_CACHE_ID }}
 
       - name: Start disposable Home Assistant
         if: env.IOS_WARM_ONLY != 'true'
@@ -143,6 +142,7 @@ jobs:
       - name: Restore iOS DerivedData cache
         id: ios-deriveddata-cache
         if: steps.ios-native.outputs.hit != 'true'
+        continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -162,6 +162,7 @@ jobs:
       - name: Restore iOS host build-tool cache
         id: ios-buildtools-cache
         if: steps.ios-native.outputs.hit != 'true'
+        continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -183,6 +184,7 @@ jobs:
       - name: Restore Swift package downloads
         id: ios-packages-cache
         if: steps.ios-native.outputs.hit != 'true'
+        continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.IOS_DIR }}/eoai-source-packages
@@ -202,10 +204,17 @@ jobs:
 
       - name: Save Swift package downloads
         if: github.ref_name == github.event.repository.default_branch && steps.ios-packages-resolve.outcome == 'success' && steps.ios-packages-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.IOS_DIR }}/eoai-source-packages
           key: ios-spm-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.IOS_PACKAGES_CACHE_ID }}
+
+      # Boot after lightweight action/setup work, while host preparation and
+      # compilation run. Avoid first-boot contention with cache-key evaluation.
+      - name: Start fresh iOS simulator in background
+        if: env.IOS_WARM_ONLY != 'true'
+        run: python ci/ios_companion_runtime.py simulator-start
 
       - name: Prepare pinned iOS host build tools
         id: ios-buildtools-prepare
@@ -215,6 +224,7 @@ jobs:
 
       - name: Save iOS host build-tool cache
         if: github.ref_name == github.event.repository.default_branch && steps.ios-buildtools-prepare.outcome == 'success' && steps.ios-buildtools-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -244,6 +254,7 @@ jobs:
 
       - name: Save iOS DerivedData cache
         if: github.ref_name == github.event.repository.default_branch && steps.ios-native-build.outcome == 'success' && steps.ios-deriveddata-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -338,9 +349,10 @@ jobs:
           PY
 
       - name: Export iOS screen recordings
-        if: always() && env.IOS_WARM_ONLY != 'true'
+        if: always() && env.IOS_WARM_ONLY != 'true' && env.IOS_DIR != ''
         run: |
           set -euo pipefail
+          if [[ -z "${IOS_DIR:-}" ]]; then exit 0; fi
           XCRESULT="$IOS_DIR/fastlane/test_output/e2e/Tests-UI.xcresult"
           OUT="$RUNNER_TEMP/ios-companion-recording"
           mkdir -p "$OUT"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,17 @@ import subprocess
 import time
 from urllib.error import URLError
 from urllib.request import urlopen
+
+
+def python_cache_key(root: Path) -> str:
+    """Read only the two dependency inputs, without a workspace-wide glob."""
+    digest = hashlib.sha256()
+    for name in (
+        "custom_components/extended_openai_conversation_responses/manifest.json",
+        "ci/install_ha_dependencies.py",
+    ):
+        digest.update(name.encode() + b"\0" + (root / name).read_bytes() + b"\0")
+    return digest.hexdigest()
 
 
 def newest_phone(devices: dict) -> str:
@@ -71,10 +83,16 @@ def wait_for_ha(directory: Path, timeout: float = 180) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["simulator-start", "ready"])
+    parser.add_argument(
+        "command", choices=["simulator-start", "ready", "python-cache-key"]
+    )
     args = parser.parse_args()
     started = time.monotonic()
-    if args.command == "simulator-start":
+    if args.command == "python-cache-key":
+        key = python_cache_key(Path(__file__).resolve().parents[1])
+        with open(os.environ["GITHUB_ENV"], "a") as stream:
+            stream.write(f"IOS_PIP_CACHE_ID={key}\n")
+    elif args.command == "simulator-start":
         start_simulator()
     else:
         subprocess.run(

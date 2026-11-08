@@ -23,6 +23,10 @@ Python caches contain wheels/downloads, never a reused HA instance; stable HA
 is resolved afresh and its integration constraints and dependency checks remain.
 Dependency caches are saved after successful preparation. Incremental DerivedData
 is saved after successful compilation. Neither is saved from a failed build.
+All optional cache restore/save steps are non-blocking; installers, package
+resolution, native identity validation and the UI journey remain mandatory.
+The Python cache key directly hashes its two dependency files instead of using
+GitHub's workspace-wide `hashFiles()` evaluation.
 
 DerivedData uses an independent compatibility prefix (Xcode/SDK, architecture,
 configuration and stable checkout path). Prefix restores can reuse older source
@@ -76,10 +80,12 @@ queued job checks for reusable artifacts when it starts. The pinned actionlint
 version predates GitHub's `queue` property, so PR lint ignores only that known
 parser message; other workflow checks remain enabled.
 
-Each acceptance job erases and boots its simulator once before preparing HA and
-native dependencies, and starts HA without blocking. Both continue starting while
-the native app compiles. Bounded simulator and HTTP/process readiness checks gate
+Each acceptance job starts HA without blocking, then erases and boots its simulator
+once after the lightweight setup actions and before host-tool preparation and
+compilation. This avoids simulator first-boot contention during cache setup.
+Both continue starting while the native app compiles. Bounded simulator and HTTP/process readiness checks gate
 the journey; the upstream login check still runs. The lane does not erase again.
+Screen-recording export is guarded when an earlier failure leaves `IOS_DIR` unset.
 The test step supplies Fastlane's device, deployment target and log name explicitly
 and prohibits build-settings discovery. That prevents a settings query from
 resolving packages again when executing an already-built `.xctestrun` bundle.

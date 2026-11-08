@@ -1,5 +1,6 @@
 """Contract checks for iOS Companion-app acceptance."""
 
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -308,3 +309,34 @@ def test_housekeeping_cannot_block_the_journey_or_hide_its_failure():
         maintenance = by_name[name]
         assert maintenance["continue-on-error"] is True
         assert steps.index(maintenance) > steps.index(evidence) > steps.index(journey)
+
+
+def test_optional_cache_failures_do_not_gate_acceptance():
+    steps = _workflow()["jobs"]["companion"]["steps"]
+    for step in steps:
+        if step.get("uses", "").startswith("actions/cache/"):
+            assert step["continue-on-error"] is True
+        if (
+            step.get("id") == "ios-native"
+            or step.get("name") == "Run genuine iOS Companion journey"
+        ):
+            assert "continue-on-error" not in step
+    source = (ROOT / ".github/workflows/ios-companion-app.yml").read_text()
+    assert "hashFiles(" not in source
+
+
+def test_screen_export_survives_a_failure_before_checkout_setup(tmp_path):
+    step = next(
+        step
+        for step in _workflow()["jobs"]["companion"]["steps"]
+        if step.get("name") == "Export iOS screen recordings"
+    )
+    assert "env.IOS_DIR != ''" in step["if"]
+    script = tmp_path / "export.sh"
+    script.write_text(step["run"], encoding="utf-8", newline="\n")
+    env = {key: value for key, value in os.environ.items() if key != "IOS_DIR"}
+    bash = "C:/Program Files/Git/bin/bash.exe" if os.name == "nt" else "bash"
+    result = subprocess.run(
+        [bash, script.as_posix()], env=env, capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stderr

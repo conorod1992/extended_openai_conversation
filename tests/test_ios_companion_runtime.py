@@ -8,6 +8,22 @@ import pytest
 from ci import ios_companion_runtime as runtime
 
 
+def test_python_cache_hash_changes_only_for_its_dependency_inputs(tmp_path):
+    manifest = (
+        tmp_path
+        / "custom_components/extended_openai_conversation_responses/manifest.json"
+    )
+    installer = tmp_path / "ci/install_ha_dependencies.py"
+    for path in (manifest, installer):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("original")
+    first = runtime.python_cache_key(tmp_path)
+    (tmp_path / "unrelated.txt").write_text("unrelated")
+    assert runtime.python_cache_key(tmp_path) == first
+    manifest.write_text("new requirements")
+    assert runtime.python_cache_key(tmp_path) != first
+
+
 def test_simulator_selection_uses_newest_ios_and_correct_model():
     devices = {
         "devices": {
