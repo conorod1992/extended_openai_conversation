@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from collections.abc import Awaitable, Callable, Iterator, Mapping
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
@@ -19,7 +21,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 
 from .const import DOMAIN
-from .exceptions import EffectReplayBlocked
+from .exceptions import EffectReplayBlocked, FunctionValidationInfrastructureError
 from .execution_arguments import execution_identity
 from .function_execution import (
     _schema_without_patterns,
@@ -291,6 +293,39 @@ def check_effect_replay(entity: Any, signature: str) -> None:
         )
 
 
+def _requires_patterned_key_classification(schema: Any) -> bool:
+    """Whether local schema normalisation may invoke a regex-key worker.
+
+    Inspect schema applicator positions, not annotations or arbitrary input
+    values. Match the production membership rule precisely.
+    """
+    if not isinstance(schema, Mapping):
+        return False
+    additional = schema.get("additionalProperties", True)
+    if schema.get("patternProperties") and (
+        additional is False
+        or (isinstance(additional, Mapping) and bool(additional))
+    ):
+        return True
+    properties = schema.get("properties")
+    if isinstance(properties, Mapping) and any(
+        _requires_patterned_key_classification(child)
+        for child in properties.values()
+    ):
+        return True
+    items = schema.get("items")
+    if _requires_patterned_key_classification(items):
+        return True
+    return _requires_patterned_key_classification(additional)
+
+
+def _replay_spec_needs_executor(spec: Mapping[str, Any]) -> bool:
+    """HA-owned callable normalisation stays on-loop; JSON membership does not."""
+    return "_ha_parameters" not in spec and _requires_patterned_key_classification(
+        spec.get("parameters")
+    )
+
+
 def record_dispatch(
     entity: Any,
     tool_input: llm.ToolInput,
@@ -346,16 +381,29 @@ def record_dispatch(
     # preview changes that input, another application (e.g. a callable default)
     # need not describe the effect's actual arguments. Do not claim precision
     # after a failed continuation, or apply a non-idempotent schema twice.
-    spec["_effective_arguments_unknown"] = ha_parameters is not None and (
-        _signature(prepared_call) != _signature(tool_input)
-        or not _ha_schema_preserves_values(ha_parameters)
+    missing_pattern_preparation = (
+        prepared_arguments is None and _replay_spec_needs_executor(spec)
     )
-    signature = (
-        _signature(prepared_call, spec, prepared=prepared_arguments is not None)
-        if isinstance(getattr(tool_input, "tool_name", None), str)
-        and isinstance(getattr(tool_input, "tool_args", None), Mapping)
-        else None
+    spec["_effective_arguments_unknown"] = missing_pattern_preparation or (
+        ha_parameters is not None
+        and (
+            _signature(prepared_call) != _signature(tool_input)
+            or not _ha_schema_preserves_values(ha_parameters)
+        )
     )
+    signature = None
+    if isinstance(getattr(tool_input, "tool_name", None), str) and isinstance(
+        getattr(tool_input, "tool_args", None), Mapping
+    ):
+        # Direct/unprepared calls cannot launch a regex subprocess while an
+        # effect receipt is recorded. Retain exact input conservatively.
+        signature = (
+            _signature(tool_input)
+            if missing_pattern_preparation
+            else _signature(
+                prepared_call, spec, prepared=prepared_arguments is not None
+            )
+        )
     for item in retained:
         dispatched[id(item)] = item
         owners[id(item)] = conversation_id
@@ -547,6 +595,87 @@ def remember_unacknowledged_calls(
         schemas.pop(oldest)
 
 
+def _patterned_replay_signature(
+    tool_input: llm.ToolInput, spec: Mapping[str, Any]
+) -> str:
+    """Calculate the exact old canonical identity in a worker thread.
+
+    This is the same validation/normalisation as _signature(prepared=False).
+    Unlike the old synchronous caller, unavailable regex proof is not silently
+    treated as evidence that a retry is different.
+    """
+    try:
+        arguments = validate_function_arguments(spec, tool_input.tool_args)
+    except FunctionValidationInfrastructureError:
+        raise
+    except (HomeAssistantError, TypeError, ValueError, *SCHEMA_ERRORS):
+        return _signature(tool_input)
+
+    prepared = llm.ToolInput(
+        id=tool_input.id,
+        tool_name=tool_input.tool_name,
+        tool_args=arguments,
+        external=tool_input.external,
+    )
+    return _signature(prepared, spec, prepared=True)
+
+
+async def async_was_unacknowledged_equivalent(
+    entity: Any, chat_log: conversation.ChatLog, tool_input: llm.ToolInput
+) -> bool:
+    """Check replay equivalence without running configured regex on HA's loop."""
+    conversation_id = getattr(chat_log, "conversation_id", None)
+    if not isinstance(conversation_id, str) or not conversation_id:
+        return False
+    if _replay_history_incomplete(entity, conversation_id):
+        return True
+    state = replay_safety(entity)
+    if tool_input.tool_name in state.uncertain_tools.get(conversation_id, ()):
+        return True
+    records = state.schemas.get(conversation_id, {})
+    raw_signature = _signature(tool_input)
+    if raw_signature in records or any(
+        raw_signature in spec.get("_original_call_signatures", ())
+        for spec in records.values()
+    ):
+        return True
+    for recorded, spec in records.items():
+        # Different tools can never have the same identity. In particular,
+        # do not launch regex work (or fail on its availability) for a
+        # different tool whose retained schema happens to use patterns.
+        try:
+            recorded_name = json.loads(recorded)[0]
+        except (ValueError, TypeError, IndexError) as err:
+            raise HomeAssistantError(
+                "Unable to verify pending tool-call replay safety"
+            ) from err
+        if recorded_name != tool_input.tool_name:
+            continue
+        if _replay_spec_needs_executor(spec):
+            # Copy only plain integration-owned JSON data. A live HA validator
+            # is never executed in the worker; the caller's arguments and the
+            # retained dispatch schema remain authoritative.
+            candidate = llm.ToolInput(
+                id=tool_input.id,
+                tool_name=tool_input.tool_name,
+                tool_args=deepcopy(dict(tool_input.tool_args)),
+                external=tool_input.external,
+            )
+            try:
+                actual = await asyncio.to_thread(
+                    _patterned_replay_signature, candidate, deepcopy(spec)
+                )
+            except FunctionValidationInfrastructureError as err:
+                raise HomeAssistantError(
+                    "Unable to verify pending tool-call replay safety"
+                ) from err
+        else:
+            actual = _signature(tool_input, spec)
+        if actual == recorded:
+            return True
+    return False
+
+
 def was_unacknowledged_equivalent(
     entity: Any, chat_log: conversation.ChatLog, tool_input: llm.ToolInput
 ) -> bool:
@@ -568,9 +697,21 @@ def was_unacknowledged_equivalent(
         for spec in records.values()
     ):
         return True
-    return any(
-        _signature(tool_input, spec) == signature for signature, spec in records.items()
-    )
+    for signature, spec in records.items():
+        if _replay_spec_needs_executor(spec):
+            # Synchronous callers cannot safely prove this comparison. Block
+            # only a matching tool name instead of launching a regex process
+            # on the HA event loop; live exchanges use the async method.
+            try:
+                recorded_tool = json.loads(signature)[0]
+            except (ValueError, TypeError, IndexError):
+                return True
+            if recorded_tool == tool_input.tool_name:
+                return True
+            continue
+        if _signature(tool_input, spec) == signature:
+            return True
+    return False
 
 
 def clear_unacknowledged_calls(entity: Any, conversation_id: str | None) -> None:
