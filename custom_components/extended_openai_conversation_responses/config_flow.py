@@ -26,6 +26,7 @@ from homeassistant.helpers.selector import (
     BooleanSelector,
     NumberSelector,
     NumberSelectorConfig,
+    NumberSelectorMode,
     SelectOptionDict,
     SelectSelector,
     SelectSelectorConfig,
@@ -656,7 +657,13 @@ def _ai_task_form_fields(schema: dict[Any, Any], *, create: bool) -> dict[Any, A
     for marker, validator in schema.items():
         if isinstance(marker, vol.Optional):
             description = dict(marker.description or {})
-            if callable(marker.default):
+            if marker.schema in {CONF_TEMPERATURE, CONF_TOP_P}:
+                # HA populates an optional NumberSelector with its minimum
+                # when neither a suggestion nor a default is present. A blank
+                # suggestion represents the *unset* setting; the frontend
+                # omits it on submit, while saved values are applied below.
+                description["suggested_value"] = ""
+            elif callable(marker.default):
                 description.setdefault("suggested_value", marker.default())
             marker = vol.Optional(marker.schema, description=description)
         fields[marker] = validator
@@ -954,7 +961,20 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                     CONF_TOP_P,
                     default=DEFAULT_TOP_P,
                 )
-            ] = NumberSelector(NumberSelectorConfig(min=0, max=1, step=0.05))
+            ] = NumberSelector(
+                NumberSelectorConfig(
+                    min=0,
+                    max=1,
+                    step=0.05,
+                    # An unset numeric selector must not display a slider
+                    # at its minimum as though it were a saved value.
+                    mode=(
+                        NumberSelectorMode.BOX
+                        if not self._is_new and CONF_TOP_P not in effective_options
+                        else NumberSelectorMode.SLIDER
+                    ),
+                )
+            )
             if not self._is_new:
                 schema[vol.Optional("clear_top_p", default=False)] = BooleanSelector()
 
@@ -964,7 +984,18 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                     CONF_TEMPERATURE,
                     default=DEFAULT_TEMPERATURE,
                 )
-            ] = NumberSelector(NumberSelectorConfig(min=0, max=2, step=0.05))
+            ] = NumberSelector(
+                NumberSelectorConfig(
+                    min=0,
+                    max=2,
+                    step=0.05,
+                    mode=(
+                        NumberSelectorMode.BOX
+                        if not self._is_new and CONF_TEMPERATURE not in effective_options
+                        else NumberSelectorMode.SLIDER
+                    ),
+                )
+            )
             if not self._is_new:
                 schema[vol.Optional("clear_temperature", default=False)] = (
                     BooleanSelector()

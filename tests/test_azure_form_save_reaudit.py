@@ -223,3 +223,65 @@ async def test_native_ai_task_sampling_reset_retry_keeps_visible_previous_value(
     assert accepted["data"]["temperature"] == 0.2
     assert accepted["data"]["top_p"] == 0.8
     assert not any(key.startswith("clear_") for key in accepted["data"])
+
+
+
+async def test_native_ai_task_unset_sampling_fields_remain_blank_on_reopen(hass):
+    """Mirror HA's initial-data and submit contract, not omitted test inputs."""
+    original = {
+        "chat_model": "gpt-4o",
+        "api_mode": "auto",
+        "max_tokens": 500,
+        "advanced_options": True,
+    }
+    flow, entry = _reconfigure_task(original, provider="openai")
+    flow._temp_data = {"advanced_options": True}
+    form = await ExtendedOpenAIAITaskSubentryFlowHandler.async_step_advanced(flow)
+    schema = form["data_schema"].schema
+    initial = {
+        str(marker): marker.description["suggested_value"]
+        for marker in schema
+        if str(marker) in {"temperature", "top_p"}
+    }
+    assert initial == {"temperature": "", "top_p": ""}
+    for marker, selector in schema.items():
+        if str(marker) in initial:
+            assert selector.config["mode"] == "box"
+
+    # HA's form submission omits empty-string values, including untouched
+    # numeric controls. No sampling parameter should appear after a save.
+    submitted = {key: value for key, value in initial.items() if value != ""}
+    saved = await ExtendedOpenAIAITaskSubentryFlowHandler.async_step_advanced(
+        flow, submitted
+    )
+    assert saved["data"] == original
+    snapshot = build_provider_request_snapshot(
+        saved["data"], entry.data, tools_required=False
+    )
+    assert "temperature" not in snapshot.api_kwargs
+    assert "top_p" not in snapshot.api_kwargs
+
+    # A deliberate value equal to a former default is still an explicit edit.
+    flow, _ = _reconfigure_task(original, provider="openai")
+    flow._temp_data = {"advanced_options": True}
+    edited = await ExtendedOpenAIAITaskSubentryFlowHandler.async_step_advanced(
+        flow, {"temperature": 0.5, "top_p": 1.0}
+    )
+    assert edited["data"]["temperature"] == 0.5
+    assert edited["data"]["top_p"] == 1.0
+
+
+async def test_native_ai_task_saved_sampling_values_still_use_number_sliders(hass):
+    original = {
+        "chat_model": "gpt-4o",
+        "api_mode": "auto",
+        "max_tokens": 500,
+        "temperature": 0.0,
+        "top_p": 0.8,
+    }
+    flow, _ = _reconfigure_task(original, provider="openai")
+    flow._temp_data = {"advanced_options": True}
+    form = await ExtendedOpenAIAITaskSubentryFlowHandler.async_step_advanced(flow)
+    for marker, selector in form["data_schema"].schema.items():
+        if str(marker) in {"temperature", "top_p"}:
+            assert selector.config["mode"] == "slider"
