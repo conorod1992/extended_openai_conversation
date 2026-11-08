@@ -77,7 +77,9 @@ def provider_loop_entity(monkeypatch):
     )
     instance._usage = None
     instance._async_add_attachments = AsyncMock()
-    instance._transform_chat_stream = lambda _chat_log, _stream, _usage: object()
+    instance._transform_chat_stream = (
+        lambda _chat_log, _stream, _usage, *, effective_output_limit: object()
+    )
     instance._truncate_message_history = AsyncMock()
 
     monkeypatch.setattr(

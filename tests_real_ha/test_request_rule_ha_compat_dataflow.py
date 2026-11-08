@@ -6,6 +6,8 @@ observe the actual HA service arguments and public Assist result.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from custom_components.extended_openai_conversation_responses.const import (
@@ -287,8 +289,11 @@ async def test_result_path_agrees_across_later_action_and_spoken_response(
         _local([capture, _record_action(reference)], success="Result: " + reference)
     )
     expected = _lookup(_DATA, path)
+    # Spoken responses JSON-format non-string values, while subsequent script
+    # actions continue to receive the native result value.
+    spoken = expected if isinstance(expected, str) else json.dumps(expected)
     result = await _say(hass, agent, "run rule")
-    assert _speech(result) == f"Result: {expected}"
+    assert _speech(result) == f"Result: {spoken}"
     assert calls == [expected]
 
 
@@ -350,7 +355,7 @@ async def test_invalid_result_path_never_executes_dependent_action(
         ("rows.0.level", "73"),
         ("rows.1.level", "0"),
         ("map.0.level", "84"),
-        ("rows.0.enabled", "False"),
+        ("rows.0.enabled", "false"),
     ],
 )
 async def test_generated_two_step_dataflow_preserves_nested_value(
@@ -405,7 +410,7 @@ async def test_generated_two_step_dataflow_preserves_nested_value(
     )
     result = await _say(hass, agent, "run rule")
     assert _speech(result) == "Result: " + expected
-    assert seen == [int(expected) if expected.isdigit() else expected == "True"]
+    assert seen == [int(expected) if expected.isdigit() else expected == "true"]
 
 
 @pytest.mark.parametrize("field,target", [("functions", "controlled_tool"), ("function_groups", "controlled-group")])

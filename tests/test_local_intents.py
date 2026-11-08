@@ -438,6 +438,11 @@ async def test_targeted_broadcast_with_no_other_speaker_returns_local_explanatio
     assert resolved == [
         {
             "whole_home": True,
+            "entity_ids": None,
+            "device_ids": None,
+            "area_ids": None,
+            "floor_ids": None,
+            "label_ids": None,
             "origin_entity_id": "assist_satellite.kitchen",
             "origin_device_id": "device-kitchen",
         }
