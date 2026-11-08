@@ -279,12 +279,20 @@ async def test_patterned_replay_preserves_invalid_argument_shape_for_recovery(
     assert result["stage"] == "pre_dispatch_validation"
 
 
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        None,  # Previously raised TypeError before reaching the validator.
+        # Previously became an equivalent replay after dict() coercion.
+        [["count", "3"], ["extra_note", "yes"]],
+    ],
+)
 async def test_patterned_replay_invalid_arguments_keep_fail_fast_budget(
-    hass, monkeypatch
+    hass, monkeypatch, arguments: Any
 ) -> None:
-    """Without recovery, leave dispatch-time validation and budget intact."""
+    """Without recovery, invalid shapes reach validation, not replay rejection."""
     entity, log, definition, effects = await _first_effect(hass, monkeypatch)
-    retry = _untyped_call("retry-invalid", [["count", "3"]])
+    retry = _untyped_call("retry-invalid", arguments)
     _retain_calls(log, [retry])
     budget = FunctionCallBudget(3)
     attempts: list[Any] = []
@@ -307,7 +315,7 @@ async def test_patterned_replay_invalid_arguments_keep_fail_fast_budget(
             recovery_state=ToolRecoveryState(enabled=False),
         )
 
-    assert attempts == [[["count", "3"]]]
+    assert attempts == [arguments]
     assert budget.used == 1  # Legacy non-recovery boundary claims before validation.
     assert effects == [{"count": 3, "extra_note": "yes"}]
     assert len(_results_for(log, retry.id)) == 1
