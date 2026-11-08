@@ -85,7 +85,9 @@ async def test_inferred_azure_connection_accepts_its_underlying_model(
     monkeypatch.setattr(helpers, "AsyncOpenAI", openai)
     monkeypatch.setattr(helpers, "get_async_client", lambda _hass: object())
     await helpers.get_authenticated_client(
-        hass=SimpleNamespace(),
+        hass=SimpleNamespace(
+            async_add_executor_job=AsyncMock(side_effect=lambda action: action())
+        ),
         api_key=data["api_key"],
         base_url=data["base_url"],
         api_version=data["api_version"],

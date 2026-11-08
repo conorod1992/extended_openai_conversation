@@ -1189,7 +1189,7 @@ def async_streaming_speech_cleanup(
     chat_log.delta_listener = wrapper
     _LOGGER.debug("Streaming speech sanitizer enabled")
     try:
-        yield
+        yield wrapper
     finally:
         try:
             wrapper.flush(chat_log)

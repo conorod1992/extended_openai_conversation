@@ -30,6 +30,7 @@ from custom_components.extended_openai_conversation_responses.request_rules impo
     validate_saved_model_routes,
 )
 from homeassistant.components import conversation
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.exceptions import HomeAssistantError
 from tests.test_agent_test import _objects
 from tests.test_backup import _document
@@ -226,7 +227,10 @@ async def test_image_auto_mode_uses_requested_model_capabilities(
         responses=SimpleNamespace(create=AsyncMock(return_value=response)),
     )
     hass.config_entries.async_get_entry.return_value = SimpleNamespace(
-        domain=DOMAIN, data=provider, runtime_data=client
+        domain=DOMAIN,
+        state=ConfigEntryState.LOADED,
+        data=provider,
+        runtime_data=client,
     )
     monkeypatch.setattr(services, "_async_require_service_admin", AsyncMock())
     monkeypatch.setattr(

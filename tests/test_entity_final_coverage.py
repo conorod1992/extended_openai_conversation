@@ -100,7 +100,7 @@ def provider_loop_entity(monkeypatch):
         entity_module, "bind_tool_recovery_state", lambda *_args: nullcontext()
     )
     monkeypatch.setattr(
-        entity_module, "async_streaming_speech_cleanup", lambda *_args: nullcontext()
+        entity_module, "async_streaming_speech_cleanup", lambda *_args, **_kwargs: nullcontext()
     )
     monkeypatch.setattr(
         entity_module, "assert_provider_loop_completed", lambda *_args: None
