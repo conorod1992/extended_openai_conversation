@@ -183,9 +183,7 @@ async def test_direct_bash_execution_failure_keeps_legacy_error_response(
         assert "missing-directory" in result["error"]
 
 
-async def test_origin_only_targeted_broadcast_is_explained_without_delivery(
-    hass, monkeypatch
-):
+async def test_origin_only_targeted_broadcast_is_handled_failure(hass, monkeypatch):
     from custom_components.extended_openai_conversation_responses.const import (
         SERVICE_PROCESS,
     )
