@@ -966,16 +966,21 @@ class ConversationArchive:
                 if index == before_turn
                 else user_length + len(turn.assistant_text)
             )
-            payload = _turn_payload(turn)
-
-            def chunk(start: int) -> dict[str, Any]:
+            def chunk(
+                start: int, source: ArchiveTurn = turn, end_offset: int = end
+            ) -> dict[str, Any]:
+                source_user_length = len(source.user_text)
                 return {
-                    **payload,
-                    "user_text": turn.user_text[
-                        min(start, user_length) : min(end, user_length)
+                    **_turn_payload(source),
+                    "user_text": source.user_text[
+                        min(start, source_user_length) : min(
+                            end_offset, source_user_length
+                        )
                     ],
-                    "assistant_text": turn.assistant_text[
-                        max(0, start - user_length) : max(0, end - user_length)
+                    "assistant_text": source.assistant_text[
+                        max(0, start - source_user_length) : max(
+                            0, end_offset - source_user_length
+                        )
                     ],
                 }
 
