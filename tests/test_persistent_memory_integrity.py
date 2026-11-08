@@ -91,6 +91,212 @@ async def test_distinct_keys_preserve_distinct_facts_even_with_same_content() ->
     }
 
 
+@pytest.mark.parametrize("operation", ["add", "upsert"])
+async def test_new_key_promotes_exact_unique_unkeyed_fact(operation: str) -> None:
+    storage = FakeStorage()
+    memory = PersistentMemory(storage)
+    await memory.async_initialize()
+    first = await memory.async_add(
+        "alice",
+        "Oscar is a Cavachon.",
+        "pets",
+        "implicit",
+        subject="Oscar",
+        valid_from="2026-01-01T00:00:00+00:00",
+    )
+    assert first["status"] == "created"
+    call = memory.async_add if operation == "add" else memory.async_upsert
+    promoted = await call(
+        "alice",
+        "Oscar is a Cavachon",
+        "pets",
+        "explicit",
+        subject="oscar",
+        key="pet.oscar.breed",
+    )
+    assert promoted["status"] == "updated"
+    assert promoted["memory"]["memory_id"] == first["memory"]["memory_id"]
+    assert promoted["memory"]["created_at"] == first["memory"]["created_at"]
+    assert promoted["memory"]["source"] == "explicit"
+    assert promoted["memory"]["content"] == "Oscar is a Cavachon."
+    assert promoted["memory"]["key"] == "pet.oscar.breed"
+    assert promoted["memory"]["valid_from"] == "2026-01-01T00:00:00+00:00"
+    assert len(await memory.async_list("alice")) == 1
+
+    reloaded = PersistentMemory(storage)
+    await reloaded.async_initialize()
+    [record] = await reloaded.async_list("alice")
+    assert record.memory_id == first["memory"]["memory_id"]
+    assert record.key == "pet.oscar.breed"
+    assert reloaded._key_index[("alice", "pet.oscar.breed")] == record.memory_id
+
+
+@pytest.mark.parametrize("operation", ["add", "upsert"])
+async def test_new_key_never_rekeys_differently_keyed_fact(operation: str) -> None:
+    memory = await _memory()
+    existing = await memory.async_upsert(
+        "alice", "Oscar is a Cavachon.", "pets", "explicit", key="pet.oscar.breed"
+    )
+    call = memory.async_add if operation == "add" else memory.async_upsert
+    second = await call(
+        "alice",
+        "Oscar is a Cavachon.",
+        "pets",
+        "explicit",
+        key="pet.oscar.description",
+    )
+    assert second["status"] == "created"
+    assert second["memory"]["memory_id"] != existing["memory"]["memory_id"]
+    assert {r.key for r in await memory.async_list("alice")} == {
+        "pet.oscar.breed",
+        "pet.oscar.description",
+    }
+
+
+@pytest.mark.parametrize("operation", ["add", "upsert"])
+async def test_ambiguous_unkeyed_duplicates_are_not_promoted(operation: str) -> None:
+    memory = await _memory()
+    first = await memory.async_add(
+        "alice", "The light is on.", "devices", "explicit", subject="Kitchen"
+    )
+    second = await memory.async_add(
+        "alice", "The light is on.", "devices", "explicit", subject="Hall"
+    )
+    assert first["memory"]["memory_id"] != second["memory"]["memory_id"]
+    call = memory.async_add if operation == "add" else memory.async_upsert
+    result = await call(
+        "alice",
+        "The light is on.",
+        "devices",
+        "explicit",
+        subject="Kitchen",
+        key="home.kitchen.light",
+    )
+    assert result["status"] == "created"
+    assert all(r.key is None for r in await memory.async_list("alice") if r.memory_id in {
+        first["memory"]["memory_id"],
+        second["memory"]["memory_id"],
+    })
+    assert len(await memory.async_list("alice")) == 3
+
+
+@pytest.mark.parametrize("operation", ["add", "upsert"])
+async def test_new_key_respects_subject_and_temporal_identity(operation: str) -> None:
+    memory = await _memory()
+    original = await memory.async_add(
+        "alice",
+        "The light is on.",
+        "devices",
+        "explicit",
+        subject="Kitchen",
+        valid_from="2026-01-01T00:00:00+00:00",
+    )
+    call = memory.async_add if operation == "add" else memory.async_upsert
+    different_subject = await call(
+        "alice",
+        "The light is on.",
+        "devices",
+        "explicit",
+        subject="Hall",
+        key="home.hall.light",
+    )
+    different_time = await call(
+        "alice",
+        "The light is on.",
+        "devices",
+        "explicit",
+        subject="Kitchen",
+        key="home.kitchen.light",
+        valid_from="2026-02-01T00:00:00+00:00",
+    )
+    assert different_subject["status"] == different_time["status"] == "created"
+    assert original["memory"]["memory_id"] not in {
+        different_subject["memory"]["memory_id"],
+        different_time["memory"]["memory_id"],
+    }
+    restored = next(
+        record for record in await memory.async_list("alice")
+        if record.memory_id == original["memory"]["memory_id"]
+    )
+    assert restored.key is None
+    assert restored.subject == "Kitchen"
+    assert restored.valid_from == "2026-01-01T00:00:00+00:00"
+
+
+@pytest.mark.parametrize("operation", ["add", "upsert"])
+async def test_implicit_new_key_cannot_relabel_explicit_memory(operation: str) -> None:
+    storage = FakeStorage()
+    memory = PersistentMemory(storage)
+    await memory.async_initialize()
+    original = await memory.async_add(
+        "alice", "Oscar is a Cavachon.", "pets", "explicit", subject="Oscar"
+    )
+    before_saves = storage.save_count
+    call = memory.async_add if operation == "add" else memory.async_upsert
+    result = await call(
+        "alice",
+        "Oscar is a Cavachon.",
+        "other",
+        "implicit",
+        key="pet.oscar.breed",
+    )
+    assert result["status"] == ("duplicate" if operation == "add" else "unchanged")
+    assert result["memory"]["memory_id"] == original["memory"]["memory_id"]
+    assert result["memory"]["key"] is None
+    assert result["memory"]["source"] == "explicit"
+    assert result["memory"]["category"] == "pets"
+    assert storage.save_count == before_saves
+    assert len(await memory.async_list("alice")) == 1
+
+
+@pytest.mark.parametrize("operation", ["add", "upsert"])
+async def test_new_key_never_promotes_a_different_owner(operation: str) -> None:
+    memory = await _memory()
+    original = await memory.async_add(
+        "alice", "Oscar is a Cavachon.", "pets", "explicit"
+    )
+    call = memory.async_add if operation == "add" else memory.async_upsert
+    result = await call(
+        "bob", "Oscar is a Cavachon.", "pets", "explicit", key="pet.oscar.breed"
+    )
+    assert result["status"] == "created"
+    assert result["memory"]["memory_id"] != original["memory"]["memory_id"]
+    assert {r.key for r in await memory.async_list("alice")} == {None}
+    assert {r.key for r in await memory.async_list("bob")} == {
+        "pet.oscar.breed"
+    }
+
+
+@pytest.mark.parametrize("source", ["explicit", "implicit"])
+@pytest.mark.parametrize("operation", ["add", "upsert"])
+async def test_card_like_identifier_rejection_explains_false_positives(
+    source: str, operation: str
+) -> None:
+    memory = await _memory()
+    call = memory.async_add if operation == "add" else memory.async_upsert
+    with pytest.raises(memory_module.MemoryPrivacyRejected) as error:
+        await call(
+            "alice",
+            "Package tracking reference 4111111111111111.",
+            "deliveries",
+            source,
+        )
+    message = str(error.value)
+    assert "financial credential" in message
+    assert "unrelated long identifiers" in message
+    assert "without the identifier" in message
+    assert "4111111111111111" not in message
+    assert await memory.async_list("alice") == []
+
+
+async def test_non_card_identifier_remains_allowed() -> None:
+    memory = await _memory()
+    result = await memory.async_add(
+        "alice", "Package tracking reference 4111111111111112.", "deliveries", "explicit"
+    )
+    assert result["status"] == "created"
+
+
 async def test_new_keyed_upsert_does_not_merge_with_another_key() -> None:
     memory = await _memory()
     first = await memory.async_upsert(

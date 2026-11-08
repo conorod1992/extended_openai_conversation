@@ -409,6 +409,27 @@ class PersistentMemory:
             self._require_writable()
             if key and (user_id, key) in self._key_index:
                 raise ValueError("canonical key already exists in this memory scope")
+            if key is not None:
+                # A key may identify one existing legacy fact, but must never
+                # reassign the identity of an already keyed record.
+                duplicate = self._find_unique_unkeyed_duplicate(
+                    user_id, content, subject, valid_from
+                )
+                if duplicate is not None:
+                    if duplicate.source == "explicit" and source == "implicit":
+                        return "duplicate", duplicate
+                    changes: dict[str, Any] = {"key": key}
+                    if duplicate.source == "implicit" and source == "explicit":
+                        changes["source"] = "explicit"
+                    if subject and not duplicate.subject:
+                        changes["subject"] = subject
+                    if valid_from is not None and duplicate.valid_from is None:
+                        changes["valid_from"] = valid_from
+                    timestamp = dt_util.utcnow().isoformat()
+                    _set_updated_at_if_substantive(duplicate, changes, timestamp)
+                    updated = self._replace_record(duplicate, **changes)
+                    await self._async_save_locked()
+                    return "updated", updated
             if key is None:
                 duplicate = self._find_duplicate(user_id, content, subject)
                 if duplicate:
@@ -513,6 +534,43 @@ class PersistentMemory:
                     "status": "unchanged" if updated == current else "updated",
                     "memory": memory_as_dict(updated),
                 }
+
+            if keyed_identity:
+                # Only a uniquely identified unkeyed fact may acquire a key.
+                # Preserve the same explicit-over-implicit ownership guarantee
+                # as an upsert to an already keyed fact.
+                duplicate = self._find_unique_unkeyed_duplicate(
+                    user_id,
+                    content,
+                    cleaned_subject if isinstance(cleaned_subject, str) else None,
+                    cleaned_valid_from
+                    if isinstance(cleaned_valid_from, str)
+                    else None,
+                )
+                if duplicate is not None:
+                    if duplicate.source == "explicit" and source == "implicit":
+                        return {
+                            "status": "unchanged",
+                            "memory": memory_as_dict(duplicate),
+                        }
+                    changes: dict[str, Any] = {
+                        "key": cleaned_key,
+                        "category": category,
+                        "source": "explicit"
+                        if duplicate.source == "explicit"
+                        else source,
+                    }
+                    if cleaned_subject is not _UNSET:
+                        changes["subject"] = cleaned_subject
+                    if cleaned_valid_from is not _UNSET:
+                        changes["valid_from"] = cleaned_valid_from
+                    _set_updated_at_if_substantive(duplicate, changes, timestamp)
+                    updated = self._replace_record(duplicate, **changes)
+                    await self._async_save_locked()
+                    return {
+                        "status": "updated",
+                        "memory": memory_as_dict(updated),
+                    }
 
             if not keyed_identity:
                 duplicate = self._find_duplicate(
@@ -1081,6 +1139,43 @@ class PersistentMemory:
         if len(matches) == 1 and (not subject or not matches[0].subject):
             return matches[0]
         return None
+
+    def _find_unique_unkeyed_duplicate(
+        self,
+        user_id: str,
+        content: str,
+        subject: str | None = None,
+        valid_from: str | None = None,
+    ) -> MemoryRecord | None:
+        """Find one unkeyed exact fact without crossing canonical identities.
+
+        Multiple unkeyed facts with identical text remain ambiguous even when
+        one subject matches; leave them untouched for explicit resolution.
+        """
+        normalized = _fact_equality(content)
+        matches = [
+            memory
+            for memory in self._memories.values()
+            if memory.user_id == user_id
+            and memory.key is None
+            and _fact_equality(memory.content) == normalized
+        ]
+        if len(matches) != 1:
+            return None
+        candidate = matches[0]
+        if (
+            subject
+            and candidate.subject
+            and _subject_identity(subject) != _subject_identity(candidate.subject)
+        ):
+            return None
+        if (
+            valid_from is not None
+            and candidate.valid_from is not None
+            and valid_from != candidate.valid_from
+        ):
+            return None
+        return candidate
 
     def _find_related_candidate(
         self, user_id: str, content: str, subject: str | None, key: str | None
@@ -2202,7 +2297,9 @@ def _validate_privacy(content: str, source: str) -> None:
         )
     if _contains_financial_credential(content):
         raise MemoryPrivacyRejected(
-            "memory rejected because it appears to contain a financial credential"
+            "memory rejected because it appears to contain a financial credential. "
+            "This conservative check can also flag unrelated long identifiers; "
+            "save a description without the identifier instead."
         )
     if source == "implicit" and _SENSITIVE_IMPLICIT_PATTERN.search(content):
         raise MemoryPrivacyRejected(
