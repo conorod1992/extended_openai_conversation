@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-
 from collections.abc import Awaitable, Callable, Iterator, Mapping
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
@@ -608,8 +607,12 @@ def _patterned_replay_signature(
         arguments = validate_function_arguments(spec, tool_input.tool_args)
     except FunctionValidationInfrastructureError:
         raise
-    except (HomeAssistantError, TypeError, ValueError, *SCHEMA_ERRORS):
-        return _signature(tool_input)
+    except Exception as err:
+        if isinstance(err, (HomeAssistantError, TypeError, ValueError)) or any(
+            isinstance(err, category) for category in SCHEMA_ERRORS
+        ):
+            return _signature(tool_input)
+        raise
 
     prepared = llm.ToolInput(
         id=tool_input.id,
@@ -639,17 +642,14 @@ async def async_was_unacknowledged_equivalent(
         for spec in records.values()
     ):
         return True
+    # Every retained signature is produced by _signature(), which serializes
+    # [tool_name, arguments] with compact JSON separators. Checking this
+    # deterministic prefix avoids introducing another JSON parser boundary.
+    name_prefix = "[" + json.dumps(tool_input.tool_name) + ","
     for recorded, spec in records.items():
-        # Different tools can never have the same identity. In particular,
-        # do not launch regex work (or fail on its availability) for a
-        # different tool whose retained schema happens to use patterns.
-        try:
-            recorded_name = json.loads(recorded)[0]
-        except (ValueError, TypeError, IndexError) as err:
-            raise HomeAssistantError(
-                "Unable to verify pending tool-call replay safety"
-            ) from err
-        if recorded_name != tool_input.tool_name:
+        # A different tool can never be an equivalent replay; do not start
+        # patterned-key validation for an unrelated retained schema.
+        if not recorded.startswith(name_prefix):
             continue
         if _replay_spec_needs_executor(spec):
             # Copy only plain integration-owned JSON data. A live HA validator
@@ -697,16 +697,12 @@ def was_unacknowledged_equivalent(
         for spec in records.values()
     ):
         return True
+    name_prefix = "[" + json.dumps(tool_input.tool_name) + ","
     for signature, spec in records.items():
         if _replay_spec_needs_executor(spec):
             # Synchronous callers cannot safely prove this comparison. Block
-            # only a matching tool name instead of launching a regex process
-            # on the HA event loop; live exchanges use the async method.
-            try:
-                recorded_tool = json.loads(signature)[0]
-            except (ValueError, TypeError, IndexError):
-                return True
-            if recorded_tool == tool_input.tool_name:
+            # only a matching tool instead of launching an on-loop subprocess.
+            if signature.startswith(name_prefix):
                 return True
             continue
         if _signature(tool_input, spec) == signature:
