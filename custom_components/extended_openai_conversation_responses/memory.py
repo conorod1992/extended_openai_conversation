@@ -418,16 +418,20 @@ class PersistentMemory:
                 if duplicate is not None:
                     if duplicate.source == "explicit" and source == "implicit":
                         return "duplicate", duplicate
-                    changes: dict[str, Any] = {"key": key}
+                    promotion_changes: dict[str, Any] = {"key": key}
                     if duplicate.source == "implicit" and source == "explicit":
-                        changes["source"] = "explicit"
+                        promotion_changes["source"] = "explicit"
                     if subject and not duplicate.subject:
-                        changes["subject"] = subject
+                        promotion_changes["subject"] = subject
                     if valid_from is not None and duplicate.valid_from is None:
-                        changes["valid_from"] = valid_from
+                        promotion_changes["valid_from"] = valid_from
                     timestamp = dt_util.utcnow().isoformat()
-                    _set_updated_at_if_substantive(duplicate, changes, timestamp)
-                    updated = self._replace_record(duplicate, **changes)
+                    _set_updated_at_if_substantive(
+                        duplicate, promotion_changes, timestamp
+                    )
+                    updated = self._replace_record(
+                        duplicate, **promotion_changes
+                    )
                     await self._async_save_locked()
                     return "updated", updated
             if key is None:
@@ -551,7 +555,7 @@ class PersistentMemory:
                             "status": "unchanged",
                             "memory": memory_as_dict(duplicate),
                         }
-                    changes: dict[str, Any] = {
+                    promotion_changes: dict[str, Any] = {
                         "key": cleaned_key,
                         "category": category,
                         "source": "explicit"
@@ -559,11 +563,15 @@ class PersistentMemory:
                         else source,
                     }
                     if cleaned_subject is not _UNSET:
-                        changes["subject"] = cleaned_subject
+                        promotion_changes["subject"] = cleaned_subject
                     if cleaned_valid_from is not _UNSET:
-                        changes["valid_from"] = cleaned_valid_from
-                    _set_updated_at_if_substantive(duplicate, changes, timestamp)
-                    updated = self._replace_record(duplicate, **changes)
+                        promotion_changes["valid_from"] = cleaned_valid_from
+                    _set_updated_at_if_substantive(
+                        duplicate, promotion_changes, timestamp
+                    )
+                    updated = self._replace_record(
+                        duplicate, **promotion_changes
+                    )
                     await self._async_save_locked()
                     return {
                         "status": "updated",
