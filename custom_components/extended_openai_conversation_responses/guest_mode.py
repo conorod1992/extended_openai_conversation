@@ -249,34 +249,7 @@ class GuestModeManager:
                 raise
             recovering = self._persistence_unavailable
             try:
-                if data is None or data == {}:
-                    schedule = None
-                elif not isinstance(data, Mapping) or "schedule" not in data:
-                    raise ValueError("Guest Mode storage is invalid")
-                elif data["schedule"] is None:
-                    schedule = None
-                else:
-                    raw = data["schedule"]
-                    if not isinstance(raw, Mapping):
-                        raise ValueError("Guest Mode schedule is invalid")
-                    # Retain the legacy dataclass defaults and HA-local timestamps.
-                    schedule = GuestModeSchedule(**dict(raw))
-                    start = _parse_timestamp(
-                        self.hass, schedule.active_from, "active_from"
-                    )
-                    end = (
-                        _parse_timestamp(
-                            self.hass, schedule.active_until, "active_until"
-                        )
-                        if schedule.active_until is not None
-                        else None
-                    )
-                    if end is not None and end <= start:
-                        raise ValueError("Guest Mode interval is invalid")
-                    if not isinstance(schedule.source, str) or not schedule.source:
-                        raise ValueError("Guest Mode source is invalid")
-                    if schedule.updated_at is not None:
-                        _parse_timestamp(self.hass, schedule.updated_at, "updated_at")
+                schedule = self._decode_stored_schedule(data)
             except TypeError, ValueError:
                 self._persistence_unavailable = True
                 from .persistence_hardening import StorageRepairRequired
@@ -287,6 +260,50 @@ class GuestModeManager:
             self._initialized = True
             if recovering:
                 self._notify()
+
+    def _decode_stored_schedule(self, data: Any) -> GuestModeSchedule | None:
+        """Read local legacy state consistently on startup and uncertain saves.
+
+        Portable imports retain their strict, timezone-aware backup schema.
+        Existing aware text stays unchanged; naive legacy times are converted
+        using this installation's HA timezone before they can be exported.
+        """
+        if data is None or data == {}:
+            return None
+        if not isinstance(data, Mapping) or "schedule" not in data:
+            raise ValueError("Guest Mode storage is invalid")
+        raw = data["schedule"]
+        if raw is None:
+            return None
+        if not isinstance(raw, Mapping):
+            raise ValueError("Guest Mode schedule is invalid")
+        schedule = GuestModeSchedule(**dict(raw))
+
+        def decode_time(value: str, field: str) -> tuple[str, Any]:
+            utc = _parse_timestamp(self.hass, value, field)
+            original = dt_util.parse_datetime(value)
+            return (
+                utc.isoformat() if original.tzinfo is None else value,
+                utc,
+            )
+
+        start_text, start = decode_time(schedule.active_from, "active_from")
+        end_text = None
+        if schedule.active_until is not None:
+            end_text, end = decode_time(schedule.active_until, "active_until")
+            if end <= start:
+                raise ValueError("Guest Mode interval is invalid")
+        if not isinstance(schedule.source, str) or not schedule.source:
+            raise ValueError("Guest Mode source is invalid")
+        updated_text = None
+        if schedule.updated_at is not None:
+            updated_text, _ = decode_time(schedule.updated_at, "updated_at")
+        return GuestModeSchedule(
+            active_from=start_text,
+            active_until=end_text,
+            source=schedule.source,
+            updated_at=updated_text,
+        )
 
     @property
     def initialized(self) -> bool:
@@ -508,9 +525,7 @@ class GuestModeManager:
 
         async def reconcile() -> None:
             data = await self._store.async_load()
-            durable = self.validate_backup_data(
-                {"schedule": None} if data is None else data
-            )
+            durable = self._decode_stored_schedule(data)
             self._schedule = durable
             self._persistence_unavailable = False
 

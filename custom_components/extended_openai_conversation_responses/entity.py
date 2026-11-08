@@ -1922,6 +1922,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         first_chunk = True
         refusal_seen = False
         terminal_finish_seen = False
+        terminal_finish_reason: str | None = None
         token_limit_reached = False
         event_count = 0
 
@@ -1944,6 +1945,34 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 continue
 
             if terminal_finish_seen:
+                # Some compatible gateways append a usage-bearing choice after
+                # the terminal chunk, with an empty delta and repeated finish
+                # reason. The usage adapter has already recorded its counters.
+                # Never admit actual output or a contradictory terminal here.
+                if (
+                    len(chunk.choices) == 1
+                    and (tail := chunk.choices[0]).finish_reason
+                    in (None, terminal_finish_reason)
+                    and getattr(tail, "index", 0) in (0, None)
+                    and not getattr(tail, "logprobs", None)
+                    and not getattr(tail, "model_extra", None)
+                    and (tail_delta := tail.delta) is not None
+                    and not getattr(tail_delta, "model_extra", None)
+                    and not any(
+                        getattr(tail_delta, field, None)
+                        for field in (
+                            "content",
+                            "refusal",
+                            "tool_calls",
+                            "function_call",
+                            "role",
+                            "audio",
+                            "reasoning",
+                            "reasoning_content",
+                        )
+                    )
+                ):
+                    continue
                 await async_recover_trailing_usage(result, request_usage)
                 raise ProviderStreamError(
                     "Provider returned malformed data: event after terminal response",
@@ -2057,9 +2086,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 current_tool_calls.clear()
             if finish_reason in {"stop", "tool_calls", "function_call"}:
                 terminal_finish_seen = True
+                terminal_finish_reason = finish_reason
             if finish_reason == "length":
                 token_limit_reached = True
                 terminal_finish_seen = True
+                terminal_finish_reason = finish_reason
             if finish_reason == "content_filter":
                 if not refusal_seen:
                     await async_recover_trailing_usage(result, request_usage)
@@ -2067,6 +2098,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         "OpenAI response was blocked by the provider content filter"
                     )
                 terminal_finish_seen = True
+                terminal_finish_reason = finish_reason
 
             # Keep consuming after the stop chunk so providers that honor
             # stream_options.include_usage can deliver their final usage-only chunk.

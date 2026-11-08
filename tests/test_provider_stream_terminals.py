@@ -88,6 +88,108 @@ async def test_chat_completed_terminal_is_accepted() -> None:
     assert deltas == [{"role": "assistant"}, {"content": "Done"}]
 
 
+@pytest.mark.parametrize(
+    ("finish_reason", "tail_reason"),
+    [
+        ("stop", "stop"),
+        ("stop", None),
+        ("tool_calls", "tool_calls"),
+        ("function_call", "function_call"),
+    ],
+)
+async def test_chat_allows_empty_post_terminal_accounting_choices(
+    finish_reason: str, tail_reason: str | None
+) -> None:
+    """OpenRouter-style final choices report usage without creating output."""
+    from custom_components.extended_openai_conversation_responses.context_usage_hardening import (
+        RequestTokenMeasurements,
+    )
+
+    trailing = _chat_chunk(finish_reason=tail_reason)
+    trailing.usage = SimpleNamespace(
+        prompt_tokens=11, completion_tokens=7, total_tokens=18
+    )
+    usage = RequestTokenMeasurements()
+    deltas = [
+        delta
+        async for delta in _entity()._transform_chat_stream(
+            SimpleNamespace(),
+            FakeStream([_chat_chunk(content="Done"), _chat_chunk(finish_reason=finish_reason), trailing]),
+            usage,
+        )
+    ]
+    assert deltas == [{"role": "assistant"}, {"content": "Done"}]
+    assert (
+        usage.reported.input_tokens,
+        usage.reported.output_tokens,
+        usage.reported.total_tokens,
+    ) == (11, 7, 18)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("content", "late output"),
+        ("refusal", "late refusal"),
+        ("tool_calls", [SimpleNamespace(index=0)]),
+        ("function_call", SimpleNamespace(name="late", arguments="{}")),
+        ("role", "assistant"),
+        ("audio", {"data": "late"}),
+        ("reasoning_content", "late reasoning"),
+        ("model_extra", {"output": "late"}),
+    ],
+)
+async def test_chat_rejects_output_in_post_terminal_choices(
+    field: str, value: Any
+) -> None:
+    trailing = _chat_chunk(finish_reason="stop")
+    setattr(trailing.choices[0].delta, field, value)
+    with pytest.raises(ProviderStreamError, match="after terminal response"):
+        _ = [
+            delta
+            async for delta in _entity()._transform_chat_stream(
+                SimpleNamespace(),
+                FakeStream([_chat_chunk(finish_reason="stop"), trailing]),
+            )
+        ]
+
+
+async def test_chat_rejects_changed_terminal_reason_and_extra_choices() -> None:
+    changed = _chat_chunk(finish_reason="tool_calls")
+    with pytest.raises(ProviderStreamError, match="after terminal response"):
+        _ = [
+            delta
+            async for delta in _entity()._transform_chat_stream(
+                SimpleNamespace(),
+                FakeStream([_chat_chunk(finish_reason="stop"), changed]),
+            )
+        ]
+
+    extra = _chat_chunk(finish_reason="stop")
+    extra.choices.append(extra.choices[0])
+    with pytest.raises(ProviderStreamError, match="after terminal response"):
+        _ = [
+            delta
+            async for delta in _entity()._transform_chat_stream(
+                SimpleNamespace(),
+                FakeStream([_chat_chunk(finish_reason="stop"), extra]),
+            )
+        ]
+
+
+async def test_chat_length_terminal_still_fails_after_accounting_tail() -> None:
+    trailing = _chat_chunk(finish_reason="length")
+    trailing.usage = SimpleNamespace(prompt_tokens=1, completion_tokens=3, total_tokens=4)
+    with pytest.raises(TokenLengthExceededError):
+        _ = [
+            delta
+            async for delta in _entity()._transform_chat_stream(
+                SimpleNamespace(),
+                FakeStream([_chat_chunk(finish_reason="length"), trailing]),
+            )
+        ]
+
+
 async def test_chat_premature_eof_is_error() -> None:
     """Chat EOF without a finish reason is not accepted as a completed response."""
     stream = FakeStream([_chat_chunk(content="Partial answer")])

@@ -71,6 +71,47 @@ async def test_legacy_and_inactive_guest_state_remain_compatible(hass, data):
     assert manager.is_active() is bool(data and data.get("schedule"))
 
 
+@pytest.mark.parametrize(
+    ("stored", "expected"),
+    [
+        (
+            {"schedule": {"active_from": "2026-08-20T18:00:00"}},
+            {"active_from": "2026-08-20T17:00:00+00:00",
+             "active_until": None, "source": "home_assistant", "updated_at": None},
+        ),
+        (
+            {"schedule": {"active_from": "2026-08-20T18:00:00",
+                          "active_until": "2026-08-20T23:00:00",
+                          "updated_at": "2026-08-19T09:00:00"}},
+            {"active_from": "2026-08-20T17:00:00+00:00",
+             "active_until": "2026-08-20T22:00:00+00:00",
+             "source": "home_assistant",
+             "updated_at": "2026-08-19T08:00:00+00:00"},
+        ),
+        (
+            {"schedule": {"active_from": "2026-08-20T18:00:00+02:00",
+                          "source": "llm"}},
+            {"active_from": "2026-08-20T18:00:00+02:00",
+             "active_until": None, "source": "llm", "updated_at": None},
+        ),
+    ],
+)
+async def test_legacy_local_schedule_normalizes_only_naive_timestamps(
+    hass, stored, expected
+):
+    hass.config.time_zone = "Europe/Dublin"
+    manager = GuestModeManager(hass, "entry", "agent")
+    manager._store = Mock(
+        async_load=AsyncMock(return_value=stored),
+        async_save=AsyncMock(),
+    )
+    await manager.async_initialize()
+    assert manager.status()["active_from"] == expected["active_from"]
+    assert await manager.async_backup_data() == {"schedule": expected}
+    assert manager.validate_backup_data(await manager.async_backup_data()) == manager.schedule
+    manager._store.async_save.assert_not_awaited()
+
+
 async def test_portable_guest_replacement_cannot_introduce_an_inverted_interval(hass):
     manager = GuestModeManager(hass, "entry", "agent")
     await manager.async_initialize()

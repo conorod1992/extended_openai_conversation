@@ -339,6 +339,15 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> None:
     )
 
 
+_OPENAI_CREDENTIAL_DESCRIPTION_PLACEHOLDERS = {
+    "api_key_guide_url": (
+        "https://conorod1992.github.io/extended_openai_conversation/"
+        "getting-started/api-key/"
+    ),
+    "openai_api_keys_url": "https://platform.openai.com/api-keys",
+}
+
+
 class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for OpenAI Conversation."""
 
@@ -387,10 +396,9 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
             return self.async_show_form(
                 step_id="openai_credentials",
                 data_schema=schema_for_ha(STEP_OPENAI_CREDENTIALS_SCHEMA),
-                description_placeholders={
-                    "api_key_guide_url": "https://conorod1992.github.io/extended_openai_conversation/getting-started/api-key/",
-                    "openai_api_keys_url": "https://platform.openai.com/api-keys",
-                },
+                description_placeholders=dict(
+                    _OPENAI_CREDENTIAL_DESCRIPTION_PLACEHOLDERS
+                ),
             )
 
         submitted = dict(user_input)
@@ -490,6 +498,11 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
             step_id=step_id,
             data_schema=schema_for_ha(data_schema),
             errors=errors,
+            description_placeholders=(
+                dict(_OPENAI_CREDENTIAL_DESCRIPTION_PLACEHOLDERS)
+                if step_id == "openai_credentials"
+                else None
+            ),
         )
 
     async def async_step_reauth(self, entry_data: dict[str, Any]) -> ConfigFlowResult:
