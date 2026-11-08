@@ -38,9 +38,7 @@ _EMPHASIS_TOKENS = {"*": re.compile(r"`+|\*"), "_": re.compile(r"`+|_")}
 # A *viable prefix*, not merely a failed complete match, may suspend
 # progressive speech. This includes split closing asterisks.
 _NUMERIC_EMPHASIS_PREFIX = re.compile(r"[+-]?(?:\d+(?:\.\d*)?)?\*{0,2}\Z")
-_NUMERIC_EMPHASIS_COMPLETE = re.compile(
-    r"[+-]?\d+(?:\.\d+)?\*\*(?=$|[\s.,;:!?])"
-)
+_NUMERIC_EMPHASIS_COMPLETE = re.compile(r"[+-]?\d+(?:\.\d+)?\*\*(?=$|[\s.,;:!?])")
 
 DEFAULT_STREAMING_BUFFER_LIMIT = 4096
 COMPLETED_SPEECH_EXECUTOR_THRESHOLD = 4096
@@ -369,7 +367,9 @@ class StreamingSpeechSanitizer:
                 if link_start < len(text) and text[link_start] == "!":
                     link_start += 1
                 if link_start < len(text) and text[link_start] == "[":
-                    status, link_end = self._markdown_link_end(text, link_start, final, self._completed_links)
+                    status, link_end = self._markdown_link_end(
+                        text, link_start, final, self._completed_links
+                    )
                     if status == "incomplete":
                         held_whitespace = self._hold_preceding_whitespace(output)
                         break
@@ -397,7 +397,9 @@ class StreamingSpeechSanitizer:
                 and text[markdown_start : markdown_start + 1] == "["
                 and not self._is_escaped(text, markdown_start, self._link_backslashes)
             ):
-                status, link_end = self._markdown_link_end(text, markdown_start, final, self._completed_links)
+                status, link_end = self._markdown_link_end(
+                    text, markdown_start, final, self._completed_links
+                )
                 if status == "incomplete":
                     held_whitespace = self._hold_preceding_whitespace(output)
                     break
@@ -603,8 +605,8 @@ class StreamingSpeechSanitizer:
                         and (index < 3 or text[index - 3] != char)
                     )
                     if text[index - 1] != char or combined_close:
-                        ordinary_close = (
-                            not after or (not after.isalnum() and after != char)
+                        ordinary_close = not after or (
+                            not after.isalnum() and after != char
                         )
                         if ordinary_close:
                             single[char].append(index)
@@ -724,9 +726,7 @@ class StreamingSpeechSanitizer:
                 can_close = self._triple_open[char] or (
                     char == "*" and self._strong_open
                 )
-                if not can_close and not self._has_buffer_closer(
-                    index + 3, char * 3
-                ):
+                if not can_close and not self._has_buffer_closer(index + 3, char * 3):
                     if not final:
                         unresolved_emphasis = True
                         break
@@ -755,10 +755,10 @@ class StreamingSpeechSanitizer:
                 end = -1
                 code = 0
                 if self._completed_singles is not None:
+                    # Both candidate indexes are built in the same operation.
+                    assert self._completed_nested_singles is not None
                     nested_outer_open = (
-                        self._strong_open
-                        if char == "*"
-                        else self._paired_open["__"]
+                        self._strong_open if char == "*" else self._paired_open["__"]
                     )
                     candidates = (
                         self._completed_nested_singles[char]
@@ -767,8 +767,7 @@ class StreamingSpeechSanitizer:
                     )
                     first = bisect_right(candidates, index)
                     tokens = (
-                        (candidates[pos], 0)
-                        for pos in range(first, len(candidates))
+                        (candidates[pos], 0) for pos in range(first, len(candidates))
                     )
                 else:
                     tokens = (

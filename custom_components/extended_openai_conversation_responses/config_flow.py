@@ -991,7 +991,8 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                     step=0.05,
                     mode=(
                         NumberSelectorMode.BOX
-                        if not self._is_new and CONF_TEMPERATURE not in effective_options
+                        if not self._is_new
+                        and CONF_TEMPERATURE not in effective_options
                         else NumberSelectorMode.SLIDER
                     ),
                 )
