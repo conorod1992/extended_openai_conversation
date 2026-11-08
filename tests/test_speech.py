@@ -999,8 +999,183 @@ def test_numeric_marker_waits_only_for_a_viable_closing_prefix() -> None:
     sanitizer = StreamingSpeechSanitizer()
     assert sanitizer.feed("Compute 2**3") == "Compute 2"
     assert sanitizer.feed("*") == ""
-    # A second asterisk completes the closer, but following text can still
-    # distinguish a bold number from a literal mathematical operator.
+    # The second asterisk completes the closing marker, but the following
+    # character is still needed to distinguish valid bold from arithmetic.
     assert sanitizer.feed("*") == ""
     assert sanitizer.feed("2; more text.") == "**3**2; more text."
     assert sanitizer.finish() == ""
+
+
+def test_complete_speech_keeps_cleaning_after_long_unmatched_emphasis() -> None:
+    prose = "ordinary prose " * 400
+    source = "Intro *unfinished " + prose + "\n## Later\n- **Ready**."
+    expected = "Intro *unfinished " + prose + "\nLater\nReady."
+    assert process_speech_text(source, _config()) == expected
+    # Streaming deliberately retains its bounded malformed-input fallback.
+    sanitizer = StreamingSpeechSanitizer()
+    streamed = sanitizer.feed(source) + sanitizer.finish()
+    assert streamed != expected
+    assert "## Later" in streamed
+
+
+def test_complete_speech_keeps_cleaning_after_long_unclosed_link() -> None:
+    prose = "ordinary prose " * 400
+    source = "Intro [unfinished " + prose + "\n## Later\n- **Ready**."
+    expected = "Intro [unfinished " + prose + "\nLater\nReady."
+    assert process_speech_text(source, _config()) == expected
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "**bold** and __strong__.",
+        "## Heading\n- **Item**\n2. Second item.",
+        "Read [source](https://example.com) and continue.",
+        "2**3; literal operators are preserved.",
+        "*outer **inner** outer*",
+        "Use \`code **not bold**\` and **real bold**.",
+        r"A \*literal\* and **bold**.",
+        "Hello **_[source](https://example.com)_** world.",
+    ],
+)
+def test_completed_speech_uses_the_same_supported_formatting_rules(
+    source: str,
+) -> None:
+    expected = speech._final_whitespace_cleanup(_stream([source]))
+    assert process_speech_text(source, _config()) == expected
+
+
+def test_completed_speech_long_malformed_delimiters_use_indexed_lookahead(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class NeverScan:
+        def finditer(self, *_args):
+            pytest.fail("Completed parsing must use indexed single-delimiter lookahead")
+
+    def never_scan(*_args, **_kwargs):
+        pytest.fail("Completed parsing must use indexed paired-delimiter lookahead")
+
+    monkeypatch.setattr(
+        speech, "_EMPHASIS_TOKENS", {"*": NeverScan(), "_": NeverScan()}
+    )
+    monkeypatch.setattr(
+        StreamingSpeechSanitizer, "_has_closer", classmethod(never_scan)
+    )
+    source = ("*word " * 4500) + "\n## Later\n- **Ready**."
+    cleaned = process_speech_text(source, _config())
+    assert cleaned.startswith("*word *word ")
+    assert cleaned.endswith("\nLater\nReady.")
+    assert "## Later" not in cleaned
+
+
+async def test_known_complete_speech_listener_reassembles_synthetic_deltas(
+    hass,
+) -> None:
+    heard = []
+    original_listener = lambda _log, delta: heard.append(delta)
+    log = SimpleNamespace(delta_listener=original_listener)
+    prose = "plain words " * 420
+    original = "Before *unfinished " + prose + "\n## Heading\n- **Ready**."
+    with async_streaming_speech_cleanup(log, _config(), completed=True) as wrapper:
+        assert wrapper is not None
+        log.delta_listener(log, {"role": "assistant"})
+        log.delta_listener(log, {"content": "Before *unfinished " + prose})
+        log.delta_listener(log, {"content": "\n## Heading\n- **Ready**."})
+        assert heard == []
+        await wrapper.async_flush_completed(hass, log)
+    assert log.delta_listener is original_listener
+    assert heard == [
+        {"role": "assistant"},
+        {"content": speech._built_in_cleanup(original, markdown=True, urls=True)},
+    ]
+
+
+async def test_known_complete_listener_preserves_role_groups_and_metadata(hass) -> None:
+    heard = []
+    log = SimpleNamespace(
+        delta_listener=lambda _log, delta: heard.append(delta)
+    )
+    with async_streaming_speech_cleanup(log, _config(), completed=True) as wrapper:
+        log.delta_listener(log, {"role": "assistant"})
+        log.delta_listener(log, {"content": "**One**"})
+        log.delta_listener(log, {"content": " and [link](https://example.com)"})
+        log.delta_listener(log, {"tool_calls": ["opaque"]})
+        log.delta_listener(log, {"role": "assistant"})
+        log.delta_listener(log, {"content": "## Two"})
+        assert heard == []
+        await wrapper.async_flush_completed(hass, log)
+    assert heard == [
+        {"role": "assistant"},
+        {"content": "One and"},
+        {"tool_calls": ["opaque"]},
+        {"role": "assistant"},
+        {"content": "Two"},
+    ]
+
+
+
+async def test_known_complete_speech_presentation_preserves_original_chat_log(
+    hass,
+) -> None:
+    original = "Start *unfinished " + ("ordinary words " * 420) + "\n## Status\n- **Ready**."
+    heard: list[dict] = []
+    chat_log = conversation.ChatLog(SimpleNamespace(data={}), "speech-complete")
+    chat_log.delta_listener = lambda _log, delta: heard.append(delta)
+
+    async def completed_adapted_stream():
+        yield {"role": "assistant"}
+        midpoint = len(original) // 2
+        yield {"content": original[:midpoint]}
+        yield {"content": original[midpoint:]}
+
+    with async_streaming_speech_cleanup(
+        chat_log, _config(), completed=True
+    ) as presentation:
+        retained = [
+            item
+            async for item in chat_log.async_add_delta_content_stream(
+                "conversation.speech_test", completed_adapted_stream()
+            )
+        ]
+        assert heard == []
+        assert presentation is not None
+        await presentation.async_flush_completed(hass, chat_log)
+
+    assert retained[-1].content == original
+    assert heard == [
+        {"role": "assistant"},
+        {
+            "content": speech._built_in_cleanup(
+                original, markdown=True, urls=True
+            )
+        },
+    ]
+
+
+def test_completed_speech_path_is_one_shot() -> None:
+    sanitizer = StreamingSpeechSanitizer()
+    assert sanitizer.process_complete("**one**") == "one"
+    assert sanitizer.finish() == ""
+    with pytest.raises(ValueError, match="fresh sanitizer"):
+        sanitizer.process_complete("**two**")
+
+
+
+def test_completed_speech_many_numeric_literals_reach_later_markup() -> None:
+    source = ("2**3; " * 1600) + "\n## End\n- **Ready**."
+    result = process_speech_text(source, _config())
+    assert result.count("2**3;") == 1600
+    assert result.endswith("\nEnd\nReady.")
+    assert "## End" not in result
+
+
+def test_completed_speech_many_links_keep_one_spoken_boundary() -> None:
+    source = "Before " + ("[source](https://example.com/path(v1)) " * 200) + "after."
+    assert process_speech_text(source, _config()) == "Before after."
+
+
+def test_completed_speech_many_unclosed_parentheses_do_not_block_later_text() -> None:
+    source = "Start " + ("[broken](" * 900) + "\n## Heading\n- **Ready**."
+    result = process_speech_text(source, _config())
+    assert result.startswith("Start [broken](")
+    assert result.endswith("\nHeading\nReady.")

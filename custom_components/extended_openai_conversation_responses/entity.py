@@ -1189,7 +1189,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
                     with (
                         bind_tool_recovery_state(recovery_state),
-                        async_streaming_speech_cleanup(chat_log, options),
+                        async_streaming_speech_cleanup(
+                            chat_log, options, completed=not streaming
+                        ) as speech_presentation,
                     ):
                         listener = getattr(chat_log, "delta_listener", None)
                         if conditional_continue:
@@ -1208,6 +1210,13 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                         pending_tool_calls.extend(content.tool_calls)
                         finally:
                             chat_log.delta_listener = listener
+                        if speech_presentation is not None and not streaming:
+                            # Completed Chat and Responses adapters emit synthetic
+                            # text deltas. Join each known-complete answer and run
+                            # the speech-only parser off-loop before delivery.
+                            await speech_presentation.async_flush_completed(
+                                self.hass, chat_log
+                            )
                 except BaseException as err:
                     append_unresolved_tool_results(
                         chat_log,
@@ -1410,13 +1419,19 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     # A finalizer emitted beside an action tool is premature. Remove it
                     # from history and wait for the post-tool response to decide.
                     is_final = not pending_tool_calls and not loader_calls
-                    with async_streaming_speech_cleanup(chat_log, options):
+                    with async_streaming_speech_cleanup(
+                        chat_log, options, completed=True
+                    ) as speech_presentation:
                         await self._consume_continue_conversation_tool(
                             chat_log,
                             existing_content_ids,
                             response_text if is_final else None,
                             preserve_calls=api_mode == API_MODE_RESPONSES,
                         )
+                        if speech_presentation is not None:
+                            await speech_presentation.async_flush_completed(
+                                self.hass, chat_log
+                            )
                     if is_final:
                         continuation_decision = decision
                         if draft_content_ids:
@@ -1491,7 +1506,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             preserve_native=api_mode == API_MODE_RESPONSES,
                         )
                     if chat_log.delta_listener:
-                        with async_streaming_speech_cleanup(chat_log, options):
+                        with async_streaming_speech_cleanup(
+                            chat_log, options, completed=True
+                        ) as speech_presentation:
                             for finalizer_content in chat_log.content:
                                 if (
                                     id(finalizer_content) not in existing_content_ids
@@ -1512,6 +1529,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                             "content": finalizer_content.content,
                                         },
                                     )
+                            if speech_presentation is not None:
+                                await speech_presentation.async_flush_completed(
+                                    self.hass, chat_log
+                                )
 
                 if (
                     api_mode == API_MODE_RESPONSES

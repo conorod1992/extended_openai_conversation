@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from array import array
+from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Mapping
 from contextlib import contextmanager
+from functools import partial
 import logging
 import re
 from typing import Any
@@ -32,9 +35,12 @@ _WWW_ADDRESS = re.compile(
 )
 _FORMAT_MARKERS = ("**", "__", "~~")
 _EMPHASIS_TOKENS = {"*": re.compile(r"`+|\*"), "_": re.compile(r"`+|_")}
-# Only a viable prefix of the existing numeric emphasis grammar can delay
-# progressive speech, including a split closing asterisk pair.
+# A *viable prefix*, not merely a failed complete match, may suspend
+# progressive speech. This includes split closing asterisks.
 _NUMERIC_EMPHASIS_PREFIX = re.compile(r"[+-]?(?:\d+(?:\.\d*)?)?\*{0,2}\Z")
+_NUMERIC_EMPHASIS_COMPLETE = re.compile(
+    r"[+-]?\d+(?:\.\d+)?\*\*(?=$|[\s.,;:!?])"
+)
 
 DEFAULT_STREAMING_BUFFER_LIMIT = 4096
 COMPLETED_SPEECH_EXECUTOR_THRESHOLD = 4096
@@ -87,6 +93,11 @@ class StreamingSpeechSanitizer:
         self._suppressed_line_break = False
         self._suppressed_closer: str | None = None
         self._suppressed_opener: str | None = None
+        self._completed_links: tuple[array, array, dict[int, int]] | None = None
+        self._complete_mode = False
+        self._completed_last_markers: dict[str, int] | None = None
+        self._completed_singles: dict[str, array] | None = None
+        self._completed_nested_singles: dict[str, array] | None = None
 
     @property
     def buffered_chars(self) -> int:
@@ -106,6 +117,23 @@ class StreamingSpeechSanitizer:
 
     def finish(self) -> str:
         """Resolve and return the remaining tail at end of stream."""
+        link_safe = self._drain_links(final=True)
+        if self._needs_separator:
+            self._needs_separator = False
+        return self._format(link_safe, final=True)
+
+    def process_complete(self, text: str) -> str:
+        """Clean a known-complete answer without speculative streaming overflow.
+
+        Use the same recognizers and output rules as streaming, but tell both
+        stages immediately that no further provider chunks can arrive.
+        """
+        if self._complete_mode or self._buffer or self._format_buffer:
+            raise ValueError("Completed speech requires a fresh sanitizer")
+        self._complete_mode = True
+        if self.markdown and len(text) > DEFAULT_STREAMING_BUFFER_LIMIT and "[" in text:
+            self._completed_links = self._index_complete_links(text)
+        self._buffer = text
         link_safe = self._drain_links(final=True)
         if self._needs_separator:
             self._needs_separator = False
@@ -341,7 +369,7 @@ class StreamingSpeechSanitizer:
                 if link_start < len(text) and text[link_start] == "!":
                     link_start += 1
                 if link_start < len(text) and text[link_start] == "[":
-                    status, link_end = self._markdown_link_end(text, link_start, final)
+                    status, link_end = self._markdown_link_end(text, link_start, final, self._completed_links)
                     if status == "incomplete":
                         held_whitespace = self._hold_preceding_whitespace(output)
                         break
@@ -369,7 +397,7 @@ class StreamingSpeechSanitizer:
                 and text[markdown_start : markdown_start + 1] == "["
                 and not self._is_escaped(text, markdown_start, self._link_backslashes)
             ):
-                status, link_end = self._markdown_link_end(text, markdown_start, final)
+                status, link_end = self._markdown_link_end(text, markdown_start, final, self._completed_links)
                 if status == "incomplete":
                     held_whitespace = self._hold_preceding_whitespace(output)
                     break
@@ -460,7 +488,55 @@ class StreamingSpeechSanitizer:
         return "".join(output)
 
     @staticmethod
-    def _markdown_link_end(text: str, start: int, final: bool) -> tuple[str, int]:
+    def _index_complete_links(text: str) -> tuple[array, array, dict[int, int]]:
+        """Index only source positions needed for bounded completed link scans."""
+        brackets = array("I")
+        invalid_url = array("I")
+        open_parens = array("I")
+        closed_parens: dict[int, int] = {}
+        for position, character in enumerate(text):
+            if character == "]":
+                brackets.append(position)
+            if character.isspace() or character in "<>":
+                invalid_url.append(position)
+            if character == "(":
+                open_parens.append(position)
+            elif character == ")" and open_parens:
+                opening = open_parens.pop()
+                # Only ]( can introduce a Markdown URL in this recognizer.
+                if opening and text[opening - 1] == "]":
+                    closed_parens[opening] = position
+        return brackets, invalid_url, closed_parens
+
+    @staticmethod
+    def _markdown_link_end(
+        text: str,
+        start: int,
+        final: bool,
+        completed: tuple[array, array, dict[int, int]] | None = None,
+    ) -> tuple[str, int]:
+        if completed is not None:
+            brackets, invalid_url, closed_parens = completed
+            position = bisect_right(brackets, start)
+            if position >= len(brackets):
+                return "no", start
+            label_end = brackets[position]
+            if label_end + 1 >= len(text) or text[label_end + 1] != "(":
+                return "no", start
+            url_start = label_end + 2
+            if url_start >= len(text):
+                return "no", start
+            url_close = closed_parens.get(label_end + 1)
+            if url_close is None:
+                return "no", start
+            next_invalid = bisect_left(invalid_url, url_start)
+            if (
+                next_invalid < len(invalid_url)
+                and invalid_url[next_invalid] < url_close
+            ):
+                return "no", start
+            return "complete", url_close + 1
+
         label_end = text.find("]", start + 1)
         if label_end == -1:
             return ("no", start) if final else ("incomplete", start)
@@ -485,10 +561,86 @@ class StreamingSpeechSanitizer:
                 depth -= 1
         return ("no", start) if final else ("incomplete", start)
 
+    @classmethod
+    def _index_complete_format(
+        cls, text: str
+    ) -> tuple[dict[str, int], dict[str, array], dict[str, array]]:
+        """Pre-index eligible delimiters once for complete-message lookahead.
+
+        Unmatched openers must not rescan the same long tail repeatedly. The
+        compact arrays use one 32-bit position per possible single closer.
+        """
+        last: dict[str, int] = {}
+        single = {"*": array("I"), "_": array("I")}
+        nested_single = {"*": array("I"), "_": array("I")}
+        code_width = 0
+        index = 0
+        while index < len(text):
+            char = text[index]
+            if char == "`" and (
+                code_width or not cls._is_escaped(text, index)
+            ):
+                end = index + 1
+                while end < len(text) and text[end] == "`":
+                    end += 1
+                width = end - index
+                if not code_width:
+                    code_width = width
+                elif code_width == width:
+                    code_width = 0
+                index = end
+                continue
+            if not code_width and char in "*_~" and not cls._is_escaped(
+                text, index
+            ):
+                for marker in ("**", "__", "~~", "***", "___"):
+                    if text.startswith(marker, index):
+                        last[marker] = index
+                if char in "*_" and index > 0 and not text[index - 1].isspace():
+                    after = text[index + 1 : index + 2]
+                    # A delimiter preceded by the same character cannot close
+                    # single emphasis unless it is the last of an isolated
+                    # three-character run. Preserve that nested-strong rule.
+                    combined_close = (
+                        index >= 2
+                        and text[index - 2 : index] == char * 2
+                        and (index < 3 or text[index - 3] != char)
+                    )
+                    if text[index - 1] != char or combined_close:
+                        ordinary_close = (
+                            not after or (not after.isalnum() and after != char)
+                        )
+                        if ordinary_close:
+                            single[char].append(index)
+                            nested_single[char].append(index)
+                        elif after == char and text.startswith(char * 3, index):
+                            # Only a currently open outer strong delimiter
+                            # permits the first star of a nested *** closer.
+                            nested_single[char].append(index)
+            index += 1
+        return last, single, nested_single
+
+    def _has_buffer_closer(self, start: int, marker: str) -> bool:
+        if self._completed_last_markers is not None:
+            return self._completed_last_markers.get(marker, -1) >= start
+        return self._has_closer(
+            self._format_buffer, start, marker, self._format_backslashes
+        )
+
     def _format(self, text: str, *, final: bool) -> str:
         if not self.markdown:
             return text
         self._format_buffer += text
+        if (
+            self._complete_mode
+            and final
+            and len(self._format_buffer) > DEFAULT_STREAMING_BUFFER_LIMIT
+        ):
+            (
+                self._completed_last_markers,
+                self._completed_singles,
+                self._completed_nested_singles,
+            ) = self._index_complete_format(self._format_buffer)
         output: list[str] = []
         index = 0
         unresolved_emphasis = False
@@ -576,11 +728,8 @@ class StreamingSpeechSanitizer:
                 can_close = self._triple_open[char] or (
                     char == "*" and self._strong_open
                 )
-                if not can_close and not self._has_closer(
-                    self._format_buffer,
-                    index + 3,
-                    char * 3,
-                    self._format_backslashes,
+                if not can_close and not self._has_buffer_closer(
+                    index + 3, char * 3
                 ):
                     if not final:
                         unresolved_emphasis = True
@@ -609,19 +758,42 @@ class StreamingSpeechSanitizer:
                 # remain prose; the existing bounded buffer also applies here.
                 end = -1
                 code = 0
-                for token in _EMPHASIS_TOKENS[char].finditer(
-                    self._format_buffer, index + 1
-                ):
-                    if token[0].startswith("`"):
-                        count = len(token[0])
+                if self._completed_singles is not None:
+                    nested_outer_open = (
+                        self._strong_open
+                        if char == "*"
+                        else self._paired_open["__"]
+                    )
+                    candidates = (
+                        self._completed_nested_singles[char]
+                        if nested_outer_open
+                        else self._completed_singles[char]
+                    )
+                    first = bisect_right(candidates, index)
+                    tokens = (
+                        (candidates[pos], 0)
+                        for pos in range(first, len(candidates))
+                    )
+                else:
+                    tokens = (
+                        (
+                            token.start(),
+                            len(token[0]) if token[0].startswith("`") else 0,
+                        )
+                        for token in _EMPHASIS_TOKENS[char].finditer(
+                            self._format_buffer, index + 1
+                        )
+                    )
+                for candidate, code_marker in tokens:
+                    if code_marker:
                         if not code:
-                            code = count
-                        elif count == code:
+                            code = code_marker
+                        elif code_marker == code:
                             code = 0
                         continue
                     if code:
                         continue
-                    end = token.start()
+                    end = candidate
                     after = self._format_buffer[end + 1 : end + 2]
                     combined_close = self._format_buffer[
                         max(index + 1, end - 2) : end
@@ -663,6 +835,7 @@ class StreamingSpeechSanitizer:
                         nested._line_start = False
                         nested._format_depth = self._format_depth + 1
                         nested._strong_open = self._strong_open
+                        nested._complete_mode = self._complete_mode
                         body = nested._format(body, final=True)
                         self._strong_open = nested._strong_open
                     output.append(body)
@@ -678,9 +851,8 @@ class StreamingSpeechSanitizer:
                     if not after and not final:
                         break
                     if after.isdigit() or after in {"+", "-", "("}:
-                        closer = re.match(
-                            r"[+-]?\d+(?:\.\d+)?\*\*(?=$|[\s.,;:!?])",
-                            self._format_buffer[index + 2 :],
+                        closer = _NUMERIC_EMPHASIS_COMPLETE.match(
+                            self._format_buffer, index + 2
                         )
                         if not final and (
                             (
@@ -692,16 +864,17 @@ class StreamingSpeechSanitizer:
                             )
                             or (
                                 closer is not None
-                                and index + 2 + closer.end()
-                                == len(self._format_buffer)
+                                and closer.end() == len(self._format_buffer)
                             )
                         ):
-                            # Wait only while more input might complete the marker.
+                            # Wait only while more input could complete or
+                            # disambiguate the current numeric marker.
                             unresolved_emphasis = True
                             break
                         if closer is None:
-                            # The current suffix makes numeric emphasis impossible.
-                            # Do not fall into the generic emphasis lookahead.
+                            # The suffix is now incompatible with the numeric
+                            # grammar. Release this as a *literal* operator
+                            # without re-entering the generic emphasis logic.
                             output.append(pair)
                             index += 2
                             continue
@@ -742,11 +915,8 @@ class StreamingSpeechSanitizer:
                     already_open = (
                         self._strong_open if pair == "**" else self._paired_open[pair]
                     )
-                    if not already_open and not self._has_closer(
-                        self._format_buffer,
-                        index + 2,
-                        pair,
-                        self._format_backslashes,
+                    if not already_open and not self._has_buffer_closer(
+                        index + 2, pair
                     ):
                         if not final:
                             unresolved_emphasis = True
@@ -887,10 +1057,14 @@ class _SpeechDeltaListener:
         self,
         listener: Callable[[Any, dict[str, Any]], None],
         agent_config: Mapping[str, Any],
+        *,
+        completed: bool = False,
     ) -> None:
         self._listener = listener
         self._agent_config = agent_config
         self._sanitizer = self._new_sanitizer()
+        self._completed = completed
+        self._completed_deltas: list[dict[str, Any]] = []
 
     def _new_sanitizer(self) -> StreamingSpeechSanitizer:
         return StreamingSpeechSanitizer(
@@ -903,6 +1077,11 @@ class _SpeechDeltaListener:
         )
 
     def __call__(self, chat_log: Any, delta: dict[str, Any]) -> None:
+        if self._completed:
+            # Completed provider responses are already available. Buffer only
+            # the presentation deltas, never ChatLog's retained source content.
+            self._completed_deltas.append(dict(delta))
+            return
         if "role" in delta:
             self.flush(chat_log)
             self._sanitizer = self._new_sanitizer()
@@ -919,13 +1098,79 @@ class _SpeechDeltaListener:
         if filtered:
             self._listener(chat_log, filtered)
 
+    async def async_flush_completed(self, hass: Any, chat_log: Any) -> None:
+        """Emit known-complete messages, cleaning each in an executor.
+
+        Provider adapters can split one *completed* message into multiple
+        synthetic text deltas. Resolve their joint text once, preserving
+        metadata and role boundaries without rewriting retained history.
+        """
+        if not self._completed or not self._completed_deltas:
+            return
+        pending = self._completed_deltas
+        self._completed_deltas = []
+        groups: list[list[dict[str, Any]]] = []
+        group: list[dict[str, Any]] = []
+        for delta in pending:
+            if "role" in delta and group:
+                groups.append(group)
+                group = []
+            group.append(delta)
+        if group:
+            groups.append(group)
+
+        for group in groups:
+            text = "".join(
+                delta["content"]
+                for delta in group
+                if isinstance(delta.get("content"), str)
+            )
+            cleaned = (
+                await hass.async_add_executor_job(
+                    partial(
+                        _built_in_cleanup,
+                        text,
+                        markdown=self._agent_config.get(
+                            CONF_SPEECH_STRIP_MARKDOWN,
+                            DEFAULT_SPEECH_STRIP_MARKDOWN,
+                        ),
+                        urls=self._agent_config.get(
+                            CONF_SPEECH_STRIP_URLS,
+                            DEFAULT_SPEECH_STRIP_URLS,
+                        ),
+                    )
+                )
+                if text
+                else ""
+            )
+            emitted_content = False
+            for delta in group:
+                presented = dict(delta)
+                if isinstance(delta.get("content"), str):
+                    if emitted_content or not cleaned:
+                        presented.pop("content", None)
+                    else:
+                        presented["content"] = cleaned
+                    emitted_content = True
+                if presented:
+                    self._listener(chat_log, presented)
+
     def flush(self, chat_log: Any) -> None:
         """Forward the resolved end-of-message tail."""
+        if self._completed:
+            # A caller must await async_flush_completed before leaving the
+            # completed provider path. On a failed parser, do not inject a
+            # potentially enormous, partially interpreted response on-loop.
+            self._completed_deltas.clear()
+            return
         if tail := self._sanitizer.finish():
             self._listener(chat_log, {"content": tail})
 
     def log_summary(self) -> None:
-        """Log non-sensitive streaming diagnostics."""
+        """Log non-sensitive speech diagnostics."""
+        if self._completed:
+            _LOGGER.debug("Completed-response speech cleanup applied")
+            return
         _LOGGER.debug(
             "Streaming speech cleanup suppressed %d constructs; maximum buffered chars: %d",
             self._sanitizer.suppressed_constructs,
@@ -934,13 +1179,18 @@ class _SpeechDeltaListener:
 
 
 @contextmanager
-def async_streaming_speech_cleanup(chat_log: Any, agent_config: Mapping[str, Any]):
-    """Wrap a ChatLog delta listener so only progressive output is sanitized."""
+def async_streaming_speech_cleanup(
+    chat_log: Any,
+    agent_config: Mapping[str, Any],
+    *,
+    completed: bool = False,
+):
+    """Present cleaned speech without altering ChatLog's original content."""
     listener = getattr(chat_log, "delta_listener", None)
     if listener is None or not streaming_speech_processing_enabled(agent_config):
-        yield
+        yield None
         return
-    wrapper = _SpeechDeltaListener(listener, agent_config)
+    wrapper = _SpeechDeltaListener(listener, agent_config, completed=completed)
     chat_log.delta_listener = wrapper
     _LOGGER.debug("Streaming speech sanitizer enabled")
     try:
@@ -955,7 +1205,7 @@ def async_streaming_speech_cleanup(chat_log: Any, agent_config: Mapping[str, Any
 
 def _built_in_cleanup(text: str, *, markdown: bool, urls: bool) -> str:
     sanitizer = StreamingSpeechSanitizer(markdown=markdown, urls=urls)
-    return sanitizer.feed(text) + sanitizer.finish()
+    return sanitizer.process_complete(text)
 
 
 def _final_whitespace_cleanup(text: str) -> str:
