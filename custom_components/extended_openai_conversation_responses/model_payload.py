@@ -164,11 +164,22 @@ _TOOL_DESCRIPTIONS = {
 }
 
 _PROPERTY_DESCRIPTIONS: dict[tuple[str, str], str] = {
-    ("memory_update", "expected_revision"): "Current revision from memory_search, memory_list or opening context; never guess.",
-    ("memory_upsert", "key"): "Stable canonical identifier for this exact subject; never change it to evade a conflict.",
-    ("memory_upsert", "subject"): "Specific person, device or item the assertion concerns; never infer another person's preference.",
+    ("memory_update", "expected_revision"): (
+        "Current revision from memory_search, memory_list or opening context; "
+        "never guess."
+    ),
+    ("memory_upsert", "key"): (
+        "Stable canonical identifier for this exact subject; never change it "
+        "to evade a conflict."
+    ),
+    ("memory_upsert", "subject"): (
+        "Specific person, device or item the assertion concerns; never infer "
+        "another person's preference."
+    ),
     ("memory_upsert", "source"): "Descriptive origin only; explicit is not model authorization.",
-    ("memory_update", "memory_id"): "Exact ID of the inferred record found in this scope, not a similar record.",
+    ("memory_update", "memory_id"): (
+        "Exact ID of the inferred record found in this scope, not a similar record."
+    ),
     ("knowledge_search", "query"): "Short search keywords or phrase.",
     ("knowledge_search", "source_ids"): "Exact IDs returned by Knowledge tools.",
     ("knowledge_list", "query"): "Optional title/description filter.",
