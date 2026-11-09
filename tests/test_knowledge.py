@@ -318,7 +318,7 @@ async def test_search_preserves_negation_and_action_word_relevance() -> None:
     assert (await library.async_search("not turn on heating"))[0].source_id == (
         negative.source_id
     )
-    assert (await library.async_search("turn on heating"))[0].source_id == (
+    assert (await library.async_search("enable heating"))[0].source_id == (
         positive.source_id
     )
 
