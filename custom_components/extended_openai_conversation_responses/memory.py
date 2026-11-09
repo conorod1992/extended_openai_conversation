@@ -533,6 +533,19 @@ class PersistentMemory:
                         else None,
                     )
                     reason = "unkeyed_key_promotion"
+                if candidate is None:
+                    # A new key is not proof of a new semantic fact. Previously,
+                    # changing the key bypassed the no-write related-fact barrier,
+                    # allowing contradictory duplicates with different keys.
+                    # This remains only a conservative conflict signal; it never
+                    # authorizes equivalence, replacement or metadata promotion.
+                    candidate = self._find_related_candidate(
+                        user_id,
+                        content,
+                        cleaned_subject if isinstance(cleaned_subject, str) else None,
+                        cleaned_key,
+                    )
+                    reason = "related_candidate"
             else:
                 candidate = self._find_duplicate(
                     user_id,
