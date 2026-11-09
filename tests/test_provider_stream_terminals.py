@@ -653,3 +653,125 @@ async def test_chat_rejects_mixed_legacy_and_modern_tool_payloads() -> None:
         ):
             seen.append(delta)
     assert seen == [{"role": "assistant"}]
+
+
+@pytest.mark.parametrize("finish_reason", ["stop", "tool_calls", "length"])
+async def test_chat_accepts_documented_openrouter_sdk_usage_frame(finish_reason):
+    """Parse the actual gateway shape through the SDK, including its extra field."""
+    from openai.types.chat import ChatCompletionChunk
+
+    from custom_components.extended_openai_conversation_responses.context_usage_hardening import (
+        RequestTokenMeasurements,
+    )
+
+    def sdk_chunk(*, usage=None, native_reason="end_turn"):
+        raw = {
+            "id": "gen-abc123",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "test-model",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"content": "", "role": "assistant"},
+                    "finish_reason": finish_reason,
+                    "native_finish_reason": native_reason,
+                }
+            ],
+        }
+        if usage is not None:
+            raw["usage"] = usage
+        return ChatCompletionChunk.model_validate(raw)
+
+    first = ChatCompletionChunk.model_validate(
+        {
+            "id": "gen-abc123",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "test-model",
+            "choices": [{"index": 0, "delta": {"content": "Done"}, "finish_reason": None}],
+        }
+    )
+    terminal = sdk_chunk()
+    accounting = sdk_chunk(
+        usage={"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18}
+    )
+    assert accounting.choices[0].model_extra == {
+        "native_finish_reason": "end_turn"
+    }
+    usage = RequestTokenMeasurements()
+    events = [first, terminal, accounting]
+    if finish_reason == "length":
+        with pytest.raises(TokenLengthExceededError):
+            _ = [
+                delta
+                async for delta in _entity()._transform_chat_stream(
+                    SimpleNamespace(async_trace=lambda _data: None),
+                    FakeStream(events),
+                    usage,
+                )
+            ]
+    else:
+        deltas = [
+            delta
+            async for delta in _entity()._transform_chat_stream(
+                SimpleNamespace(async_trace=lambda _data: None),
+                FakeStream(events),
+                usage,
+            )
+        ]
+        assert deltas == [{"role": "assistant"}, {"content": "Done"}]
+    assert (
+        usage.reported.input_tokens,
+        usage.reported.output_tokens,
+        usage.reported.total_tokens,
+    ) == (11, 7, 18)
+
+
+@pytest.mark.parametrize(
+    ("native_reason", "extra"),
+    [
+        ("different_reason", None),
+        ("end_turn", {"late_output": "not accounting"}),
+        (42, None),
+    ],
+)
+async def test_chat_rejects_conflicting_or_unknown_accounting_metadata(
+    native_reason, extra
+):
+    from openai.types.chat import ChatCompletionChunk
+
+    def chunk(native_reason, *, extra=None, usage=None):
+        choice = {
+            "index": 0,
+            "delta": {"content": "", "role": "assistant"},
+            "finish_reason": "stop",
+            "native_finish_reason": native_reason,
+        }
+        if extra:
+            choice.update(extra)
+        raw = {
+            "id": "gen-abc123",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "test-model",
+            "choices": [choice],
+        }
+        if usage:
+            raw["usage"] = usage
+        return ChatCompletionChunk.model_validate(raw)
+
+    terminal = chunk("end_turn")
+    accounting = chunk(
+        native_reason,
+        extra=extra,
+        usage={"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3},
+    )
+    with pytest.raises(ProviderStreamError, match="after terminal response"):
+        _ = [
+            delta
+            async for delta in _entity()._transform_chat_stream(
+                SimpleNamespace(async_trace=lambda _data: None),
+                FakeStream([terminal, accounting]),
+            )
+        ]
