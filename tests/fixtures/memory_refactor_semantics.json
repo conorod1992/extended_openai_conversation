@@ -728,12 +728,12 @@
       ],
       "user_turn": "Remember that Alex is the designer on project Orion.",
       "intent": "explicit",
-      "semantic_decision": "coexist",
+      "semantic_decision": "clarify",
       "target_ids": [],
       "forbidden_target_ids": [
         "a"
       ],
-      "rationale": "Could be a team change or another designer; do not silently delete Sam's role."
+      "rationale": "The definite singular role could mean replacement or coexisting responsibilities; clarify rather than assert two simultaneous designers or delete Sam."
     },
     {
       "id": "sem-036",
