@@ -1,7 +1,7 @@
-"""Validate independently authored Memory refactor fixtures without using EOAI heuristics.
+"""Validate fixed draft Memory refactor fixtures without using EOAI heuristics.
 
 These checks protect the *test data*, not the current Memory implementation:
-the gold labels remain independent of stemmers, embedding models, and LLM output.
+structural checks remain independent of stemmers, embeddings and LLM output.\nThese tests do not establish that the draft semantic labels are correct.
 """
 
 from __future__ import annotations
