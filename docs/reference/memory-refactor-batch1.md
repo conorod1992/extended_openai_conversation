@@ -1,9 +1,11 @@
-# Memory retrieval and semantic resolution: Batch 1 contract and baseline
+# Memory retrieval and semantic resolution: Batch 1 baselines and Batch 2 mutation contract
 
-Status: **design/evidence only**. Baseline implementation: `develop` at
-`71608da9e16ec40dd77ee83f7ae41458d0c20f78` (PR #1279 merged).
-No production code, storage schema, tool schema, default, or runtime behaviour
-is changed by this batch. The proposed contracts below are **not yet operative**.
+Batch 1 established documents and fixtures against `develop` at
+`71608da9e16ec40dd77ee83f7ae41458d0c20f78` (PR #1279 merged),
+without changing runtime behaviour. **Batch 2**, on this same PR, now
+implements the model-origin mutation and revision rules described below.
+Semantic candidate matching, morphology, ranking and storage format are
+unchanged. Remaining Batch 3/4 suggestions are still proposals.
 
 ## Purpose and ownership boundaries
 
@@ -79,7 +81,7 @@ Home Assistant Store, `_async_settle_transactional_save()`, strict write
 propagation/readback, corruption repair barriers, execution/replay receipts,
 embedding fingerprint/invalidation, bounded results and privacy filtering.
 
-## Proposed target contracts (Batch 2+; require independent review)
+## Mutation contracts (Batch 2 model path; Batch 3/4 designs remain proposals)
 
 ### Record identity, create, no-op and conflict
 
@@ -138,13 +140,15 @@ Provisional safe direction:
 - Do not equate a user writing “remember” with a cryptographic authority
   token. `confirmed=true` supplied by the model would be equally untrusted.
 
-**Decision required before Batch 2:** whether conversational edits of
-existing explicit memories must obtain an additional trusted confirmation
-(management-based is the minimal safe option), and whether new explicit
-creations similarly need verification. These choices affect usability and
-must be specified honestly; do not silently pretend the current `source`
-field is trustworthy. Explicit writes via Management remain a separate,
-authenticated contract.
+**Batch 2 provisional policy:** model-origin changes/deletions of explicit
+records require authenticated Memory Management. Model-origin creation with
+`source=explicit` remains available for ordinary Manual-mode requests as a
+**compatibility concession**, but automatic sensitive-data rules apply even
+when it claims explicit provenance. In shared Explicit mode, model-origin
+household mutations are blocked; trusted Management remains available.
+This is a visible restriction, not a claim to have implemented a trusted
+in-chat confirmation mechanism. A future real confirmation flow would be a
+separate feature and must not be replaced with a model-supplied boolean.
 
 ### Semantic workflow
 
