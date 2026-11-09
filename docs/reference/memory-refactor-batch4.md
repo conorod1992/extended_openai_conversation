@@ -1,31 +1,35 @@
 # Memory refactor — Batch 4: morphology and retrieval decision
 
-## Current decision: retain production stemmer unchanged pending corrected hybrid evidence
+## Decision: retain production stemmer unchanged
 
 The CI benchmark compares four lexical representations against the **same**
 Memory BM25/ranking/metadata pipeline and frozen synthetic fixture. No production
 dependency or ranking change is justified by these measurements.
 
-Measured on GitHub Actions run [42675917707](https://github.com/conorod1992/extended_openai_conversation/actions/runs/42675917707)
-(HOME Assistant stable job), 38 records, 36 queries and 33 relevant labels:
+Measured on GitHub Actions run [42678163173](https://github.com/conorod1992/extended_openai_conversation/actions/runs/42678163173)
+(Home Assistant stable job; [corrected four-way artifact](https://github.com/conorod1992/extended_openai_conversation/actions/runs/42678163173/artifacts/13702041710)), 38 records, 36 queries and 33 relevant labels:
 
 | Variant | Recall@1 | Recall@5 | Hard negatives @3 | Warm p95 (ms) | Cold p95 (ms) | CPU (ms) | Event-loop gap (ms) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Exact terms | 0.9394 | 0.9697 | 17 | 18.2147 | 141.0569 | 429.8452 | 163.4197 |
-| Current custom | 0.9697 | **1.0** | **15** | **17.3890** | **19.3949** | **249.2745** | **6.2207** |
-| Snowball/Porter2 | 0.9697 | **1.0** | **15** | 18.6110 | 97.9947 | 376.1206 | 7.7601 |
-| Exact + Snowball prototype | pending corrected rerun | — | — | — | — | — | — |
+| Exact terms | 0.9394 | 0.9697 | 17 | 29.9496 | 119.9443 | 518.3849 | 120.4533 |
+| Current custom | 0.9697 | **1.0** | **15** | **30.6527** | **32.7313** | **416.8116** | **8.9580** |
+| Snowball/Porter2 | 0.9697 | **1.0** | **15** | 32.8670 | 175.3583 | 635.1589 | 16.0207 |
+| Exact + Snowball prototype | 0.9697 | 1.0 | 17 | 85.5026 | 206.0648 | 1240.4598 | 10.2654 |
 
 - Current and Snowball rankings are *identical* for all 36 fixture queries.
   Neither improves on the other's relevance labels, despite Snowball's added
   complexity and observed CPU cost.
-- Exact-only misses `ret-034` (`fall` versus `falling`). The initial hybrid
-  benchmark *also* missed it because the benchmark itself omitted Snowball
-  features for unmodified base forms. That invalidates the published initial
-  hybrid metrics; they must be replaced by a corrected rerun. Neither hybrid
-  variant should be deployed without separately calibrated scoring.
-- All four methods have 17 hard-negative hits in top ten; a lexical candidate
-  may be incidental even when its correct target is ranked first. **Retrieval
+- Exact-only misses `ret-034` (`fall` versus `falling`). The *initial* hybrid
+  benchmark also missed it due to a **benchmark bug**: it omitted Snowball
+  features for unchanged base forms. Those initial hybrid results were
+  invalidated. The **corrected hybrid** now retrieves this match, but compared
+  with the current stemmer it promotes two additional hard negatives into the
+  top three, changes seven of 36 rankings, and has roughly 2.8 times the warm
+  p95 latency on this run. It is only an uncalibrated prototype, not a
+  deployable hybrid relevance policy.
+- Exact-only, current and Snowball each include 17 hard-negative hits in the
+  top ten; corrected hybrid includes **18**. A lexical candidate may be
+  incidental even when the correct target is ranked first. **Retrieval
   similarity is never mutation authorization.**
 - This is a **single-process, fixed-order** run, not a statistical performance
   study. Per-variant first-query cold times and peak RSS reflect shared Python
