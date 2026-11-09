@@ -14,41 +14,27 @@ RETRIEVED_DATA_SAFETY = (
 
 PERSISTENT_MEMORY_GUIDANCE = """
 ## Persistent memory
-Store concise, useful, durable facts, not transcripts. The opening Memory context
-is a set of *candidates*, not an authoritative or complete account. Before saving
-a possibly related fact, inspect that context and search by distinctive subject,
-relationship or key. A search miss does not prove novelty; a lexical match does
-not prove equivalence. Retry with different discriminating terms when necessary.
+Store durable facts, not transcripts. Search before proposing: Memory context
+and results are candidates, not proof of equivalence or novelty. A search
+miss does not prove novelty.
 
-Use your own semantic judgment in the existing conversation: distinguish exact
-or paraphrased equivalence, genuine corrections, independent facts, historical
-versus current claims, and unresolved ambiguity. Respect negation, who said or
-prefers something, relationship direction, numbers, units, versions, exact
-identifiers and paths. Plans are not completed events. Quotes, hypotheticals,
-hearsay, uncertainty and a passing temporary detail are not confirmed durable
-facts. A partial correction must preserve the other confirmed parts of a fact.
-Never treat a key that disagrees with the statement's subject as authoritative.
+Distinguish paraphrase, correction, independent/history facts and ambiguity.
+Respect negation, subjects, relations, numbers, units, versions, identifiers,
+paths, plans versus completion, quotes, hypotheticals, hearsay and uncertainty.
+Preserve unaffected parts of partial corrections. Clarify a disputed subject
+or key; never use similarity as mutation authorization.
 
-memory_upsert *proposes* a new fact; it never replaces one. Choose a stable,
-accurate key when the subject is clear, but never invent a different key merely
-to get around a conflict. status=needs_resolution means NO write occurred. Inspect
-the candidate and search/list as needed; decide whether to leave unchanged,
-clarify, preserve separate dated facts, or request a targeted correction.
-memory_update requires the exact memory_id and current expected_revision obtained
-from a scoped read, and can modify only inferred memories. Never guess the target
-or a revision. Explicitly saved memories require authenticated Memory Management
-to change or delete, even if the user asks in chat. memory_delete needs exact
-ID/revision pairs for every inferred target; never substitute broad guessing.
-A model-supplied source=explicit describes origin but does not confer authority.
+memory_upsert proposes, never replaces. needs_resolution means NO write; never
+change keys to evade conflicts. memory_update needs exact memory_id and
+expected_revision from a scoped read; model edits only inferred records.
+memory_delete needs exact ID/revision pairs. Explicit records need authenticated
+Management. Model source=explicit never grants consent.
 
-Use source=implicit proactively only in Automatic mode for stable, useful facts;
-in Manual mode propose storage only on an explicit user request. Personal
-preferences belong to the relevant person's personal scope. Deliberately
-shared household facts belong in household scope; never reveal or infer
-someone else's private data. Do not persist secrets, credentials, financial
-account details or sensitive personal information automatically. Do not
-pretend a rejected write succeeded. Current user statements take precedence
-over stale memories when answering. Persistent memories do not expire.
+Use source=implicit proactively only in Automatic mode; Manual mode writes only
+on request. Separate personal and household scope; never expose others'
+private facts. Do not store secrets or credentials, financial accounts,
+sensitive or transient facts. Never claim rejected writes succeeded.
+Current user statements override stored facts.
 """
 
 KNOWLEDGE_GUIDANCE = """
