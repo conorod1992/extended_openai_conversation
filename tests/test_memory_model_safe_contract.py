@@ -305,3 +305,109 @@ async def test_legacy_management_deletion_is_still_supported():
         "alice", [made["memory"]["memory_id"], "unknown"]
     ) == 1
     assert await memory.async_list("alice") == []
+
+
+async def test_model_update_rejects_sensitive_fields_with_forged_explicit_source():
+    memory, storage = await store()
+    created = await memory.async_add(
+        "alice", "The household note is plain text.", "home", "implicit"
+    )
+    memory_id = created["memory"]["memory_id"]
+    revision = memory_revision((await memory.async_list("alice"))[0])
+    before, saves = deepcopy(storage.data), storage.saves
+    with pytest.raises(ValueError, match="sensitive"):
+        await model_call(
+            entity(memory),
+            "update",
+            memory_id=memory_id,
+            expected_revision=revision,
+            content="Medical diagnosis is example condition",
+            source="explicit",
+        )
+    assert storage.saves == saves
+    assert storage.data == before
+
+
+async def test_model_multi_delete_rejects_protected_record_before_removing_anything():
+    memory, storage = await store()
+    inferred = await memory.async_add("alice", "Inferred record.", "general", "implicit")
+    explicit = await memory.async_add("alice", "Explicit record.", "general", "explicit")
+    records = await memory.async_list("alice")
+    revisions = {record.memory_id: memory_revision(record) for record in records}
+    before, saves = deepcopy(storage.data), storage.saves
+    with pytest.raises(ValueError, match="authenticated management deletion"):
+        await model_call(
+            entity(memory),
+            "delete",
+            targets=[
+                {"memory_id": inferred["memory"]["memory_id"],
+                 "expected_revision": revisions[inferred["memory"]["memory_id"]]},
+                {"memory_id": explicit["memory"]["memory_id"],
+                 "expected_revision": revisions[explicit["memory"]["memory_id"]]},
+            ],
+        )
+    assert storage.data == before
+    assert storage.saves == saves
+    assert len(await memory.async_list("alice")) == 2
+
+
+async def test_simultaneous_model_revision_updates_only_one_wins():
+    memory, _ = await store()
+    created = await memory.async_add("alice", "The fan is enabled.", "home", "implicit")
+    memory_id = created["memory"]["memory_id"]
+    revision = memory_revision((await memory.async_list("alice"))[0])
+    agent = entity(memory)
+    attempted = await asyncio.gather(
+        model_call(agent, "update", memory_id=memory_id,
+                   expected_revision=revision, content="The fan is disabled."),
+        model_call(agent, "update", memory_id=memory_id,
+                   expected_revision=revision, content="The fan is automatic."),
+        return_exceptions=True,
+    )
+    succeeded = [item for item in attempted if isinstance(item, dict)]
+    rejected = [item for item in attempted if isinstance(item, ValueError)]
+    assert len(succeeded) == len(rejected) == 1
+    assert "changed" in str(rejected[0])
+    assert (await memory.async_list("alice"))[0].content in {
+        "The fan is disabled.", "The fan is automatic."
+    }
+
+
+async def test_model_scope_separation_does_not_allow_foreign_id_even_with_revision():
+    memory, storage = await store()
+    other = await memory.async_add("bob", "Other user's private fact.", "private", "implicit")
+    record = (await memory.async_list("bob"))[0]
+    revision = memory_revision(record)
+    before, saves = deepcopy(storage.data), storage.saves
+    agent = entity(memory)
+    with pytest.raises(ValueError, match="memory not found"):
+        await model_call(
+            agent, "update", memory_id=other["memory"]["memory_id"],
+            expected_revision=revision, content="An attempted change"
+        )
+    with pytest.raises(ValueError, match="not found or changed"):
+        await model_call(agent, "delete", targets=[{
+            "memory_id": other["memory"]["memory_id"],
+            "expected_revision": revision,
+        }])
+    assert storage.data == before and storage.saves == saves
+
+
+async def test_model_delete_does_not_accept_duplicate_ids_or_fake_versions():
+    memory, storage = await store()
+    entry = await memory.async_add("alice", "A synthetic note.", "general", "implicit")
+    record = (await memory.async_list("alice"))[0]
+    memory_id = entry["memory"]["memory_id"]
+    revision = memory_revision(record)
+    before, saves = deepcopy(storage.data), storage.saves
+    agent = entity(memory)
+    with pytest.raises(ValueError, match="unique"):
+        await model_call(agent, "delete", targets=[
+            {"memory_id": memory_id, "expected_revision": revision},
+            {"memory_id": memory_id, "expected_revision": revision},
+        ])
+    with pytest.raises(ValueError, match="expected_revisions"):
+        await model_call(agent, "delete", targets=[
+            {"memory_id": memory_id, "expected_revision": "not-a-version"},
+        ])
+    assert storage.data == before and storage.saves == saves
