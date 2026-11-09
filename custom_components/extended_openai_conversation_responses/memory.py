@@ -1806,7 +1806,14 @@ def memory_tools() -> list[dict[str, Any]]:
                     "properties": {
                         "content": {"type": "string"},
                         "category": {"type": "string"},
-                        "source": {"type": "string", "enum": ["explicit", "implicit"]},
+                        "source": {
+                            "type": "string",
+                            "enum": ["explicit", "implicit"],
+                            "description": (
+                                "Describes the proposed origin. A model's explicit "
+                                "label cannot grant permission or bypass sensitive-data checks."
+                            ),
+                        },
                         **_memory_metadata_schema(include_scope=True),
                     },
                     "required": ["content", "category", "source"],
@@ -1859,8 +1866,16 @@ def memory_tools() -> list[dict[str, Any]]:
                     "type": "object",
                     "properties": {
                         "memory_id": {"type": "string"},
-                        "expected_revision": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-                        "source": {"type": "string", "enum": ["explicit", "implicit"]},
+                        "expected_revision": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$",
+                            "description": "Exact revision from a scoped read.",
+                        },
+                        "source": {
+                            "type": "string",
+                            "enum": ["explicit", "implicit"],
+                            "description": "Legacy label; ignored for model edits, provenance is preserved.",
+                        },
                         "content": {"type": "string"},
                         "category": {"type": "string"},
                         **_memory_metadata_schema(include_scope=True),
