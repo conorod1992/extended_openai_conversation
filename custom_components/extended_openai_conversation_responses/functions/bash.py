@@ -124,21 +124,26 @@ def _contains_disk_format_command(command: str) -> bool:
             ):
                 index += 1
             continue
-        if lower in {"bash", "sh", "dash", "zsh"} and index + 2 < len(tokens):
-            if tokens[index + 1] in {"-c", "-lc", "-ec", "-xc"}:
-                if _contains_disk_format_command(tokens[index + 2]):
-                    return True
-        if lower in {"cmd", "cmd.exe"} and index + 2 < len(tokens):
-            if tokens[index + 1].casefold() in {"/c", "/k"}:
-                if _contains_disk_format_command(
-                    " ".join(tokens[index + 2 :])
-                ):
-                    return True
+        if (
+            lower in {"bash", "sh", "dash", "zsh"}
+            and index + 2 < len(tokens)
+            and tokens[index + 1] in {"-c", "-lc", "-ec", "-xc"}
+            and _contains_disk_format_command(tokens[index + 2])
+        ):
+            return True
+        if (
+            lower in {"cmd", "cmd.exe"}
+            and index + 2 < len(tokens)
+            and tokens[index + 1].casefold() in {"/c", "/k"}
+            and _contains_disk_format_command(" ".join(tokens[index + 2 :]))
+        ):
+            return True
         if lower in {"format", "format.exe"}:
             return True
         at_command = False
         index += 1
     return False
+
 
 def _valid_allow_pattern(value: str) -> str:
     """Reject malformed Bash allowlist regular expressions at configuration time."""
