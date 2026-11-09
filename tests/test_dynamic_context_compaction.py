@@ -18,7 +18,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     MEMORY_MODE_AUTOMATIC,
     TEMPORARY_MEMORY_BALANCED,
 )
-from custom_components.extended_openai_conversation_responses.memory import MemoryRecord
+from custom_components.extended_openai_conversation_responses.memory import MemoryRecord, memory_revision
 from custom_components.extended_openai_conversation_responses.prompt import (
     _default_prompt_entities,
     _entity_prompt_name,
@@ -200,6 +200,8 @@ def test_persistent_memory_context_preserves_record_fields_with_compact_json() -
             "memory_id": "memory-1",
             "scope": "shared_household",
             "category": "household",
+            "source": "explicit",
+            "revision": memory_revision(memory),
             "subject": "boiler",
             "key": "boiler-service",
             "valid_from": "2026-02-01T00:00:00+00:00",
