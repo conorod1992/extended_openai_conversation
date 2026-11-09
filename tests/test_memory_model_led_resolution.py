@@ -6,6 +6,7 @@ classifies every semantic case. Fixture labels remain provisional judgments.
 
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 
 import pytest
@@ -213,6 +214,51 @@ async def test_write_only_exact_duplicate_does_not_expose_existing_record(monkey
     assert result == {"status": "needs_resolution"}
     assert (await memory.async_list("alice"))[0].memory_id == old["memory"]["memory_id"]
     assert storage.data == before and storage.saves == saves
+
+
+async def test_exact_proposal_matching_never_uses_stemming_or_overlap(monkeypatch):
+    memory, _storage = await store()
+    agent = entity(memory)
+
+    def unexpected_related_candidate(*_args):
+        raise AssertionError("Model proposal admission must not use lexical overlap")
+
+    monkeypatch.setattr(memory, "_find_related_candidate", unexpected_related_candidate)
+    first = await model_call(
+        agent, "upsert", content="I prefer coffee.", category="preferences",
+        source="implicit", key="preference.coffee",
+    )
+    second = await model_call(
+        agent, "upsert", content="I do not prefer coffee.", category="preferences",
+        source="implicit", key="preference.coffee.negative",
+    )
+    assert first["status"] == second["status"] == "created"
+    duplicate = await model_call(
+        agent, "upsert", content="I prefer coffee!!!", category="preferences",
+        source="implicit", key="preference.coffee.other",
+    )
+    assert duplicate["status"] == "needs_resolution"
+    assert duplicate["reason"] == "exact_duplicate"
+
+
+async def test_concurrent_new_keys_with_identical_text_commit_once():
+    memory, storage = await store()
+    agent = entity(memory)
+    results = await asyncio.gather(
+        model_call(
+            agent, "upsert", content="Oscar likes beef.", category="pets",
+            source="implicit", subject="Oscar", key="oscar.food.beef",
+        ),
+        model_call(
+            agent, "upsert", content="Oscar likes beef.", category="pets",
+            source="implicit", subject="Oscar", key="oscar.food.alternate",
+        ),
+    )
+    assert {result["status"] for result in results} == {
+        "created", "needs_resolution"
+    }
+    assert len(await memory.async_list("alice")) == 1
+    assert storage.saves == 1
 
 
 async def test_new_independent_subjects_and_historical_facts_still_create():
