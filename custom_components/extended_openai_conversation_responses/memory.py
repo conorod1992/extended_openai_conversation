@@ -476,6 +476,143 @@ class PersistentMemory:
             await self._async_save_locked()
             return "created", memory
 
+    async def async_propose(
+        self,
+        user_id: str,
+        content: str,
+        category: str,
+        source: str,
+        subject: str | _UnsetType | None = _UNSET,
+        key: str | _UnsetType | None = _UNSET,
+        valid_from: str | _UnsetType | None = _UNSET,
+    ) -> dict[str, Any]:
+        """Model-origin create/no-op/conflict path; never edit an existing record.
+
+        The model's requested source is descriptive provenance only. It cannot
+        authorize the sensitive-data exceptions available to authenticated
+        management actions, nor establish permission to mutate existing state.
+        """
+        content = _clean_content(content)
+        category = _clean_category(category)
+        if source not in {"explicit", "implicit"}:
+            raise ValueError("source must be explicit or implicit")
+        cleaned_subject = (
+            _UNSET
+            if isinstance(subject, _UnsetType)
+            else _clean_optional(subject, "subject", MAX_SUBJECT_LENGTH)
+        )
+        cleaned_key = _UNSET if isinstance(key, _UnsetType) else _clean_key(key)
+        cleaned_valid_from = (
+            _UNSET
+            if isinstance(valid_from, _UnsetType)
+            else _clean_timestamp(valid_from, "valid_from")
+        )
+        # A model-generated explicit label is not trusted user confirmation.
+        _validate_privacy_fields(
+            "implicit", content, category, cleaned_subject, cleaned_key
+        )
+
+        async with async_storage_lock(self._storage, self._lock):
+            self._require_writable()
+            candidate: MemoryRecord | None = None
+            reason = "related_candidate"
+            if isinstance(cleaned_key, str):
+                memory_id = self._key_index.get((user_id, cleaned_key))
+                if memory_id is not None:
+                    candidate = self._memories[memory_id]
+                    reason = "key_collision"
+                else:
+                    candidate = self._find_unique_unkeyed_duplicate(
+                        user_id,
+                        content,
+                        cleaned_subject
+                        if isinstance(cleaned_subject, str)
+                        else None,
+                        cleaned_valid_from
+                        if isinstance(cleaned_valid_from, str)
+                        else None,
+                    )
+                    reason = "unkeyed_key_promotion"
+            else:
+                candidate = self._find_duplicate(
+                    user_id,
+                    content,
+                    cleaned_subject if isinstance(cleaned_subject, str) else None,
+                )
+                if candidate is not None:
+                    reason = "duplicate_metadata"
+                else:
+                    candidate = self._find_related_candidate(
+                        user_id,
+                        content,
+                        cleaned_subject if isinstance(cleaned_subject, str) else None,
+                        None,
+                    )
+            if candidate is not None:
+                same = (
+                    _fact_equality(candidate.content) == _fact_equality(content)
+                    and candidate.category == category
+                    and candidate.source == source
+                    and (
+                        cleaned_subject is _UNSET
+                        or candidate.subject == cleaned_subject
+                    )
+                    and (
+                        cleaned_valid_from is _UNSET
+                        or candidate.valid_from == cleaned_valid_from
+                    )
+                    and (
+                        cleaned_key is _UNSET or candidate.key == cleaned_key
+                    )
+                )
+                # An unkeyed proposal must not silently take the identity of a
+                # differently keyed record; an identical text alone is not proof
+                # that two canonical identities are interchangeable.
+                if same and (
+                    cleaned_key is not _UNSET
+                    or candidate.key is None
+                ):
+                    return {
+                        "status": "unchanged",
+                        "memory": memory_as_dict(candidate, include_revision=True),
+                    }
+                return {
+                    "status": "needs_resolution",
+                    "reason": reason,
+                    "applied": False,
+                    "candidate": memory_as_dict(candidate, include_revision=True),
+                }
+
+            if len(self._memories) >= MAX_MEMORIES_PER_AGENT:
+                raise ValueError(
+                    "memory limit reached; delete memories before adding more"
+                )
+            timestamp = dt_util.utcnow().isoformat()
+            new_record = MemoryRecord(
+                memory_id=uuid4().hex,
+                user_id=user_id,
+                content=content,
+                category=category,
+                source=source,
+                created_at=timestamp,
+                updated_at=timestamp,
+                subject=cleaned_subject if isinstance(cleaned_subject, str) else None,
+                key=cleaned_key if isinstance(cleaned_key, str) else None,
+                valid_from=(
+                    cleaned_valid_from
+                    if isinstance(cleaned_valid_from, str)
+                    else None
+                ),
+            )
+            self._assert_key_available(new_record)
+            self._memories[new_record.memory_id] = new_record
+            self._index(new_record)
+            await self._async_save_locked()
+            return {
+                "status": "created",
+                "memory": memory_as_dict(new_record, include_revision=True),
+            }
+
     async def async_upsert(
         self,
         user_id: str,
@@ -860,8 +997,9 @@ class PersistentMemory:
         expected_revision: str | None = None,
         *,
         source: str | None = None,
+        allow_explicit_edit: bool = True,
     ) -> MemoryRecord:
-        """Update a memory owned by one user scope."""
+        """Update a memory; untrusted model callers cannot edit explicit facts."""
         if source is not None and source not in {"explicit", "implicit"}:
             raise ValueError("source must be explicit or implicit")
         if expected_revision is not None and (
@@ -895,6 +1033,8 @@ class PersistentMemory:
         async with async_storage_lock(self._storage, self._lock):
             self._require_writable()
             current = self._owned_memory(user_id, memory_id)
+            if not allow_explicit_edit and current.source == "explicit":
+                raise ValueError("explicit memories require authenticated management editing")
             if (
                 expected_revision is not None
                 and memory_revision(current) != expected_revision
@@ -957,18 +1097,59 @@ class PersistentMemory:
             await self._async_save_locked()
             return updated
 
-    async def async_delete(self, user_id: str, memory_ids: list[str]) -> int:
-        """Delete selected memories owned by one user scope."""
-        if not memory_ids or len(memory_ids) > MAX_SEARCH_LIMIT:
+    async def async_delete(
+        self,
+        user_id: str,
+        memory_ids: list[str],
+        *,
+        expected_revisions: Mapping[str, str] | None = None,
+        allow_explicit_delete: bool = True,
+    ) -> int:
+        """Delete scoped records, optionally validating an atomic guarded batch.
+
+        Legacy authenticated Management calls retain their established
+        best-effort missing-ID behaviour. Model-origin calls must supply a
+        complete revision map; every requested target is validated under the
+        lock before any record/index/cache mutation occurs.
+        """
+        if not isinstance(memory_ids, list) or not memory_ids or len(memory_ids) > MAX_SEARCH_LIMIT:
             raise ValueError(f"memory_ids must contain 1 to {MAX_SEARCH_LIMIT} IDs")
+        if not all(isinstance(identity, str) and identity for identity in memory_ids):
+            raise ValueError("memory_ids must contain non-empty strings")
+        if expected_revisions is not None:
+            if (
+                not isinstance(expected_revisions, Mapping)
+                or len(set(memory_ids)) != len(memory_ids)
+                or set(expected_revisions) != set(memory_ids)
+                or not all(
+                    isinstance(revision, str)
+                    and re.fullmatch(r"[0-9a-f]{64}", revision)
+                    for revision in expected_revisions.values()
+                )
+            ):
+                raise ValueError("expected_revisions must cover unique memory IDs")
+        elif not allow_explicit_delete:
+            raise ValueError("model-origin deletion requires expected_revisions")
+
         async with async_storage_lock(self._storage, self._lock):
             self._require_writable()
+            if expected_revisions is not None:
+                for memory_id in memory_ids:
+                    current = self._memories.get(memory_id)
+                    if current is None or current.user_id != user_id:
+                        raise ValueError("memory not found or changed; search again")
+                    if not allow_explicit_delete and current.source == "explicit":
+                        raise ValueError(
+                            "explicit memories require authenticated management deletion"
+                        )
+                    if memory_revision(current) != expected_revisions[memory_id]:
+                        raise ValueError("memory changed since it was loaded; search again")
             deleted = 0
             for memory_id in set(memory_ids):
-                memory = self._memories.get(memory_id)
-                if memory is None or memory.user_id != user_id:
+                current = self._memories.get(memory_id)
+                if current is None or current.user_id != user_id:
                     continue
-                self._unindex(memory)
+                self._unindex(current)
                 del self._memories[memory_id]
                 self._invalidate_cached_embedding(memory_id)
                 deleted += 1
@@ -1532,6 +1713,7 @@ def memory_as_dict(
     *,
     include_scope: bool = False,
     personal_scope_id: str | None = None,
+    include_revision: bool = False,
 ) -> dict[str, Any]:
     """Serialize a memory, exposing its owner only to explicit admin callers."""
     result = {
@@ -1545,6 +1727,8 @@ def memory_as_dict(
         "key": getattr(memory, "key", None),
         "valid_from": getattr(memory, "valid_from", None),
     }
+    if include_revision:
+        result["revision"] = memory_revision(memory)
     if include_scope:
         owner = getattr(memory, "user_id", personal_scope_id)
         result["scope_id"] = owner
@@ -1616,7 +1800,7 @@ def memory_tools() -> list[dict[str, Any]]:
         {
             "spec": {
                 "name": "memory_upsert",
-                "description": "Create or replace a durable fact using a stable canonical key when available.",
+                "description": "Propose a durable fact. Existing keyed facts require a separate revision-checked update; no automatic replacement.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -1670,11 +1854,12 @@ def memory_tools() -> list[dict[str, Any]]:
         {
             "spec": {
                 "name": "memory_update",
-                "description": "Correct or replace an existing memory. Use explicit only for a user-requested update; use implicit for proactive changes.",
+                "description": "Revision-checked edit of an existing inferred memory; explicit memories require authenticated management editing.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "memory_id": {"type": "string"},
+                        "expected_revision": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
                         "source": {"type": "string", "enum": ["explicit", "implicit"]},
                         "content": {"type": "string"},
                         "category": {"type": "string"},
@@ -1690,7 +1875,7 @@ def memory_tools() -> list[dict[str, Any]]:
                             "description": "Optional metadata fields to clear explicitly.",
                         },
                     },
-                    "required": ["memory_id"],
+                    "required": ["memory_id", "expected_revision"],
                     "additionalProperties": False,
                 },
             },
@@ -1699,19 +1884,30 @@ def memory_tools() -> list[dict[str, Any]]:
         {
             "spec": {
                 "name": "memory_delete",
-                "description": "Permanently delete selected memories after identifying their IDs.",
+                "description": "Delete inferred memories using the exact ID and revision of every target. Explicit memories require authenticated management deletion.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "memory_ids": {
+                        "targets": {
                             "type": "array",
-                            "items": {"type": "string"},
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "memory_id": {"type": "string"},
+                                    "expected_revision": {
+                                        "type": "string",
+                                        "pattern": "^[0-9a-f]{64}$",
+                                    },
+                                },
+                                "required": ["memory_id", "expected_revision"],
+                                "additionalProperties": False,
+                            },
                             "minItems": 1,
                             "maxItems": 50,
                         },
                         "scope": {"type": "string", "enum": ["personal", "household"]},
                     },
-                    "required": ["memory_ids"],
+                    "required": ["targets"],
                     "additionalProperties": False,
                 },
             },
