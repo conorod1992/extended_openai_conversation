@@ -341,7 +341,7 @@ def _direct_memory_user_request(operation: str, selector: Any) -> bool:
     if (
         not trailing_memory_command
         and verb not in {"remember", "memorise", "memorize", "forget"}
-        and _MEMORY_OBJECT_RE.search(utterance[match.end():]) is None
+        and _MEMORY_OBJECT_RE.search(utterance[match.end() :]) is None
     ):
         return False
     if selector == "household" and (

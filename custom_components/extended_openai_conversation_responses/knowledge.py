@@ -1173,7 +1173,6 @@ def _clean_content(value: str) -> str:
     return value
 
 
-
 def _search_tokens(value: str, exact: set[str] | None = None) -> set[str]:
     """Index exact lexical forms plus low-weight, separately tagged variants."""
     from .retrieval_text import _stem
@@ -1195,6 +1194,7 @@ def _search_tokens(value: str, exact: set[str] | None = None) -> set[str]:
         if len(stem) >= 3:
             terms.add("morph:" + stem)
     return terms
+
 
 def _tokens(value: str) -> set[str]:
     from .retrieval_text import cjk_terms, lexical_terms

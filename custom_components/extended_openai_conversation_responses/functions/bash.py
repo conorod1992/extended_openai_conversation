@@ -84,7 +84,6 @@ def _without_shell_comments(command: str) -> str:
     return "".join(result)
 
 
-
 def _contains_disk_format_command(command: str) -> bool:
     """Detect literal disk-format commands at executable positions only.
 
