@@ -80,9 +80,13 @@ def make_tokenizer(mode: str):
             # Treat morphology as ADDITIONAL evidence, never a substitute for
             # the original token. Tag stem terms to keep exact identifiers
             # logically separate, and avoid useless duplicates.
+            # Both the inflected form AND the already canonical root need
+            # the tagged feature: "falling" => snow:fall must match "fall"
+            # => snow:fall. Omitting unchanged roots falsely loses retrieval.
             terms = raw + [
-                "snow:" + candidate for item in raw
-                if (candidate := snowball(item)) != item
+                "snow:" + snowball(item)
+                for item in raw
+                if item.isascii() and item.isalpha() and len(item) > 3
             ]
         return terms + sorted(cjk_terms(normalized) - set(terms))
 
@@ -187,6 +191,13 @@ async def mode_results(mode: str, count: int, repeats: int) -> dict:
 async def evaluate(count: int, repeats: int) -> dict:
     if version("snowballstemmer") != STEMMER_VERSION:
         raise RuntimeError("Benchmark requires exactly snowballstemmer==3.1.1")
+    # Reject a benchmark implementation that breaks base-form vs inflection
+    # recall before producing comparative evidence.
+    hybrid_tokens = make_tokenizer("hybrid")
+    assert "snow:fall" in hybrid_tokens("fall")
+    assert "snow:fall" in hybrid_tokens("falling")
+    assert "c++" in hybrid_tokens("C++")
+    assert "snow:c" not in hybrid_tokens("C++")
     original = m._token_list
     try:
         modes = [await mode_results(name, count, repeats) for name in MODES]
