@@ -1220,7 +1220,7 @@ def test_completed_speech_many_unclosed_parentheses_do_not_block_later_text() ->
 
 async def test_local_rule_speech_uses_completed_cleanup_without_changing_history(hass):
     from unittest.mock import AsyncMock, MagicMock
-    from homeassistant.components import intent
+    from homeassistant.helpers import intent
 
     original = "**Done** [source](https://example.com)"
     response = intent.IntentResponse(language="en")
@@ -1246,7 +1246,7 @@ async def test_local_rule_speech_uses_completed_cleanup_without_changing_history
 
 async def test_local_rule_speech_uses_async_regex_and_keeps_action_success(hass):
     from unittest.mock import AsyncMock, MagicMock, patch
-    from homeassistant.components import intent
+    from homeassistant.helpers import intent
 
     original = "HA is ready"
     response = intent.IntentResponse(language="en")
@@ -1257,7 +1257,7 @@ async def test_local_rule_speech_uses_async_regex_and_keeps_action_success(hass)
         _async_archive_turn=AsyncMock(),
         _local_rule_result=MagicMock(return_value=SimpleNamespace(response=response)),
         subentry=SimpleNamespace(data=_config(speech_regex_replacements=[
-            {"pattern": r"\\bHA\\b", "replacement": "Home Assistant"}
+            {"pattern": r"\bHA\b", "replacement": "Home Assistant"}
         ])),
         hass=hass,
     )
@@ -1277,7 +1277,7 @@ async def test_local_rule_speech_uses_async_regex_and_keeps_action_success(hass)
 
 async def test_local_rule_speech_failure_does_not_turn_executed_action_into_failure(hass):
     from unittest.mock import AsyncMock, MagicMock, patch
-    from homeassistant.components import intent
+    from homeassistant.helpers import intent
 
     original = "HA ready"
     response = intent.IntentResponse(language="en")
@@ -1308,7 +1308,7 @@ async def test_local_rule_speech_failure_does_not_turn_executed_action_into_fail
 
 async def test_local_rule_speech_disabled_preserves_original(hass):
     from unittest.mock import AsyncMock, MagicMock
-    from homeassistant.components import intent
+    from homeassistant.helpers import intent
 
     original = "**HA** https://example.com"
     response = intent.IntentResponse(language="en")
