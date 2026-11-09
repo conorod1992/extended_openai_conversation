@@ -2945,7 +2945,9 @@ class ExtendedOpenAIAgentEntity(
                     for target in targets
                 )
             ):
-                raise ValueError("deletion requires exact IDs and revisions for every target")
+                raise ValueError(
+                    "deletion requires exact IDs and revisions for every target"
+                )
             ids = [target["memory_id"] for target in targets]
             if len(set(ids)) != len(ids):
                 raise ValueError("deletion targets must be unique")
