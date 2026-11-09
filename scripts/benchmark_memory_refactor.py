@@ -21,9 +21,8 @@ import json
 import os
 from pathlib import Path
 import platform
-import statistics
 import sys
-from time import perf_counter
+from time import perf_counter, process_time
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -197,8 +196,18 @@ async def _timed_search(
     return (perf_counter() - start) * 1000, len(results)
 
 
+def peak_rss_kib() -> int | None:
+    """Linux process high-water RSS, not incremental Memory-store allocation."""
+    if not sys.platform.startswith("linux"):
+        return None
+    import resource
+
+    return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+
+
 async def synthetic_performance(count: int, repeats: int) -> dict[str, Any]:
     manager = await manager_from_records(synthetic_records(count))
+    cpu_started = process_time()
     loop_gaps_ms: list[float] = []
 
     async def heartbeat() -> None:
@@ -245,6 +254,8 @@ async def synthetic_performance(count: int, repeats: int) -> dict[str, Any]:
             "max": _round(max(warm_ms, default=0.0)),
         },
         "max_excess_event_loop_gap_ms": _round(max(loop_gaps_ms, default=0.0)),
+        "process_cpu_ms_including_heartbeat": _round((process_time() - cpu_started) * 1000),
+        "process_peak_rss_kib_linux": peak_rss_kib(),
         "returns_per_query": return_counts,
     }
 
