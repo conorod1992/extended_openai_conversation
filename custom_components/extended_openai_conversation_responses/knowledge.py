@@ -550,7 +550,7 @@ class KnowledgeLibrary:
             if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
                 raise ValueError("offset must be a nonnegative integer")
             raw_query_tokens = _tokens(query)
-            query_tokens = _search_tokens(query)
+            query_tokens = _search_tokens(query, raw_query_tokens)
             normalized_query = _normalize(query)
             if not query_tokens or not normalized_query:
                 return []
@@ -1168,11 +1168,11 @@ def _clean_content(value: str) -> str:
 
 
 
-def _search_tokens(value: str) -> set[str]:
+def _search_tokens(value: str, exact: set[str] | None = None) -> set[str]:
     """Index exact lexical forms plus low-weight, separately tagged variants."""
     from .retrieval_text import _stem
 
-    exact = _tokens(value)
+    exact = _tokens(value) if exact is None else exact
     terms = set(exact)
     for token in exact:
         if not (token.isascii() and token.isalpha() and len(token) >= 4):
