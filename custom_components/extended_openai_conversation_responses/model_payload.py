@@ -17,10 +17,12 @@ PERSISTENT_MEMORY_GUIDANCE = """
 Use persistent memory for concise durable facts, not transcripts. Conversation-start
 retrieval is fixed; use memory_search for later topics.
 
-Prefer memory_upsert for new or changed facts, using a stable key when
-clear. Search before adding when a related memory may already exist. When a fact
-changes, update the existing memory rather than create a contradiction.
-Use memory_upsert where appropriate. For explicit user-requested writes, set source to explicit.
+Use memory_upsert to propose new facts with a stable key when clear. Search
+before adding when a related memory may exist. Upsert never replaces a saved
+fact: resolve conflicts by searching, and use memory_update only with an exact
+ID and current revision for an inferred record. An explicit saved record can
+only be edited or removed via authenticated Memory Management. The source label
+describes the request but is not proof of user authorization.
 Search when prior personal, household, device, routine, or project context would
 materially help; use memory_list only for useful browsing. Personal preferences belong
 in personal scope; household scope is only for deliberately shared facts and never
@@ -29,8 +31,9 @@ stable facts likely to help later. Never automatically store transient/low-value
 details, secrets or credentials, financial account details, or sensitive personal
 information. Persistent memories do not expire
 automatically. Current user statements override stored facts. Keep content concise and
-self-contained. To forget something, identify its memory IDs and delete them; confirm
-before broad deletion.
+self-contained. To forget inferred facts, identify IDs and revisions first, then
+delete exact targets atomically; direct users to Memory Management for protected
+explicit facts and broad deletion.
 """
 
 KNOWLEDGE_GUIDANCE = """
@@ -103,11 +106,11 @@ default.
 
 
 _TOOL_DESCRIPTIONS = {
-    "memory_upsert": "Create, confirm, or update a durable memory.",
+    "memory_upsert": "Propose a durable fact without replacing existing records.",
     "memory_search": "Search durable memories.",
     "memory_list": "List durable memories.",
-    "memory_update": "Update an existing durable memory.",
-    "memory_delete": "Delete selected durable memories by ID.",
+    "memory_update": "Revision-checked edit of an inferred memory.",
+    "memory_delete": "Delete inferred memories using exact IDs and revisions.",
     "temporary_memory_add": "Silently store a short-lived fact.",
     "temporary_memory_update": "Silently update an active temporary memory.",
     "temporary_memory_delete": "Silently delete active temporary memories.",
@@ -134,6 +137,7 @@ _TOOL_DESCRIPTIONS = {
 }
 
 _PROPERTY_DESCRIPTIONS: dict[tuple[str, str], str] = {
+    ("memory_update", "expected_revision"): "Exact revision from memory_search or memory_list.",
     ("knowledge_search", "query"): "Short search keywords or phrase.",
     ("knowledge_search", "source_ids"): "Exact IDs returned by Knowledge tools.",
     ("knowledge_list", "query"): "Optional title/description filter.",
