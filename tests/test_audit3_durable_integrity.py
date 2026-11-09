@@ -273,13 +273,13 @@ async def test_write_only_memory_never_returns_stored_fields(operation, readable
     )
     existing = await memory.async_add(
         SHARED_HOUSEHOLD_SCOPE_ID,
-        "The spare house key is beneath the porch",
+        "The hallway lamp is near the stairs",
         "home",
         "implicit",
-        subject="spare key",
-        key="house.key",
+        subject="hallway lamp",
+        key="house.lamp",
     )
-    args = {"category": "home", "source": "explicit", "subject": "spare key"}
+    args = {"category": "home", "source": "explicit", "subject": "hallway lamp"}
     if operation == "update":
         from custom_components.extended_openai_conversation_responses.memory import memory_revision
 
@@ -290,11 +290,11 @@ async def test_write_only_memory_never_returns_stored_fields(operation, readable
             "category": "security",
         }
     else:
-        args["content"] = "The spare house key is somewhere"
+        args["content"] = "The hallway lamp is somewhere"
     result = await agent._async_execute_memory_tool(operation, args, None)
     assert set(result) == {"status"}
     if operation != "update":
-        args["content"] = "The spare house key is beneath the porch"
+        args["content"] = "The hallway lamp is near the stairs"
         result = await agent._async_execute_memory_tool(operation, args, None)
         assert set(result) == {"status"}
         args["content"] = "Unrelated newly supplied fact"
