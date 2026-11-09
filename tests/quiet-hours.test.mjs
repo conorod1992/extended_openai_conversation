@@ -37,11 +37,14 @@ test("renders schedule semantics and automation hooks in plain language", () => 
 
   assert.match(html, /Outside Quiet Hours/);
   assert.match(html, /Enable daily schedule/);
-  assert.match(html, /only turns louder satellites down/);
-  assert.match(html, /An initially quieter satellite stays quieter/);
-  assert.match(html, /If you change this setting while Quiet Hours is active/);
-  assert.match(html, /volumes previously lowered by Quiet Hours may briefly be restored/);
-  assert.match(html, /other audio from that speaker may also be quieter/);
+  assert.match(html, /Starting volume limit/);
+  assert.match(html, /louder satellites are lowered to this level/);
+  assert.match(html, /quieter ones stay unchanged/);
+  assert.match(html, /Satellites appearing later may also be adjusted/);
+  assert.match(html, /Later volume changes by you or automations are respected/);
+  assert.match(html, /restored only if it was not independently changed/);
+  assert.match(html, /mid-period may briefly restore previous volumes/);
+  assert.match(html, /Other audio played on the satellite is affected too/);
   assert.match(html, /chime played when a satellite hears its wake word/);
   assert.match(html, /binary_sensor\.extended_openai_quiet_hours/);
   assert.match(html, /enable_quiet_hours/);
