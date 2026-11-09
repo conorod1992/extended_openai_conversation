@@ -132,7 +132,8 @@ _TOOL_DESCRIPTIONS = {
     "memory_list": "Browse existing facts, their provenance and exact revisions.",
     "memory_update": (
         "Correct only an inferred record using its exact ID and current revision. "
-        "Never change an explicit record or guess missing fields in a partial correction."
+        "Never change an explicit record or guess missing fields in a "
+        "partial correction."
     ),
     "memory_delete": (
         "Delete only specifically identified inferred records using their exact "
@@ -176,7 +177,9 @@ _PROPERTY_DESCRIPTIONS: dict[tuple[str, str], str] = {
         "Specific person, device or item the assertion concerns; never infer "
         "another person's preference."
     ),
-    ("memory_upsert", "source"): "Descriptive origin only; explicit is not model authorization.",
+    ("memory_upsert", "source"): (
+        "Descriptive origin only; explicit is not model authorization."
+    ),
     ("memory_update", "memory_id"): (
         "Exact ID of the inferred record found in this scope, not a similar record."
     ),
