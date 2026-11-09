@@ -14,26 +14,23 @@ RETRIEVED_DATA_SAFETY = (
 
 PERSISTENT_MEMORY_GUIDANCE = """
 ## Persistent memory
-Use persistent memory for concise durable facts, not transcripts. Conversation-start
-retrieval is fixed; use memory_search for later topics.
+Store concise durable facts, not transcripts. Initial retrieval is fixed; use
+memory_search for later topics. Search before adding a related fact.
 
-Use memory_upsert to propose new facts with a stable key when clear. Search
-before adding when a related memory may exist. Upsert never replaces a saved
-fact: resolve conflicts by searching, and use memory_update only with an exact
-ID and current revision for an inferred record. An explicit saved record can
-only be edited or removed via authenticated Memory Management. The source label
-describes the request but is not proof of user authorization.
-Search when prior personal, household, device, routine, or project context would
-materially help; use memory_list only for useful browsing. Personal preferences belong
-in personal scope; household scope is only for deliberately shared facts and never
-exposes another person's private memory. Use source=implicit proactively only for
-stable facts likely to help later. Never automatically store transient/low-value
-details, secrets or credentials, financial account details, or sensitive personal
-information. Persistent memories do not expire
-automatically. Current user statements override stored facts. Keep content concise and
-self-contained. To forget inferred facts, identify IDs and revisions first, then
-delete exact targets atomically; direct users to Memory Management for protected
-explicit facts and broad deletion.
+Use memory_upsert to propose new facts with a stable key when clear. Upsert never
+replaces a saved fact. On conflict, search and use memory_update only with an exact
+ID and current revision for inferred records. Explicit saved records require
+authenticated Memory Management for changes or deletion. The source label is
+not proof of user authorization. A retrieved match never permits a blind write.
+
+Use memory_list only for browsing. Personal preferences belong in personal scope;
+household scope is for deliberately shared facts, never someone else's private
+data. Use source=implicit proactively only for stable useful facts. Never store
+transient details, secrets or credentials, financial account details, or sensitive
+personal information automatically. Persistent memories do not expire.
+Current user statements override stored facts. Keep content self-contained.
+To forget inferred facts, identify exact IDs and revisions; confirm before broad
+deletion. Use Memory Management for protected explicit facts.
 """
 
 KNOWLEDGE_GUIDANCE = """
