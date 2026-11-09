@@ -732,3 +732,70 @@ async def test_preview_matches_production_for_same_rule_and_request(
         }
     assert rules.snapshot() == before
     hass.services.async_call.assert_not_called()
+
+
+@pytest.mark.parametrize("match_type", ["equals", "starts_with", "ends_with", "contains"])
+@pytest.mark.parametrize(
+    ("singular", "plural"),
+    [
+        ("status", "statuses"),
+        ("focus", "focuses"),
+        ("virus", "viruses"),
+        ("bonus", "bonuses"),
+        ("campus", "campuses"),
+        ("cactus", "cactuses"),
+        ("octopus", "octopuses"),
+        ("nexus", "nexuses"),
+        ("syllabus", "syllabuses"),
+        ("thesaurus", "thesauruses"),
+        ("house", "houses"),
+        ("size", "sizes"),
+        ("noise", "noises"),
+        ("movie", "movies"),
+        ("quiz", "quizzes"),
+        ("bus", "buses"),
+        ("gas", "gases"),
+    ],
+)
+@pytest.mark.parametrize("reverse", [False, True])
+async def test_word_form_families_preserve_strict_matching_in_all_modes(
+    hass, match_type, singular, plural, reverse
+):
+    phrase, spoken = (plural, singular) if reverse else (singular, plural)
+    context = {
+        "equals": ("show " + phrase, "show " + spoken),
+        "starts_with": ("show " + phrase, "show " + spoken + " now"),
+        "ends_with": ("show " + phrase, "please show " + spoken),
+        "contains": ("show " + phrase, "please show " + spoken + " now"),
+    }
+    saved, incoming = context[match_type]
+    rules = await manager(
+        rule("forms", saved, match_type),
+        defaults={"word_forms": True, "fuzzy": False},
+    )
+    direct = rules.match(incoming)
+    async_result = await rules.async_match(hass, incoming)
+    assert direct is not None and not direct.fuzzy
+    assert async_result == direct
+    preview = request_rule_match_preview(async_result)
+    assert preview["matched"] is True and preview["fuzzy"] is False
+
+
+@pytest.mark.parametrize(
+    ("saved", "incoming"),
+    [
+        ("status", "statue"),
+        ("focus", "focuse"),
+        ("house", "hous"),
+        ("virus", "viruse"),
+    ],
+)
+async def test_word_form_corrections_do_not_admit_unrelated_words(
+    hass, saved, incoming
+):
+    rules = await manager(
+        rule("forms", "show " + saved),
+        defaults={"word_forms": True, "fuzzy": False},
+    )
+    assert rules.match("show " + incoming) is None
+    assert await rules.async_match(hass, "show " + incoming) is None
