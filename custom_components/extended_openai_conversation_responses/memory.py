@@ -1795,7 +1795,7 @@ _ING_DOUBLED_L_BASES = frozenset(
         "tunnel",
         "unravel",
     }
-))
+)
 
 # The undoubled roots are real words, unlike those for pass/fuss/buzz.
 _ING_AMBIGUOUS_DOUBLE_BASES = frozenset({"gass", "buss", "quizz"})

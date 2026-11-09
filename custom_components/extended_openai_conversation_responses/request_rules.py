@@ -4156,7 +4156,7 @@ _US_ES_PLURAL_ROOTS = frozenset(
         "virus",
         "walrus",
     }
-))
+)
 
 
 def _singularize(token: str) -> str:
