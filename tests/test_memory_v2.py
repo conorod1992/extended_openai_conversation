@@ -660,3 +660,76 @@ async def test_explicit_memory_search_uses_configured_hybrid_semantics() -> None
         query_embedding=[1.0, 0.0],
         hybrid=True,
     )
+
+
+@pytest.mark.parametrize(
+    ("inflected", "base"),
+    [
+        ("travelling", "travel"),
+        ("traveling", "travel"),
+        ("cancelling", "cancel"),
+        ("canceling", "cancel"),
+        ("labelling", "label"),
+        ("controlling", "control"),
+        ("modelling", "model"),
+        ("signalling", "signal"),
+        ("levelling", "level"),
+        ("channelling", "channel"),
+        ("counselling", "counsel"),
+        ("fuelling", "fuel"),
+        ("dialling", "dial"),
+        ("gassing", "gas"),
+        ("bussing", "bus"),
+        ("quizzing", "quiz"),
+        ("calling", "call"),
+        ("falling", "fall"),
+        ("filling", "fill"),
+        ("rolling", "roll"),
+        ("spelling", "spell"),
+        ("pressing", "press"),
+        ("dressing", "dress"),
+        ("buzzing", "buzz"),
+        ("passing", "pass"),
+        ("fussing", "fuss"),
+        ("running", "run"),
+        ("shopping", "shop"),
+    ],
+)
+def test_memory_stemming_maintains_ambiguous_inflection_families(
+    inflected, base
+):
+    from custom_components.extended_openai_conversation_responses.memory import _stem
+    assert _stem(inflected) == _stem(base)
+
+
+@pytest.mark.parametrize(
+    ("content", "query"),
+    [
+        ("I enjoy travelling.", "travel holidays tourism"),
+        ("I enjoy travelling.", "travel trips holidays"),
+        ("I prefer gassing up at the motorway services.", "gas"),
+        ("I spend an hour bussing to work.", "bus"),
+    ],
+)
+async def test_memory_stem_regressions_restore_actual_lexical_retrieval(
+    content, query
+):
+    memory = await _memory()
+    added = await memory.async_add("alice", content, "personal", "explicit")
+    results = await memory.async_search("alice", query)
+    assert any(
+        record.memory_id == added["memory"]["memory_id"] for record in results
+    )
+
+
+async def test_memory_stem_regression_preserves_related_fact_resolution():
+    memory = await _memory()
+    original = await memory.async_add(
+        "alice", "My hobby is travelling.", "hobbies", "explicit"
+    )
+    outcome = await memory.async_upsert(
+        "alice", "My hobby is travel.", "hobbies", "explicit"
+    )
+    assert outcome["status"] == "needs_resolution"
+    assert outcome["candidate"]["memory_id"] == original["memory"]["memory_id"]
+    assert len(await memory.async_list("alice")) == 1
