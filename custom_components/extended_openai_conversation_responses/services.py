@@ -38,6 +38,7 @@ from . import function_configuration_mutations as function_mutations
 from .agent_maintenance import get_agent_maintenance_gate
 from .const import (
     API_MODE_OPTIONS,
+    API_PROVIDERS,
     API_MODE_RESPONSES,
     CONF_API_MODE,
     CONF_API_PROVIDER,
@@ -130,7 +131,9 @@ CHANGE_CONFIG_SCHEMA = vol.Schema(
         vol.Optional(CONF_API_VERSION): cv.string,
         vol.Optional(CONF_ORGANIZATION): cv.string,
         vol.Optional(CONF_SKIP_AUTHENTICATION): cv.boolean,
-        vol.Optional(CONF_API_PROVIDER): cv.string,
+        vol.Optional(CONF_API_PROVIDER): vol.In(
+            [provider["key"] for provider in API_PROVIDERS]
+        ),
     }
 )
 
@@ -459,6 +462,14 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
 
         new_data = dict(original_data)
         new_data.update(updates)
+        valid_providers = {provider["key"] for provider in API_PROVIDERS}
+        if (
+            CONF_API_PROVIDER in new_data
+            and new_data[CONF_API_PROVIDER] not in valid_providers
+        ):
+            raise HomeAssistantError(
+                "Unsupported API provider. Choose 'openai' or 'azure'."
+            )
 
         _LOGGER.debug(
             "Updating config entry %s fields: %s",
