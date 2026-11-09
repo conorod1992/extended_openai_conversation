@@ -509,3 +509,45 @@ async def test_execute_subprocess_creation_failure_is_returned(tmp_path: Path) -
         result = await function.execute(hass, config, {}, None, None)
 
     assert result == {"error": "spawn failed"}
+
+
+def test_disk_format_command_guard_distinguishes_arguments_from_executables(tmp_path: Path) -> None:
+    function = bash_module.BashFunction()
+    for cmd in (
+        "git log --format=%H",
+        "stat --format=%s file.txt",
+        "docker ps --format '{{.ID}}'",
+        'echo "format this"',
+    ):
+        function._guard_command(cmd, tmp_path, False)
+    for cmd in (
+        "format C:", "echo hello; format C:", "echo hello && format C:",
+        "sudo format C:", "env PATH=/bin format C:",
+        "cmd /c format C:", "bash -c 'format C:'",
+    ):
+        with pytest.raises(ValueError, match="disk format"):
+            function._guard_command(cmd, tmp_path, False)
+
+
+def test_workspace_guard_allows_only_exact_posix_special_streams(tmp_path: Path) -> None:
+    if bash_module.os.name != "posix":
+        pytest.skip("POSIX-only special streams")
+    function = bash_module.BashFunction()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    for cmd in (
+        "jq . file.json 2>/dev/null",
+        "echo hello >/dev/stdout",
+        "echo error 2>/dev/stderr",
+    ):
+        function._guard_command(cmd, workspace, True)
+    for cmd in (
+        "cat /etc/passwd",
+        "echo test >/dev/sda",
+        "echo test >/dev/null2",
+        "echo test >/dev/null/../sda",
+    ):
+        with pytest.raises(ValueError):
+            function._guard_command(cmd, workspace, True)
+    with pytest.raises(ValueError, match="recursive rm"):
+        function._guard_command("rm -rf /dev/null", workspace, True)

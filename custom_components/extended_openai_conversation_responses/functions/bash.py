@@ -84,6 +84,62 @@ def _without_shell_comments(command: str) -> str:
     return "".join(result)
 
 
+
+def _contains_disk_format_command(command: str) -> bool:
+    """Detect literal disk-format commands at executable positions only.
+
+    A best-effort defensive check: shell execution is explicitly opt-in.
+    """
+    lex = shlex.shlex(
+        _without_shell_comments(command),
+        posix=True,
+        punctuation_chars="();&|<>",
+    )
+    lex.whitespace_split = True
+    lex.commenters = ""
+    tokens = list(lex)
+    at_command = True
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token in {";", "&&", "||", "|", "&", "(", ")"}:
+            at_command = True
+            index += 1
+            continue
+        if not at_command:
+            index += 1
+            continue
+        lower = token.casefold()
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", token):
+            index += 1
+            continue
+        if lower in {"sudo", "command", "builtin", "exec", "nohup"}:
+            index += 1
+            continue
+        if lower == "env":
+            index += 1
+            while index < len(tokens) and (
+                tokens[index].startswith("-")
+                or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", tokens[index])
+            ):
+                index += 1
+            continue
+        if lower in {"bash", "sh", "dash", "zsh"} and index + 2 < len(tokens):
+            if tokens[index + 1] in {"-c", "-lc", "-ec", "-xc"}:
+                if _contains_disk_format_command(tokens[index + 2]):
+                    return True
+        if lower in {"cmd", "cmd.exe"} and index + 2 < len(tokens):
+            if tokens[index + 1].casefold() in {"/c", "/k"}:
+                if _contains_disk_format_command(
+                    " ".join(tokens[index + 2 :])
+                ):
+                    return True
+        if lower in {"format", "format.exe"}:
+            return True
+        at_command = False
+        index += 1
+    return False
+
 def _valid_allow_pattern(value: str) -> str:
     """Reject malformed Bash allowlist regular expressions at configuration time."""
     if not isinstance(value, str):
@@ -244,6 +300,8 @@ class BashFunction(Function):
 
         # Deny patterns check. These reduce accidental damage only; shell syntax can
         # construct equivalent commands dynamically, so they are never authorization.
+        if _contains_disk_format_command(command):
+            raise ValueError("Command blocked by defensive policy: disk format")
         for pattern in SHELL_DENY_PATTERNS:
             if re.search(pattern, command, re.IGNORECASE):
                 raise ValueError(
@@ -310,7 +368,10 @@ class BashFunction(Function):
                     continue
                 posix_paths.extend(re.findall(r"(?<![\w./:])/[^\s\"\']+", token))
 
+            safe_streams = {"/dev/null", "/dev/stdout", "/dev/stderr"}
             for raw in win_paths + posix_paths:
+                if os.name == "posix" and raw in safe_streams:
+                    continue
                 try:
                     p = Path(raw).resolve()
                 except Exception:
