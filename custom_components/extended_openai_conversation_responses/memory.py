@@ -1757,6 +1757,33 @@ def _tokens(value: str) -> set[str]:
     return set(_cached_memory_tokens(value))
 
 
+# These standard English roots may double their final l before -ing. Do not
+# apply that rule to genuine -ll roots (call, fill, spell, install, etc.).
+_ING_DOUBLED_L_BASES = frozenset(
+    {
+        "cancel",
+        "channel",
+        "control",
+        "counsel",
+        "dial",
+        "fuel",
+        "jewel",
+        "label",
+        "level",
+        "marvel",
+        "model",
+        "quarrel",
+        "revel",
+        "signal",
+        "total",
+        "travel",
+    }
+)
+
+# The undoubled roots are real words, unlike those for pass/fuss/buzz.
+_ING_AMBIGUOUS_DOUBLE_BASES = frozenset({"gass", "buss", "quizz"})
+
+
 def _stem(token: str) -> str:
     """Apply conservative deterministic English suffix normalization."""
     if len(token) > 4 and token.endswith("ies"):
@@ -1766,7 +1793,11 @@ def _stem(token: str) -> str:
         if (
             len(root) > 2
             and root[-1] == root[-2]
-            and not root.endswith(("ll", "ss", "ff", "zz", "ee"))
+            and (
+                root in _ING_AMBIGUOUS_DOUBLE_BASES
+                or (root.endswith("ll") and root[:-1] in _ING_DOUBLED_L_BASES)
+                or not root.endswith(("ll", "ss", "ff", "zz", "ee"))
+            )
         ):
             root = root[:-1]
         return root
