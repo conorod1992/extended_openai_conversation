@@ -58,6 +58,16 @@ GENERATED_FIXTURES = {
         generator_sha="74cf5a49c63ed8d4d87717844bf14f79c28c9cea",
         official_package=True,
     ),
+    # Released 2026.11.1 also includes the official Core pytest fixtures.
+    # The tag is an immutable commit, so the wheel's provenance and embedded
+    # Home Assistant version are verified by install_ha_test_plugin.py.
+    "2026.11.1": GeneratedFixture(
+        "2026.11.1",
+        "0.13.370+eoai.ha2026.11.1.official.cd8a0dc69",
+        "d8a0dc698c8946b44e455d904000db563cfbf1ba",
+        generator_sha="d8a0dc698c8946b44e455d904000db563cfbf1ba",
+        official_package=True,
+    ),
     "2026.10.4": GeneratedFixture(
         "2026.10.4",
         "0.13.370+eoai.ha2026.10.4.gaacf4b5e.c357cae5c",
