@@ -34,7 +34,6 @@ from custom_components.extended_openai_conversation_responses.retrieval_text imp
     lexical_terms,
 )
 from scripts.benchmark_memory_refactor import (  # noqa: E402
-    FIXTURE,
     SYNTHETIC_QUERIES,
     OWNER,
     _percentile,
@@ -48,7 +47,6 @@ from scripts.benchmark_memory_refactor import (  # noqa: E402
 
 STEMMER_VERSION = "3.1.1"
 MODES = ("exact", "custom", "snowball", "hybrid")
-_original_token_list = m._token_list
 _thread_local = threading.local()
 
 
@@ -195,10 +193,7 @@ async def evaluate(count: int, repeats: int) -> dict:
     finally:
         m._token_list = original
         clear_caches()
-    exact = modes[0]
     custom = modes[1]
-    snow = modes[2]
-    hybrid = modes[3]
     for item in modes:
         item["hard_negative_promotion_vs_custom_at_3"] = (
             item["hard_negative_hits_at_3"] - custom["hard_negative_hits_at_3"]
