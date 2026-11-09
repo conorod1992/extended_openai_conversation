@@ -31,25 +31,44 @@ result. A model-supplied `source=explicit` label cannot grant owner consent,
 sensitive-storage permission, or write authority in explicitly restricted shared
 scope. Guest Mode, retention scope and management permissions remain separate.
 
-## Remaining no-write conflict heuristic
+## Model proposal admission after the follow-up simplification
 
-`_find_related_candidate()` is **not** a fact-equivalence classifier. It is a
-conservative admission barrier: a probable match can only return a no-write
-conflict for model proposals. Because the available semantic fixtures have not
-been independently adjudicated with a sufficiently representative live-model
-confusion matrix, removing it would be an unsupported safety regression.
+Model-facing `memory_upsert` (and the legacy `memory_add` tool alias) now
+uses **deterministic exact identity checks**, not token-overlap/Jaccard ranking,
+to decide whether a proposal may be inserted.
 
-Previously, an incoming *different* canonical key bypassed that barrier, even
-when the new content contradicted a keyed fact. Batch 3 also checks related
-candidates for model proposals with new keys. It returns an exact candidate and
-revision to a reader permitted to see that scope; write-only callers receive
-only a status. No automatic rewrite, metadata promotion, or record merge occurs.
+- An **existing canonical key in the same owner scope** is never overwritten.
+  A truly unchanged proposal can return `unchanged`; different content,
+  provenance or metadata returns `needs_resolution` without a write.
+- **Literal duplicate content**, with compatible subject and validity time,
+  cannot silently create another record under a different key. A unique exact
+  match can return `unchanged` only when its existing identity/metadata also
+  match the proposal. Otherwise the model receives a no-write conflict.
+- Distinct explicitly known subjects or validity dates may coexist even if
+  the short content is identical; multiple exact candidates cannot silently
+  become an arbitrary no-op.
+- **Semantically related but differently worded facts are not vetoed** by the
+  backend. This permits independent facts about the same person or device,
+  historical facts, and reversals of relationships. It also permits erroneous
+  duplicate/contradictory insertion if the selected model makes a poor semantic
+  decision; this is a documented data-quality trade-off, not an authorization
+  relaxation. Models must search and avoid inventing keys to evade a known
+  collision.
+- Candidate data is released only after independent read-scope authorization.
+  Write-only guests receive status only. Storage locks, revision checks,
+  privacy filters, rollback, retirement and scope isolation remain unchanged.
 
-**Trade-off:** conservative conflict checks can abstain on independently true
-facts about the same subject. This is preferable to allowing a silent write
-based solely on lexical matching. The model can still create genuinely distinct
-facts. Do **not** turn this guard into a synonym matching or merge algorithm,
-and do not delete it until independent evaluations demonstrate safe replacement.
+The older `_find_related_candidate()` remains exclusively in the *legacy
+non-model* `async_upsert()` path to preserve that API's existing behaviour.
+Authenticated Management has its own explicit add/update APIs and is not
+rerouted. The heuristic is **no longer consulted by model-facing proposals**,
+and is never an authorization source. Removing it from legacy direct upserts
+would be a separate compatibility decision.
+
+This follow-up deliberately does not require proving that all user-chosen
+models make correct semantic decisions. Deterministic tests establish that
+model-selected tool actions are executed or rejected according to the backend
+contract, including genuine Chat Completions and Responses provider wires.
 
 ## Evidence boundaries
 
