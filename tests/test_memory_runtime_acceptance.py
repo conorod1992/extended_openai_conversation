@@ -170,9 +170,18 @@ async def test_memory_store_bundle_prompt_and_tool_update_form_one_runtime_contr
             [],
         )
         tool_payload = json.loads(tool_result_data(tool_result)["result"])
-        assert tool_payload["status"] == "updated"
-        assert tool_payload["memory"]["memory_id"] == memory_id
+        assert tool_payload["status"] == "needs_resolution"
+        assert tool_payload["applied"] is False
+        assert tool_payload["candidate"]["memory_id"] == memory_id
+        assert tool_payload["candidate"]["revision"]
+        assert (await memory.async_list("alice"))[0].content == "Oscar is a Cavachon."
 
+        # The authenticated management route owns explicit record correction.
+        await memory.async_update(
+            "alice", memory_id, content="Oscar is a Cavapoo.",
+            expected_revision=tool_payload["candidate"]["revision"],
+            source="explicit",
+        )
         second_input, _ = _request("Remind me about Oscar's breed.", context)
         await entity._async_handle_message(second_input, _chat_log(second_input.text))
 
