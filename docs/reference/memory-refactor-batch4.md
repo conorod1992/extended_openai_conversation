@@ -1,6 +1,6 @@
 # Memory refactor — Batch 4: morphology and retrieval decision
 
-## Decision: retain production stemmer unchanged
+## Current decision: retain production stemmer unchanged pending corrected hybrid evidence
 
 The CI benchmark compares four lexical representations against the **same**
 Memory BM25/ranking/metadata pipeline and frozen synthetic fixture. No production
@@ -14,14 +14,16 @@ Measured on GitHub Actions run [42675917707](https://github.com/conorod1992/exte
 | Exact terms | 0.9394 | 0.9697 | 17 | 18.2147 | 141.0569 | 429.8452 | 163.4197 |
 | Current custom | 0.9697 | **1.0** | **15** | **17.3890** | **19.3949** | **249.2745** | **6.2207** |
 | Snowball/Porter2 | 0.9697 | **1.0** | **15** | 18.6110 | 97.9947 | 376.1206 | 7.7601 |
-| Exact + Snowball prototype | 0.9394 | 0.9697 | 17 | 29.2260 | 105.4718 | 496.7722 | 10.2953 |
+| Exact + Snowball prototype | pending corrected rerun | — | — | — | — | — | — |
 
 - Current and Snowball rankings are *identical* for all 36 fixture queries.
   Neither improves on the other's relevance labels, despite Snowball's added
   complexity and observed CPU cost.
-- The exact-only and uncalibrated additive hybrid miss query `ret-034` (`fall`)
-  and each promote two extra hard negatives into the top three. The prototype
-  hybrid is not a deployable relevance policy.
+- Exact-only misses `ret-034` (`fall` versus `falling`). The initial hybrid
+  benchmark *also* missed it because the benchmark itself omitted Snowball
+  features for unmodified base forms. That invalidates the published initial
+  hybrid metrics; they must be replaced by a corrected rerun. Neither hybrid
+  variant should be deployed without separately calibrated scoring.
 - All four methods have 17 hard-negative hits in top ten; a lexical candidate
   may be incidental even when its correct target is ranked first. **Retrieval
   similarity is never mutation authorization.**
