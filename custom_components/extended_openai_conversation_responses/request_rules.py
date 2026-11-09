@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from functools import lru_cache
 from hashlib import sha256
+from itertools import pairwise
 import json
 import logging
 import re
@@ -4367,7 +4368,7 @@ def _fuzzy_join_safe_compounds(words: list[str]) -> list[str]:
 def _fuzzy_has_safe_compound(words: list[str]) -> bool:
     return any(word in _FUZZY_SAFE_COMPOUND_WORDS for word in words) or any(
         (left, right) in _FUZZY_SAFE_COMPOUND_PAIRS
-        for left, right in zip(words, words[1:])
+        for left, right in pairwise(words)
     )
 
 
