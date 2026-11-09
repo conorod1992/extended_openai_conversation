@@ -74,7 +74,7 @@ def test_markdown_citation_and_bare_urls_are_removed_without_mutating_original()
 ):
     original = "Inside Iran ([apnews.com](https://apnews.com/article/example)) See https://example.com/news."
     spoken = process_speech_text(original, _config())
-    assert spoken == "Inside Iran See"
+    assert spoken == "Inside Iran See."
     assert "apnews.com" in original
     assert "https://example.com" in original
 
@@ -248,10 +248,41 @@ def test_streaming_malformed_markdown_degrades_with_bounded_memory() -> None:
 
 
 def test_streaming_bare_url_complete_split_and_punctuation() -> None:
-    # Match the established completed-response behavior: terminal punctuation is
-    # part of the bare URL match and is therefore suppressed with it.
-    assert _stream(["See https://example.com/test. Next."]) == "See Next."
-    assert _stream(["See https://exa", "mple.com/test! Then."]) == "See Then."
+    assert _stream(["See https://example.com/test. Next."]) == "See. Next."
+    assert _stream(["See https://exa", "mple.com/test! Then."]) == "See! Then."
+
+
+@pytest.mark.parametrize(
+    "original,expected",
+    [
+        (
+            "Check https://example.com. Then restart Home Assistant.",
+            "Check. Then restart Home Assistant.",
+        ),
+        (
+            "Docs are at https://example.com, and the forum too.",
+            "Docs are at, and the forum too.",
+        ),
+        ("See the docs (https://example.com) for details.", "See the docs for details."),
+        ("Link: <https://example.com>", "Link:"),
+        ("Link: <www.example.com> and more", "Link: and more"),
+        (
+            "Read (https://en.wikipedia.org/wiki/Function_(mathematics)) next.",
+            "Read next.",
+        ),
+        ("See https://example.com/a(b) now.", "See now."),
+        ("Try https://example.com/a?x=1&y=2! Next.", "Try! Next."),
+        ("Try https://example.com/a]), then continue.", "Try]), then continue."),
+        ("This (is not a URL) and <ordinary text>.", "This (is not a URL) and <ordinary text>."),
+        ("Code: `<https://example.com>` stays literal.", "Code: <https://example.com> stays literal."),
+    ],
+)
+def test_bare_url_punctuation_wrappers_and_code_at_every_split(original, expected):
+    assert process_speech_text(original, _config()) == expected
+    assert _stream([original]) == expected
+    assert _stream(list(original)) == expected
+    for split in range(len(original) + 1):
+        assert _stream([original[:split], original[split:]]) == expected, split
 
 
 def test_streaming_multiple_adjacent_and_terminal_citations() -> None:
@@ -768,7 +799,13 @@ def test_line_prefix_finalizes_ambiguous_terminal_markers_as_plain_text() -> Non
 )
 def test_bare_web_addresses_share_runtime_and_completed_cleanup(prefix, suffix) -> None:
     text = f"Visit {prefix}example.com{suffix} for details. Ordinary prose stays."
-    expected = "Visit for details. Ordinary prose stays."
+    punctuation = {
+        ",": ",",
+        ".": ".",
+        ")": ")",
+        "/path),": "),",
+    }.get(suffix, "")
+    expected = f"Visit{punctuation} for details. Ordinary prose stays."
     assert process_speech_text(text, _config()) == expected
     assert process_speech_text(text, _config(speech_strip_urls=False)) == text
     for split in range(len(text) + 1):
