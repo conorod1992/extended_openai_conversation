@@ -93,8 +93,9 @@ def _contains_disk_format_command(command: str) -> bool:
     lex = shlex.shlex(
         _without_shell_comments(command),
         posix=True,
-        punctuation_chars="();&|<>",
+        punctuation_chars="();&|<>\\n",
     )
+    lex.whitespace = " \\t\\r"
     lex.whitespace_split = True
     lex.commenters = ""
     tokens = list(lex)
@@ -102,7 +103,7 @@ def _contains_disk_format_command(command: str) -> bool:
     index = 0
     while index < len(tokens):
         token = tokens[index]
-        if token in {";", "&&", "||", "|", "&", "(", ")"}:
+        if token in {";", "&&", "||", "|", "&", "(", ")", "\\n"}:
             at_command = True
             index += 1
             continue
