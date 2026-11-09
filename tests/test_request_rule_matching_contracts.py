@@ -775,6 +775,20 @@ async def test_preview_matches_production_for_same_rule_and_request(
         ("abuse", "abuses"),
         ("fuse", "fuses"),
         ("genius", "geniuses"),
+        ("coronavirus", "coronaviruses"),
+        ("corpus", "corpuses"),
+        ("crocus", "crocuses"),
+        ("fetus", "fetuses"),
+        ("fungus", "funguses"),
+        ("genus", "genuses"),
+        ("hippopotamus", "hippopotamuses"),
+        ("meniscus", "meniscuses"),
+        ("nucleus", "nucleuses"),
+        ("prospectus", "prospectuses"),
+        ("radius", "radiuses"),
+        ("retrovirus", "retroviruses"),
+        ("rhinovirus", "rhinoviruses"),
+        ("stylus", "styluses"),
     ],
 )
 @pytest.mark.parametrize("reverse", [False, True])
@@ -816,6 +830,11 @@ async def test_word_form_families_preserve_strict_matching_in_all_modes(
         ("surplus", "surpluse"),
         ("use", "us"),
         ("excuse", "excus"),
+        ("crocus", "crocuse"),
+        ("fetus", "fetuse"),
+        ("retrovirus", "retroviruse"),
+        ("prospectus", "prospectuse"),
+        ("hippopotamus", "hippopotamuse"),
     ],
 )
 async def test_word_form_corrections_do_not_admit_unrelated_words(
@@ -835,6 +854,8 @@ async def test_word_form_corrections_do_not_admit_unrelated_words(
         ("minibus", "minibuses"),
         ("house", "houses"),
         ("status", "statuses"),
+        ("crocus", "crocuses"),
+        ("retrovirus", "retroviruses"),
     ],
 )
 async def test_word_form_suffix_matching_remains_opt_in(

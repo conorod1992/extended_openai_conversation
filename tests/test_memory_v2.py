@@ -716,6 +716,21 @@ async def test_explicit_memory_search_uses_configured_hybrid_semantics() -> None
         ("pulling", "pull"),
         ("dwelling", "dwell"),
         ("appalling", "appall"),
+        ("corralling", "corral"),
+        ("dispelling", "dispel"),
+        ("expelling", "expel"),
+        ("extolling", "extol"),
+        ("grovelling", "grovel"),
+        ("impelling", "impel"),
+        ("initialling", "initial"),
+        ("pummelling", "pummel"),
+        ("relabelling", "relabel"),
+        ("remodelling", "remodel"),
+        ("shovelling", "shovel"),
+        ("swivelling", "swivel"),
+        ("fulfilling", "fulfil"),
+        ("distilling", "distil"),
+        ("enrolling", "enrol"),
     ],
 )
 def test_memory_stemming_maintains_ambiguous_inflection_families(
@@ -734,6 +749,11 @@ def test_memory_stemming_maintains_ambiguous_inflection_families(
         ("I spend an hour bussing to work.", "bus"),
         ("My dog is patrolling the garden.", "patrol garden checking"),
         ("I find compelling stories interesting.", "compel stories reasoning"),
+        ("I plan to expel the member.", "expelling member actions"),
+        ("I am distilling clean water.", "distil water steps"),
+        ("We fulfil orders daily.", "fulfilling order dispatch"),
+        ("I intend to enrol students.", "enrolling student lessons"),
+        ("I am corralling the sheep.", "corral sheep notes"),
     ],
 )
 async def test_memory_stem_regressions_restore_actual_lexical_retrieval(
@@ -763,6 +783,12 @@ async def test_memory_stem_regression_preserves_related_fact_resolution():
     ("stored", "incoming"),
     [
         ("My dog patrols the garden.", "My dog is patrolling the garden."),
+        ("I plan to expel the member.", "I plan on expelling the member."),
+        ("We distil water.", "We are distilling water."),
+        ("I fulfil orders.", "I am fulfilling orders."),
+        ("I enrol clients.", "I am enrolling clients."),
+        ("My job is to fulfil orders.", "My job involves fulfilling orders."),
+        ("We fulfill orders.", "We are fulfilling orders."),
         (
             "Our neighbour rebels against restrictions.",
             "Our neighbour is rebelling against restrictions.",
@@ -807,3 +833,55 @@ async def test_memory_stemming_does_not_create_unrelated_upsert_conflicts():
     )
     assert outcome["status"] == "created"
     assert len(await memory.async_list("alice")) == 2
+
+@pytest.mark.parametrize(
+    ("british", "american", "participial"),
+    [
+        ("fulfil", "fulfill", "fulfilling"),
+        ("distil", "distill", "distilling"),
+        ("enrol", "enroll", "enrolling"),
+    ],
+)
+def test_memory_english_single_l_spelling_aliases_are_bidirectional(
+    british, american, participial
+):
+    from custom_components.extended_openai_conversation_responses.memory import _stem
+
+    assert _stem(british) == _stem(american) == _stem(participial)
+    assert _stem(british + "s") == _stem(american + "s") == _stem(american)
+
+
+@pytest.mark.parametrize(
+    ("british", "american"),
+    [
+        ("fulfilment", "fulfillment"),
+        ("enrolment", "enrollment"),
+    ],
+)
+def test_memory_english_derivative_spelling_variants_are_exact(
+    british, american
+):
+    from custom_components.extended_openai_conversation_responses.memory import _stem
+
+    assert _stem(british) == _stem(american)
+    assert _stem(british + "s") == _stem(american + "s") == _stem(american)
+
+
+@pytest.mark.parametrize(
+    ("source", "new_content"),
+    [
+        ("I want to expel the member.", "I want to explore the member."),
+        ("We intend to distil water.", "We intend to distribute water."),
+        ("I fulfil orders.", "I cancel orders."),
+    ],
+)
+async def test_memory_spelling_repairs_leave_unrelated_upserts_distinct(
+    source, new_content
+):
+    memory = await _memory()
+    original = await memory.async_add("alice", source, "personal", "explicit")
+    outcome = await memory.async_upsert("alice", new_content, "personal", "explicit")
+    assert outcome["status"] == "created"
+    assert len(await memory.async_list("alice")) == 2
+    assert outcome["memory"]["memory_id"] != original["memory"]["memory_id"]
+

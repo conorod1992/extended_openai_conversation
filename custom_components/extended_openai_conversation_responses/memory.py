@@ -1765,10 +1765,17 @@ _ING_DOUBLED_L_BASES = frozenset(
         "channel",
         "compel",
         "control",
+        "corral",
         "counsel",
         "dial",
+        "dispel",
         "excel",
+        "expel",
+        "extol",
         "fuel",
+        "grovel",
+        "impel",
+        "initial",
         "jewel",
         "label",
         "level",
@@ -1781,15 +1788,20 @@ _ING_DOUBLED_L_BASES = frozenset(
         "patrol",
         "pencil",
         "propel",
+        "pummel",
         "quarrel",
         "rebel",
+        "relabel",
+        "remodel",
         "repel",
         "revel",
         "rival",
+        "shovel",
         "signal",
         "spiral",
         "squirrel",
         "surveil",
+        "swivel",
         "total",
         "travel",
         "tunnel",
@@ -1801,8 +1813,23 @@ _ING_DOUBLED_L_BASES = frozenset(
 _ING_AMBIGUOUS_DOUBLE_BASES = frozenset({"gass", "buss", "quizz"})
 
 
+# Normalize only established single-l British spellings to the same token as
+# their double-l counterparts. Plural -s is handled here too; no new fuzzy
+# aliases or alternative retrieval terms are introduced.
+_COMMON_L_SPELLING_ALIASES = {
+    "distil": "distill",
+    "enrol": "enroll",
+    "enrolment": "enrollment",
+    "fulfil": "fulfill",
+    "fulfilment": "fulfillment",
+}
+
+
 def _stem(token: str) -> str:
     """Apply conservative deterministic English suffix normalization."""
+    variant = token[:-1] if token.endswith("s") else token
+    if canonical := _COMMON_L_SPELLING_ALIASES.get(variant):
+        return canonical
     if len(token) > 4 and token.endswith("ies"):
         return f"{token[:-3]}y"
     if len(token) > 5 and token.endswith("ing"):
