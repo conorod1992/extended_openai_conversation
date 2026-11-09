@@ -318,6 +318,7 @@
     "services": {
     "call_function": {
       "name": "Call configured function",
+      "description": "Call an enabled Extended OpenAI configured function from a Request Rule action sequence.",
       "fields": {
         "function": {
           "name": "Function tool"
@@ -329,6 +330,7 @@
     },
     "memory_list": {
       "name": "List memories",
+      "description": "List or search persistent memories for the calling Home Assistant user.",
       "fields": {
         "config_entry": {
           "name": "Provider connection"
@@ -352,6 +354,7 @@
     },
     "memory_delete": {
       "name": "Delete memories",
+      "description": "Permanently delete selected persistent memories for the calling Home Assistant user.",
       "fields": {
         "config_entry": {
           "name": "Provider connection"
@@ -366,6 +369,7 @@
     },
     "memory_clear": {
       "name": "Clear memories",
+      "description": "Permanently clear all memories, or one category, for the calling Home Assistant user.",
       "fields": {
         "config_entry": {
           "name": "Provider connection"
@@ -383,6 +387,7 @@
     },
     "enable_function_tools": {
       "name": "Enable Function Tools",
+      "description": "Enable one or more configured Function Tools for a conversation agent. This administrator action is not exposed to the model automatically.",
       "fields": {
         "config_entry": {
           "name": "Provider connection"
@@ -397,6 +402,7 @@
     },
     "disable_function_tools": {
       "name": "Disable Function Tools",
+      "description": "Disable one or more configured Function Tools so their schemas are withheld and calls are rejected. This administrator action is not exposed to the model automatically.",
       "fields": {
         "config_entry": {
           "name": "Provider connection"
@@ -411,6 +417,7 @@
     },
     "enable_function_groups": {
       "name": "Enable Function Groups",
+      "description": "Enable one or more configured Function Groups without changing the individual enabled state of any member Function Tool.",
       "fields": {
         "config_entry": {
           "name": "Provider connection"
@@ -425,6 +432,7 @@
     },
     "disable_function_groups": {
       "name": "Disable Function Groups",
+      "description": "Make one or more Function Groups and their members unavailable while retaining each member Function Tool's own enabled state.",
       "fields": {
         "config_entry": {
           "name": "Provider connection"
@@ -439,6 +447,7 @@
     },
     "guest_mode_update": {
       "name": "Update Guest Mode",
+      "description": "Set or replace the Guest Mode interval for a conversation agent. This trusted administrator action may shorten or move the interval.",
       "fields": {
         "config_entry": {
           "name": "Provider connection"
@@ -459,6 +468,7 @@
     },
     "guest_mode_disable": {
       "name": "End Guest Mode",
+      "description": "Immediately end active Guest Mode or cancel a future schedule for a conversation agent.",
       "fields": {
         "config_entry": {
           "name": "Provider connection"
