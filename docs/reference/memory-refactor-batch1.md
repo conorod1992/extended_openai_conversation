@@ -1,0 +1,247 @@
+# Memory retrieval and semantic resolution: Batch 1 contract and baseline
+
+Status: **design/evidence only**. Baseline implementation: `develop` at
+`71608da9e16ec40dd77ee83f7ae41458d0c20f78` (PR #1279 merged).
+No production code, storage schema, tool schema, default, or runtime behaviour
+is changed by this batch. The proposed contracts below are **not yet operative**.
+
+## Purpose and ownership boundaries
+
+This project separates *discovery*, *interpretation*, *authorization*, and
+*persistence*. A retrieval match or canonical-key collision is evidence of a
+candidate record, not permission to change it. Conversely, a correct semantic
+decision by a model cannot substitute for ownership, privacy, concurrency, or
+durability checks in the backend.
+
+| Responsibility | Owner | Required property |
+| --- | --- | --- |
+| Candidate discovery and ranking | Retrieval | Scope-filtered, bounded and measurable; no side effects |
+| Meaning, contradiction, subject and time | The conversation model | May choose create / unchanged / replace / coexist / clarify / abstain |
+| Write authority | Backend, using trusted request provenance | Model-supplied `source` cannot elevate permission |
+| Target identity and freshness | Backend | Exact owner + memory ID + revision for existing-record writes |
+| Mutation and acknowledgment | Existing Memory Store / execution pipeline | Atomic settled operation or honest uncertain outcome |
+| Test labels | Independently reviewed synthetic fixtures | Never generated or accepted by the model under evaluation |
+
+**Non-goal:** a second model classifier, background consolidation worker,
+semantic merge endpoint, persistent vector database, migration-time rewriting,
+or replacing the established Home Assistant Store transaction/repair machinery.
+
+## Verified existing contracts (as of baseline commit)
+
+- `memory.py`: `MemoryRecord` stores ID, user ID, content, category, source,
+  creation/update timestamps and optional subject/key/valid-from. Store v2,
+  limit 10,000 records per agent; embedding cache is separate.
+- `_find_duplicate()` compares ordered, case-sensitive `_fact_equality()`
+  values, not stem overlap. `_fact_equality()` performs NFC/whitespace
+  normalization and strips final `.!?`. That is tolerant textual equality,
+  *not* a universally safe semantic identity.
+- `_find_unique_unkeyed_duplicate()` permits limited metadata promotion
+  after finding one unkeyed literal duplicate with compatible subject/time.
+- `_find_related_candidate()` chooses a **single** owner-scoped candidate
+  using stemmed Jaccard overlap plus subject/key bonuses with cutoff `0.62`.
+  It can return `needs_resolution`, without changing storage. It is not a
+  semantic equivalence classifier.
+- `async_upsert()` with an existing canonical key can update that key's
+  content without an optimistic revision from the caller. An implicit write
+  cannot replace differing explicit content. Unkeyed paths may change metadata
+  on textual duplicates; the separate fuzzy candidate lookup is only used
+  when a non-keyed duplicate is not found.
+- `async_update()` already supports optional `expected_revision`; the
+  Management UI exposes `memory_revision()` (hash of substantive state),
+  but model-facing `memory_update` currently does not carry it.
+  `async_delete()` does not require per-record revisions and skips absent or
+  foreign IDs rather than treating the entire batch as a conflict.
+- The model currently supplies `source=explicit|implicit`. That is a
+  *claim*, not trusted evidence that a particular user instructed a write.
+  It presently influences both precedence and sensitive-information checks.
+- Memory search ranks a scoped snapshot with lexical BM25-like features,
+  metadata and phrase bonuses, conservative fuzzy fallback and optional
+  provider embeddings. Current hard thresholds are lexical `0.08` and
+  semantic `0.55`. Hybrid blending weights lexical `0.58`, semantic
+  `0.42`; cache is bound to embedding space/provider.
+- Automatic injection ranks the opening turn once and retains selected IDs
+  for continuity. That is **not** a complete enumeration of existing facts.
+  Search/list results include full bounded records. `memory_add` is kept
+  executable but removed from fresh advertised tool catalogues.
+- `model_payload.prepare_model_function_tools()` compacts tool descriptions.
+  Effective instructions must be checked in **provider-wire** tests, not
+  inferred from `memory_tools()` alone.
+- Knowledge uses an unstemmed lexical chunk/source index. Archive uses the
+  shared custom stemmer plus its own short `-ing` rule; the Archive model and
+  Management ranking/pagination contracts are not identical. Management Memory
+  browsing uses normalised substring search. These should not be silently
+  forced through one new ranking policy.
+
+Existing protections to **retain**: owner/scope selection in
+`conversation.py` and `scope.py`, Guest Mode policy, canonical key index,
+per-agent maintenance gate, manager locks, search result revalidation, private
+Home Assistant Store, `_async_settle_transactional_save()`, strict write
+propagation/readback, corruption repair barriers, execution/replay receipts,
+embedding fingerprint/invalidation, bounded results and privacy filtering.
+
+## Proposed target contracts (Batch 2+; require independent review)
+
+### Record identity, create, no-op and conflict
+
+1. A canonical key is an **identifier** unique within its exact owner, never
+   evidence that new text has the same meaning as old text.
+2. `memory_upsert` and retained `memory_add` should **create**, report
+   genuinely **unchanged** existing state, or return an **unapplied conflict**.
+   Neither should replace content, promote provenance, or attach/reassign
+   canonical keys to existing records without a version-checked edit.
+3. Define conservative exact-identity semantics deliberately. The existing
+   trailing-punctuation equality is a compatibility behaviour, not a proven
+   equality relation for arbitrary content. Different subjects, keys and
+   temporal metadata must not be collapsed by an omitted field; multiple
+   possible matches are ambiguous.
+4. For an existing key with different content/metadata, return
+   `needs_resolution` with `applied=false`, a machine-readable reason and
+   a **read-authorised** record including its revision. A write-only caller
+   must not be given existing private content or metadata.
+5. A no-write result never establishes a completed side effect. Avoid new
+   implicit retries; the model may search/inspect and then choose an operation.
+
+### Existing-record updates and deletion
+
+1. A fresh model-facing edit identifies owner scope, memory ID,
+   `expected_revision`, and only the intended fields. Check the revision
+   inside the existing mutation lock, **after** any model/tool awaits.
+2. Revision equality establishes the same substantive state, not semantic
+   correctness, authority, observed history, or a unique mutation event.
+   Because the revision is content-derived, A→B→A is not a monotonic version.
+3. Deletion should have an exact target + expected revision per record.
+   Define all-or-nothing validation for multi-record deletion; do not partially
+   delete just because one target is stale/foreign/missing.
+4. Omitted metadata means preservation. Clearing metadata requires an explicit
+   `clear_fields` instruction. A key promotion, ownership move, or provenance
+   promotion is a guarded edit, not a duplicate-path side effect.
+5. Keep existing transaction settlement, uncertain outcomes, and replay
+   protection. A stale write is **not** rebased automatically; an uncertain
+   write is **not** assumed rolled back.
+
+### Authority / consent (policy decision outstanding)
+
+**Critical:** changing schemas alone cannot establish explicit user consent.
+Today, `source='explicit'` is model-supplied. The backend cannot safely infer
+per-operation user authorization from an arbitrary sentence.
+
+Provisional safe direction:
+
+- Treat `source` as proposed descriptive provenance, **not authority**.
+- Distinguish model-origin execution from a trusted authenticated Management
+  operation in one backend-owned policy, including nested/legacy call paths.
+- For model-origin data, apply automatic sensitive-data rules to creation,
+  update and metadata regardless of a forged `explicit` label.
+- Do not allow the model alone to promote provenance, delete or replace a
+  protected explicitly confirmed fact. Use a trusted confirmation mechanism
+  or Management UI for protected mutations.
+- Do not equate a user writing “remember” with a cryptographic authority
+  token. `confirmed=true` supplied by the model would be equally untrusted.
+
+**Decision required before Batch 2:** whether conversational edits of
+existing explicit memories must obtain an additional trusted confirmation
+(management-based is the minimal safe option), and whether new explicit
+creations similarly need verification. These choices affect usability and
+must be specified honestly; do not silently pretend the current `source`
+field is trustworthy. Explicit writes via Management remain a separate,
+authenticated contract.
+
+### Semantic workflow
+
+The existing conversation model uses `memory_search` or known context,
+inspects complete scoped records, and selects between unchanged, create,
+identified update, coexist (including historical context), clarify or
+abstain. Search/inspect occurs outside the write lock; mutations revalidate.
+
+The model must distinguish paraphrase, contradiction, different subjects,
+historical versus present, quoted/hypothetical/intended statements and
+partial/compound facts. An ambiguous or absent candidate is **not** proof
+of novelty. `needs_resolution` and revision failure do not imply success.
+
+No separate semantic-classifier request is planned. The existing
+per-conversation function-call budget, provider-loop ceiling, guest/privacy
+and tool-recovery gates remain effective.
+
+**Candidate deletion gate:** remove `_find_related_candidate()` from the
+write path **only after** the semantic workflow is shown not to increase
+harmful contradictory or duplicate insertion. Otherwise retain its
+conservative no-write behaviour temporarily. Keeping it forever is not
+the preferred architecture, but removing an imperfect barrier before
+measuring replacement behaviour would be unsafe.
+
+### Retrieval
+
+Evaluate a focused, version-pinned Snowball/Porter2 English stemmer against
+current custom stems, exact-only, and hybrid retrieval. Preserve exact
+Unicode, compound/symbolic identifiers, CJK handling, phrase evidence and
+non-English text. Stems should be *additional evidence*, not identities.
+Do not indiscriminately count exact+stem+fuzzy as independent matches or
+reuse old thresholds without recalibration. A stemmer is not a negation
+or fact-equivalence engine.
+
+Prefer isolated morphology changes to Memory and Archive after baseline
+quality review. Do **not** change Knowledge's unstemmed source/chunk
+retrieval or Management substring matching without separate evidence.
+Use thread-safe worker-local stemmer ownership; benchmark provider/package
+variants rather than assuming native/pure-Python parity.
+
+## Synthetic independent fixtures
+
+- `tests/fixtures/memory_refactor_semantics.json`: human-authored scenarios.
+  Labels describe the **semantic intention**, not authorization to execute it.
+  Both expected decisions and forbidden existing-record targets are encoded.
+  Candidate recall and semantic action selection must be scored separately.
+- `tests/fixtures/memory_refactor_retrieval.json`: a fixed synthetic
+  lexical-retrieval corpus with relevant IDs, hard negatives, and scenario
+  families. It tests retrieval evidence, **not** a write policy.
+
+The lightweight unit test validates fixture structure and label
+consistency **without importing the retrieval or model implementation**.
+This prevents broken test metadata from silently becoming the semantic
+oracle.
+
+## Reproducible baseline measurements
+
+Run against this exact commit or another checkout with the same fixtures:
+
+```sh
+python -m pytest -q tests/test_memory_refactor_fixture_contract.py
+python scripts/benchmark_memory_refactor.py --size 1000 --repeats 3 --output memory-refactor-baseline.json
+python scripts/benchmark_archive_search.py --scenario mixed --repeats 5 --output archive-search-baseline.json
+python scripts/benchmark_knowledge.py
+```
+
+The Memory runner reports corpus/fixture hashes, environment, lexical
+Recall@5/10 and excluded-ID hits, per-query returned IDs, synthetic cold
+and warm search timings, and a timed event-loop gap probe. **Failed recall
+in this phase is a measurement, not a test failure.** It does not use real
+user data, provider calls or embeddings, and must not be claimed as a
+live-HA/LLM benchmark.
+
+Existing controlled-vector stress tests already characterize hybrid
+ranking; record those independently. Extend the live provider acceptance
+lane in Batch 3 to measure actual model decisions, tokens/latency and final
+durable state, using frozen human labels rather than model self-judging.
+
+Performance numbers vary by host and concurrent load. Compare on the
+same pinned runner and fixture hash, with cold/warm phases distinguished;
+do not introduce brittle millisecond ceilings from one unrepresentative run.
+
+## Acceptance gates and rollback
+
+| Gate | Requirement |
+| --- | --- |
+| B1 | Documents identify existing vs proposed behaviour; fixtures independently validated; baseline runner reproducibly emits a self-describing report; production diff is empty |
+| B2 | Identity, authority, stale writes, no-write outcomes, private result redaction, cancellation and recovery are deterministic, including legacy aliases |
+| B3 | Real tool workflows pass on both APIs; held-out semantic corpus shows no forbidden mutation and no increase in contradictory automatic insertion; create/update utility not replaced by universal abstention |
+| B4 | Retrieval relevance meets reviewed gold thresholds, no unexplained lost critical hit, bounded CPU/memory/loop latency and tested HA dependency installation |
+| Release | Full stable/dev HA, real-HA, stress, process-recovery and provider-wire checks; intentional compatibility changes documented |
+
+Before implementation, retain a user-visible rollback route: existing
+Memory stores and backups are not migrated, embedding cache remains
+rebuildable, and there is no automatic semantic rewrite of stored facts.
+
+**Evidence status at creation:** source inspection completed; fixture
+labels are design oracles; execution timings and live-model accuracy are
+**not yet measured**. Do not substitute test green status for those
+measurements.
