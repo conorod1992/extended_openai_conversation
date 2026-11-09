@@ -522,6 +522,7 @@ def test_disk_format_command_guard_distinguishes_arguments_from_executables(tmp_
         function._guard_command(cmd, tmp_path, False)
     for cmd in (
         "format C:", "echo hello; format C:", "echo hello && format C:",
+        "echo hello\\nformat C:",
         "sudo format C:", "env PATH=/bin format C:",
         "cmd /c format C:", "bash -c 'format C:'",
     ):
