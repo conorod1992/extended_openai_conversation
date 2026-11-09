@@ -693,6 +693,29 @@ async def test_explicit_memory_search_uses_configured_hybrid_semantics() -> None
         ("fussing", "fuss"),
         ("running", "run"),
         ("shopping", "shop"),
+        ("compelling", "compel"),
+        ("excelling", "excel"),
+        ("libelling", "libel"),
+        ("marshalling", "marshal"),
+        ("panelling", "panel"),
+        ("parcelling", "parcel"),
+        ("patrolling", "patrol"),
+        ("pencilling", "pencil"),
+        ("propelling", "propel"),
+        ("rebelling", "rebel"),
+        ("repelling", "repel"),
+        ("rivalling", "rival"),
+        ("spiralling", "spiral"),
+        ("squirrelling", "squirrel"),
+        ("surveilling", "surveil"),
+        ("tunnelling", "tunnel"),
+        ("unravelling", "unravel"),
+        ("installing", "install"),
+        ("selling", "sell"),
+        ("spilling", "spill"),
+        ("pulling", "pull"),
+        ("dwelling", "dwell"),
+        ("appalling", "appall"),
     ],
 )
 def test_memory_stemming_maintains_ambiguous_inflection_families(
@@ -705,10 +728,12 @@ def test_memory_stemming_maintains_ambiguous_inflection_families(
 @pytest.mark.parametrize(
     ("content", "query"),
     [
-        ("I enjoy travelling.", "travel holidays tourism"),
-        ("I enjoy travelling.", "travel trips holidays"),
+        ("I enjoy travelling.", "enjoy travel holidays"),
+        ("I enjoy travelling.", "enjoy travel trips"),
         ("I prefer gassing up at the motorway services.", "gas"),
         ("I spend an hour bussing to work.", "bus"),
+        ("My dog is patrolling the garden.", "patrol garden checking"),
+        ("I find compelling stories interesting.", "compel stories reasoning"),
     ],
 )
 async def test_memory_stem_regressions_restore_actual_lexical_retrieval(
@@ -733,3 +758,52 @@ async def test_memory_stem_regression_preserves_related_fact_resolution():
     assert outcome["status"] == "needs_resolution"
     assert outcome["candidate"]["memory_id"] == original["memory"]["memory_id"]
     assert len(await memory.async_list("alice")) == 1
+
+@pytest.mark.parametrize(
+    ("stored", "incoming"),
+    [
+        ("My dog patrols the garden.", "My dog is patrolling the garden."),
+        (
+            "Our neighbour rebels against restrictions.",
+            "Our neighbour is rebelling against restrictions.",
+        ),
+    ],
+)
+async def test_memory_additional_l_stems_retain_related_fact_resolution(
+    stored, incoming
+):
+    memory = await _memory()
+    original = await memory.async_add("alice", stored, "personal", "explicit")
+    outcome = await memory.async_upsert("alice", incoming, "personal", "explicit")
+    assert outcome["status"] == "needs_resolution"
+    assert outcome["candidate"]["memory_id"] == original["memory"]["memory_id"]
+    assert len(await memory.async_list("alice")) == 1
+
+
+@pytest.mark.parametrize(
+    ("inflected", "different"),
+    [
+        ("patrolling", "patroll"),
+        ("calling", "cal"),
+        ("spelling", "spel"),
+        ("installing", "instal"),
+        ("bussing", "buss"),
+        ("buzzing", "buz"),
+    ],
+)
+def test_memory_stem_does_not_strip_genuine_or_unknown_word_endings(
+    inflected, different
+):
+    from custom_components.extended_openai_conversation_responses.memory import _stem
+
+    assert _stem(inflected) != _stem(different)
+
+
+async def test_memory_stemming_does_not_create_unrelated_upsert_conflicts():
+    memory = await _memory()
+    await memory.async_add("alice", "My dog patrols the garden.", "pets", "explicit")
+    outcome = await memory.async_upsert(
+        "alice", "My dog watches the television.", "pets", "explicit"
+    )
+    assert outcome["status"] == "created"
+    assert len(await memory.async_list("alice")) == 2

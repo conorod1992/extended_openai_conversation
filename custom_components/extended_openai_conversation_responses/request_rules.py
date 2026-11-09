@@ -4129,20 +4129,34 @@ def _compile_sentence_pattern(pattern: str) -> CompiledPhrase:
 # -se + s fallback used by house/houses and excuse/excuses.
 _US_ES_PLURAL_ROOTS = frozenset(
     {
+        "apparatus",
         "bonus",
-        "campus",
         "cactus",
+        "campus",
+        "caucus",
+        "census",
+        "chorus",
         "circus",
         "focus",
         "genius",
+        "hibiscus",
+        "lotus",
+        "minibus",
+        "minus",
         "nexus",
         "octopus",
+        "omnibus",
+        "plus",
+        "refocus",
+        "sinus",
         "status",
+        "surplus",
         "syllabus",
         "thesaurus",
         "virus",
+        "walrus",
     }
-)
+))
 
 
 def _singularize(token: str) -> str:

@@ -755,6 +755,26 @@ async def test_preview_matches_production_for_same_rule_and_request(
         ("quiz", "quizzes"),
         ("bus", "buses"),
         ("gas", "gases"),
+        ("apparatus", "apparatuses"),
+        ("caucus", "caucuses"),
+        ("census", "censuses"),
+        ("chorus", "choruses"),
+        ("hibiscus", "hibiscuses"),
+        ("lotus", "lotuses"),
+        ("minibus", "minibuses"),
+        ("minus", "minuses"),
+        ("omnibus", "omnibuses"),
+        ("plus", "pluses"),
+        ("refocus", "refocuses"),
+        ("sinus", "sinuses"),
+        ("surplus", "surpluses"),
+        ("walrus", "walruses"),
+        ("excuse", "excuses"),
+        ("use", "uses"),
+        ("refuse", "refuses"),
+        ("abuse", "abuses"),
+        ("fuse", "fuses"),
+        ("genius", "geniuses"),
     ],
 )
 @pytest.mark.parametrize("reverse", [False, True])
@@ -788,6 +808,14 @@ async def test_word_form_families_preserve_strict_matching_in_all_modes(
         ("focus", "focuse"),
         ("house", "hous"),
         ("virus", "viruse"),
+        ("census", "censuse"),
+        ("chorus", "choruse"),
+        ("minus", "minuse"),
+        ("minibus", "minibuse"),
+        ("refocus", "refocuse"),
+        ("surplus", "surpluse"),
+        ("use", "us"),
+        ("excuse", "excus"),
     ],
 )
 async def test_word_form_corrections_do_not_admit_unrelated_words(
@@ -799,3 +827,22 @@ async def test_word_form_corrections_do_not_admit_unrelated_words(
     )
     assert rules.match("show " + incoming) is None
     assert await rules.async_match(hass, "show " + incoming) is None
+
+@pytest.mark.parametrize(
+    ("singular", "plural"),
+    [
+        ("census", "censuses"),
+        ("minibus", "minibuses"),
+        ("house", "houses"),
+        ("status", "statuses"),
+    ],
+)
+async def test_word_form_suffix_matching_remains_opt_in(
+    hass, singular, plural
+):
+    rules = await manager(
+        rule("opt-in", "show " + singular),
+        defaults={"word_forms": False, "fuzzy": False},
+    )
+    assert rules.match("show " + plural) is None
+    assert await rules.async_match(hass, "show " + plural) is None

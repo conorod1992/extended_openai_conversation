@@ -1763,22 +1763,39 @@ _ING_DOUBLED_L_BASES = frozenset(
     {
         "cancel",
         "channel",
+        "compel",
         "control",
         "counsel",
         "dial",
+        "excel",
         "fuel",
         "jewel",
         "label",
         "level",
+        "libel",
+        "marshal",
         "marvel",
         "model",
+        "panel",
+        "parcel",
+        "patrol",
+        "pencil",
+        "propel",
         "quarrel",
+        "rebel",
+        "repel",
         "revel",
+        "rival",
         "signal",
+        "spiral",
+        "squirrel",
+        "surveil",
         "total",
         "travel",
+        "tunnel",
+        "unravel",
     }
-)
+))
 
 # The undoubled roots are real words, unlike those for pass/fuss/buzz.
 _ING_AMBIGUOUS_DOUBLE_BASES = frozenset({"gass", "buss", "quizz"})

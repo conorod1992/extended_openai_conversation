@@ -775,3 +775,72 @@ async def test_chat_rejects_conflicting_or_unknown_accounting_metadata(
                 FakeStream([terminal, accounting]),
             )
         ]
+
+async def test_chat_openrouter_accounting_tail_never_republishes_tool_calls():
+    """Only the first terminal can publish tool calls; a usage tail is inert."""
+    from openai.types.chat import ChatCompletionChunk
+
+    from custom_components.extended_openai_conversation_responses.context_usage_hardening import (
+        RequestTokenMeasurements,
+    )
+
+    def sdk_terminal(*, usage=None):
+        payload = {
+            "id": "gen-tool-tail",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "test-model",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"content": "", "role": "assistant"},
+                    "finish_reason": "tool_calls",
+                    "native_finish_reason": "tool_use",
+                }
+            ],
+        }
+        if usage is not None:
+            payload["usage"] = usage
+        return ChatCompletionChunk.model_validate(payload)
+
+    call_delta = SimpleNamespace(
+        index=0,
+        id="call-1",
+        function=SimpleNamespace(name="do_thing", arguments='{"value":3}'),
+    )
+    usage = RequestTokenMeasurements()
+    deltas = [
+        delta
+        async for delta in _entity()._transform_chat_stream(
+            SimpleNamespace(async_trace=lambda _data: None),
+            FakeStream(
+                [
+                    _chat_chunk(tool_calls=[call_delta]),
+                    sdk_terminal(),
+                    sdk_terminal(
+                        usage={
+                            "prompt_tokens": 11,
+                            "completion_tokens": 7,
+                            "total_tokens": 18,
+                        }
+                    ),
+                ]
+            ),
+            usage,
+        )
+    ]
+    assert len(deltas) == 2
+    assert deltas[0] == {"role": "assistant"}
+    assert len(deltas[1]["tool_calls"]) == 1
+    call = deltas[1]["tool_calls"][0]
+    assert (call.id, call.tool_name, call.tool_args, call.external) == (
+        "call-1",
+        "do_thing",
+        {"value": 3},
+        True,
+    )
+    assert (
+        usage.reported.input_tokens,
+        usage.reported.output_tokens,
+        usage.reported.total_tokens,
+    ) == (11, 7, 18)
