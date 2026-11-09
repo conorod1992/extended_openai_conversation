@@ -29,6 +29,7 @@ _WHITESPACE = re.compile(r"[ \t\f\v]+")
 _BLANK_LINES = re.compile(r"\n\s*\n+")
 
 _URL_PREFIXES = ("http://", "https://", "www.")
+_URL_TRAILING_PUNCTUATION = frozenset(".,;:!?")
 _WWW_ADDRESS = re.compile(
     r"www\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+",
     re.IGNORECASE,
@@ -297,6 +298,34 @@ class StreamingSpeechSanitizer:
             count += preceding_backslashes
         return bool(count % 2)
 
+    @staticmethod
+    def _bare_url_end(text: str, start: int, end: int) -> int:
+        """Leave sentence punctuation and excess closing brackets outside a URL.
+
+        Count delimiters once so trimming a long URL remains linear. Balanced
+        parentheses in a URL path (such as Wikipedia titles) stay part of it.
+        """
+        opens = {"(": 0, "[": 0}
+        closes = {")": 0, "]": 0}
+        for char in text[start:end]:
+            if char in opens:
+                opens[char] += 1
+            elif char in closes:
+                closes[char] += 1
+        while end > start:
+            char = text[end - 1]
+            if char in _URL_TRAILING_PUNCTUATION:
+                end -= 1
+            elif char == ")" and closes[")"] > opens["("]:
+                closes[")"] -= 1
+                end -= 1
+            elif char == "]" and closes["]"] > opens["["]:
+                closes["]"] -= 1
+                end -= 1
+            else:
+                break
+        return end
+
     @classmethod
     def _has_closer(
         cls, text: str, start: int, marker: str, preceding_backslashes: int = 0
@@ -386,6 +415,55 @@ class StreamingSpeechSanitizer:
                     held_whitespace = self._hold_preceding_whitespace(output)
                     break
 
+            if self.urls and char in "<(" and not (
+                self.markdown
+                and self._is_escaped(text, index, self._link_backslashes)
+            ):
+                # A URL wrapped by angle brackets or parentheses should not
+                # leave empty delimiters in speech. Hold the opening delimiter
+                # until a split URL prefix can be ruled out, or its closer
+                # arrives; already-emitted speech cannot be taken back.
+                remaining = text[index + 1 : index + 9].lower()
+                wrapper_prefix = next(
+                    (prefix for prefix in _URL_PREFIXES if remaining.startswith(prefix)),
+                    None,
+                )
+                if (
+                    wrapper_prefix is None
+                    and not final
+                    and any(prefix.startswith(remaining) for prefix in _URL_PREFIXES)
+                ):
+                    held_whitespace = self._hold_preceding_whitespace(output)
+                    break
+                if wrapper_prefix is not None:
+                    closing = ">" if char == "<" else ")"
+                    end = index + 1 + len(wrapper_prefix)
+                    depth = 0
+                    while end < len(text):
+                        current = text[end]
+                        if current.isspace() or current in "<>":
+                            break
+                        if char == "(" and current == "(":
+                            depth += 1
+                        elif current == closing:
+                            if depth == 0:
+                                break
+                            depth -= 1
+                        end += 1
+                    if end == len(text) and not final:
+                        held_whitespace = self._hold_preceding_whitespace(output)
+                        break
+                    if (
+                        end < len(text)
+                        and text[end] == closing
+                        and (
+                            wrapper_prefix != "www."
+                            or _WWW_ADDRESS.match(text[index + 1 : end])
+                        )
+                    ):
+                        index = self._suppress(output, end + 1)
+                        continue
+
             markdown_start = index
             if self.markdown and char == "!":
                 if index + 1 == len(text) and not final:
@@ -446,7 +524,9 @@ class StreamingSpeechSanitizer:
                         self._emit(output, char)
                         index += 1
                         continue
-                    index = self._suppress(output, end)
+                    index = self._suppress(
+                        output, self._bare_url_end(text, index, end)
+                    )
                     continue
 
             # Keep a whitespace-only tail unresolved until meaningful input
