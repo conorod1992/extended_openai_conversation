@@ -258,25 +258,25 @@ async def current_mutation_behaviour() -> dict[str, Any]:
     tests = [
         {
             "name": "existing-key-explicit-correction",
-            "initial": [record("original", "Thermostat target is 19 C.", "alice", key="temp.target")],
+            "initial": [record("original", "alice", "Thermostat target is 19 C.", key="temp.target")],
             "owner": "alice",
             "incoming": {"content": "Thermostat target is 21 C.", "category": "general", "source": "explicit", "key": "temp.target"},
         },
         {
             "name": "unkeyed-related-contradiction",
-            "initial": [record("original", "I prefer tea to coffee.", "alice")],
+            "initial": [record("original", "alice", "I prefer tea to coffee.")],
             "owner": "alice",
             "incoming": {"content": "I prefer coffee to tea.", "category": "general", "source": "explicit"},
         },
         {
             "name": "punctuation-only-duplicate",
-            "initial": [record("original", "I like milk.", "alice")],
+            "initial": [record("original", "alice", "I like milk.")],
             "owner": "alice",
             "incoming": {"content": "I like milk!!!", "category": "general", "source": "explicit"},
         },
         {
             "name": "implicit-protected-key",
-            "initial": [record("original", "I like tea.", "alice", key="drink.preference")],
+            "initial": [record("original", "alice", "I like tea.", key="drink.preference")],
             "owner": "alice",
             "incoming": {"content": "I dislike tea.", "category": "general", "source": "implicit", "key": "drink.preference"},
         },
@@ -288,19 +288,19 @@ async def current_mutation_behaviour() -> dict[str, Any]:
         },
         {
             "name": "unkeyed-key-promotion",
-            "initial": [dict(record("original", "My dog is a collie.", "alice", subject="Dog"), source="implicit")],
+            "initial": [dict(record("original", "alice", "My dog is a collie.", subject="Dog"), source="implicit")],
             "owner": "alice",
             "incoming": {"content": "My dog is a collie.", "category": "general", "source": "explicit", "subject": "Dog", "key": "pets.dog.breed"},
         },
         {
             "name": "same-key-different-owner",
-            "initial": [record("original", "My dog is a collie.", "alice", key="pets.dog.breed")],
+            "initial": [record("original", "alice", "My dog is a collie.", key="pets.dog.breed")],
             "owner": "bob",
             "incoming": {"content": "My dog is a terrier.", "category": "general", "source": "explicit", "key": "pets.dog.breed"},
         },
         {
             "name": "unkeyed-same-text-different-subject",
-            "initial": [record("original", "The lamp is on.", "alice", subject="Kitchen")],
+            "initial": [record("original", "alice", "The lamp is on.", subject="Kitchen")],
             "owner": "alice",
             "incoming": {"content": "The lamp is on.", "category": "general", "source": "explicit", "subject": "Bedroom"},
         },
