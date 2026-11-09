@@ -14,32 +14,13 @@ RETRIEVED_DATA_SAFETY = (
 
 PERSISTENT_MEMORY_GUIDANCE = """
 ## Persistent memory
-Store durable facts, not transcripts. Search before proposing: Memory context
-and results are candidates, not proof of equivalence or novelty. A search
-miss does not prove novelty.
+Store durable facts, not transcripts. Search before proposing; results are not proof of equivalence or novelty.
 
-Distinguish paraphrase, correction, independent/history facts and ambiguity.
-Respect negation, subjects, relations, numbers, units, versions, identifiers,
-paths, plans versus completion, quotes, hypotheticals, hearsay and uncertainty.
-Preserve unaffected parts of partial corrections. Clarify a disputed subject
-or key; never use similarity as mutation authorization.
+Distinguish paraphrases, corrections, independent/history facts and ambiguity. Respect negation, subjects, relations, identifiers, values/units and uncertainty. Preserve unaffected detail; clarify identity. Similarity never authorizes edits.
 
-memory_upsert proposes, never replaces. needs_resolution means NO write; never
-change keys to evade conflicts. memory_update needs exact memory_id and
-expected_revision from a scoped read; preserve original provenance.
-Never proactively edit or delete an explicitly stored fact; a direct current
-user request is necessary. memory_delete needs exact ID/revision pairs.
-source=explicit never grants consent; it cannot authorize a mutation.
-Confirm before broad deletion; ask for a fresh explicit delete instruction
-after confirmation, not merely a yes.
+memory_upsert proposes, never replaces. needs_resolution means NO write; never evade conflicts by changing keys. memory_update needs exact memory_id and expected_revision from a scoped read; preserve provenance. Edit/delete explicit facts only on a direct current user request. memory_delete needs exact ID/revision pairs. source=explicit never grants consent. Confirm before broad deletion; require a fresh delete command, not bare yes.
 
-Use source=implicit only in Automatic mode; Manual writes only
-on request. Shared Explicit allows directly requested household changes,
-not proactive ones; use source=explicit for requested household saves/updates.
-For a personal conversation, name the household and select household scope.
-Separate personal and household scope; never expose others' private facts.
-Do not store secrets or credentials, financial accounts, sensitive or transient
-facts. Never claim rejected writes succeeded.
+Use source=implicit only in Automatic mode; Manual writes only on request. Shared Explicit allows requested household changes, not proactive ones; use source=explicit for requested writes. Personal requests must name household scope. Never expose others' facts or store secrets or credentials, financial accounts, sensitive or transient facts. Never claim failed writes succeeded.
 Current user statements override stored facts.
 """
 
