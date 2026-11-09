@@ -525,9 +525,7 @@ class PersistentMemory:
                     candidate = self._find_unique_unkeyed_duplicate(
                         user_id,
                         content,
-                        cleaned_subject
-                        if isinstance(cleaned_subject, str)
-                        else None,
+                        cleaned_subject if isinstance(cleaned_subject, str) else None,
                         cleaned_valid_from
                         if isinstance(cleaned_valid_from, str)
                         else None,
@@ -574,17 +572,12 @@ class PersistentMemory:
                         cleaned_valid_from is _UNSET
                         or candidate.valid_from == cleaned_valid_from
                     )
-                    and (
-                        cleaned_key is _UNSET or candidate.key == cleaned_key
-                    )
+                    and (cleaned_key is _UNSET or candidate.key == cleaned_key)
                 )
                 # An unkeyed proposal must not silently take the identity of a
                 # differently keyed record; an identical text alone is not proof
                 # that two canonical identities are interchangeable.
-                if same and (
-                    cleaned_key is not _UNSET
-                    or candidate.key is None
-                ):
+                if same and (cleaned_key is not _UNSET or candidate.key is None):
                     return {
                         "status": "unchanged",
                         "memory": memory_as_dict(candidate, include_revision=True),
@@ -612,9 +605,7 @@ class PersistentMemory:
                 subject=cleaned_subject if isinstance(cleaned_subject, str) else None,
                 key=cleaned_key if isinstance(cleaned_key, str) else None,
                 valid_from=(
-                    cleaned_valid_from
-                    if isinstance(cleaned_valid_from, str)
-                    else None
+                    cleaned_valid_from if isinstance(cleaned_valid_from, str) else None
                 ),
             )
             self._assert_key_available(new_record)
@@ -1047,7 +1038,9 @@ class PersistentMemory:
             self._require_writable()
             current = self._owned_memory(user_id, memory_id)
             if not allow_explicit_edit and current.source == "explicit":
-                raise ValueError("explicit memories require authenticated management editing")
+                raise ValueError(
+                    "explicit memories require authenticated management editing"
+                )
             if (
                 expected_revision is not None
                 and memory_revision(current) != expected_revision
@@ -1125,7 +1118,11 @@ class PersistentMemory:
         complete revision map; every requested target is validated under the
         lock before any record/index/cache mutation occurs.
         """
-        if not isinstance(memory_ids, list) or not memory_ids or len(memory_ids) > MAX_SEARCH_LIMIT:
+        if (
+            not isinstance(memory_ids, list)
+            or not memory_ids
+            or len(memory_ids) > MAX_SEARCH_LIMIT
+        ):
             raise ValueError(f"memory_ids must contain 1 to {MAX_SEARCH_LIMIT} IDs")
         if not all(isinstance(identity, str) and identity for identity in memory_ids):
             raise ValueError("memory_ids must contain non-empty strings")
@@ -1156,7 +1153,9 @@ class PersistentMemory:
                             "explicit memories require authenticated management deletion"
                         )
                     if memory_revision(current) != expected_revisions[memory_id]:
-                        raise ValueError("memory changed since it was loaded; search again")
+                        raise ValueError(
+                            "memory changed since it was loaded; search again"
+                        )
             deleted = 0
             for memory_id in set(memory_ids):
                 current = self._memories.get(memory_id)
