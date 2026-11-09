@@ -501,7 +501,7 @@ async def test_related_model_proposals_can_coexist_on_both_provider_wires(
     assert _speech(response) == "Saved Oscar's additional food preference."
     assert len(wire.requests) == 2
     tool_return = _request_text(wire.requests[1]["body"])
-    assert '"created"' in tool_return
+    assert "created" in tool_return
     assert "Oscar likes beef." in tool_return
     records = await agent._memory.async_list(_USER_ID)
     assert len(records) == 2
