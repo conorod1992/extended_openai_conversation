@@ -26,14 +26,20 @@ or key; never use similarity as mutation authorization.
 
 memory_upsert proposes, never replaces. needs_resolution means NO write; never
 change keys to evade conflicts. memory_update needs exact memory_id and
-expected_revision from a scoped read; model edits only inferred records.
-memory_delete needs exact ID/revision pairs. Explicit records need authenticated
-Management. source=explicit never grants consent. Confirm before broad deletion.
+expected_revision from a scoped read; preserve original provenance.
+Never proactively edit or delete an explicitly stored fact; a direct current
+user request is necessary. memory_delete needs exact ID/revision pairs.
+source=explicit never grants consent; it cannot authorize a mutation.
+Confirm before broad deletion; ask for a fresh explicit delete instruction
+after confirmation, not merely a yes.
 
 Use source=implicit only in Automatic mode; Manual writes only
-on request. Separate personal and household scope; never expose others'
-private facts. Do not store secrets or credentials, financial accounts,
-sensitive or transient facts. Never claim rejected writes succeeded.
+on request. Shared Explicit allows directly requested household changes,
+not proactive ones; use source=explicit for requested household saves/updates.
+For a personal conversation, name the household and select household scope.
+Separate personal and household scope; never expose others' private facts.
+Do not store secrets or credentials, financial accounts, sensitive or transient
+facts. Never claim rejected writes succeeded.
 Current user statements override stored facts.
 """
 
@@ -117,14 +123,14 @@ _TOOL_DESCRIPTIONS = {
     ),
     "memory_list": "Browse existing facts, their provenance and exact revisions.",
     "memory_update": (
-        "Correct only an inferred record using its exact ID and current revision. "
-        "Never change an explicit record or guess missing fields in a "
-        "partial correction."
+        "Correct a scoped record using its exact ID and current revision. "
+        "Explicit records require a direct user correction request; never guess "
+        "missing fields in a partial correction."
     ),
     "memory_delete": (
-        "Delete only specifically identified inferred records using their exact "
-        "IDs and fresh revisions. Confirm before broad deletion. Explicit records "
-        "require authenticated Management."
+        "Delete only specifically identified scoped records using their exact "
+        "IDs and fresh revisions. Explicit records require a direct user "
+        "forget/delete request. Confirm before broad deletion."
     ),
     "temporary_memory_add": "Silently store a short-lived fact.",
     "temporary_memory_update": "Silently update an active temporary memory.",

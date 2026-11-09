@@ -992,8 +992,11 @@ class PersistentMemory:
         *,
         source: str | None = None,
         allow_explicit_edit: bool = True,
+        model_origin: bool = False,
     ) -> MemoryRecord:
-        """Update a memory; untrusted model callers cannot edit explicit facts."""
+        """Revision-checked update; model writes preserve privacy and provenance."""
+        if model_origin and expected_revision is None:
+            raise ValueError("model-origin update requires expected_revision")
         if source is not None and source not in {"explicit", "implicit"}:
             raise ValueError("source must be explicit or implicit")
         if expected_revision is not None and (
@@ -1045,7 +1048,8 @@ class PersistentMemory:
             new_category = (
                 _clean_category(category) if category is not None else current.category
             )
-            effective_source = source or current.source
+            # Model-supplied origin cannot promote or demote existing records.
+            effective_source = current.source if model_origin else (source or current.source)
             new_key = (
                 None
                 if "key" in clear
@@ -1076,9 +1080,10 @@ class PersistentMemory:
                 ),
             }
             _validate_privacy_fields(
-                effective_source, new_content, new_category, changes["subject"], new_key
+                "implicit" if model_origin else effective_source,
+                new_content, new_category, changes["subject"], new_key,
             )
-            if current.source == "explicit" and source == "implicit":
+            if not model_origin and current.source == "explicit" and source == "implicit":
                 if any(
                     value != getattr(current, field)
                     for field, value in changes.items()
@@ -1897,7 +1902,7 @@ def memory_tools() -> list[dict[str, Any]]:
         {
             "spec": {
                 "name": "memory_update",
-                "description": "Revision-checked edit of an existing inferred memory; explicit memories require authenticated management editing.",
+                "description": "Revision-checked correction of a scoped memory. Explicit records require a direct current-turn user request; provenance stays unchanged.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -1935,7 +1940,7 @@ def memory_tools() -> list[dict[str, Any]]:
         {
             "spec": {
                 "name": "memory_delete",
-                "description": "Delete inferred memories using the exact ID and revision of every target. Explicit memories require authenticated management deletion.",
+                "description": "Delete scoped memories by exact ID and revision. Explicit records require a direct user forget/delete request. Confirm before broad deletion.",
                 "parameters": {
                     "type": "object",
                     "properties": {
