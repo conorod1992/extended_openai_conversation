@@ -71,6 +71,153 @@ def _chat_chunk(
     )
 
 
+def _azure_annotation(
+    *,
+    results: Any = None,
+    delta: Any = None,
+    extras: dict[str, Any] | None = None,
+    finish_reason: str | None = None,
+) -> SimpleNamespace:
+    """Mirror Azure's annotation-only wire choices and SDK model_extra."""
+    if extras is None:
+        extras = {
+            "content_filter_results": results
+            if results is not None
+            else {"hate": {"filtered": False, "severity": "safe"}},
+            "content_filter_raw": [],
+            "content_filter_offsets": {
+                "check_offset": 44,
+                "start_offset": 0,
+                "end_offset": 44,
+            },
+        }
+    return SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                index=0,
+                finish_reason=finish_reason,
+                delta=delta,
+                model_extra=extras,
+                logprobs=None,
+            )
+        ],
+        usage=None,
+    )
+
+
+async def test_azure_async_filter_annotations_can_interleave_and_follow_stop() -> None:
+    """Azure's documented safe annotations don't terminate an answer early."""
+    stream = FakeStream(
+        [
+            _azure_annotation(),
+            _chat_chunk(content="Hello "),
+            _azure_annotation(delta=SimpleNamespace()),
+            _chat_chunk(content="world"),
+            _chat_chunk(finish_reason="stop"),
+            _azure_annotation(),
+        ]
+    )
+    deltas = [
+        delta
+        async for delta in _entity()._transform_chat_stream(SimpleNamespace(), stream)
+    ]
+    assert deltas == [
+        {"role": "assistant"}, {"content": "Hello "}, {"content": "world"}
+    ]
+
+
+@pytest.mark.parametrize("after_terminal", [False, True])
+@pytest.mark.parametrize(
+    ("results", "message"),
+    [
+        ({"hate": {"filtered": True, "severity": "high"}}, "blocked"),
+        ({"hate": {"error": {"code": "content_filter_error"}}}, "filtering failed"),
+        ({"hate": {"filtered": "unknown"}}, "blocked"),
+    ],
+)
+async def test_azure_async_filter_negative_annotations_are_not_ignored(
+    after_terminal: bool, results: Any, message: str
+) -> None:
+    chunks = [_chat_chunk(content="partial")]
+    if after_terminal:
+        chunks.append(_chat_chunk(finish_reason="stop"))
+    chunks.append(_azure_annotation(results=results))
+    with pytest.raises(HomeAssistantError, match=message):
+        _ = [
+            delta
+            async for delta in _entity()._transform_chat_stream(
+                SimpleNamespace(), FakeStream(chunks)
+            )
+        ]
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"content_filter_results": {}, "late_output": "hidden"},
+        {"content_filter_results": {}, "native_finish_reason": "stop"},
+    ],
+)
+async def test_azure_annotations_cannot_smuggle_unknown_post_terminal_data(
+    extra: dict[str, Any],
+) -> None:
+    with pytest.raises(ProviderStreamError, match="after terminal response"):
+        _ = [
+            delta
+            async for delta in _entity()._transform_chat_stream(
+                SimpleNamespace(),
+                FakeStream([
+                    _chat_chunk(finish_reason="stop"),
+                    _azure_annotation(extras=extra),
+                ]),
+            )
+        ]
+
+
+async def test_azure_annotation_cannot_smuggle_late_assistant_delta() -> None:
+    with pytest.raises(ProviderStreamError, match="after terminal response"):
+        _ = [
+            delta
+            async for delta in _entity()._transform_chat_stream(
+                SimpleNamespace(),
+                FakeStream([
+                    _chat_chunk(finish_reason="stop"),
+                    _azure_annotation(delta=SimpleNamespace(content="late")),
+                ]),
+            )
+        ]
+
+
+async def test_missing_chat_delta_without_annotation_is_still_rejected() -> None:
+    with pytest.raises(ProviderStreamError, match="Chat delta missing"):
+        _ = [
+            delta
+            async for delta in _entity()._transform_chat_stream(
+                SimpleNamespace(), FakeStream([
+                    SimpleNamespace(
+                        choices=[
+                            SimpleNamespace(
+                                index=0, delta=None, finish_reason=None
+                            )
+                        ],
+                        usage=None,
+                    )
+                ]),
+            )
+        ]
+
+
+async def test_azure_content_filter_terminal_without_delta_still_blocks() -> None:
+    with pytest.raises(HomeAssistantError, match="blocked"):
+        _ = [
+            delta
+            async for delta in _entity()._transform_chat_stream(
+                SimpleNamespace(),
+                FakeStream([_azure_annotation(finish_reason="content_filter")]),
+            )
+        ]
+
+
 async def test_chat_completed_terminal_is_accepted() -> None:
     """A normal Chat Completions stop finish still succeeds."""
     stream = FakeStream(

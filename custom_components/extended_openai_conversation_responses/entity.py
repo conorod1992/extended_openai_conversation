@@ -745,6 +745,71 @@ def _parse_provider_tool_arguments(arguments: str) -> Any:
     return json.loads(arguments)
 
 
+_AZURE_CHAT_ANNOTATION_FIELDS = frozenset(
+    {"content_filter_results", "content_filter_raw", "content_filter_offsets"}
+)
+
+
+def _is_azure_chat_filter_annotation_choice(choice: Any) -> bool:
+    """Recognize Azure's annotation-only choice, never late assistant output.
+
+    Azure asynchronous filtering sends these choices without a delta, sometimes
+    after the ordinary stop chunk. Restrict the envelope instead of relaxing
+    the general post-terminal accounting and provider-output admission rules.
+    """
+    extras = getattr(choice, "model_extra", None)
+    if (
+        not isinstance(extras, Mapping)
+        or not extras
+        or not set(extras) <= _AZURE_CHAT_ANNOTATION_FIELDS
+        or getattr(choice, "finish_reason", None) is not None
+        or getattr(choice, "index", 0) not in (0, None)
+        or getattr(choice, "logprobs", None) is not None
+    ):
+        return False
+    delta = getattr(choice, "delta", None)
+    if delta is None:
+        return True
+    if getattr(delta, "model_extra", None):
+        return False
+    return not any(
+        getattr(delta, field, None)
+        for field in (
+            "role",
+            "content",
+            "refusal",
+            "tool_calls",
+            "function_call",
+            "audio",
+            "reasoning",
+            "reasoning_content",
+        )
+    )
+
+
+def _azure_filter_signal(results: Any) -> str | None:
+    """Inspect filtering decisions, including nested Azure category results."""
+    if results is None:
+        return None
+    if isinstance(results, Mapping):
+        if "error" in results and results["error"] is not None:
+            return "error"
+        if "filtered" in results and results["filtered"] is not False:
+            return "blocked"
+        for value in results.values():
+            if signal := _azure_filter_signal(value):
+                return signal
+    elif isinstance(results, list):
+        for value in results:
+            if signal := _azure_filter_signal(value):
+                return signal
+    else:
+        # Unknown annotation result shapes must not be silently accepted as
+        # proof that the already-streamed text passed content filtering.
+        return "error"
+    return None
+
+
 def _is_post_terminal_chat_accounting_choice(
     choice: Any,
     terminal_reason: str | None,
@@ -2028,6 +2093,26 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     _trace_provider_usage(chat_log, extract_usage(chunk.usage))
                 continue
 
+            # Azure asynchronous content filtering sends annotation-only
+            # choices (without delta), including after the terminal response.
+            # Their filtering signals must be processed, not merely discarded.
+            if (
+                len(chunk.choices) == 1
+                and _is_azure_chat_filter_annotation_choice(chunk.choices[0])
+            ):
+                annotation = chunk.choices[0].model_extra
+                signal = _azure_filter_signal(annotation.get("content_filter_results"))
+                if signal:
+                    await async_recover_trailing_usage(result, request_usage)
+                    if signal == "blocked":
+                        raise HomeAssistantError(
+                            "OpenAI response was blocked by the provider content filter"
+                        )
+                    raise HomeAssistantError(
+                        "Provider content filtering failed; response cannot be trusted"
+                    )
+                continue
+
             if terminal_finish_seen:
                 # Some compatible gateways append a usage-bearing choice after
                 # the terminal chunk, with an empty delta and repeated finish
@@ -2046,8 +2131,20 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     error_type="invalid_event_sequence",
                 )
             choice = chunk.choices[0]
-            delta = choice.delta
+            delta = getattr(choice, "delta", None)
             finish_reason = choice.finish_reason
+            if delta is None:
+                # A content-filter terminal can also arrive without a delta.
+                # Every other unannotated missing-delta event remains malformed.
+                await async_recover_trailing_usage(result, request_usage)
+                if finish_reason == "content_filter":
+                    raise HomeAssistantError(
+                        "OpenAI response was blocked by the provider content filter"
+                    )
+                raise ProviderStreamError(
+                    "Provider returned malformed data: Chat delta missing",
+                    error_type="invalid_event_sequence",
+                )
             try:
                 budget.chat_delta(delta)
             except ProviderStreamError:
