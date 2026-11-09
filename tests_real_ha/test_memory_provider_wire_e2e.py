@@ -399,6 +399,8 @@ async def test_model_upsert_conflict_has_no_write_and_exposes_revision_on_real_s
     assert "needs_resolution" in descriptions["memory_upsert"]
     assert "not proof" in descriptions["memory_search"]
     assert "revision" in descriptions["memory_update"]
+    assert "direct user correction" in descriptions["memory_update"]
+    assert "direct user" in descriptions["memory_delete"]
     assert "Confirm before broad deletion" in descriptions["memory_delete"]
     assert "Confirm before broad deletion" in _request_text(request)
     assert "memory_add" not in descriptions

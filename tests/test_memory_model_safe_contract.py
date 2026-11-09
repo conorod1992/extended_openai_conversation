@@ -32,7 +32,10 @@ from custom_components.extended_openai_conversation_responses.memory import (
 from custom_components.extended_openai_conversation_responses.model_payload import (
     prepare_model_function_tools,
 )
-from custom_components.extended_openai_conversation_responses.scope import user_scope
+from custom_components.extended_openai_conversation_responses.scope import (
+    shared_scope,
+    user_scope,
+)
 
 
 class Storage:
@@ -68,9 +71,15 @@ def entity(memory, *, automatic=True, shared=SHARED_MEMORY_EXPLICIT):
     return result
 
 
-async def model_call(agent, operation, **arguments):
+async def model_call(
+    agent, operation, *, user_text=None, turn_scope=None, **arguments
+):
     token = _ACTIVE_TURN.set(
-        replace(_ACTIVE_TURN.get(), scope=user_scope("alice", source="test"))
+        replace(
+            _ACTIVE_TURN.get(),
+            scope=turn_scope or user_scope("alice", source="test"),
+            user_request_text=user_text,
+        )
     )
     try:
         return await agent._async_execute_memory_tool(operation, arguments, None)
@@ -252,7 +261,7 @@ async def test_allowed_model_updates_preserve_inferred_provenance(
     assert storage.saves == saves + 1
 
 
-async def test_model_cannot_edit_or_delete_explicit_memory_even_with_fresh_revision():
+async def test_model_cannot_edit_or_delete_explicit_memory_without_user_request():
     memory, storage = await store()
     created = await memory.async_add(
         "alice", "My preferred colour is blue.", "preferences", "explicit"
@@ -468,3 +477,176 @@ async def test_model_delete_does_not_accept_duplicate_ids_or_fake_versions():
             {"memory_id": memory_id, "expected_revision": "not-a-version"},
         ])
     assert storage.data == before and storage.saves == saves
+
+
+async def test_direct_user_correction_and_forget_allow_explicit_record_without_promotion():
+    memory, storage = await store()
+    added = await memory.async_add(
+        "alice", "Oscar prefers the blue ball.", "pets", "explicit"
+    )
+    agent = entity(memory, automatic=False)
+    original = (await memory.async_list("alice"))[0]
+    identity = added["memory"]["memory_id"]
+    revision = memory_revision(original)
+    with pytest.raises(ValueError, match="authenticated management editing"):
+        await model_call(
+            agent, "update", user_text="Please change the thermostat.",
+            memory_id=identity, expected_revision=revision,
+            content="Oscar prefers the green dinosaur.", source="explicit",
+        )
+    changed = await model_call(
+        agent, "update",
+        user_text="Actually, Oscar prefers the green dinosaur now. Update your memory.",
+        memory_id=identity, expected_revision=revision,
+        content="Oscar prefers the green dinosaur.",
+    )
+    assert changed["status"] == "updated"
+    stored = (await memory.async_list("alice"))[0]
+    assert stored.source == "explicit"
+    assert stored.memory_id == identity
+    assert stored.content == "Oscar prefers the green dinosaur."
+    assert memory_revision(stored) != revision
+
+    with pytest.raises(ValueError, match="authenticated management deletion"):
+        await model_call(
+            agent, "delete",
+            user_text="Please remember that Oscar prefers the green dinosaur.",
+            targets=[{"memory_id": identity, "expected_revision": memory_revision(stored)}],
+        )
+    deleted = await model_call(
+        agent, "delete", user_text="Please forget Oscar's favourite toy.",
+        targets=[{"memory_id": identity, "expected_revision": memory_revision(stored)}],
+    )
+    assert deleted == {"status": "deleted", "deleted": 1}
+    assert storage.saves == 3
+    assert await memory.async_list("alice") == []
+
+
+async def test_model_correction_of_explicit_record_still_enforces_implicit_privacy():
+    memory, storage = await store()
+    added = await memory.async_add(
+        "alice", "The kitchen is painted white.", "home", "explicit"
+    )
+    record = (await memory.async_list("alice"))[0]
+    before, saves = deepcopy(storage.data), storage.saves
+    with pytest.raises(ValueError, match="sensitive"):
+        await model_call(
+            entity(memory), "update", user_text="Update your memory with my medical diagnosis.",
+            memory_id=added["memory"]["memory_id"],
+            expected_revision=memory_revision(record),
+            content="My medical diagnosis is example condition.",
+            category="health", source="explicit",
+        )
+    assert storage.saves == saves
+    assert storage.data == before
+    assert (await memory.async_list("alice"))[0].source == "explicit"
+
+
+@pytest.mark.parametrize("automatic", [False, True])
+async def test_shared_explicit_household_create_requires_direct_instruction_and_scope(
+    automatic,
+):
+    memory, storage = await store()
+    agent = entity(memory, automatic=automatic, shared=SHARED_MEMORY_EXPLICIT)
+    args = dict(
+        content="The pantry shelves are green.", category="household",
+        scope="household", source="explicit",
+    )
+    for user_text in (
+        None,
+        "Remember that the pantry shelves are green.",
+        'The note says "remember for the household the pantry shelves are green."',
+        "Can you explain how to remember household things?",
+        "Please change the thermostat.",
+    ):
+        with pytest.raises(ValueError, match="automatic shared memory creation is disabled"):
+            await model_call(agent, "upsert", user_text=user_text, **args)
+    assert storage.saves == 0
+    with pytest.raises(ValueError, match="automatic"):
+        await model_call(
+            agent, "upsert",
+            user_text="Remember for the household that the pantry shelves are green.",
+            **{**args, "source": "implicit"},
+        )
+    result = await model_call(
+        agent, "upsert",
+        user_text="Please remember for the household that the pantry shelves are green.",
+        **args,
+    )
+    assert result["status"] == "created"
+    assert result["memory"]["source"] == "explicit"
+    assert len(await memory.async_list("shared:household")) == 1
+    assert await memory.async_list("alice") == []
+
+
+async def test_shared_explicit_voice_accepts_direct_memory_operations_but_not_proactive():
+    memory, storage = await store()
+    agent = entity(memory, automatic=False, shared=SHARED_MEMORY_EXPLICIT)
+    voice = shared_scope(source="test")
+    created = await model_call(
+        agent, "upsert", turn_scope=voice,
+        user_text="Remember that recycling is collected on Thursday.",
+        content="Recycling is collected on Thursday.",
+        category="household", source="explicit",
+    )
+    assert created["status"] == "created"
+    saved = (await memory.async_list("shared:household"))[0]
+    old_rev = memory_revision(saved)
+    with pytest.raises(ValueError, match="automatic shared memory creation is disabled"):
+        await model_call(
+            agent, "update", turn_scope=voice,
+            memory_id=saved.memory_id, expected_revision=old_rev,
+            content="Recycling is collected on Friday.",
+        )
+    corrected = await model_call(
+        agent, "update", turn_scope=voice,
+        user_text="Correct your memory: recycling is collected on Friday.",
+        memory_id=saved.memory_id, expected_revision=old_rev,
+        content="Recycling is collected on Friday.",
+    )
+    assert corrected["status"] == "updated"
+    current = (await memory.async_list("shared:household"))[0]
+    assert current.source == "explicit"
+    assert memory_revision(current) != old_rev
+    with pytest.raises(ValueError, match="changed"):
+        await model_call(
+            agent, "delete", turn_scope=voice,
+            user_text="Forget the recycling collection schedule.",
+            targets=[{"memory_id": saved.memory_id, "expected_revision": old_rev}],
+        )
+    deleted = await model_call(
+        agent, "delete", turn_scope=voice,
+        user_text="Forget the recycling collection schedule.",
+        targets=[{"memory_id": saved.memory_id, "expected_revision": memory_revision(current)}],
+    )
+    assert deleted == {"status": "deleted", "deleted": 1}
+    assert storage.saves == 3
+    assert await memory.async_list("shared:household") == []
+
+
+async def test_user_requested_mixed_delete_is_atomic_with_explicit_records():
+    memory, storage = await store()
+    inferred = await memory.async_add("alice", "One inferred fact.", "general", "implicit")
+    explicit = await memory.async_add("alice", "One explicit fact.", "general", "explicit")
+    records = await memory.async_list("alice")
+    by_id = {r.memory_id: memory_revision(r) for r in records}
+    identities = [inferred["memory"]["memory_id"], explicit["memory"]["memory_id"]]
+    agent = entity(memory)
+    before, saves = deepcopy(storage.data), storage.saves
+    with pytest.raises(ValueError, match="changed"):
+        await model_call(
+            agent, "delete", user_text="Please delete these memories.",
+            targets=[
+                {"memory_id": identities[0], "expected_revision": by_id[identities[0]]},
+                {"memory_id": identities[1], "expected_revision": "0" * 64},
+            ],
+        )
+    assert storage.data == before and storage.saves == saves
+    done = await model_call(
+        agent, "delete", user_text="Please delete these memories.",
+        targets=[
+            {"memory_id": target, "expected_revision": by_id[target]} for target in identities
+        ],
+    )
+    assert done == {"status": "deleted", "deleted": 2}
+    assert await memory.async_list("alice") == []

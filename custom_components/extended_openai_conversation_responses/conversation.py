@@ -319,6 +319,16 @@ def _direct_memory_user_request(operation: str, selector: Any) -> bool:
         match = _MEMORY_TRAILING_COMMAND.search(utterance)
     if match is None or match.group("verb").lower() not in _MEMORY_REQUEST_VERBS[operation]:
         return False
+    # "Change the thermostat" or "delete a file" are not memory commands.
+    # Only remember/forget are unambiguously about retained facts on their own.
+    if match.group("verb").lower() not in {
+        "remember", "memorise", "memorize", "forget"
+    } and re.search(
+        r"\bmemor(?:y|ies)\b|\bwhat\s+(?:you|it)\s+remember\b",
+        utterance[match.end():],
+        re.IGNORECASE,
+    ) is None:
+        return False
     if selector == "household" and (
         turn.scope is None or turn.scope.scope_type != "shared"
     ):
