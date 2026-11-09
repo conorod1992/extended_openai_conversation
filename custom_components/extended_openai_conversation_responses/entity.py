@@ -2141,7 +2141,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 yield {"tool_calls": tool_calls_list}
                 current_tool_calls.clear()
             if finish_reason in {
-                "stop", "tool_calls", "function_call", "length", "content_filter"
+                "stop",
+                "tool_calls",
+                "function_call",
+                "length",
+                "content_filter",
             }:
                 original_extra = getattr(choice, "model_extra", None)
                 if isinstance(original_extra, Mapping):
