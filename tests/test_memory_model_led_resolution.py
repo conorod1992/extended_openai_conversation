@@ -123,5 +123,6 @@ def test_provider_bound_descriptions_explain_semantics_not_just_tool_names():
     assert "revision" in tools["memory_update"]["description"]
     assert "authenticated Management" in tools["memory_delete"]["description"]
     assert "never change it" in tools["memory_upsert"]["parameters"]["properties"]["key"]["description"]
-    assert "Plans are not completed events" in PERSISTENT_MEMORY_GUIDANCE
-    assert "A search miss does not prove novelty" in PERSISTENT_MEMORY_GUIDANCE
+    compact_guidance = " ".join(PERSISTENT_MEMORY_GUIDANCE.split())
+    assert "plans versus completion" in compact_guidance
+    assert "A search miss does not prove novelty" in compact_guidance
