@@ -451,3 +451,61 @@ async def test_model_selected_inferred_revision_update_persists_through_provider
     assert refreshed.memory_id == original.memory_id
     assert refreshed.content == "The lounge heating target is 21 C."
     assert memory_revision(refreshed) != revision
+
+
+@pytest.mark.parametrize("api_mode", [API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES])
+async def test_related_model_proposals_can_coexist_on_both_provider_wires(
+    hass: HomeAssistant, monkeypatch: Any, api_mode: str
+) -> None:
+    """A semantic overlap is not a backend veto for a different canonical key."""
+    MockUser(id=_USER_ID, name="Memory Coexist Wire User", is_owner=True).add_to_hass(
+        hass
+    )
+    _, agent = await _memory_agent(hass, api_mode)
+    await agent._memory.async_add(
+        _USER_ID, "Oscar likes chicken.", "pets", "explicit",
+        subject="Oscar", key="oscar.food.chicken",
+    )
+    before = (await agent._memory.async_list(_USER_ID))[0]
+    first = (
+        _chat_sse_tool_call(
+            _TOOL_CALL_ID, "memory_upsert",
+            {
+                "content": "Oscar likes beef.",
+                "category": "pets",
+                "source": "explicit",
+                "subject": "Oscar",
+                "key": "oscar.food.beef",
+            },
+        )
+        if api_mode == API_MODE_CHAT_COMPLETIONS
+        else _responses_sse_tool_call(
+            _TOOL_CALL_ID, "memory_upsert",
+            {
+                "content": "Oscar likes beef.",
+                "category": "pets",
+                "source": "explicit",
+                "subject": "Oscar",
+                "key": "oscar.food.beef",
+            },
+        )
+    )
+    final = (
+        _chat_sse_text("Saved Oscar's additional food preference.")
+        if api_mode == API_MODE_CHAT_COMPLETIONS
+        else _responses_sse_text("Saved Oscar's additional food preference.")
+    )
+    wire = _install_wire(monkeypatch, agent, [first, final])
+    response = await _say(hass, agent, "Remember that Oscar also likes beef.")
+
+    assert _speech(response) == "Saved Oscar's additional food preference."
+    assert len(wire.requests) == 2
+    tool_return = _request_text(wire.requests[1]["body"])
+    assert '"created"' in tool_return
+    assert "Oscar likes beef." in tool_return
+    records = await agent._memory.async_list(_USER_ID)
+    assert len(records) == 2
+    assert any(record == before for record in records)
+    assert {record.content for record in records} == {
+        "Oscar likes chicken.", "Oscar likes beef."
+    }
