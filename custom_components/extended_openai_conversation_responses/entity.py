@@ -734,17 +734,6 @@ def _partition_provider_tool_calls(
     return pending, loader, control
 
 
-def _parse_provider_tool_arguments(arguments: str) -> Any:
-    """Normalize provider-blank calls; execution still validates the tool schema.
-
-    Some OpenAI-compatible servers emit an empty string for zero-parameter
-    tools. Leave nonblank malformed JSON to the existing opt-in recovery path.
-    """
-    if isinstance(arguments, str) and not arguments.strip():
-        return {}
-    return json.loads(arguments)
-
-
 _AZURE_CHAT_ANNOTATION_FIELDS = frozenset(
     {"content_filter_results", "content_filter_raw", "content_filter_offsets"}
 )
@@ -2222,7 +2211,12 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 for idx in sorted(current_tool_calls.keys()):
                     tool_call = current_tool_calls[idx]
                     try:
-                        args = _parse_provider_tool_arguments(tool_call["arguments"])
+                        raw_args = tool_call["arguments"]
+                        args = (
+                            {}
+                            if isinstance(raw_args, str) and not raw_args.strip()
+                            else json.loads(raw_args)
+                        )
                     except json.JSONDecodeError as err:
                         if recovery_state is None or not recovery_state.enabled:
                             await async_recover_trailing_usage(result, request_usage)
@@ -2456,7 +2450,12 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         yield {"native": item}
                     elif item_type == "function_call":
                         try:
-                            arguments = _parse_provider_tool_arguments(item.arguments)
+                            raw_args = item.arguments
+                            arguments = (
+                                {}
+                                if isinstance(raw_args, str) and not raw_args.strip()
+                                else json.loads(raw_args)
+                            )
                         except json.JSONDecodeError as err:
                             if recovery_state is None or not recovery_state.enabled:
                                 await async_recover_trailing_usage(

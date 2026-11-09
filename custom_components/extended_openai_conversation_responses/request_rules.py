@@ -4396,10 +4396,10 @@ def _fuzzy_word_is_typo(expected: str, observed: str) -> bool:
     return True
 
 
-def _fuzzy_words_compatible(phrase: str, candidate: str) -> bool:
-    """Require aligned words; retain one harmless article insertion/deletion."""
-    expected = _fuzzy_join_safe_compounds(phrase.split())
-    observed = _fuzzy_join_safe_compounds(candidate.split())
+def _fuzzy_aligned_words_compatible(
+    expected: list[str], observed: list[str], *, joined: bool = False
+) -> bool:
+    """Preserve word-level typo matching and one optional article."""
     if abs(len(expected) - len(observed)) > 1:
         return False
     skip_expected = len(expected) > len(observed)
@@ -4415,7 +4415,18 @@ def _fuzzy_words_compatible(phrase: str, candidate: str) -> bool:
         elif skip_observed and observed[j] in _FUZZY_OPTIONAL_ARTICLES:
             j += 1
             skip_observed = False
-        elif _fuzzy_word_is_typo(expected[i], observed[j]):
+        elif (
+            # A newly joined word must match exactly, not turn an innocuous
+            # compound into a different word through fuzzy substitution.
+            not (
+                joined
+                and (
+                    expected[i] in _FUZZY_SAFE_COMPOUND_WORDS
+                    or observed[j] in _FUZZY_SAFE_COMPOUND_WORDS
+                )
+            )
+            and _fuzzy_word_is_typo(expected[i], observed[j])
+        ):
             i += 1
             j += 1
         else:
@@ -4433,6 +4444,20 @@ def _fuzzy_words_compatible(phrase: str, candidate: str) -> bool:
             and observed[j] in _FUZZY_OPTIONAL_ARTICLES
         )
     return True
+
+
+def _fuzzy_words_compatible(phrase: str, candidate: str) -> bool:
+    """Try ordinary typo alignment before specifically approved compound joins."""
+    expected, observed = phrase.split(), candidate.split()
+    if _fuzzy_aligned_words_compatible(expected, observed):
+        return True
+    joined_expected = _fuzzy_join_safe_compounds(expected)
+    joined_observed = _fuzzy_join_safe_compounds(observed)
+    if joined_expected == expected and joined_observed == observed:
+        return False
+    return _fuzzy_aligned_words_compatible(
+        joined_expected, joined_observed, joined=True
+    )
 
 
 def _fuzzy_score(

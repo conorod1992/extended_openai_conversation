@@ -282,6 +282,7 @@ async def test_fuzzy_preserves_typo_matching_in_all_text_modes(
     ("phrase", "utterance", "match_type"),
     [
         ("good night", "goodnight", "equals"),
+        ("good night", "good nigt", "equals"),
         ("goodnight", "good night", "equals"),
         ("turn on living room lights", "turn on livingroom lights please", "starts_with"),
         ("turn on bedroom lights", "please turn on bed room lights", "ends_with"),
@@ -315,6 +316,7 @@ async def test_fuzzy_handles_safe_compounds_and_article_omissions(
     ("phrase", "utterance"),
     [
         ("now here", "nowhere"),
+        ("good night", "goodlight"),
         ("turn on the kitchen lights", "turn off the kitchen lights"),
         ("turn on the living room lights", "turn off livingroom lights"),
         ("lock the front door", "unlock the frontdoor"),
