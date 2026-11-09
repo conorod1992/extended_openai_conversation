@@ -515,50 +515,36 @@ class PersistentMemory:
         async with async_storage_lock(self._storage, self._lock):
             self._require_writable()
             candidate: MemoryRecord | None = None
-            reason = "related_candidate"
+            reason = "exact_duplicate"
+            ambiguous = False
             if isinstance(cleaned_key, str):
                 memory_id = self._key_index.get((user_id, cleaned_key))
                 if memory_id is not None:
+                    # A canonical key identifies an exact record, but cannot
+                    # authorize replacing it, regardless of text similarity.
                     candidate = self._memories[memory_id]
                     reason = "key_collision"
-                else:
-                    candidate = self._find_unique_unkeyed_duplicate(
-                        user_id,
-                        content,
-                        cleaned_subject if isinstance(cleaned_subject, str) else None,
-                        cleaned_valid_from
-                        if isinstance(cleaned_valid_from, str)
-                        else None,
-                    )
-                    reason = "unkeyed_key_promotion"
-                if candidate is None:
-                    # A new key is not proof of a new semantic fact. Previously,
-                    # changing the key bypassed the no-write related-fact barrier,
-                    # allowing contradictory duplicates with different keys.
-                    # This remains only a conservative conflict signal; it never
-                    # authorizes equivalence, replacement or metadata promotion.
-                    candidate = self._find_related_candidate(
-                        user_id,
-                        content,
-                        cleaned_subject if isinstance(cleaned_subject, str) else None,
-                        cleaned_key,
-                    )
-                    reason = "related_candidate"
-            else:
-                candidate = self._find_duplicate(
+
+            if candidate is None:
+                # Literal equality is a deterministic duplicate check, not
+                # semantic classification. Keep subjects and temporal identity
+                # distinct; leave paraphrases and contradictions to the model.
+                matches = self._find_exact_proposal_candidates(
                     user_id,
                     content,
                     cleaned_subject if isinstance(cleaned_subject, str) else None,
+                    cleaned_valid_from if isinstance(cleaned_valid_from, str) else None,
                 )
-                if candidate is not None:
-                    reason = "duplicate_metadata"
-                else:
-                    candidate = self._find_related_candidate(
-                        user_id,
-                        content,
-                        cleaned_subject if isinstance(cleaned_subject, str) else None,
-                        None,
-                    )
+                if matches:
+                    candidate = matches[0]
+                    ambiguous = len(matches) != 1
+                    if ambiguous:
+                        reason = "ambiguous_exact_duplicate"
+                    elif isinstance(cleaned_key, str) and candidate.key is None:
+                        reason = "unkeyed_key_promotion"
+                    elif cleaned_key is _UNSET:
+                        reason = "duplicate_metadata"
+
             if candidate is not None:
                 same = (
                     _fact_equality(candidate.content) == _fact_equality(content)
@@ -577,7 +563,11 @@ class PersistentMemory:
                 # An unkeyed proposal must not silently take the identity of a
                 # differently keyed record; an identical text alone is not proof
                 # that two canonical identities are interchangeable.
-                if same and (cleaned_key is not _UNSET or candidate.key is None):
+                if (
+                    not ambiguous
+                    and same
+                    and (cleaned_key is not _UNSET or candidate.key is None)
+                ):
                     return {
                         "status": "unchanged",
                         "memory": memory_as_dict(candidate, include_revision=True),
@@ -1372,6 +1362,40 @@ class PersistentMemory:
         ):
             return None
         return candidate
+
+    def _find_exact_proposal_candidates(
+        self,
+        user_id: str,
+        content: str,
+        subject: str | None,
+        valid_from: str | None,
+    ) -> list[MemoryRecord]:
+        """Find literal model-proposal duplicates without semantic inference.
+
+        A different explicit subject or known validity date establishes distinct
+        facts. An omitted field is not proof of a different identity, so retain
+        an exact-content conflict rather than silently multiplying records.
+        All matches are scoped to this owner; the caller publishes candidate
+        data only when read access is independently authorized.
+        """
+        normalized = _fact_equality(content)
+        matches = [
+            memory
+            for memory in self._memories.values()
+            if memory.user_id == user_id
+            and _fact_equality(memory.content) == normalized
+            and not (
+                subject
+                and memory.subject
+                and _subject_identity(subject) != _subject_identity(memory.subject)
+            )
+            and not (
+                valid_from is not None
+                and memory.valid_from is not None
+                and valid_from != memory.valid_from
+            )
+        ]
+        return sorted(matches, key=lambda memory: memory.memory_id)
 
     def _find_related_candidate(
         self, user_id: str, content: str, subject: str | None, key: str | None
