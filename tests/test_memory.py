@@ -592,10 +592,10 @@ def test_prompt_frames_memories_as_potentially_relevant_untrusted_data(hass) -> 
     normalized_prompt = " ".join(prompt.split())
 
     assert "Persistent memory" in prompt
-    assert "Search before adding" in prompt
-    assert "use memory_update only with an exact" in normalized_prompt
-    assert "Upsert never replaces a saved" in normalized_prompt
-    assert "not proof of user authorization" in normalized_prompt
+    assert "Search before proposing" in prompt
+    assert "memory_update needs exact memory_id" in normalized_prompt
+    assert "memory_upsert proposes, never replaces" in normalized_prompt
+    assert "source=explicit never grants consent" in normalized_prompt
     assert "Only call memory_add" not in prompt
     prompt_lower = prompt.lower()
     assert "potentially relevant" in prompt_lower
