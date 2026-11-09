@@ -39,6 +39,7 @@ from custom_components.extended_openai_conversation_responses.memory import (
     MemoryStore,
     PersistentMemory,
     memory_user_id,
+    memory_revision,
 )
 from custom_components.extended_openai_conversation_responses.services import (
     resolve_memory_agent,
@@ -372,7 +373,7 @@ async def test_implicit_tool_write_is_structurally_disabled() -> None:
     entity = ExtendedOpenAIAgentEntity.__new__(ExtendedOpenAIAgentEntity)
     entity.subentry = SimpleNamespace(data={CONF_MEMORY_ENABLED: True})
     entity._memory = SimpleNamespace(
-        async_add=AsyncMock(return_value={"status": "created"})
+        async_propose=AsyncMock(return_value={"status": "created"})
     )
     context = SimpleNamespace(context=SimpleNamespace(user_id="user-1"))
 
@@ -387,7 +388,7 @@ async def test_implicit_tool_write_is_structurally_disabled() -> None:
             context,
         )
 
-    entity._memory.async_add.assert_not_awaited()
+    entity._memory.async_propose.assert_not_awaited()
 
     result = await entity._async_execute_memory_tool(
         "add",
@@ -400,7 +401,7 @@ async def test_implicit_tool_write_is_structurally_disabled() -> None:
     )
 
     assert result == {"status": "created"}
-    entity._memory.async_add.assert_awaited_once_with(
+    entity._memory.async_propose.assert_awaited_once_with(
         "user-1", "User prefers Celsius.", "preferences", "explicit"
     )
 
@@ -410,7 +411,7 @@ async def test_upsert_tool_preserves_omitted_metadata_arguments() -> None:
     entity = ExtendedOpenAIAgentEntity.__new__(ExtendedOpenAIAgentEntity)
     entity.subentry = SimpleNamespace(data={CONF_MEMORY_ENABLED: True})
     entity._memory = SimpleNamespace(
-        async_upsert=AsyncMock(return_value={"status": "updated"})
+        async_propose=AsyncMock(return_value={"status": "needs_resolution"})
     )
     context = SimpleNamespace(context=SimpleNamespace(user_id="user-1"))
 
@@ -425,7 +426,7 @@ async def test_upsert_tool_preserves_omitted_metadata_arguments() -> None:
         context,
     )
 
-    entity._memory.async_upsert.assert_awaited_once_with(
+    entity._memory.async_propose.assert_awaited_once_with(
         "user-1",
         "Oscar is a Cavapoo.",
         "pets",
@@ -520,7 +521,7 @@ async def test_malformed_tool_input_is_rejected_before_storage() -> None:
     entity._memory = SimpleNamespace(async_delete=AsyncMock())
     context = SimpleNamespace(context=SimpleNamespace(user_id="user-1"))
 
-    with pytest.raises(ValueError, match="list of strings"):
+    with pytest.raises(ValueError, match="deletion requires exact IDs and revisions"):
         await entity._async_execute_memory_tool(
             "delete", {"memory_ids": "not-a-list"}, context
         )
@@ -536,7 +537,7 @@ async def test_storage_failure_returns_tool_error_instead_of_breaking_chat() -> 
         data={CONF_MEMORY_ENABLED: True, CONF_MEMORY_AUTO_CREATE: True}
     )
     entity._memory = SimpleNamespace(
-        async_add=AsyncMock(side_effect=OSError("disk unavailable"))
+        async_propose=AsyncMock(side_effect=OSError("disk unavailable"))
     )
     context = SimpleNamespace(context=SimpleNamespace(user_id="user-1"))
     tool_input = SimpleNamespace(
@@ -592,9 +593,9 @@ def test_prompt_frames_memories_as_potentially_relevant_untrusted_data(hass) -> 
 
     assert "Persistent memory" in prompt
     assert "Search before adding" in prompt
-    assert "When a fact changes, update the existing memory" in normalized_prompt
-    assert "Use memory_upsert where appropriate" in prompt
-    assert "source to explicit" in prompt
+    assert "use memory_update only with an exact" in normalized_prompt
+    assert "Upsert never replaces a saved" in normalized_prompt
+    assert "not proof of user authorization" in normalized_prompt
     assert "Only call memory_add" not in prompt
     prompt_lower = prompt.lower()
     assert "potentially relevant" in prompt_lower
@@ -615,6 +616,8 @@ def test_prompt_frames_memories_as_potentially_relevant_untrusted_data(hass) -> 
             "memory_id": "one",
             "scope": "personal",
             "category": "misc",
+            "source": "explicit",
+            "revision": memory_revision(memory),
             "content": memory.content,
         }
     ]
