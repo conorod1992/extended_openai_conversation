@@ -797,8 +797,9 @@ def _azure_filter_signal(results: Any) -> str | None:
         if "filtered" in results and results["filtered"] is not False:
             return "blocked"
         for value in results.values():
-            if signal := _azure_filter_signal(value):
-                return signal
+            if isinstance(value, (Mapping, list)):
+                if signal := _azure_filter_signal(value):
+                    return signal
     elif isinstance(results, list):
         for value in results:
             if signal := _azure_filter_signal(value):
