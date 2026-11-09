@@ -81,6 +81,65 @@ def test_grouped_default_uses_csv_writer_without_attributes(hass, monkeypatch) -
     ]
 
 
+
+@pytest.mark.parametrize(
+    ("entity_id", "name", "expected"),
+    [
+        ("light.kitchen_light", "Kitchen Light", ""),
+        ("light.bedroom_lamp_2", "Bedroom Lamp 2", ""),
+        ("light.kitchen_light", "kitchen_light", ""),
+        ("light.ke_ting_deng", "客厅灯", "客厅灯"),
+        ("light.svet_kukhnia", "Свет кухня", "Свет кухня"),
+        ("light.lumiere", "Lumière", "Lumière"),
+        ("light.athena", "Αθήνα", "Αθήνα"),
+        ("light.almTbk", "المطبخ", "المطبخ"),
+        ("light.ri_ben_yu", "日本語", "日本語"),
+        ("light.kitchen_light", "Kitchen-Light", "Kitchen-Light"),
+        ("light.kitchen_light", "Kitchen Light!", "Kitchen Light!"),
+        ("light.kitchen_light", "Kitchen  Light", "Kitchen  Light"),
+        ("light.kitchen_light", "Kitchen_Light", "Kitchen_Light"),
+        ("light.kitchen_light", "kitchen Light", ""),
+    ],
+)
+def test_prompt_name_compaction_preserves_original_nonredundant_text(
+    entity_id: str, name: str, expected: str
+) -> None:
+    from custom_components.extended_openai_conversation_responses.prompt import (
+        _entity_prompt_name,
+    )
+
+    assert _entity_prompt_name({"entity_id": entity_id, "name": name}) == expected
+
+
+@pytest.mark.parametrize(
+    ("entity_id", "name", "expected"),
+    [
+        ("light.ke_ting_deng", "客厅灯", "客厅灯"),
+        ("light.lumiere", "Lumière", "Lumière"),
+        ("light.kitchen_light", "Kitchen Light", ""),
+        ("light.kitchen_light", "Kitchen-Light", "Kitchen-Light"),
+    ],
+)
+def test_grouped_default_prompt_retains_nonlatin_names_without_changing_csv(
+    hass, monkeypatch, entity_id: str, name: str, expected: str
+) -> None:
+    monkeypatch.setattr(
+        exposed_attributes,
+        "get_entity_prompt_metadata",
+        lambda _hass, _entity_id: SimpleNamespace(area_id=None),
+    )
+    rendered = _render_grouped_default(
+        hass,
+        [{"entity_id": entity_id, "name": name, "state": "on", "aliases": []}],
+        include_attributes=False,
+    )
+    lines = rendered.splitlines()
+    assert lines[0] == "## Available Devices"
+    assert next(csv.reader([lines[1]])) == ["entity_id", "name", "state", "aliases"]
+    assert lines[2] == "area_id="
+    assert next(csv.reader([lines[3]])) == [entity_id, expected, "on", ""]
+
+
 def test_legacy_default_quotes_fields_and_passes_raw_json_to_writer(
     hass, monkeypatch
 ) -> None:

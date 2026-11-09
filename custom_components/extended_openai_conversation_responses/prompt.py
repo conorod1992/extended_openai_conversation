@@ -10,7 +10,6 @@ from typing import Any
 
 from homeassistant.helpers import template
 from homeassistant.helpers.template.helpers import resolve_area_id
-from homeassistant.util import slugify
 
 from .capabilities import (
     persistent_memory_scope_available,
@@ -150,7 +149,16 @@ def _entity_prompt_name(entity: dict[str, Any]) -> str:
     if not isinstance(entity_id, str) or not isinstance(name, str):
         return str(name or "")
     _domain, separator, object_id = entity_id.partition(".")
-    if separator and object_id and slugify(name) == object_id:
+    if not separator or not object_id:
+        return name
+    # Slugification is lossy: non-Latin scripts, accents and punctuation
+    # must remain visible to the model even when their generated ID matches.
+    # Preserve the existing token savings only for literal names or simple
+    # ASCII words whose spaces map directly to the entity ID.
+    if name == object_id or (
+        re.fullmatch(r"[A-Za-z0-9]+(?: [A-Za-z0-9]+)*", name)
+        and name.lower().replace(" ", "_") == object_id
+    ):
         return ""
     return name
 
