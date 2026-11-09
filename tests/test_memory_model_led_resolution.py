@@ -19,25 +19,42 @@ from custom_components.extended_openai_conversation_responses.memory import memo
 from tests.test_memory_model_safe_contract import entity, model_call, store
 
 
-async def test_changing_canonical_key_cannot_bypass_related_fact_conflict():
+async def test_differently_keyed_related_fact_is_model_decision_not_backend_veto():
     memory, storage = await store()
     agent = entity(memory)
     first = await model_call(
         agent, "upsert", content="My bicycle is blue.", category="transport",
         source="explicit", subject="bicycle", key="bike.colour"
     )
-    before, saves = deepcopy(storage.data), storage.saves
-    changed = await model_call(
+    first_snapshot = deepcopy((await memory.async_list("alice"))[0])
+    saves = storage.saves
+    second = await model_call(
         agent, "upsert", content="My bicycle is red.", category="transport",
         source="explicit", subject="bicycle", key="bike.paint"
     )
+    assert first["status"] == second["status"] == "created"
+    assert first["memory"]["memory_id"] != second["memory"]["memory_id"]
+    assert storage.saves == saves + 1
+    records = await memory.async_list("alice")
+    assert len(records) == 2
+    assert next(row for row in records if row.memory_id == first_snapshot.memory_id) == first_snapshot
+
+
+async def test_independent_same_subject_predicates_create_without_overlap_veto():
+    memory, storage = await store()
+    agent = entity(memory)
+    first = await model_call(
+        agent, "upsert", content="Oscar likes chicken.", category="pets",
+        source="implicit", subject="Oscar", key="oscar.food.chicken"
+    )
+    second = await model_call(
+        agent, "upsert", content="Oscar likes beef.", category="pets",
+        source="implicit", subject="Oscar", key="oscar.food.beef"
+    )
     assert first["status"] == "created"
-    assert changed["status"] == "needs_resolution"
-    assert changed["reason"] == "related_candidate"
-    assert changed["applied"] is False
-    assert changed["candidate"]["memory_id"] == first["memory"]["memory_id"]
-    assert storage.data == before and storage.saves == saves
-    assert len(await memory.async_list("alice")) == 1
+    assert second["status"] == "created"
+    assert len(await memory.async_list("alice")) == 2
+    assert storage.saves == 2
 
 
 async def test_relabelled_exact_fact_does_not_create_second_keyed_memory():
@@ -55,6 +72,146 @@ async def test_relabelled_exact_fact_does_not_create_second_keyed_memory():
     assert second["status"] == "needs_resolution"
     assert second["applied"] is False
     assert first["memory"]["memory_id"] == second["candidate"]["memory_id"]
+    assert storage.data == before and storage.saves == saves
+
+
+async def test_unkeyed_exact_duplicate_is_noop_without_save():
+    memory, storage = await store()
+    agent = entity(memory)
+    first = await model_call(
+        agent, "add", content="The living room light is dim.",
+        category="devices", source="implicit", subject="living room lamp"
+    )
+    before, saves = deepcopy(storage.data), storage.saves
+    again = await model_call(
+        agent, "upsert", content="The living room light is dim!!!",
+        category="devices", source="implicit", subject="living room lamp"
+    )
+    assert first["status"] == "created"
+    assert again["status"] == "unchanged"
+    assert again["memory"]["memory_id"] == first["memory"]["memory_id"]
+    assert storage.data == before and storage.saves == saves
+
+
+async def test_exact_duplicate_new_key_conflicts_without_mutating_existing_key():
+    memory, storage = await store()
+    agent = entity(memory)
+    first = await model_call(
+        agent, "upsert", content="Milo is a collie.", category="pets",
+        source="implicit", subject="Milo", key="animal.milo.breed"
+    )
+    before, saves = deepcopy(storage.data), storage.saves
+    duplicate = await model_call(
+        agent, "upsert", content="Milo is a collie.", category="pets",
+        source="implicit", subject="Milo", key="pet.milo.kind"
+    )
+    assert duplicate["status"] == "needs_resolution"
+    assert duplicate["reason"] == "exact_duplicate"
+    assert duplicate["applied"] is False
+    assert duplicate["candidate"]["memory_id"] == first["memory"]["memory_id"]
+    assert duplicate["candidate"]["key"] == "animal.milo.breed"
+    assert storage.data == before and storage.saves == saves
+
+
+async def test_identical_text_may_describe_two_explicitly_distinct_subjects():
+    memory, storage = await store()
+    agent = entity(memory)
+    for subject, key in (
+        ("Kitchen", "kitchen.lamp.state"),
+        ("Bedroom", "bedroom.lamp.state"),
+    ):
+        result = await model_call(
+            agent, "upsert", content="The lamp is on.", category="devices",
+            source="implicit", subject=subject, key=key,
+        )
+        assert result["status"] == "created"
+    assert storage.saves == 2
+    assert len(await memory.async_list("alice")) == 2
+
+
+async def test_identical_text_with_distinct_known_valid_from_can_coexist():
+    memory, storage = await store()
+    agent = entity(memory)
+    for year, key in (("2024", "residence.2024"), ("2026", "residence.2026")):
+        result = await model_call(
+            agent, "upsert", content="I live in Cork.", category="residence",
+            source="implicit", key=key,
+            valid_from=f"{year}-01-01T00:00:00+00:00",
+        )
+        assert result["status"] == "created"
+    assert storage.saves == 2
+    assert len(await memory.async_list("alice")) == 2
+
+
+async def test_exact_candidates_are_case_sensitive_for_paths():
+    memory, _storage = await store()
+    agent = entity(memory)
+    for path, key in (
+        ("/Data/Main.py", "project.main"),
+        ("/data/main.py", "test.main"),
+    ):
+        result = await model_call(
+            agent, "upsert",
+            content=f"Project path is {path}.", category="tech",
+            source="implicit", subject="project path", key=key,
+        )
+        assert result["status"] == "created"
+    assert len(await memory.async_list("alice")) == 2
+
+
+async def test_multiple_identical_candidates_refuse_ambiguous_noop():
+    memory, storage = await store()
+    # Distinct keyed records can already exist through authenticated management.
+    await memory.async_add(
+        "alice", "The lamp is on.", "devices", "implicit",
+        subject="Lamp", key="lamp.first",
+    )
+    await memory.async_add(
+        "alice", "The lamp is on.", "devices", "implicit",
+        subject="Lamp", key="lamp.second",
+    )
+    before, saves = deepcopy(storage.data), storage.saves
+    result = await model_call(
+        entity(memory), "upsert", content="The lamp is on.",
+        category="devices", source="implicit", subject="Lamp", key="lamp.third",
+    )
+    assert result["status"] == "needs_resolution"
+    assert result["reason"] == "ambiguous_exact_duplicate"
+    assert result["applied"] is False
+    assert storage.data == before and storage.saves == saves
+
+
+async def test_foreign_exact_match_cannot_block_current_owner_proposal():
+    memory, storage = await store()
+    await memory.async_add(
+        "bob", "The kitchen lamp is on.", "devices", "implicit",
+        key="kitchen.lamp",
+    )
+    result = await model_call(
+        entity(memory), "upsert", content="The kitchen lamp is on.",
+        category="devices", source="implicit", key="kitchen.lamp",
+    )
+    assert result["status"] == "created"
+    assert len(await memory.async_list("alice")) == 1
+    assert len(await memory.async_list("bob")) == 1
+    assert storage.saves == 2
+
+
+async def test_write_only_exact_duplicate_does_not_expose_existing_record(monkeypatch):
+    memory, storage = await store()
+    old = await memory.async_add(
+        "alice", "The kitchen lamp is on.", "devices", "implicit",
+        key="kitchen.lamp",
+    )
+    agent = entity(memory)
+    monkeypatch.setattr(agent, "_current_readable_memory_scope_ids", lambda _ctx: [])
+    before, saves = deepcopy(storage.data), storage.saves
+    result = await model_call(
+        agent, "upsert", content="The kitchen lamp is on.",
+        category="devices", source="implicit", key="kitchen.other",
+    )
+    assert result == {"status": "needs_resolution"}
+    assert (await memory.async_list("alice"))[0].memory_id == old["memory"]["memory_id"]
     assert storage.data == before and storage.saves == saves
 
 
