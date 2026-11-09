@@ -38,8 +38,8 @@ from . import function_configuration_mutations as function_mutations
 from .agent_maintenance import get_agent_maintenance_gate
 from .const import (
     API_MODE_OPTIONS,
-    API_PROVIDERS,
     API_MODE_RESPONSES,
+    API_PROVIDERS,
     CONF_API_MODE,
     CONF_API_PROVIDER,
     CONF_API_VERSION,
