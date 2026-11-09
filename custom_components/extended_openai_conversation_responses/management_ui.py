@@ -1925,7 +1925,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         updates = message.get("config", {})
         if not isinstance(sample, str) or not isinstance(updates, dict):
             raise HomeAssistantError("sample_text and config are invalid")
-        normalized = merge_agent_config(subentry.data, updates)
+        normalized = merge_agent_config(subentry.data, updates, provider=provider)
         return {
             "speech_text": await async_process_speech_text(hass, sample, normalized)
         }
@@ -1933,7 +1933,7 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         updates = message.get("config", {})
         if not isinstance(updates, dict):
             raise HomeAssistantError("config must be an object")
-        normalized = merge_agent_config(subentry.data, updates)
+        normalized = merge_agent_config(subentry.data, updates, provider=provider)
         return await _async_preview_effective_request(
             hass, entry, subentry, normalized, user_id
         )
