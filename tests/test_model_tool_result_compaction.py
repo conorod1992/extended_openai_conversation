@@ -11,6 +11,7 @@ from custom_components.extended_openai_conversation_responses.ha_tool_result_com
 from custom_components.extended_openai_conversation_responses.memory import (
     MemoryRecord,
     memory_as_dict,
+    memory_revision,
 )
 from custom_components.extended_openai_conversation_responses.model_tool_results import (
     _compact_json_result_content,
@@ -97,7 +98,10 @@ def test_model_memory_projection_keeps_every_populated_optional_field() -> None:
         valid_from="2026-09-01T00:00:00+00:00",
     )
 
-    assert model_memory_as_dict(record) == memory_as_dict(record)
+    assert model_memory_as_dict(record) == {
+        **memory_as_dict(record),
+        "revision": memory_revision(record),
+    }
 
 
 def test_nested_memory_results_only_remove_null_optional_fields() -> None:
