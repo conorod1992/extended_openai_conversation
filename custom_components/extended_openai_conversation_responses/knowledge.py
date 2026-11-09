@@ -561,8 +561,9 @@ class KnowledgeLibrary:
             has_salient_terms = bool(raw_query_tokens - _SEARCH_FILLER_TERMS)
             query_weights = {
                 token: (
-                    0.2 if token.startswith("morph:") else
-                    _SEARCH_FILLER_WEIGHT
+                    0.2
+                    if token.startswith("morph:")
+                    else _SEARCH_FILLER_WEIGHT
                     if has_salient_terms and token in _SEARCH_FILLER_TERMS
                     else 1.0
                 )
@@ -592,7 +593,9 @@ class KnowledgeLibrary:
                 normalized_title = features.normalized_title
                 normalized_description = features.normalized_description
                 all_tokens = chunk.tokens | title_tokens | description_tokens
-                exact_salient = bool((raw_query_tokens - _SEARCH_FILLER_TERMS) & all_tokens)
+                exact_salient = bool(
+                    (raw_query_tokens - _SEARCH_FILLER_TERMS) & all_tokens
+                )
                 if has_salient_terms and not (
                     (query_tokens - _SEARCH_FILLER_TERMS) & all_tokens
                 ):
@@ -612,7 +615,10 @@ class KnowledgeLibrary:
                 if (
                     current is None
                     or (exact_salient, score) > (current[0], current[1])
-                    or ((exact_salient, score) == (current[0], current[1]) and chunk.start < current[2].start)
+                    or (
+                        (exact_salient, score) == (current[0], current[1])
+                        and chunk.start < current[2].start
+                    )
                 ):
                     best_by_source[chunk.source_id] = (exact_salient, score, chunk)
 
