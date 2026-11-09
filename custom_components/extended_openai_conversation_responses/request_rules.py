@@ -4367,10 +4367,8 @@ def _fuzzy_join_safe_compounds(words: list[str]) -> list[str]:
 
 def _fuzzy_has_safe_compound(words: list[str]) -> bool:
     return any(word in _FUZZY_SAFE_COMPOUND_WORDS for word in words) or any(
-        (left, right) in _FUZZY_SAFE_COMPOUND_PAIRS
-        for left, right in pairwise(words)
+        (left, right) in _FUZZY_SAFE_COMPOUND_PAIRS for left, right in pairwise(words)
     )
-
 
 
 def _fuzzy_word_is_typo(expected: str, observed: str) -> bool:
@@ -4457,10 +4455,9 @@ def _fuzzy_score(
         has_article = any(
             word in _FUZZY_OPTIONAL_ARTICLES for word in (*phrase_words, *words)
         )
-        has_compound = (
-            _fuzzy_has_safe_compound(phrase_words)
-            or _fuzzy_has_safe_compound(words)
-        )
+        has_compound = _fuzzy_has_safe_compound(
+            phrase_words
+        ) or _fuzzy_has_safe_compound(words)
         slack = int(has_article) + (2 if has_compound else 0)
         sizes = tuple(
             length

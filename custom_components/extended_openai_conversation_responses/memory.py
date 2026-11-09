@@ -1825,7 +1825,6 @@ _COMMON_L_SPELLING_ALIASES = {
 }
 
 
-
 # Regular -e verbs need their silent e back after -ed and -ing. This is an
 # intentionally small, audited family: blindly appending e turns walked into
 # "walke" and creates false matches in retrieval and upsert candidate ranking.
@@ -1892,7 +1891,9 @@ def _stem(token: str) -> str:
         return f"{root}e" if f"{root}e" in _SILENT_E_VERB_BASES else root
     if token in {"quizzes", "buses", "gases"}:
         return {"quizzes": "quiz", "buses": "bus", "gases": "gas"}[token]
-    if len(token) > 5 and token.endswith(("sses", "ches", "shes", "xes", "zzes", "oes")):
+    if len(token) > 5 and token.endswith(
+        ("sses", "ches", "shes", "xes", "zzes", "oes")
+    ):
         return token[:-2]
     if len(token) > 4 and token.endswith("s") and not token.endswith("ss"):
         return token[:-1]

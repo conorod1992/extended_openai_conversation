@@ -2098,9 +2098,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             # Azure asynchronous content filtering sends annotation-only
             # choices (without delta), including after the terminal response.
             # Their filtering signals must be processed, not merely discarded.
-            if (
-                len(chunk.choices) == 1
-                and _is_azure_chat_filter_annotation_choice(chunk.choices[0])
+            if len(chunk.choices) == 1 and _is_azure_chat_filter_annotation_choice(
+                chunk.choices[0]
             ):
                 annotation = chunk.choices[0].model_extra
                 signal = _azure_filter_signal(annotation.get("content_filter_results"))
