@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 import logging
+import math
 import os
 from pathlib import Path
 import re
@@ -387,8 +388,12 @@ class BashFunction(Function):
         raw_timeout = arguments.get("timeout", SHELL_TIMEOUT)
         try:
             timeout = float(raw_timeout)
-        except TypeError, ValueError:
+        except TypeError, ValueError, OverflowError:
             return backend_failure("Timeout must be a number")
+        # A NaN timer reaches asyncio's event-loop heap and may crash HA's
+        # shared loop, rather than failing within this Function Tool coroutine.
+        if not math.isfinite(timeout):
+            return backend_failure("Timeout must be a finite number")
         if timeout <= 0:
             return backend_failure("Timeout must be greater than zero")
         timeout = min(timeout, float(SHELL_TIMEOUT))
