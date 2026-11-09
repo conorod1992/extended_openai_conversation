@@ -80,7 +80,7 @@ assert.deepEqual(historyChunk[1].imports || [], [],
 assert.match(management, /"overview": async_overview_command/);
 assert.match(management, /"usage": async_usage_command/);
 assert.match(management, /"conversations": async_conversations_command/);
-for (const query of ["archive_list_page", "archive_search_page", "archive_get_page"]) {
+for (const query of ["archive_list_page", "archive_search_page", "archive_get_page", "archive_get_before_page"]) {
   assert.ok(management.includes(`return await ${query}(`), `${query} remains the History read owner`);
 }
 assert.match(management, /result = usage_summary\(usage\)/);
@@ -184,11 +184,13 @@ function historyPanel() {
     _formatDate: value => value, _empty: value => value,
     async _call(section, action, cursor) {
       requests.push(cursor);
+      const startTurn = action === "get_before" ? cursor.before_turn - 1 : cursor.start_turn;
+      const textOffset = action === "get_before" ? 0 : cursor.text_offset;
       return {
-        session: {title: "Long conversation"}, start_turn: cursor.start_turn,
-        text_offset: cursor.text_offset, offset: cursor.start_turn, returned: 1, total: 1,
-        turns: [{user_text: `fragment ${cursor.text_offset}`, assistant_text: "", timestamp: "now"}],
-        has_more: cursor.text_offset === 0, next_start_turn: 0, next_text_offset: 30000,
+        session: {title: "Long conversation"}, start_turn: startTurn,
+        text_offset: textOffset, offset: startTurn, returned: 1, total: 1,
+        turns: [{user_text: "fragment " + textOffset, assistant_text: "", timestamp: "now"}],
+        has_more: textOffset === 0, next_start_turn: 0, next_text_offset: 30000,
       };
     },
   };
@@ -207,7 +209,11 @@ function historyPanel() {
   assert.equal(requests[2].start_turn, 0);
   assert.equal(requests[2].text_offset, 0);
   await pagination.openSession(panel, "another-session", 40);
-  assert.equal(button("Previous turns").disabled, true, "Opening another session resets cursor history");
+  assert.equal(button("Previous turns").disabled, false, "Search hits allow backward paging without prior visits");
+  button("Previous turns").click();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(requests.at(-1).before_turn, 40);
+  assert.equal(requests.at(-1).before_text_offset, 0);
   button("Start of conversation").click();
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(requests.at(-1).session_id, "another-session");
@@ -238,4 +244,76 @@ function historyPanel() {
   await pending;
   assert.equal(panel._eocHistoryResult, undefined);
   assert.deepEqual(panel._contentData.sessions, {});
+}
+
+
+// Search hit -> earlier page -> yet earlier -> forward twice -> previous.
+// Refetch must preserve the original exact backward page's end cursor.
+{
+  class Element {
+    constructor() { this.children = []; this.style = {}; this.listeners = {}; }
+    append(item) { this.children.push(item); }
+    addEventListener(name, callback) { this.listeners[name] = callback; }
+    set innerHTML(value) { this.html = value; this.children = []; }
+    click() { if (!this.disabled) this.listeners.click?.(); }
+  }
+  globalThis.document = {createElement: () => new Element()};
+  const body = new Element(), title = new Element();
+  const dialog = {open: false, showModal() { this.open = true; }};
+  const calls = [];
+  const panel = {
+    _agentId: "agent", _scopeId: "user:alice",
+    shadowRoot: {querySelector: selector => ({
+      "#session-dialog": dialog, "#session-body": body, "#session-title": title,
+    })[selector]},
+    _ensureOwnedDialog() {}, _loading: () => "loading",
+    _e: String, _formatDate: String, _empty: String,
+    async _call(section, action, cursor) {
+      calls.push({section, action, ...cursor});
+      if (action === "get_before") {
+        const end = cursor.before_turn;
+        return {
+          session: {title: "Archive"}, start_turn: end - 1, text_offset: 0,
+          offset: end - 1, returned: 1, total: 100, has_more: true,
+          next_start_turn: end, next_text_offset: 0,
+          turns: [{user_text: "turn " + (end - 1), assistant_text: "", timestamp: "now"}],
+        };
+      }
+      return {
+        session: {title: "Archive"}, start_turn: cursor.start_turn,
+        text_offset: cursor.text_offset, offset: cursor.start_turn,
+        returned: 1, total: 100, has_more: cursor.start_turn < 99,
+        next_start_turn: cursor.start_turn + 1, next_text_offset: 0,
+        turns: [{user_text: "turn " + cursor.start_turn, assistant_text: "", timestamp: "now"}],
+      };
+    },
+  };
+  const button = label => body.children[0].children.find(item => item.textContent === label);
+  const click = async label => {
+    button(label).click();
+    await new Promise(resolve => setImmediate(resolve));
+  };
+  await pagination.openSession(panel, "match", 85);
+  assert.equal(button("Previous turns").disabled, false);
+  await click("Previous turns");
+  assert.equal(calls.at(-1).action, "get_before");
+  assert.equal(calls.at(-1).before_turn, 85);
+  assert.match(body.html, /turn 84/);
+  await click("Previous turns");
+  assert.equal(calls.at(-1).before_turn, 84);
+  assert.match(body.html, /turn 83/);
+  await click("Next turns");
+  assert.equal(calls.at(-1).action, "get_before");
+  assert.equal(calls.at(-1).before_turn, 85);
+  assert.match(body.html, /turn 84/);
+  await click("Next turns");
+  assert.equal(calls.at(-1).action, "get");
+  assert.equal(calls.at(-1).start_turn, 85);
+  assert.match(body.html, /turn 85/);
+  await click("Previous turns");
+  assert.equal(calls.at(-1).before_turn, 85);
+  await click("Start of conversation");
+  assert.equal(calls.at(-1).action, "get");
+  assert.equal(calls.at(-1).start_turn, 0);
+  assert.equal(button("Previous turns").disabled, true);
 }

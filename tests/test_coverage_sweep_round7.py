@@ -690,7 +690,10 @@ async def test_authenticated_client_skip_authentication_and_transport_error(
 ) -> None:
     from custom_components.extended_openai_conversation_responses import helpers
 
-    client = SimpleNamespace(models=SimpleNamespace(list=Mock()))
+    client = SimpleNamespace(
+        platform_headers=Mock(return_value={}),
+        models=SimpleNamespace(list=Mock()),
+    )
     constructor = Mock(return_value=client)
     monkeypatch.setattr(helpers, "AsyncOpenAI", constructor)
     monkeypatch.setattr(helpers, "get_async_client", Mock(return_value=object()))
@@ -717,10 +720,14 @@ async def test_authenticated_client_materializes_coroutine_paginator(
     async def page_coro():
         return _AsyncPage([object()])
 
-    client = SimpleNamespace(models=SimpleNamespace(list=Mock()))
+    client = SimpleNamespace(
+        platform_headers=Mock(return_value={}),
+        models=SimpleNamespace(list=Mock()),
+    )
     monkeypatch.setattr(helpers, "AsyncOpenAI", Mock(return_value=client))
     monkeypatch.setattr(helpers, "get_async_client", Mock(return_value=object()))
-    hass.async_add_executor_job = AsyncMock(return_value=page_coro())
+    client.models.list.side_effect = lambda **_kwargs: page_coro()
+    hass.async_add_executor_job = AsyncMock(side_effect=lambda function: function())
 
     result = await helpers.get_authenticated_client(
         hass, "key", None, None, None, "openai"

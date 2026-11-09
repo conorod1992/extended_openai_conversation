@@ -4,9 +4,44 @@ import asyncio
 import logging
 from typing import Any
 
+from homeassistant.util.async_ import create_eager_task
+
 from .operation_settlement import async_wait_owned_cleanup
 
 _LOGGER = logging.getLogger(__name__)
+
+
+async def async_run_script(script: Any, *args: Any, **kwargs: Any) -> Any:
+    """Own the native run until it settles, including after caller cancellation."""
+    # HA shields an internal run task. Cancelling its outer async_run await can
+    # orphan a simultaneous native failure, even when async_stop/unload finishes.
+    # Keep that await alive and request a normal native stop instead.
+    run = create_eager_task(script.async_run(*args, **kwargs))
+    try:
+        await asyncio.wait({run})
+        return run.result()
+    except asyncio.CancelledError:
+
+        async def stop_and_collect() -> None:
+            try:
+                if not run.done():
+                    await script.async_stop()
+            finally:
+                await async_wait_owned_cleanup(run)
+                try:
+                    run.result()
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    _LOGGER.warning("Script execution failed during cancellation")
+
+        stopping = create_eager_task(stop_and_collect())
+        await async_wait_owned_cleanup(stopping)
+        try:
+            stopping.result()
+        except asyncio.CancelledError, Exception:
+            _LOGGER.warning("Script stop failed during cancellation")
+        raise
 
 
 async def async_cleanup_script(

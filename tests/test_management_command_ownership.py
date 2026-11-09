@@ -425,8 +425,9 @@ async def test_speech_preview_uses_shared_bare_url_cleanup(
             "configuration", "speech_preview", sample_text=sample, config=config
         ),
     )
-    assert (
-        result["speech_text"]
-        == process_speech_text(sample, config)
-        == "Visit for details."
+    expected = (
+        "Visit), for details."
+        if address.endswith("),")
+        else "Visit for details."
     )
+    assert result["speech_text"] == process_speech_text(sample, config) == expected

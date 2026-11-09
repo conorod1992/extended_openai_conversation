@@ -16,6 +16,7 @@ import voluptuous as vol
 
 from homeassistant.components import conversation
 from homeassistant.components.conversation import ConversationInput
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import (
     HomeAssistant,
@@ -68,7 +69,7 @@ from .const import (
 from .guest_mode import async_get_guest_mode
 from .ha_schema import schema_for_ha
 from .ha_tool_result_compat import tool_result_data
-from .helpers import get_api_mode, get_authenticated_client
+from .helpers import effective_api_provider, get_api_mode, get_authenticated_client
 from .live_subentry_updates import update_live_subentry
 from .memory import async_get_memory, memory_as_dict, memory_user_id
 from .model_capabilities import model_capability_snapshot
@@ -341,6 +342,13 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             entry = hass.config_entries.async_get_entry(call.data["config_entry"])
             if entry is None or entry.domain != DOMAIN:
                 raise HomeAssistantError("Config entry not found")
+            if getattr(entry, "state", None) is not ConfigEntryState.LOADED:
+                raise HomeAssistantError("Config entry is not loaded")
+            # Setup can fail before assigning a runtime client. Do not parse
+            # images or make a provider request for an unavailable connection.
+            client = getattr(entry, "runtime_data", None)
+            if client is None:
+                raise HomeAssistantError("Config entry client is unavailable")
             with model_capability_snapshot(
                 model,
                 request_model_capabilities(
@@ -358,8 +366,6 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             image_params = await hass.async_add_executor_job(
                 prepare_image_params, hass, call.data["images"]
             )
-
-            client = entry.runtime_data
 
             if api_mode == API_MODE_RESPONSES:
                 messages = [
@@ -465,6 +471,9 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             # Do not set base_url if using OpenAI for case of OpenAI's base_url change
             base_url = None
             new_data.pop(CONF_BASE_URL)
+
+        if effective_api_provider(new_data.get(CONF_API_PROVIDER), base_url) == "azure":
+            new_data[CONF_API_PROVIDER] = "azure"
 
         if new_data.get(CONF_API_PROVIDER) == "azure" and not base_url:
             raise HomeAssistantError("Azure OpenAI requires a custom base URL.")

@@ -290,6 +290,48 @@ async def test_execute_requires_opt_in_and_valid_timeout(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "raw_timeout",
+    ["nan", "NaN", float("nan"), "inf", "-inf", float("inf"), float("-inf")],
+)
+async def test_execute_rejects_nonfinite_timeout_before_shell(
+    tmp_path: Path, raw_timeout: object
+) -> None:
+    """An invalid provider timer must never enter the shared asyncio loop."""
+    function = bash_module.BashFunction()
+    hass = _hass(tmp_path)
+    config = {"command": _Template("echo hello"), "allow_unsafe_shell": True}
+    with (
+        patch.object(function, "_async_guard_command", new=AsyncMock()) as guard,
+        patch.object(
+            bash_module.asyncio, "create_subprocess_shell", new=AsyncMock()
+        ) as spawn,
+    ):
+        result = await function.execute(
+            hass, config, {"timeout": raw_timeout}, None, None
+        )
+    assert result == {"error": "Timeout must be a finite number"}
+    guard.assert_not_awaited()
+    spawn.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_execute_rejects_huge_integer_timeout_before_shell(tmp_path: Path) -> None:
+    """Python float overflow is a normal invalid timeout, not an uncaught error."""
+    function = bash_module.BashFunction()
+    hass = _hass(tmp_path)
+    config = {"command": _Template("echo hello"), "allow_unsafe_shell": True}
+    with patch.object(
+        bash_module.asyncio, "create_subprocess_shell", new=AsyncMock()
+    ) as spawn:
+        result = await function.execute(
+            hass, config, {"timeout": 10**400}, None, None
+        )
+    assert result == {"error": "Timeout must be a number"}
+    spawn.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_execute_returns_guard_error_without_spawning(tmp_path: Path) -> None:
     """A rejected command never reaches subprocess creation."""
     function = bash_module.BashFunction()

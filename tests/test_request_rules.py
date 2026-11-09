@@ -886,6 +886,39 @@ async def test_result_alias_validation_and_substitution() -> None:
         validate_rule(rule)
 
 
+def test_result_response_formatting_preserves_native_action_values() -> None:
+    from custom_components.extended_openai_conversation_responses.request_rules import (
+        _rule_response_text,
+    )
+
+    results = {
+        "payload": {"level": 5, "enabled": True, "details": None},
+        "list": [{"value": 1}, False],
+        "flag": True,
+    }
+    assert resolve_result_values("{payload}", {}, results) is results["payload"]
+    assert resolve_result_values("{flag}", {}, results) is True
+    structured = resolve_result_values(
+        "{payload}", {}, results, stringify=_rule_response_text
+    )
+    assert _rule_response_text(structured) == (
+        '{"level": 5, "enabled": true, "details": null}'
+    )
+    embedded = resolve_result_values(
+        "Result: {payload}; flags {list} / {flag}",
+        {},
+        results,
+        stringify=_rule_response_text,
+    )
+    assert embedded == (
+        'Result: {"level": 5, "enabled": true, "details": null}; '
+        'flags [{"value": 1}, false] / true'
+    )
+    assert resolve_result_values(
+        {"native": "{flag}", "children": ["{payload}"]}, {}, results
+    ) == {"native": True, "children": [results["payload"]]}
+
+
 async def test_function_result_capture_requires_active_result_context() -> None:
     executor = AsyncMock(return_value={"result": "completed"})
     token = _ACTIVE_RULE_ACTION.set(

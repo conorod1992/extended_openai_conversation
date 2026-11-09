@@ -42,7 +42,6 @@ from .const import (
     CONF_CONTEXT_TRUNCATE_STRATEGY,
     CONF_FUNCTION_TOOL_ERROR_RECOVERY,
     CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-    CONF_MAX_TOKENS,
     CONF_SHORTEN_TOOL_CALL_ID,
     CONTEXT_TRUNCATE_CLEAR,
     CONTEXT_TRUNCATE_KEEP_RECENT,
@@ -54,7 +53,6 @@ from .const import (
     DEFAULT_CONTEXT_TRUNCATE_STRATEGY,
     DEFAULT_FUNCTION_TOOL_ERROR_RECOVERY,
     DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
-    DEFAULT_MAX_TOKENS,
     DEFAULT_SHORTEN_TOOL_CALL_ID,
     DOMAIN,
     FUNCTION_GROUP_LOADER_TOOL_NAME,
@@ -117,7 +115,7 @@ from .ha_tool_result_compat import (
     is_tool_result_content,
     make_tool_result_content,
 )
-from .helpers import get_api_mode
+from .helpers import entry_api_provider, get_api_mode
 from .model_tool_results import async_prepare_tool_results, serialize_model_tool_result
 from .non_streaming import completed_chat_chunks, completed_responses_events
 from .operational_errors import log_handled_failure
@@ -736,6 +734,126 @@ def _partition_provider_tool_calls(
     return pending, loader, control
 
 
+_AZURE_CHAT_ANNOTATION_FIELDS = frozenset(
+    {"content_filter_results", "content_filter_raw", "content_filter_offsets"}
+)
+
+
+def _is_azure_chat_filter_annotation_choice(choice: Any) -> bool:
+    """Recognize Azure's annotation-only choice, never late assistant output.
+
+    Azure asynchronous filtering sends these choices without a delta, sometimes
+    after the ordinary stop chunk. Restrict the envelope instead of relaxing
+    the general post-terminal accounting and provider-output admission rules.
+    """
+    extras = getattr(choice, "model_extra", None)
+    if (
+        not isinstance(extras, Mapping)
+        or not extras
+        or not set(extras) <= _AZURE_CHAT_ANNOTATION_FIELDS
+        or getattr(choice, "finish_reason", None) is not None
+        or getattr(choice, "index", 0) not in (0, None)
+        or getattr(choice, "logprobs", None) is not None
+    ):
+        return False
+    delta = getattr(choice, "delta", None)
+    if delta is None:
+        return True
+    if getattr(delta, "model_extra", None):
+        return False
+    return not any(
+        getattr(delta, field, None)
+        for field in (
+            "role",
+            "content",
+            "refusal",
+            "tool_calls",
+            "function_call",
+            "audio",
+            "reasoning",
+            "reasoning_content",
+        )
+    )
+
+
+def _azure_filter_signal(results: Any) -> str | None:
+    """Inspect filtering decisions, including nested Azure category results."""
+    if results is None:
+        return None
+    if isinstance(results, Mapping):
+        if "error" in results and results["error"] is not None:
+            return "error"
+        if "filtered" in results and results["filtered"] is not False:
+            return "blocked"
+        for value in results.values():
+            if isinstance(value, (Mapping, list)) and (
+                signal := _azure_filter_signal(value)
+            ):
+                return signal
+    elif isinstance(results, list):
+        for value in results:
+            if signal := _azure_filter_signal(value):
+                return signal
+    else:
+        # Unknown annotation result shapes must not be silently accepted as
+        # proof that the already-streamed text passed content filtering.
+        return "error"
+    return None
+
+
+def _is_post_terminal_chat_accounting_choice(
+    choice: Any,
+    terminal_reason: str | None,
+    terminal_native_reason: str | None,
+    *,
+    has_usage: bool,
+) -> bool:
+    """Admit only inert accounting metadata after a terminal Chat chunk.
+
+    OpenRouter repeats the normalized and native finish reasons with an empty
+    assistant delta. Unknown extra fields must not conceal late provider output.
+    """
+    extras = getattr(choice, "model_extra", None) or {}
+    if not isinstance(extras, Mapping) or set(extras) - {"native_finish_reason"}:
+        return False
+    native_reason = extras.get("native_finish_reason")
+    if native_reason is not None and (
+        not isinstance(native_reason, str)
+        or (
+            terminal_native_reason is not None
+            and native_reason != terminal_native_reason
+        )
+    ):
+        return False
+    delta = getattr(choice, "delta", None)
+    if delta is None:
+        return False
+    role = getattr(delta, "role", None)
+    # The newly accepted gateway-specific shape must actually carry usage;
+    # preserve the older, completely empty compatibility tail without it.
+    if (role == "assistant" or native_reason is not None) and not has_usage:
+        return False
+    return (
+        choice.finish_reason in (None, terminal_reason)
+        and getattr(choice, "index", 0) in (0, None)
+        and not getattr(choice, "logprobs", None)
+        and not getattr(delta, "model_extra", None)
+        and role in (None, "", "assistant")
+        and getattr(delta, "content", None) in (None, "")
+        and not any(
+            getattr(delta, field, None)
+            for field in (
+                "refusal",
+                "tool_calls",
+                "function_call",
+                "audio",
+                "reasoning",
+                "reasoning_content",
+            )
+        )
+    )
+
+
 class ExtendedOpenAIBaseLLMEntity(Entity):
     """Extended OpenAI base entity."""
 
@@ -872,6 +990,19 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 )
             }
             api_kwargs = dict(provider_snapshot.api_kwargs)
+            # Use the effective wire request, not a saved setting that may differ.
+            effective_output_limit = next(
+                (
+                    api_kwargs[name]
+                    for name in (
+                        "max_output_tokens",
+                        "max_completion_tokens",
+                        "max_tokens",
+                    )
+                    if type(api_kwargs.get(name)) is int
+                ),
+                None,
+            )
             model = str(api_kwargs["model"])
             api_mode = provider_snapshot.api_mode
             max_function_calls = options.get(
@@ -903,7 +1034,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     raise HomeAssistantError(
                         f"{model} does not support native Structured Outputs."
                     )
-                azure = self.entry.data.get(CONF_API_PROVIDER) == "azure"
+                azure = entry_api_provider(self.entry) == "azure"
                 if structure_schema is None:
                     structured_schema = _format_structured_output(
                         structure, chat_log.llm_api, azure=azure
@@ -1166,7 +1297,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                 response, request_usage
                             )
                         transformed_stream = self._transform_responses_stream(
-                            chat_log, response_events, request_usage
+                            chat_log,
+                            response_events,
+                            request_usage,
+                            effective_output_limit=effective_output_limit,
                         )
                     else:
                         response = await self._client.chat.completions.create(
@@ -1184,12 +1318,17 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                 response, request_usage
                             )
                         transformed_stream = self._transform_chat_stream(
-                            chat_log, response_chunks, request_usage
+                            chat_log,
+                            response_chunks,
+                            request_usage,
+                            effective_output_limit=effective_output_limit,
                         )
 
                     with (
                         bind_tool_recovery_state(recovery_state),
-                        async_streaming_speech_cleanup(chat_log, options),
+                        async_streaming_speech_cleanup(
+                            chat_log, options, completed=not streaming
+                        ) as speech_presentation,
                     ):
                         listener = getattr(chat_log, "delta_listener", None)
                         if conditional_continue:
@@ -1208,6 +1347,13 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                         pending_tool_calls.extend(content.tool_calls)
                         finally:
                             chat_log.delta_listener = listener
+                        if speech_presentation is not None and not streaming:
+                            # Completed Chat and Responses adapters emit synthetic
+                            # text deltas. Join each known-complete answer and run
+                            # the speech-only parser off-loop before delivery.
+                            await speech_presentation.async_flush_completed(
+                                self.hass, chat_log
+                            )
                 except BaseException as err:
                     append_unresolved_tool_results(
                         chat_log,
@@ -1410,13 +1556,19 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     # A finalizer emitted beside an action tool is premature. Remove it
                     # from history and wait for the post-tool response to decide.
                     is_final = not pending_tool_calls and not loader_calls
-                    with async_streaming_speech_cleanup(chat_log, options):
+                    with async_streaming_speech_cleanup(
+                        chat_log, options, completed=True
+                    ) as speech_presentation:
                         await self._consume_continue_conversation_tool(
                             chat_log,
                             existing_content_ids,
                             response_text if is_final else None,
                             preserve_calls=api_mode == API_MODE_RESPONSES,
                         )
+                        if speech_presentation is not None:
+                            await speech_presentation.async_flush_completed(
+                                self.hass, chat_log
+                            )
                     if is_final:
                         continuation_decision = decision
                         if draft_content_ids:
@@ -1491,7 +1643,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             preserve_native=api_mode == API_MODE_RESPONSES,
                         )
                     if chat_log.delta_listener:
-                        with async_streaming_speech_cleanup(chat_log, options):
+                        with async_streaming_speech_cleanup(
+                            chat_log, options, completed=True
+                        ) as speech_presentation:
                             for finalizer_content in chat_log.content:
                                 if (
                                     id(finalizer_content) not in existing_content_ids
@@ -1512,6 +1666,10 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                             "content": finalizer_content.content,
                                         },
                                     )
+                            if speech_presentation is not None:
+                                await speech_presentation.async_flush_completed(
+                                    self.hass, chat_log
+                                )
 
                 if (
                     api_mode == API_MODE_RESPONSES
@@ -1890,6 +2048,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         chat_log: conversation.ChatLog,
         result: AsyncStream[ChatCompletionChunk],
         request_usage: RequestTokenMeasurements | None = None,
+        *,
+        effective_output_limit: int | None = None,
     ) -> AsyncGenerator[
         conversation.AssistantContentDeltaDict | conversation.ToolResultContentDeltaDict
     ]:
@@ -1901,6 +2061,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         first_chunk = True
         refusal_seen = False
         terminal_finish_seen = False
+        terminal_finish_reason: str | None = None
+        terminal_native_finish_reason: str | None = None
         token_limit_reached = False
         event_count = 0
 
@@ -1922,15 +2084,57 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     _trace_provider_usage(chat_log, extract_usage(chunk.usage))
                 continue
 
+            # Azure asynchronous content filtering sends annotation-only
+            # choices (without delta), including after the terminal response.
+            # Their filtering signals must be processed, not merely discarded.
+            if len(chunk.choices) == 1 and _is_azure_chat_filter_annotation_choice(
+                chunk.choices[0]
+            ):
+                annotation = chunk.choices[0].model_extra
+                signal = _azure_filter_signal(annotation.get("content_filter_results"))
+                if signal:
+                    await async_recover_trailing_usage(result, request_usage)
+                    if signal == "blocked":
+                        raise HomeAssistantError(
+                            "OpenAI response was blocked by the provider content filter"
+                        )
+                    raise HomeAssistantError(
+                        "Provider content filtering failed; response cannot be trusted"
+                    )
+                continue
+
             if terminal_finish_seen:
+                # Some compatible gateways append a usage-bearing choice after
+                # the terminal chunk, with an empty delta and repeated finish
+                # reason. The usage adapter has already recorded its counters.
+                # Never admit actual output or a contradictory terminal here.
+                if len(chunk.choices) == 1 and _is_post_terminal_chat_accounting_choice(
+                    chunk.choices[0],
+                    terminal_finish_reason,
+                    terminal_native_finish_reason,
+                    has_usage=chunk.usage is not None,
+                ):
+                    continue
                 await async_recover_trailing_usage(result, request_usage)
                 raise ProviderStreamError(
                     "Provider returned malformed data: event after terminal response",
                     error_type="invalid_event_sequence",
                 )
             choice = chunk.choices[0]
-            delta = choice.delta
+            delta = getattr(choice, "delta", None)
             finish_reason = choice.finish_reason
+            if delta is None:
+                # A content-filter terminal can also arrive without a delta.
+                # Every other unannotated missing-delta event remains malformed.
+                await async_recover_trailing_usage(result, request_usage)
+                if finish_reason == "content_filter":
+                    raise HomeAssistantError(
+                        "OpenAI response was blocked by the provider content filter"
+                    )
+                raise ProviderStreamError(
+                    "Provider returned malformed data: Chat delta missing",
+                    error_type="invalid_event_sequence",
+                )
             try:
                 budget.chat_delta(delta)
             except ProviderStreamError:
@@ -1959,6 +2163,17 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 if refusal_value:
                     yield {"content": refusal_value}
 
+            # The deprecated delta.function_call format has no externally
+            # supplied call ID and cannot use the current result/history/replay
+            # protocol. Reject it explicitly instead of accepting a terminal
+            # marker while silently discarding the requested action.
+            if getattr(delta, "function_call", None) is not None:
+                await async_recover_trailing_usage(result, request_usage)
+                raise ProviderStreamError(
+                    "Provider returned unsupported legacy Chat Completions function_call payload",
+                    error_type="unsupported_function_call",
+                )
+
             if delta.tool_calls:
                 for tool_call_delta in delta.tool_calls:
                     idx = tool_call_delta.index
@@ -1986,13 +2201,22 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                                 tool_call_delta.function.arguments
                             )
 
-            if current_tool_calls and (finish_reason in {"tool_calls", "stop"}):
+            if current_tool_calls and finish_reason in {
+                "tool_calls",
+                "stop",
+                "function_call",
+            }:
                 # Yield all accumulated tool calls (marked as external since we handle them ourselves)
                 tool_calls_list = []
                 for idx in sorted(current_tool_calls.keys()):
                     tool_call = current_tool_calls[idx]
                     try:
-                        args = json.loads(tool_call["arguments"])
+                        raw_args = tool_call["arguments"]
+                        args = (
+                            {}
+                            if isinstance(raw_args, str) and not raw_args.strip()
+                            else json.loads(raw_args)
+                        )
                     except json.JSONDecodeError as err:
                         if recovery_state is None or not recovery_state.enabled:
                             await async_recover_trailing_usage(result, request_usage)
@@ -2019,11 +2243,25 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 )
                 yield {"tool_calls": tool_calls_list}
                 current_tool_calls.clear()
+            if finish_reason in {
+                "stop",
+                "tool_calls",
+                "function_call",
+                "length",
+                "content_filter",
+            }:
+                original_extra = getattr(choice, "model_extra", None)
+                if isinstance(original_extra, Mapping):
+                    original_native = original_extra.get("native_finish_reason")
+                    if isinstance(original_native, str):
+                        terminal_native_finish_reason = original_native
             if finish_reason in {"stop", "tool_calls", "function_call"}:
                 terminal_finish_seen = True
+                terminal_finish_reason = finish_reason
             if finish_reason == "length":
                 token_limit_reached = True
                 terminal_finish_seen = True
+                terminal_finish_reason = finish_reason
             if finish_reason == "content_filter":
                 if not refusal_seen:
                     await async_recover_trailing_usage(result, request_usage)
@@ -2031,14 +2269,13 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         "OpenAI response was blocked by the provider content filter"
                     )
                 terminal_finish_seen = True
+                terminal_finish_reason = finish_reason
 
             # Keep consuming after the stop chunk so providers that honor
             # stream_options.include_usage can deliver their final usage-only chunk.
 
         if token_limit_reached:
-            raise TokenLengthExceededError(
-                self.subentry.data.get(CONF_MAX_TOKENS, DEFAULT_MAX_TOKENS)
-            )
+            raise TokenLengthExceededError(effective_output_limit)
         if not terminal_finish_seen:
             raise HomeAssistantError(
                 "OpenAI Chat Completions stream ended before a terminal finish reason"
@@ -2053,6 +2290,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         chat_log: conversation.ChatLog,
         result: AsyncStream[Any],
         request_usage: RequestTokenMeasurements | None = None,
+        *,
+        effective_output_limit: int | None = None,
     ) -> AsyncGenerator[
         conversation.AssistantContentDeltaDict | conversation.ToolResultContentDeltaDict
     ]:
@@ -2061,7 +2300,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         try:
             async with aclosing(
                 ExtendedOpenAIBaseLLMEntity._transform_responses_stream_events(
-                    self, chat_log, result, request_usage
+                    self,
+                    chat_log,
+                    result,
+                    request_usage,
+                    effective_output_limit=effective_output_limit,
                 )
             ) as events:
                 async for delta in events:
@@ -2081,6 +2324,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         chat_log: conversation.ChatLog,
         result: AsyncStream[Any],
         request_usage: RequestTokenMeasurements | None = None,
+        *,
+        effective_output_limit: int | None = None,
     ) -> AsyncGenerator[
         conversation.AssistantContentDeltaDict | conversation.ToolResultContentDeltaDict
     ]:
@@ -2205,7 +2450,12 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         yield {"native": item}
                     elif item_type == "function_call":
                         try:
-                            arguments = json.loads(item.arguments)
+                            raw_args = item.arguments
+                            arguments = (
+                                {}
+                                if isinstance(raw_args, str) and not raw_args.strip()
+                                else json.loads(raw_args)
+                            )
                         except json.JSONDecodeError as err:
                             if recovery_state is None or not recovery_state.enabled:
                                 await async_recover_trailing_usage(
@@ -2262,11 +2512,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             else "unknown reason"
                         )
                         if reason == "max_output_tokens":
-                            raise TokenLengthExceededError(
-                                self.subentry.data.get(
-                                    CONF_MAX_TOKENS, DEFAULT_MAX_TOKENS
-                                )
-                            )
+                            raise TokenLengthExceededError(effective_output_limit)
                         raise HomeAssistantError(
                             f"OpenAI response incomplete: {reason}"
                         )

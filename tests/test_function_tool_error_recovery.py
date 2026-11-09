@@ -755,6 +755,80 @@ async def test_chat_completions_malformed_arguments_are_retained_when_enabled(ha
     assert state.pop_malformed(tool_input.id) is not None
 
 
+@pytest.mark.parametrize("arguments", ["", "  \n\t"])
+@pytest.mark.parametrize("api_mode", ["chat", "responses"])
+async def test_provider_blank_arguments_are_empty_objects_with_recovery_off(
+    hass, arguments: str, api_mode: str
+) -> None:
+    """Parameterless provider calls work without enabling error recovery."""
+    entity = ExtendedOpenAIBaseLLMEntity.__new__(ExtendedOpenAIBaseLLMEntity)
+    if api_mode == "chat":
+        call_delta = SimpleNamespace(
+            index=0,
+            id="blank-call",
+            function=SimpleNamespace(
+                name="start_fresh_conversation", arguments=arguments
+            ),
+        )
+        chunk = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    delta=SimpleNamespace(
+                        content=None, refusal=None, tool_calls=[call_delta]
+                    ),
+                    finish_reason="tool_calls",
+                )
+            ],
+            usage=None,
+        )
+        stream = FakeStream([chunk])
+    else:
+        item = SimpleNamespace(
+            type="function_call",
+            call_id="blank-call",
+            name="start_fresh_conversation",
+            arguments=arguments,
+        )
+        stream = FakeStream(
+            [
+                _response_event("response.output_item.added", item=item),
+                _response_event("response.output_item.done", item=item),
+                _response_completed(),
+            ]
+        )
+    with bind_tool_recovery_state(ToolRecoveryState(enabled=False)):
+        deltas = [
+            delta
+            async for delta in (
+                entity._transform_chat_stream(_chat_log(hass), stream)
+                if api_mode == "chat"
+                else entity._transform_responses_stream(_chat_log(hass), stream)
+            )
+        ]
+    call = next(delta["tool_calls"][0] for delta in deltas if "tool_calls" in delta)
+    assert call.tool_args == {}
+    assert call.id == "blank-call"
+
+
+def test_blank_arguments_do_not_bypass_required_function_parameters() -> None:
+    """The normal Function Tool validator still refuses missing required fields."""
+    from custom_components.extended_openai_conversation_responses.function_execution import (
+        validate_function_arguments,
+    )
+
+    spec = {
+        "name": "requires_target",
+        "parameters": {
+            "type": "object",
+            "properties": {"target": {"type": "string"}},
+            "required": ["target"],
+            "additionalProperties": False,
+        },
+    }
+    with pytest.raises(HomeAssistantError, match="Missing required function input"):
+        validate_function_arguments(spec, {})
+
+
 @pytest.mark.parametrize("converter", [_convert_content_to_param, _convert_content_to_responses_param])
 def test_malformed_arguments_replay_raw_provider_text_in_both_protocols(hass, converter) -> None:
     call = llm.ToolInput(

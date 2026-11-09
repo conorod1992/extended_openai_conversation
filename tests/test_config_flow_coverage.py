@@ -243,6 +243,51 @@ async def test_initial_provider_setup_routes_to_simple_provider_specific_forms()
     assert CONF_SKIP_AUTHENTICATION not in azure_keys
 
 
+async def test_openai_credentials_error_retry_preserves_help_placeholders() -> None:
+    """The same translated form description renders before and after errors."""
+    flow = SimpleNamespace(
+        hass=MagicMock(),
+        _setup_data={CONF_NAME: "Assistant", CONF_API_PROVIDER: "openai"},
+        async_show_form=MagicMock(side_effect=_sync_result),
+    )
+    first = await ExtendedOpenAIConversationConfigFlow.async_step_openai_credentials(
+        flow
+    )
+    placeholders = first["description_placeholders"]
+    assert set(placeholders) == {"api_key_guide_url", "openai_api_keys_url"}
+    assert all(url.startswith("https://") for url in placeholders.values())
+
+    for failure, expected in (
+        (APIConnectionError(request=MagicMock()), "cannot_connect"),
+        (RuntimeError("validation failed"), "unknown"),
+    ):
+        with patch.object(
+            config_flow, "validate_input", AsyncMock(side_effect=failure)
+        ):
+            retry = await ExtendedOpenAIConversationConfigFlow._async_finish_initial_setup(
+                flow,
+                {**flow._setup_data, CONF_API_KEY: "private-key"},
+                "openai_credentials",
+                config_flow.STEP_OPENAI_CREDENTIALS_SCHEMA,
+            )
+        assert retry["step_id"] == "openai_credentials"
+        assert retry["errors"] == {"base": expected}
+        assert retry["description_placeholders"] == placeholders
+
+    with patch.object(
+        config_flow,
+        "validate_input",
+        AsyncMock(side_effect=APIConnectionError(request=MagicMock())),
+    ):
+        advanced = await ExtendedOpenAIConversationConfigFlow._async_finish_initial_setup(
+            flow,
+            {**flow._setup_data, CONF_API_KEY: "private-key"},
+            "openai_advanced",
+            config_flow.STEP_OPENAI_ADVANCED_SCHEMA,
+        )
+    assert advanced["description_placeholders"] is None
+
+
 async def test_config_flow_success_errors_reauth_and_type_registration() -> None:
     """Cover direct config-flow outcomes, including defensive reauthentication paths."""
     flow = SimpleNamespace(

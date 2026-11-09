@@ -199,6 +199,171 @@ async def test_strict_broad_match_beats_fuzzy_equals():
     assert match.score == 100
 
 
+@pytest.mark.parametrize("match_type", ["equals", "starts_with", "ends_with", "contains"])
+@pytest.mark.parametrize(
+    ("phrase", "utterance"),
+    [
+        ("turn on the kitchen lights", "turn off the kitchen lights"),
+        ("unlock the front door", "lock the front door"),
+        ("open the garage door", "close the garage door"),
+        ("arm the security system", "disarm the security system"),
+        ("enable the kitchen alarm", "disable the kitchen alarm"),
+        ("turn up the bedroom lights", "turn down the bedroom lights"),
+        ("set bedroom temperature to 20", "set bedroom temperature to 30"),
+        ("set bedroom temperature to twenty", "set bedroom temperature to thirty"),
+        ("turn on the hall lights", "turn on the wall lights"),
+        ("turn on kitchen lights", "turn on garden lights"),
+    ],
+)
+async def test_fuzzy_never_substitutes_command_number_or_target(
+    hass, phrase, utterance, match_type
+):
+    rules = await manager(
+        rule(
+            "unsafe",
+            phrase,
+            match_type,
+            matching={"fuzzy": True, "fuzzy_threshold": 70},
+        )
+    )
+    assert rules.match(utterance) is None
+    assert await rules.async_match(hass, utterance) is None
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "do not turn on the kitchen lights",
+        "never turn on the kitchen lights",
+        "turn on the kitchen lights not",
+    ],
+)
+async def test_fuzzy_equals_rejects_inserted_negation(hass, utterance):
+    rules = await manager(
+        rule(
+            "unsafe",
+            "turn on the kitchen lights",
+            matching={"fuzzy": True, "fuzzy_threshold": 70},
+        )
+    )
+    assert rules.match(utterance) is None
+    assert await rules.async_match(hass, utterance) is None
+
+
+@pytest.mark.parametrize(
+    ("match_type", "utterance"),
+    [
+        ("equals", "turn on the kitchn lights"),
+        ("starts_with", "turn on the kitchn lights please"),
+        ("ends_with", "please turn on the kitchn lights"),
+        ("contains", "please turn on the kitchn lights now"),
+    ],
+)
+async def test_fuzzy_preserves_typo_matching_in_all_text_modes(
+    hass, match_type, utterance
+):
+    rules = await manager(
+        rule(
+            "command",
+            "turn on the kitchen lights",
+            match_type,
+            matching={"fuzzy": True, "fuzzy_threshold": 90},
+        )
+    )
+    direct = rules.match(utterance)
+    eligible = await rules.async_match(hass, utterance)
+    assert direct is not None and direct.fuzzy
+    assert eligible is not None and eligible.fuzzy
+    assert direct.rule["id"] == eligible.rule["id"] == "command"
+    assert direct.score == eligible.score >= 90
+
+
+@pytest.mark.parametrize(
+    ("phrase", "utterance", "match_type"),
+    [
+        ("good night", "goodnight", "equals"),
+        ("good night", "good nigt", "equals"),
+        ("goodnight", "good night", "equals"),
+        ("turn on living room lights", "turn on livingroom lights please", "starts_with"),
+        ("turn on bedroom lights", "please turn on bed room lights", "ends_with"),
+        ("switch on the living room light", "please switch on livingroom light now", "contains"),
+        ("turn on the hall light", "turn on hall light", "equals"),
+        ("turn on the hall light", "turn on hall light please", "starts_with"),
+        ("turn on the hall light", "please turn on hall light", "ends_with"),
+        ("turn on the hall light", "please turn on hall light now", "contains"),
+        ("turn on the living room lights", "please turn on livingroom lights now", "contains"),
+    ],
+)
+async def test_fuzzy_handles_safe_compounds_and_article_omissions(
+    hass, phrase: str, utterance: str, match_type: str
+):
+    rules = await manager(
+        rule(
+            "safe",
+            phrase,
+            match_type,
+            matching={"fuzzy": True, "fuzzy_threshold": 90},
+        )
+    )
+    direct = rules.match(utterance)
+    eligible = await rules.async_match(hass, utterance)
+    assert direct is not None and direct.fuzzy
+    assert eligible is not None and eligible.fuzzy
+    assert direct.rule["id"] == eligible.rule["id"] == "safe"
+
+
+@pytest.mark.parametrize(
+    ("phrase", "utterance"),
+    [
+        ("now here", "nowhere"),
+        ("good night", "goodlight"),
+        ("turn on the kitchen lights", "turn off the kitchen lights"),
+        ("turn on the living room lights", "turn off livingroom lights"),
+        ("lock the front door", "unlock the frontdoor"),
+        ("set bedroom temperature to 20", "set bed room temperature to 30"),
+    ],
+)
+async def test_fuzzy_compounds_never_remove_sensitive_differences(
+    hass, phrase: str, utterance: str
+):
+    rules = await manager(
+        rule(
+            "unsafe",
+            phrase,
+            matching={"fuzzy": True, "fuzzy_threshold": 70},
+        )
+    )
+    assert rules.match(utterance) is None
+    assert await rules.async_match(hass, utterance) is None
+
+
+async def test_fuzzy_preserves_optional_article_and_inherited_safety(hass):
+    rules = await manager(
+        rule("command", "turn on kitchen light"),
+        defaults={"fuzzy": True, "fuzzy_threshold": 90},
+    )
+    match = rules.match("turn on the kitchen light")
+    assert match is not None and match.fuzzy
+    assert 90 <= match.score < 100
+    assert (await rules.async_match(hass, "turn on the kitchen light")) == match
+    assert rules.match("turn off kitchen light") is None
+    assert await rules.async_match(hass, "turn off kitchen light") is None
+
+
+async def test_strict_contains_semantics_are_not_rewritten_by_fuzzy_guard():
+    rules = await manager(
+        rule(
+            "broad",
+            "turn on the kitchen lights",
+            "contains",
+            matching={"fuzzy": True, "fuzzy_threshold": 70},
+        )
+    )
+    match = rules.match("do not turn on the kitchen lights")
+    assert match is not None and match.rule["id"] == "broad"
+    assert match.fuzzy is False
+
+
 @pytest.mark.parametrize("threshold,expected", [(79, True), (80, True), (81, False)])
 async def test_fuzzy_threshold_is_inclusive(threshold, expected):
     # One substituted letter in five gives 80%, exactly representable; no mock
@@ -380,6 +545,32 @@ async def test_rule_condition_truth_table(phrase, text, expected):
         assert match.score == 100
     assert rules.snapshot() == before
     assert rules.match(text) == match
+
+
+@pytest.mark.parametrize(
+    ("singular", "plural"),
+    [
+        ("house", "houses"),
+        ("size", "sizes"),
+        ("noise", "noises"),
+        ("movie", "movies"),
+        ("cookie", "cookies"),
+        ("brownie", "brownies"),
+        ("bus", "buses"),
+        ("gas", "gases"),
+        ("quiz", "quizzes"),
+        ("party", "parties"),
+        ("box", "boxes"),
+        ("glass", "glasses"),
+    ],
+)
+async def test_word_form_normalization_preserves_common_plural_pairs(
+    singular, plural
+):
+    rules = await manager(rule("word", singular))
+    match = rules.match(plural)
+    assert match is not None and match.rule["id"] == "word"
+    assert not match.fuzzy
 
 
 @pytest.mark.parametrize(
@@ -600,3 +791,138 @@ async def test_preview_matches_production_for_same_rule_and_request(
         }
     assert rules.snapshot() == before
     hass.services.async_call.assert_not_called()
+
+
+@pytest.mark.parametrize("match_type", ["equals", "starts_with", "ends_with", "contains"])
+@pytest.mark.parametrize(
+    ("singular", "plural"),
+    [
+        ("status", "statuses"),
+        ("focus", "focuses"),
+        ("virus", "viruses"),
+        ("bonus", "bonuses"),
+        ("campus", "campuses"),
+        ("cactus", "cactuses"),
+        ("octopus", "octopuses"),
+        ("nexus", "nexuses"),
+        ("syllabus", "syllabuses"),
+        ("thesaurus", "thesauruses"),
+        ("house", "houses"),
+        ("size", "sizes"),
+        ("noise", "noises"),
+        ("movie", "movies"),
+        ("quiz", "quizzes"),
+        ("bus", "buses"),
+        ("gas", "gases"),
+        ("apparatus", "apparatuses"),
+        ("caucus", "caucuses"),
+        ("census", "censuses"),
+        ("chorus", "choruses"),
+        ("hibiscus", "hibiscuses"),
+        ("lotus", "lotuses"),
+        ("minibus", "minibuses"),
+        ("minus", "minuses"),
+        ("omnibus", "omnibuses"),
+        ("plus", "pluses"),
+        ("refocus", "refocuses"),
+        ("sinus", "sinuses"),
+        ("surplus", "surpluses"),
+        ("walrus", "walruses"),
+        ("excuse", "excuses"),
+        ("use", "uses"),
+        ("refuse", "refuses"),
+        ("abuse", "abuses"),
+        ("fuse", "fuses"),
+        ("genius", "geniuses"),
+        ("coronavirus", "coronaviruses"),
+        ("corpus", "corpuses"),
+        ("crocus", "crocuses"),
+        ("fetus", "fetuses"),
+        ("fungus", "funguses"),
+        ("genus", "genuses"),
+        ("hippopotamus", "hippopotamuses"),
+        ("meniscus", "meniscuses"),
+        ("nucleus", "nucleuses"),
+        ("prospectus", "prospectuses"),
+        ("radius", "radiuses"),
+        ("retrovirus", "retroviruses"),
+        ("rhinovirus", "rhinoviruses"),
+        ("stylus", "styluses"),
+    ],
+)
+@pytest.mark.parametrize("reverse", [False, True])
+async def test_word_form_families_preserve_strict_matching_in_all_modes(
+    hass, match_type, singular, plural, reverse
+):
+    phrase, spoken = (plural, singular) if reverse else (singular, plural)
+    context = {
+        "equals": ("show " + phrase, "show " + spoken),
+        "starts_with": ("show " + phrase, "show " + spoken + " now"),
+        "ends_with": ("show " + phrase, "please show " + spoken),
+        "contains": ("show " + phrase, "please show " + spoken + " now"),
+    }
+    saved, incoming = context[match_type]
+    rules = await manager(
+        rule("forms", saved, match_type),
+        defaults={"word_forms": True, "fuzzy": False},
+    )
+    direct = rules.match(incoming)
+    async_result = await rules.async_match(hass, incoming)
+    assert direct is not None and not direct.fuzzy
+    assert async_result == direct
+    preview = request_rule_match_preview(async_result)
+    assert preview["matched"] is True and preview["fuzzy"] is False
+
+
+@pytest.mark.parametrize(
+    ("saved", "incoming"),
+    [
+        ("status", "statue"),
+        ("focus", "focuse"),
+        ("house", "hous"),
+        ("virus", "viruse"),
+        ("census", "censuse"),
+        ("chorus", "choruse"),
+        ("minus", "minuse"),
+        ("minibus", "minibuse"),
+        ("refocus", "refocuse"),
+        ("surplus", "surpluse"),
+        ("use", "us"),
+        ("excuse", "excus"),
+        ("crocus", "crocuse"),
+        ("fetus", "fetuse"),
+        ("retrovirus", "retroviruse"),
+        ("prospectus", "prospectuse"),
+        ("hippopotamus", "hippopotamuse"),
+    ],
+)
+async def test_word_form_corrections_do_not_admit_unrelated_words(
+    hass, saved, incoming
+):
+    rules = await manager(
+        rule("forms", "show " + saved),
+        defaults={"word_forms": True, "fuzzy": False},
+    )
+    assert rules.match("show " + incoming) is None
+    assert await rules.async_match(hass, "show " + incoming) is None
+
+@pytest.mark.parametrize(
+    ("singular", "plural"),
+    [
+        ("census", "censuses"),
+        ("minibus", "minibuses"),
+        ("house", "houses"),
+        ("status", "statuses"),
+        ("crocus", "crocuses"),
+        ("retrovirus", "retroviruses"),
+    ],
+)
+async def test_word_form_suffix_matching_remains_opt_in(
+    hass, singular, plural
+):
+    rules = await manager(
+        rule("opt-in", "show " + singular),
+        defaults={"word_forms": False, "fuzzy": False},
+    )
+    assert rules.match("show " + plural) is None
+    assert await rules.async_match(hass, "show " + plural) is None

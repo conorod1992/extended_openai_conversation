@@ -90,6 +90,9 @@ async def test_result_reference_stop_cannot_skip_native_unload(
 
     async def effect(_call):
         effects.append(True)
+        # Model a service that suspends so HA's shield is installed before the
+        # later result-reference failure and caller cancellation coincide.
+        await asyncio.sleep(0)
 
     hass.services.async_register("script_probe", "record", effect)
     tool = {

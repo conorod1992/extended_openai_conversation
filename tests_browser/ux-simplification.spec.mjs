@@ -140,7 +140,9 @@ for (const bundled of [false, true]) {
     await expect(panel.locator("main")).toContainText("New Guest Mode restrictions apply immediately to actions.");
     await expect(panel.locator("main")).toContainText("Information already sent to the AI for the current response cannot be taken back");
     await go("capabilities/quiet-hours");
-    await expect(panel.locator("main")).toContainText("volumes previously lowered by Quiet Hours may briefly be restored before the new limit is applied");
+    await expect(panel.locator("main")).toContainText("Starting volume limit");
+    await expect(panel.locator("main")).toContainText("Later volume changes by you or automations are respected");
+    await expect(panel.locator("main")).toContainText("Changing this limit mid-period may briefly restore previous volumes");
     await go("usage-maintenance/retention");
     await expect(panel.locator("main")).toContainText("Overall usage totals are kept.");
     await expectHarnessClean(page, errors);

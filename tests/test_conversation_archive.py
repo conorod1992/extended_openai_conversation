@@ -1117,6 +1117,7 @@ async def test_home_assistant_storage_delegates_to_private_atomic_stores(monkeyp
     assert len(created) == 3
     assert created[0][3]["private"] is True
     assert created[0][3]["atomic_writes"] is True
+    assert created[0][3]["serialize_in_event_loop"] is False
     assert created[1][3]["serialize_in_event_loop"] is False
 
 
@@ -1173,6 +1174,41 @@ def test_search_snapshot_filters_dates_ranks_phrase_and_paginates() -> None:
     assert first["results"][0]["turn_id"] != second["results"][0]["turn_id"]
 
 
+def test_archive_search_discards_question_filler_without_losing_literal_queries() -> None:
+    session = _session(turn_count=3)
+    turns = (
+        _turn(
+            turn_id="topic",
+            timestamp="2026-09-01T10:00:00+00:00",
+            user_text="The boiler needs servicing",
+            assistant_text="Book a plumber",
+        ),
+        _turn(
+            turn_id="filler",
+            timestamp="2026-09-03T10:00:00+00:00",
+            user_text="What did I say?",
+            assistant_text="I said something",
+        ),
+        _turn(
+            turn_id="other",
+            timestamp="2026-09-04T10:00:00+00:00",
+            user_text="Weather forecast",
+            assistant_text="Clear",
+        ),
+    )
+    snapshot = ((session, turns),)
+    result = _search_archive_snapshot(
+        snapshot, "what did I say about the boiler", None, None, 1, 0
+    )
+    assert [item["turn_id"] for item in result["results"]] == ["topic"]
+    assert result["has_more"] is False
+    # A deliberately literal stopword-only search is still supported, and
+    # punctuation cannot become a match-all request.
+    literal = _search_archive_snapshot(snapshot, "what", None, None, 3, 0)
+    assert [item["turn_id"] for item in literal["results"]] == ["filler"]
+    assert _search_archive_snapshot(snapshot, "?!", None, None, 3, 0)["results"] == []
+
+
 def test_search_snapshot_does_not_turn_zero_token_queries_into_match_all() -> None:
     session = _session(turn_count=3)
     turns = (
@@ -1218,11 +1254,11 @@ def test_text_search_and_time_helpers_cover_edge_forms() -> None:
 
     assert _title("  many\n  spaces  ") == "many spaces"
     assert _stem("stories") == "story"
-    assert _stem("running") == "runn"
+    assert _stem("running") == "run"
     assert _stem("cars") == "cars"
     assert _stem("glass") == "glass"
     assert _stem("cat") == "cat"
-    assert _tokens("The stories and running cars") == {"story", "runn", "cars"}
+    assert _tokens("The stories and running cars") == {"story", "run", "cars"}
 
     value = "prefix " * 100 + "needle phrase" + " suffix" * 100
     excerpt = _excerpt(value, "needle phrase")

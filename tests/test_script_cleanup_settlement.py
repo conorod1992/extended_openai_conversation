@@ -8,7 +8,109 @@ import pytest
 
 from custom_components.extended_openai_conversation_responses.script_lifecycle import (
     async_cleanup_script,
+    async_run_script,
 )
+
+
+@pytest.mark.parametrize("run_outcome", ["success", "error", "cancel"])
+@pytest.mark.parametrize("stop_outcome", ["success", "error", "cancel"])
+@pytest.mark.parametrize("cancels", [1, 3])
+async def test_cancelled_run_settles_native_execution_and_stop(
+    run_outcome, stop_outcome, cancels, caplog
+):
+    running, stopping, release, finished = (asyncio.Event() for _ in range(4))
+    effects = []
+    native = None
+
+    async def execute():
+        effects.append(True)
+        running.set()
+        try:
+            await release.wait()
+            if run_outcome == "error":
+                raise ValueError("PRIVATE_EXECUTION_FAILURE")
+            if run_outcome == "cancel":
+                raise asyncio.CancelledError("PRIVATE_NATIVE_CANCELLATION")
+            return "stopped"
+        finally:
+            finished.set()
+
+    async def run(variables, context):
+        nonlocal native
+        assert variables == {"argument": 1} and context == "context"
+        native = asyncio.create_task(execute())
+        return await asyncio.shield(native)
+
+    async def stop():
+        stopping.set()
+        await release.wait()
+        await finished.wait()
+        if stop_outcome == "error":
+            raise RuntimeError("PRIVATE_STOP_FAILURE")
+        if stop_outcome == "cancel":
+            raise asyncio.CancelledError("PRIVATE_STOP_CANCELLATION")
+
+    task = asyncio.create_task(async_run_script(
+        SimpleNamespace(async_run=run, async_stop=stop), {"argument": 1}, "context"
+    ))
+    try:
+        await running.wait()
+        task.cancel("original cancellation")
+        await stopping.wait()
+        for _ in range(cancels - 1):
+            task.cancel("later cancellation")
+            await asyncio.sleep(0)
+        assert not task.done()
+        release.set()
+        with pytest.raises(asyncio.CancelledError, match="original cancellation"):
+            await task
+        assert native.done() and finished.is_set()
+        assert effects == [True]
+        assert "PRIVATE_" not in caplog.text
+        assert ("Script execution failed during cancellation" in caplog.text) is (run_outcome == "error")
+        assert ("Script stop failed during cancellation" in caplog.text) is (stop_outcome != "success")
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+        if native is not None:
+            await asyncio.gather(native, return_exceptions=True)
+
+
+@pytest.mark.parametrize("outcome", ["success", "error", "cancel"])
+async def test_uncancelled_run_preserves_native_outcome_and_context(outcome):
+    owner = ContextVar("script_owner")
+    state = {}
+    failure = ValueError("native failure")
+
+    async def run(variables, context):
+        assert owner.get() is state
+        await asyncio.sleep(0)
+        state["finished"] = True
+        if outcome == "error":
+            raise failure
+        if outcome == "cancel":
+            raise asyncio.CancelledError("native cancellation")
+        return variables
+
+    async def stop():
+        state["stop"] = True
+
+    token = owner.set(state)
+    try:
+        script = SimpleNamespace(async_run=run, async_stop=stop)
+        if outcome == "success":
+            assert await async_run_script(script, {"result": 42}, None) == {"result": 42}
+        elif outcome == "error":
+            with pytest.raises(ValueError) as caught:
+                await async_run_script(script, {}, None)
+            assert caught.value is failure
+        else:
+            with pytest.raises(asyncio.CancelledError, match="native cancellation"):
+                await async_run_script(script, {}, None)
+        assert state["finished"]
+        assert "stop" not in state  # An already settled native run needs no stop.
+    finally:
+        owner.reset(token)
 
 
 @pytest.mark.parametrize("fallback", [False, True])

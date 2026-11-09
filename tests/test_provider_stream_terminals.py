@@ -52,6 +52,8 @@ def _chat_chunk(
     content: str | None = None,
     refusal: str | None = None,
     finish_reason: str | None = None,
+    tool_calls: Any = None,
+    function_call: Any = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         choices=[
@@ -59,13 +61,161 @@ def _chat_chunk(
                 delta=SimpleNamespace(
                     content=content,
                     refusal=refusal,
-                    tool_calls=None,
+                    tool_calls=tool_calls,
+                    function_call=function_call,
                 ),
                 finish_reason=finish_reason,
             )
         ],
         usage=None,
     )
+
+
+def _azure_annotation(
+    *,
+    results: Any = None,
+    delta: Any = None,
+    extras: dict[str, Any] | None = None,
+    finish_reason: str | None = None,
+) -> SimpleNamespace:
+    """Mirror Azure's annotation-only wire choices and SDK model_extra."""
+    if extras is None:
+        extras = {
+            "content_filter_results": results
+            if results is not None
+            else {"hate": {"filtered": False, "severity": "safe"}},
+            "content_filter_raw": [],
+            "content_filter_offsets": {
+                "check_offset": 44,
+                "start_offset": 0,
+                "end_offset": 44,
+            },
+        }
+    return SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                index=0,
+                finish_reason=finish_reason,
+                delta=delta,
+                model_extra=extras,
+                logprobs=None,
+            )
+        ],
+        usage=None,
+    )
+
+
+async def test_azure_async_filter_annotations_can_interleave_and_follow_stop() -> None:
+    """Azure's documented safe annotations don't terminate an answer early."""
+    stream = FakeStream(
+        [
+            _azure_annotation(),
+            _chat_chunk(content="Hello "),
+            _azure_annotation(delta=SimpleNamespace()),
+            _chat_chunk(content="world"),
+            _chat_chunk(finish_reason="stop"),
+            _azure_annotation(),
+        ]
+    )
+    deltas = [
+        delta
+        async for delta in _entity()._transform_chat_stream(SimpleNamespace(), stream)
+    ]
+    assert deltas == [
+        {"role": "assistant"}, {"content": "Hello "}, {"content": "world"}
+    ]
+
+
+@pytest.mark.parametrize("after_terminal", [False, True])
+@pytest.mark.parametrize(
+    ("results", "message"),
+    [
+        ({"hate": {"filtered": True, "severity": "high"}}, "blocked"),
+        ({"hate": {"error": {"code": "content_filter_error"}}}, "filtering failed"),
+        ({"hate": {"filtered": "unknown"}}, "blocked"),
+    ],
+)
+async def test_azure_async_filter_negative_annotations_are_not_ignored(
+    after_terminal: bool, results: Any, message: str
+) -> None:
+    chunks = [_chat_chunk(content="partial")]
+    if after_terminal:
+        chunks.append(_chat_chunk(finish_reason="stop"))
+    chunks.append(_azure_annotation(results=results))
+    with pytest.raises(HomeAssistantError, match=message):
+        _ = [
+            delta
+            async for delta in _entity()._transform_chat_stream(
+                SimpleNamespace(), FakeStream(chunks)
+            )
+        ]
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"content_filter_results": {}, "late_output": "hidden"},
+        {"content_filter_results": {}, "native_finish_reason": "stop"},
+    ],
+)
+async def test_azure_annotations_cannot_smuggle_unknown_post_terminal_data(
+    extra: dict[str, Any],
+) -> None:
+    with pytest.raises(ProviderStreamError, match="after terminal response"):
+        _ = [
+            delta
+            async for delta in _entity()._transform_chat_stream(
+                SimpleNamespace(),
+                FakeStream([
+                    _chat_chunk(finish_reason="stop"),
+                    _azure_annotation(extras=extra),
+                ]),
+            )
+        ]
+
+
+async def test_azure_annotation_cannot_smuggle_late_assistant_delta() -> None:
+    with pytest.raises(ProviderStreamError, match="after terminal response"):
+        _ = [
+            delta
+            async for delta in _entity()._transform_chat_stream(
+                SimpleNamespace(),
+                FakeStream([
+                    _chat_chunk(finish_reason="stop"),
+                    _azure_annotation(delta=SimpleNamespace(content="late")),
+                ]),
+            )
+        ]
+
+
+async def test_missing_chat_delta_without_annotation_is_still_rejected() -> None:
+    with pytest.raises(ProviderStreamError, match="Chat delta missing"):
+        _ = [
+            delta
+            async for delta in _entity()._transform_chat_stream(
+                SimpleNamespace(), FakeStream([
+                    SimpleNamespace(
+                        choices=[
+                            SimpleNamespace(
+                                index=0, delta=None, finish_reason=None
+                            )
+                        ],
+                        usage=None,
+                    )
+                ]),
+            )
+        ]
+
+
+async def test_azure_content_filter_terminal_without_delta_still_blocks() -> None:
+    with pytest.raises(HomeAssistantError, match="blocked"):
+        _ = [
+            delta
+            async for delta in _entity()._transform_chat_stream(
+                SimpleNamespace(),
+                FakeStream([_azure_annotation(finish_reason="content_filter")]),
+            )
+        ]
 
 
 async def test_chat_completed_terminal_is_accepted() -> None:
@@ -83,6 +233,177 @@ async def test_chat_completed_terminal_is_accepted() -> None:
     ]
 
     assert deltas == [{"role": "assistant"}, {"content": "Done"}]
+
+
+@pytest.mark.parametrize(
+    ("finish_reason", "tail_reason"),
+    [
+        ("stop", "stop"),
+        ("stop", None),
+        ("tool_calls", "tool_calls"),
+        ("function_call", "function_call"),
+    ],
+)
+async def test_chat_allows_empty_post_terminal_accounting_choices(
+    finish_reason: str, tail_reason: str | None
+) -> None:
+    """OpenRouter-style final choices report usage without creating output."""
+    from custom_components.extended_openai_conversation_responses.context_usage_hardening import (
+        RequestTokenMeasurements,
+    )
+
+    trailing = _chat_chunk(finish_reason=tail_reason)
+    trailing.usage = SimpleNamespace(
+        prompt_tokens=11, completion_tokens=7, total_tokens=18
+    )
+    usage = RequestTokenMeasurements()
+    deltas = [
+        delta
+        async for delta in _entity()._transform_chat_stream(
+            SimpleNamespace(async_trace=lambda _data: None),
+            FakeStream(
+                [
+                    _chat_chunk(content="Done"),
+                    _chat_chunk(finish_reason=finish_reason),
+                    trailing,
+                ]
+            ),
+            usage,
+        )
+    ]
+    assert deltas == [{"role": "assistant"}, {"content": "Done"}]
+    assert (
+        usage.reported.input_tokens,
+        usage.reported.output_tokens,
+        usage.reported.total_tokens,
+    ) == (11, 7, 18)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("content", "late output"),
+        ("refusal", "late refusal"),
+        ("tool_calls", [SimpleNamespace(index=0)]),
+        ("function_call", SimpleNamespace(name="late", arguments="{}")),
+        ("role", "assistant"),
+        ("audio", {"data": "late"}),
+        ("reasoning_content", "late reasoning"),
+        ("model_extra", {"output": "late"}),
+    ],
+)
+async def test_chat_rejects_output_in_post_terminal_choices(
+    field: str, value: Any
+) -> None:
+    trailing = _chat_chunk(finish_reason="stop")
+    setattr(trailing.choices[0].delta, field, value)
+    with pytest.raises(ProviderStreamError, match="after terminal response"):
+        _ = [
+            delta
+            async for delta in _entity()._transform_chat_stream(
+                SimpleNamespace(),
+                FakeStream([_chat_chunk(finish_reason="stop"), trailing]),
+            )
+        ]
+
+
+async def test_chat_rejects_changed_terminal_reason_and_extra_choices() -> None:
+    changed = _chat_chunk(finish_reason="tool_calls")
+    with pytest.raises(ProviderStreamError, match="after terminal response"):
+        _ = [
+            delta
+            async for delta in _entity()._transform_chat_stream(
+                SimpleNamespace(),
+                FakeStream([_chat_chunk(finish_reason="stop"), changed]),
+            )
+        ]
+
+    extra = _chat_chunk(finish_reason="stop")
+    extra.choices.append(extra.choices[0])
+    with pytest.raises(ProviderStreamError, match="after terminal response"):
+        _ = [
+            delta
+            async for delta in _entity()._transform_chat_stream(
+                SimpleNamespace(),
+                FakeStream([_chat_chunk(finish_reason="stop"), extra]),
+            )
+        ]
+
+
+async def test_chat_length_terminal_still_fails_after_accounting_tail() -> None:
+    trailing = _chat_chunk(finish_reason="length")
+    trailing.usage = SimpleNamespace(
+        prompt_tokens=1, completion_tokens=3, total_tokens=4
+    )
+    with pytest.raises(TokenLengthExceededError):
+        _ = [
+            delta
+            async for delta in _entity()._transform_chat_stream(
+                SimpleNamespace(async_trace=lambda _data: None),
+                FakeStream([_chat_chunk(finish_reason="length"), trailing]),
+            )
+        ]
+
+
+@pytest.mark.parametrize(
+    ("sent_limit", "expected_fragment"),
+    [
+        (512, "512 tokens"),
+        (None, "Maximum response length reached"),
+    ],
+)
+async def test_chat_length_error_reports_request_limit_not_saved_settings(
+    sent_limit: int | None, expected_fragment: str
+) -> None:
+    entity = _entity()
+    entity.subentry.data["max_tokens"] = 999
+    stream = FakeStream([_chat_chunk(finish_reason="length")])
+    with pytest.raises(TokenLengthExceededError) as exc:
+        _ = [
+            delta
+            async for delta in entity._transform_chat_stream(
+                SimpleNamespace(), stream,
+                effective_output_limit=sent_limit,
+            )
+        ]
+    assert expected_fragment in str(exc.value)
+    assert "999" not in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    ("sent_limit", "expected_fragment"),
+    [
+        (128, "128 tokens"),
+        (None, "Maximum response length reached"),
+    ],
+)
+async def test_responses_length_error_reports_request_limit_not_saved_settings(
+    sent_limit: int | None, expected_fragment: str
+) -> None:
+    entity = _entity()
+    entity.subentry.data["max_tokens"] = 999
+    stream = FakeStream(
+        [
+            _event(
+                "response.incomplete",
+                response=SimpleNamespace(
+                    usage=None,
+                    incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+                ),
+            )
+        ]
+    )
+    with pytest.raises(TokenLengthExceededError) as exc:
+        _ = [
+            delta
+            async for delta in entity._transform_responses_stream(
+                SimpleNamespace(),
+                stream,
+                effective_output_limit=sent_limit,
+            )
+        ]
+    assert expected_fragment in str(exc.value)
+    assert "999" not in str(exc.value)
 
 
 async def test_chat_premature_eof_is_error() -> None:
@@ -382,3 +703,291 @@ async def test_malformed_stream_values_are_not_logged(field, caplog):
     assert "PRIVATE_STREAM_MARKER" not in "\n".join(
         logging.Formatter().format(record) for record in caplog.records
     )
+
+
+
+async def test_chat_legacy_finish_marker_forwards_complete_modern_tool_calls() -> None:
+    """A compatibility server may use the old terminal with new tool deltas."""
+    tool_delta = SimpleNamespace(
+        index=0,
+        id="call-1",
+        function=SimpleNamespace(name="do_thing", arguments='{"value":3}'),
+    )
+    stream = FakeStream(
+        [
+            _chat_chunk(tool_calls=[tool_delta]),
+            _chat_chunk(finish_reason="function_call"),
+        ]
+    )
+    deltas = [
+        delta
+        async for delta in _entity()._transform_chat_stream(
+            SimpleNamespace(), stream
+        )
+    ]
+    assert deltas[0] == {"role": "assistant"}
+    assert len(deltas) == 2
+    assert len(deltas[1]["tool_calls"]) == 1
+    call = deltas[1]["tool_calls"][0]
+    assert (call.id, call.tool_name, call.tool_args, call.external) == (
+        "call-1", "do_thing", {"value": 3}, True,
+    )
+
+
+async def test_chat_legacy_finish_marker_preserves_existing_argument_errors() -> None:
+    tool_delta = SimpleNamespace(
+        index=0,
+        id="call-1",
+        function=SimpleNamespace(name="do_thing", arguments="{invalid"),
+    )
+    stream = FakeStream(
+        [
+            _chat_chunk(tool_calls=[tool_delta]),
+            _chat_chunk(finish_reason="function_call"),
+        ]
+    )
+    with pytest.raises(HomeAssistantError, match="parse|arguments|Parse"):
+        _ = [
+            delta
+            async for delta in _entity()._transform_chat_stream(
+                SimpleNamespace(), stream
+            )
+        ]
+
+
+@pytest.mark.parametrize("terminal", [None, "function_call", "stop"])
+async def test_chat_rejects_deprecated_function_call_payload_without_dispatch(
+    terminal: str | None,
+) -> None:
+    stream = FakeStream(
+        [
+            _chat_chunk(
+                function_call=SimpleNamespace(
+                    name="legacy_action", arguments='{"value":3}'
+                ),
+                finish_reason=terminal,
+            ),
+        ]
+    )
+    emitted = []
+    with pytest.raises(ProviderStreamError, match="unsupported legacy"):
+        async for delta in _entity()._transform_chat_stream(
+            SimpleNamespace(), stream
+        ):
+            emitted.append(delta)
+    assert not any("tool_calls" in delta for delta in emitted)
+
+
+async def test_chat_rejects_mixed_legacy_and_modern_tool_payloads() -> None:
+    modern = SimpleNamespace(
+        index=0,
+        id="call-1",
+        function=SimpleNamespace(name="modern", arguments="{}"),
+    )
+    stream = FakeStream(
+        [
+            _chat_chunk(tool_calls=[modern]),
+            _chat_chunk(
+                function_call=SimpleNamespace(name="legacy", arguments="{}"),
+                finish_reason="function_call",
+            ),
+        ]
+    )
+    seen = []
+    with pytest.raises(ProviderStreamError, match="unsupported legacy"):
+        async for delta in _entity()._transform_chat_stream(
+            SimpleNamespace(), stream
+        ):
+            seen.append(delta)
+    assert seen == [{"role": "assistant"}]
+
+
+@pytest.mark.parametrize("finish_reason", ["stop", "tool_calls", "length"])
+async def test_chat_accepts_documented_openrouter_sdk_usage_frame(finish_reason):
+    """Parse the actual gateway shape through the SDK, including its extra field."""
+    from openai.types.chat import ChatCompletionChunk
+
+    from custom_components.extended_openai_conversation_responses.context_usage_hardening import (
+        RequestTokenMeasurements,
+    )
+
+    def sdk_chunk(*, usage=None, native_reason="end_turn"):
+        raw = {
+            "id": "gen-abc123",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "test-model",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"content": "", "role": "assistant"},
+                    "finish_reason": finish_reason,
+                    "native_finish_reason": native_reason,
+                }
+            ],
+        }
+        if usage is not None:
+            raw["usage"] = usage
+        return ChatCompletionChunk.model_validate(raw)
+
+    first = ChatCompletionChunk.model_validate(
+        {
+            "id": "gen-abc123",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "test-model",
+            "choices": [{"index": 0, "delta": {"content": "Done"}, "finish_reason": None}],
+        }
+    )
+    terminal = sdk_chunk()
+    accounting = sdk_chunk(
+        usage={"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18}
+    )
+    assert accounting.choices[0].model_extra == {
+        "native_finish_reason": "end_turn"
+    }
+    usage = RequestTokenMeasurements()
+    events = [first, terminal, accounting]
+    if finish_reason == "length":
+        with pytest.raises(TokenLengthExceededError):
+            _ = [
+                delta
+                async for delta in _entity()._transform_chat_stream(
+                    SimpleNamespace(async_trace=lambda _data: None),
+                    FakeStream(events),
+                    usage,
+                )
+            ]
+    else:
+        deltas = [
+            delta
+            async for delta in _entity()._transform_chat_stream(
+                SimpleNamespace(async_trace=lambda _data: None),
+                FakeStream(events),
+                usage,
+            )
+        ]
+        assert deltas == [{"role": "assistant"}, {"content": "Done"}]
+    assert (
+        usage.reported.input_tokens,
+        usage.reported.output_tokens,
+        usage.reported.total_tokens,
+    ) == (11, 7, 18)
+
+
+@pytest.mark.parametrize(
+    ("native_reason", "extra"),
+    [
+        ("different_reason", None),
+        ("end_turn", {"late_output": "not accounting"}),
+        (42, None),
+    ],
+)
+async def test_chat_rejects_conflicting_or_unknown_accounting_metadata(
+    native_reason, extra
+):
+    from openai.types.chat import ChatCompletionChunk
+
+    def chunk(native_reason, *, extra=None, usage=None):
+        choice = {
+            "index": 0,
+            "delta": {"content": "", "role": "assistant"},
+            "finish_reason": "stop",
+            "native_finish_reason": native_reason,
+        }
+        if extra:
+            choice.update(extra)
+        raw = {
+            "id": "gen-abc123",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "test-model",
+            "choices": [choice],
+        }
+        if usage:
+            raw["usage"] = usage
+        return ChatCompletionChunk.model_validate(raw)
+
+    terminal = chunk("end_turn")
+    accounting = chunk(
+        native_reason,
+        extra=extra,
+        usage={"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3},
+    )
+    with pytest.raises(ProviderStreamError, match="after terminal response"):
+        _ = [
+            delta
+            async for delta in _entity()._transform_chat_stream(
+                SimpleNamespace(async_trace=lambda _data: None),
+                FakeStream([terminal, accounting]),
+            )
+        ]
+
+async def test_chat_openrouter_accounting_tail_never_republishes_tool_calls():
+    """Only the first terminal can publish tool calls; a usage tail is inert."""
+    from openai.types.chat import ChatCompletionChunk
+
+    from custom_components.extended_openai_conversation_responses.context_usage_hardening import (
+        RequestTokenMeasurements,
+    )
+
+    def sdk_terminal(*, usage=None):
+        payload = {
+            "id": "gen-tool-tail",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "test-model",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"content": "", "role": "assistant"},
+                    "finish_reason": "tool_calls",
+                    "native_finish_reason": "tool_use",
+                }
+            ],
+        }
+        if usage is not None:
+            payload["usage"] = usage
+        return ChatCompletionChunk.model_validate(payload)
+
+    call_delta = SimpleNamespace(
+        index=0,
+        id="call-1",
+        function=SimpleNamespace(name="do_thing", arguments='{"value":3}'),
+    )
+    usage = RequestTokenMeasurements()
+    deltas = [
+        delta
+        async for delta in _entity()._transform_chat_stream(
+            SimpleNamespace(async_trace=lambda _data: None),
+            FakeStream(
+                [
+                    _chat_chunk(tool_calls=[call_delta]),
+                    sdk_terminal(),
+                    sdk_terminal(
+                        usage={
+                            "prompt_tokens": 11,
+                            "completion_tokens": 7,
+                            "total_tokens": 18,
+                        }
+                    ),
+                ]
+            ),
+            usage,
+        )
+    ]
+    assert len(deltas) == 2
+    assert deltas[0] == {"role": "assistant"}
+    assert len(deltas[1]["tool_calls"]) == 1
+    call = deltas[1]["tool_calls"][0]
+    assert (call.id, call.tool_name, call.tool_args, call.external) == (
+        "call-1",
+        "do_thing",
+        {"value": 3},
+        True,
+    )
+    assert (
+        usage.reported.input_tokens,
+        usage.reported.output_tokens,
+        usage.reported.total_tokens,
+    ) == (11, 7, 18)

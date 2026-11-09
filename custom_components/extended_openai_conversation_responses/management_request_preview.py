@@ -145,8 +145,18 @@ async def async_preview_effective_request(
         guest_policy.knowledge_access
         and options.get(CONF_KNOWLEDGE_ENABLED)
         and knowledge is not None
+        and knowledge.initialized
         and knowledge.source_count > 0
     )
+    if (
+        guest_policy.knowledge_access
+        and options.get(CONF_KNOWLEDGE_ENABLED)
+        and knowledge is not None
+        and not knowledge.initialized
+    ):
+        notes.append(
+            "Knowledge Library is unavailable; its tools and instructions are excluded until storage recovery."
+        )
     try:
         exposed_entities = get_exposed_entities(hass)
         if guest_policy.guest_active:

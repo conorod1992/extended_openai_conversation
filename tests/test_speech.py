@@ -74,7 +74,7 @@ def test_markdown_citation_and_bare_urls_are_removed_without_mutating_original()
 ):
     original = "Inside Iran ([apnews.com](https://apnews.com/article/example)) See https://example.com/news."
     spoken = process_speech_text(original, _config())
-    assert spoken == "Inside Iran See"
+    assert spoken == "Inside Iran See."
     assert "apnews.com" in original
     assert "https://example.com" in original
 
@@ -248,10 +248,41 @@ def test_streaming_malformed_markdown_degrades_with_bounded_memory() -> None:
 
 
 def test_streaming_bare_url_complete_split_and_punctuation() -> None:
-    # Match the established completed-response behavior: terminal punctuation is
-    # part of the bare URL match and is therefore suppressed with it.
-    assert _stream(["See https://example.com/test. Next."]) == "See Next."
-    assert _stream(["See https://exa", "mple.com/test! Then."]) == "See Then."
+    assert _stream(["See https://example.com/test. Next."]) == "See. Next."
+    assert _stream(["See https://exa", "mple.com/test! Then."]) == "See! Then."
+
+
+@pytest.mark.parametrize(
+    "original,expected",
+    [
+        (
+            "Check https://example.com. Then restart Home Assistant.",
+            "Check. Then restart Home Assistant.",
+        ),
+        (
+            "Docs are at https://example.com, and the forum too.",
+            "Docs are at, and the forum too.",
+        ),
+        ("See the docs (https://example.com) for details.", "See the docs for details."),
+        ("Link: <https://example.com>", "Link:"),
+        ("Link: <www.example.com> and more", "Link: and more"),
+        (
+            "Read (https://en.wikipedia.org/wiki/Function_(mathematics)) next.",
+            "Read next.",
+        ),
+        ("See https://example.com/a(b) now.", "See now."),
+        ("Try https://example.com/a?x=1&y=2! Next.", "Try! Next."),
+        ("Try https://example.com/a]), then continue.", "Try]), then continue."),
+        ("This (is not a URL) and <ordinary text>.", "This (is not a URL) and <ordinary text>."),
+        ("Code: `<https://example.com>` stays literal.", "Code: <https://example.com> stays literal."),
+    ],
+)
+def test_bare_url_punctuation_wrappers_and_code_at_every_split(original, expected):
+    assert process_speech_text(original, _config()) == expected
+    assert _stream([original]) == expected
+    assert _stream(list(original)) == expected
+    for split in range(len(original) + 1):
+        assert _stream([original[:split], original[split:]]) == expected, split
 
 
 def test_streaming_multiple_adjacent_and_terminal_citations() -> None:
@@ -275,6 +306,64 @@ def test_streaming_real_trace_shape() -> None:
         "progress is limited. Allies are responding independently. Ukraine has "
         "increasingly adapted."
     )
+
+
+@pytest.mark.parametrize(
+    "original,expected",
+    [
+        (
+            "Summary.\n\n[Source](https://example.com)\n\n## Next steps\n- Take a coat.",
+            "Summary.\nNext steps\nTake a coat.",
+        ),
+        (
+            "Answer.\n[Source](https://example.com)\n- First\n2. Second\n> Note",
+            "Answer.\nFirst\nSecond\nNote",
+        ),
+        (
+            "The result is **[here](https://example.com)**.",
+            "The result is.",
+        ),
+        (
+            "The result is *[here](https://example.com)*.",
+            "The result is.",
+        ),
+        (
+            "Answer. [Source](https://example.com)\n\nMore.",
+            "Answer. More.",
+        ),
+        (
+            "Answer. [Source](https://example.com) ## literal inline heading",
+            "Answer. ## literal inline heading",
+        ),
+        (
+            "Answer. [Source](https://example.com)\n#hashtag stays literal",
+            "Answer. #hashtag stays literal",
+        ),
+        (
+            "The answer is 2**3. [Source](https://example.com)\n2**3 again",
+            "The answer is 2**3. 2**3 again",
+        ),
+        (
+            "Read **details [here](https://example.com) now**.",
+            "Read details now.",
+        ),
+    ],
+)
+def test_link_suppression_preserves_real_markdown_boundaries_at_all_splits(
+    original, expected
+):
+    assert process_speech_text(original, _config()) == expected
+    # Progressive speech intentionally does not run the completed response's
+    # punctuation/blank-line whitespace normalizer.
+    streamed = [_stream([original]), _stream(list(original))]
+    streamed.extend(
+        _stream([original[:split], original[split:]])
+        for split in range(len(original) + 1)
+    )
+    for index, result in enumerate(streamed):
+        assert speech._final_whitespace_cleanup(result) == expected, index
+        if "## Next steps" in original or "\n- First" in original:
+            assert result == expected, index
 
 
 def test_streaming_common_markdown_formatting() -> None:
@@ -530,8 +619,15 @@ def test_suppress_and_hold_whitespace_cover_trailing_chunks() -> None:
 
     output = ["x", " ", "\t"]
     sanitizer._last_output = "x \t"
-    assert sanitizer._hold_preceding_whitespace(output, 5) == 3
+    assert sanitizer._hold_preceding_whitespace(output) == " \t"
     assert output == ["x"]
+    assert sanitizer._last_output == "x"
+
+    # A whitespace-only output chunk may contain multiple actual characters.
+    output = ["prefix", " \t", "\n"]
+    sanitizer._last_output = "x \t\n"
+    assert sanitizer._hold_preceding_whitespace(output) == " \t\n"
+    assert output == ["prefix"]
     assert sanitizer._last_output == "x"
 
 
@@ -703,7 +799,13 @@ def test_line_prefix_finalizes_ambiguous_terminal_markers_as_plain_text() -> Non
 )
 def test_bare_web_addresses_share_runtime_and_completed_cleanup(prefix, suffix) -> None:
     text = f"Visit {prefix}example.com{suffix} for details. Ordinary prose stays."
-    expected = "Visit for details. Ordinary prose stays."
+    punctuation = {
+        ",": ",",
+        ".": ".",
+        ")": ")",
+        "/path),": "),",
+    }.get(suffix, "")
+    expected = f"Visit{punctuation} for details. Ordinary prose stays."
     assert process_speech_text(text, _config()) == expected
     assert process_speech_text(text, _config(speech_strip_urls=False)) == text
     for split in range(len(text) + 1):
@@ -749,3 +851,479 @@ def test_literal_operators_and_code_survive_all_stream_splits(text, expected):
     for split in range(len(text) + 1):
         assert _stream([text[:split], text[split:]]).strip() == expected
     assert _stream(list(text)).strip() == expected
+
+
+@pytest.mark.parametrize(
+    "citation",
+    [
+        "**[source](https://example.com)**",
+        "*[source](https://example.com)*",
+        "([source](https://example.com))",
+        "[source](https://example.com)",
+    ],
+)
+@pytest.mark.parametrize("spacing", [" ", "   ", "        ", "\t \t", "\n\n"])
+def test_removed_citation_before_pending_url_never_replays_source(
+    citation: str, spacing: str
+) -> None:
+    # A previously removed link must not re-enter the raw buffer when the next
+    # URL reaches a provider boundary. Output whitespace is not a raw offset.
+    original = f"Hello{spacing}{citation} https://example.org"
+    assert process_speech_text(original, _config()) == "Hello"
+    for chunks in ([original], list(original)):
+        streamed = _stream(chunks)
+        assert speech._final_whitespace_cleanup(streamed) == "Hello", chunks
+    for split in range(len(original) + 1):
+        streamed = _stream([original[:split], original[split:]])
+        assert speech._final_whitespace_cleanup(streamed) == "Hello", split
+
+
+@pytest.mark.parametrize("continuation", ["httx next", "www.example next"])
+def test_pending_url_prefix_after_removed_citation_keeps_literal_text(
+    continuation: str,
+) -> None:
+    # If the apparent URL becomes ordinary prose, replay only held whitespace,
+    # not parts of the already suppressed citation.
+    original = f"Hello **[source](https://example.com)** {continuation}"
+    expected = f"Hello {continuation}"
+    assert process_speech_text(original, _config()) == expected
+    for split in range(len(original) + 1):
+        streamed = _stream([original[:split], original[split:]])
+        assert speech._final_whitespace_cleanup(streamed) == expected, split
+    assert speech._final_whitespace_cleanup(_stream(list(original))) == expected
+
+
+@pytest.mark.parametrize(
+    "original,expected",
+    [
+        (
+            "The lights are off    [source](https://example.com) and the door is locked.",
+            "The lights are off and the door is locked.",
+        ),
+        (
+            "Summary.\n\n  [source](https://example.com)\n\n## Next steps\n- Take a coat.",
+            "Summary.\nNext steps\nTake a coat.",
+        ),
+        (
+            "**Result**[source](https://example.com) **Explanation**.",
+            "Result Explanation.",
+        ),
+        (
+            "Hello **_[source](https://example.com)_** world.",
+            "Hello world.",
+        ),
+    ],
+)
+def test_removed_citations_keep_spoken_boundaries_and_formatting(
+    original: str, expected: str
+) -> None:
+    assert process_speech_text(original, _config()) == expected
+    chunks = [[original], list(original)]
+    chunks.extend(
+        [original[:split], original[split:]]
+        for split in range(len(original) + 1)
+    )
+    for position, parts in enumerate(chunks):
+        assert speech._final_whitespace_cleanup(_stream(parts)) == expected, position
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        ("Pass **kwargs to the function.", "Pass **kwargs to the function."),
+        (
+            "Use sensor.__temperature for the reading.",
+            "Use sensor.__temperature for the reading.",
+        ),
+        ("A ***unfinished span", "A ***unfinished span"),
+        ("A ~~unfinished span", "A ~~unfinished span"),
+        ("**This is bold** and __this too__.", "This is bold and this too."),
+        (r"A \*literal\* and **bold**.", r"A \*literal\* and bold."),
+        (r"A \_literal\_ and __strong__.", r"A \_literal\_ and strong."),
+        (
+            r"A \` literal; **important**. See https://example.com now.",
+            r"A \` literal; important. See now.",
+        ),
+        (r"Type \[name](target) literally.", r"Type \[name](target) literally."),
+        (
+            "0871234567. That is the contact number.",
+            "0871234567. That is the contact number.",
+        ),
+        ("123456789. This is an ordered item.", "This is an ordered item."),
+        (
+            "1234567890. This is not an ordered item.",
+            "1234567890. This is not an ordered item.",
+        ),
+    ],
+)
+def test_speech_literal_syntax_is_not_silently_deleted(
+    source: str, expected: str
+) -> None:
+    assert process_speech_text(source, _config()) == expected
+    assert speech._final_whitespace_cleanup(_stream([source])) == expected
+    assert speech._final_whitespace_cleanup(_stream(list(source))) == expected
+    for split in range(len(source) + 1):
+        assert speech._final_whitespace_cleanup(
+            _stream([source[:split], source[split:]])
+        ) == expected, split
+
+
+def test_url_only_speech_cleanup_keeps_boundary_after_long_whitespace() -> None:
+    source = "The lights are off    https://example.com and the door is locked."
+    cfg = _config(speech_strip_markdown=False)
+    expected = "The lights are off and the door is locked."
+    assert process_speech_text(source, cfg) == expected
+    for split in range(len(source) + 1):
+        assert speech._final_whitespace_cleanup(
+            _stream([source[:split], source[split:]], markdown=False)
+        ) == expected, split
+
+
+def test_long_unmatched_speech_delimiter_has_bounded_fallback() -> None:
+    sanitizer = StreamingSpeechSanitizer(max_buffer_chars=64)
+    source = "before **" + ("x" * 80)
+    result = sanitizer.feed(source) + sanitizer.finish()
+    assert result == source
+    assert sanitizer.buffered_chars == 0
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        ("**bold *italics***", "bold italics"),
+        ("__bold _italics___", "bold italics"),
+        ("*italic **both***", "italic both"),
+        ("**a **b** c**", "a b c"),
+        ("word**bold**word", "wordboldword"),
+        ("2**3", "2**3"),
+        ("2**3**", "23"),
+        ("2**3**2", "2**3**2"),
+        (r"**before `a\` after**", r"before a\ after"),
+    ],
+)
+def test_nested_speech_emphasis_and_numeric_compatibility(
+    source: str, expected: str
+) -> None:
+    assert process_speech_text(source, _config()) == expected
+    for chunks in ([source], list(source)):
+        assert speech._final_whitespace_cleanup(_stream(chunks)) == expected
+    for split in range(len(source) + 1):
+        assert speech._final_whitespace_cleanup(
+            _stream([source[:split], source[split:]])
+        ) == expected, split
+
+
+
+@pytest.mark.parametrize(
+    "prefix,suffix,initial,continuation",
+    [
+        ("Compute 2**10", "; then the lights are on.", "Compute 2", "**10; then the lights are on."),
+        ("Result 2**(3)", "; next step.", "Result 2**(3)", "; next step."),
+        ("The value is 2**3", "**2; continue.", "The value is 2", "**3**2; continue."),
+    ],
+)
+def test_literal_numeric_marker_releases_progressive_speech_once_disambiguated(
+    prefix: str, suffix: str, initial: str, continuation: str
+) -> None:
+    sanitizer = StreamingSpeechSanitizer()
+    assert sanitizer.feed(prefix) == initial
+    assert sanitizer.feed(suffix) == continuation
+    assert sanitizer.finish() == ""
+    assert sanitizer.buffered_chars == 0
+
+
+def test_numeric_marker_waits_only_for_a_viable_closing_prefix() -> None:
+    sanitizer = StreamingSpeechSanitizer()
+    assert sanitizer.feed("Compute 2**3") == "Compute 2"
+    assert sanitizer.feed("*") == ""
+    # The second asterisk completes the closing marker, but the following
+    # character is still needed to distinguish valid bold from arithmetic.
+    assert sanitizer.feed("*") == ""
+    assert sanitizer.feed("2; more text.") == "**3**2; more text."
+    assert sanitizer.finish() == ""
+
+
+def test_complete_speech_keeps_cleaning_after_long_unmatched_emphasis() -> None:
+    prose = "ordinary prose " * 400
+    source = "Intro *unfinished " + prose + "\n## Later\n- **Ready**."
+    expected = "Intro *unfinished " + prose + "\nLater\nReady."
+    assert process_speech_text(source, _config()) == expected
+    # Streaming deliberately retains its bounded malformed-input fallback.
+    sanitizer = StreamingSpeechSanitizer()
+    streamed = sanitizer.feed(source) + sanitizer.finish()
+    assert streamed != expected
+    assert "## Later" in streamed
+
+
+def test_complete_speech_keeps_cleaning_after_long_unclosed_link() -> None:
+    prose = "ordinary prose " * 400
+    source = "Intro [unfinished " + prose + "\n## Later\n- **Ready**."
+    expected = "Intro [unfinished " + prose + "\nLater\nReady."
+    assert process_speech_text(source, _config()) == expected
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "**bold** and __strong__.",
+        "## Heading\n- **Item**\n2. Second item.",
+        "Read [source](https://example.com) and continue.",
+        "2**3; literal operators are preserved.",
+        "*outer **inner** outer*",
+        "Use \`code **not bold**\` and **real bold**.",
+        r"A \*literal\* and **bold**.",
+        "Hello **_[source](https://example.com)_** world.",
+    ],
+)
+def test_completed_speech_uses_the_same_supported_formatting_rules(
+    source: str,
+) -> None:
+    expected = speech._final_whitespace_cleanup(_stream([source]))
+    assert process_speech_text(source, _config()) == expected
+
+
+def test_completed_speech_long_malformed_delimiters_use_indexed_lookahead(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class NeverScan:
+        def finditer(self, *_args):
+            pytest.fail("Completed parsing must use indexed single-delimiter lookahead")
+
+    def never_scan(*_args, **_kwargs):
+        pytest.fail("Completed parsing must use indexed paired-delimiter lookahead")
+
+    monkeypatch.setattr(
+        speech, "_EMPHASIS_TOKENS", {"*": NeverScan(), "_": NeverScan()}
+    )
+    monkeypatch.setattr(
+        StreamingSpeechSanitizer, "_has_closer", classmethod(never_scan)
+    )
+    source = ("*word " * 4500) + "\n## Later\n- **Ready**."
+    cleaned = process_speech_text(source, _config())
+    assert cleaned.startswith("*word *word ")
+    assert cleaned.endswith("\nLater\nReady.")
+    assert "## Later" not in cleaned
+
+
+async def test_known_complete_speech_listener_reassembles_synthetic_deltas(
+    hass,
+) -> None:
+    heard = []
+    original_listener = lambda _log, delta: heard.append(delta)
+    log = SimpleNamespace(delta_listener=original_listener)
+    prose = "plain words " * 420
+    original = "Before *unfinished " + prose + "\n## Heading\n- **Ready**."
+    with async_streaming_speech_cleanup(log, _config(), completed=True) as wrapper:
+        assert wrapper is not None
+        log.delta_listener(log, {"role": "assistant"})
+        log.delta_listener(log, {"content": "Before *unfinished " + prose})
+        log.delta_listener(log, {"content": "\n## Heading\n- **Ready**."})
+        assert heard == []
+        await wrapper.async_flush_completed(hass, log)
+    assert log.delta_listener is original_listener
+    assert heard == [
+        {"role": "assistant"},
+        {"content": speech._built_in_cleanup(original, markdown=True, urls=True)},
+    ]
+
+
+async def test_known_complete_listener_preserves_role_groups_and_metadata(hass) -> None:
+    heard = []
+    log = SimpleNamespace(
+        delta_listener=lambda _log, delta: heard.append(delta)
+    )
+    with async_streaming_speech_cleanup(log, _config(), completed=True) as wrapper:
+        log.delta_listener(log, {"role": "assistant"})
+        log.delta_listener(log, {"content": "**One**"})
+        log.delta_listener(log, {"content": " and [link](https://example.com)"})
+        log.delta_listener(log, {"tool_calls": ["opaque"]})
+        log.delta_listener(log, {"role": "assistant"})
+        log.delta_listener(log, {"content": "## Two"})
+        assert heard == []
+        await wrapper.async_flush_completed(hass, log)
+    assert heard == [
+        {"role": "assistant"},
+        {"content": "One and"},
+        {"tool_calls": ["opaque"]},
+        {"role": "assistant"},
+        {"content": "Two"},
+    ]
+
+
+
+async def test_known_complete_speech_presentation_preserves_original_chat_log(
+    hass,
+) -> None:
+    original = "Start *unfinished " + ("ordinary words " * 420) + "\n## Status\n- **Ready**."
+    heard: list[dict] = []
+    chat_log = conversation.ChatLog(SimpleNamespace(data={}), "speech-complete")
+    chat_log.delta_listener = lambda _log, delta: heard.append(delta)
+
+    async def completed_adapted_stream():
+        yield {"role": "assistant"}
+        midpoint = len(original) // 2
+        yield {"content": original[:midpoint]}
+        yield {"content": original[midpoint:]}
+
+    with async_streaming_speech_cleanup(
+        chat_log, _config(), completed=True
+    ) as presentation:
+        retained = [
+            item
+            async for item in chat_log.async_add_delta_content_stream(
+                "conversation.speech_test", completed_adapted_stream()
+            )
+        ]
+        assert heard == []
+        assert presentation is not None
+        await presentation.async_flush_completed(hass, chat_log)
+
+    assert retained[-1].content == original
+    assert heard == [
+        {"role": "assistant"},
+        {
+            "content": speech._built_in_cleanup(
+                original, markdown=True, urls=True
+            )
+        },
+    ]
+
+
+def test_completed_speech_path_is_one_shot() -> None:
+    sanitizer = StreamingSpeechSanitizer()
+    assert sanitizer.process_complete("**one**") == "one"
+    assert sanitizer.finish() == ""
+    with pytest.raises(ValueError, match="fresh sanitizer"):
+        sanitizer.process_complete("**two**")
+
+
+
+def test_completed_speech_many_numeric_literals_reach_later_markup() -> None:
+    source = ("2**3; " * 1600) + "\n## End\n- **Ready**."
+    result = process_speech_text(source, _config())
+    assert result.count("2**3;") == 1600
+    assert result.endswith("\nEnd\nReady.")
+    assert "## End" not in result
+
+
+def test_completed_speech_many_links_keep_one_spoken_boundary() -> None:
+    source = "Before " + ("[source](https://example.com/path(v1)) " * 200) + "after."
+    assert process_speech_text(source, _config()) == "Before after."
+
+
+def test_completed_speech_many_unclosed_parentheses_do_not_block_later_text() -> None:
+    source = "Start " + ("[broken](" * 900) + "\n## Heading\n- **Ready**."
+    result = process_speech_text(source, _config())
+    assert result.startswith("Start [broken](")
+    assert result.endswith("\nHeading\nReady.")
+
+
+async def test_local_rule_speech_uses_completed_cleanup_without_changing_history(hass):
+    from unittest.mock import AsyncMock, MagicMock
+    from homeassistant.helpers import intent
+
+    original = "**Done** [source](https://example.com)"
+    response = intent.IntentResponse(language="en")
+    response.async_set_speech(original)
+    continuity = SimpleNamespace(async_record_success=AsyncMock())
+    agent = SimpleNamespace(
+        _usage=None,
+        _continuity=continuity,
+        _async_archive_turn=AsyncMock(),
+        _local_rule_result=MagicMock(return_value=SimpleNamespace(response=response)),
+        subentry=SimpleNamespace(data=_config()),
+        hass=hass,
+    )
+    chat_log = SimpleNamespace(content=[original], extra_system_prompt=None)
+    result = await ExtendedOpenAIAgentEntity._async_complete_local_rule(
+        agent, SimpleNamespace(), chat_log, original,
+        None, "continuity", "claim", None,
+    )
+    assert result.response.speech["plain"]["speech"] == "Done"
+    assert chat_log.content == [original]
+    continuity.async_record_success.assert_awaited_once()
+
+
+async def test_local_rule_speech_uses_async_regex_and_keeps_action_success(hass):
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from homeassistant.helpers import intent
+
+    original = "HA is ready"
+    response = intent.IntentResponse(language="en")
+    response.async_set_speech(original)
+    agent = SimpleNamespace(
+        _usage=None,
+        _continuity=SimpleNamespace(async_record_success=AsyncMock()),
+        _async_archive_turn=AsyncMock(),
+        _local_rule_result=MagicMock(return_value=SimpleNamespace(response=response)),
+        subentry=SimpleNamespace(data=_config(speech_regex_replacements=[
+            {"pattern": r"\bHA\b", "replacement": "Home Assistant"}
+        ])),
+        hass=hass,
+    )
+    with patch(
+        "custom_components.extended_openai_conversation_responses.conversation.async_process_speech_text",
+        new_callable=AsyncMock,
+        return_value="Home Assistant is ready",
+    ) as cleanup:
+        result = await ExtendedOpenAIAgentEntity._async_complete_local_rule(
+            agent, SimpleNamespace(),
+            SimpleNamespace(content=[original], extra_system_prompt=None),
+            original, None, "continuity", "claim", None,
+        )
+    assert result.response.speech["plain"]["speech"] == "Home Assistant is ready"
+    cleanup.assert_awaited_once_with(hass, original, agent.subentry.data)
+
+
+async def test_local_rule_speech_failure_does_not_turn_executed_action_into_failure(hass):
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from homeassistant.helpers import intent
+
+    original = "HA ready"
+    response = intent.IntentResponse(language="en")
+    response.async_set_speech(original)
+    agent = SimpleNamespace(
+        _usage=None,
+        _continuity=SimpleNamespace(async_record_success=AsyncMock()),
+        _async_archive_turn=AsyncMock(),
+        _local_rule_result=MagicMock(return_value=SimpleNamespace(response=response)),
+        subentry=SimpleNamespace(data=_config(speech_regex_replacements=[
+            {"pattern": "HA", "replacement": "Home Assistant"}
+        ])),
+        hass=hass,
+    )
+    with patch(
+        "custom_components.extended_openai_conversation_responses.conversation.async_process_speech_text",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("worker failure"),
+    ):
+        result = await ExtendedOpenAIAgentEntity._async_complete_local_rule(
+            agent, SimpleNamespace(),
+            SimpleNamespace(content=[original], extra_system_prompt=None),
+            original, None, "continuity", "claim", None,
+        )
+    assert result.response.speech["plain"]["speech"] == original
+    agent._continuity.async_record_success.assert_awaited_once()
+
+
+async def test_local_rule_speech_disabled_preserves_original(hass):
+    from unittest.mock import AsyncMock, MagicMock
+    from homeassistant.helpers import intent
+
+    original = "**HA** https://example.com"
+    response = intent.IntentResponse(language="en")
+    response.async_set_speech(original)
+    agent = SimpleNamespace(
+        _usage=None,
+        _continuity=SimpleNamespace(async_record_success=AsyncMock()),
+        _async_archive_turn=AsyncMock(),
+        _local_rule_result=MagicMock(return_value=SimpleNamespace(response=response)),
+        subentry=SimpleNamespace(data=_config(speech_processing_enabled=False)),
+        hass=hass,
+    )
+    result = await ExtendedOpenAIAgentEntity._async_complete_local_rule(
+        agent, SimpleNamespace(),
+        SimpleNamespace(content=[original], extra_system_prompt=None),
+        original, None, "continuity", "claim", None,
+    )
+    assert result.response.speech["plain"]["speech"] == original

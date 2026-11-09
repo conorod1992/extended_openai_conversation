@@ -11,6 +11,7 @@ from custom_components.extended_openai_conversation_responses.conversation_archi
     ConversationArchive,
 )
 from custom_components.extended_openai_conversation_responses.management_history_queries import (
+    archive_get_before_page,
     archive_get_page,
     archive_search_page,
 )
@@ -157,3 +158,98 @@ async def test_search_card_and_view_open_matching_size_limited_turn(
             "text_offset": page["next_text_offset"],
         }
     assert len(recovered) == len(set(recovered)) == count
+
+
+@pytest.mark.parametrize("count", [1, 2, 27, 85])
+async def test_get_before_search_result_pages_back_to_start_without_skipping_turns(count):
+    """Reverse pages reconstruct each retained turn before a search hit."""
+    archive = ConversationArchive(FakeArchiveStorage(), "agent")
+    await archive.async_initialize()
+    session = await archive.async_begin_session(
+        "browser", user_scope("alice", source="authenticated_user"),
+        "conversation", archive_enabled=True,
+        shared_archive_enabled=False, inactivity_minutes=30,
+    )
+    assert session is not None
+    for index in range(count + 1):
+        await archive.async_record_turn(
+            session.session_id, run_id=f"run-{index}",
+            user_text="needlephrase" if index == count else f"Question {index}",
+            assistant_text=f"Answer {index}", successful=True,
+        )
+    match = (await archive_search_page(archive, "user:alice", "needlephrase"))[
+        "results"
+    ][0]
+    cursor = {"before_turn": match["turn_index"], "before_text_offset": 0}
+    reconstructed = []
+    while cursor["before_turn"] or cursor["before_text_offset"]:
+        page = await archive_get_before_page(
+            archive, "user:alice", session.session_id, **cursor, limit=20,
+        )
+        assert page["turns"]
+        start = (page["start_turn"], page["text_offset"])
+        assert start < (cursor["before_turn"], cursor["before_text_offset"])
+        assert (page["next_start_turn"], page["next_text_offset"]) == (
+            cursor["before_turn"], cursor["before_text_offset"],
+        )
+        reconstructed = page["turns"] + reconstructed
+        cursor = {"before_turn": start[0], "before_text_offset": start[1]}
+    assert [turn["user_text"] for turn in reconstructed] == [
+        f"Question {index}" for index in range(count)
+    ]
+
+
+async def test_backwards_navigation_preserves_long_turn_fragments_and_empty_turns():
+    """Reverse pages preserve truncated fragments and advance past empty turns."""
+    from custom_components.extended_openai_conversation_responses.runtime_hardening import (
+        MAX_MODEL_TOOL_RESULT_CHARACTERS,
+    )
+
+    archive = ConversationArchive(FakeArchiveStorage(), "agent")
+    await archive.async_initialize()
+    session = await archive.async_begin_session(
+        "browser", user_scope("alice", source="authenticated_user"),
+        "conversation", archive_enabled=True,
+        shared_archive_enabled=False, inactivity_minutes=30,
+    )
+    assert session is not None
+    messages = [
+        ("", ""),
+        ("one", "€" * 39000),
+        ("", ""),
+        ("four", "short"),
+        ("needlephrase", "matched"),
+    ]
+    for index, (user, answer) in enumerate(messages):
+        await archive.async_record_turn(
+            session.session_id, run_id=f"run-{index}",
+            user_text=user, assistant_text=answer, successful=True,
+        )
+
+    cursor = {"before_turn": 4, "before_text_offset": 0}
+    pages = []
+    while cursor["before_turn"] or cursor["before_text_offset"]:
+        page = await archive_get_before_page(
+            archive, "user:alice", session.session_id, **cursor, limit=20,
+        )
+        assert page["turns"]
+        assert len(json.dumps(page, ensure_ascii=False)) < MAX_MODEL_TOOL_RESULT_CHARACTERS
+        start = (page["start_turn"], page["text_offset"])
+        assert start < (cursor["before_turn"], cursor["before_text_offset"])
+        pages.insert(0, page)
+        cursor = {"before_turn": start[0], "before_text_offset": start[1]}
+
+    assembled = {}
+    for page in pages:
+        for turn in page["turns"]:
+            assembled.setdefault(turn["turn_id"], "")
+            assembled[turn["turn_id"]] += turn["user_text"] + turn["assistant_text"]
+    assert list(assembled.values()) == [
+        user + answer for user, answer in messages[:4]
+    ]
+
+    # Authorization stays scoped to the caller even for the new endpoint.
+    with pytest.raises(Exception):
+        await archive_get_before_page(
+            archive, "user:bob", session.session_id, before_turn=4,
+        )

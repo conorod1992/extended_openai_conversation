@@ -173,6 +173,7 @@ async def test_local_targeted_broadcast_uses_authenticated_permission_boundary(
 
     manager = SimpleNamespace(
         enabled=True,
+        resolve_targets=MagicMock(return_value=["assist_satellite.denied"]),
         async_send=AsyncMock(side_effect=HomeAssistantError("Permission denied")),
     )
     monkeypatch.setattr(
@@ -189,6 +190,16 @@ async def test_local_targeted_broadcast_uses_authenticated_permission_boundary(
             hass,
             SimpleNamespace(text="Broadcast to kitchen that hello", context=context),
         )
+    manager.resolve_targets.assert_called_once_with(
+        whole_home=False,
+        entity_ids=["assist_satellite.denied"],
+        device_ids=None,
+        area_ids=None,
+        floor_ids=None,
+        label_ids=None,
+        origin_entity_id=None,
+        origin_device_id=None,
+    )
     manager.async_send.assert_awaited_once_with(
         "Hello",
         entity_ids=["assist_satellite.denied"],

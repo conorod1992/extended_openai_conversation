@@ -41,7 +41,7 @@ function setDependent(root, key, enabled) {
 }
 
 export function updateConfigurationControl(panel, control, eventType = "input") {
-  const result = applyConfigurationControl(panel, control);
+  const result = applyConfigurationControl(panel, control, eventType !== "reset");
   if (!result) return null;
   const {key, changed} = result;
   if (changed) {

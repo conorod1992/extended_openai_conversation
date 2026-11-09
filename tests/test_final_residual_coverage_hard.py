@@ -8,6 +8,7 @@ from unittest.mock import ANY, AsyncMock, Mock
 import pytest
 
 from custom_components.extended_openai_conversation_responses import function_configuration_mutations as mutations
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.exceptions import HomeAssistantError
 
 
@@ -275,6 +276,7 @@ async def test_image_query_provider_failure_requests_reauthentication(hass, monk
 
     entry = SimpleNamespace(
         domain=services.DOMAIN,
+        state=ConfigEntryState.LOADED,
         runtime_data=SimpleNamespace(
             responses=SimpleNamespace(create=AsyncMock(side_effect=RuntimeError("auth")))
         ),

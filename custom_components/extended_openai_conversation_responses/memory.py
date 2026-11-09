@@ -40,6 +40,7 @@ from .persistence_hardening import (
     _async_settle_transactional_save,
 )
 from .provider_errors import provider_failure_category, provider_log_remediation
+from .retrieval_text import _stem
 from .scope import LEGACY_ANONYMOUS_SCOPE_ID
 from .storage_namespaces import MEMORY_PREFIX as STORAGE_KEY_PREFIX
 from .strict_store import PropagatingWriteStore, async_storage_lock
@@ -409,6 +410,29 @@ class PersistentMemory:
             self._require_writable()
             if key and (user_id, key) in self._key_index:
                 raise ValueError("canonical key already exists in this memory scope")
+            if key is not None:
+                # A key may identify one existing legacy fact, but must never
+                # reassign the identity of an already keyed record.
+                duplicate = self._find_unique_unkeyed_duplicate(
+                    user_id, content, subject, valid_from
+                )
+                if duplicate is not None:
+                    if duplicate.source == "explicit" and source == "implicit":
+                        return "duplicate", duplicate
+                    promotion_changes: dict[str, Any] = {"key": key}
+                    if duplicate.source == "implicit" and source == "explicit":
+                        promotion_changes["source"] = "explicit"
+                    if subject and not duplicate.subject:
+                        promotion_changes["subject"] = subject
+                    if valid_from is not None and duplicate.valid_from is None:
+                        promotion_changes["valid_from"] = valid_from
+                    timestamp = dt_util.utcnow().isoformat()
+                    _set_updated_at_if_substantive(
+                        duplicate, promotion_changes, timestamp
+                    )
+                    updated = self._replace_record(duplicate, **promotion_changes)
+                    await self._async_save_locked()
+                    return "updated", updated
             if key is None:
                 duplicate = self._find_duplicate(user_id, content, subject)
                 if duplicate:
@@ -513,6 +537,43 @@ class PersistentMemory:
                     "status": "unchanged" if updated == current else "updated",
                     "memory": memory_as_dict(updated),
                 }
+
+            if keyed_identity:
+                # Only a uniquely identified unkeyed fact may acquire a key.
+                # Preserve the same explicit-over-implicit ownership guarantee
+                # as an upsert to an already keyed fact.
+                duplicate = self._find_unique_unkeyed_duplicate(
+                    user_id,
+                    content,
+                    cleaned_subject if isinstance(cleaned_subject, str) else None,
+                    cleaned_valid_from if isinstance(cleaned_valid_from, str) else None,
+                )
+                if duplicate is not None:
+                    if duplicate.source == "explicit" and source == "implicit":
+                        return {
+                            "status": "unchanged",
+                            "memory": memory_as_dict(duplicate),
+                        }
+                    promotion_changes: dict[str, Any] = {
+                        "key": cleaned_key,
+                        "category": category,
+                        "source": "explicit"
+                        if duplicate.source == "explicit"
+                        else source,
+                    }
+                    if cleaned_subject is not _UNSET:
+                        promotion_changes["subject"] = cleaned_subject
+                    if cleaned_valid_from is not _UNSET:
+                        promotion_changes["valid_from"] = cleaned_valid_from
+                    _set_updated_at_if_substantive(
+                        duplicate, promotion_changes, timestamp
+                    )
+                    updated = self._replace_record(duplicate, **promotion_changes)
+                    await self._async_save_locked()
+                    return {
+                        "status": "updated",
+                        "memory": memory_as_dict(updated),
+                    }
 
             if not keyed_identity:
                 duplicate = self._find_duplicate(
@@ -1081,6 +1142,43 @@ class PersistentMemory:
         if len(matches) == 1 and (not subject or not matches[0].subject):
             return matches[0]
         return None
+
+    def _find_unique_unkeyed_duplicate(
+        self,
+        user_id: str,
+        content: str,
+        subject: str | None = None,
+        valid_from: str | None = None,
+    ) -> MemoryRecord | None:
+        """Find one unkeyed exact fact without crossing canonical identities.
+
+        Multiple unkeyed facts with identical text remain ambiguous even when
+        one subject matches; leave them untouched for explicit resolution.
+        """
+        normalized = _fact_equality(content)
+        matches = [
+            memory
+            for memory in self._memories.values()
+            if memory.user_id == user_id
+            and memory.key is None
+            and _fact_equality(memory.content) == normalized
+        ]
+        if len(matches) != 1:
+            return None
+        candidate = matches[0]
+        if (
+            subject
+            and candidate.subject
+            and _subject_identity(subject) != _subject_identity(candidate.subject)
+        ):
+            return None
+        if (
+            valid_from is not None
+            and candidate.valid_from is not None
+            and valid_from != candidate.valid_from
+        ):
+            return None
+        return candidate
 
     def _find_related_candidate(
         self, user_id: str, content: str, subject: str | None, key: str | None
@@ -1660,24 +1758,6 @@ def _tokens(value: str) -> set[str]:
     return set(_cached_memory_tokens(value))
 
 
-def _stem(token: str) -> str:
-    """Apply conservative deterministic English suffix normalization."""
-    if len(token) > 4 and token.endswith("ies"):
-        return f"{token[:-3]}y"
-    if len(token) > 5 and token.endswith("ing"):
-        root = token[:-3]
-        if len(root) > 2 and root[-1] == root[-2]:
-            root = root[:-1]
-        return root
-    if len(token) > 4 and token.endswith("ed"):
-        return token[:-2]
-    if len(token) > 5 and token.endswith(("ches", "shes", "xes", "zes", "oes")):
-        return token[:-2]
-    if len(token) > 4 and token.endswith("s") and not token.endswith("ss"):
-        return token[:-1]
-    return token
-
-
 @lru_cache(maxsize=20_000)
 def _cached_memory_record_terms(memory: MemoryRecord) -> tuple[str, ...]:
     return tuple(
@@ -2096,7 +2176,9 @@ def _subject_identity(value: str | None) -> str:
 @lru_cache(maxsize=20_000)
 def _normalize(value: str) -> str:
     return " ".join(
-        _TOKEN_PATTERN.findall(unicodedata.normalize("NFC", value).casefold())
+        _TOKEN_PATTERN.findall(
+            unicodedata.normalize("NFC", value).casefold().replace("\u2019", "'")
+        )
     )
 
 
@@ -2198,7 +2280,9 @@ def _validate_privacy(content: str, source: str) -> None:
         )
     if _contains_financial_credential(content):
         raise MemoryPrivacyRejected(
-            "memory rejected because it appears to contain a financial credential"
+            "memory rejected because it appears to contain a financial credential. "
+            "This conservative check can also flag unrelated long identifiers; "
+            "save a description without the identifier instead."
         )
     if source == "implicit" and _SENSITIVE_IMPLICIT_PATTERN.search(content):
         raise MemoryPrivacyRejected(

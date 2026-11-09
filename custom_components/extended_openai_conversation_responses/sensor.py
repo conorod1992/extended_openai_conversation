@@ -144,7 +144,9 @@ class UsageSensor(SensorEntity):
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_entity_registry_enabled_default = False
     _attr_native_unit_of_measurement = "tokens"
-    _attr_state_class: SensorStateClass | None = SensorStateClass.TOTAL_INCREASING
+    # Backup restore can legitimately decrease this counter. A decrease is a
+    # correction, not a new meter cycle whose entire value should be added.
+    _attr_state_class: SensorStateClass | None = SensorStateClass.TOTAL
 
     def __init__(self, subentry: ConfigSubentry, usage: UsageManager) -> None:
         """Initialize the diagnostic sensor."""

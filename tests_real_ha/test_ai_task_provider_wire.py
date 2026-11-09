@@ -40,6 +40,125 @@ from tests_real_ha.test_provider_wire_e2e import (
 MODES = (API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES)
 
 
+@pytest.mark.parametrize(
+    ("mode", "legacy"),
+    [(mode, legacy) for mode in MODES for legacy in (False, True)],
+    ids=["chat-canonical", "chat-legacy", "responses-canonical", "responses-legacy"],
+)
+async def test_change_config_azure_task_keeps_original_number_bounds(
+    hass, monkeypatch, hass_admin_user, mode, legacy
+):
+    """Public service/reload and AI Task use one provider contract at the SDK wire."""
+    import importlib
+
+    from openai import AsyncAzureOpenAI
+
+    entry, entity_id = await _task_entity(hass, mode)
+    hass.config_entries.async_update_entry(
+        entry, data={**entry.data, "api_provider": "openai"}
+    )
+    await hass.async_block_till_done()
+    shared_http = _raw_client(SimpleNamespace(_client=entry.runtime_data))._client
+    requests = []
+    replies = iter((5, 11))
+
+    async def send(request, *args, **kwargs):
+        requests.append(request)
+        if request.method == "GET":
+            assert request.url.path.endswith("/models")
+            return httpx.Response(
+                200, json={"object": "list", "data": []}, request=request
+            )
+        assert request.method == "POST"
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=_text_reply(mode, json.dumps({"score": next(replies)})),
+            request=request,
+        )
+
+    monkeypatch.setattr(shared_http, "send", send)
+    await hass.services.async_call(
+        DOMAIN,
+        "change_config",
+        {
+            "config_entry": entry.entry_id,
+            "base_url": "https://schema.openai.azure.com",
+            "api_key": "schema-test-key",
+            "api_version": "2025-04-01-preview",
+            "skip_authentication": False,
+        },
+        blocking=True,
+        context=Context(user_id=hass_admin_user.id),
+    )
+    await hass.async_block_till_done()
+    assert entry.data["api_provider"] == "azure"
+    assert entry.state is ConfigEntryState.LOADED
+    if legacy:
+        # Independently exercise runtime protection for a pre-existing mismatch.
+        hass.config_entries.async_update_entry(
+            entry, data={**entry.data, "api_provider": "openai"}
+        )
+        await hass.async_block_till_done()
+        assert entry.data["api_provider"] == "openai"
+    client = _raw_client(SimpleNamespace(_client=entry.runtime_data))
+    assert isinstance(client, AsyncAzureOpenAI)
+    assert client._client is shared_http
+    assert any(request.method == "GET" for request in requests)
+
+    api = (
+        ai_task
+        if hasattr(ai_task, "STRUCTURE_FIELD_SCHEMA")
+        else importlib.import_module("homeassistant.components.ai_task.services")
+    )
+    fields = {
+        "score": api.STRUCTURE_FIELD_SCHEMA(
+            {
+                "required": True,
+                "selector": {"number": {"min": 0, "max": 10}},
+            }
+        )
+    }
+    structure = api._validate_structure_fields(fields)
+    result = await ai_task.async_generate_data(
+        hass,
+        task_name="Bounded Azure task",
+        entity_id=entity_id,
+        instructions="Choose a score",
+        structure=structure,
+        context=Context(user_id=hass_admin_user.id),
+    )
+    assert result.data == {"score": 5}
+    with pytest.raises(HomeAssistantError, match="structure"):
+        await ai_task.async_generate_data(
+            hass,
+            task_name="Reject out of bounds",
+            entity_id=entity_id,
+            instructions="Choose a score",
+            structure=structure,
+            context=Context(user_id=hass_admin_user.id),
+        )
+    posts = [request for request in requests if request.method == "POST"]
+    assert len(posts) == 2
+    for request in posts:
+        assert request.url.host == "schema.openai.azure.com"
+        assert request.url.path.startswith("/openai/")
+        if mode == API_MODE_RESPONSES:
+            assert request.url.path.endswith("/responses")
+        else:
+            assert "/deployments/" in request.url.path
+            assert request.url.path.endswith("/chat/completions")
+        body = json.loads(request.content)
+        output = (
+            body["text"]["format"]
+            if mode == API_MODE_RESPONSES
+            else body["response_format"]["json_schema"]
+        )
+        assert output["schema"]["properties"]["score"] == {"type": "number"}
+    with pytest.raises(vol.Invalid):
+        structure({"score": 11})
+
+
 async def _task_entity(hass: HomeAssistant, mode: str, **options) -> tuple[Any, str]:
     entry = _entry(mode)
     entry.add_to_hass(hass)

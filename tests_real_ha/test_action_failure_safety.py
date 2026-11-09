@@ -233,16 +233,19 @@ async def test_origin_only_targeted_broadcast_is_handled_failure(hass, monkeypat
         user_id=user.id,
     )
     await hass.async_block_till_done()
-    assert "No matching announcement-capable" in str(result)
+    assert result["successful"] is True
+    assert "another available speaker" in str(result)
+    assert "Unexpected fallback" not in str(result)
     assert sent == []
     assert manager.history() == []
     assert len(agent._usage.runs) == 1
-    assert agent._usage.runs[0].successful is False
+    assert agent._usage.runs[0].successful is True
     assert len(finished) == 1
-    assert finished[0].data["status"] == "error"
+    assert finished[0].data["status"] == "local"
+    assert finished[0].data["handled_locally"] is True
     turns = [turn for values in agent._archive._turns.values() for turn in values]
     assert len(turns) == 1
-    assert turns[0].successful is False
+    assert turns[0].successful is True
 
 
 async def test_public_rule_repeat_count_keeps_rendered_value_private(

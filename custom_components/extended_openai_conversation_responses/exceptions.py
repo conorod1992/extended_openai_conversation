@@ -131,22 +131,18 @@ class FunctionValidationInfrastructureError(HomeAssistantError):
 
 
 class TokenLengthExceededError(HomeAssistantError):
-    """When openai return 'length' as 'finish_reason'."""
+    """Provider reported a length ceiling, with or without a configured cap."""
 
-    def __init__(self, token: int) -> None:
-        """Initialize error."""
-        super().__init__(
-            self,
-            f"Maximum response length ({token} tokens) reached. Increase Maximum "
-            "response length in this assistant's Extended OpenAI configuration, "
-            "or ask for a shorter response.",
-        )
+    def __init__(self, token: int | None) -> None:
+        """Retain the effective request limit, if one was actually sent."""
         self.token = token
+        super().__init__(str(self))
 
     def __str__(self) -> str:
-        """Return string representation."""
+        """Avoid quoting a numeric limit if the request contained none."""
+        limit = f" ({self.token} tokens)" if self.token is not None else ""
         return (
-            f"Maximum response length ({self.token} tokens) reached. Increase Maximum "
+            f"Maximum response length{limit} reached. Increase Maximum "
             "response length in this assistant's Extended OpenAI configuration, "
             "or ask for a shorter response."
         )

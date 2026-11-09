@@ -221,3 +221,11 @@ for (const flag of [undefined,null,true,false]) {
   const markup=renderOverview(panel,{...agent,guest_mode:{currently_active:true,state:"active_indefinitely",has_home_assistant_exclusions:flag}});
   assert.equal(markup.includes("Guest Mode is active without configured Home Assistant exclusions."),flag===false);
 }
+
+const degradedMarkup = renderOverview(panel, {...agent, function_group_count:null, knowledge_source_count:null,
+  guest_mode:{state:"unavailable",currently_active:null}, metadata_errors:[{key:"guest_mode",label:"Guest Mode"},{key:"knowledge",label:"Knowledge Library"}]});
+assert.match(degradedMarkup,/Unknown groups/);
+assert.match(degradedMarkup,/Unknown Knowledge sources/);
+assert.match(degradedMarkup,/Knowledge Library could not be loaded/);
+assert.match(degradedMarkup,/Guest Mode could not be loaded/);
+assert.match(degradedMarkup,/data-subsection="home-assistant"/);

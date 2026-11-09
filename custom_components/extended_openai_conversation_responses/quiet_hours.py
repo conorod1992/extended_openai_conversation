@@ -45,7 +45,7 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
 
     async def async_setup(self) -> None:
         await super().async_setup()
-        if self._stopping:
+        if self._stopping or self.startup_unavailable:
             return
         if self._registry_unsubscribe is None:
             self._registry_unsubscribe = self.hass.bus.async_listen(
@@ -144,11 +144,17 @@ class QuietHoursManager(_RuntimeQuietHoursManager):
                 self.hass.states.async_remove(entity_id)
             self._published_state = None
             return
+        registry_name = getattr(entry, "name", None)
+        friendly_name = (
+            registry_name
+            if isinstance(registry_name, str) and registry_name.strip()
+            else "Quiet Hours"
+        )
         self.hass.states.async_set(
             entity_id,
             "on" if period is not None else "off",
             {
-                "friendly_name": "Quiet Hours",
+                "friendly_name": friendly_name,
                 "icon": "mdi:weather-night",
                 "enabled": self._config.enabled,
                 "start": self._config.start,

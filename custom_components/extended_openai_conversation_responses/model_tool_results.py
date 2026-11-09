@@ -369,3 +369,43 @@ def bounded_record_page(result: dict[str, Any], records_key: str) -> dict[str, A
     if len(compact_tool_json(page)) > MAX_MODEL_TOOL_RESULT_CHARACTERS:
         raise ValueError("record metadata exceeds model tool result budget")
     return page
+
+
+def bounded_text_page(result: dict[str, Any], offset: int) -> dict[str, Any]:
+    """Fit text and its continuation cursor using the actual JSON wire codec."""
+    from .runtime_hardening import MAX_MODEL_TOOL_RESULT_CHARACTERS
+
+    budget = MAX_MODEL_TOOL_RESULT_CHARACTERS - 1024
+    if (
+        offset == 0
+        and len(result["content"]) <= budget
+        and len(compact_tool_json(result)) <= budget
+    ):
+        return result
+    text = result["content"]
+    if not 0 <= offset <= len(text):
+        raise ValueError("File offset is outside the file's character range")
+
+    def page(count: int) -> dict[str, Any]:
+        end = offset + count
+        more = end < len(text)
+        return {
+            **result,
+            "content": text[offset:end],
+            "offset": offset,
+            "returned": count,
+            "total_characters": len(text),
+            "has_more": more,
+            "next_offset": end if more else None,
+        }
+
+    low, high = 0, min(len(text) - offset, budget)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if len(compact_tool_json(page(middle))) <= budget:
+            low = middle
+        else:
+            high = middle - 1
+    if low == 0 and offset < len(text):
+        raise ValueError("File metadata exceeds the model result budget")
+    return page(low)

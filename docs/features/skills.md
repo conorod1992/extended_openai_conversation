@@ -16,6 +16,8 @@ Each conversation agent can choose which installed skills it is allowed to load.
 
 `SKILL.md` must fit the loader's **1 MiB (1,048,576 bytes)** file limit. Discovery skips larger instruction files with a warning rather than offering a Skill that cannot be loaded. Split larger material into supporting files, each within the same read limit. After reducing an oversized file, reload Skills to make it available again.
 
+The maintained `load_skill` loader returns large instructions and supporting files in pages that fit the model's serialized tool-result budget, including JSON escaping and continuation metadata. Start at character offset `0` (or omit `offset`). While `has_more` is true, call the loader again with the returned `next_offset`; offsets count Unicode characters, not UTF-8 bytes. Each page consumes one ordinary Function Tool call. Previously saved maintained loader presets gain this optional argument at runtime without rewriting their saved configuration. Custom file readers can opt in with a `page_offset` template.
+
 ## Enable skills
 
 1. Open **Extended OpenAI** in the Home Assistant sidebar.

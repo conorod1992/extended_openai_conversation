@@ -302,7 +302,7 @@ async def test_backup_preview_and_diagnostics_success_routes(
     monkeypatch.setattr(management_ui, "async_restore_backup", restore)
     monkeypatch.setattr(management_ui, "_async_preview_effective_request", preview)
     monkeypatch.setattr(
-        management_ui, "merge_agent_config", lambda data, updates: {**data, **updates}
+        management_ui, "merge_agent_config", lambda data, updates, *, provider=None: {**data, **updates}
     )
     monkeypatch.setattr(
         management_ui,
@@ -324,6 +324,122 @@ async def test_backup_preview_and_diagnostics_success_routes(
     assert await management_ui.async_management_command(
         hass, "user", True, _message("diagnostics", "test_agent")
     ) == {"healthy": True}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("preview_action", ("prompt_preview", "request_preview", "speech_preview"))
+@pytest.mark.parametrize(
+    ("entry_data", "updates", "expected_effort"),
+    [
+        (
+            {"api_provider": "openai"},
+            {"chat_model": "o3-pro", "api_mode": "responses", "reasoning_effort": None},
+            None,
+        ),
+        (
+            {"api_provider": "azure"},
+            {
+                "chat_model": "my-o3-deployment",
+                "azure_model": "o3-pro",
+                "api_mode": "responses",
+                "reasoning_effort": "high",
+            },
+            "high",
+        ),
+        (
+            {
+                "api_provider": "openai",
+                "base_url": "https://example.openai.azure.com",
+            },
+            {
+                "chat_model": "my-o3-deployment",
+                "azure_model": "o3-pro",
+                "api_mode": "responses",
+                "reasoning_effort": "high",
+            },
+            "high",
+        ),
+    ],
+    ids=("openai-null", "azure-high", "inferred-azure-high"),
+)
+async def test_configuration_previews_use_same_provider_as_validate(
+    monkeypatch: pytest.MonkeyPatch,
+    preview_action: str,
+    entry_data: dict,
+    updates: dict,
+    expected_effort: str | None,
+) -> None:
+    """Preview normalization must honor the connected provider, not portable imports."""
+    entry, subentry = _entry_pair()
+    entry.data = entry_data
+    hass = _hass(entry)
+    # The difference under test is the configuration normalization boundary;
+    # live request readiness and retained-rule dependencies are covered separately.
+    monkeypatch.setattr(management_ui, "_async_validate_configuration_request", AsyncMock())
+    monkeypatch.setattr(management_ui, "_async_validate_configuration_dependencies", AsyncMock())
+    request_preview = AsyncMock(return_value={"preview": True})
+    speech_preview = AsyncMock(return_value="processed")
+    monkeypatch.setattr(management_ui, "_async_preview_effective_request", request_preview)
+    monkeypatch.setattr(management_ui, "async_process_speech_text", speech_preview)
+
+    validated = await management_ui.async_management_command(
+        hass, "admin", True, _message("configuration", "validate", config=updates)
+    )
+    assert validated["valid"] is True, validated
+
+    message = _message("configuration", preview_action, config=updates)
+    if preview_action == "speech_preview":
+        message["sample_text"] = "example"
+    result = await management_ui.async_management_command(hass, "admin", True, message)
+
+    if preview_action == "speech_preview":
+        assert result == {"speech_text": "processed"}
+        speech_preview.assert_awaited_once()
+        preview_config = speech_preview.await_args.args[2]
+        request_preview.assert_not_awaited()
+    else:
+        assert result == {"preview": True}
+        request_preview.assert_awaited_once()
+        assert request_preview.await_args.args[:3] == (hass, entry, subentry)
+        preview_config = request_preview.await_args.args[3]
+        speech_preview.assert_not_awaited()
+
+    assert preview_config["chat_model"] == validated["config"]["chat_model"]
+    assert preview_config.get("reasoning_effort") == validated["config"].get(
+        "reasoning_effort"
+    )
+    if expected_effort is None:
+        assert "reasoning_effort" not in preview_config
+    else:
+        assert preview_config["reasoning_effort"] == expected_effort
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("preview_action", ("prompt_preview", "request_preview", "speech_preview"))
+async def test_azure_previews_reject_explicit_null_effort_like_validate(
+    monkeypatch: pytest.MonkeyPatch, preview_action: str
+) -> None:
+    """Do not turn an invalid Azure o3-pro override into an implicit default."""
+    entry, subentry = _entry_pair()
+    entry.data = {"api_provider": "azure"}
+    hass = _hass(entry)
+    updates = {
+        "chat_model": "my-o3-deployment",
+        "azure_model": "o3-pro",
+        "api_mode": "responses",
+        "reasoning_effort": None,
+    }
+    validated = await management_ui.async_management_command(
+        hass, "admin", True, _message("configuration", "validate", config=updates)
+    )
+    assert validated["valid"] is False
+    assert validated["errors"]["reasoning_effort"] == "unsupported value"
+
+    message = _message("configuration", preview_action, config=updates)
+    if preview_action == "speech_preview":
+        message["sample_text"] = "example"
+    with pytest.raises(AgentConfigError, match="reasoning_effort: unsupported value"):
+        await management_ui.async_management_command(hass, "admin", True, message)
 
 
 @pytest.mark.asyncio

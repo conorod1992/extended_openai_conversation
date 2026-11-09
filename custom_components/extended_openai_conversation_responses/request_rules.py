@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from functools import lru_cache
 from hashlib import sha256
+from itertools import pairwise
 import json
 import logging
 import re
@@ -81,7 +82,7 @@ from .request_rule_patterns import (
     sentence_capture_names,
     validate_match_input,
 )
-from .script_lifecycle import async_cleanup_script
+from .script_lifecycle import async_cleanup_script, async_run_script
 from .script_payload import (
     effective_service_payload,
     is_function_service_action,
@@ -1040,7 +1041,15 @@ class RequestRules:
             self._rules.insert(target, moved)
             for order, rule in enumerate(self._rules):
                 rule["order"] = order
-            self._reorder_matching_snapshot()
+            # When a retained legacy rule was excluded, order changes can
+            # change which patterns fit the aggregate state budget. Reapply
+            # loader admission and diagnostics instead of sorting only the
+            # previously admitted subset. Healthy collections keep the
+            # zero-recompile fast path and compiled pattern identities.
+            if self._diagnostics:
+                self._sort_and_compile()
+            else:
+                self._reorder_matching_snapshot()
             await self._async_save_locked()
             return dict(self._rules[target])
 
@@ -2278,9 +2287,10 @@ def _result_references(value: Any) -> set[str]:
         return {match.group(1) for match in RESULT_REFERENCE.finditer(value)}
     if isinstance(value, Mapping):
         result: set[str] = set()
-        for key, item in value.items():
-            if key not in {"result_alias", "step_id"}:
-                result.update(_result_references(item))
+        # Declaration aliases and step IDs are validated bare identifiers, so
+        # cannot match reference syntax. Ordinary payloads may use either key.
+        for item in value.values():
+            result.update(_result_references(item))
         return result
     if isinstance(value, list):
         result = set()
@@ -2687,10 +2697,21 @@ def _lookup_result_value(token: str, results: Mapping[str, Any]) -> Any:
     return current
 
 
+def _rule_response_text(value: Any) -> str:
+    """Render spoken structured results as JSON rather than Python repr."""
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False, default=str, allow_nan=False)
+
+
 def resolve_result_values(
-    value: Any, slots: Mapping[str, str], results: Mapping[str, Any]
+    value: Any,
+    slots: Mapping[str, str],
+    results: Mapping[str, Any],
+    *,
+    stringify: Callable[[Any], str] = str,
 ) -> Any:
-    """Resolve exact result paths, keeping captures in their own namespace."""
+    """Resolve result paths while preserving native script argument values."""
 
     def lookup(token: str) -> Any:
         return _lookup_result_value(token, results)
@@ -2705,8 +2726,8 @@ def resolve_result_values(
         def replace_reference(match: re.Match[str]) -> str:
             token = match.group(0)[1:-1]
             if "." in token:
-                return str(lookup(token))
-            return str(results[token]) if token in results else slots[token]
+                return stringify(lookup(token))
+            return stringify(results[token]) if token in results else slots[token]
 
         # Scan only authored references: substituted tool data is opaque text.
         return re.sub(
@@ -2716,11 +2737,14 @@ def resolve_result_values(
         )
     if isinstance(value, Mapping):
         return {
-            key: resolve_result_values(item, slots, results)
+            key: resolve_result_values(item, slots, results, stringify=stringify)
             for key, item in value.items()
         }
     if isinstance(value, list):
-        return [resolve_result_values(item, slots, results) for item in value]
+        return [
+            resolve_result_values(item, slots, results, stringify=stringify)
+            for item in value
+        ]
     return value
 
 
@@ -3769,7 +3793,8 @@ async def _async_evaluate_matched_rule(
             execution_token = script_execution_cv.set(execution)
             cancelled = False
             try:
-                run_result = await script.async_run(
+                run_result = await async_run_script(
+                    script,
                     {**match.slots, "request": {"slots": dict(match.slots)}},
                     context,
                 )
@@ -3836,9 +3861,12 @@ async def _async_evaluate_matched_rule(
             )
         try:
             response = resolve_result_values(
-                action["success_response"], match.slots, result_values
+                action["success_response"],
+                match.slots,
+                result_values,
+                stringify=_rule_response_text,
             )
-            response = str(response)
+            response = _rule_response_text(response)
         except (ValueError, KeyError, TypeError) as err:
             # These actions have already occurred. Never rerun the script or
             # misrepresent this as an action failure to the user.
@@ -4097,6 +4125,55 @@ def _compile_sentence_pattern(pattern: str) -> CompiledPhrase:
     return CompiledPhrase(pattern, sentence_pattern=sentence_pattern)
 
 
+# Plurals of common -us nouns are ambiguous with -use + s words.
+# Treat only verified -us roots specially; otherwise keep the conservative
+# -se + s fallback used by house/houses and excuse/excuses.
+_US_ES_PLURAL_ROOTS = frozenset(
+    {
+        "apparatus",
+        "bonus",
+        "cactus",
+        "campus",
+        "caucus",
+        "census",
+        "chorus",
+        "circus",
+        "coronavirus",
+        "corpus",
+        "crocus",
+        "fetus",
+        "focus",
+        "fungus",
+        "genius",
+        "genus",
+        "hibiscus",
+        "hippopotamus",
+        "lotus",
+        "meniscus",
+        "minibus",
+        "minus",
+        "nexus",
+        "nucleus",
+        "octopus",
+        "omnibus",
+        "plus",
+        "prospectus",
+        "radius",
+        "refocus",
+        "retrovirus",
+        "rhinovirus",
+        "sinus",
+        "status",
+        "stylus",
+        "surplus",
+        "syllabus",
+        "thesaurus",
+        "virus",
+        "walrus",
+    }
+)
+
+
 def _singularize(token: str) -> str:
     if (
         token in {"news", "series", "species"}
@@ -4104,9 +4181,27 @@ def _singularize(token: str) -> str:
         or token.endswith(("ss", "us", "is"))
     ):
         return token
+    # Common -ie + s plurals must keep the final e; do not apply the
+    # otherwise useful party -> parties transformation indiscriminately.
+    if token in {
+        "movies",
+        "cookies",
+        "brownies",
+        "zombies",
+        "smoothies",
+        "selfies",
+    }:
+        return token[:-1]
+    if token == "quizzes":
+        return "quiz"
     if len(token) > 4 and token.endswith("ies"):
         return token[:-3] + "y"
-    if token.endswith(("ches", "shes", "xes", "zes", "ses")):
+    # "houses", "sizes" and "noises" are -se + s, not -s + es.
+    if token.endswith(("sses", "ches", "shes", "xes", "zzes")):
+        return token[:-2]
+    if token in {"buses", "gases"}:
+        return token[:-2]
+    if token.endswith("es") and token[:-2] in _US_ES_PLURAL_ROOTS:
         return token[:-2]
     if token.endswith("s"):
         return token[:-1]
@@ -4123,10 +4218,252 @@ def _deterministic_match(text: str, phrase: str, match_type: str) -> bool:
     return text == phrase or f" {phrase} " in f" {text} "
 
 
+# A fuzzy candidate must keep command polarity, negation and quantities exact.
+# This is intentionally conservative: a typo in an action word must not
+# accidentally choose a different action. Names of short targets are likewise
+# too ambiguous to substitute safely (for example, hall versus wall).
+_FUZZY_EXACT_WORDS = frozenset(
+    {
+        "on",
+        "off",
+        "no",
+        "not",
+        "never",
+        "without",
+        "don't",
+        "dont",
+        "didn't",
+        "didnt",
+        "can't",
+        "cant",
+        "cannot",
+        "won't",
+        "wont",
+        "lock",
+        "unlock",
+        "locked",
+        "unlocked",
+        "locking",
+        "unlocking",
+        "open",
+        "close",
+        "opened",
+        "closed",
+        "opening",
+        "closing",
+        "arm",
+        "disarm",
+        "armed",
+        "disarmed",
+        "arming",
+        "disarming",
+        "enable",
+        "disable",
+        "enabled",
+        "disabled",
+        "enabling",
+        "disabling",
+        "start",
+        "stop",
+        "started",
+        "stopped",
+        "starting",
+        "stopping",
+        "mute",
+        "unmute",
+        "muted",
+        "unmuted",
+        "muting",
+        "unmuting",
+        "play",
+        "pause",
+        "resume",
+        "cancel",
+        "uncancel",
+        "increase",
+        "decrease",
+        "raise",
+        "lower",
+        "up",
+        "down",
+        "heat",
+        "cool",
+        "add",
+        "remove",
+        "delete",
+        "create",
+        "zero",
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+        "six",
+        "seven",
+        "eight",
+        "nine",
+        "ten",
+        "eleven",
+        "twelve",
+        "thirteen",
+        "fourteen",
+        "fifteen",
+        "sixteen",
+        "seventeen",
+        "eighteen",
+        "nineteen",
+        "twenty",
+        "thirty",
+        "forty",
+        "fifty",
+        "sixty",
+        "seventy",
+        "eighty",
+        "ninety",
+        "hundred",
+        "thousand",
+    }
+)
+_FUZZY_OPTIONAL_ARTICLES = frozenset({"a", "an", "the"})
+
+
+# Only well-established, meaning-preserving speech compounds. Joining arbitrary
+# words (e.g. "now here" and "nowhere") would undo the polarity/target guard.
+_FUZZY_SAFE_COMPOUND_PAIRS = frozenset(
+    {
+        ("good", "night"),
+        ("good", "morning"),
+        ("good", "evening"),
+        ("living", "room"),
+        ("bed", "room"),
+        ("bath", "room"),
+        ("dining", "room"),
+        ("hall", "way"),
+        ("front", "door"),
+        ("back", "door"),
+    }
+)
+_FUZZY_SAFE_COMPOUND_WORDS = frozenset(
+    "".join(pair) for pair in _FUZZY_SAFE_COMPOUND_PAIRS
+)
+
+
+def _fuzzy_join_safe_compounds(words: list[str]) -> list[str]:
+    """Canonicalize only approved adjacent word pairs for fuzzy compatibility."""
+    joined: list[str] = []
+    index = 0
+    while index < len(words):
+        if (
+            index + 1 < len(words)
+            and (words[index], words[index + 1]) in _FUZZY_SAFE_COMPOUND_PAIRS
+        ):
+            joined.append(words[index] + words[index + 1])
+            index += 2
+        else:
+            joined.append(words[index])
+            index += 1
+    return joined
+
+
+def _fuzzy_has_safe_compound(words: list[str]) -> bool:
+    return any(word in _FUZZY_SAFE_COMPOUND_WORDS for word in words) or any(
+        (left, right) in _FUZZY_SAFE_COMPOUND_PAIRS for left, right in pairwise(words)
+    )
+
+
+def _fuzzy_word_is_typo(expected: str, observed: str) -> bool:
+    """Permit small spelling errors, not unrelated or sensitive word changes."""
+    if expected == observed:
+        return True
+    if (
+        expected in _FUZZY_EXACT_WORDS
+        or observed in _FUZZY_EXACT_WORDS
+        or any(char.isdigit() for char in expected + observed)
+        or (len(expected) <= 4 and len(observed) <= 4)
+        or expected[0] != observed[0]
+        or abs(len(expected) - len(observed)) > 1
+    ):
+        return False
+    matcher = SequenceMatcher(None, expected, observed, autojunk=False)
+    if matcher.ratio() < 0.7:
+        return False
+    edits = 0
+    for kind, a_start, a_end, b_start, b_end in matcher.get_opcodes():
+        if kind != "equal":
+            edits += max(a_end - a_start, b_end - b_start)
+            if edits > 2:
+                return False
+    return True
+
+
+def _fuzzy_aligned_words_compatible(
+    expected: list[str], observed: list[str], *, joined: bool = False
+) -> bool:
+    """Preserve word-level typo matching and one optional article."""
+    if abs(len(expected) - len(observed)) > 1:
+        return False
+    skip_expected = len(expected) > len(observed)
+    skip_observed = len(observed) > len(expected)
+    i = j = 0
+    while i < len(expected) and j < len(observed):
+        if expected[i] == observed[j]:
+            i += 1
+            j += 1
+        elif skip_expected and expected[i] in _FUZZY_OPTIONAL_ARTICLES:
+            i += 1
+            skip_expected = False
+        elif skip_observed and observed[j] in _FUZZY_OPTIONAL_ARTICLES:
+            j += 1
+            skip_observed = False
+        elif (
+            # A newly joined word must match exactly, not turn an innocuous
+            # compound into a different word through fuzzy substitution.
+            not (
+                joined
+                and (
+                    expected[i] in _FUZZY_SAFE_COMPOUND_WORDS
+                    or observed[j] in _FUZZY_SAFE_COMPOUND_WORDS
+                )
+            )
+            and _fuzzy_word_is_typo(expected[i], observed[j])
+        ):
+            i += 1
+            j += 1
+        else:
+            return False
+    if i < len(expected):
+        return (
+            skip_expected
+            and i == len(expected) - 1
+            and expected[i] in _FUZZY_OPTIONAL_ARTICLES
+        )
+    if j < len(observed):
+        return (
+            skip_observed
+            and j == len(observed) - 1
+            and observed[j] in _FUZZY_OPTIONAL_ARTICLES
+        )
+    return True
+
+
+def _fuzzy_words_compatible(phrase: str, candidate: str) -> bool:
+    """Try ordinary typo alignment before specifically approved compound joins."""
+    expected, observed = phrase.split(), candidate.split()
+    if _fuzzy_aligned_words_compatible(expected, observed):
+        return True
+    joined_expected = _fuzzy_join_safe_compounds(expected)
+    joined_observed = _fuzzy_join_safe_compounds(observed)
+    if joined_expected == expected and joined_observed == observed:
+        return False
+    return _fuzzy_aligned_words_compatible(
+        joined_expected, joined_observed, joined=True
+    )
+
+
 def _fuzzy_score(
     text: str, phrase: str, match_type: str, budget: MatchBudget | None = None
 ) -> float:
-    """Rank candidates with a shared bound on worst-case comparison work."""
+    """Score only word-safe candidates, retaining existing ranking and work bounds."""
     if budget is None:
         budget = MatchBudget()
     budget.consume(len(text) + len(phrase))
@@ -4135,15 +4472,32 @@ def _fuzzy_score(
         candidates = [text]
     else:
         words = text.split()
-        size = max(1, len(phrase.split()))
+        phrase_words = phrase.split()
+        size = max(1, len(phrase_words))
+        # Article omissions and safe compound joins change the word count.
+        # Bound alternative windows and charge each one against the existing
+        # MatchBudget; other fuzzy calls retain their original window size.
+        has_article = any(
+            word in _FUZZY_OPTIONAL_ARTICLES for word in (*phrase_words, *words)
+        )
+        has_compound = _fuzzy_has_safe_compound(
+            phrase_words
+        ) or _fuzzy_has_safe_compound(words)
+        slack = int(has_article) + (2 if has_compound else 0)
+        sizes = tuple(
+            length
+            for length in range(max(1, size - slack), size + slack + 1)
+            if length <= len(words)
+        )
         if match_type == "starts_with":
-            candidates = [" ".join(words[:size])]
+            candidates = (" ".join(words[:length]) for length in sizes)
         elif match_type == "ends_with":
-            candidates = [" ".join(words[-size:])]
+            candidates = (" ".join(words[-length:]) for length in sizes)
         else:
             candidates = (
-                " ".join(words[index : index + size])
-                for index in range(max(1, len(words) - size + 1))
+                " ".join(words[index : index + length])
+                for length in sizes
+                for index in range(len(words) - length + 1)
             )
     best = 0.0
     seen: set[str] = set()
@@ -4155,7 +4509,11 @@ def _fuzzy_score(
         matcher = SequenceMatcher(None, phrase, candidate)
         if matcher.real_quick_ratio() <= best or matcher.quick_ratio() <= best:
             continue
+        # This charge already bounds the word-local comparisons as well as
+        # the final whole-phrase ratio; both reuse the same request budget.
         budget.consume(max(1, len(candidate) * len(phrase)))
+        if not _fuzzy_words_compatible(phrase, candidate):
+            continue
         best = max(best, matcher.ratio())
         if best == 1:
             break

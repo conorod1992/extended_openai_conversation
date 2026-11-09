@@ -520,7 +520,7 @@ async def test_static_descendant_validation_skips_templates_and_defensive_shapes
     validate.assert_not_awaited()
 
 
-async def test_static_descendants_recurse_object_and_array(monkeypatch) -> None:
+async def test_static_descendants_recurse_object_and_array(hass, monkeypatch) -> None:
     validate = AsyncMock()
     monkeypatch.setattr(integrity, "async_validate_function_arguments", validate)
     schema = {
@@ -538,14 +538,14 @@ async def test_static_descendants_recurse_object_and_array(monkeypatch) -> None:
         "dynamic": "{{ later }}",
     }
 
-    await integrity._async_validate_static_descendants(SimpleNamespace(), value, schema)
+    await integrity._async_validate_static_descendants(hass, value, schema)
 
     checked_values = [call.args[2]["value"] for call in validate.await_args_list]
     assert checked_values == ["fixed", 1, 3, True]
 
 
 async def test_validate_static_function_arguments_rejects_bad_schema_and_masks_dynamic(
-    monkeypatch,
+    hass, monkeypatch,
 ) -> None:
     with pytest.raises(HomeAssistantError, match="input schema is invalid"):
         await integrity.async_validate_static_function_arguments(
@@ -567,7 +567,7 @@ async def test_validate_static_function_arguments_rejects_bad_schema_and_masks_d
     }
     arguments = {"value": "{{ dynamic }}"}
     await integrity.async_validate_static_function_arguments(
-        SimpleNamespace(), spec, arguments
+        hass, spec, arguments
     )
 
     masked_spec = validate.await_args.args[1]

@@ -14,6 +14,14 @@
       "required": false,
       "kind": "string"
     },
+    "before_text_offset": {
+      "required": false,
+      "kind": "integer"
+    },
+    "before_turn": {
+      "required": false,
+      "kind": "integer"
+    },
     "category": {
       "required": false,
       "kind": "string"
@@ -82,6 +90,10 @@
     "expires_at": {
       "required": false,
       "kind": "string"
+    },
+    "export_text": {
+      "required": false,
+      "kind": "boolean"
     },
     "group": {
       "required": false,

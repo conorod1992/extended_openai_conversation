@@ -106,6 +106,14 @@ The character count is labelled as serialized size, not a provider token count.
 
 ## Compatibility and limitations
 
+Renaming a Function Tool or changing a Group ID is refused while a saved Request
+Rule contains an applicable `enable_function_tools`, `disable_function_tools`,
+`enable_function_groups`, or `disable_function_groups` reference. The error lists
+the rules to review, including rules owned by another assistant. Update those
+actions before retrying the rename. Unresolved templated targets or lists require
+review rather than an automatic rewrite. Changing a Group's display name does
+not change its ID.
+
 - Legacy configurations, imports, exports, and duplicated agents remain valid; existing groups default to enabled.
 - Groups, assignments, and group enabled state are included in agent duplication and import/export.
 - Responses and Chat Completions use the same integration-owned function loop, so grouping works in both modes when Function Tools are available for the request.

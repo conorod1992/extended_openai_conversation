@@ -62,6 +62,208 @@ async def _memory(data=None) -> PersistentMemory:
     return memory
 
 
+@pytest.mark.parametrize(
+    ("word", "other", "stem"),
+    [
+        ("calling", "call", "call"),
+        ("falling", "fall", "fall"),
+        ("filling", "fill", "fill"),
+        ("rolling", "roll", "roll"),
+        ("pressing", "press", "press"),
+        ("dressing", "dress", "dress"),
+        ("spelling", "spell", "spell"),
+        ("breed", "breeds", "breed"),
+        ("speed", "speeds", "speed"),
+        ("running", "run", "run"),
+        ("shopping", "shop", "shop"),
+    ],
+)
+def test_memory_stemmer_preserves_real_word_endings(word, other, stem) -> None:
+    from custom_components.extended_openai_conversation_responses.memory import _stem
+
+    assert _stem(word) == _stem(other) == stem
+
+
+@pytest.mark.parametrize(
+    ("base", "inflected"),
+    [
+        ("like", "liked"), ("like", "liking"), ("love", "loved"),
+        ("live", "lived"), ("move", "moved"), ("name", "named"),
+        ("change", "changed"), ("change", "changing"),
+        ("stop", "stopped"), ("plan", "planned"),
+        ("glass", "glasses"), ("class", "classes"),
+        ("movie", "movies"), ("cookie", "cookies"),
+        ("brownie", "brownies"), ("size", "sizes"), ("shoe", "shoes"),
+        ("pass", "passed"), ("dress", "dressed"), ("roll", "rolled"),
+    ],
+)
+def test_memory_regains_common_past_and_plural_word_families(
+    base: str, inflected: str
+) -> None:
+    from custom_components.extended_openai_conversation_responses.memory import _stem
+
+    assert _stem(base) == _stem(inflected)
+
+
+@pytest.mark.parametrize(
+    ("stored", "query"),
+    [
+        ("I liked coffee.", "likes"),
+        ("I loved coffee.", "love"),
+        ("I have moved.", "move"),
+        ("I changed my name.", "change"),
+        ("My bicycle stopped.", "stop"),
+        ("We planned a trip.", "plan"),
+        ("My glasses broke.", "glass"),
+        ("My favourite movies are documentaries.", "movie"),
+        ("I bought some cookies.", "cookie"),
+    ],
+)
+async def test_memory_real_search_recovers_past_and_plural_forms(
+    stored: str, query: str
+) -> None:
+    memory = await _memory()
+    added = await memory.async_add("alice", stored, "personal", "explicit")
+    results = await memory.async_search("alice", query)
+    assert any(row.memory_id == added["memory"]["memory_id"] for row in results)
+
+
+
+@pytest.mark.parametrize(
+    ("base", "inflections"),
+    [
+        ("control", ("controlled", "controlling", "controls")),
+        ("cancel", ("cancelled", "canceled", "cancelling", "canceling")),
+        ("travel", ("travelled", "traveled", "travelling", "traveling")),
+        ("label", ("labelled", "labeled", "labelling", "labeling")),
+        ("model", ("modelled", "modeled", "modelling", "modeling")),
+        ("signal", ("signalled", "signaled", "signalling", "signaling")),
+        ("patrol", ("patrolled", "patrolling")),
+        ("compel", ("compelled", "compelling")),
+        ("expel", ("expelled", "expelling")),
+        ("propel", ("propelled", "propelling")),
+        ("add", ("added", "adding")),
+        ("egg", ("egged", "egging")),
+        ("ebb", ("ebbed", "ebbing")),
+        ("run", ("running",)),
+        ("stop", ("stopped", "stopping", "stops")),
+        ("call", ("called", "calling", "calls")),
+        ("fill", ("filled", "filling", "fills")),
+        ("install", ("installed", "installing", "installs")),
+        ("sell", ("selling", "sells")),
+    ],
+)
+def test_memory_doubled_consonant_families_retain_correct_roots(
+    base: str, inflections: tuple[str, ...]
+) -> None:
+    from custom_components.extended_openai_conversation_responses.memory import _stem
+
+    assert all(_stem(word) == _stem(base) for word in inflections)
+
+
+@pytest.mark.parametrize(
+    ("stored", "query"),
+    [
+        ("I controlled the thermostat.", "control"),
+        ("I cancelled the gym.", "cancel"),
+        ("I travelled yesterday.", "travel"),
+        ("I added a reminder.", "add"),
+        ("I egged the pudding.", "egg"),
+    ],
+)
+async def test_memory_new_doubled_roots_are_retrievable(
+    stored: str, query: str
+) -> None:
+    memory = await _memory()
+    record = await memory.async_add("alice", stored, "personal", "explicit")
+    matches = await memory.async_search("alice", query)
+    assert [item.memory_id for item in matches] == [record["memory"]["memory_id"]]
+
+
+@pytest.mark.parametrize(
+    ("original", "revised"),
+    [
+        ("I cancelled gym.", "I cancel gym."),
+        ("I added reminder.", "I add reminder."),
+    ],
+)
+async def test_memory_doubled_roots_enable_related_upsert_without_premature_update(
+    original: str, revised: str
+) -> None:
+    memory = await _memory()
+    created = await memory.async_add("alice", original, "personal", "explicit")
+    response = await memory.async_upsert("alice", revised, "personal", "explicit")
+    assert response["status"] == "needs_resolution"
+    assert response["candidate"]["memory_id"] == created["memory"]["memory_id"]
+    assert len(await memory.async_list("alice")) == 1
+
+
+def test_memory_consonant_doubling_does_not_create_silent_e_word() -> None:
+    """A doubled consonant distinguishes hopping from hoping."""
+    from custom_components.extended_openai_conversation_responses.memory import _stem
+
+    assert _stem("hopped") == _stem("hopping") == _stem("hop") == "hop"
+    assert _stem("hoped") == _stem("hoping") == _stem("hope") == "hope"
+    assert _stem("hop") != _stem("hope")
+
+
+async def test_memory_lexical_search_keeps_hop_and_hope_separate() -> None:
+    memory = await _memory()
+    hopped = await memory.async_add(
+        "alice", "I hopped.", "personal", "explicit"
+    )
+    hoped = await memory.async_add(
+        "alice", "I hoped.", "personal", "explicit"
+    )
+    hop = await memory.async_search("alice", "hop")
+    hope = await memory.async_search("alice", "hope")
+    assert [row.memory_id for row in hop] == [hopped["memory"]["memory_id"]]
+    assert [row.memory_id for row in hope] == [hoped["memory"]["memory_id"]]
+
+
+async def test_memory_new_stems_retain_conservative_upsert_resolution() -> None:
+    memory = await _memory()
+    original = await memory.async_add(
+        "alice", "I liked coffee.", "preferences", "explicit"
+    )
+    resolution = await memory.async_upsert(
+        "alice", "I like coffee.", "preferences", "explicit"
+    )
+    assert resolution["status"] == "needs_resolution"
+    assert resolution["candidate"]["memory_id"] == original["memory"]["memory_id"]
+    assert len(await memory.async_list("alice")) == 1
+
+
+
+
+def test_memory_uses_exact_shared_stemmer_after_extraction() -> None:
+    """The refactor must not change the Memory stemmer independently of Archive."""
+    from custom_components.extended_openai_conversation_responses import memory
+    from custom_components.extended_openai_conversation_responses.retrieval_text import (
+        _stem as shared_stem,
+    )
+
+    assert memory._stem is shared_stem
+    assert shared_stem("controlled") == "control"
+    assert shared_stem("adding") == "add"
+    assert shared_stem("hopped") == "hop"
+    assert shared_stem("hoped") == "hope"
+
+
+async def test_memory_search_recovers_call_and_breed_families() -> None:
+    memory = await _memory()
+    call = await memory.async_add(
+        "alice", "Calling the plumber tomorrow", "reminders", "explicit"
+    )
+    breed = await memory.async_add(
+        "alice", "Breed information is on the vet form", "pets", "explicit"
+    )
+    found_call = await memory.async_search("alice", "call")
+    found_breed = await memory.async_search("alice", "breeds")
+    assert any(row.memory_id == call["memory"]["memory_id"] for row in found_call)
+    assert any(row.memory_id == breed["memory"]["memory_id"] for row in found_breed)
+
+
 async def test_metadata_defaults_and_backup_round_trip() -> None:
     memory = await _memory()
     created = await memory.async_add(
@@ -624,3 +826,239 @@ async def test_explicit_memory_search_uses_configured_hybrid_semantics() -> None
         query_embedding=[1.0, 0.0],
         hybrid=True,
     )
+
+
+@pytest.mark.parametrize(
+    ("inflected", "base"),
+    [
+        ("travelling", "travel"),
+        ("traveling", "travel"),
+        ("cancelling", "cancel"),
+        ("canceling", "cancel"),
+        ("labelling", "label"),
+        ("controlling", "control"),
+        ("modelling", "model"),
+        ("signalling", "signal"),
+        ("levelling", "level"),
+        ("channelling", "channel"),
+        ("counselling", "counsel"),
+        ("fuelling", "fuel"),
+        ("dialling", "dial"),
+        ("gassing", "gas"),
+        ("bussing", "bus"),
+        ("quizzing", "quiz"),
+        ("calling", "call"),
+        ("falling", "fall"),
+        ("filling", "fill"),
+        ("rolling", "roll"),
+        ("spelling", "spell"),
+        ("pressing", "press"),
+        ("dressing", "dress"),
+        ("buzzing", "buzz"),
+        ("passing", "pass"),
+        ("fussing", "fuss"),
+        ("running", "run"),
+        ("shopping", "shop"),
+        ("compelling", "compel"),
+        ("excelling", "excel"),
+        ("libelling", "libel"),
+        ("marshalling", "marshal"),
+        ("panelling", "panel"),
+        ("parcelling", "parcel"),
+        ("patrolling", "patrol"),
+        ("pencilling", "pencil"),
+        ("propelling", "propel"),
+        ("rebelling", "rebel"),
+        ("repelling", "repel"),
+        ("rivalling", "rival"),
+        ("spiralling", "spiral"),
+        ("squirrelling", "squirrel"),
+        ("surveilling", "surveil"),
+        ("tunnelling", "tunnel"),
+        ("unravelling", "unravel"),
+        ("installing", "install"),
+        ("selling", "sell"),
+        ("spilling", "spill"),
+        ("pulling", "pull"),
+        ("dwelling", "dwell"),
+        ("appalling", "appall"),
+        ("corralling", "corral"),
+        ("dispelling", "dispel"),
+        ("expelling", "expel"),
+        ("extolling", "extol"),
+        ("grovelling", "grovel"),
+        ("impelling", "impel"),
+        ("initialling", "initial"),
+        ("pummelling", "pummel"),
+        ("relabelling", "relabel"),
+        ("remodelling", "remodel"),
+        ("shovelling", "shovel"),
+        ("swivelling", "swivel"),
+        ("fulfilling", "fulfil"),
+        ("distilling", "distil"),
+        ("enrolling", "enrol"),
+    ],
+)
+def test_memory_stemming_maintains_ambiguous_inflection_families(
+    inflected, base
+):
+    from custom_components.extended_openai_conversation_responses.memory import _stem
+    assert _stem(inflected) == _stem(base)
+
+
+@pytest.mark.parametrize(
+    ("content", "query"),
+    [
+        ("I enjoy travelling.", "enjoy travel holidays"),
+        ("I enjoy travelling.", "enjoy travel trips"),
+        ("I prefer gassing up at the motorway services.", "gas"),
+        ("I spend an hour bussing to work.", "bus"),
+        ("My dog is patrolling the garden.", "patrol garden checking"),
+        ("I find compelling stories interesting.", "compel stories reasoning"),
+        ("I plan to expel the member.", "expelling member actions"),
+        ("I am distilling clean water.", "distil water steps"),
+        ("We fulfil orders daily.", "fulfilling order dispatch"),
+        ("I intend to enrol students.", "enrolling student lessons"),
+        ("I am corralling the sheep.", "corral sheep notes"),
+    ],
+)
+async def test_memory_stem_regressions_restore_actual_lexical_retrieval(
+    content, query
+):
+    memory = await _memory()
+    added = await memory.async_add("alice", content, "personal", "explicit")
+    results = await memory.async_search("alice", query)
+    assert any(
+        record.memory_id == added["memory"]["memory_id"] for record in results
+    )
+
+
+async def test_memory_stem_regression_preserves_related_fact_resolution():
+    memory = await _memory()
+    original = await memory.async_add(
+        "alice", "My hobby is travelling.", "hobbies", "explicit"
+    )
+    outcome = await memory.async_upsert(
+        "alice", "My hobby is travel.", "hobbies", "explicit"
+    )
+    assert outcome["status"] == "needs_resolution"
+    assert outcome["candidate"]["memory_id"] == original["memory"]["memory_id"]
+    assert len(await memory.async_list("alice")) == 1
+
+@pytest.mark.parametrize(
+    ("stored", "incoming"),
+    [
+        ("My dog patrols the garden.", "My dog is patrolling the garden."),
+        ("I plan to expel the member.", "I plan on expelling the member."),
+        ("We distil water.", "We are distilling water."),
+        ("I fulfil orders.", "I am fulfilling orders."),
+        ("I enrol clients.", "I am enrolling clients."),
+        ("My job is to fulfil orders.", "My job involves fulfilling orders."),
+        ("We fulfill orders.", "We are fulfilling orders."),
+        (
+            "Our neighbour rebels against restrictions.",
+            "Our neighbour is rebelling against restrictions.",
+        ),
+    ],
+)
+async def test_memory_additional_l_stems_retain_related_fact_resolution(
+    stored, incoming
+):
+    memory = await _memory()
+    original = await memory.async_add("alice", stored, "personal", "explicit")
+    outcome = await memory.async_upsert("alice", incoming, "personal", "explicit")
+    assert outcome["status"] == "needs_resolution"
+    assert outcome["candidate"]["memory_id"] == original["memory"]["memory_id"]
+    assert len(await memory.async_list("alice")) == 1
+
+
+@pytest.mark.parametrize(
+    ("inflected", "different"),
+    [
+        ("patrolling", "patroll"),
+        ("calling", "cal"),
+        ("spelling", "spel"),
+        ("installing", "instal"),
+        ("bussing", "buss"),
+        ("buzzing", "buz"),
+    ],
+)
+def test_memory_stem_does_not_strip_genuine_or_unknown_word_endings(
+    inflected, different
+):
+    from custom_components.extended_openai_conversation_responses.memory import _stem
+
+    assert _stem(inflected) != _stem(different)
+
+
+async def test_memory_stemming_does_not_create_unrelated_upsert_conflicts():
+    memory = await _memory()
+    await memory.async_add("alice", "My dog patrols the garden.", "pets", "explicit")
+    outcome = await memory.async_upsert(
+        "alice", "My dog watches the television.", "pets", "explicit"
+    )
+    assert outcome["status"] == "created"
+    assert len(await memory.async_list("alice")) == 2
+
+@pytest.mark.parametrize(
+    ("british", "american", "participial"),
+    [
+        ("fulfil", "fulfill", "fulfilling"),
+        ("distil", "distill", "distilling"),
+        ("enrol", "enroll", "enrolling"),
+    ],
+)
+def test_memory_english_single_l_spelling_aliases_are_bidirectional(
+    british, american, participial
+):
+    from custom_components.extended_openai_conversation_responses.memory import _stem
+
+    assert _stem(british) == _stem(american) == _stem(participial)
+    assert _stem(british + "s") == _stem(american + "s") == _stem(american)
+
+
+@pytest.mark.parametrize(
+    ("british", "american"),
+    [
+        ("fulfilment", "fulfillment"),
+        ("enrolment", "enrollment"),
+    ],
+)
+def test_memory_english_derivative_spelling_variants_are_exact(
+    british, american
+):
+    from custom_components.extended_openai_conversation_responses.memory import _stem
+
+    assert _stem(british) == _stem(american)
+    assert _stem(british + "s") == _stem(american + "s") == _stem(american)
+
+
+@pytest.mark.parametrize(
+    ("source", "new_content"),
+    [
+        ("I want to expel the member.", "I want to explore the member."),
+        ("We intend to distil water.", "We intend to distribute water."),
+        ("I fulfil orders.", "I cancel orders."),
+    ],
+)
+async def test_memory_spelling_repairs_leave_unrelated_upserts_distinct(
+    source, new_content
+):
+    memory = await _memory()
+    original = await memory.async_add("alice", source, "personal", "explicit")
+    outcome = await memory.async_upsert("alice", new_content, "personal", "explicit")
+    assert outcome["status"] == "created"
+    assert len(await memory.async_list("alice")) == 2
+    assert outcome["memory"]["memory_id"] != original["memory"]["memory_id"]
+
+
+
+def test_memory_phrase_normalization_equates_straight_and_curly_apostrophes():
+    from custom_components.extended_openai_conversation_responses.memory import (
+        _normalize,
+    )
+
+    assert _normalize("What's the WiFi password") == _normalize(
+        "What’s the WiFi password"
+    )
+    assert _normalize("don't") == _normalize("don’t")

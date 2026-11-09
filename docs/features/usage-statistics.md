@@ -25,6 +25,12 @@ Each conversation-agent device has four disabled-by-default diagnostic entities:
 
 No sensor is created per day, model, request, or transcript session. Updates are listener-driven and do not poll. The selectable management-panel history period does not change the Today or This month sensor periods.
 
+Lifetime usage uses Home Assistant's `total` state class without `last_reset`.
+Restoring an older backup can reduce the lifetime counter; HA records that as a
+correction rather than inventing a new consumption cycle. Today and This month
+retain their explicit calendar reset markers. This change prevents new restore
+inflation; it does not rewrite previously recorded HA statistics.
+
 ## Management panel
 
 Open **Extended OpenAI → Usage & Maintenance → Usage** to see daily token charts, input/output/cached/reasoning splits, run counts, recent runs, request details, and provider/model/API-mode breakdowns. There are no costs or prices.

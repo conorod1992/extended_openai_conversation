@@ -43,6 +43,7 @@ from custom_components.extended_openai_conversation_responses.services import (
     to_image_param,
 )
 from custom_components.extended_openai_conversation_responses.skills import SkillManager
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_API_KEY
 from homeassistant.exceptions import HomeAssistantError
 
@@ -165,6 +166,7 @@ async def test_query_image_builds_provider_request_for_each_api_mode(
     chat_create = AsyncMock(return_value=response)
     entry = SimpleNamespace(
         domain=DOMAIN,
+        state=ConfigEntryState.LOADED,
         runtime_data=SimpleNamespace(
             responses=SimpleNamespace(create=responses_create),
             chat=SimpleNamespace(completions=SimpleNamespace(create=chat_create)),
@@ -235,6 +237,7 @@ async def test_query_image_rejects_output_limit_before_provider_call(
     responses_create = AsyncMock()
     entry = SimpleNamespace(
         domain=DOMAIN,
+        state=ConfigEntryState.LOADED,
         runtime_data=SimpleNamespace(
             responses=SimpleNamespace(create=responses_create),
             chat=SimpleNamespace(completions=SimpleNamespace(create=AsyncMock())),
@@ -273,6 +276,7 @@ async def test_query_image_translates_provider_error_and_requests_reauthenticati
 ) -> None:
     entry = SimpleNamespace(
         domain=DOMAIN,
+        state=ConfigEntryState.LOADED,
         runtime_data=SimpleNamespace(
             responses=SimpleNamespace(
                 create=AsyncMock(side_effect=OpenAIError("provider unavailable"))
@@ -1023,3 +1027,86 @@ async def test_function_enable_action_persists_only_runtime_function_defaults(
         ]
         is False
     )
+
+
+@pytest.mark.parametrize("saved_provider", [None, "openai"])
+async def test_change_config_canonicalizes_azure_endpoint_before_validation(
+    hass, monkeypatch, saved_provider
+):
+    from homeassistant.config_entries import ConfigEntryState
+
+    original = {CONF_API_KEY: "old", "organization": "kept"}
+    if saved_provider is not None:
+        original[CONF_API_PROVIDER] = saved_provider
+    entry = SimpleNamespace(
+        entry_id="entry",
+        state=ConfigEntryState.LOADED,
+        disabled_by=None,
+        domain=DOMAIN,
+        data=original,
+    )
+    hass.config_entries.async_get_entry.return_value = entry
+    authenticate = AsyncMock(return_value=object())
+    monkeypatch.setattr(services, "get_authenticated_client", authenticate)
+    handlers = await _handlers(hass)
+    await handlers["change_config"](
+        _call(
+            services.CHANGE_CONFIG_SCHEMA(
+                {
+                    "config_entry": "entry",
+                    CONF_BASE_URL: "https://schema.openai.azure.com",
+                    "api_version": "2024-10-21",
+                    CONF_API_KEY: "replacement",
+                }
+            )
+        )
+    )
+    assert authenticate.await_args.kwargs["api_provider"] == "azure"
+    saved = hass.config_entries.async_update_entry.call_args.kwargs["data"]
+    assert saved[CONF_API_PROVIDER] == "azure"
+    assert saved["organization"] == "kept"
+    assert original.get(CONF_API_PROVIDER) == saved_provider
+
+
+
+@pytest.mark.parametrize(
+    "entry,expected",
+    [
+        (SimpleNamespace(domain=DOMAIN, state=ConfigEntryState.SETUP_ERROR), "not loaded"),
+        (SimpleNamespace(domain=DOMAIN, state=ConfigEntryState.LOADED), "client is unavailable"),
+        (
+            SimpleNamespace(
+                domain=DOMAIN,
+                state=ConfigEntryState.LOADED,
+                runtime_data=None,
+            ),
+            "client is unavailable",
+        ),
+    ],
+)
+async def test_query_image_rejects_unavailable_client_before_image_access(
+    hass, monkeypatch, entry, expected
+) -> None:
+    hass.config_entries.async_get_entry.return_value = entry
+    prepare = MagicMock(side_effect=AssertionError("must not read images"))
+    capabilities = MagicMock(side_effect=AssertionError("must not build request"))
+    monkeypatch.setattr(services, "prepare_image_params", prepare)
+    monkeypatch.setattr(services, "request_model_capabilities", capabilities)
+    handlers = await _handlers(hass)
+
+    with pytest.raises(HomeAssistantError, match=expected):
+        await handlers[SERVICE_QUERY_IMAGE](
+            _call(
+                {
+                    "config_entry": "entry",
+                    "model": "gpt-test",
+                    CONF_API_MODE: API_MODE_RESPONSES,
+                    "prompt": "inspect",
+                    "images": [{"url": "https://example.test/image.png"}],
+                    "max_tokens": 100,
+                }
+            )
+        )
+
+    prepare.assert_not_called()
+    capabilities.assert_not_called()

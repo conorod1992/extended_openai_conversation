@@ -82,7 +82,7 @@ Reasoning effort is validated against the model that will actually receive it, i
 
 - **Normalize word forms** handles conservative English forms such as `light/lights`.
 - **Wording alternatives** map different ways of saying the same thing to a main phrase. The seeded alternatives preserve the previous built-in behavior, such as `switch on` to `turn on` and `television` to `tv`. Alternatives can be added, edited, and removed. Ambiguous duplicate phrases are rejected.
-- **Fuzzy matching** tolerates small speech-recognition differences only after strict matching fails. Conservative, Normal, and Tolerant correspond to progressively lower thresholds. Sensitivity is unavailable when fuzzy matching is off.
+- **Fuzzy matching** tolerates small speech-recognition differences only after strict matching fails. Conservative, Normal, and Tolerant correspond to progressively lower thresholds. Sensitivity is unavailable when fuzzy matching is off. Fuzzy candidates must preserve command/negation words and numeric values, and must align word by word with only small spelling differences (plus a single optional article such as “the”). This does not change the intentional breadth of strict **Contains** and other strict match modes.
 
 Strict matching always wins over fuzzy matching. Deterministic rules are evaluated from top to bottom in the order shown on the Request Rules screen. The first eligible strict match handles the request by default, regardless of match type. A rule with **Continue matching** on can let later strict matches run. Fuzzy matching is considered only after strict candidates are exhausted. When no strict rule matched, the first fuzzy candidate is chosen by its existing score-based ranking; continuation then checks only later-priority fuzzy rules in global order.
 
@@ -130,6 +130,8 @@ set brightness to {level=0..100}
 ```
 
 `set brightness to 73` captures `level = 73`; `set brightness to 173` does not match.
+
+A number range **validates** an integer, but the captured value is still **text**: `73` is captured as `"73"`, not the integer `73`. The original spelling (including a permitted leading sign or leading zeros) is preserved. To use it in a Home Assistant template for numeric comparisons or arithmetic, convert it explicitly, for example `{{ level | int > 50 }}`.
 
 Free-text captures may contain multiple words. The matcher chooses the shortest capture that still allows the complete pattern to succeed. For example:
 

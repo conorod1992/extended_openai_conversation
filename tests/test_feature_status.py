@@ -120,7 +120,7 @@ def test_snapshot_enriches_from_loaded_knowledge(hass, management_agent, monkeyp
     monkeypatch.setattr(
         management_loading_performance,
         "get_loaded_knowledge",
-        lambda *_: SimpleNamespace(source_count=3),
+        lambda *_: SimpleNamespace(source_count=3, initialized=True),
     )
     result = management_loading_performance._agent_snapshot(hass, entry, subentry)
     assert result["knowledge_source_count"] == 3

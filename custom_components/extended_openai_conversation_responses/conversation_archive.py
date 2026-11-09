@@ -31,6 +31,7 @@ from .persistence_hardening import (
     StorageRepairRequired,
     _async_settle_transactional_save,
 )
+from .retrieval_text import _stem as _shared_stem
 from .runtime_hardening import MAX_MODEL_TOOL_RESULT_CHARACTERS
 from .scope import ResolvedDataScope
 from .storage_namespaces import ARCHIVE_PREFIX as STORAGE_KEY_PREFIX
@@ -67,18 +68,38 @@ def _scope_retention_allowed(
 
 _STOP_WORDS = {
     "a",
+    "about",
     "an",
     "and",
     "are",
+    "did",
+    "do",
+    "does",
     "for",
     "from",
+    "how",
+    "i",
     "in",
     "is",
     "it",
+    "me",
+    "my",
     "of",
     "on",
+    "our",
+    "said",
+    "say",
+    "tell",
     "the",
     "to",
+    "we",
+    "what",
+    "when",
+    "where",
+    "who",
+    "why",
+    "you",
+    "your",
 }
 
 
@@ -155,6 +176,7 @@ class HomeAssistantArchiveStorage:
             f"{prefix}.metadata",
             private=True,
             atomic_writes=True,
+            serialize_in_event_loop=False,
         ).bind_agent(entry_id, subentry_id)
 
     def _partition_store(self, partition: str) -> Store[dict[str, Any]]:
@@ -913,6 +935,105 @@ class ConversationArchive:
         next_turn = start_turn + len(result["turns"])
         more = next_turn < len(turns)
         result.update(has_more=more, next_start_turn=next_turn if more else None)
+        return result
+
+    async def async_get_before(
+        self,
+        scope_id: str,
+        session_id: str,
+        before_turn: int,
+        limit: int = 6,
+        *,
+        before_text_offset: int = 0,
+    ) -> dict[str, Any]:
+        """Read the nearest earlier fragments without changing forward paging.
+
+        The exclusive (turn, text-offset) cursor is authoritative. Iterate
+        backwards and return fragments in chronological order with an exact
+        starting cursor for the next backwards request.
+        """
+        session = self._require_owned_session(scope_id, session_id)
+        turns = self._turns.get(session_id, [])
+        before_turn = max(0, int(before_turn))
+        before_text_offset = max(0, int(before_text_offset))
+        limit = max(1, min(limit, MAX_GET_LIMIT))
+        if before_turn > len(turns) or (
+            before_turn == len(turns) and before_text_offset
+        ):
+            raise ValueError("Invalid archive backward cursor")
+        if before_turn < len(turns):
+            turn = turns[before_turn]
+            if before_text_offset > len(turn.user_text) + len(turn.assistant_text):
+                raise ValueError("Invalid archive backward text offset")
+
+        result: dict[str, Any] = {
+            "session": asdict(session),
+            "turns": [],
+            "start_turn": before_turn,
+            "limit": limit,
+            "text_offset": before_text_offset,
+            "has_more": before_turn < len(turns),
+            "next_start_turn": before_turn,
+            "next_text_offset": before_text_offset,
+        }
+        budget = MAX_MODEL_TOOL_RESULT_CHARACTERS - 1024
+        index = before_turn if before_text_offset else before_turn - 1
+        for _ in range(limit):
+            if index < 0:
+                break
+            turn = turns[index]
+            user_length = len(turn.user_text)
+            end = (
+                before_text_offset
+                if index == before_turn
+                else user_length + len(turn.assistant_text)
+            )
+
+            def chunk(
+                start: int, source: ArchiveTurn = turn, end_offset: int = end
+            ) -> dict[str, Any]:
+                source_user_length = len(source.user_text)
+                return {
+                    **_turn_payload(source),
+                    "user_text": source.user_text[
+                        min(start, source_user_length) : min(
+                            end_offset, source_user_length
+                        )
+                    ],
+                    "assistant_text": source.assistant_text[
+                        max(0, start - source_user_length) : max(
+                            0, end_offset - source_user_length
+                        )
+                    ],
+                }
+
+            prior_start = result["start_turn"]
+            prior_offset = result["text_offset"]
+            result["turns"].insert(0, chunk(0))
+            result["start_turn"] = index
+            result["text_offset"] = 0
+            if len(json.dumps(result, ensure_ascii=False)) > budget:
+                if len(result["turns"]) > 1:
+                    result["turns"].pop(0)
+                    result["start_turn"] = prior_start
+                    result["text_offset"] = prior_offset
+                    break
+                # Choose the longest fitting suffix, with positive progress.
+                low, high = 0, end
+                while low < high:
+                    start = (low + high) // 2
+                    result["turns"][0] = chunk(start)
+                    result["text_offset"] = start
+                    if len(json.dumps(result, ensure_ascii=False)) <= budget:
+                        high = start
+                    else:
+                        low = start + 1
+                if low == end:
+                    raise ValueError("archive page metadata exceeds result limit")
+                result["turns"][0] = chunk(low)
+                result["text_offset"] = low
+                break
+            index -= 1
         return result
 
     async def async_list_sessions(
@@ -1872,13 +1993,16 @@ def _normalize(value: str) -> str:
 
 
 def _stem(token: str) -> str:
-    if len(token) > 4 and token.endswith("ies"):
-        return f"{token[:-3]}y"
-    if len(token) > 4 and token.endswith("ing"):
+    """Share Memory's conservative stemmer without dropping legacy short -ing hits.
+
+    Archive previously mapped five-character forms such as "going" to "go".
+    Retain those historical query matches; all longer regular inflections now
+    share Memory's corrected handling. Both ranking and excerpt location call
+    this same function.
+    """
+    if len(token) == 5 and token.endswith("ing"):
         return token[:-3]
-    if len(token) > 4 and token.endswith("s") and not token.endswith("ss"):
-        return token[:-1]
-    return token
+    return _shared_stem(token)
 
 
 def _tokens(value: str) -> set[str]:

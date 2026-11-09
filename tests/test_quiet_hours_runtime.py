@@ -676,7 +676,7 @@ async def test_reconcile_handles_uninitialized_inactive_and_period_rollover(
     manager._unsubscribers = [Mock()]
     await manager.async_reconcile(now=now)
     manager._publish_state.assert_called_once_with(None)
-    manager._async_restore_locked.assert_awaited_once_with()
+    manager._async_restore_locked.assert_awaited_once_with(period_ended=True)
     manager._reschedule.assert_called_once_with()
 
     manager._publish_state.reset_mock()
@@ -688,7 +688,7 @@ async def test_reconcile_handles_uninitialized_inactive_and_period_rollover(
         "observed_controls": [],
     }
 
-    async def restore() -> None:
+    async def restore(*, period_ended=False) -> None:
         manager._active = None
 
     manager._async_restore_locked = AsyncMock(side_effect=restore)
@@ -732,7 +732,7 @@ async def test_reconcile_handles_uninitialized_inactive_and_period_rollover(
 
     await manager.async_reconcile(now=now)
 
-    manager._async_restore_locked.assert_awaited_once_with()
+    manager._async_restore_locked.assert_not_awaited()
     assert manager._active is not None
     assert manager._active["period_started_at"] == period.start.isoformat()
     manager._async_save_locked.assert_awaited_once_with()
@@ -1139,7 +1139,7 @@ def test_discovery_skips_disabled_and_handles_unregistered_satellite(
     assert discovered[0].media_player_entity_id is None
 
 
-async def test_setup_recovers_invalid_storage_and_is_idempotent() -> None:
+async def test_setup_quarantines_invalid_storage_without_reconciliation() -> None:
     manager = _runtime_manager(initialized=False)
     manager._store.async_load.return_value = {
         "config": {"max_volume": 2},
@@ -1149,13 +1149,16 @@ async def test_setup_recovers_invalid_storage_and_is_idempotent() -> None:
     manager.async_reconcile = AsyncMock()
 
     await manager.async_setup()
+    assert manager.startup_unavailable
     assert manager.config == runtime.QuietHoursConfig()
     assert manager.active is None
-    manager._reschedule.assert_called_once_with()
-    manager.async_reconcile.assert_awaited_once_with()
+    assert manager.snapshot()["available"] is False
+    manager._reschedule.assert_not_called()
+    manager.async_reconcile.assert_not_awaited()
+    manager._store.async_save.assert_not_awaited()
 
     await manager.async_setup()
-    manager._reschedule.assert_called_once_with()
+    manager._store.async_load.assert_awaited_once()
 
 
 async def test_update_config_rolls_back_then_succeeds() -> None:
@@ -1197,7 +1200,7 @@ async def test_reconcile_covers_disabled_new_and_stale_periods(monkeypatch) -> N
     manager._async_restore_locked = AsyncMock()
     await manager.async_reconcile(now=datetime(2026, 9, 13, 23, tzinfo=UTC))
     manager._publish_state.assert_called_once_with(None)
-    manager._async_restore_locked.assert_awaited_once_with()
+    manager._async_restore_locked.assert_awaited_once_with(period_ended=True)
 
     manager._config = runtime.QuietHoursConfig(
         enabled=True,
@@ -1233,13 +1236,13 @@ async def test_reconcile_covers_disabled_new_and_stale_periods(monkeypatch) -> N
     }
     manager._active = old
 
-    async def restore():
+    async def restore(*, period_ended=False):
         manager._active = None
 
     manager._async_restore_locked = AsyncMock(side_effect=restore)
     monkeypatch.setattr(runtime, "discover_satellite_capabilities", lambda *_args: [])
     await manager.async_reconcile(now=datetime(2026, 9, 13, 23, tzinfo=UTC))
-    manager._async_restore_locked.assert_awaited_once_with()
+    manager._async_restore_locked.assert_not_awaited()
     assert manager._active is not None
     assert manager._active["period_started_at"].startswith("2026-09-13T22:00")
 
@@ -2247,3 +2250,29 @@ async def test_timezone_callback_preserves_failure_and_cancellation_contracts(fa
         await manager._handle_core_config_update(event)
     manager._reschedule.assert_called_once_with()
     manager.async_reconcile.assert_awaited_once_with()
+
+
+def test_public_state_uses_custom_registry_name_without_changing_state(
+    hass, monkeypatch
+) -> None:
+    """A custom name reaches state consumers; clearing it restores the original."""
+    manager = _stateful_public_manager(hass)
+    registry_entry = SimpleNamespace(disabled_by=None, name="Night silence")
+    registry = SimpleNamespace(
+        async_get_entity_id=lambda *_args: "binary_sensor.extended_openai_quiet_hours",
+        async_get=lambda _entity_id: registry_entry,
+    )
+    monkeypatch.setattr(quiet_hours.er, "async_get", lambda _hass: registry)
+
+    manager._publish_state(None)
+    original = hass.states.get("binary_sensor.extended_openai_quiet_hours")
+    assert original.state == "off"
+    assert original.attributes["friendly_name"] == "Night silence"
+    assert original.attributes["max_volume"] == 0.2
+
+    registry_entry.name = None
+    manager._publish_state(None)
+    fallback = hass.states.get("binary_sensor.extended_openai_quiet_hours")
+    assert fallback.state == "off"
+    assert fallback.attributes["friendly_name"] == "Quiet Hours"
+    assert fallback.attributes["max_volume"] == original.attributes["max_volume"]

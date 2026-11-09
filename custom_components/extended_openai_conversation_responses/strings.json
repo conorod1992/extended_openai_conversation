@@ -61,6 +61,10 @@
         }
       }
     },
+    "abort": {
+      "reauth_successful": "Provider credentials updated successfully.",
+      "reauth_failed": "The provider connection could not be found. Reopen its settings and try again."
+    },
     "error": {
       "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
       "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
@@ -149,6 +153,8 @@
         }
       },
       "abort": {
+        "entry_not_loaded": "The integration entry is not loaded. Enable or repair the provider connection and try again.",
+        "reconfigure_successful": "Conversation agent reconfigured successfully.",
         "agent_configuration_managed_in_panel": "Conversation-agent behaviour is managed from Extended OpenAI > Configuration in the sidebar."
       },
       "error": {
@@ -170,13 +176,15 @@
             "name": "Agent name",
             "chat_model": "Model",
             "azure_model": "Azure underlying model",
+            "clear_azure_model": "Clear saved Azure underlying model",
             "api_mode": "API mode",
             "max_tokens": "Maximum tokens to return in response",
             "web_search": "Web search",
             "advanced_options": "Advanced options"
           },
           "data_description": {
-            "azure_model": "For custom Azure deployment names, enter the underlying model ID, such as gpt-4.1. Leave blank for other providers.",
+            "azure_model": "For custom Azure deployment names, enter the underlying model ID, such as gpt-4.1. For an existing agent, use the clear control to remove a saved binding.",
+            "clear_azure_model": "Use the deployment name for capabilities instead. When checked, this overrides the underlying model text field.",
             "web_search": "Allow this AI Task agent to use OpenAI's native Web Search tool for current or external information. Requires the direct OpenAI Responses API."
           }
         },
@@ -185,14 +193,22 @@
           "data": {
             "temperature": "Temperature",
             "top_p": "Top P",
+            "clear_temperature": "Remove temperature override",
+            "clear_top_p": "Remove Top P override",
             "reasoning_effort": "Reasoning effort",
             "service_tier": "Service tier",
             "shorten_tool_call_id": "Shorten tool call IDs"
           },
           "data_description": {
+            "clear_temperature": "Use provider defaults instead of the saved temperature. When checked, this overrides the number field.",
+            "clear_top_p": "Use provider defaults instead of the saved Top P. When checked, this overrides the number field.",
             "shorten_tool_call_id": "Required for Mistral AI cloud API compatibility. Enable only if your provider requires short (9-character) tool call IDs. Keep disabled for OpenAI and most other providers."
           }
         }
+      },
+      "abort": {
+        "entry_not_loaded": "The integration entry is not loaded. Enable or repair the provider connection and try again.",
+        "reconfigure_successful": "AI Task agent reconfigured successfully."
       }
     }
   },

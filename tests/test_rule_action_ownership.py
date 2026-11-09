@@ -29,11 +29,13 @@ def rule_runs(hass, monkeypatch):
     class Script:
         def __init__(self, _hass, actions, name, *_args, **_kwargs):
             self.owner = name.removeprefix("Request Rule ")
+            self.run_task = None
             self.markers = next(
                 step["variables"] for step in reversed(actions) if "variables" in step
             )
 
         async def async_run(self, _variables, _context):
+            self.run_task = asyncio.current_task()
             assert (
                 rr._ACTIVE_RULE_ACTION.get().function_executor is executors[self.owner]
             )
@@ -47,8 +49,15 @@ def rule_runs(hass, monkeypatch):
                 variables=self.markers, conversation_response=UNDEFINED
             )
 
+        async def async_stop(self):
+            # Match the native runner's public stop contract. Cancellation is
+            # requested through async_stop, while the owner collects async_run.
+            if self.run_task is not None and not self.run_task.done():
+                self.run_task.cancel()
+                await asyncio.gather(self.run_task, return_exceptions=True)
+
         async def async_unload(self):
-            pass
+            await self.async_stop()
 
     monkeypatch.setattr(rr, "Script", Script)
 

@@ -118,7 +118,7 @@ async def test_mixed_tool_repair_returns_successful_refresh(
     monkeypatch.setattr(
         ui,
         "_function_reference_state",
-        AsyncMock(return_value=(None, {"request_rules": [], "guest_mode": False})),
+        AsyncMock(return_value=(SimpleNamespace(async_backup_data=AsyncMock(return_value={"rules": []})), {"request_rules": [], "guest_mode": False})),
     )
     candidate = deepcopy(invalid)
     candidate["function"] = valid["function"]
@@ -258,7 +258,7 @@ async def test_tool_edit_retains_noncollection_group_damage(grouped_agent, monke
     monkeypatch.setattr(
         ui,
         "_function_reference_state",
-        AsyncMock(return_value=(None, {"request_rules": [], "guest_mode": False})),
+        AsyncMock(return_value=(SimpleNamespace(async_backup_data=AsyncMock(return_value={"rules": []})), {"request_rules": [], "guest_mode": False})),
     )
     await ui.async_management_command(
         hass,

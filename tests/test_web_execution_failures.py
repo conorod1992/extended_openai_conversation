@@ -449,3 +449,29 @@ async def test_reused_rest_data_retires_no_content_state_before_xml(
 
         assert json.loads(data.data_without_xml()) == {"root": "ready"}
         assert effects == ["applied", "applied"]
+
+
+@pytest.mark.parametrize("status", [404, 429, 500])
+async def test_scrape_preserves_sanitized_http_status(hass, rest_server, status):
+    config = {
+        **rest_server(status, "html"),
+        "type": "scrape",
+        "sensor": [{"select": "p"}],
+    }
+    with pytest.raises(HomeAssistantError, match=f"HTTP {status}") as caught:
+        await web.ScrapeFunction().execute(hass, config, {}, None, [])
+    assert "secret" not in str(caught.value)
+    assert "http://" not in str(caught.value)
+
+
+async def test_scrape_transport_failure_retains_generic_public_error(hass, monkeypatch):
+    from types import SimpleNamespace
+
+    data = SimpleNamespace(
+        data=None, headers=None, async_update=AsyncMock(side_effect=TimeoutError())
+    )
+    monkeypatch.setattr(web, "get_rest_data", lambda *_: data)
+    with pytest.raises(HomeAssistantError, match="Remote scrape response is unavailable"):
+        await web.ScrapeFunction().execute(
+            hass, {"sensor": [{"select": "p"}]}, {}, None, []
+        )

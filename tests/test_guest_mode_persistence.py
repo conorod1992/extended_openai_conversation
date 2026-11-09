@@ -85,6 +85,49 @@ async def test_failed_guest_mode_restore_keeps_previous_schedule(hass) -> None:
     assert manager.schedule == committed
 
 
+@pytest.mark.parametrize(
+    ("stored", "expected_schedule"),
+    [
+        (
+            {"schedule": {"active_from": "2026-08-20T18:00:00"}},
+            GuestModeSchedule("2026-08-20T17:00:00+00:00"),
+        ),
+        (
+            {"schedule": {"active_from": "2026-08-20T18:00:00",
+                          "active_until": "2026-08-20T23:00:00",
+                          "updated_at": "2026-08-19T09:00:00"}},
+            GuestModeSchedule(
+                "2026-08-20T17:00:00+00:00",
+                "2026-08-20T22:00:00+00:00",
+                updated_at="2026-08-19T08:00:00+00:00",
+            ),
+        ),
+        ({}, None),
+    ],
+)
+async def test_failed_save_recovers_legacy_local_state_without_invalidating(
+    hass, stored, expected_schedule
+) -> None:
+    hass.config.time_zone = "Europe/Dublin"
+    manager = _manager(hass)
+    manager._schedule = _active_schedule()
+    manager._store.async_save = AsyncMock(side_effect=OSError("save failed"))
+    manager._store.async_load.return_value = stored
+    listener = Mock()
+    manager.async_add_listener(listener)
+
+    with pytest.raises(OSError, match="save failed"):
+        await manager.async_disable_trusted()
+
+    assert manager.initialized
+    assert not manager._persistence_unavailable
+    assert manager.schedule == expected_schedule
+    assert await manager.async_backup_data() == {
+        "schedule": asdict(expected_schedule) if expected_schedule else None
+    }
+    listener.assert_called_once_with()
+
+
 async def test_guest_mode_mutations_serialize_monotonic_restrictions(hass) -> None:
     manager = _manager(hass)
     first_save_entered = asyncio.Event()

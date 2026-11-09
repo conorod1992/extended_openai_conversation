@@ -55,3 +55,31 @@ for (const file of ["configuration-inputs.js", "agent-config-editor-model-v2.js"
   const source = await readFile(new URL(`../custom_components/extended_openai_conversation_responses/frontend/${file}`, import.meta.url), "utf8");
   assert.doesNotMatch(source, /stopImmediatePropagation/, `${file} must not suppress competing configuration handlers`);
 }
+
+// Full readers and read-only preview snapshots must preserve untouched native
+// textarea representations, including imported mixed CR/LF and leading lines.
+for (const key of ["prompt", "current_datetime_template", "exposed_entities_template"]) {
+  const original="\nFirst\r\nSecond\rThird";
+  const control={dataset:{config:key},value:original.replace(/\r\n?/g,"\n")};
+  let rebinds=0;
+  const draft={[key]:original,unrelated:42};
+  const panel={_draft:draft,_draftTitle:"Original",_configData:{config:structuredClone(draft)},
+    _eocPendingModelPreparation:{rebindDraft(){rebinds++;}},
+    shadowRoot:{querySelector:()=>null,querySelectorAll:()=>[control]}};
+  assert.deepEqual(applyConfigurationControl(panel,control),{key,changed:false});
+  const explicit={_draft:{[key]:original}};
+  assert.deepEqual(applyConfigurationControl(explicit,control,false),{key,changed:true});
+  assert.equal(explicit._draft[key],control.value,"An explicit reset may intentionally replace equivalent CRLF bytes");
+  assert.deepEqual(applyConfigurationControl(explicit,control,false),{key,changed:false},"An exact reset remains idempotent");
+  const snapshot=readConfigurationDraft(panel,false);
+  assert.notEqual(snapshot,draft);
+  assert.deepEqual(snapshot,draft);
+  assert.equal(panel._draft,draft);
+  assert.equal(rebinds,0);
+  control.value="Authored new text\n";
+  assert.equal(readConfigurationDraft(panel,false)[key],control.value);
+  assert.equal(panel._draft[key],original);
+  assert.equal(rebinds,0);
+  assert.equal(readConfigurationDraft(panel)[key],control.value);
+  assert.equal(rebinds,1);
+}

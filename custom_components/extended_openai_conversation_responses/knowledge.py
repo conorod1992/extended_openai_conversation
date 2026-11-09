@@ -48,6 +48,60 @@ _TOKEN_PATTERN = re.compile(r"[\w'-]+", re.UNICODE)
 _SPACE_PATTERN = re.compile(r"\s+")
 _LINE_END_PATTERN = re.compile(r"[ \t]+$", re.MULTILINE)
 
+# English question scaffolding has little retrieval value in a mixed query.
+# Keep negation, control words (on/off), identifiers and all CJK tokens salient.
+_SEARCH_FILLER_TERMS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "been",
+        "by",
+        "did",
+        "do",
+        "does",
+        "for",
+        "from",
+        "had",
+        "has",
+        "have",
+        "how",
+        "i",
+        "in",
+        "is",
+        "it",
+        "me",
+        "my",
+        "of",
+        "or",
+        "our",
+        "that",
+        "the",
+        "their",
+        "there",
+        "these",
+        "this",
+        "those",
+        "to",
+        "was",
+        "were",
+        "what",
+        "when",
+        "where",
+        "which",
+        "who",
+        "why",
+        "with",
+        "you",
+        "your",
+    }
+)
+_SEARCH_FILLER_WEIGHT = 0.05
+
 
 @dataclass(slots=True, frozen=True)
 class KnowledgeSource:
@@ -500,6 +554,25 @@ class KnowledgeLibrary:
             if not query_tokens or not normalized_query:
                 return []
             allowed, _ = self.resolve_source_filter(source_ids)
+            # Retain filler matches rather than removing them from the index.
+            # A filler-only query keeps the original equal weighting, while a
+            # substantive query is not overwhelmed by incidental title words.
+            has_salient_terms = bool(query_tokens - _SEARCH_FILLER_TERMS)
+            query_weights = {
+                token: (
+                    _SEARCH_FILLER_WEIGHT
+                    if has_salient_terms and token in _SEARCH_FILLER_TERMS
+                    else 1.0
+                )
+                for token in query_tokens
+            }
+            total_weight = sum(query_weights.values())
+
+            def weighted_overlap(tokens: frozenset[str]) -> float:
+                return (
+                    sum(query_weights[token] for token in query_tokens & tokens)
+                    / total_weight
+                )
 
             candidates: set[tuple[str, int]] = set()
             for token in query_tokens:
@@ -515,12 +588,11 @@ class KnowledgeLibrary:
                 description_tokens = features.description_tokens
                 normalized_title = features.normalized_title
                 normalized_description = features.normalized_description
-                overlap = len(query_tokens & chunk.tokens) / len(query_tokens)
-                title_overlap = len(query_tokens & title_tokens) / len(query_tokens)
-                description_overlap = len(query_tokens & description_tokens) / len(
-                    query_tokens
+                score = (
+                    weighted_overlap(chunk.tokens)
+                    + weighted_overlap(title_tokens) * 8
+                    + weighted_overlap(description_tokens) * 4
                 )
-                score = overlap + title_overlap * 8 + description_overlap * 4
                 if normalized_query in normalized_title:
                     score += 8
                 if normalized_query in normalized_description:
@@ -827,7 +899,7 @@ _KNOWLEDGE_MANAGERS = f"{DOMAIN}.knowledge_managers"
 def get_loaded_knowledge(
     hass: HomeAssistant, entry_id: str, subentry_id: str
 ) -> KnowledgeLibrary | None:
-    """Return an already initialized library without creating runtime state."""
+    """Return a cached library without initializing it; check availability before use."""
     return cast(
         KnowledgeLibrary | None,
         hass.data.get(_KNOWLEDGE_MANAGERS, {}).get((entry_id, subentry_id)),
@@ -1094,7 +1166,9 @@ def _tokens(value: str) -> set[str]:
 
 def _normalize(value: str) -> str:
     return " ".join(
-        _TOKEN_PATTERN.findall(unicodedata.normalize("NFC", value).casefold())
+        _TOKEN_PATTERN.findall(
+            unicodedata.normalize("NFC", value).casefold().replace("\u2019", "'")
+        )
     )
 
 

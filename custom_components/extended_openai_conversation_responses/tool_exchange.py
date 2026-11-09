@@ -40,7 +40,10 @@ from .parallel_tool_execution import (
     resolve_parallel_safe_batch,
 )
 from .public_errors import sanitize_backend_error
-from .tool_replay_guard import was_unacknowledged_equivalent, with_effect_replay_scope
+from .tool_replay_guard import (
+    async_was_unacknowledged_equivalent,
+    with_effect_replay_scope,
+)
 
 _MAX_ERROR_TEXT = 512
 
@@ -630,10 +633,24 @@ async def async_execute_tool_exchange(
         request_config_data=request_config_data,
         existing_content_ids=existing_content_ids,
     )
-    if any(
-        was_unacknowledged_equivalent(entity, chat_log, call)
-        for call in pending_tool_calls
-    ):
+    # No side effect may dispatch until *all* candidate calls have cleared
+    # the replay guard. Configured pattern-key membership can launch an isolated
+    # regex worker, so canonical comparisons are awaited off the HA event loop.
+    try:
+        repeated = False
+        for call in pending_tool_calls:
+            if await async_was_unacknowledged_equivalent(entity, chat_log, call):
+                repeated = True
+                break
+    except BaseException as err:
+        # The regex comparison can now be cancelled while calls are retained.
+        # Nothing in this batch has dispatched: settle pending calls before
+        # propagating the original cancellation or validation error.
+        append_unresolved_tool_results(
+            chat_log, entity.entity_id, pending_tool_calls, error=err
+        )
+        raise
+    if repeated:
         error = HomeAssistantError(
             "Provider repeated a tool call whose prior result was not acknowledged. "
             "Start a new conversation, or complete a turn without this tool before retrying"

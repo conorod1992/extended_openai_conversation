@@ -80,7 +80,10 @@ async def test_authentication_accepts_empty_model_page_on_both_sdk_shapes(
         return page
 
     listing = Mock(side_effect=lambda **_kwargs: get_page() if awaitable else page)
-    client = SimpleNamespace(models=SimpleNamespace(list=listing))
+    client = SimpleNamespace(
+        platform_headers=Mock(return_value={}),
+        models=SimpleNamespace(list=listing),
+    )
     monkeypatch.setattr(helpers, "AsyncOpenAI", lambda **_kwargs: client)
     monkeypatch.setattr(helpers, "get_async_client", lambda *_: object())
     result = await helpers.get_authenticated_client(hass, "key", None, None, None, None)

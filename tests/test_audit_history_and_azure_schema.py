@@ -123,7 +123,7 @@ async def test_responses_output_group_converts_to_one_chat_call_batch(
 
 
 @pytest.mark.parametrize("mode", ["chat_completions", "responses"])
-@pytest.mark.parametrize("provider", ["azure", "openai"])
+@pytest.mark.parametrize("provider", ["azure", "azure_inferred", "openai"])
 async def test_public_bounded_number_task_uses_provider_schema_and_caller_validation(
     hass, mode, provider
 ):
@@ -138,15 +138,24 @@ async def test_public_bounded_number_task_uses_provider_schema_and_caller_valida
         responses=SimpleNamespace(create=create),
     )
     entry = SimpleNamespace(
-        entry_id="entry", data={"api_provider": provider}, runtime_data=client
+        entry_id="entry",
+        data={
+            "api_provider": "openai" if provider == "azure_inferred" else provider,
+            **(
+                {"base_url": "https://schema.openai.azure.com"}
+                if provider == "azure_inferred"
+                else {}
+            ),
+        },
+        runtime_data=client,
     )
     subentry = SimpleNamespace(
         subentry_id="task",
         title="Task",
         data={
-            "chat_model": "deployment" if provider == "azure" else "gpt-4.1",
+            "chat_model": "deployment" if provider.startswith("azure") else "gpt-4.1",
             "api_mode": mode,
-            **({"azure_model": "gpt-4.1"} if provider == "azure" else {}),
+            **({"azure_model": "gpt-4.1"} if provider.startswith("azure") else {}),
         },
     )
     entity = ExtendedOpenAITaskEntity(entry, subentry)
@@ -184,7 +193,7 @@ async def test_public_bounded_number_task_uses_provider_schema_and_caller_valida
     )
     assert output["strict"] is True
     expected = {"type": "number"}
-    if provider != "azure":
+    if not provider.startswith("azure"):
         expected.update(minimum=0.0, maximum=10.0)
     assert output["schema"]["properties"]["score"] == expected
     assert parse_ai_task_structured_response('{"score": 5}', structure) == {"score": 5}

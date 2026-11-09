@@ -82,7 +82,10 @@ test("Request Rules settings save atomically and retain drafts through search an
 test("Request Rule dialog guards X/Escape and unload, while Cancel deliberately discards", async ({page}) => {
   const errors = trackPageErrors(page);
   await page.goto(fixtureUrl("capabilities/request-rules")); const panel = panelFor(page), dialog = panel.locator("#rule-dialog");
-  await panel.locator(".rule-edit").click(); await page.keyboard.press("Escape"); await expect(dialog).not.toBeVisible();
+  await panel.locator(".rule-edit").click();
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).not.toBeVisible();
   await panel.locator(".rule-edit").click(); await panel.locator("#rule-name").fill("Changed rule"); expect(await unload(page)).toBe(true);
   await dialog.locator(".icon.rule-close").click(); await panel.locator("#confirm-cancel").click(); await expect(dialog).toBeVisible();
   await page.keyboard.press("Escape"); await acceptConfirmation(panel); await expect(dialog).not.toBeVisible(); expect(await unload(page)).toBe(false);

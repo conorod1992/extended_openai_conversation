@@ -1531,6 +1531,17 @@ async def async_materialize_restore(
         raise backup.BackupError(
             f"Restored request is incompatible with the destination provider: {err}"
         ) from err
+    from .function_dependency_integrity import async_validate_disappearing_identifiers
+
+    await async_validate_disappearing_identifiers(
+        hass,
+        entry,
+        subentry,
+        current.config,
+        target.config,
+        get_rules=async_get_request_rules,
+        retained_document=target.request_rules,
+    )
     await _async_validate_request_rule_function_dependencies(
         hass, target.request_rules, target.config
     )

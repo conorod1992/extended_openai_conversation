@@ -172,7 +172,7 @@ function renderTurns(panel, data) {
   return (data.turns || []).map((turn) => `<article class="turn"><div class="message user"><strong>You</strong><p>${panel._e(turn.user_text)}</p></div><div class="message assistant"><strong>Assistant</strong><p>${panel._e(turn.assistant_text)}</p></div><small>${panel._e(panel._formatDate(turn.timestamp))}</small></article>`).join("") || panel._empty("No turns retained on this page.");
 }
 
-function appendTurnPager(panel, body, sessionId, data, history) {
+function appendTurnPager(panel, body, sessionId, data, history, future, current) {
   const pager = document.createElement("div");
   pager.className = "section-actions eoc-turn-pager";
   const status = document.createElement("small");
@@ -181,7 +181,8 @@ function appendTurnPager(panel, body, sessionId, data, history) {
   status.textContent = pageLabel(data, "turns");
   pager.append(status);
 
-  if (integer(data.start_turn) > 0 || integer(data.text_offset) > 0) {
+  const hasEarlier = integer(data.start_turn) > 0 || integer(data.text_offset) > 0;
+  if (hasEarlier) {
     const start = document.createElement("button");
     start.type = "button";
     start.className = "secondary";
@@ -190,14 +191,25 @@ function appendTurnPager(panel, body, sessionId, data, history) {
     pager.append(start);
   }
 
+  const navigate = (cursor, previous, next) => openSession(
+    panel, sessionId, cursor.start_turn, cursor.text_offset, previous, next, cursor.mode || "get",
+  );
   const previous = document.createElement("button");
   previous.type = "button";
   previous.className = "secondary";
   previous.textContent = "Previous turns";
-  previous.disabled = history.length === 0;
+  previous.disabled = !history.length && !hasEarlier;
   previous.addEventListener("click", () => {
-    const cursor = history.at(-1);
-    if (cursor) void openSession(panel, sessionId, cursor.start_turn, cursor.text_offset, history.slice(0, -1));
+    if (history.length) {
+      void navigate(history.at(-1), history.slice(0, -1), [current, ...future]);
+    } else if (hasEarlier) {
+      // Search hits have no visited history. Request the nearest earlier
+      // content rather than assuming a fixed number of turns per page.
+      void navigate(
+        {mode: "before", start_turn: integer(data.start_turn), text_offset: integer(data.text_offset)},
+        [], [current, ...future],
+      );
+    }
   });
   pager.append(previous);
 
@@ -205,15 +217,20 @@ function appendTurnPager(panel, body, sessionId, data, history) {
   next.type = "button";
   next.className = "secondary";
   next.textContent = "Next turns";
-  next.disabled = !data.has_more;
+  next.disabled = !future.length && !data.has_more;
   next.addEventListener("click", () => {
-    const cursor = {start_turn: integer(data.start_turn), text_offset: integer(data.text_offset)};
-    void openSession(panel, sessionId, data.next_start_turn, data.next_text_offset, [...history, cursor]);
+    if (future.length) {
+      void navigate(future[0], [...history, current], future.slice(1));
+    } else if (data.has_more) {
+      void navigate(
+        {mode: "get", start_turn: integer(data.next_start_turn), text_offset: integer(data.next_text_offset)},
+        [...history, current], [],
+      );
+    }
   });
   pager.append(next);
   body.append(pager);
 }
-
 export function bindConversationActions(panel) {
   const root = panel.shadowRoot;
   const host = root.querySelector("#archive-query")?.closest(".content-card");
@@ -238,9 +255,10 @@ async function searchArchive(panel, offset = 0) {
   await loadConversationPage(panel, offset);
 }
 
-async function openSession(panel, sessionId, startTurn = 0, textOffset = 0, history = []) {
+async function openSession(panel, sessionId, startTurn = 0, textOffset = 0, history = [], future = [], mode = "get") {
   const agentId = panel._agentId;
   const scopeId = panel._scopeId;
+  const current = {mode, start_turn: integer(startTurn), text_offset: integer(textOffset)};
   panel._ensureOwnedDialog("session-dialog");
   const root = panel.shadowRoot;
   const dialog = root.querySelector("#session-dialog");
@@ -252,17 +270,19 @@ async function openSession(panel, sessionId, startTurn = 0, textOffset = 0, hist
   body.innerHTML = panel._loading();
   if (!dialog.open) dialog.showModal();
   try {
-    const data = await panel._call("conversations", "get", {
-      scope_id: panel._scopeId,
+    const cursor = mode === "before"
+      ? {before_turn: current.start_turn, before_text_offset: current.text_offset}
+      : {start_turn: current.start_turn, text_offset: current.text_offset};
+    const data = await panel._call("conversations", mode === "before" ? "get_before" : "get", {
+      scope_id: scopeId,
       session_id: sessionId,
-      start_turn: integer(startTurn),
-      text_offset: integer(textOffset),
+      ...cursor,
       limit: TURN_PAGE_LIMIT,
     });
     if (panel._eocSessionLoadToken !== token || !dialog.open || panel._agentId !== agentId || panel._scopeId !== scopeId) return;
     title.textContent = data.session?.title || "Untitled conversation";
     body.innerHTML = renderTurns(panel, data);
-    appendTurnPager(panel, body, sessionId, data, history);
+    appendTurnPager(panel, body, sessionId, data, history, future, current);
   } catch (err) {
     if (panel._eocSessionLoadToken !== token || !dialog.open || panel._agentId !== agentId || panel._scopeId !== scopeId) return;
     title.textContent = "Unable to load conversation";

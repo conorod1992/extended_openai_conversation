@@ -65,7 +65,10 @@ async def test_repair_acknowledgement_survives_optional_guest_status_and_next_sa
     saved = first.send_result.call_args.args[1]
     assert saved["revision"] and isinstance(saved["config"]["functions"], list)
     assert isinstance(saved["config"]["function_groups"], list)
-    assert ("agent" in saved) is (not guest_unavailable)
+    assert "agent" in saved
+    assert saved["agent"]["guest_mode"]["state"] == (
+        "unavailable" if guest_unavailable else "inactive"
+    )
     if action == "configuration_save":
         assert subentry.data["prompt"] == "Saved during Guest recovery"
         assert yaml.safe_load(subentry.data["functions"])[1] == broken

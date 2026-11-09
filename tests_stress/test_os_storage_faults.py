@@ -197,9 +197,11 @@ async def test_delayed_scheduler_same_process_recovers_after_write_and_read_fail
             await asyncio.wait_for(write_attempted.wait(), 8)
             await asyncio.gather(original_worker, return_exceptions=True)
         assert not manager._setup_complete and not manager._started
+        assert not manager._quarantined
         assert not manager._records and not manager._tasks and not effects
-        with pytest.raises(OSError):
-            await async_setup_delayed_tools(hass)
+        # A retry while the read fault is active now enters permanent startup
+        # quarantine. This scenario instead exercises successful same-process
+        # recovery after storage becomes readable again.
         if phase == "schedule" and timing == "overdue":
             await asyncio.sleep(2.1)
     disk = json.loads(path.read_text())["data"]["calls"]
