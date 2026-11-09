@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 from decimal import Decimal, InvalidOperation
+from functools import partial
 import logging
 import os
 from pathlib import Path
@@ -125,7 +126,11 @@ def _read_text_bounded_snapshot(path: Path) -> tuple[str, _FileFingerprint]:
 
 
 def _atomic_replace_text(
-    path: Path, content: str, *, expected: _FileFingerprint | None = None
+    path: Path,
+    content: str,
+    *,
+    expected: _FileFingerprint | None = None,
+    create_parents: bool = False,
 ) -> int:
     """Atomically write text, preserving an existing file's mode when present."""
     encoded = content.encode("utf-8")
@@ -136,6 +141,11 @@ def _atomic_replace_text(
         )
 
     current_mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o644
+    # Only write_file opts in. Validate the byte budget first, then create the
+    # parent beside the atomic temporary file inside the owned executor job.
+    # edit_file must never create paths when its expected file is missing.
+    if create_parents:
+        path.parent.mkdir(parents=True, exist_ok=True)
     fd, temp_name = tempfile.mkstemp(
         dir=path.parent,
         prefix=f".{path.name}.",
@@ -467,7 +477,12 @@ class WriteFileFunction(FileFunction):
                 )
                 bytes_written = await _async_settle_native_edit(
                     hass.async_add_executor_job(
-                        _atomic_replace_text, target_path, content
+                        partial(
+                            _atomic_replace_text,
+                            target_path,
+                            content,
+                            create_parents=True,
+                        )
                     )
                 )
                 execution_completed(receipt)
