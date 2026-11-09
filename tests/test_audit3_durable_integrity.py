@@ -144,7 +144,11 @@ async def test_guest_write_only_memory_dispatches_with_write_scope(operation):
     memory = await _memory()
     agent = ExtendedOpenAIAgentEntity.__new__(ExtendedOpenAIAgentEntity)
     agent.subentry = SimpleNamespace(
-        data={"memory_enabled": True, "shared_memory_mode": "automatic"}
+        data={
+            "memory_enabled": True,
+            "memory_mode": "automatic",
+            "shared_memory_mode": "automatic",
+        }
     )
     agent._memory = memory
     agent._effective_guest_policy = lambda: GuestCapabilityPolicy(
