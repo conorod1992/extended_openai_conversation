@@ -249,6 +249,94 @@ async def synthetic_performance(count: int, repeats: int) -> dict[str, Any]:
     }
 
 
+async def current_mutation_behaviour() -> dict[str, Any]:
+    """Measure legacy write outcomes without judging their semantic correctness.
+
+    These synthetic probes give subsequent contract changes a differential
+    reference. No assertion demands that the old behaviour be preserved.
+    """
+    tests = [
+        {
+            "name": "existing-key-explicit-correction",
+            "initial": [record("original", "Thermostat target is 19 C.", "alice", key="temp.target")],
+            "owner": "alice",
+            "incoming": {"content": "Thermostat target is 21 C.", "category": "general", "source": "explicit", "key": "temp.target"},
+        },
+        {
+            "name": "unkeyed-related-contradiction",
+            "initial": [record("original", "I prefer tea to coffee.", "alice")],
+            "owner": "alice",
+            "incoming": {"content": "I prefer coffee to tea.", "category": "general", "source": "explicit"},
+        },
+        {
+            "name": "punctuation-only-duplicate",
+            "initial": [record("original", "I like milk.", "alice")],
+            "owner": "alice",
+            "incoming": {"content": "I like milk!!!", "category": "general", "source": "explicit"},
+        },
+        {
+            "name": "implicit-protected-key",
+            "initial": [record("original", "I like tea.", "alice", key="drink.preference")],
+            "owner": "alice",
+            "incoming": {"content": "I dislike tea.", "category": "general", "source": "implicit", "key": "drink.preference"},
+        },
+        {
+            "name": "new-key",
+            "initial": [],
+            "owner": "alice",
+            "incoming": {"content": "The router is downstairs.", "category": "general", "source": "explicit", "key": "router.location"},
+        },
+        {
+            "name": "unkeyed-key-promotion",
+            "initial": [dict(record("original", "My dog is a collie.", "alice", subject="Dog"), source="implicit")],
+            "owner": "alice",
+            "incoming": {"content": "My dog is a collie.", "category": "general", "source": "explicit", "subject": "Dog", "key": "pets.dog.breed"},
+        },
+        {
+            "name": "same-key-different-owner",
+            "initial": [record("original", "My dog is a collie.", "alice", key="pets.dog.breed")],
+            "owner": "bob",
+            "incoming": {"content": "My dog is a terrier.", "category": "general", "source": "explicit", "key": "pets.dog.breed"},
+        },
+        {
+            "name": "unkeyed-same-text-different-subject",
+            "initial": [record("original", "The lamp is on.", "alice", subject="Kitchen")],
+            "owner": "alice",
+            "incoming": {"content": "The lamp is on.", "category": "general", "source": "explicit", "subject": "Bedroom"},
+        },
+    ]
+    rows = []
+    for test in tests:
+        manager = await manager_from_records(test["initial"])
+        before = {
+            entry.memory_id: entry
+            for user in {"alice", "bob"}
+            for entry in await manager.async_list(user, limit=100)
+        }
+        result = await manager.async_upsert(test["owner"], **test["incoming"])
+        after = {
+            entry.memory_id: entry
+            for user in {"alice", "bob"}
+            for entry in await manager.async_list(user, limit=100)
+        }
+        rows.append(
+            {
+                "name": test["name"],
+                "status": result["status"],
+                "before_count": len(before),
+                "after_count": len(after),
+                "changed_existing_ids": sorted(
+                    identity
+                    for identity in before.keys() & after.keys()
+                    if before[identity] != after[identity]
+                ),
+                "deleted_existing_ids": sorted(before.keys() - after.keys()),
+                "new_record_count": len(after.keys() - before.keys()),
+            }
+        )
+    return {"probe_count": len(rows), "rows": rows}
+
+
 def package_version(name: str) -> str | None:
     try:
         return version(name)
@@ -277,6 +365,7 @@ async def run(size: int, repeats: int) -> dict[str, Any]:
             "cold_definition": "first search of each query on fresh manager in this process",
         },
         "fixture_retrieval": await fixture_ranking(),
+        "current_mutation_behaviour": await current_mutation_behaviour(),
         "synthetic_lexical": await synthetic_performance(size, repeats),
     }
 
