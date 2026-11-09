@@ -102,11 +102,13 @@ call_function:
   description: Call an enabled Extended OpenAI configured function from a Request Rule action sequence.
   fields:
     function:
+      name: Function tool
       required: true
       description: Exact configured Function Tool name.
       selector:
         text:
     arguments:
+      name: Arguments
       description: Function arguments. Request Rule captured values are available as templates such as {{ item }}.
       selector:
         object:
@@ -186,6 +188,7 @@ download_skill:
       selector:
         text:
     source_ref:
+      name: Git source reference
       description: Optional Git branch, tag, or commit to use instead of the installed release version. Intended for development and testing, for example develop.
       example: develop
       selector:
@@ -198,11 +201,13 @@ memory_list:
   description: List or search persistent memories for the calling Home Assistant user.
   fields:
     config_entry:
+      name: Provider connection
       required: true
       selector:
         config_entry:
           integration: extended_openai_conversation_responses
     agent_id:
+      name: Conversation agent
       required: true
       description: Conversation agent. Legacy action calls may also use its subentry ID.
       selector:
@@ -211,14 +216,17 @@ memory_list:
             integration: extended_openai_conversation_responses
             domain: conversation
     query:
+      name: Search query
       description: Optional search query. Leave empty to browse memories.
       selector:
         text:
     category:
+      name: Category
       description: Optional category filter.
       selector:
         text:
     limit:
+      name: Result limit
       default: 50
       selector:
         number:
@@ -226,6 +234,7 @@ memory_list:
           max: 100
           mode: box
     offset:
+      name: Result offset
       default: 0
       selector:
         number:
@@ -236,11 +245,13 @@ memory_delete:
   description: Permanently delete selected persistent memories for the calling Home Assistant user.
   fields:
     config_entry:
+      name: Provider connection
       required: true
       selector:
         config_entry:
           integration: extended_openai_conversation_responses
     agent_id:
+      name: Conversation agent
       required: true
       description: Conversation agent. Legacy action calls may also use its subentry ID.
       selector:
@@ -249,6 +260,7 @@ memory_delete:
             integration: extended_openai_conversation_responses
             domain: conversation
     memory_ids:
+      name: Memory IDs
       required: true
       description: One or more memory IDs returned by memory_list.
       selector:
@@ -258,11 +270,13 @@ memory_clear:
   description: Permanently clear all memories, or one category, for the calling Home Assistant user.
   fields:
     config_entry:
+      name: Provider connection
       required: true
       selector:
         config_entry:
           integration: extended_openai_conversation_responses
     agent_id:
+      name: Conversation agent
       required: true
       description: Conversation agent. Legacy action calls may also use its subentry ID.
       selector:
@@ -271,10 +285,12 @@ memory_clear:
             integration: extended_openai_conversation_responses
             domain: conversation
     category:
+      name: Category
       description: Optional category to clear. Leave empty to clear all memories in your user scope.
       selector:
         text:
     confirm:
+      name: Confirm deletion
       required: true
       default: false
       description: Must be enabled to confirm this destructive action.
@@ -285,11 +301,13 @@ enable_function_tools:
   description: Enable one or more configured Function Tools for a conversation agent. This administrator action is not exposed to the model automatically.
   fields:
     config_entry:
+      name: Provider connection
       required: true
       selector:
         config_entry:
           integration: extended_openai_conversation_responses
     agent_id:
+      name: Conversation agent
       required: true
       description: Conversation agent. Legacy action calls may also use its subentry ID.
       selector:
@@ -298,6 +316,7 @@ enable_function_tools:
             integration: extended_openai_conversation_responses
             domain: conversation
     functions:
+      name: Function tools
       required: true
       description: One or more configured model-facing Function Tool names.
       selector:
@@ -308,11 +327,13 @@ disable_function_tools:
   description: Disable one or more configured Function Tools so their schemas are withheld and calls are rejected. This administrator action is not exposed to the model automatically.
   fields:
     config_entry:
+      name: Provider connection
       required: true
       selector:
         config_entry:
           integration: extended_openai_conversation_responses
     agent_id:
+      name: Conversation agent
       required: true
       description: Conversation agent. Legacy action calls may also use its subentry ID.
       selector:
@@ -321,6 +342,7 @@ disable_function_tools:
             integration: extended_openai_conversation_responses
             domain: conversation
     functions:
+      name: Function tools
       required: true
       description: One or more configured model-facing Function Tool names.
       selector:
@@ -331,11 +353,13 @@ enable_function_groups:
   description: Enable one or more configured Function Groups without changing the individual enabled state of any member Function Tool.
   fields:
     config_entry:
+      name: Provider connection
       required: true
       selector:
         config_entry:
           integration: extended_openai_conversation_responses
     agent_id:
+      name: Conversation agent
       required: true
       description: Conversation agent. Legacy action calls may also use its subentry ID.
       selector:
@@ -344,6 +368,7 @@ enable_function_groups:
             integration: extended_openai_conversation_responses
             domain: conversation
     function_groups:
+      name: Function groups
       required: true
       description: One or more configured Function Group IDs.
       selector:
@@ -354,11 +379,13 @@ disable_function_groups:
   description: Make one or more Function Groups and their members unavailable while retaining each member Function Tool's own enabled state.
   fields:
     config_entry:
+      name: Provider connection
       required: true
       selector:
         config_entry:
           integration: extended_openai_conversation_responses
     agent_id:
+      name: Conversation agent
       required: true
       description: Conversation agent. Legacy action calls may also use its subentry ID.
       selector:
@@ -367,6 +394,7 @@ disable_function_groups:
             integration: extended_openai_conversation_responses
             domain: conversation
     function_groups:
+      name: Function groups
       required: true
       description: One or more configured Function Group IDs.
       selector:
@@ -377,11 +405,13 @@ guest_mode_update:
   description: Set or replace the Guest Mode interval for a conversation agent. This trusted administrator action may shorten or move the interval.
   fields:
     config_entry:
+      name: Provider connection
       required: true
       selector:
         config_entry:
           integration: extended_openai_conversation_responses
     agent_id:
+      name: Conversation agent
       required: true
       description: Conversation agent. Legacy action calls may also use its subentry ID.
       selector:
@@ -390,14 +420,17 @@ guest_mode_update:
             integration: extended_openai_conversation_responses
             domain: conversation
     active_from:
+      name: Start time
       description: ISO 8601 start time. Leave empty to start now.
       selector:
         datetime:
     active_until:
+      name: End time
       description: ISO 8601 end time. Ignored when indefinite is enabled.
       selector:
         datetime:
     indefinite:
+      name: Indefinite
       default: false
       selector:
         boolean:
@@ -406,11 +439,13 @@ guest_mode_disable:
   description: Immediately end active Guest Mode or cancel a future schedule for a conversation agent.
   fields:
     config_entry:
+      name: Provider connection
       required: true
       selector:
         config_entry:
           integration: extended_openai_conversation_responses
     agent_id:
+      name: Conversation agent
       required: true
       description: Conversation agent. Legacy action calls may also use its subentry ID.
       selector:

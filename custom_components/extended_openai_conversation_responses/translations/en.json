@@ -316,6 +316,158 @@
         }
     },
     "services": {
+    "call_function": {
+      "name": "Call configured function",
+      "fields": {
+        "function": {
+          "name": "Function tool"
+        },
+        "arguments": {
+          "name": "Arguments"
+        }
+      }
+    },
+    "memory_list": {
+      "name": "List memories",
+      "fields": {
+        "config_entry": {
+          "name": "Provider connection"
+        },
+        "agent_id": {
+          "name": "Conversation agent"
+        },
+        "query": {
+          "name": "Search query"
+        },
+        "category": {
+          "name": "Category"
+        },
+        "limit": {
+          "name": "Result limit"
+        },
+        "offset": {
+          "name": "Result offset"
+        }
+      }
+    },
+    "memory_delete": {
+      "name": "Delete memories",
+      "fields": {
+        "config_entry": {
+          "name": "Provider connection"
+        },
+        "agent_id": {
+          "name": "Conversation agent"
+        },
+        "memory_ids": {
+          "name": "Memory IDs"
+        }
+      }
+    },
+    "memory_clear": {
+      "name": "Clear memories",
+      "fields": {
+        "config_entry": {
+          "name": "Provider connection"
+        },
+        "agent_id": {
+          "name": "Conversation agent"
+        },
+        "category": {
+          "name": "Category"
+        },
+        "confirm": {
+          "name": "Confirm deletion"
+        }
+      }
+    },
+    "enable_function_tools": {
+      "name": "Enable Function Tools",
+      "fields": {
+        "config_entry": {
+          "name": "Provider connection"
+        },
+        "agent_id": {
+          "name": "Conversation agent"
+        },
+        "functions": {
+          "name": "Function tools"
+        }
+      }
+    },
+    "disable_function_tools": {
+      "name": "Disable Function Tools",
+      "fields": {
+        "config_entry": {
+          "name": "Provider connection"
+        },
+        "agent_id": {
+          "name": "Conversation agent"
+        },
+        "functions": {
+          "name": "Function tools"
+        }
+      }
+    },
+    "enable_function_groups": {
+      "name": "Enable Function Groups",
+      "fields": {
+        "config_entry": {
+          "name": "Provider connection"
+        },
+        "agent_id": {
+          "name": "Conversation agent"
+        },
+        "function_groups": {
+          "name": "Function groups"
+        }
+      }
+    },
+    "disable_function_groups": {
+      "name": "Disable Function Groups",
+      "fields": {
+        "config_entry": {
+          "name": "Provider connection"
+        },
+        "agent_id": {
+          "name": "Conversation agent"
+        },
+        "function_groups": {
+          "name": "Function groups"
+        }
+      }
+    },
+    "guest_mode_update": {
+      "name": "Update Guest Mode",
+      "fields": {
+        "config_entry": {
+          "name": "Provider connection"
+        },
+        "agent_id": {
+          "name": "Conversation agent"
+        },
+        "active_from": {
+          "name": "Start time"
+        },
+        "active_until": {
+          "name": "End time"
+        },
+        "indefinite": {
+          "name": "Indefinite"
+        }
+      }
+    },
+    "guest_mode_disable": {
+      "name": "End Guest Mode",
+      "fields": {
+        "config_entry": {
+          "name": "Provider connection"
+        },
+        "agent_id": {
+          "name": "Conversation agent"
+        }
+      }
+    },
         "query_image": {
             "name": "Query image",
             "description": "Take in images and answer questions about them",
@@ -417,6 +569,7 @@
             "name": "Download skill",
             "description": "Download a skill from the GitHub repository to your skills directory.",
             "fields": {
+        "source_ref": {"name": "Git source reference"},
                 "skill_name": {
                     "name": "Skill name",
                     "description": "The name of the skill to download (e.g., crypto)"
