@@ -391,6 +391,15 @@ async def test_model_upsert_conflict_has_no_write_and_exposes_revision_on_real_s
     assert schemas["memory_delete"]["properties"]["targets"]["items"]["required"] == [
         "memory_id", "expected_revision"
     ]
+    descriptions = (
+        {item["function"]["name"]: item["function"]["description"] for item in request["tools"]}
+        if api_mode == API_MODE_CHAT_COMPLETIONS
+        else {item["name"]: item["description"] for item in request["tools"]}
+    )
+    assert "needs_resolution" in descriptions["memory_upsert"]
+    assert "not proof" in descriptions["memory_search"]
+    assert "revision" in descriptions["memory_update"]
+    assert "memory_add" not in descriptions
     tool_round_trip = json.dumps(wire.requests[1]["body"], ensure_ascii=False)
     assert "needs_resolution" in tool_round_trip
     assert revision in tool_round_trip
@@ -401,3 +410,44 @@ async def test_model_upsert_conflict_has_no_write_and_exposes_revision_on_real_s
     assert len(after) == 1 and after[0] == original
     assert memory_revision(after[0]) == revision
 
+
+
+@pytest.mark.parametrize("api_mode", [API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES])
+async def test_model_selected_inferred_revision_update_persists_through_provider_wire(
+    hass: HomeAssistant, monkeypatch: Any, api_mode: str
+) -> None:
+    """Controlled model action: both APIs may correct exactly one inferred fact."""
+    MockUser(id=_USER_ID, name="Memory Revision Wire User", is_owner=True).add_to_hass(hass)
+    _, agent = await _memory_agent(hass, api_mode)
+    await agent._memory.async_add(
+        _USER_ID, "The lounge heating target is 19 C.", "heating",
+        "implicit", key="heating.lounge.target",
+    )
+    original = (await agent._memory.async_list(_USER_ID))[0]
+    revision = memory_revision(original)
+    proposed = {
+        "memory_id": original.memory_id,
+        "expected_revision": revision,
+        "content": "The lounge heating target is 21 C.",
+    }
+    first = (
+        _chat_sse_tool_call(_TOOL_CALL_ID, "memory_update", proposed)
+        if api_mode == API_MODE_CHAT_COMPLETIONS
+        else _responses_sse_tool_call(_TOOL_CALL_ID, "memory_update", proposed)
+    )
+    final = (
+        _chat_sse_text("The lounge target was updated.")
+        if api_mode == API_MODE_CHAT_COMPLETIONS
+        else _responses_sse_text("The lounge target was updated.")
+    )
+    wire = _install_wire(monkeypatch, agent, [first, final])
+    result = await _say(hass, agent, "Correct my lounge target from 19 C to 21 C.")
+    assert _speech(result) == "The lounge target was updated."
+    assert len(wire.requests) == 2
+    assert revision in _request_text(wire.requests[0]["body"])
+    published = _request_text(wire.requests[1]["body"])
+    assert "updated" in published
+    refreshed = (await agent._memory.async_list(_USER_ID))[0]
+    assert refreshed.memory_id == original.memory_id
+    assert refreshed.content == "The lounge heating target is 21 C."
+    assert memory_revision(refreshed) != revision
