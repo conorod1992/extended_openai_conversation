@@ -128,6 +128,76 @@ async def test_memory_real_search_recovers_past_and_plural_forms(
     assert any(row.memory_id == added["memory"]["memory_id"] for row in results)
 
 
+
+@pytest.mark.parametrize(
+    ("base", "inflections"),
+    [
+        ("control", ("controlled", "controlling", "controls")),
+        ("cancel", ("cancelled", "canceled", "cancelling", "canceling")),
+        ("travel", ("travelled", "traveled", "travelling", "traveling")),
+        ("label", ("labelled", "labeled", "labelling", "labeling")),
+        ("model", ("modelled", "modeled", "modelling", "modeling")),
+        ("signal", ("signalled", "signaled", "signalling", "signaling")),
+        ("patrol", ("patrolled", "patrolling")),
+        ("compel", ("compelled", "compelling")),
+        ("expel", ("expelled", "expelling")),
+        ("propel", ("propelled", "propelling")),
+        ("add", ("added", "adding", "adds")),
+        ("egg", ("egged", "egging", "eggs")),
+        ("ebb", ("ebbed", "ebbing", "ebbs")),
+        ("run", ("running", "runs")),
+        ("stop", ("stopped", "stopping", "stops")),
+        ("call", ("called", "calling", "calls")),
+        ("fill", ("filled", "filling", "fills")),
+        ("install", ("installed", "installing", "installs")),
+        ("sell", ("selling", "sells")),
+    ],
+)
+def test_memory_doubled_consonant_families_retain_correct_roots(
+    base: str, inflections: tuple[str, ...]
+) -> None:
+    from custom_components.extended_openai_conversation_responses.memory import _stem
+
+    assert all(_stem(word) == _stem(base) for word in inflections)
+
+
+@pytest.mark.parametrize(
+    ("stored", "query"),
+    [
+        ("I controlled the thermostat.", "control"),
+        ("I cancelled the gym.", "cancel"),
+        ("I travelled yesterday.", "travel"),
+        ("I added a reminder.", "add"),
+        ("I egged the pudding.", "egg"),
+    ],
+)
+async def test_memory_new_doubled_roots_are_retrievable(
+    stored: str, query: str
+) -> None:
+    memory = await _memory()
+    record = await memory.async_add("alice", stored, "personal", "explicit")
+    matches = await memory.async_search("alice", query)
+    assert [item.memory_id for item in matches] == [record["memory"]["memory_id"]]
+
+
+@pytest.mark.parametrize(
+    ("original", "revised"),
+    [
+        ("I cancelled gym.", "I cancel gym."),
+        ("I added reminder.", "I add reminder."),
+    ],
+)
+async def test_memory_doubled_roots_enable_related_upsert_without_premature_update(
+    original: str, revised: str
+) -> None:
+    memory = await _memory()
+    created = await memory.async_add("alice", original, "personal", "explicit")
+    response = await memory.async_upsert("alice", revised, "personal", "explicit")
+    assert response["status"] == "needs_resolution"
+    assert response["candidate"]["memory_id"] == created["memory"]["memory_id"]
+    assert len(await memory.async_list("alice")) == 1
+
+
 def test_memory_consonant_doubling_does_not_create_silent_e_word() -> None:
     """A doubled consonant distinguishes hopping from hoping."""
     from custom_components.extended_openai_conversation_responses.memory import _stem

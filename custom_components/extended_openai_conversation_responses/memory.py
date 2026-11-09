@@ -1757,9 +1757,9 @@ def _tokens(value: str) -> set[str]:
     return set(_cached_memory_tokens(value))
 
 
-# These standard English roots may double their final l before -ing. Do not
-# apply that rule to genuine -ll roots (call, fill, spell, install, etc.).
-_ING_DOUBLED_L_BASES = frozenset(
+# These English roots may double their final l before -ing or -ed. Do not
+# apply this to genuine -ll roots (call, fill, spell, install, etc.).
+_DOUBLED_L_BASES = frozenset(
     {
         "cancel",
         "channel",
@@ -1867,11 +1867,11 @@ def _stem(token: str) -> str:
     if len(token) > 5 and token.endswith("ing"):
         root = token[:-3]
         if (
-            len(root) > 2
+            len(root) > 3
             and root[-1] == root[-2]
             and (
                 root in _ING_AMBIGUOUS_DOUBLE_BASES
-                or (root.endswith("ll") and root[:-1] in _ING_DOUBLED_L_BASES)
+                or (root.endswith("ll") and root[:-1] in _DOUBLED_L_BASES)
                 or not root.endswith(("ll", "ss", "ff", "zz", "ee"))
             )
         ):
@@ -1882,14 +1882,16 @@ def _stem(token: str) -> str:
     if len(token) > 4 and token.endswith("ed") and not token.endswith("eed"):
         root = token[:-2]
         if (
-            len(root) > 2
+            len(root) > 3
             and root[-1] == root[-2]
             and (
                 root in _ING_AMBIGUOUS_DOUBLE_BASES
+                or (root.endswith("ll") and root[:-1] in _DOUBLED_L_BASES)
                 or not root.endswith(("ll", "ss", "ff", "zz", "ee"))
             )
         ):
-            # Likewise, "hopped" is hop; only "hoped" restores hope.
+            # Preserve true doubled-consonant roots such as add and call;
+            # a doubled ending also distinguishes hopped from hoped.
             return root[:-1]
         return f"{root}e" if f"{root}e" in _SILENT_E_VERB_BASES else root
     if token in {"quizzes", "buses", "gases"}:
