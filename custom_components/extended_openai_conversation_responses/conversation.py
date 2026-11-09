@@ -2783,20 +2783,20 @@ class ExtendedOpenAIAgentEntity(
                 != SHARED_MEMORY_AUTOMATIC
             ):
                 raise ValueError("automatic shared memory creation is disabled")
+            # The model can describe the origin of a fact but cannot prove
+            # explicit user consent. Treat model-origin scope privileges as
+            # automatic, and never use the label to authorize a modification.
             write_scope_id = self._current_write_memory_scope_id(
-                arguments.get("scope"), llm_context, source=source
-            )
-            method = (
-                self._memory.async_upsert
-                if operation == "upsert"
-                else self._memory.async_add
+                arguments.get("scope"), llm_context, source="implicit"
             )
             metadata = {
                 name: arguments[name]
                 for name in ("subject", "key", "valid_from")
                 if name in arguments
             }
-            result = await method(write_scope_id, content, category, source, **metadata)
+            result = await self._memory.async_propose(
+                write_scope_id, content, category, source, **metadata
+            )
             # Write permission does not grant access to existing candidate records,
             # including duplicate/conflict metadata returned by the memory store.
             if write_scope_id not in readable_scope_ids:
@@ -2876,6 +2876,7 @@ class ExtendedOpenAIAgentEntity(
             )
         if operation == "update":
             memory_id = arguments.get("memory_id")
+            expected_revision = arguments.get("expected_revision")
             content = arguments.get("content")
             category = arguments.get("category")
             metadata = {
@@ -2891,6 +2892,7 @@ class ExtendedOpenAIAgentEntity(
                 raise ValueError("clear_fields must be a list of metadata field names")
             if (
                 not isinstance(memory_id, str)
+                or not isinstance(expected_revision, str)
                 or (content is not None and not isinstance(content, str))
                 or (category is not None and not isinstance(category, str))
                 or (
@@ -2901,22 +2903,12 @@ class ExtendedOpenAIAgentEntity(
                 )
             ):
                 raise ValueError("memory_id and at least one valid update are required")
-            # Legacy manual callers remain explicit; unspecified proactive updates
-            # must obey the current operation's automatic sensitivity policy.
-            source = arguments.get(
-                "source",
-                "implicit"
-                if automatic_memory_enabled(self.subentry.data)
-                else "explicit",
-            )
-            if source not in ("explicit", "implicit"):
+            # Keep legacy source fields in the schema but never treat a model
+            # assertion of "explicit" as permission to elevate provenance.
+            if arguments.get("source", "implicit") not in ("explicit", "implicit"):
                 raise ValueError("source must be explicit or implicit")
-            if source == "implicit" and not automatic_memory_enabled(
-                self.subentry.data
-            ):
-                raise ValueError("automatic memory creation is disabled")
             write_scope_id = self._current_write_memory_scope_id(
-                arguments.get("scope"), llm_context, source=source
+                arguments.get("scope"), llm_context, source="implicit"
             )
             memory = await self._memory.async_update(
                 write_scope_id,
@@ -2925,7 +2917,9 @@ class ExtendedOpenAIAgentEntity(
                 category,
                 **metadata,
                 clear_fields=clear_fields,
-                source=source,
+                source="implicit",
+                expected_revision=expected_revision,
+                allow_explicit_edit=False,
             )
             if write_scope_id not in readable_scope_ids:
                 return {"status": "updated"}
@@ -2938,15 +2932,38 @@ class ExtendedOpenAIAgentEntity(
                 ),
             }
         if operation == "delete":
-            memory_ids = arguments.get("memory_ids")
-            if not isinstance(memory_ids, list) or not all(
-                isinstance(memory_id, str) for memory_id in memory_ids
+            targets = arguments.get("targets")
+            if (
+                not isinstance(targets, list)
+                or not targets
+                or len(targets) > 50
+                or not all(
+                    isinstance(target, dict)
+                    and set(target) == {"memory_id", "expected_revision"}
+                    and isinstance(target["memory_id"], str)
+                    and isinstance(target["expected_revision"], str)
+                    for target in targets
+                )
             ):
-                raise ValueError("memory_ids must be a list of strings")
+                raise ValueError("deletion requires exact IDs and revisions for every target")
+            ids = [target["memory_id"] for target in targets]
+            if len(set(ids)) != len(ids):
+                raise ValueError("deletion targets must be unique")
+            if "memory_ids" in arguments:
+                # Old generated tool calls never bypass the revision gate.
+                raise ValueError("legacy memory_ids cannot authorize model deletion")
             write_scope_id = self._current_write_memory_scope_id(
-                arguments.get("scope"), llm_context, source="explicit"
+                arguments.get("scope"), llm_context, source="implicit"
             )
-            deleted = await self._memory.async_delete(write_scope_id, memory_ids)
+            deleted = await self._memory.async_delete(
+                write_scope_id,
+                ids,
+                expected_revisions={
+                    target["memory_id"]: target["expected_revision"]
+                    for target in targets
+                },
+                allow_explicit_delete=False,
+            )
             return {"status": "deleted", "deleted": deleted}
         raise ValueError("unknown memory operation")
 
