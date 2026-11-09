@@ -6,6 +6,8 @@ from datetime import timedelta
 import json
 from typing import Any
 
+import pytest
+
 from custom_components.extended_openai_conversation_responses import (
     continuity as continuity_module,
     conversation as conversation_module,
@@ -24,6 +26,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     MEMORY_MODE_MANUAL,
     TEMPORARY_MEMORY_BALANCED,
 )
+from custom_components.extended_openai_conversation_responses.memory import memory_revision
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
     TemporaryMemoryRecord,
 )
@@ -35,8 +38,10 @@ from pytest_homeassistant_custom_component.common import MockUser
 from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
 from tests_real_ha.test_provider_wire_e2e import (
     _chat_sse_text,
+    _chat_sse_tool_call,
     _install_wire,
     _responses_sse_text,
+    _responses_sse_tool_call,
     _speech,
 )
 
@@ -330,3 +335,69 @@ async def test_responses_memory_prompt_injection_uses_real_sdk_wire(
     assert "cobalt-zebra" in request
     assert "minestrone" not in request
     assert "amber-lynx" not in request
+
+
+@pytest.mark.parametrize("api_mode", [API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES])
+async def test_model_upsert_conflict_has_no_write_and_exposes_revision_on_real_sdk_wire(
+    hass: HomeAssistant, monkeypatch: Any, api_mode: str
+) -> None:
+    """Both provider APIs receive the actual versioned tool contract and conflict."""
+    MockUser(id=_USER_ID, name="Memory Conflict Wire User", is_owner=True).add_to_hass(
+        hass
+    )
+    _, agent = await _memory_agent(hass, api_mode)
+    created = await agent._memory.async_add(
+        _USER_ID,
+        "The lounge heating target is 19 C.",
+        "heating",
+        "explicit",
+        key="heating.lounge.target",
+    )
+    original_id = created["memory"]["memory_id"]
+    original = (await agent._memory.async_list(_USER_ID))[0]
+    revision = memory_revision(original)
+
+    proposed = {
+        "content": "The lounge heating target is 21 C.",
+        "category": "heating",
+        "source": "explicit",
+        "key": "heating.lounge.target",
+    }
+    first = (
+        _chat_sse_tool_call(_TOOL_CALL_ID, "memory_upsert", proposed)
+        if api_mode == API_MODE_CHAT_COMPLETIONS
+        else _responses_sse_tool_call(_TOOL_CALL_ID, "memory_upsert", proposed)
+    )
+    final = (
+        _chat_sse_text("The existing memory needs review.")
+        if api_mode == API_MODE_CHAT_COMPLETIONS
+        else _responses_sse_text("The existing memory needs review.")
+    )
+    wire = _install_wire(monkeypatch, agent, [first, final])
+    result = await _say(hass, agent, "Remember: change the lounge target to 21 C.")
+
+    assert _speech(result) == "The existing memory needs review."
+    assert len(wire.requests) == 2
+    request = wire.requests[0]["body"]
+    if api_mode == API_MODE_CHAT_COMPLETIONS:
+        schemas = {
+            item["function"]["name"]: item["function"]["parameters"]
+            for item in request["tools"]
+        }
+    else:
+        schemas = {item["name"]: item["parameters"] for item in request["tools"]}
+    assert "expected_revision" in schemas["memory_update"]["required"]
+    assert schemas["memory_delete"]["required"] == ["targets"]
+    assert schemas["memory_delete"]["properties"]["targets"]["items"]["required"] == [
+        "memory_id", "expected_revision"
+    ]
+    tool_round_trip = json.dumps(wire.requests[1]["body"], ensure_ascii=False)
+    assert "needs_resolution" in tool_round_trip
+    assert revision in tool_round_trip
+    assert original_id in tool_round_trip
+    assert "The lounge heating target is 19 C." in tool_round_trip
+
+    after = await agent._memory.async_list(_USER_ID)
+    assert len(after) == 1 and after[0] == original
+    assert memory_revision(after[0]) == revision
+
