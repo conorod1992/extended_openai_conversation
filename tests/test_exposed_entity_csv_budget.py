@@ -6,6 +6,8 @@ import csv
 from io import StringIO
 from types import SimpleNamespace
 
+import pytest
+
 from homeassistant.helpers import entity_registry as er
 
 from custom_components.extended_openai_conversation_responses import exposed_attributes
@@ -79,7 +81,6 @@ def test_grouped_default_uses_csv_writer_without_attributes(hass, monkeypatch) -
         "on",
         "Ceiling, primary",
     ]
-
 
 
 @pytest.mark.parametrize(
