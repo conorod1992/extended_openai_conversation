@@ -52,12 +52,52 @@ _LINE_END_PATTERN = re.compile(r"[ \t]+$", re.MULTILINE)
 # Keep negation, control words (on/off), identifiers and all CJK tokens salient.
 _SEARCH_FILLER_TERMS = frozenset(
     {
-        "a", "an", "and", "are", "as", "at", "be", "been", "by",
-        "did", "do", "does", "for", "from", "had", "has", "have",
-        "how", "i", "in", "is", "it", "me", "my", "of", "or",
-        "our", "that", "the", "their", "there", "these", "this",
-        "those", "to", "was", "were", "what", "when", "where",
-        "which", "who", "why", "with", "you", "your",
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "been",
+        "by",
+        "did",
+        "do",
+        "does",
+        "for",
+        "from",
+        "had",
+        "has",
+        "have",
+        "how",
+        "i",
+        "in",
+        "is",
+        "it",
+        "me",
+        "my",
+        "of",
+        "or",
+        "our",
+        "that",
+        "the",
+        "their",
+        "there",
+        "these",
+        "this",
+        "those",
+        "to",
+        "was",
+        "were",
+        "what",
+        "when",
+        "where",
+        "which",
+        "who",
+        "why",
+        "with",
+        "you",
+        "your",
     }
 )
 _SEARCH_FILLER_WEIGHT = 0.05
@@ -529,9 +569,10 @@ class KnowledgeLibrary:
             total_weight = sum(query_weights.values())
 
             def weighted_overlap(tokens: frozenset[str]) -> float:
-                return sum(
-                    query_weights[token] for token in query_tokens & tokens
-                ) / total_weight
+                return (
+                    sum(query_weights[token] for token in query_tokens & tokens)
+                    / total_weight
+                )
 
             candidates: set[tuple[str, int]] = set()
             for token in query_tokens:
