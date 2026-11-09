@@ -280,6 +280,49 @@ async def test_search_ranking_and_description_and_phrase_boost() -> None:
     )
 
 
+async def test_search_ranking_prioritizes_boiler_terms_over_question_filler() -> None:
+    """Incidental words in an unrelated title cannot outweigh matching content."""
+    library = await _library()
+    garage = await library.async_create(
+        "The Garage Door",
+        "The door is inside the garage",
+        "The garage door uses two sensors and has a remote.",
+    )
+    boiler = await library.async_create(
+        "Heating Manual",
+        "",
+        "Reset the boiler by pressing its power switch for three seconds.",
+    )
+
+    results = await library.async_search("how do I reset the boiler", limit=2)
+    assert [result.source_id for result in results] == [
+        boiler.source_id,
+        garage.source_id,
+    ]
+    assert results[0].score > results[1].score
+
+    # Stop-word-only searches retain the former scoring and do not disappear.
+    assert garage.source_id in {
+        result.source_id for result in await library.async_search("the")
+    }
+
+
+async def test_search_preserves_negation_and_action_word_relevance() -> None:
+    library = await _library()
+    positive = await library.async_create(
+        "Turn on the heating", "", "Enable the heating."
+    )
+    negative = await library.async_create(
+        "Do not turn on the heating", "", "Keep the heating switched off."
+    )
+    assert (await library.async_search("not turn on heating"))[0].source_id == (
+        negative.source_id
+    )
+    assert (await library.async_search("turn on heating"))[0].source_id == (
+        positive.source_id
+    )
+
+
 async def test_search_and_catalog_reuse_precomputed_lexical_features(
     monkeypatch,
 ) -> None:
