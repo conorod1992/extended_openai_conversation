@@ -734,6 +734,59 @@ def _partition_provider_tool_calls(
     return pending, loader, control
 
 
+def _is_post_terminal_chat_accounting_choice(
+    choice: Any,
+    terminal_reason: str | None,
+    terminal_native_reason: str | None,
+    *,
+    has_usage: bool,
+) -> bool:
+    """Admit only inert accounting metadata after a terminal Chat chunk.
+
+    OpenRouter repeats the normalized and native finish reasons with an empty
+    assistant delta. Unknown extra fields must not conceal late provider output.
+    """
+    extras = getattr(choice, "model_extra", None) or {}
+    if not isinstance(extras, Mapping) or set(extras) - {"native_finish_reason"}:
+        return False
+    native_reason = extras.get("native_finish_reason")
+    if native_reason is not None and (
+        not isinstance(native_reason, str)
+        or (
+            terminal_native_reason is not None
+            and native_reason != terminal_native_reason
+        )
+    ):
+        return False
+    delta = getattr(choice, "delta", None)
+    if delta is None:
+        return False
+    role = getattr(delta, "role", None)
+    # The newly accepted gateway-specific shape must actually carry usage;
+    # preserve the older, completely empty compatibility tail without it.
+    if (role == "assistant" or native_reason is not None) and not has_usage:
+        return False
+    return (
+        choice.finish_reason in (None, terminal_reason)
+        and getattr(choice, "index", 0) in (0, None)
+        and not getattr(choice, "logprobs", None)
+        and not getattr(delta, "model_extra", None)
+        and role in (None, "", "assistant")
+        and getattr(delta, "content", None) in (None, "")
+        and not any(
+            getattr(delta, field, None)
+            for field in (
+                "refusal",
+                "tool_calls",
+                "function_call",
+                "audio",
+                "reasoning",
+                "reasoning_content",
+            )
+        )
+    )
+
+
 class ExtendedOpenAIBaseLLMEntity(Entity):
     """Extended OpenAI base entity."""
 
@@ -1942,6 +1995,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         refusal_seen = False
         terminal_finish_seen = False
         terminal_finish_reason: str | None = None
+        terminal_native_finish_reason: str | None = None
         token_limit_reached = False
         event_count = 0
 
@@ -1968,28 +2022,11 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 # the terminal chunk, with an empty delta and repeated finish
                 # reason. The usage adapter has already recorded its counters.
                 # Never admit actual output or a contradictory terminal here.
-                if (
-                    len(chunk.choices) == 1
-                    and (tail := chunk.choices[0]).finish_reason
-                    in (None, terminal_finish_reason)
-                    and getattr(tail, "index", 0) in (0, None)
-                    and not getattr(tail, "logprobs", None)
-                    and not getattr(tail, "model_extra", None)
-                    and (tail_delta := tail.delta) is not None
-                    and not getattr(tail_delta, "model_extra", None)
-                    and not any(
-                        getattr(tail_delta, field, None)
-                        for field in (
-                            "content",
-                            "refusal",
-                            "tool_calls",
-                            "function_call",
-                            "role",
-                            "audio",
-                            "reasoning",
-                            "reasoning_content",
-                        )
-                    )
+                if len(chunk.choices) == 1 and _is_post_terminal_chat_accounting_choice(
+                    chunk.choices[0],
+                    terminal_finish_reason,
+                    terminal_native_finish_reason,
+                    has_usage=chunk.usage is not None,
                 ):
                     continue
                 await async_recover_trailing_usage(result, request_usage)
@@ -2103,6 +2140,14 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 )
                 yield {"tool_calls": tool_calls_list}
                 current_tool_calls.clear()
+            if finish_reason in {
+                "stop", "tool_calls", "function_call", "length", "content_filter"
+            }:
+                original_extra = getattr(choice, "model_extra", None)
+                if isinstance(original_extra, Mapping):
+                    original_native = original_extra.get("native_finish_reason")
+                    if isinstance(original_native, str):
+                        terminal_native_finish_reason = original_native
             if finish_reason in {"stop", "tool_calls", "function_call"}:
                 terminal_finish_seen = True
                 terminal_finish_reason = finish_reason
