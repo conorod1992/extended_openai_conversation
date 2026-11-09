@@ -415,9 +415,13 @@ class StreamingSpeechSanitizer:
                     held_whitespace = self._hold_preceding_whitespace(output)
                     break
 
-            if self.urls and char in "<(" and not (
-                self.markdown
-                and self._is_escaped(text, index, self._link_backslashes)
+            if (
+                self.urls
+                and char in "<("
+                and not (
+                    self.markdown
+                    and self._is_escaped(text, index, self._link_backslashes)
+                )
             ):
                 # A URL wrapped by angle brackets or parentheses should not
                 # leave empty delimiters in speech. Hold the opening delimiter
@@ -425,7 +429,11 @@ class StreamingSpeechSanitizer:
                 # arrives; already-emitted speech cannot be taken back.
                 remaining = text[index + 1 : index + 9].lower()
                 wrapper_prefix = next(
-                    (prefix for prefix in _URL_PREFIXES if remaining.startswith(prefix)),
+                    (
+                        prefix
+                        for prefix in _URL_PREFIXES
+                        if remaining.startswith(prefix)
+                    ),
                     None,
                 )
                 if (
@@ -524,9 +532,7 @@ class StreamingSpeechSanitizer:
                         self._emit(output, char)
                         index += 1
                         continue
-                    index = self._suppress(
-                        output, self._bare_url_end(text, index, end)
-                    )
+                    index = self._suppress(output, self._bare_url_end(text, index, end))
                     continue
 
             # Keep a whitespace-only tail unresolved until meaningful input
