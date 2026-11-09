@@ -182,6 +182,7 @@ download_skill:
   description: Download a Skill from this integration's GitHub repository. Normal release installs use the Git tag matching the installed integration version so Skill files do not silently move with the develop branch.
   fields:
     skill_name:
+      name: Skill name
       required: true
       example: crypto
       description: Name of the Skill to download, such as crypto, weather, or calendar.

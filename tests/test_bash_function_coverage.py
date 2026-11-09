@@ -550,5 +550,7 @@ def test_workspace_guard_allows_only_exact_posix_special_streams(tmp_path: Path)
     ):
         with pytest.raises(ValueError):
             function._guard_command(cmd, workspace, True)
-    with pytest.raises(ValueError, match="recursive rm"):
+    # Both the general defensive pattern and recursive-rm guard deny this.
+    # Do not pin which overlapping protection reports the error first.
+    with pytest.raises(ValueError, match="Command blocked by defensive policy"):
         function._guard_command("rm -rf /dev/null", workspace, True)

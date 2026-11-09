@@ -327,17 +327,20 @@ def _direct_memory_user_request(operation: str, selector: Any) -> bool:
     if not isinstance(utterance, str) or not 0 < len(utterance) <= 10_000:
         return False
     match = _MEMORY_DIRECT_COMMAND.search(utterance)
-    if match is None:
+    trailing_memory_command = match is None
+    if trailing_memory_command:
         match = _MEMORY_TRAILING_COMMAND.search(utterance)
     if match is None:
         return False
     verb = match.group("verb").lower()
     if verb not in _MEMORY_REQUEST_VERBS[operation]:
         return False
-    # "Change the thermostat" or "delete a file" are not memory commands.
-    # Only remember/forget unambiguously concern retained facts on their own.
+    # A trailing "Update your memory" already names its object inside the
+    # matched span. For initial commands, avoid treating "change a thermostat"
+    # or "delete a file" as memory authorization.
     if (
-        verb not in {"remember", "memorise", "memorize", "forget"}
+        not trailing_memory_command
+        and verb not in {"remember", "memorise", "memorize", "forget"}
         and _MEMORY_OBJECT_RE.search(utterance[match.end():]) is None
     ):
         return False

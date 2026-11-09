@@ -129,9 +129,9 @@ async def test_persistent_memory_dispatcher_routes_read_and_write_operations() -
         "Oscar is a Cavachon.",
         None,
         clear_fields=["subject"],
-        source="implicit",
         expected_revision=memory_revision(record),
         allow_explicit_edit=False,
+        model_origin=True,
     )
     entity._memory.async_delete.assert_awaited_once_with(
         "user-1", ["memory-1"],
