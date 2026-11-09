@@ -41,3 +41,4 @@ jobs:
           fi
           git commit -m "build: regenerate tracked frontend assets for Quiet Hours wording"
           git push origin HEAD:refs/heads/fix/lossless-editors-rule-rename
+# Re-run after the revised Quiet Hours copy fits the existing bundle budget.
