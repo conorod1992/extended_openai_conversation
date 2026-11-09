@@ -298,13 +298,25 @@ _HOUSEHOLD_MEMORY_REQUEST = re.compile(
     r"for\s+everyone|for\s+all\s+(?:of\s+us|users))\b",
     re.IGNORECASE,
 )
+_MEMORY_OBJECT_RE = re.compile(
+    r"\bmemor(?:y|ies)\b|\bwhat\s+(?:you|it)\s+remember\b", re.IGNORECASE
+)
 _MEMORY_REQUEST_VERBS = {
-    "add": frozenset({"remember", "memorise", "memorize", "save", "store", "add"}),
-    "update": frozenset({
-        "remember", "memorise", "memorize", "save", "store", "add",
-        "update", "change", "correct", "edit", "fix",
-    }),
-    "delete": frozenset({"forget", "delete", "remove", "erase"}),
+    "add": {"remember", "memorise", "memorize", "save", "store", "add"},
+    "update": {
+        "remember",
+        "memorise",
+        "memorize",
+        "save",
+        "store",
+        "add",
+        "update",
+        "change",
+        "correct",
+        "edit",
+        "fix",
+    },
+    "delete": {"forget", "delete", "remove", "erase"},
 }
 
 
@@ -317,17 +329,17 @@ def _direct_memory_user_request(operation: str, selector: Any) -> bool:
     match = _MEMORY_DIRECT_COMMAND.search(utterance)
     if match is None:
         match = _MEMORY_TRAILING_COMMAND.search(utterance)
-    if match is None or match.group("verb").lower() not in _MEMORY_REQUEST_VERBS[operation]:
+    if match is None:
+        return False
+    verb = match.group("verb").lower()
+    if verb not in _MEMORY_REQUEST_VERBS[operation]:
         return False
     # "Change the thermostat" or "delete a file" are not memory commands.
-    # Only remember/forget are unambiguously about retained facts on their own.
-    if match.group("verb").lower() not in {
-        "remember", "memorise", "memorize", "forget"
-    } and re.search(
-        r"\bmemor(?:y|ies)\b|\bwhat\s+(?:you|it)\s+remember\b",
-        utterance[match.end():],
-        re.IGNORECASE,
-    ) is None:
+    # Only remember/forget unambiguously concern retained facts on their own.
+    if (
+        verb not in {"remember", "memorise", "memorize", "forget"}
+        and _MEMORY_OBJECT_RE.search(utterance[match.end():]) is None
+    ):
         return False
     if selector == "household" and (
         turn.scope is None or turn.scope.scope_type != "shared"
@@ -2850,7 +2862,8 @@ class ExtendedOpenAIAgentEntity(
             # An origin label never authorizes Shared Explicit by itself.
             requested = _direct_memory_user_request("add", arguments.get("scope"))
             write_scope_id = self._current_write_memory_scope_id(
-                arguments.get("scope"), llm_context,
+                arguments.get("scope"),
+                llm_context,
                 source="explicit" if requested and source == "explicit" else "implicit",
             )
             metadata = {
@@ -2970,13 +2983,12 @@ class ExtendedOpenAIAgentEntity(
             # Explicit provenance can be corrected on a direct user request.
             # The model's source label does not grant this permission.
             requested = _direct_memory_user_request("update", arguments.get("scope"))
-            source = arguments.get(
-                "source",
-                "explicit" if requested else (
-                    "implicit" if automatic_memory_enabled(self.subentry.data)
-                    else "explicit"
-                ),
+            default_source = (
+                "explicit"
+                if requested or not automatic_memory_enabled(self.subentry.data)
+                else "implicit"
             )
+            source = arguments.get("source", default_source)
             if source not in ("explicit", "implicit"):
                 raise ValueError("source must be explicit or implicit")
             if source == "implicit" and not automatic_memory_enabled(
@@ -2984,7 +2996,8 @@ class ExtendedOpenAIAgentEntity(
             ):
                 raise ValueError("automatic memory creation is disabled")
             write_scope_id = self._current_write_memory_scope_id(
-                arguments.get("scope"), llm_context,
+                arguments.get("scope"),
+                llm_context,
                 source="explicit" if requested and source == "explicit" else "implicit",
             )
             memory = await self._memory.async_update(
@@ -3033,7 +3046,8 @@ class ExtendedOpenAIAgentEntity(
                 raise ValueError("legacy memory_ids cannot authorize model deletion")
             requested = _direct_memory_user_request("delete", arguments.get("scope"))
             write_scope_id = self._current_write_memory_scope_id(
-                arguments.get("scope"), llm_context,
+                arguments.get("scope"),
+                llm_context,
                 source="explicit" if requested else "implicit",
             )
             deleted = await self._memory.async_delete(

@@ -1049,7 +1049,9 @@ class PersistentMemory:
                 _clean_category(category) if category is not None else current.category
             )
             # Model-supplied origin cannot promote or demote existing records.
-            effective_source = current.source if model_origin else (source or current.source)
+            effective_source = (
+                current.source if model_origin else (source or current.source)
+            )
             new_key = (
                 None
                 if "key" in clear
@@ -1081,9 +1083,16 @@ class PersistentMemory:
             }
             _validate_privacy_fields(
                 "implicit" if model_origin else effective_source,
-                new_content, new_category, changes["subject"], new_key,
+                new_content,
+                new_category,
+                changes["subject"],
+                new_key,
             )
-            if not model_origin and current.source == "explicit" and source == "implicit":
+            if (
+                not model_origin
+                and current.source == "explicit"
+                and source == "implicit"
+            ):
                 if any(
                     value != getattr(current, field)
                     for field, value in changes.items()
