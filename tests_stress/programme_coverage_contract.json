@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "pytest_union_sha256": "6a9fe8ac2e93b728703e6ac0ce760409856f5844bfd1a4da451f7d15825b4581",
+  "pytest_union_sha256": "42b2c610efcc87b6146712c34acf631726a650e686ba45acf5359b976f18a8f7",
   "minimums": {
     "conversation_turns": 1,
     "process_soak_windows": 9,
