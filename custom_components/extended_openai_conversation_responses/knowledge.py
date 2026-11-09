@@ -1184,7 +1184,12 @@ def _search_tokens(value: str, exact: set[str] | None = None) -> set[str]:
         if not (token.isascii() and token.isalpha() and len(token) >= 4):
             continue
         # Avoid known technical and ambiguous collisions in the shared stemmer.
-        if token in {"http", "https", "news", "status"}:
+        if token in _SEARCH_FILLER_TERMS or token in {
+            "http",
+            "https",
+            "news",
+            "status",
+        }:
             continue
         stem = "schedule" if token in {"scheduled", "scheduling"} else _stem(token)
         if len(stem) >= 3:
