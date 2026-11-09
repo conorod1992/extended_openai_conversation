@@ -22,15 +22,15 @@ async def test_write_file_creates_nested_parents_and_atomically_overwrites(
 ) -> None:
     tool = WriteFileFunction()
     config = tool.validate_schema(
-        {"type": "write_file", "path": "notes/daily/today.md", "content": "First\\n"}
+        {"type": "write_file", "path": "notes/daily/today.md", "content": "First\n"}
     )
     target = tmp_path / DEFAULT_WORKING_DIRECTORY / "notes/daily/today.md"
     assert not target.parent.exists()
 
     result = await tool.execute(hass, config, {}, llm_context, exposed_entities)
     assert result["success"] is True
-    assert result["bytes_written"] == len("First\\n".encode())
-    assert target.read_text() == "First\\n"
+    assert result["bytes_written"] == len("First\n".encode())
+    assert target.read_text() == "First\n"
     assert not list(target.parent.glob(".*.tmp"))
 
     replacement = tool.validate_schema(
