@@ -43,7 +43,7 @@ from .exposed_attributes import (
     enrich_exposed_entities,
 )
 from .guest_mode import GuestCapabilityPolicy
-from .memory import MemoryRecord, memory_revision, automatic_memory_enabled
+from .memory import MemoryRecord, automatic_memory_enabled, memory_revision
 from .model_payload import (
     ARCHIVE_GUIDANCE,
     CONTINUATION_GUIDANCE,
