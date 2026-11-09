@@ -1875,7 +1875,9 @@ def _stem(token: str) -> str:
                 or not root.endswith(("ll", "ss", "ff", "zz", "ee"))
             )
         ):
-            root = root[:-1]
+            # The double consonant is evidence of a non-silent-e base:
+            # "hopping" is hop, not hope.
+            return root[:-1]
         return f"{root}e" if f"{root}e" in _SILENT_E_VERB_BASES else root
     if len(token) > 4 and token.endswith("ed") and not token.endswith("eed"):
         root = token[:-2]
@@ -1887,7 +1889,8 @@ def _stem(token: str) -> str:
                 or not root.endswith(("ll", "ss", "ff", "zz", "ee"))
             )
         ):
-            root = root[:-1]
+            # Likewise, "hopped" is hop; only "hoped" restores hope.
+            return root[:-1]
         return f"{root}e" if f"{root}e" in _SILENT_E_VERB_BASES else root
     if token in {"quizzes", "buses", "gases"}:
         return {"quizzes": "quiz", "buses": "bus", "gases": "gas"}[token]

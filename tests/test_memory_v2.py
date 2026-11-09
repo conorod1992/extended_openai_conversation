@@ -128,6 +128,29 @@ async def test_memory_real_search_recovers_past_and_plural_forms(
     assert any(row.memory_id == added["memory"]["memory_id"] for row in results)
 
 
+def test_memory_consonant_doubling_does_not_create_silent_e_word() -> None:
+    """A doubled consonant distinguishes hopping from hoping."""
+    from custom_components.extended_openai_conversation_responses.memory import _stem
+
+    assert _stem("hopped") == _stem("hopping") == _stem("hop") == "hop"
+    assert _stem("hoped") == _stem("hoping") == _stem("hope") == "hope"
+    assert _stem("hop") != _stem("hope")
+
+
+async def test_memory_lexical_search_keeps_hop_and_hope_separate() -> None:
+    memory = await _memory()
+    hopped = await memory.async_add(
+        "alice", "I hopped.", "personal", "explicit"
+    )
+    hoped = await memory.async_add(
+        "alice", "I hoped.", "personal", "explicit"
+    )
+    hop = await memory.async_search("alice", "hop")
+    hope = await memory.async_search("alice", "hope")
+    assert [row.memory_id for row in hop] == [hopped["memory"]["memory_id"]]
+    assert [row.memory_id for row in hope] == [hoped["memory"]["memory_id"]]
+
+
 async def test_memory_new_stems_retain_conservative_upsert_resolution() -> None:
     memory = await _memory()
     original = await memory.async_add(
