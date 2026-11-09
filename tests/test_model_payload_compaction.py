@@ -161,7 +161,9 @@ def test_compact_guidance_retains_memory_and_knowledge_safety_semantics() -> Non
         "household scope",
         "secrets or credentials",
         "Current user statements override stored facts",
-        "confirm before broad deletion",
+        "expected_revision",
+        "needs_resolution",
+        "not proof of equivalence",
     ):
         assert phrase in memory_guidance
 
