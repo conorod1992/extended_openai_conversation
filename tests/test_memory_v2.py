@@ -234,6 +234,22 @@ async def test_memory_new_stems_retain_conservative_upsert_resolution() -> None:
     assert len(await memory.async_list("alice")) == 1
 
 
+
+
+def test_memory_uses_exact_shared_stemmer_after_extraction() -> None:
+    """The refactor must not change the Memory stemmer independently of Archive."""
+    from custom_components.extended_openai_conversation_responses import memory
+    from custom_components.extended_openai_conversation_responses.retrieval_text import (
+        _stem as shared_stem,
+    )
+
+    assert memory._stem is shared_stem
+    assert shared_stem("controlled") == "control"
+    assert shared_stem("adding") == "add"
+    assert shared_stem("hopped") == "hop"
+    assert shared_stem("hoped") == "hope"
+
+
 async def test_memory_search_recovers_call_and_breed_families() -> None:
     memory = await _memory()
     call = await memory.async_add(

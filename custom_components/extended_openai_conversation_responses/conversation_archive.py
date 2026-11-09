@@ -31,6 +31,7 @@ from .persistence_hardening import (
     StorageRepairRequired,
     _async_settle_transactional_save,
 )
+from .retrieval_text import _stem as _shared_stem
 from .runtime_hardening import MAX_MODEL_TOOL_RESULT_CHARACTERS
 from .scope import ResolvedDataScope
 from .storage_namespaces import ARCHIVE_PREFIX as STORAGE_KEY_PREFIX
@@ -1992,13 +1993,16 @@ def _normalize(value: str) -> str:
 
 
 def _stem(token: str) -> str:
-    if len(token) > 4 and token.endswith("ies"):
-        return f"{token[:-3]}y"
-    if len(token) > 4 and token.endswith("ing"):
+    """Share Memory's conservative stemmer without dropping legacy short -ing hits.
+
+    Archive previously mapped five-character forms such as "going" to "go".
+    Retain those historical query matches; all longer regular inflections now
+    share Memory's corrected handling. Both ranking and excerpt location call
+    this same function.
+    """
+    if len(token) == 5 and token.endswith("ing"):
         return token[:-3]
-    if len(token) > 4 and token.endswith("s") and not token.endswith("ss"):
-        return token[:-1]
-    return token
+    return _shared_stem(token)
 
 
 def _tokens(value: str) -> set[str]:
