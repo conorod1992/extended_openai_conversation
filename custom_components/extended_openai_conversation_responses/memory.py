@@ -1825,11 +1825,44 @@ _COMMON_L_SPELLING_ALIASES = {
 }
 
 
+
+# Regular -e verbs need their silent e back after -ed and -ing. This is an
+# intentionally small, audited family: blindly appending e turns walked into
+# "walke" and creates false matches in retrieval and upsert candidate ranking.
+_SILENT_E_VERB_BASES = frozenset(
+    {
+        "bake",
+        "care",
+        "change",
+        "close",
+        "dance",
+        "face",
+        "hope",
+        "like",
+        "live",
+        "love",
+        "move",
+        "name",
+        "place",
+        "save",
+        "share",
+        "size",
+    }
+)
+
+# Plurals ending in -ies are normally y forms, but these retain their -ie.
+_IE_PLURAL_BASES = frozenset(
+    {"movie", "cookie", "brownie", "zombie", "smoothie", "selfie"}
+)
+
+
 def _stem(token: str) -> str:
     """Apply conservative deterministic English suffix normalization."""
     variant = token[:-1] if token.endswith("s") else token
     if canonical := _COMMON_L_SPELLING_ALIASES.get(variant):
         return canonical
+    if token.endswith("ies") and token[:-1] in _IE_PLURAL_BASES:
+        return token[:-1]
     if len(token) > 4 and token.endswith("ies"):
         return f"{token[:-3]}y"
     if len(token) > 5 and token.endswith("ing"):
@@ -1844,10 +1877,22 @@ def _stem(token: str) -> str:
             )
         ):
             root = root[:-1]
-        return root
+        return f"{root}e" if f"{root}e" in _SILENT_E_VERB_BASES else root
     if len(token) > 4 and token.endswith("ed") and not token.endswith("eed"):
-        return token[:-2]
-    if len(token) > 5 and token.endswith(("ches", "shes", "xes", "zes", "oes")):
+        root = token[:-2]
+        if (
+            len(root) > 2
+            and root[-1] == root[-2]
+            and (
+                root in _ING_AMBIGUOUS_DOUBLE_BASES
+                or not root.endswith(("ll", "ss", "ff", "zz", "ee"))
+            )
+        ):
+            root = root[:-1]
+        return f"{root}e" if f"{root}e" in _SILENT_E_VERB_BASES else root
+    if token in {"quizzes", "buses", "gases"}:
+        return {"quizzes": "quiz", "buses": "bus", "gases": "gas"}[token]
+    if len(token) > 5 and token.endswith(("sses", "ches", "shes", "xes", "zzes", "oes")):
         return token[:-2]
     if len(token) > 4 and token.endswith("s") and not token.endswith("ss"):
         return token[:-1]

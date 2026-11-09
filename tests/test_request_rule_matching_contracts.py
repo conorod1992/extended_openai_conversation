@@ -278,6 +278,63 @@ async def test_fuzzy_preserves_typo_matching_in_all_text_modes(
     assert direct.score == eligible.score >= 90
 
 
+@pytest.mark.parametrize(
+    ("phrase", "utterance", "match_type"),
+    [
+        ("good night", "goodnight", "equals"),
+        ("goodnight", "good night", "equals"),
+        ("turn on living room lights", "turn on livingroom lights please", "starts_with"),
+        ("turn on bedroom lights", "please turn on bed room lights", "ends_with"),
+        ("switch on the living room light", "please switch on livingroom light now", "contains"),
+        ("turn on the hall light", "turn on hall light", "equals"),
+        ("turn on the hall light", "turn on hall light please", "starts_with"),
+        ("turn on the hall light", "please turn on hall light", "ends_with"),
+        ("turn on the hall light", "please turn on hall light now", "contains"),
+        ("turn on the living room lights", "please turn on livingroom lights now", "contains"),
+    ],
+)
+async def test_fuzzy_handles_safe_compounds_and_article_omissions(
+    hass, phrase: str, utterance: str, match_type: str
+):
+    rules = await manager(
+        rule(
+            "safe",
+            phrase,
+            match_type,
+            matching={"fuzzy": True, "fuzzy_threshold": 90},
+        )
+    )
+    direct = rules.match(utterance)
+    eligible = await rules.async_match(hass, utterance)
+    assert direct is not None and direct.fuzzy
+    assert eligible is not None and eligible.fuzzy
+    assert direct.rule["id"] == eligible.rule["id"] == "safe"
+
+
+@pytest.mark.parametrize(
+    ("phrase", "utterance"),
+    [
+        ("now here", "nowhere"),
+        ("turn on the kitchen lights", "turn off the kitchen lights"),
+        ("turn on the living room lights", "turn off livingroom lights"),
+        ("lock the front door", "unlock the frontdoor"),
+        ("set bedroom temperature to 20", "set bed room temperature to 30"),
+    ],
+)
+async def test_fuzzy_compounds_never_remove_sensitive_differences(
+    hass, phrase: str, utterance: str
+):
+    rules = await manager(
+        rule(
+            "unsafe",
+            phrase,
+            matching={"fuzzy": True, "fuzzy_threshold": 70},
+        )
+    )
+    assert rules.match(utterance) is None
+    assert await rules.async_match(hass, utterance) is None
+
+
 async def test_fuzzy_preserves_optional_article_and_inherited_safety(hass):
     rules = await manager(
         rule("command", "turn on kitchen light"),

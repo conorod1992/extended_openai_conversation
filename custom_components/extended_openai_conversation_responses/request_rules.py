@@ -4326,6 +4326,52 @@ _FUZZY_EXACT_WORDS = frozenset(
 _FUZZY_OPTIONAL_ARTICLES = frozenset({"a", "an", "the"})
 
 
+# Only well-established, meaning-preserving speech compounds. Joining arbitrary
+# words (e.g. "now here" and "nowhere") would undo the polarity/target guard.
+_FUZZY_SAFE_COMPOUND_PAIRS = frozenset(
+    {
+        ("good", "night"),
+        ("good", "morning"),
+        ("good", "evening"),
+        ("living", "room"),
+        ("bed", "room"),
+        ("bath", "room"),
+        ("dining", "room"),
+        ("hall", "way"),
+        ("front", "door"),
+        ("back", "door"),
+    }
+)
+_FUZZY_SAFE_COMPOUND_WORDS = frozenset(
+    "".join(pair) for pair in _FUZZY_SAFE_COMPOUND_PAIRS
+)
+
+
+def _fuzzy_join_safe_compounds(words: list[str]) -> list[str]:
+    """Canonicalize only approved adjacent word pairs for fuzzy compatibility."""
+    joined: list[str] = []
+    index = 0
+    while index < len(words):
+        if (
+            index + 1 < len(words)
+            and (words[index], words[index + 1]) in _FUZZY_SAFE_COMPOUND_PAIRS
+        ):
+            joined.append(words[index] + words[index + 1])
+            index += 2
+        else:
+            joined.append(words[index])
+            index += 1
+    return joined
+
+
+def _fuzzy_has_safe_compound(words: list[str]) -> bool:
+    return any(word in _FUZZY_SAFE_COMPOUND_WORDS for word in words) or any(
+        (left, right) in _FUZZY_SAFE_COMPOUND_PAIRS
+        for left, right in zip(words, words[1:])
+    )
+
+
+
 def _fuzzy_word_is_typo(expected: str, observed: str) -> bool:
     """Permit small spelling errors, not unrelated or sensitive word changes."""
     if expected == observed:
@@ -4353,7 +4399,8 @@ def _fuzzy_word_is_typo(expected: str, observed: str) -> bool:
 
 def _fuzzy_words_compatible(phrase: str, candidate: str) -> bool:
     """Require aligned words; retain one harmless article insertion/deletion."""
-    expected, observed = phrase.split(), candidate.split()
+    expected = _fuzzy_join_safe_compounds(phrase.split())
+    observed = _fuzzy_join_safe_compounds(candidate.split())
     if abs(len(expected) - len(observed)) > 1:
         return False
     skip_expected = len(expected) > len(observed)
@@ -4401,15 +4448,33 @@ def _fuzzy_score(
         candidates = [text]
     else:
         words = text.split()
-        size = max(1, len(phrase.split()))
+        phrase_words = phrase.split()
+        size = max(1, len(phrase_words))
+        # Article omissions and safe compound joins change the word count.
+        # Bound alternative windows and charge each one against the existing
+        # MatchBudget; other fuzzy calls retain their original window size.
+        has_article = any(
+            word in _FUZZY_OPTIONAL_ARTICLES for word in (*phrase_words, *words)
+        )
+        has_compound = (
+            _fuzzy_has_safe_compound(phrase_words)
+            or _fuzzy_has_safe_compound(words)
+        )
+        slack = int(has_article) + (2 if has_compound else 0)
+        sizes = tuple(
+            length
+            for length in range(max(1, size - slack), size + slack + 1)
+            if length <= len(words)
+        )
         if match_type == "starts_with":
-            candidates = [" ".join(words[:size])]
+            candidates = (" ".join(words[:length]) for length in sizes)
         elif match_type == "ends_with":
-            candidates = [" ".join(words[-size:])]
+            candidates = (" ".join(words[-length:]) for length in sizes)
         else:
             candidates = (
-                " ".join(words[index : index + size])
-                for index in range(max(1, len(words) - size + 1))
+                " ".join(words[index : index + length])
+                for length in sizes
+                for index in range(len(words) - length + 1)
             )
     best = 0.0
     seen: set[str] = set()

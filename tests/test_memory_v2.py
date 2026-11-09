@@ -84,6 +84,63 @@ def test_memory_stemmer_preserves_real_word_endings(word, other, stem) -> None:
     assert _stem(word) == _stem(other) == stem
 
 
+@pytest.mark.parametrize(
+    ("base", "inflected"),
+    [
+        ("like", "liked"), ("like", "liking"), ("love", "loved"),
+        ("live", "lived"), ("move", "moved"), ("name", "named"),
+        ("change", "changed"), ("change", "changing"),
+        ("stop", "stopped"), ("plan", "planned"),
+        ("glass", "glasses"), ("class", "classes"),
+        ("movie", "movies"), ("cookie", "cookies"),
+        ("brownie", "brownies"), ("size", "sizes"), ("shoe", "shoes"),
+        ("pass", "passed"), ("dress", "dressed"), ("roll", "rolled"),
+    ],
+)
+def test_memory_regains_common_past_and_plural_word_families(
+    base: str, inflected: str
+) -> None:
+    from custom_components.extended_openai_conversation_responses.memory import _stem
+
+    assert _stem(base) == _stem(inflected)
+
+
+@pytest.mark.parametrize(
+    ("stored", "query"),
+    [
+        ("I liked coffee.", "likes"),
+        ("I loved coffee.", "love"),
+        ("I have moved.", "move"),
+        ("I changed my name.", "change"),
+        ("My bicycle stopped.", "stop"),
+        ("We planned a trip.", "plan"),
+        ("My glasses broke.", "glass"),
+        ("My favourite movies are documentaries.", "movie"),
+        ("I bought some cookies.", "cookie"),
+    ],
+)
+async def test_memory_real_search_recovers_past_and_plural_forms(
+    stored: str, query: str
+) -> None:
+    memory = await _memory()
+    added = await memory.async_add("alice", stored, "personal", "explicit")
+    results = await memory.async_search("alice", query)
+    assert any(row.memory_id == added["memory"]["memory_id"] for row in results)
+
+
+async def test_memory_new_stems_retain_conservative_upsert_resolution() -> None:
+    memory = await _memory()
+    original = await memory.async_add(
+        "alice", "I liked coffee.", "preferences", "explicit"
+    )
+    resolution = await memory.async_upsert(
+        "alice", "I like coffee.", "preferences", "explicit"
+    )
+    assert resolution["status"] == "needs_resolution"
+    assert resolution["candidate"]["memory_id"] == original["memory"]["memory_id"]
+    assert len(await memory.async_list("alice")) == 1
+
+
 async def test_memory_search_recovers_call_and_breed_families() -> None:
     memory = await _memory()
     call = await memory.async_add(
