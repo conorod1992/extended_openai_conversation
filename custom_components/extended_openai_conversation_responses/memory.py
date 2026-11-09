@@ -1910,7 +1910,7 @@ def memory_tools() -> list[dict[str, Any]]:
                         "source": {
                             "type": "string",
                             "enum": ["explicit", "implicit"],
-                            "description": "Legacy label; ignored for model edits, provenance is preserved.",
+                            "description": "Requested origin; proactive updates require Automatic mode. This label cannot elevate privileges or change provenance.",
                         },
                         "content": {"type": "string"},
                         "category": {"type": "string"},

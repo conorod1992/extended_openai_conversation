@@ -164,6 +164,7 @@ def test_compact_guidance_retains_memory_and_knowledge_safety_semantics() -> Non
         "expected_revision",
         "needs_resolution",
         "not proof of equivalence",
+        "Confirm before broad deletion",
     ):
         assert phrase in memory_guidance
 

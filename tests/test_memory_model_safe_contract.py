@@ -195,6 +195,63 @@ async def test_model_update_requires_revision_and_preserves_provenance():
     assert (await memory.async_list("alice"))[0].content == "The air filter was cleaned."
 
 
+async def test_manual_model_update_rejects_proactive_changes_without_mutating_state():
+    memory, storage = await store()
+    await memory.async_add(
+        "alice", "The kitchen target is 19 C.", "heating", "implicit"
+    )
+    original = (await memory.async_list("alice"))[0]
+    before, saves = deepcopy(storage.data), storage.saves
+
+    with pytest.raises(ValueError, match="automatic memory creation is disabled"):
+        await model_call(
+            entity(memory, automatic=False),
+            "update",
+            memory_id=original.memory_id,
+            expected_revision=memory_revision(original),
+            content="The kitchen target is 21 C.",
+            source="implicit",
+        )
+
+    assert await memory.async_list("alice") == [original]
+    assert storage.data == before
+    assert storage.saves == saves
+
+
+@pytest.mark.parametrize(
+    ("automatic", "source_arguments"),
+    [(False, {"source": "explicit"}), (False, {}), (True, {"source": "implicit"})],
+    ids=["manual-requested", "manual-legacy-default", "automatic-proactive"],
+)
+async def test_allowed_model_updates_preserve_inferred_provenance(
+    automatic, source_arguments
+):
+    memory, storage = await store()
+    await memory.async_add(
+        "alice", "The kitchen target is 19 C.", "heating", "implicit"
+    )
+    original = (await memory.async_list("alice"))[0]
+    saves = storage.saves
+
+    result = await model_call(
+        entity(memory, automatic=automatic),
+        "update",
+        memory_id=original.memory_id,
+        expected_revision=memory_revision(original),
+        content="The kitchen target is 21 C.",
+        **source_arguments,
+    )
+
+    updated = (await memory.async_list("alice"))[0]
+    assert result["status"] == "updated"
+    assert updated.memory_id == original.memory_id
+    assert updated.content == "The kitchen target is 21 C."
+    assert updated.source == result["memory"]["source"] == "implicit"
+    assert result["memory"]["revision"] == memory_revision(updated)
+    assert memory_revision(updated) != memory_revision(original)
+    assert storage.saves == saves + 1
+
+
 async def test_model_cannot_edit_or_delete_explicit_memory_even_with_fresh_revision():
     memory, storage = await store()
     created = await memory.async_add(

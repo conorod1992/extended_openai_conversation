@@ -2905,8 +2905,20 @@ class ExtendedOpenAIAgentEntity(
                 raise ValueError("memory_id and at least one valid update are required")
             # Keep legacy source fields in the schema but never treat a model
             # assertion of "explicit" as permission to elevate provenance.
-            if arguments.get("source", "implicit") not in ("explicit", "implicit"):
+            # A declared proactive update must still respect Manual mode. Keep
+            # omitted-source manual calls compatible with user-requested edits.
+            source = arguments.get(
+                "source",
+                "implicit"
+                if automatic_memory_enabled(self.subentry.data)
+                else "explicit",
+            )
+            if source not in ("explicit", "implicit"):
                 raise ValueError("source must be explicit or implicit")
+            if source == "implicit" and not automatic_memory_enabled(
+                self.subentry.data
+            ):
+                raise ValueError("automatic memory creation is disabled")
             write_scope_id = self._current_write_memory_scope_id(
                 arguments.get("scope"), llm_context, source="implicit"
             )

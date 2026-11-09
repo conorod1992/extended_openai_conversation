@@ -28,9 +28,9 @@ memory_upsert proposes, never replaces. needs_resolution means NO write; never
 change keys to evade conflicts. memory_update needs exact memory_id and
 expected_revision from a scoped read; model edits only inferred records.
 memory_delete needs exact ID/revision pairs. Explicit records need authenticated
-Management. Model source=explicit never grants consent.
+Management. source=explicit never grants consent. Confirm before broad deletion.
 
-Use source=implicit proactively only in Automatic mode; Manual mode writes only
+Use source=implicit only in Automatic mode; Manual writes only
 on request. Separate personal and household scope; never expose others'
 private facts. Do not store secrets or credentials, financial accounts,
 sensitive or transient facts. Never claim rejected writes succeeded.
@@ -123,7 +123,8 @@ _TOOL_DESCRIPTIONS = {
     ),
     "memory_delete": (
         "Delete only specifically identified inferred records using their exact "
-        "IDs and fresh revisions. Explicit records require authenticated Management."
+        "IDs and fresh revisions. Confirm before broad deletion. Explicit records "
+        "require authenticated Management."
     ),
     "temporary_memory_add": "Silently store a short-lived fact.",
     "temporary_memory_update": "Silently update an active temporary memory.",
