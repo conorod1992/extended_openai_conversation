@@ -9,8 +9,8 @@ from contextvars import ContextVar
 from dataclasses import replace
 from datetime import datetime, timedelta
 import logging
-import re
 from pathlib import Path
+import re
 import time
 from types import SimpleNamespace
 from typing import Any, Literal, cast
