@@ -258,6 +258,7 @@ def model_memory_as_dict(
             memory,
             include_scope=include_scope,
             personal_scope_id=personal_scope_id,
+            include_revision=True,
         )
     )
 
