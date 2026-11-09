@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "description": "Synthetic human-authored semantic expectations; not execution authority or model-generated gold labels",
+  "description": "Synthetic draft semantic expectations for independent adjudication; not execution authority or validated ground truth",
   "cases": [
     {
       "id": "sem-001",
