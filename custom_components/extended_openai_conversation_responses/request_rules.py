@@ -4124,6 +4124,27 @@ def _compile_sentence_pattern(pattern: str) -> CompiledPhrase:
     return CompiledPhrase(pattern, sentence_pattern=sentence_pattern)
 
 
+# Plurals of common -us nouns are ambiguous with -use + s words.
+# Treat only verified -us roots specially; otherwise keep the conservative
+# -se + s fallback used by house/houses and excuse/excuses.
+_US_ES_PLURAL_ROOTS = frozenset(
+    {
+        "bonus",
+        "campus",
+        "cactus",
+        "circus",
+        "focus",
+        "genius",
+        "nexus",
+        "octopus",
+        "status",
+        "syllabus",
+        "thesaurus",
+        "virus",
+    }
+)
+
+
 def _singularize(token: str) -> str:
     if (
         token in {"news", "series", "species"}
@@ -4150,6 +4171,8 @@ def _singularize(token: str) -> str:
     if token.endswith(("sses", "ches", "shes", "xes", "zzes")):
         return token[:-2]
     if token in {"buses", "gases"}:
+        return token[:-2]
+    if token.endswith("es") and token[:-2] in _US_ES_PLURAL_ROOTS:
         return token[:-2]
     if token.endswith("s"):
         return token[:-1]
