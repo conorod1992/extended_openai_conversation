@@ -295,7 +295,7 @@ def test_model_schemas_require_atomic_target_revisions_and_keep_legacy_add_hidde
                 for entry in prepare_model_function_tools(memory_tools())}
     assert "memory_add" not in rendered
     assert rendered["memory_delete"]["parameters"]["required"] == ["targets"]
-    assert "revision" in rendered["memory_update"]["parameters"]["properties"]
+    assert "expected_revision" in rendered["memory_update"]["parameters"]["properties"]
 
 
 async def test_legacy_management_deletion_is_still_supported():
