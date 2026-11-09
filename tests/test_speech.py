@@ -1216,3 +1216,114 @@ def test_completed_speech_many_unclosed_parentheses_do_not_block_later_text() ->
     result = process_speech_text(source, _config())
     assert result.startswith("Start [broken](")
     assert result.endswith("\nHeading\nReady.")
+
+
+async def test_local_rule_speech_uses_completed_cleanup_without_changing_history(hass):
+    from unittest.mock import AsyncMock, MagicMock
+    from homeassistant.components import intent
+
+    original = "**Done** [source](https://example.com)"
+    response = intent.IntentResponse(language="en")
+    response.async_set_speech(original)
+    continuity = SimpleNamespace(async_record_success=AsyncMock())
+    agent = SimpleNamespace(
+        _usage=None,
+        _continuity=continuity,
+        _async_archive_turn=AsyncMock(),
+        _local_rule_result=MagicMock(return_value=SimpleNamespace(response=response)),
+        subentry=SimpleNamespace(data=_config()),
+        hass=hass,
+    )
+    chat_log = SimpleNamespace(content=[original], extra_system_prompt=None)
+    result = await ExtendedOpenAIAgentEntity._async_complete_local_rule(
+        agent, SimpleNamespace(), chat_log, original,
+        None, "continuity", "claim", None,
+    )
+    assert result.response.speech["plain"]["speech"] == "Done"
+    assert chat_log.content == [original]
+    continuity.async_record_success.assert_awaited_once()
+
+
+async def test_local_rule_speech_uses_async_regex_and_keeps_action_success(hass):
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from homeassistant.components import intent
+
+    original = "HA is ready"
+    response = intent.IntentResponse(language="en")
+    response.async_set_speech(original)
+    agent = SimpleNamespace(
+        _usage=None,
+        _continuity=SimpleNamespace(async_record_success=AsyncMock()),
+        _async_archive_turn=AsyncMock(),
+        _local_rule_result=MagicMock(return_value=SimpleNamespace(response=response)),
+        subentry=SimpleNamespace(data=_config(speech_regex_replacements=[
+            {"pattern": r"\\bHA\\b", "replacement": "Home Assistant"}
+        ])),
+        hass=hass,
+    )
+    with patch(
+        "custom_components.extended_openai_conversation_responses.conversation.async_process_speech_text",
+        new_callable=AsyncMock,
+        return_value="Home Assistant is ready",
+    ) as cleanup:
+        result = await ExtendedOpenAIAgentEntity._async_complete_local_rule(
+            agent, SimpleNamespace(),
+            SimpleNamespace(content=[original], extra_system_prompt=None),
+            original, None, "continuity", "claim", None,
+        )
+    assert result.response.speech["plain"]["speech"] == "Home Assistant is ready"
+    cleanup.assert_awaited_once_with(hass, original, agent.subentry.data)
+
+
+async def test_local_rule_speech_failure_does_not_turn_executed_action_into_failure(hass):
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from homeassistant.components import intent
+
+    original = "HA ready"
+    response = intent.IntentResponse(language="en")
+    response.async_set_speech(original)
+    agent = SimpleNamespace(
+        _usage=None,
+        _continuity=SimpleNamespace(async_record_success=AsyncMock()),
+        _async_archive_turn=AsyncMock(),
+        _local_rule_result=MagicMock(return_value=SimpleNamespace(response=response)),
+        subentry=SimpleNamespace(data=_config(speech_regex_replacements=[
+            {"pattern": "HA", "replacement": "Home Assistant"}
+        ])),
+        hass=hass,
+    )
+    with patch(
+        "custom_components.extended_openai_conversation_responses.conversation.async_process_speech_text",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("worker failure"),
+    ):
+        result = await ExtendedOpenAIAgentEntity._async_complete_local_rule(
+            agent, SimpleNamespace(),
+            SimpleNamespace(content=[original], extra_system_prompt=None),
+            original, None, "continuity", "claim", None,
+        )
+    assert result.response.speech["plain"]["speech"] == original
+    agent._continuity.async_record_success.assert_awaited_once()
+
+
+async def test_local_rule_speech_disabled_preserves_original(hass):
+    from unittest.mock import AsyncMock, MagicMock
+    from homeassistant.components import intent
+
+    original = "**HA** https://example.com"
+    response = intent.IntentResponse(language="en")
+    response.async_set_speech(original)
+    agent = SimpleNamespace(
+        _usage=None,
+        _continuity=SimpleNamespace(async_record_success=AsyncMock()),
+        _async_archive_turn=AsyncMock(),
+        _local_rule_result=MagicMock(return_value=SimpleNamespace(response=response)),
+        subentry=SimpleNamespace(data=_config(speech_processing_enabled=False)),
+        hass=hass,
+    )
+    result = await ExtendedOpenAIAgentEntity._async_complete_local_rule(
+        agent, SimpleNamespace(),
+        SimpleNamespace(content=[original], extra_system_prompt=None),
+        original, None, "continuity", "claim", None,
+    )
+    assert result.response.speech["plain"]["speech"] == original

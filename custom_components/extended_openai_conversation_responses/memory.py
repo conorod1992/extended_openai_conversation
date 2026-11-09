@@ -2176,7 +2176,9 @@ def _subject_identity(value: str | None) -> str:
 @lru_cache(maxsize=20_000)
 def _normalize(value: str) -> str:
     return " ".join(
-        _TOKEN_PATTERN.findall(unicodedata.normalize("NFC", value).casefold())
+        _TOKEN_PATTERN.findall(
+            unicodedata.normalize("NFC", value).casefold().replace("\u2019", "'")
+        )
     )
 
 

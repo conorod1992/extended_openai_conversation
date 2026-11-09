@@ -1051,3 +1051,14 @@ async def test_memory_spelling_repairs_leave_unrelated_upserts_distinct(
     assert len(await memory.async_list("alice")) == 2
     assert outcome["memory"]["memory_id"] != original["memory"]["memory_id"]
 
+
+
+def test_memory_phrase_normalization_equates_straight_and_curly_apostrophes():
+    from custom_components.extended_openai_conversation_responses.memory import (
+        _normalize,
+    )
+
+    assert _normalize("What's the WiFi password") == _normalize(
+        "What’s the WiFi password"
+    )
+    assert _normalize("don't") == _normalize("don’t")

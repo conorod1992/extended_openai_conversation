@@ -1127,3 +1127,14 @@ async def test_knowledge_canonical_unicode_scores_edits_and_reconstruction(form)
     assert await fresh.async_search("creme brulee") == []
     await fresh.async_update(source.source_id, content=unicodedata.normalize(form, "Pâtisserie menu"))
     assert [item.source_id for item in await fresh.async_search(unicodedata.normalize("NFD", "pâtisserie"))] == [source.source_id]
+
+
+def test_phrase_normalization_equates_straight_and_curly_apostrophes():
+    from custom_components.extended_openai_conversation_responses.knowledge import (
+        _normalize,
+    )
+
+    assert _normalize("What's the WiFi password") == _normalize(
+        "What’s the WiFi password"
+    )
+    assert _normalize("can't") == _normalize("can’t")

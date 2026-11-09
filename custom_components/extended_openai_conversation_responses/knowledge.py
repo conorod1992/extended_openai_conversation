@@ -1166,7 +1166,9 @@ def _tokens(value: str) -> set[str]:
 
 def _normalize(value: str) -> str:
     return " ".join(
-        _TOKEN_PATTERN.findall(unicodedata.normalize("NFC", value).casefold())
+        _TOKEN_PATTERN.findall(
+            unicodedata.normalize("NFC", value).casefold().replace("\u2019", "'")
+        )
     )
 
 

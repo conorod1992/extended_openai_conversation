@@ -1650,6 +1650,23 @@ class ExtendedOpenAIAgentEntity(
                 chat_log.content,
                 extra_system_prompt=chat_log.extra_system_prompt,
             )
+            # Preserve the original reply in ChatLog, Archive and continuity.
+            # A local action has already executed: speech cleanup must not
+            # turn that committed action into a reported failure or a retry.
+            try:
+                speech_config = self.subentry.data
+                if needs_async_speech_cleanup(response, speech_config):
+                    spoken = await async_process_speech_text(
+                        self.hass, response, speech_config
+                    )
+                else:
+                    spoken = process_speech_text(response, speech_config)
+                result.response.async_set_speech(spoken)
+            except Exception as err:
+                _LOGGER.warning(
+                    "Request Rule spoken-text cleanup failed; preserving original reply (%s)",
+                    type(err).__name__,
+                )
         return result
 
     async def _async_execute_request_rule_function(

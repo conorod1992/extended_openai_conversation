@@ -653,6 +653,11 @@ class ScrapeFunction(Function):
         )
         await coordinator.async_refresh()
         if coordinator.data is None:
+            # HA's coordinator retains the safe HTTP status, even though its
+            # refresh API absorbs the original exception. Never forward an
+            # arbitrary coordinator exception: it may contain a private URL.
+            if isinstance(coordinator.last_exception, SanitizedRequestError):
+                raise coordinator.last_exception
             raise HomeAssistantError("Remote scrape response is unavailable")
 
         new_arguments = dict(arguments)
