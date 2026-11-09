@@ -755,7 +755,7 @@ async def test_chat_completions_malformed_arguments_are_retained_when_enabled(ha
     assert state.pop_malformed(tool_input.id) is not None
 
 
-@pytest.mark.parametrize("arguments", ["", "  \\n\\t"])
+@pytest.mark.parametrize("arguments", ["", "  \n\t"])
 @pytest.mark.parametrize("api_mode", ["chat", "responses"])
 async def test_provider_blank_arguments_are_empty_objects_with_recovery_off(
     hass, arguments: str, api_mode: str
