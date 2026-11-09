@@ -734,6 +734,17 @@ def _partition_provider_tool_calls(
     return pending, loader, control
 
 
+def _parse_provider_tool_arguments(arguments: str) -> Any:
+    """Normalize provider-blank calls; execution still validates the tool schema.
+
+    Some OpenAI-compatible servers emit an empty string for zero-parameter
+    tools. Leave nonblank malformed JSON to the existing opt-in recovery path.
+    """
+    if isinstance(arguments, str) and not arguments.strip():
+        return {}
+    return json.loads(arguments)
+
+
 def _is_post_terminal_chat_accounting_choice(
     choice: Any,
     terminal_reason: str | None,
@@ -1975,17 +1986,6 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 *attachments,
             ]
         return total_bytes
-
-def _parse_provider_tool_arguments(arguments: str) -> Any:
-    """Normalize provider-blank calls; execution still validates the tool schema.
-
-    Some OpenAI-compatible servers emit an empty string for zero-parameter
-    tools. Leave nonblank malformed JSON to the existing opt-in recovery path.
-    """
-    if isinstance(arguments, str) and not arguments.strip():
-        return {}
-    return json.loads(arguments)
-
 
     async def _transform_chat_stream(
         self,
