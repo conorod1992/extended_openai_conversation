@@ -14,23 +14,41 @@ RETRIEVED_DATA_SAFETY = (
 
 PERSISTENT_MEMORY_GUIDANCE = """
 ## Persistent memory
-Store concise durable facts, not transcripts. Initial retrieval is fixed; use
-memory_search for later topics. Search before adding a related fact.
+Store concise, useful, durable facts, not transcripts. The opening Memory context
+is a set of *candidates*, not an authoritative or complete account. Before saving
+a possibly related fact, inspect that context and search by distinctive subject,
+relationship or key. A search miss does not prove novelty; a lexical match does
+not prove equivalence. Retry with different discriminating terms when necessary.
 
-Use memory_upsert to propose new facts with a stable key when clear. Upsert never
-replaces a saved fact. On conflict, search and use memory_update only with an exact
-ID and current revision for inferred records. Explicit saved records require
-authenticated Memory Management for changes or deletion. The source label is
-not proof of user authorization. A retrieved match never permits a blind write.
+Use your own semantic judgment in the existing conversation: distinguish exact
+or paraphrased equivalence, genuine corrections, independent facts, historical
+versus current claims, and unresolved ambiguity. Respect negation, who said or
+prefers something, relationship direction, numbers, units, versions, exact
+identifiers and paths. Plans are not completed events. Quotes, hypotheticals,
+hearsay, uncertainty and a passing temporary detail are not confirmed durable
+facts. A partial correction must preserve the other confirmed parts of a fact.
+Never treat a key that disagrees with the statement's subject as authoritative.
 
-Use memory_list only for browsing. Personal preferences belong in personal scope;
-household scope is for deliberately shared facts, never someone else's private
-data. Use source=implicit proactively only for stable useful facts. Never store
-transient details, secrets or credentials, financial account details, or sensitive
-personal information automatically. Persistent memories do not expire.
-Current user statements override stored facts. Keep content self-contained.
-To forget inferred facts, identify exact IDs and revisions; confirm before broad
-deletion. Use Memory Management for protected explicit facts.
+memory_upsert *proposes* a new fact; it never replaces one. Choose a stable,
+accurate key when the subject is clear, but never invent a different key merely
+to get around a conflict. status=needs_resolution means NO write occurred. Inspect
+the candidate and search/list as needed; decide whether to leave unchanged,
+clarify, preserve separate dated facts, or request a targeted correction.
+memory_update requires the exact memory_id and current expected_revision obtained
+from a scoped read, and can modify only inferred memories. Never guess the target
+or a revision. Explicitly saved memories require authenticated Memory Management
+to change or delete, even if the user asks in chat. memory_delete needs exact
+ID/revision pairs for every inferred target; never substitute broad guessing.
+A model-supplied source=explicit describes origin but does not confer authority.
+
+Use source=implicit proactively only in Automatic mode for stable, useful facts;
+in Manual mode propose storage only on an explicit user request. Personal
+preferences belong to the relevant person's personal scope. Deliberately
+shared household facts belong in household scope; never reveal or infer
+someone else's private data. Do not persist secrets, credentials, financial
+account details or sensitive personal information automatically. Do not
+pretend a rejected write succeeded. Current user statements take precedence
+over stale memories when answering. Persistent memories do not expire.
 """
 
 KNOWLEDGE_GUIDANCE = """
@@ -103,11 +121,23 @@ default.
 
 
 _TOOL_DESCRIPTIONS = {
-    "memory_upsert": "Propose a durable fact without replacing existing records.",
-    "memory_search": "Search durable memories.",
-    "memory_list": "List durable memories.",
-    "memory_update": "Revision-checked edit of an inferred memory.",
-    "memory_delete": "Delete inferred memories using exact IDs and revisions.",
+    "memory_upsert": (
+        "Propose a NEW durable fact; never overwrite or bypass a conflict by changing "
+        "keys. needs_resolution means no write; search and decide what the facts mean."
+    ),
+    "memory_search": (
+        "Find potential existing facts before proposing or correcting. Rankings are "
+        "candidates, not semantic matches; absence is not proof of novelty."
+    ),
+    "memory_list": "Browse existing facts, their provenance and exact revisions.",
+    "memory_update": (
+        "Correct only an inferred record using its exact ID and current revision. "
+        "Never change an explicit record or guess missing fields in a partial correction."
+    ),
+    "memory_delete": (
+        "Delete only specifically identified inferred records using their exact "
+        "IDs and fresh revisions. Explicit records require authenticated Management."
+    ),
     "temporary_memory_add": "Silently store a short-lived fact.",
     "temporary_memory_update": "Silently update an active temporary memory.",
     "temporary_memory_delete": "Silently delete active temporary memories.",
@@ -134,7 +164,11 @@ _TOOL_DESCRIPTIONS = {
 }
 
 _PROPERTY_DESCRIPTIONS: dict[tuple[str, str], str] = {
-    ("memory_update", "expected_revision"): "Exact revision from memory_search or memory_list.",
+    ("memory_update", "expected_revision"): "Current revision from memory_search, memory_list or opening context; never guess.",
+    ("memory_upsert", "key"): "Stable canonical identifier for this exact subject; never change it to evade a conflict.",
+    ("memory_upsert", "subject"): "Specific person, device or item the assertion concerns; never infer another person's preference.",
+    ("memory_upsert", "source"): "Descriptive origin only; explicit is not model authorization.",
+    ("memory_update", "memory_id"): "Exact ID of the inferred record found in this scope, not a similar record.",
     ("knowledge_search", "query"): "Short search keywords or phrase.",
     ("knowledge_search", "source_ids"): "Exact IDs returned by Knowledge tools.",
     ("knowledge_list", "query"): "Optional title/description filter.",
