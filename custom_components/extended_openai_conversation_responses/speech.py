@@ -43,8 +43,8 @@ _NUMERIC_EMPHASIS_COMPLETE = re.compile(r"[+-]?\d+(?:\.\d+)?\*\*(?=$|[\s.,;:!?])
 
 # Suppress reference-only links but speak meaningful Markdown labels.
 _CITATION_LINK_LABEL = re.compile(
-    r"(?:\\d+|sources?|references?|citations?|"
-    r"(?:www\\.)?[a-z0-9][a-z0-9.-]*\\.[a-z]{2,}(?:/[^\\s]*)?)",
+    r"(?:\d+|sources?|references?|citations?|"
+    r"(?:www\.)?[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:/[^\s]*)?)",
     re.IGNORECASE,
 )
 
