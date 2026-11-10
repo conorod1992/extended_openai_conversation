@@ -370,7 +370,11 @@ class StreamingSpeechSanitizer:
     def _emit_link_label(self, output: list[str], label: str) -> bool:
         """Keep useful link labels; citation-like labels do not add spoken prose."""
         label = label.strip()
-        if not label or _CITATION_LINK_LABEL.fullmatch(label):
+        if (
+            not label
+            or label.casefold().startswith(("http://", "https://", "www."))
+            or _CITATION_LINK_LABEL.fullmatch(label)
+        ):
             return False
         self._emit(output, label)
         return True
@@ -804,9 +808,7 @@ class StreamingSpeechSanitizer:
                     break
                 if action == "strip":
                     prefix = self._format_buffer[index:].lstrip(" \t")
-                    self._line_is_list = bool(
-                        prefix and prefix[0] in "-+*0123456789"
-                    )
+                    self._line_is_list = bool(prefix and prefix[0] in "-+*0123456789")
                     index += count
                     self._line_start = False
                     continue
