@@ -172,8 +172,8 @@ def test_provider_optional_integration_tools_declare_non_strict_on_both_apis() -
         for name in specs:
             if name == "set_continue_conversation":
                 assert specs[name]["strict"] is True
-            elif name == "load_function_groups":
-                # An all-required loader schema keeps the previous API behaviour.
+            elif name == "load_function_groups" or api_mode == API_MODE_CHAT_COMPLETIONS:
+                # The loader and non-Responses API retain their previous contracts.
                 assert "strict" not in specs[name]
             else:
                 assert specs[name]["strict"] is False, (api_mode, name)
