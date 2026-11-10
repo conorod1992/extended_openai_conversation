@@ -121,12 +121,12 @@ def test_speech_links_preserve_prose_not_citations_across_provider_splits(
     [
         ("7. Juli ist ein Dienstag.", "7. Juli ist ein Dienstag."),
         ("1. Mai ist ein Feiertag.", "1. Mai ist ein Feiertag."),
-        ("The total is\\n42. That's all.", "The total is\\n42. That's all."),
+        ("The total is\n42. That's all.", "The total is\n42. That's all."),
         ("- 3 degrees tonight", "- 3 degrees tonight"),
         ("- 30 degrees tonight", "- 30 degrees tonight"),
-        ("## Report\\n- **First** item\\n2. Second item", "Report\\nFirst item\\nSecond item"),
-        ("1. First item\\n2. Second item", "1. First item\\n2. Second item"),
-        ("- **First** item\\n\\n42. Total", "First item\\n42. Total"),
+        ("## Report\n- **First** item\n2. Second item", "Report\nFirst item\nSecond item"),
+        ("1. First item\n2. Second item", "1. First item\n2. Second item"),
+        ("- **First** item\n\n42. Total", "First item\n42. Total"),
     ],
 )
 def test_speech_line_prefixes_do_not_destroy_literal_numbers(
