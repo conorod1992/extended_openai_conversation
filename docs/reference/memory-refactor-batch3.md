@@ -21,7 +21,8 @@ The model may select:
   Inferred records retain the mode-specific update policy; explicit records also
   permit a correction when the backend recognizes a direct current user request.
   Exact target and revision checks happen inside the storage lock, and model
-  updates preserve provenance and apply the automatic sensitive-data rules.
+  updates preserve provenance and structural validation; content sensitivity
+  classification has since been retired.
 - **Delete:** use exact revision-checked targets; the entire batch is checked
   before any deletion. Explicit records require a recognized direct current user
   forget/delete request. Confirm broad deletion with a fresh delete instruction;
@@ -31,9 +32,8 @@ The model may select:
 
 A proposed record yielding `needs_resolution` has **not** been written.
 The model must not retry with a fictitious different key simply to evade that
-result. A model-supplied `source=explicit` label cannot grant owner consent,
-sensitive-storage permission, or write authority in explicitly restricted shared
-scope. Guest Mode, retention scope and management permissions remain separate.
+result. A model-supplied `source=explicit` label cannot grant owner consent or
+write authority in explicitly restricted shared scope. Guest Mode, retention scope and management permissions remain separate.
 
 The follow-up request gate reads the original current user utterance, never
 retrieved text or model arguments. Shared Explicit mode permits a recognized
@@ -68,7 +68,8 @@ to decide whether a proposal may be inserted.
   collision.
 - Candidate data is released only after independent read-scope authorization.
   Write-only guests receive status only. Storage locks, revision checks,
-  privacy filters, rollback, retirement and scope isolation remain unchanged.
+  rollback, retirement and scope isolation remain unchanged. Content filters
+  were retired subsequently without changing those protections.
 
 The older `_find_related_candidate()` remains exclusively in the *legacy
 non-model* `async_upsert()` path to preserve that API's existing behaviour.
@@ -84,7 +85,11 @@ contract, including genuine Chat Completions and Responses provider wires.
 
 ## Evidence boundaries
 
-The 40 Batch 1 semantic fixtures are deliberately **draft semantic expectations**.
+The semantic fixture corpus contains the original 40 Batch 1 cases plus a
+user-supplied health-fact case added when content filtering was retired. These
+41 cases are deliberately **draft semantic expectations**. Unsupported inference
+is still rejected; a useful user-supplied sensitive fact is eligible in Automatic
+mode, and an explicitly requested synthetic credential is eligible within scope.
 An expected `update` label means the user's statement semantically revises
 a previous assertion. It does **not** mean the model has authority to call
 `memory_update` on an explicit record. The separate current-request, scope,

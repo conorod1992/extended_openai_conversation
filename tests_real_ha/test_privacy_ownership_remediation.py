@@ -416,24 +416,16 @@ async def test_automatic_memory_update_sensitive_provenance(
     )
     assert response.response.error_code is None
     records = await agent._memory.async_list(owner.id)
-    print(
-        json.dumps(
-            {
-                "operation": operation,
-                "explicit_request": explicit_request,
-                "requests": len(sent),
-                "retained_sensitive": "medical diagnosis" in records[0].content,
-                "source": records[0].source,
-            }
-        )
-    )
-    # The provider's source=explicit is a model assertion, not authenticated
-    # Memory Management authorization. Even when the user's text contains
-    # "Please remember", the model cannot elevate provenance or save sensitive
-    # data by choosing either an upsert or an exact, fresh-revision update.
+    # Sensitive updates are allowed, while canonical-key proposals remain no-write
+    # conflicts. Neither operation can promote existing provenance.
     assert len(records) == 1
-    assert records[0].content == "User prefers tea"
+    assert records[0].content == (
+        arguments["content"] if operation == "update" else "User prefers tea"
+    )
     assert records[0].source == "implicit"
+    tool_results = json.dumps([m for m in sent[1]["messages"] if m.get("role") == "tool"])
+    assert ("needs_resolution" in tool_results) == (operation == "upsert")
+
 
 
 async def test_automatic_metadata_secret_reaches_subsequent_provider(hass, monkeypatch):
@@ -465,18 +457,21 @@ async def test_automatic_metadata_secret_reaches_subsequent_provider(hass, monke
     )
     assert response.response.error_code is None
     assert len(sent) == 2
-    print(
-        json.dumps(
-            {
-                "saved_record_count": len(await agent._memory.async_list(owner.id)),
-                "secret_in_tool_result_sent_to_provider": "synthetic-audit-secret"
-                in json.dumps(sent[1]),
-            }
+    [record] = await agent._memory.async_list(owner.id)
+    assert record.subject == "password: synthetic-audit-secret"
+    assert record.source == "implicit"
+    assert "synthetic-audit-secret" in json.dumps(sent[1])
+    # A fresh request can retrieve the retained metadata only in its owner's scope.
+    stranger = await hass.auth.async_create_user("Other owner")
+    for caller in (stranger.id, owner.id):
+        replies = _provider(monkeypatch, agent, [_tool("memory_list", {}), "Checked."])
+        result = await conversation.async_converse(
+            hass=hass, text="List my memories", context=Context(user_id=caller),
+            language="en", agent_id=agent.entry.entry_id, conversation_id=None,
         )
-    )
-    assert await agent._memory.async_list(owner.id) == [], (
-        "Privacy checks must include retained subject metadata"
-    )
+        assert result.response.error_code is None
+        assert ("synthetic-audit-secret" in json.dumps(replies[-1])) == (caller == owner.id)
+
 
 
 def _privacy_wire(monkeypatch, agent):
@@ -533,7 +528,7 @@ def _privacy_wire(monkeypatch, agent):
         ("temporary", "category"),
     ],
 )
-async def test_previously_stored_metadata_never_enters_any_provider_request(
+async def test_previously_stored_metadata_enters_only_authorized_provider_requests(
     hass, monkeypatch, mode, feature, field
 ):
     from dataclasses import asdict
@@ -586,18 +581,19 @@ async def test_previously_stored_metadata_never_enters_any_provider_request(
         if feature == "memory"
         else agent._temporary_memory._store.async_load()
     )
-    assert canary not in json.dumps(durable)
+    assert canary in json.dumps(durable)
     requests = _privacy_wire(monkeypatch, agent)
-    result = await conversation.async_converse(
-        hass=hass,
-        text="Find calibration memory",
-        context=Context(user_id=owner.id),
-        conversation_id=None,
-        language="en",
-        agent_id=agent.entry.entry_id,
-    )
-    assert result.response.error_code is None
-    assert requests
-    assert canary not in json.dumps(requests), (
-        "Unsafe retained metadata reached model or embedding HTTP requests"
-    )
+    stranger = await hass.auth.async_create_user("Other metadata owner")
+    for caller in (stranger.id, owner.id):
+        requests.clear()
+        result = await conversation.async_converse(
+            hass=hass, text="Find calibration memory", context=Context(user_id=caller),
+            conversation_id=None, language="en", agent_id=agent.entry.entry_id,
+        )
+        assert result.response.error_code is None
+        assert requests
+        assert "Do not reject requested memories solely for credentials" in json.dumps(requests)
+        assert (canary in json.dumps(requests)) == (caller == owner.id)
+        if caller == owner.id and feature == "memory":
+            assert any(canary in json.dumps(r["body"]) for r in requests if r["path"].endswith("/embeddings"))
+        assert any(canary in json.dumps(r["body"]) for r in requests if not r["path"].endswith("/embeddings")) == (caller == owner.id)
