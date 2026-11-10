@@ -197,7 +197,6 @@ def format_function_tools(
                 "knowledge",
                 "archive",
                 "guest_mode",
-                "function_group_loader",
             }
             and "strict" not in spec
         ):
