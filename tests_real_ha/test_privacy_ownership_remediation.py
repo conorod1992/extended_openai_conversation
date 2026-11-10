@@ -382,7 +382,14 @@ async def test_automatic_memory_update_sensitive_provenance(
         "category": "personal",
     }
     if operation == "update":
+        from custom_components.extended_openai_conversation_responses.memory import (
+            memory_revision,
+        )
+
         arguments["memory_id"] = created["memory"]["memory_id"]
+        arguments["expected_revision"] = memory_revision(
+            (await agent._memory.async_list(owner.id))[0]
+        )
         if explicit_request:
             arguments["source"] = "explicit"
     else:
@@ -420,13 +427,13 @@ async def test_automatic_memory_update_sensitive_provenance(
             }
         )
     )
-    if explicit_request:
-        assert "medical diagnosis" in records[0].content
-        assert records[0].source == "explicit"
-    else:
-        assert records[0].content == "User prefers tea", (
-            "Sensitive proactive update must require explicit user provenance"
-        )
+    # The provider's source=explicit is a model assertion, not authenticated
+    # Memory Management authorization. Even when the user's text contains
+    # "Please remember", the model cannot elevate provenance or save sensitive
+    # data by choosing either an upsert or an exact, fresh-revision update.
+    assert len(records) == 1
+    assert records[0].content == "User prefers tea"
+    assert records[0].source == "implicit"
 
 
 async def test_automatic_metadata_secret_reaches_subsequent_provider(hass, monkeypatch):

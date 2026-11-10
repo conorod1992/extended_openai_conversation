@@ -295,11 +295,7 @@ async def test_search_ranking_prioritizes_boiler_terms_over_question_filler() ->
     )
 
     results = await library.async_search("how do I reset the boiler", limit=2)
-    assert [result.source_id for result in results] == [
-        boiler.source_id,
-        garage.source_id,
-    ]
-    assert results[0].score > results[1].score
+    assert [result.source_id for result in results] == [boiler.source_id]
 
     # Stop-word-only searches retain the former scoring and do not disappear.
     assert garage.source_id in {
@@ -338,7 +334,7 @@ async def test_search_and_catalog_reuse_precomputed_lexical_features(
         item for item in library._chunks.values() if item.source_id == source.source_id
     )
 
-    assert features.title_tokens == frozenset({"concrete", "wall", "drill"})
+    assert {"concrete", "wall", "drill"} <= features.title_tokens
     assert features.normalized_description == "masonry tools and fixings"
     assert chunk.normalized_text == "use the blue masonry bit for concrete walls"
 
@@ -1138,3 +1134,37 @@ def test_phrase_normalization_equates_straight_and_curly_apostrophes():
         "What’s the WiFi password"
     )
     assert _normalize("can't") == _normalize("can’t")
+
+
+async def test_search_secondary_word_forms_and_filler_filter() -> None:
+    library = await _library()
+    plural = await library.async_create("Passwords", "", "Passwords may be reset.")
+    schedule = await library.async_create("Schedule", "", "Tasks are scheduled daily.")
+    unrelated = await library.async_create("The Garden", "", "How to water plants.")
+    assert (await library.async_search("password"))[0].source_id == plural.source_id
+    assert (await library.async_search("scheduled"))[0].source_id == schedule.source_id
+    assert unrelated.source_id not in {
+        result.source_id for result in await library.async_search("how to reset the password")
+    }
+    assert unrelated.source_id in {
+        result.source_id for result in await library.async_search("the")
+    }
+
+
+async def test_search_exact_identifiers_outrank_secondary_forms_and_unindex() -> None:
+    library = await _library()
+    plural = await library.async_create("Passwords", "", "Credentials")
+    singular = await library.async_create("Password", "", "Credentials")
+    assert (await library.async_search("password"))[0].source_id == singular.source_id
+    http = await library.async_create("HTTP", "", "HTTP request")
+    https = await library.async_create("HTTPS", "", "HTTPS request")
+    assert (await library.async_search("http"))[0].source_id == http.source_id
+    assert (await library.async_search("https"))[0].source_id == https.source_id
+    await library.async_update(plural.source_id, title="Other", content="Unrelated")
+    assert plural.source_id not in {
+        result.source_id for result in await library.async_search("password")
+    }
+    await library.async_delete(singular.source_id)
+    assert singular.source_id not in {
+        result.source_id for result in await library.async_search("password")
+    }

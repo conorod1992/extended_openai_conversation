@@ -10,6 +10,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 import logging
 from pathlib import Path
+import re
 import time
 from types import SimpleNamespace
 from typing import Any, Literal, cast
@@ -272,6 +273,83 @@ from .usage import async_get_usage, extract_usage
 from .voice_identity_runtime import voice_identity_scope, voice_source_device_id
 
 _LOGGER = logging.getLogger(__name__)
+
+
+# Source labels provided by the model are descriptive, not user authority.
+# Authorize newly permitted mutations only from the raw current user turn.
+_MEMORY_DIRECT_COMMAND = re.compile(
+    r"^\s*(?:(?:please|could\s+you|can\s+you|would\s+you|will\s+you|"
+    r"i\s+want\s+you\s+to|i(?:'d|\s+would)\s+like\s+you\s+to)\s+)*"
+    r"(?P<verb>remember|memorise|memorize|save|store|add|update|change|"
+    r"correct|edit|fix|forget|delete|remove|erase)\b",
+    re.IGNORECASE,
+)
+_MEMORY_TRAILING_COMMAND = re.compile(
+    r"(?:[.!?]\s+|;\s+)(?:please\s+)?"
+    r"(?P<verb>remember|update|change|correct|edit|fix|forget|delete|remove)\s+"
+    r"(?:(?:this|that|it)\s+)?(?:(?:in|to|from)\s+)?"
+    r"(?:(?:your|the|my|our)\s+)?(?:stored\s+)?memor(?:y|ies)\s*[.!?]*\s*$",
+    re.IGNORECASE,
+)
+_HOUSEHOLD_MEMORY_REQUEST = re.compile(
+    r"\b(?:for\s+(?:(?:the|our|my)\s+)?household|"
+    r"(?:the|our|my)\s+household\s+memor(?:y|ies)|"
+    r"household\s+memor(?:y|ies)|shared\s+memor(?:y|ies)|"
+    r"for\s+everyone|for\s+all\s+(?:of\s+us|users))\b",
+    re.IGNORECASE,
+)
+_MEMORY_OBJECT_RE = re.compile(
+    r"\bmemor(?:y|ies)\b|\bwhat\s+(?:you|it)\s+remember\b", re.IGNORECASE
+)
+_MEMORY_REQUEST_VERBS = {
+    "add": {"remember", "memorise", "memorize", "save", "store", "add"},
+    "update": {
+        "remember",
+        "memorise",
+        "memorize",
+        "save",
+        "store",
+        "add",
+        "update",
+        "change",
+        "correct",
+        "edit",
+        "fix",
+    },
+    "delete": {"forget", "delete", "remove", "erase"},
+}
+
+
+def _direct_memory_user_request(operation: str, selector: Any) -> bool:
+    """Require direct current-turn memory intent before expanding authority."""
+    turn = _ACTIVE_TURN.get()
+    utterance = turn.user_request_text
+    if not isinstance(utterance, str) or not 0 < len(utterance) <= 10_000:
+        return False
+    match = _MEMORY_DIRECT_COMMAND.search(utterance)
+    trailing_memory_command = match is None
+    if trailing_memory_command:
+        match = _MEMORY_TRAILING_COMMAND.search(utterance)
+    if match is None:
+        return False
+    verb = match.group("verb").lower()
+    if verb not in _MEMORY_REQUEST_VERBS[operation]:
+        return False
+    # A trailing "Update your memory" already names its object inside the
+    # matched span. For initial commands, avoid treating "change a thermostat"
+    # or "delete a file" as memory authorization.
+    if (
+        not trailing_memory_command
+        and verb not in {"remember", "memorise", "memorize", "forget"}
+        and _MEMORY_OBJECT_RE.search(utterance[match.end() :]) is None
+    ):
+        return False
+    if selector == "household" and (
+        turn.scope is None or turn.scope.scope_type != "shared"
+    ):
+        return _HOUSEHOLD_MEMORY_REQUEST.search(utterance) is not None
+    return True
+
 
 # Live changes may tighten this policy; nested requests resolve their own policy.
 _ACTIVE_GUEST_POLICY: ContextVar[GuestCapabilityPolicy | None] = ContextVar(
@@ -1020,6 +1098,7 @@ class ExtendedOpenAIAgentEntity(
             turn_token = _ACTIVE_TURN.set(
                 ConversationTurnContext(
                     scope=scope,
+                    user_request_text=user_input.text,
                     archive=(session_key, archive_session.session_id)
                     if archive_session
                     else None,
@@ -2783,20 +2862,21 @@ class ExtendedOpenAIAgentEntity(
                 != SHARED_MEMORY_AUTOMATIC
             ):
                 raise ValueError("automatic shared memory creation is disabled")
+            # An origin label never authorizes Shared Explicit by itself.
+            requested = _direct_memory_user_request("add", arguments.get("scope"))
             write_scope_id = self._current_write_memory_scope_id(
-                arguments.get("scope"), llm_context, source=source
-            )
-            method = (
-                self._memory.async_upsert
-                if operation == "upsert"
-                else self._memory.async_add
+                arguments.get("scope"),
+                llm_context,
+                source="explicit" if requested and source == "explicit" else "implicit",
             )
             metadata = {
                 name: arguments[name]
                 for name in ("subject", "key", "valid_from")
                 if name in arguments
             }
-            result = await method(write_scope_id, content, category, source, **metadata)
+            result = await self._memory.async_propose(
+                write_scope_id, content, category, source, **metadata
+            )
             # Write permission does not grant access to existing candidate records,
             # including duplicate/conflict metadata returned by the memory store.
             if write_scope_id not in readable_scope_ids:
@@ -2876,6 +2956,7 @@ class ExtendedOpenAIAgentEntity(
             )
         if operation == "update":
             memory_id = arguments.get("memory_id")
+            expected_revision = arguments.get("expected_revision")
             content = arguments.get("content")
             category = arguments.get("category")
             metadata = {
@@ -2891,6 +2972,7 @@ class ExtendedOpenAIAgentEntity(
                 raise ValueError("clear_fields must be a list of metadata field names")
             if (
                 not isinstance(memory_id, str)
+                or not isinstance(expected_revision, str)
                 or (content is not None and not isinstance(content, str))
                 or (category is not None and not isinstance(category, str))
                 or (
@@ -2901,14 +2983,15 @@ class ExtendedOpenAIAgentEntity(
                 )
             ):
                 raise ValueError("memory_id and at least one valid update are required")
-            # Legacy manual callers remain explicit; unspecified proactive updates
-            # must obey the current operation's automatic sensitivity policy.
-            source = arguments.get(
-                "source",
-                "implicit"
-                if automatic_memory_enabled(self.subentry.data)
-                else "explicit",
+            # Explicit provenance can be corrected on a direct user request.
+            # The model's source label does not grant this permission.
+            requested = _direct_memory_user_request("update", arguments.get("scope"))
+            default_source = (
+                "explicit"
+                if requested or not automatic_memory_enabled(self.subentry.data)
+                else "implicit"
             )
+            source = arguments.get("source", default_source)
             if source not in ("explicit", "implicit"):
                 raise ValueError("source must be explicit or implicit")
             if source == "implicit" and not automatic_memory_enabled(
@@ -2916,7 +2999,9 @@ class ExtendedOpenAIAgentEntity(
             ):
                 raise ValueError("automatic memory creation is disabled")
             write_scope_id = self._current_write_memory_scope_id(
-                arguments.get("scope"), llm_context, source=source
+                arguments.get("scope"),
+                llm_context,
+                source="explicit" if requested and source == "explicit" else "implicit",
             )
             memory = await self._memory.async_update(
                 write_scope_id,
@@ -2925,7 +3010,9 @@ class ExtendedOpenAIAgentEntity(
                 category,
                 **metadata,
                 clear_fields=clear_fields,
-                source=source,
+                expected_revision=expected_revision,
+                allow_explicit_edit=requested,
+                model_origin=True,
             )
             if write_scope_id not in readable_scope_ids:
                 return {"status": "updated"}
@@ -2938,15 +3025,43 @@ class ExtendedOpenAIAgentEntity(
                 ),
             }
         if operation == "delete":
-            memory_ids = arguments.get("memory_ids")
-            if not isinstance(memory_ids, list) or not all(
-                isinstance(memory_id, str) for memory_id in memory_ids
+            targets = arguments.get("targets")
+            if (
+                not isinstance(targets, list)
+                or not targets
+                or len(targets) > 50
+                or not all(
+                    isinstance(target, dict)
+                    and set(target) == {"memory_id", "expected_revision"}
+                    and isinstance(target["memory_id"], str)
+                    and isinstance(target["expected_revision"], str)
+                    for target in targets
+                )
             ):
-                raise ValueError("memory_ids must be a list of strings")
+                raise ValueError(
+                    "deletion requires exact IDs and revisions for every target"
+                )
+            ids = [target["memory_id"] for target in targets]
+            if len(set(ids)) != len(ids):
+                raise ValueError("deletion targets must be unique")
+            if "memory_ids" in arguments:
+                # Old generated tool calls never bypass the revision gate.
+                raise ValueError("legacy memory_ids cannot authorize model deletion")
+            requested = _direct_memory_user_request("delete", arguments.get("scope"))
             write_scope_id = self._current_write_memory_scope_id(
-                arguments.get("scope"), llm_context, source="explicit"
+                arguments.get("scope"),
+                llm_context,
+                source="explicit" if requested else "implicit",
             )
-            deleted = await self._memory.async_delete(write_scope_id, memory_ids)
+            deleted = await self._memory.async_delete(
+                write_scope_id,
+                ids,
+                expected_revisions={
+                    target["memory_id"]: target["expected_revision"]
+                    for target in targets
+                },
+                allow_explicit_delete=requested,
+            )
             return {"status": "deleted", "deleted": deleted}
         raise ValueError("unknown memory operation")
 

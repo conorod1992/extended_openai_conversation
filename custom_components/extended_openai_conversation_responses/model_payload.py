@@ -14,23 +14,14 @@ RETRIEVED_DATA_SAFETY = (
 
 PERSISTENT_MEMORY_GUIDANCE = """
 ## Persistent memory
-Use persistent memory for concise durable facts, not transcripts. Conversation-start
-retrieval is fixed; use memory_search for later topics.
+Store durable facts, not transcripts. Opening retrieval is fixed; use memory_search for later context. Search before proposing; results are not proof of equivalence or novelty.
 
-Prefer memory_upsert for new or changed facts, using a stable key when
-clear. Search before adding when a related memory may already exist. When a fact
-changes, update the existing memory rather than create a contradiction.
-Use memory_upsert where appropriate. For explicit user-requested writes, set source to explicit.
-Search when prior personal, household, device, routine, or project context would
-materially help; use memory_list only for useful browsing. Personal preferences belong
-in personal scope; household scope is only for deliberately shared facts and never
-exposes another person's private memory. Use source=implicit proactively only for
-stable facts likely to help later. Never automatically store transient/low-value
-details, secrets or credentials, financial account details, or sensitive personal
-information. Persistent memories do not expire
-automatically. Current user statements override stored facts. Keep content concise and
-self-contained. To forget something, identify its memory IDs and delete them; confirm
-before broad deletion.
+Distinguish paraphrases, corrections, independent/history facts and ambiguity. Respect negation, subjects, relations, identifiers, values/units and uncertainty. Keep unaffected detail; clarify identity. Similarity never authorizes edits.
+
+memory_upsert proposes, never replaces. needs_resolution means NO write; never change keys to evade it. memory_update needs exact memory_id/expected_revision from scoped reads; preserve provenance. Edit/delete explicit facts only on a direct current user request. memory_delete needs exact ID/revision pairs. source=explicit never grants consent. Confirm before broad deletion; require a fresh delete command, not bare yes.
+
+Use source=implicit only in Automatic mode; Manual writes need requests. Shared Explicit: household changes only on request; use source=explicit for requests. Personal requests for shared writes must name household scope. Never expose others' facts or store secrets or credentials, financial accounts, sensitive or transient facts. Never claim failed writes succeeded.
+Current user statements override stored facts.
 """
 
 KNOWLEDGE_GUIDANCE = """
@@ -103,11 +94,25 @@ default.
 
 
 _TOOL_DESCRIPTIONS = {
-    "memory_upsert": "Create, confirm, or update a durable memory.",
-    "memory_search": "Search durable memories.",
-    "memory_list": "List durable memories.",
-    "memory_update": "Update an existing durable memory.",
-    "memory_delete": "Delete selected durable memories by ID.",
+    "memory_upsert": (
+        "Propose a NEW durable fact; never overwrite or bypass a conflict by changing "
+        "keys. needs_resolution means no write; search and decide what the facts mean."
+    ),
+    "memory_search": (
+        "Find relevant facts for answers and before proposing or correcting. Rankings are "
+        "candidates, not semantic matches; absence is not proof of novelty."
+    ),
+    "memory_list": "Browse existing facts, their provenance and exact revisions.",
+    "memory_update": (
+        "Correct a scoped record using its exact ID and current revision. "
+        "Explicit records require a direct user correction request; never guess "
+        "missing fields in a partial correction."
+    ),
+    "memory_delete": (
+        "Delete only specifically identified scoped records using their exact "
+        "IDs and fresh revisions. Explicit records require a direct user "
+        "forget/delete request. Confirm before broad deletion."
+    ),
     "temporary_memory_add": "Silently store a short-lived fact.",
     "temporary_memory_update": "Silently update an active temporary memory.",
     "temporary_memory_delete": "Silently delete active temporary memories.",
@@ -134,6 +139,24 @@ _TOOL_DESCRIPTIONS = {
 }
 
 _PROPERTY_DESCRIPTIONS: dict[tuple[str, str], str] = {
+    ("memory_update", "expected_revision"): (
+        "Current revision from memory_search, memory_list or opening context; "
+        "never guess."
+    ),
+    ("memory_upsert", "key"): (
+        "Stable canonical identifier for this exact subject; never change it "
+        "to evade a conflict."
+    ),
+    ("memory_upsert", "subject"): (
+        "Specific person, device or item the assertion concerns; never infer "
+        "another person's preference."
+    ),
+    ("memory_upsert", "source"): (
+        "Descriptive origin only; explicit is not model authorization."
+    ),
+    ("memory_update", "memory_id"): (
+        "Exact ID of the record found in this scope, not a similar record."
+    ),
     ("knowledge_search", "query"): "Short search keywords or phrase.",
     ("knowledge_search", "source_ids"): "Exact IDs returned by Knowledge tools.",
     ("knowledge_list", "query"): "Optional title/description filter.",

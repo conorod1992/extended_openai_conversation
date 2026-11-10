@@ -25,7 +25,7 @@ from custom_components.extended_openai_conversation_responses.conversation impor
 from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
     tool_result_data,
 )
-from custom_components.extended_openai_conversation_responses.memory import MemoryRecord
+from custom_components.extended_openai_conversation_responses.memory import MemoryRecord, memory_revision
 from custom_components.extended_openai_conversation_responses.scope import user_scope
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
     TemporaryMemoryRecord,
@@ -107,13 +107,14 @@ async def test_persistent_memory_dispatcher_routes_read_and_write_operations() -
         "update",
         {
             "memory_id": "memory-1",
+            "expected_revision": memory_revision(record),
             "content": "Oscar is a Cavachon.",
             "clear_fields": ["subject"],
         },
         llm_context,
     )
     deleted = await entity._async_execute_memory_tool(
-        "delete", {"memory_ids": ["memory-1"]}, llm_context
+        "delete", {"targets": [{"memory_id": "memory-1", "expected_revision": memory_revision(record)}]}, llm_context
     )
 
     entity._async_search_memories.assert_awaited_once_with(
@@ -128,10 +129,14 @@ async def test_persistent_memory_dispatcher_routes_read_and_write_operations() -
         "Oscar is a Cavachon.",
         None,
         clear_fields=["subject"],
-        source="explicit",
+        expected_revision=memory_revision(record),
+        allow_explicit_edit=False,
+        model_origin=True,
     )
     entity._memory.async_delete.assert_awaited_once_with(
-        "user-1", ["memory-1"]
+        "user-1", ["memory-1"],
+        expected_revisions={"memory-1": memory_revision(record)},
+        allow_explicit_delete=False,
     )
     assert searched["memories"][0]["memory_id"] == "memory-1"
     assert listed["memories"][0]["memory_id"] == "memory-1"

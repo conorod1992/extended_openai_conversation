@@ -160,8 +160,8 @@ class _KnowledgeIndex:
 def _index_source(source: KnowledgeSource, index: _KnowledgeIndex) -> None:
     if not source.enabled:
         return
-    title_tokens = frozenset(_tokens(source.title))
-    description_tokens = frozenset(_tokens(source.description))
+    title_tokens = frozenset(_search_tokens(source.title))
+    description_tokens = frozenset(_search_tokens(source.description))
     metadata_tokens = title_tokens | description_tokens
     normalized_title = _normalize(source.title)
     normalized_description = _normalize(source.description)
@@ -180,7 +180,7 @@ def _index_source(source: KnowledgeSource, index: _KnowledgeIndex) -> None:
             start=start,
             text=text,
             normalized_text=_normalize(text),
-            tokens=frozenset(_tokens(text)),
+            tokens=frozenset(_search_tokens(text)),
         )
         key = (source.source_id, chunk_id)
         index.chunks[key] = chunk
@@ -549,7 +549,8 @@ class KnowledgeLibrary:
             limit = max(1, min(limit, MAX_SEARCH_LIMIT))
             if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
                 raise ValueError("offset must be a nonnegative integer")
-            query_tokens = _tokens(query)
+            raw_query_tokens = _tokens(query)
+            query_tokens = _search_tokens(query, raw_query_tokens)
             normalized_query = _normalize(query)
             if not query_tokens or not normalized_query:
                 return []
@@ -557,16 +558,19 @@ class KnowledgeLibrary:
             # Retain filler matches rather than removing them from the index.
             # A filler-only query keeps the original equal weighting, while a
             # substantive query is not overwhelmed by incidental title words.
-            has_salient_terms = bool(query_tokens - _SEARCH_FILLER_TERMS)
+            has_salient_terms = bool(raw_query_tokens - _SEARCH_FILLER_TERMS)
             query_weights = {
                 token: (
-                    _SEARCH_FILLER_WEIGHT
+                    0.2
+                    if token.startswith("morph:")
+                    else _SEARCH_FILLER_WEIGHT
                     if has_salient_terms and token in _SEARCH_FILLER_TERMS
                     else 1.0
                 )
                 for token in query_tokens
             }
-            total_weight = sum(query_weights.values())
+            # Preserve the existing exact-term denominator and its score scale.
+            total_weight = sum(query_weights[token] for token in raw_query_tokens)
 
             def weighted_overlap(tokens: frozenset[str]) -> float:
                 return (
@@ -578,7 +582,7 @@ class KnowledgeLibrary:
             for token in query_tokens:
                 candidates.update(self._token_index.get(token, set()))
 
-            best_by_source: dict[str, tuple[float, _Chunk]] = {}
+            best_by_source: dict[str, tuple[bool, float, _Chunk]] = {}
             for chunk_key in candidates:
                 chunk = self._chunks[chunk_key]
                 if allowed is not None and chunk.source_id not in allowed:
@@ -588,6 +592,14 @@ class KnowledgeLibrary:
                 description_tokens = features.description_tokens
                 normalized_title = features.normalized_title
                 normalized_description = features.normalized_description
+                all_tokens = chunk.tokens | title_tokens | description_tokens
+                exact_salient = bool(
+                    (raw_query_tokens - _SEARCH_FILLER_TERMS) & all_tokens
+                )
+                if has_salient_terms and not (
+                    (query_tokens - _SEARCH_FILLER_TERMS) & all_tokens
+                ):
+                    continue
                 score = (
                     weighted_overlap(chunk.tokens)
                     + weighted_overlap(title_tokens) * 8
@@ -602,19 +614,22 @@ class KnowledgeLibrary:
                 current = best_by_source.get(chunk.source_id)
                 if (
                     current is None
-                    or score > current[0]
-                    or (score == current[0] and chunk.start < current[1].start)
+                    or (exact_salient, score) > (current[0], current[1])
+                    or (
+                        (exact_salient, score) == (current[0], current[1])
+                        and chunk.start < current[2].start
+                    )
                 ):
-                    best_by_source[chunk.source_id] = (score, chunk)
+                    best_by_source[chunk.source_id] = (exact_salient, score, chunk)
 
             ranked = [
-                (score, self._sources[source_id].updated_at, source_id, chunk)
-                for source_id, (score, chunk) in best_by_source.items()
+                (exact, score, self._sources[source_id].updated_at, source_id, chunk)
+                for source_id, (exact, score, chunk) in best_by_source.items()
                 if score > 0
             ]
             ranked.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
             results: list[SearchResult] = []
-            for score, _, source_id, chunk in ranked[
+            for _, score, _, source_id, chunk in ranked[
                 offset : offset + limit + int(lookahead)
             ]:
                 source = self._sources[source_id]
@@ -1156,6 +1171,29 @@ def _clean_content(value: str) -> str:
     if not value or len(value) > MAX_CONTENT_LENGTH:
         raise ValueError(f"content must be 1 to {MAX_CONTENT_LENGTH} characters")
     return value
+
+
+def _search_tokens(value: str, exact: set[str] | None = None) -> set[str]:
+    """Index exact lexical forms plus low-weight, separately tagged variants."""
+    from .retrieval_text import _stem
+
+    exact = _tokens(value) if exact is None else exact
+    terms = set(exact)
+    for token in exact:
+        if not (token.isascii() and token.isalpha() and len(token) >= 3):
+            continue
+        # Avoid known technical and ambiguous collisions in the shared stemmer.
+        if token in _SEARCH_FILLER_TERMS or token in {
+            "http",
+            "https",
+            "news",
+            "status",
+        }:
+            continue
+        stem = "schedule" if token in {"scheduled", "scheduling"} else _stem(token)
+        if len(stem) >= 3:
+            terms.add("morph:" + stem)
+    return terms
 
 
 def _tokens(value: str) -> set[str]:

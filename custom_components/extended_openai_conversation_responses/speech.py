@@ -41,6 +41,13 @@ _EMPHASIS_TOKENS = {"*": re.compile(r"`+|\*"), "_": re.compile(r"`+|_")}
 _NUMERIC_EMPHASIS_PREFIX = re.compile(r"[+-]?(?:\d+(?:\.\d*)?)?\*{0,2}\Z")
 _NUMERIC_EMPHASIS_COMPLETE = re.compile(r"[+-]?\d+(?:\.\d+)?\*\*(?=$|[\s.,;:!?])")
 
+# Suppress reference-only links but speak meaningful Markdown labels.
+_CITATION_LINK_LABEL = re.compile(
+    r"(?:\d+|sources?|references?|citations?|"
+    r"(?:www\.)?[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:/[^\s]*)?)",
+    re.IGNORECASE,
+)
+
 DEFAULT_STREAMING_BUFFER_LIMIT = 4096
 COMPLETED_SPEECH_EXECUTOR_THRESHOLD = 4096
 _FORMAT_PREFIX_LIMIT = 32
@@ -77,6 +84,8 @@ class StreamingSpeechSanitizer:
         self._format_code = 0
         self._strong_open = False
         self._line_start = True
+        self._previous_line_list = False
+        self._line_is_list = False
         self._needs_separator = False
         self._last_output = ""
         # A four-character raw suffix can lose the last real word behind
@@ -274,7 +283,9 @@ class StreamingSpeechSanitizer:
             and self._suppressed_line_break
             and text[index] in "#>-+*0123456789"
         ):
-            action, _ = self._line_prefix(text, final, index)
+            action, _ = self._line_prefix(
+                text, final, index, preceding_list_item=self._previous_line_list
+            )
             if action == "incomplete" and not final:
                 if len(text) - index <= _FORMAT_PREFIX_LIMIT:
                     return None
@@ -356,6 +367,18 @@ class StreamingSpeechSanitizer:
             cursor += 1
         return False
 
+    def _emit_link_label(self, output: list[str], label: str) -> bool:
+        """Keep useful link labels; citation-like labels do not add spoken prose."""
+        label = label.strip()
+        if (
+            not label
+            or label.casefold().startswith(("http://", "https://", "www."))
+            or _CITATION_LINK_LABEL.fullmatch(label)
+        ):
+            return False
+        self._emit(output, label)
+        return True
+
     def _drain_links(self, *, final: bool) -> str:
         text = self._buffer
         output: list[str] = []
@@ -409,7 +432,12 @@ class StreamingSpeechSanitizer:
                         end = link_end + (
                             link_end < len(text) and text[link_end] == ")"
                         )
-                        index = self._suppress(output, end)
+                        label_end = text.find("]", link_start + 1)
+                        if text[index + 1] == "!" or not self._emit_link_label(
+                            output, text[link_start + 1 : label_end]
+                        ):
+                            self._suppress(output, end)
+                        index = end
                         continue
                 elif link_start >= len(text) and not final:
                     held_whitespace = self._hold_preceding_whitespace(output)
@@ -490,7 +518,12 @@ class StreamingSpeechSanitizer:
                     held_whitespace = self._hold_preceding_whitespace(output)
                     break
                 if status == "complete":
-                    index = self._suppress(output, link_end)
+                    label_end = text.find("]", markdown_start + 1)
+                    if char == "!" or not self._emit_link_label(
+                        output, text[markdown_start + 1 : label_end]
+                    ):
+                        self._suppress(output, link_end)
+                    index = link_end
                     continue
 
             if self.urls and char.lower() in "hw":
@@ -765,10 +798,17 @@ class StreamingSpeechSanitizer:
                 index += 1
                 continue
             if self._line_start:
-                action, count = self._line_prefix(self._format_buffer, final, index)
+                action, count = self._line_prefix(
+                    self._format_buffer,
+                    final,
+                    index,
+                    preceding_list_item=self._previous_line_list,
+                )
                 if action == "incomplete":
                     break
                 if action == "strip":
+                    prefix = self._format_buffer[index:].lstrip(" \t")
+                    self._line_is_list = bool(prefix and prefix[0] in "-+*0123456789")
                     index += count
                     self._line_start = False
                     continue
@@ -779,6 +819,8 @@ class StreamingSpeechSanitizer:
                 output.append(char)
                 index += 1
                 self._line_start = True
+                self._previous_line_list = self._line_is_list
+                self._line_is_list = False
                 continue
             if char == "`":
                 index += 1
@@ -1047,7 +1089,13 @@ class StreamingSpeechSanitizer:
         return "".join(output)
 
     @staticmethod
-    def _line_prefix(text: str, final: bool, start: int = 0) -> tuple[str, int]:
+    def _line_prefix(
+        text: str,
+        final: bool,
+        start: int = 0,
+        *,
+        preceding_list_item: bool = False,
+    ) -> tuple[str, int]:
         whitespace = start
         while whitespace < len(text) and text[whitespace] in " \t":
             whitespace += 1
@@ -1071,6 +1119,13 @@ class StreamingSpeechSanitizer:
             if text[end].isspace():
                 while end < len(text) and text[end] in " \t":
                     end += 1
+                # "- 3 degrees" could be a negative quantity. Do not remove
+                # its sign, even when the number arrives in a later delta.
+                if marker == "-":
+                    if end == len(text) and not final:
+                        return "incomplete", 0
+                    if end < len(text) and text[end].isdigit():
+                        return "none", 0
                 return "strip", end - start
         elif marker in "0123456789":
             while (
@@ -1086,6 +1141,10 @@ class StreamingSpeechSanitizer:
                 if end == len(text):
                     return ("none", 0) if final else ("incomplete", 0)
                 if text[end].isspace():
+                    # A standalone "N." can be an ordinal date or a quantity.
+                    # Suppress it only when continuing an already marked list.
+                    if not preceding_list_item:
+                        return "none", 0
                     while end < len(text) and text[end] in " \t":
                         end += 1
                     return "strip", end - start

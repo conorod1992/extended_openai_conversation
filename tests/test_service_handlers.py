@@ -1110,3 +1110,47 @@ async def test_query_image_rejects_unavailable_client_before_image_access(
 
     prepare.assert_not_called()
     capabilities.assert_not_called()
+
+
+@pytest.mark.parametrize("invalid_provider", ["OpenAI", "unknown", "", "AZURE"])
+async def test_change_config_rejects_invalid_provider_without_mutation(
+    hass, monkeypatch, invalid_provider
+) -> None:
+    """Schema and handler both reject unsupported provider IDs."""
+    import voluptuous as vol
+
+    with pytest.raises(vol.Invalid):
+        services.CHANGE_CONFIG_SCHEMA(
+            {"config_entry": "entry", CONF_API_PROVIDER: invalid_provider}
+        )
+    entry = SimpleNamespace(domain=DOMAIN, data={CONF_API_KEY: "key"}, subentries={})
+    hass.config_entries.async_get_entry.return_value = entry
+    authenticate = AsyncMock(return_value=object())
+    monkeypatch.setattr(services, "get_authenticated_client", authenticate)
+    handlers = await _handlers(hass)
+    with pytest.raises(HomeAssistantError, match="Unsupported API provider"):
+        await handlers["change_config"](
+            _call({"config_entry": "entry", CONF_API_PROVIDER: invalid_provider})
+        )
+    authenticate.assert_not_awaited()
+    hass.config_entries.async_update_entry.assert_not_called()
+
+
+async def test_change_config_invalid_legacy_provider_requires_correction(
+    hass, monkeypatch
+) -> None:
+    entry = SimpleNamespace(
+        domain=DOMAIN,
+        data={CONF_API_KEY: "key", CONF_API_PROVIDER: "bad-legacy-provider"},
+        subentries={},
+    )
+    hass.config_entries.async_get_entry.return_value = entry
+    authenticate = AsyncMock(return_value=object())
+    monkeypatch.setattr(services, "get_authenticated_client", authenticate)
+    handlers = await _handlers(hass)
+    with pytest.raises(HomeAssistantError, match="Unsupported API provider"):
+        await handlers["change_config"](
+            _call({"config_entry": "entry", CONF_API_KEY: "replacement"})
+        )
+    authenticate.assert_not_awaited()
+    hass.config_entries.async_update_entry.assert_not_called()

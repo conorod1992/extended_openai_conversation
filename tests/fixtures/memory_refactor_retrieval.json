@@ -1,0 +1,709 @@
+{
+  "schema_version": 1,
+  "description": "Fixed synthetic ground truth for lexical Memory retrieval; hard negatives are diagnostic, not a guarantee of no incidental matches",
+  "records": [
+    {
+      "id": "bike-blue",
+      "scope": "alice",
+      "content": "My bicycle has a blue frame.",
+      "category": "transport",
+      "key": "bike.colour"
+    },
+    {
+      "id": "bike-red",
+      "scope": "alice",
+      "content": "The spare bicycle is red.",
+      "category": "transport",
+      "key": "bike.spare.colour"
+    },
+    {
+      "id": "tea-preference",
+      "scope": "alice",
+      "content": "I prefer herbal tea to coffee.",
+      "category": "preferences",
+      "key": "drink.preference"
+    },
+    {
+      "id": "tea-negative",
+      "scope": "alice",
+      "content": "I no longer enjoy black tea.",
+      "category": "preferences",
+      "key": "drink.black"
+    },
+    {
+      "id": "alice-reads",
+      "scope": "alice",
+      "content": "Ava lends books to Ben.",
+      "category": "people",
+      "subject": "Ava"
+    },
+    {
+      "id": "ben-reads",
+      "scope": "alice",
+      "content": "Ben lends books to Ava.",
+      "category": "people",
+      "subject": "Ben"
+    },
+    {
+      "id": "thermostat-day",
+      "scope": "alice",
+      "content": "The living room daytime thermostat target is 19 C.",
+      "category": "heating",
+      "key": "heating.living.day"
+    },
+    {
+      "id": "thermostat-night",
+      "scope": "alice",
+      "content": "The living room night-time target is 17 C.",
+      "category": "heating",
+      "key": "heating.living.night"
+    },
+    {
+      "id": "thermostat-office",
+      "scope": "alice",
+      "content": "The office thermostat is set to 19 C.",
+      "category": "heating",
+      "key": "heating.office"
+    },
+    {
+      "id": "dog-milo",
+      "scope": "alice",
+      "content": "Milo is a collie and enjoys walks.",
+      "category": "pets",
+      "key": "pet.milo.breed",
+      "subject": "Milo"
+    },
+    {
+      "id": "dog-mina",
+      "scope": "alice",
+      "content": "Mina is a terrier and enjoys walks.",
+      "category": "pets",
+      "key": "pet.mina.breed",
+      "subject": "Mina"
+    },
+    {
+      "id": "compiler-cpp",
+      "scope": "alice",
+      "content": "The firmware build uses C++20.",
+      "category": "tech",
+      "key": "firmware.language"
+    },
+    {
+      "id": "docs-csharp",
+      "scope": "alice",
+      "content": "The documentation examples are written in C#.",
+      "category": "tech",
+      "key": "docs.language"
+    },
+    {
+      "id": "runtime-c",
+      "scope": "alice",
+      "content": "The embedded runtime is written in C.",
+      "category": "tech",
+      "key": "runtime.language"
+    },
+    {
+      "id": "config-path-upper",
+      "scope": "alice",
+      "content": "The configuration file is /Data/Main.py.",
+      "category": "tech",
+      "key": "config.path.upper"
+    },
+    {
+      "id": "config-path-lower",
+      "scope": "alice",
+      "content": "The test fixture is /data/main.py.",
+      "category": "tech",
+      "key": "config.path.lower"
+    },
+    {
+      "id": "model-name",
+      "scope": "alice",
+      "content": "The integration uses model gpt-5.6.",
+      "category": "tech",
+      "key": "integration.model"
+    },
+    {
+      "id": "model-name-other",
+      "scope": "alice",
+      "content": "The spare configuration uses model gpt-5.5.",
+      "category": "tech",
+      "key": "integration.spare.model"
+    },
+    {
+      "id": "oscar-label",
+      "scope": "alice",
+      "content": "The lamp label is 客厅灯.",
+      "category": "devices",
+      "key": "lamp.name"
+    },
+    {
+      "id": "oscar-latin",
+      "scope": "alice",
+      "content": "The lamp label is Living Room Light.",
+      "category": "devices",
+      "key": "lamp.english.name"
+    },
+    {
+      "id": "cyrillic-kitchen",
+      "scope": "alice",
+      "content": "Свет кухня is assigned to room A.",
+      "category": "devices",
+      "subject": "Свет кухня"
+    },
+    {
+      "id": "cyrillic-bedroom",
+      "scope": "alice",
+      "content": "Свет спальня is assigned to room B.",
+      "category": "devices",
+      "subject": "Свет спальня"
+    },
+    {
+      "id": "japanese-note",
+      "scope": "alice",
+      "content": "寝室の照明は暖色に設定されています。",
+      "category": "devices"
+    },
+    {
+      "id": "plurals-cookies",
+      "scope": "alice",
+      "content": "I baked cookies and brownies yesterday.",
+      "category": "food"
+    },
+    {
+      "id": "hop",
+      "scope": "alice",
+      "content": "The athlete hopped across the tiles.",
+      "category": "activity"
+    },
+    {
+      "id": "hope",
+      "scope": "alice",
+      "content": "The athlete hoped for clear weather.",
+      "category": "activity"
+    },
+    {
+      "id": "call",
+      "scope": "alice",
+      "content": "The technician called yesterday.",
+      "category": "maintenance"
+    },
+    {
+      "id": "fall",
+      "scope": "alice",
+      "content": "The leaves are falling in autumn.",
+      "category": "outdoors"
+    },
+    {
+      "id": "cancel",
+      "scope": "alice",
+      "content": "The booking was cancelled yesterday.",
+      "category": "calendar"
+    },
+    {
+      "id": "travel",
+      "scope": "alice",
+      "content": "The family travelled by train.",
+      "category": "transport"
+    },
+    {
+      "id": "colour",
+      "scope": "alice",
+      "content": "The bedroom walls are my favourite colour, violet.",
+      "category": "decor"
+    },
+    {
+      "id": "door-locked",
+      "scope": "alice",
+      "content": "The front door must stay locked at night.",
+      "category": "security"
+    },
+    {
+      "id": "door-unlocked",
+      "scope": "alice",
+      "content": "The garden gate is normally unlocked at night.",
+      "category": "security"
+    },
+    {
+      "id": "historical-home",
+      "scope": "alice",
+      "content": "I lived in Galway in 2024.",
+      "category": "location",
+      "key": "home.history.2024"
+    },
+    {
+      "id": "current-home",
+      "scope": "alice",
+      "content": "I currently live in Cork.",
+      "category": "location",
+      "key": "home.current"
+    },
+    {
+      "id": "foreign-private",
+      "scope": "bob",
+      "content": "My private calibration marker is ORCHID-77.",
+      "category": "private"
+    },
+    {
+      "id": "shared-grocery",
+      "scope": "shared:household",
+      "content": "Household groceries are kept in the pantry.",
+      "category": "home"
+    },
+    {
+      "id": "shared-router",
+      "scope": "shared:household",
+      "content": "Shared router is in the downstairs cupboard.",
+      "category": "home"
+    }
+  ],
+  "queries": [
+    {
+      "id": "ret-001",
+      "family": "exact",
+      "query": "bicycle blue",
+      "scope": "alice",
+      "relevant_ids": [
+        "bike-blue"
+      ],
+      "excluded_ids": [
+        "bike-red"
+      ],
+      "rationale": "Prefer exact bicycle colour over another bicycle."
+    },
+    {
+      "id": "ret-002",
+      "family": "synonym",
+      "query": "bike frame colour",
+      "scope": "alice",
+      "relevant_ids": [
+        "bike-blue"
+      ],
+      "excluded_ids": [
+        "bike-red"
+      ],
+      "rationale": "Synonym bike/bicycle should be measured, not presumed."
+    },
+    {
+      "id": "ret-003",
+      "family": "relation-order",
+      "query": "Ava lends books to Ben",
+      "scope": "alice",
+      "relevant_ids": [
+        "alice-reads"
+      ],
+      "excluded_ids": [
+        "ben-reads"
+      ],
+      "rationale": "Reversing people is not the same assertion."
+    },
+    {
+      "id": "ret-004",
+      "family": "relation-order",
+      "query": "Ben lends books to Ava",
+      "scope": "alice",
+      "relevant_ids": [
+        "ben-reads"
+      ],
+      "excluded_ids": [
+        "alice-reads"
+      ],
+      "rationale": "Reverse direction is an adversarial hard negative."
+    },
+    {
+      "id": "ret-005",
+      "family": "polarity",
+      "query": "do not enjoy black tea",
+      "scope": "alice",
+      "relevant_ids": [
+        "tea-negative"
+      ],
+      "excluded_ids": [
+        "tea-preference"
+      ],
+      "rationale": "Negation and tea type distinguish facts."
+    },
+    {
+      "id": "ret-006",
+      "family": "temperature-subject",
+      "query": "office thermostat 19",
+      "scope": "alice",
+      "relevant_ids": [
+        "thermostat-office"
+      ],
+      "excluded_ids": [
+        "thermostat-day"
+      ],
+      "rationale": "Avoid room confusion despite same numeric target."
+    },
+    {
+      "id": "ret-007",
+      "family": "temperature-temporal",
+      "query": "living room night temperature",
+      "scope": "alice",
+      "relevant_ids": [
+        "thermostat-night"
+      ],
+      "excluded_ids": [
+        "thermostat-day"
+      ],
+      "rationale": "Time of day changes identity."
+    },
+    {
+      "id": "ret-008",
+      "family": "pet-similar-name",
+      "query": "Milo breed",
+      "scope": "alice",
+      "relevant_ids": [
+        "dog-milo"
+      ],
+      "excluded_ids": [
+        "dog-mina"
+      ],
+      "rationale": "Milo and Mina should not be treated as aliases."
+    },
+    {
+      "id": "ret-009",
+      "family": "pet-similar-name",
+      "query": "Mina terrier",
+      "scope": "alice",
+      "relevant_ids": [
+        "dog-mina"
+      ],
+      "excluded_ids": [
+        "dog-milo"
+      ],
+      "rationale": "Close spellings are distinct subjects."
+    },
+    {
+      "id": "ret-010",
+      "family": "symbolic",
+      "query": "C++20 firmware",
+      "scope": "alice",
+      "relevant_ids": [
+        "compiler-cpp"
+      ],
+      "excluded_ids": [
+        "docs-csharp",
+        "runtime-c"
+      ],
+      "rationale": "Programming language punctuation must survive."
+    },
+    {
+      "id": "ret-011",
+      "family": "symbolic",
+      "query": "C# documentation",
+      "scope": "alice",
+      "relevant_ids": [
+        "docs-csharp"
+      ],
+      "excluded_ids": [
+        "compiler-cpp",
+        "runtime-c"
+      ],
+      "rationale": "C# is not C or C++."
+    },
+    {
+      "id": "ret-012",
+      "family": "symbolic",
+      "query": "C runtime",
+      "scope": "alice",
+      "relevant_ids": [
+        "runtime-c"
+      ],
+      "excluded_ids": [
+        "docs-csharp",
+        "compiler-cpp"
+      ],
+      "rationale": "Short identifier C needs careful matching."
+    },
+    {
+      "id": "ret-013",
+      "family": "path-case",
+      "query": "/Data/Main.py",
+      "scope": "alice",
+      "relevant_ids": [
+        "config-path-upper"
+      ],
+      "excluded_ids": [
+        "config-path-lower"
+      ],
+      "rationale": "Case-sensitive path should remain distinguishable."
+    },
+    {
+      "id": "ret-014",
+      "family": "path-case",
+      "query": "/data/main.py",
+      "scope": "alice",
+      "relevant_ids": [
+        "config-path-lower"
+      ],
+      "excluded_ids": [
+        "config-path-upper"
+      ],
+      "rationale": "Case-preserving exact retrieval matters."
+    },
+    {
+      "id": "ret-015",
+      "family": "model-identifier",
+      "query": "gpt-5.6",
+      "scope": "alice",
+      "relevant_ids": [
+        "model-name"
+      ],
+      "excluded_ids": [
+        "model-name-other"
+      ],
+      "rationale": "Dot-separated model identifiers are distinct."
+    },
+    {
+      "id": "ret-016",
+      "family": "model-identifier",
+      "query": "gpt-5.5",
+      "scope": "alice",
+      "relevant_ids": [
+        "model-name-other"
+      ],
+      "excluded_ids": [
+        "model-name"
+      ],
+      "rationale": "Close version numbers are not synonyms."
+    },
+    {
+      "id": "ret-017",
+      "family": "cjk",
+      "query": "客厅灯",
+      "scope": "alice",
+      "relevant_ids": [
+        "oscar-label"
+      ],
+      "excluded_ids": [
+        "oscar-latin"
+      ],
+      "rationale": "Preserve original Chinese device label."
+    },
+    {
+      "id": "ret-018",
+      "family": "cyrillic",
+      "query": "Свет кухня",
+      "scope": "alice",
+      "relevant_ids": [
+        "cyrillic-kitchen"
+      ],
+      "excluded_ids": [
+        "cyrillic-bedroom"
+      ],
+      "rationale": "Retain separate Cyrillic labels."
+    },
+    {
+      "id": "ret-019",
+      "family": "japanese",
+      "query": "寝室 照明",
+      "scope": "alice",
+      "relevant_ids": [
+        "japanese-note"
+      ],
+      "excluded_ids": [],
+      "rationale": "CJK run retrieval without spaces."
+    },
+    {
+      "id": "ret-020",
+      "family": "morphology-plural",
+      "query": "cookie brownie",
+      "scope": "alice",
+      "relevant_ids": [
+        "plurals-cookies"
+      ],
+      "excluded_ids": [],
+      "rationale": "Plural expansion is the retrieval concern."
+    },
+    {
+      "id": "ret-021",
+      "family": "morphology-verb",
+      "query": "call technician",
+      "scope": "alice",
+      "relevant_ids": [
+        "call"
+      ],
+      "excluded_ids": [],
+      "rationale": "Called vs call."
+    },
+    {
+      "id": "ret-022",
+      "family": "morphology-verb",
+      "query": "cancel booking",
+      "scope": "alice",
+      "relevant_ids": [
+        "cancel"
+      ],
+      "excluded_ids": [],
+      "rationale": "Cancelled vs cancel."
+    },
+    {
+      "id": "ret-023",
+      "family": "morphology-verb",
+      "query": "travel train",
+      "scope": "alice",
+      "relevant_ids": [
+        "travel"
+      ],
+      "excluded_ids": [],
+      "rationale": "Travelled vs travel."
+    },
+    {
+      "id": "ret-024",
+      "family": "false-stem",
+      "query": "hopped",
+      "scope": "alice",
+      "relevant_ids": [
+        "hop"
+      ],
+      "excluded_ids": [
+        "hope"
+      ],
+      "rationale": "Hop and hope must remain distinct."
+    },
+    {
+      "id": "ret-025",
+      "family": "false-stem",
+      "query": "hoped",
+      "scope": "alice",
+      "relevant_ids": [
+        "hope"
+      ],
+      "excluded_ids": [
+        "hop"
+      ],
+      "rationale": "Hope and hop must remain distinct."
+    },
+    {
+      "id": "ret-026",
+      "family": "locale-spelling",
+      "query": "favorite color violet",
+      "scope": "alice",
+      "relevant_ids": [
+        "colour"
+      ],
+      "excluded_ids": [],
+      "rationale": "Cross-dialect spelling without losing exact phrases."
+    },
+    {
+      "id": "ret-027",
+      "family": "polarity",
+      "query": "front door locked at night",
+      "scope": "alice",
+      "relevant_ids": [
+        "door-locked"
+      ],
+      "excluded_ids": [
+        "door-unlocked"
+      ],
+      "rationale": "Different doors and polarities."
+    },
+    {
+      "id": "ret-028",
+      "family": "history",
+      "query": "where did I live in 2024",
+      "scope": "alice",
+      "relevant_ids": [
+        "historical-home"
+      ],
+      "excluded_ids": [
+        "current-home"
+      ],
+      "rationale": "Historical fact should remain findable."
+    },
+    {
+      "id": "ret-029",
+      "family": "current-v-history",
+      "query": "where do I currently live",
+      "scope": "alice",
+      "relevant_ids": [
+        "current-home"
+      ],
+      "excluded_ids": [
+        "historical-home"
+      ],
+      "rationale": "Do not confuse historical with current residence."
+    },
+    {
+      "id": "ret-030",
+      "family": "scope-personal",
+      "query": "ORCHID-77",
+      "scope": "alice",
+      "relevant_ids": [],
+      "excluded_ids": [
+        "foreign-private"
+      ],
+      "rationale": "Another user's memory must never be visible."
+    },
+    {
+      "id": "ret-031",
+      "family": "scope-shared",
+      "query": "household groceries pantry",
+      "scope": "shared:household",
+      "relevant_ids": [
+        "shared-grocery"
+      ],
+      "excluded_ids": [],
+      "rationale": "Household scope is explicit."
+    },
+    {
+      "id": "ret-032",
+      "family": "scope-foreign",
+      "query": "ORCHID-77",
+      "scope": "bob",
+      "relevant_ids": [
+        "foreign-private"
+      ],
+      "excluded_ids": [],
+      "rationale": "Owner itself may search its own record."
+    },
+    {
+      "id": "ret-033",
+      "family": "scope-no-leak",
+      "query": "downstairs cupboard router",
+      "scope": "alice",
+      "relevant_ids": [],
+      "excluded_ids": [
+        "shared-router"
+      ],
+      "rationale": "Personal-only backend search must not leak household unless caller includes that scope."
+    },
+    {
+      "id": "ret-034",
+      "family": "stems-false-positive",
+      "query": "fall",
+      "scope": "alice",
+      "relevant_ids": [
+        "fall"
+      ],
+      "excluded_ids": [
+        "call"
+      ],
+      "rationale": "Prefix/one-edit fallback should not confuse fall and call."
+    },
+    {
+      "id": "ret-035",
+      "family": "exact-negative",
+      "query": "garden gate unlocked",
+      "scope": "alice",
+      "relevant_ids": [
+        "door-unlocked"
+      ],
+      "excluded_ids": [
+        "door-locked"
+      ],
+      "rationale": "Different hardware and state."
+    },
+    {
+      "id": "ret-036",
+      "family": "missing",
+      "query": "unicorn firmware licence",
+      "scope": "alice",
+      "relevant_ids": [],
+      "excluded_ids": [],
+      "rationale": "No relevant memory; check no arbitrary unrelated hit."
+    }
+  ]
+}

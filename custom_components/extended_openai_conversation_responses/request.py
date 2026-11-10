@@ -182,9 +182,33 @@ def format_function_tools(
 ) -> list[dict[str, Any]]:
     """Format compact model-facing definitions exactly as the API expects."""
     model_tools = prepare_model_function_tools(function_tools)
-    if api_mode == API_MODE_RESPONSES:
-        return [{"type": "function", **tool["spec"]} for tool in model_tools]
-    return [{"type": "function", "function": tool["spec"]} for tool in model_tools]
+    formatted = []
+    for tool in model_tools:
+        spec = tool["spec"]
+        function = tool.get("function")
+        # Responses may silently normalize omitted-strict schemas into required,
+        # nullable fields. Our optional tool arguments must remain truly optional.
+        # Never change user-configured schemas or tools that explicitly set strict.
+        if (
+            api_mode == API_MODE_RESPONSES
+            and isinstance(function, dict)
+            and function.get("type")
+            in {
+                "memory",
+                "temporary_memory",
+                "knowledge",
+                "archive",
+                "guest_mode",
+            }
+            and "strict" not in spec
+        ):
+            spec = {**spec, "strict": False}
+        formatted.append(
+            {"type": "function", **spec}
+            if api_mode == API_MODE_RESPONSES
+            else {"type": "function", "function": spec}
+        )
+    return formatted
 
 
 def build_web_search_tool(

@@ -10,6 +10,8 @@ from custom_components.extended_openai_conversation_responses.speech import (
 @pytest.mark.parametrize(
     "text,expected",
     [
+        ("Before (![alt](https://example.com/a.png)) after", "Before after"),
+        ("Before ([help](https://example.com/help)) after", "Before help after"),
         ("1.example is a hostname", "1.example is a hostname"),
         ("2)words stay together", "2)words stay together"),
         ("3.14 is pi", "3.14 is pi"),

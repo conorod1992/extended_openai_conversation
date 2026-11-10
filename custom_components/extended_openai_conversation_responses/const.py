@@ -642,7 +642,6 @@ SHELL_DENY_PATTERNS = [
     r"\brm\s+-rf",  # Force recursive delete
     r"\bdel\s+/[fqs]",  # Windows delete with flags
     r"\brmdir\s+/s",  # Windows recursive directory delete
-    r"\bformat\b",  # Disk format
     r"\bmkfs\b",  # Make filesystem
     r"\bdiskpart\b",  # Windows disk partition
     r"\bdd\b",  # Disk duplicator

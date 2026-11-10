@@ -43,7 +43,7 @@ from .exposed_attributes import (
     enrich_exposed_entities,
 )
 from .guest_mode import GuestCapabilityPolicy
-from .memory import MemoryRecord, automatic_memory_enabled
+from .memory import MemoryRecord, automatic_memory_enabled, memory_revision
 from .model_payload import (
     ARCHIVE_GUIDANCE,
     CONTINUATION_GUIDANCE,
@@ -223,6 +223,8 @@ def _persistent_memory_context(memories: list[MemoryRecord]) -> str:
                         else "personal"
                     ),
                     "category": memory.category,
+                    "source": memory.source,
+                    "revision": memory_revision(memory),
                     **({"subject": memory.subject} if memory.subject else {}),
                     **({"key": memory.key} if memory.key else {}),
                     **({"valid_from": memory.valid_from} if memory.valid_from else {}),

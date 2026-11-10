@@ -144,7 +144,11 @@ async def test_guest_write_only_memory_dispatches_with_write_scope(operation):
     memory = await _memory()
     agent = ExtendedOpenAIAgentEntity.__new__(ExtendedOpenAIAgentEntity)
     agent.subentry = SimpleNamespace(
-        data={"memory_enabled": True, "shared_memory_mode": "explicit"}
+        data={
+            "memory_enabled": True,
+            "memory_mode": "automatic",
+            "shared_memory_mode": "automatic",
+        }
     )
     agent._memory = memory
     agent._effective_guest_policy = lambda: GuestCapabilityPolicy(
@@ -155,15 +159,29 @@ async def test_guest_write_only_memory_dispatches_with_write_scope(operation):
     )
     try:
         existing = await memory.async_add(
-            SHARED_HOUSEHOLD_SCOPE_ID, "Existing fact", "home", "explicit"
+            SHARED_HOUSEHOLD_SCOPE_ID, "Existing fact", "home", "implicit"
         )
+        from custom_components.extended_openai_conversation_responses.memory import memory_revision
+
+        revision = memory_revision((await memory.async_list(SHARED_HOUSEHOLD_SCOPE_ID))[0])
         args = {
             "content": "New fact",
             "category": "home",
-            "source": "explicit",
-            "memory_id": existing["memory"]["memory_id"],
-            "memory_ids": [existing["memory"]["memory_id"]],
+            "source": "implicit",
         }
+        if operation == "update":
+            args = {
+                "memory_id": existing["memory"]["memory_id"],
+                "expected_revision": revision,
+                "content": "Updated fact",
+            }
+        elif operation == "delete":
+            args = {
+                "targets": [{
+                    "memory_id": existing["memory"]["memory_id"],
+                    "expected_revision": revision,
+                }]
+            }
         result = await agent._async_execute_memory_tool(operation, args, None)
         assert result["status"] in {"created", "updated", "deleted"}
         with pytest.raises(RuntimeError, match="disabled for this data scope"):
@@ -259,21 +277,28 @@ async def test_write_only_memory_never_returns_stored_fields(operation, readable
     )
     existing = await memory.async_add(
         SHARED_HOUSEHOLD_SCOPE_ID,
-        "The spare house key is beneath the porch",
+        "The hallway lamp is near the stairs",
         "home",
-        "explicit",
-        subject="spare key",
-        key="house.key",
+        "implicit",
+        subject="hallway lamp",
+        key="house.lamp",
     )
-    args = {"category": "home", "source": "explicit", "subject": "spare key"}
+    args = {"category": "home", "source": "explicit", "subject": "hallway lamp"}
     if operation == "update":
-        args = {"memory_id": existing["memory"]["memory_id"], "category": "security"}
+        from custom_components.extended_openai_conversation_responses.memory import memory_revision
+
+        revision = memory_revision((await memory.async_list(SHARED_HOUSEHOLD_SCOPE_ID))[0])
+        args = {
+            "memory_id": existing["memory"]["memory_id"],
+            "expected_revision": revision,
+            "category": "security",
+        }
     else:
-        args["content"] = "The spare house key is somewhere"
+        args["content"] = "The hallway lamp is somewhere"
     result = await agent._async_execute_memory_tool(operation, args, None)
     assert set(result) == {"status"}
     if operation != "update":
-        args["content"] = "The spare house key is beneath the porch"
+        args["content"] = "The hallway lamp is near the stairs"
         result = await agent._async_execute_memory_tool(operation, args, None)
         assert set(result) == {"status"}
         args["content"] = "Unrelated newly supplied fact"

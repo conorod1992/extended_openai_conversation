@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 from custom_components.extended_openai_conversation_responses.const import (
+    API_MODE_CHAT_COMPLETIONS,
     API_MODE_RESPONSES,
     KNOWLEDGE_PROMPT,
     MEMORY_PROMPT,
@@ -147,6 +148,72 @@ def test_provider_formatter_hides_legacy_memory_add() -> None:
     assert "memory_upsert" in names
 
 
+def test_provider_optional_integration_tools_declare_non_strict_on_both_apis() -> None:
+    """Omitted strict must not coerce optional fields to required nullable values."""
+    loader = build_loader_tool(
+        [{"id": "testing", "name": "Testing", "description": "Test tools."}]
+    )
+    original = [
+        *memory_tools(),
+        *temporary_memory_tools(),
+        *knowledge_tools(),
+        *archive_tools(),
+        guest_mode_restrict_tool(),
+        loader,
+        CONTINUE_CONVERSATION_TOOL,
+    ]
+    for api_mode in (API_MODE_RESPONSES, API_MODE_CHAT_COMPLETIONS):
+        wire = format_function_tools(original, api_mode)
+        specs = {
+            (entry if api_mode == API_MODE_RESPONSES else entry["function"])["name"]:
+            entry if api_mode == API_MODE_RESPONSES else entry["function"]
+            for entry in wire
+        }
+        for name in specs:
+            if name == "set_continue_conversation":
+                assert specs[name]["strict"] is True
+            elif name == "load_function_groups" or api_mode == API_MODE_CHAT_COMPLETIONS:
+                # The loader and non-Responses API retain their previous contracts.
+                assert "strict" not in specs[name]
+            else:
+                assert specs[name]["strict"] is False, (api_mode, name)
+
+        search = specs["memory_search"]["parameters"]
+        assert search["required"] == ["query"]
+        assert {"offset", "category", "scope", "limit"} <= set(
+            search["properties"]
+        )
+        assert {"offset", "category", "scope", "limit"}.isdisjoint(
+            search["required"]
+        )
+
+    # The shared internal schemas must not be mutated by provider formatting.
+    assert all("strict" not in item["spec"] for item in original
+               if item["spec"]["name"] != "set_continue_conversation")
+
+
+def test_provider_formatter_respects_user_and_explicit_strict_contracts() -> None:
+    """Do not rewrite a configured function or override an explicit strict mode."""
+    user_tool = {
+        "spec": {
+            "name": "configured",
+            "description": "User-defined function.",
+            "parameters": {"type": "object", "properties": {"value": {"type": "string"}}},
+        },
+        "function": {"type": "native", "name": "configured"},
+    }
+    explicit = memory_tools()[1]
+    explicit["spec"]["strict"] = True
+    for api_mode in (API_MODE_RESPONSES, API_MODE_CHAT_COMPLETIONS):
+        result = format_function_tools([user_tool, explicit], api_mode)
+        specs = [
+            item if api_mode == API_MODE_RESPONSES else item["function"]
+            for item in result
+        ]
+        assert "strict" not in specs[0]
+        assert specs[1]["strict"] is True
+
+
 def test_compact_guidance_retains_memory_and_knowledge_safety_semantics() -> None:
     """The largest fixed guidance blocks keep their behavioral requirements."""
     assert len(PERSISTENT_MEMORY_GUIDANCE) < len(MEMORY_PROMPT) * 0.7
@@ -161,7 +228,12 @@ def test_compact_guidance_retains_memory_and_knowledge_safety_semantics() -> Non
         "household scope",
         "secrets or credentials",
         "Current user statements override stored facts",
-        "confirm before broad deletion",
+        "expected_revision",
+        "needs_resolution",
+        "not proof of equivalence",
+        "Confirm before broad deletion",
+        "direct current",
+        "Shared Explicit",
     ):
         assert phrase in memory_guidance
 

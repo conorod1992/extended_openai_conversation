@@ -1,0 +1,838 @@
+{
+  "schema_version": 1,
+  "description": "Synthetic draft semantic expectations for independent adjudication; not execution authority or validated ground truth",
+  "cases": [
+    {
+      "id": "sem-001",
+      "family": "paraphrase",
+      "initial": [
+        {
+          "id": "a",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "My bicycle is blue.",
+          "category": "general",
+          "key": "transport.bike.colour"
+        }
+      ],
+      "user_turn": "Remember that my bike is blue.",
+      "intent": "explicit",
+      "semantic_decision": "unchanged",
+      "target_ids": [
+        "a"
+      ],
+      "forbidden_target_ids": [],
+      "rationale": "Equivalent paraphrase; no rewriting is needed."
+    },
+    {
+      "id": "sem-002",
+      "family": "numeric-update",
+      "initial": [
+        {
+          "id": "a",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "The living room heating target is 19 C.",
+          "category": "general",
+          "key": "heating.living.room"
+        }
+      ],
+      "user_turn": "Remember that the living room target is now 21 C.",
+      "intent": "explicit",
+      "semantic_decision": "update",
+      "target_ids": [
+        "a"
+      ],
+      "forbidden_target_ids": [],
+      "rationale": "Specific room, changed number, current correction."
+    },
+    {
+      "id": "sem-003",
+      "family": "negation",
+      "initial": [
+        {
+          "id": "a",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "I enjoy coffee.",
+          "category": "general",
+          "key": "preference.coffee"
+        }
+      ],
+      "user_turn": "Remember that I no longer enjoy coffee.",
+      "intent": "explicit",
+      "semantic_decision": "update",
+      "target_ids": [
+        "a"
+      ],
+      "forbidden_target_ids": [],
+      "rationale": "Opposite polarity supersedes a current personal preference."
+    },
+    {
+      "id": "sem-004",
+      "family": "different-subject",
+      "initial": [
+        {
+          "id": "a",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "Ava prefers tea.",
+          "category": "general",
+          "key": "ava.drink.preference",
+          "subject": "Ava"
+        }
+      ],
+      "user_turn": "Remember that Ben prefers tea.",
+      "intent": "explicit",
+      "semantic_decision": "coexist",
+      "target_ids": [],
+      "forbidden_target_ids": [
+        "a"
+      ],
+      "rationale": "Same predicate, different person."
+    },
+    {
+      "id": "sem-005",
+      "family": "reversed-relation",
+      "initial": [
+        {
+          "id": "a",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "Ava lent Ben a book.",
+          "category": "general",
+          "subject": "Ava"
+        }
+      ],
+      "user_turn": "Remember that Ben lent Ava a book.",
+      "intent": "explicit",
+      "semantic_decision": "coexist",
+      "target_ids": [],
+      "forbidden_target_ids": [
+        "a"
+      ],
+      "rationale": "Reversing the relation is not identity."
+    },
+    {
+      "id": "sem-006",
+      "family": "historical-coexist",
+      "initial": [
+        {
+          "id": "a",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "I lived in Galway until January 2025.",
+          "category": "general",
+          "key": "residence.history.2025",
+          "valid_from": "2021-01-01T00:00:00+00:00"
+        }
+      ],
+      "user_turn": "Remember that I currently live in Cork.",
+      "intent": "explicit",
+      "semantic_decision": "coexist",
+      "target_ids": [],
+      "forbidden_target_ids": [
+        "a"
+      ],
+      "rationale": "A dated historical residence may remain true."
+    },
+    {
+      "id": "sem-007",
+      "family": "intent-versus-completion",
+      "initial": [
+        {
+          "id": "a",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "I intend to relocate to Cork next year.",
+          "category": "general",
+          "key": "plan.move.cork"
+        }
+      ],
+      "user_turn": "Remember that I have now completed my move to Cork.",
+      "intent": "explicit",
+      "semantic_decision": "update",
+      "target_ids": [
+        "a"
+      ],
+      "forbidden_target_ids": [],
+      "rationale": "Completion changes the status of the original plan; preserve any relevant history."
+    },
+    {
+      "id": "sem-008",
+      "family": "compound-partial",
+      "initial": [
+        {
+          "id": "a",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "My car is a red Ford Focus with a manual gearbox.",
+          "category": "general",
+          "key": "vehicle.primary"
+        }
+      ],
+      "user_turn": "Remember that my Ford Focus is blue now, but it is still manual.",
+      "intent": "explicit",
+      "semantic_decision": "update",
+      "target_ids": [
+        "a"
+      ],
+      "forbidden_target_ids": [],
+      "must_preserve": [
+        "Ford Focus",
+        "manual"
+      ],
+      "rationale": "Only colour changed; preserve make, model and transmission."
+    },
+    {
+      "id": "sem-009",
+      "family": "unclear-pronoun",
+      "initial": [
+        {
+          "id": "a",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "Kitchen thermostat target is 19 C.",
+          "category": "general",
+          "key": "thermostat.kitchen"
+        },
+        {
+          "id": "b",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "Bedroom thermostat target is 18 C.",
+          "category": "general",
+          "key": "thermostat.bedroom"
+        }
+      ],
+      "user_turn": "Remember that it should be 21 now.",
+      "intent": "explicit",
+      "semantic_decision": "clarify",
+      "target_ids": [],
+      "forbidden_target_ids": [
+        "a",
+        "b"
+      ],
+      "rationale": "The referent is unresolved."
+    },
+    {
+      "id": "sem-010",
+      "family": "reported-speech",
+      "initial": [
+        {
+          "id": "a",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "I prefer tea.",
+          "category": "general",
+          "key": "preference.drink"
+        }
+      ],
+      "user_turn": "Ava said: 'I hate tea.'",
+      "intent": "explicit",
+      "semantic_decision": "abstain",
+      "target_ids": [],
+      "forbidden_target_ids": [
+        "a"
+      ],
+      "rationale": "A quoted third party statement is not a new personal preference."
+    },
+    {
+      "id": "sem-011",
+      "family": "hypothetical",
+      "initial": [],
+      "user_turn": "If I bought a campervan, I'd probably paint it orange.",
+      "intent": "explicit",
+      "semantic_decision": "abstain",
+      "target_ids": [],
+      "forbidden_target_ids": [],
+      "rationale": "Hypothetical does not establish ownership."
+    },
+    {
+      "id": "sem-012",
+      "family": "unknown-provenance",
+      "initial": [
+        {
+          "id": "a",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "The meeting is on Tuesday.",
+          "category": "general",
+          "key": "project.meeting.day"
+        }
+      ],
+      "user_turn": "Someone thinks the meeting may have moved to Wednesday.",
+      "intent": "explicit",
+      "semantic_decision": "clarify",
+      "target_ids": [],
+      "forbidden_target_ids": [
+        "a"
+      ],
+      "rationale": "Hearsay and uncertainty do not justify a durable update."
+    },
+    {
+      "id": "sem-013",
+      "family": "new-fact",
+      "initial": [],
+      "user_turn": "Remember that my favourite pasta is penne.",
+      "intent": "explicit",
+      "semantic_decision": "create",
+      "target_ids": [],
+      "forbidden_target_ids": [],
+      "rationale": "Explicit durable fact with no pre-existing candidate."
+    },
+    {
+      "id": "sem-014",
+      "family": "spelling-equivalence",
+      "initial": [
+        {
+          "id": "a",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "My favourite colour is purple.",
+          "category": "general",
+          "key": "preferences.colour"
+        }
+      ],
+      "user_turn": "Remember my favorite color is purple.",
+      "intent": "explicit",
+      "semantic_decision": "unchanged",
+      "target_ids": [
+        "a"
+      ],
+      "forbidden_target_ids": [],
+      "rationale": "US/UK spelling changes do not alter the fact."
+    },
+    {
+      "id": "sem-015",
+      "family": "exact-text-duplicate",
+      "initial": [
+        {
+          "id": "a",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "My dog is a terrier.",
+          "category": "general",
+          "key": "pets.dog.breed"
+        }
+      ],
+      "user_turn": "Remember: my dog is a terrier!!!",
+      "intent": "explicit",
+      "semantic_decision": "unchanged",
+      "target_ids": [
+        "a"
+      ],
+      "forbidden_target_ids": [],
+      "rationale": "Punctuation does not affect the intended assertion."
+    },
+    {
+      "id": "sem-016",
+      "family": "transient-detail",
+      "initial": [],
+      "user_turn": "I'm making soup right now.",
+      "intent": "inferred",
+      "semantic_decision": "abstain",
+      "target_ids": [],
+      "forbidden_target_ids": [],
+      "rationale": "Short-lived activity is not normally persistent Memory."
+    },
+    {
+      "id": "sem-017",
+      "family": "sensitive-inferred",
+      "initial": [],
+      "user_turn": "The user has a medical diagnosis of condition X.",
+      "intent": "inferred",
+      "semantic_decision": "reject",
+      "target_ids": [],
+      "forbidden_target_ids": [],
+      "rationale": "Inferred sensitive personal health facts require stronger authorization."
+    },
+    {
+      "id": "sem-018",
+      "family": "credential",
+      "initial": [],
+      "user_turn": "Remember that my password is demo-pass-123.",
+      "intent": "explicit",
+      "semantic_decision": "reject",
+      "target_ids": [],
+      "forbidden_target_ids": [],
+      "rationale": "Credentials must never become persistent memory."
+    },
+    {
+      "id": "sem-019",
+      "family": "different-time-of-day",
+      "initial": [
+        {
+          "id": "a",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "Daytime heating target is 20 C.",
+          "category": "general",
+          "key": "heating.day"
+        }
+      ],
+      "user_turn": "Remember the night-time heating target is 20 C.",
+      "intent": "explicit",
+      "semantic_decision": "coexist",
+      "target_ids": [],
+      "forbidden_target_ids": [
+        "a"
+      ],
+      "rationale": "Equal values are different slots."
+    },
+    {
+      "id": "sem-020",
+      "family": "structured-identifier",
+      "initial": [
+        {
+          "id": "a",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "The firmware is compiled using C++.",
+          "category": "general",
+          "key": "firmware.language"
+        }
+      ],
+      "user_turn": "Remember that my documentation examples use C#.",
+      "intent": "explicit",
+      "semantic_decision": "coexist",
+      "target_ids": [],
+      "forbidden_target_ids": [
+        "a"
+      ],
+      "rationale": "C++ and C# are distinct symbolic identifiers."
+    },
+    {
+      "id": "sem-021",
+      "family": "case-sensitive-path",
+      "initial": [
+        {
+          "id": "a",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "The project entry point is /Data/Main.py.",
+          "category": "general",
+          "key": "project.entrypoint"
+        }
+      ],
+      "user_turn": "Remember that /data/main.py is a separate test fixture.",
+      "intent": "explicit",
+      "semantic_decision": "coexist",
+      "target_ids": [],
+      "forbidden_target_ids": [
+        "a"
+      ],
+      "rationale": "Case-sensitive paths cannot be collapsed."
+    },
+    {
+      "id": "sem-022",
+      "family": "nonlatin-name",
+      "initial": [
+        {
+          "id": "a",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "The label on the lamp is 客厅灯.",
+          "category": "general",
+          "key": "lamp.label"
+        }
+      ],
+      "user_turn": "Remember that the lamp label is 客厅灯.",
+      "intent": "explicit",
+      "semantic_decision": "unchanged",
+      "target_ids": [
+        "a"
+      ],
+      "forbidden_target_ids": [],
+      "rationale": "Original Unicode name is semantically unchanged."
+    },
+    {
+      "id": "sem-023",
+      "family": "nonlatin-distinct-subject",
+      "initial": [
+        {
+          "id": "a",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "Свет кухня uses group A.",
+          "category": "general",
+          "subject": "Свет кухня"
+        }
+      ],
+      "user_turn": "Remember that Свет спальня uses group A.",
+      "intent": "explicit",
+      "semantic_decision": "coexist",
+      "target_ids": [],
+      "forbidden_target_ids": [
+        "a"
+      ],
+      "rationale": "Cyrillic names identify distinct things."
+    },
+    {
+      "id": "sem-024",
+      "family": "ambiguous-time",
+      "initial": [
+        {
+          "id": "a",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "The thermostat was set to 18 C on Monday.",
+          "category": "general",
+          "valid_from": "2026-10-05T08:00:00+00:00"
+        }
+      ],
+      "user_turn": "It was 21 at some point. Remember that.",
+      "intent": "explicit",
+      "semantic_decision": "clarify",
+      "target_ids": [],
+      "forbidden_target_ids": [
+        "a"
+      ],
+      "rationale": "Missing time and target prevent a safe update."
+    },
+    {
+      "id": "sem-025",
+      "family": "partial-not-overwrite",
+      "initial": [
+        {
+          "id": "a",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "I like black coffee, and I drink tea in the evening.",
+          "category": "general",
+          "key": "beverage.routine"
+        }
+      ],
+      "user_turn": "Remember that I now take milk in coffee.",
+      "intent": "explicit",
+      "semantic_decision": "update",
+      "target_ids": [
+        "a"
+      ],
+      "forbidden_target_ids": [],
+      "must_preserve": [
+        "tea in the evening"
+      ],
+      "rationale": "Preserve evening tea, change coffee modifier."
+    },
+    {
+      "id": "sem-026",
+      "family": "topic-overlap-no-equivalence",
+      "initial": [
+        {
+          "id": "a",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "The radiator valve is set to 19.",
+          "category": "general",
+          "key": "radiator.valve"
+        }
+      ],
+      "user_turn": "Remember that the boiler water temperature is set to 19.",
+      "intent": "explicit",
+      "semantic_decision": "coexist",
+      "target_ids": [],
+      "forbidden_target_ids": [
+        "a"
+      ],
+      "rationale": "Different heating variables with overlapping terms."
+    },
+    {
+      "id": "sem-027",
+      "family": "names-distinct",
+      "initial": [
+        {
+          "id": "a",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "Milo is a golden retriever.",
+          "category": "general",
+          "key": "pet.milo.breed",
+          "subject": "Milo"
+        }
+      ],
+      "user_turn": "Remember that Mina is a golden retriever.",
+      "intent": "explicit",
+      "semantic_decision": "coexist",
+      "target_ids": [],
+      "forbidden_target_ids": [
+        "a"
+      ],
+      "rationale": "Similar names cannot be merged."
+    },
+    {
+      "id": "sem-028",
+      "family": "inferred-contradiction",
+      "initial": [
+        {
+          "id": "a",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "I prefer herbal tea.",
+          "category": "general",
+          "key": "drink.tea"
+        }
+      ],
+      "user_turn": "I might prefer black tea this week.",
+      "intent": "inferred",
+      "semantic_decision": "abstain",
+      "target_ids": [],
+      "forbidden_target_ids": [
+        "a"
+      ],
+      "rationale": "Tentative inferred preference must not overwrite confirmed durable fact."
+    },
+    {
+      "id": "sem-029",
+      "family": "inferred-nonsensitive-new",
+      "initial": [],
+      "user_turn": "The user repeatedly says they prefer short answers.",
+      "intent": "inferred",
+      "semantic_decision": "create",
+      "target_ids": [],
+      "forbidden_target_ids": [],
+      "rationale": "A stable non-sensitive inferred preference can be useful."
+    },
+    {
+      "id": "sem-030",
+      "family": "contradiction-not-duplicate",
+      "initial": [
+        {
+          "id": "a",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "The front door should remain locked at night.",
+          "category": "general",
+          "key": "door.night.policy"
+        }
+      ],
+      "user_turn": "Remember the front door should remain unlocked at night.",
+      "intent": "explicit",
+      "semantic_decision": "update",
+      "target_ids": [
+        "a"
+      ],
+      "forbidden_target_ids": [],
+      "rationale": "Near-identical vocabulary with opposite meaning."
+    },
+    {
+      "id": "sem-031",
+      "family": "multiple-matches",
+      "initial": [
+        {
+          "id": "a",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "The kitchen temperature preference is 19 C.",
+          "category": "general",
+          "subject": "Kitchen"
+        },
+        {
+          "id": "b",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "The office temperature preference is 19 C.",
+          "category": "general",
+          "subject": "Office"
+        }
+      ],
+      "user_turn": "Remember that the preferred temperature is now 21 C.",
+      "intent": "explicit",
+      "semantic_decision": "clarify",
+      "target_ids": [],
+      "forbidden_target_ids": [
+        "a",
+        "b"
+      ],
+      "rationale": "Cannot choose between two plausible memories."
+    },
+    {
+      "id": "sem-032",
+      "family": "key-and-subject-disagree",
+      "initial": [
+        {
+          "id": "a",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "The kitchen thermostat target is 19 C.",
+          "category": "general",
+          "key": "thermostat.kitchen",
+          "subject": "Kitchen"
+        }
+      ],
+      "user_turn": "Remember that the bedroom thermostat target is 21 C, using the kitchen key.",
+      "intent": "explicit",
+      "semantic_decision": "clarify",
+      "target_ids": [],
+      "forbidden_target_ids": [
+        "a"
+      ],
+      "rationale": "Supplied key contradicts the described subject; avoid blind keyed overwrite."
+    },
+    {
+      "id": "sem-033",
+      "family": "scope-isolation",
+      "initial": [
+        {
+          "id": "a",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "The private office Wi-Fi SSID is ExampleOffice.",
+          "category": "general",
+          "key": "wifi.office"
+        }
+      ],
+      "user_turn": "Remember that household Wi-Fi is ExampleHome; share it with the household.",
+      "intent": "explicit",
+      "semantic_decision": "coexist",
+      "target_ids": [],
+      "forbidden_target_ids": [
+        "a"
+      ],
+      "rationale": "Different scopes and networks require separate records."
+    },
+    {
+      "id": "sem-034",
+      "family": "legacy-unkeyed",
+      "initial": [
+        {
+          "id": "a",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "My dog's breed is a collie.",
+          "category": "general",
+          "subject": "Dog"
+        }
+      ],
+      "user_turn": "Remember that my dog is a collie, and use key pets.dog.breed.",
+      "intent": "explicit",
+      "semantic_decision": "unchanged",
+      "target_ids": [
+        "a"
+      ],
+      "forbidden_target_ids": [],
+      "rationale": "Semantic content is unchanged; adding a key is separately authorized guarded metadata, not proof of new fact."
+    },
+    {
+      "id": "sem-035",
+      "family": "names-and-roles",
+      "initial": [
+        {
+          "id": "a",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "Sam is the designer on project Orion.",
+          "category": "general",
+          "subject": "Sam"
+        }
+      ],
+      "user_turn": "Remember that Alex is the designer on project Orion.",
+      "intent": "explicit",
+      "semantic_decision": "clarify",
+      "target_ids": [],
+      "forbidden_target_ids": [
+        "a"
+      ],
+      "rationale": "The definite singular role could mean replacement or coexisting responsibilities; clarify rather than assert two simultaneous designers or delete Sam."
+    },
+    {
+      "id": "sem-036",
+      "family": "past-versus-current",
+      "initial": [
+        {
+          "id": "a",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "The living room used to have blue curtains.",
+          "category": "general",
+          "key": "decor.living.history"
+        }
+      ],
+      "user_turn": "Remember the living room curtains are now green.",
+      "intent": "explicit",
+      "semantic_decision": "coexist",
+      "target_ids": [],
+      "forbidden_target_ids": [
+        "a"
+      ],
+      "rationale": "Historical decoration is not false; current fact can coexist."
+    },
+    {
+      "id": "sem-037",
+      "family": "temporary-event",
+      "initial": [],
+      "user_turn": "My train departs in forty minutes.",
+      "intent": "inferred",
+      "semantic_decision": "abstain",
+      "target_ids": [],
+      "forbidden_target_ids": [],
+      "rationale": "Expiring travel detail should not be durable Memory."
+    },
+    {
+      "id": "sem-038",
+      "family": "attribution-denial",
+      "initial": [
+        {
+          "id": "a",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "Ava likes jazz.",
+          "category": "general",
+          "subject": "Ava"
+        }
+      ],
+      "user_turn": "Remember that I don't like jazz.",
+      "intent": "explicit",
+      "semantic_decision": "coexist",
+      "target_ids": [],
+      "forbidden_target_ids": [
+        "a"
+      ],
+      "rationale": "Another person's preference is not the user's preference."
+    },
+    {
+      "id": "sem-039",
+      "family": "unit-correction",
+      "initial": [
+        {
+          "id": "a",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "The room width is 4 metres.",
+          "category": "general",
+          "key": "room.width"
+        }
+      ],
+      "user_turn": "Remember the width measurement was wrong; it's actually 4 feet.",
+      "intent": "explicit",
+      "semantic_decision": "update",
+      "target_ids": [
+        "a"
+      ],
+      "forbidden_target_ids": [],
+      "rationale": "Unit change is a substantive correction."
+    },
+    {
+      "id": "sem-040",
+      "family": "negated-entity",
+      "initial": [
+        {
+          "id": "a",
+          "scope": "user:alice",
+          "source": "explicit",
+          "content": "The home has a gas boiler.",
+          "category": "general",
+          "key": "home.heating.type"
+        }
+      ],
+      "user_turn": "Remember that the house does not have a gas boiler; it has an electric heat pump.",
+      "intent": "explicit",
+      "semantic_decision": "update",
+      "target_ids": [
+        "a"
+      ],
+      "forbidden_target_ids": [],
+      "rationale": "Explicit reversal and replacement."
+    }
+  ]
+}

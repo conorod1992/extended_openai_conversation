@@ -399,6 +399,44 @@ jobs:
           tests_stress/test_function_provider_wire_remaining.py::test_shared_backend_business_outcomes_survive_enclosing_workflows
           tests_stress/test_function_provider_wire_remaining.py::test_composite_resource_tree_rejected_before_effects
 
+      - name: Capture Memory retrieval refactor baseline
+        if: always()
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: >-
+          python scripts/benchmark_memory_refactor.py
+          --size 1000 --repeats 3
+          --output memory-refactor-baseline.json
+
+      - name: Upload Memory retrieval baseline evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: memory-refactor-lexical-baseline
+          path: memory-refactor-baseline.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Compare Memory morphology without changing production retrieval
+        if: always()
+        continue-on-error: true
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          python -m pip install --disable-pip-version-check snowballstemmer==3.1.1
+          python scripts/benchmark_memory_stemmers.py \
+            --size 1000 --repeats 3 \
+            --output memory-refactor-stemmers.json
+
+      - name: Upload four-way Memory morphology evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: memory-refactor-morphology-comparison
+          path: memory-refactor-stemmers.json
+          if-no-files-found: warn
+          retention-days: 14
+
   dev-test:
     name: Test (HA dev)
     runs-on: ubuntu-latest
