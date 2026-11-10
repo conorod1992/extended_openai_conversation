@@ -1032,7 +1032,7 @@ class PersistentMemory:
             current = self._owned_memory(user_id, memory_id)
             if not allow_explicit_edit and current.source == "explicit":
                 raise ValueError(
-                    "explicit memories require authenticated management editing"
+                    "explicit memories require a direct user request or authenticated management editing"
                 )
             if (
                 expected_revision is not None
@@ -1154,7 +1154,7 @@ class PersistentMemory:
                         raise ValueError("memory not found or changed; search again")
                     if not allow_explicit_delete and current.source == "explicit":
                         raise ValueError(
-                            "explicit memories require authenticated management deletion"
+                            "explicit memories require a direct user request or authenticated management deletion"
                         )
                     if memory_revision(current) != expected_revisions[memory_id]:
                         raise ValueError(

@@ -68,7 +68,10 @@ Archive has its own special five-character `-ing` rule, relevance scoring and
 excerpt offsets. Replacing the shared function would silently change Archive
 ranking and excerpt matching; therefore no common production tokenizer switch
 was made. Knowledge uses a different source/chunk index, and Management uses
-substring browsing. Neither was changed for artificial consistency.
+substring browsing. Neither was changed as part of the morphology comparison.
+Separate follow-up fixes on the same PR add lower-weight word-form evidence
+to Knowledge's existing exact index; they leave the shared stemmer and
+Management substring browsing unchanged.
 
 ## What would justify reconsideration
 

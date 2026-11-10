@@ -17,11 +17,15 @@ The model may select:
   hypothetical, quoted, too temporary, insufficiently certain or unsuitable.
 - **Propose:** a new independent durable fact, using `memory_upsert`. A stable
   key is useful but not a semantic authorization credential.
-- **Correct:** only an inferred record, using `memory_update` with the exact
-  ID/revision from a scoped read. Exact target and revision checks happen inside
-  the storage lock; protected explicit records require authenticated Management.
-- **Delete:** only exact revision-checked inferred targets; the entire batch is
-  checked before any deletion. Broad or guessed deletion is forbidden.
+- **Correct:** use `memory_update` with the exact ID/revision from a scoped read.
+  Inferred records retain the mode-specific update policy; explicit records also
+  permit a correction when the backend recognizes a direct current user request.
+  Exact target and revision checks happen inside the storage lock, and model
+  updates preserve provenance and apply the automatic sensitive-data rules.
+- **Delete:** use exact revision-checked targets; the entire batch is checked
+  before any deletion. Explicit records require a recognized direct current user
+  forget/delete request. Confirm broad deletion with a fresh delete instruction;
+  a bare confirmation does not authorize a protected mutation.
 - **Clarify:** ask the user when subject, time, target, intended persistence or
   meaning is genuinely ambiguous.
 
@@ -30,6 +34,14 @@ The model must not retry with a fictitious different key simply to evade that
 result. A model-supplied `source=explicit` label cannot grant owner consent,
 sensitive-storage permission, or write authority in explicitly restricted shared
 scope. Guest Mode, retention scope and management permissions remain separate.
+
+The follow-up request gate reads the original current user utterance, never
+retrieved text or model arguments. Shared Explicit mode permits a recognized
+direct household request; a personal conversation must name the household
+target. This gate recognizes a limited set of English command forms, rather
+than establishing semantic consent for arbitrary natural language. It does not
+replace scope, mode, revision or privacy checks. The earlier Management-only
+restriction in the Batch 1/2 baseline is superseded.
 
 ## Model proposal admission after the follow-up simplification
 
@@ -75,8 +87,10 @@ contract, including genuine Chat Completions and Responses provider wires.
 The 40 Batch 1 semantic fixtures are deliberately **draft semantic expectations**.
 An expected `update` label means the user's statement semantically revises
 a previous assertion. It does **not** mean the model has authority to call
-`memory_update` on a protected explicit record. For those cases the permitted
-model action is no change and referral to authenticated Management.
+`memory_update` on an explicit record. The separate current-request, scope,
+mode, privacy and revision checks must still allow the operation; otherwise
+the record stays unchanged. Authenticated Management remains available through
+its separate administrative path.
 
 Testing is separated into four independent layers:
 
@@ -98,5 +112,7 @@ classification a prerequisite for deterministic mutation security.
 ## Non-changes
 
 Store version 2, authenticated Management calls, storage locks, rollback,
-replay, backup/restore, embeddings and Knowledge are unchanged. The Archive
-ranking pipeline is not part of this semantic-action refactor.
+replay, backup/restore and embeddings are unchanged. The Archive ranking
+pipeline is not part of this semantic-action refactor. Separate follow-up fixes
+on the same PR add secondary word-form matching to Knowledge; they do not
+replace the shared Memory/Archive stemmer.
