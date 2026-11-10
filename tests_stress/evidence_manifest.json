@@ -405,7 +405,7 @@
     "evidence": [
       "tests_real_ha/test_memory_provider_wire_e2e.py::test_chat_memory_crosses_provider_tool_and_durable_retrieval_boundaries",
       "tests_stress/test_provider_wire_privacy.py::test_concurrent_users_never_cross_private_provider_wire",
-      "tests/test_memory_simplification.py::test_temporary_add_manual_privacy_ownership_and_fresh_manager"
+      "tests/test_memory_simplification.py::test_temporary_add_manual_ownership_and_fresh_manager"
     ]
   },
   "data-memory/knowledge::knowledge_crud_search": {
