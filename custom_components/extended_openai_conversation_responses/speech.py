@@ -433,7 +433,7 @@ class StreamingSpeechSanitizer:
                             link_end < len(text) and text[link_end] == ")"
                         )
                         label_end = text.find("]", link_start + 1)
-                        if text[link_start] == "!" or not self._emit_link_label(
+                        if text[index + 1] == "!" or not self._emit_link_label(
                             output, text[link_start + 1 : label_end]
                         ):
                             self._suppress(output, end)

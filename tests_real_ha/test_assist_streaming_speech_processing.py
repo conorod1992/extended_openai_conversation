@@ -31,7 +31,7 @@ _RAW_RESPONSE = (
     "**Hello** see https://example.com/path and "
     "[docs](https://example.org/help) done."
 )
-_SPOKEN_RESPONSE = "Hello see and done."
+_SPOKEN_RESPONSE = "Hello see and docs done."
 
 
 def _chat_sse_deltas(parts: list[str]) -> bytes:

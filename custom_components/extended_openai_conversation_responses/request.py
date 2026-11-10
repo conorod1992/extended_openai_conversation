@@ -192,7 +192,8 @@ def format_function_tools(
         if (
             api_mode == API_MODE_RESPONSES
             and isinstance(function, dict)
-            and function.get("type") in {
+            and function.get("type")
+            in {
                 "memory",
                 "temporary_memory",
                 "knowledge",

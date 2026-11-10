@@ -739,7 +739,8 @@ def test_line_prefix_strips_supported_markers_and_rejects_near_misses() -> None:
     assert line_prefix("   ###   Heading", False) == ("strip", 9)
     assert line_prefix("\t>  Quote", False) == ("strip", 4)
     assert line_prefix("  -   Item", False) == ("strip", 6)
-    assert line_prefix("12)  Item", False) == ("strip", 5)
+    assert line_prefix("12)  Item", False) == ("none", 0)
+    assert line_prefix("12)  Item", False, preceding_list_item=True) == ("strip", 5)
     assert line_prefix("123x Item", False) == ("none", 0)
     assert line_prefix("####### Heading", False) == ("none", 0)
     assert line_prefix("-not-a-list", False) == ("none", 0)
@@ -1206,7 +1207,7 @@ async def test_known_complete_listener_preserves_role_groups_and_metadata(hass) 
         await wrapper.async_flush_completed(hass, log)
     assert heard == [
         {"role": "assistant"},
-        {"content": "One and"},
+        {"content": "One and link"},
         {"tool_calls": ["opaque"]},
         {"role": "assistant"},
         {"content": "Two"},
