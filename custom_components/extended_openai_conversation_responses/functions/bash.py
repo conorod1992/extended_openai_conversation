@@ -84,25 +84,73 @@ def _without_shell_comments(command: str) -> str:
     return "".join(result)
 
 
+def _shell_command_tokens(command: str) -> list[tuple[str, bool]]:
+    """Retain whether words and operator runs were unquoted and unescaped.
+
+    ``shlex`` alone removes that distinction, making a quoted semicolon look
+    like a command boundary. Decode words with shlex only after finding their
+    quote-aware boundaries. This remains a defensive lexer, not a shell parser.
+    """
+    command = _without_shell_comments(command)
+    tokens: list[tuple[str, bool]] = []
+    operators = "();&|<>\n"
+    whitespace = " \t\r"
+    index = 0
+    while index < len(command):
+        if command[index] in whitespace:
+            index += 1
+            continue
+        start = index
+        if command[index] in operators:
+            while index < len(command) and command[index] in operators:
+                index += 1
+            tokens.append((command[start:index], True))
+            continue
+        quote: str | None = None
+        word: list[str] = []
+        while index < len(command):
+            char = command[index]
+            if char == "\\" and quote != "'":
+                # POSIX shells remove escaped newlines before tokenization,
+                # including inside double quotes. shlex retains the newline.
+                if command[index : index + 2] != "\\\n":
+                    word.append(command[index : index + 2])
+                index += 2
+                continue
+            if quote:
+                if char == quote:
+                    quote = None
+            elif char in {"'", '"'}:
+                quote = char
+            elif char in whitespace or char in operators:
+                break
+            word.append(char)
+            index += 1
+        raw = "".join(word)
+        if not raw:
+            continue
+        value = shlex.split(raw, comments=False, posix=True)[0]
+        tokens.append((value, value == raw))
+    return tokens
+
+
 def _contains_disk_format_command(command: str) -> bool:
     """Detect literal disk-format commands at executable positions only.
 
     A best-effort defensive check: shell execution is explicitly opt-in.
     """
-    lex = shlex.shlex(
-        _without_shell_comments(command),
-        posix=True,
-        punctuation_chars="();&|<>\n",
-    )
-    lex.whitespace = " \t\r"
-    lex.whitespace_split = True
-    lex.commenters = ""
-    tokens = list(lex)
+    try:
+        tokens = _shell_command_tokens(command)
+    except ValueError:
+        # Heredoc bodies may contain quotes that are literal data to the shell.
+        # Keep the former broad protection for syntax this lexer cannot parse
+        # without rejecting every such command when workspace checks are off.
+        return re.search(r"\bformat\b", command, re.IGNORECASE) is not None
     at_command = True
     index = 0
     while index < len(tokens):
-        token = tokens[index]
-        if token in {";", "&&", "||", "|", "&", "(", ")", "\n"}:
+        token, literal = tokens[index]
+        if literal and token and all(char in "();&|\n" for char in token):
             at_command = True
             index += 1
             continue
@@ -110,6 +158,20 @@ def _contains_disk_format_command(command: str) -> bool:
             index += 1
             continue
         lower = token.casefold()
+        if literal and token in {
+            "if",
+            "then",
+            "elif",
+            "else",
+            "while",
+            "until",
+            "do",
+            "!",
+            "{",
+            "}",
+        }:
+            index += 1
+            continue
         if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", token):
             index += 1
             continue
@@ -119,23 +181,25 @@ def _contains_disk_format_command(command: str) -> bool:
         if lower == "env":
             index += 1
             while index < len(tokens) and (
-                tokens[index].startswith("-")
-                or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", tokens[index])
+                tokens[index][0].startswith("-")
+                or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", tokens[index][0])
             ):
                 index += 1
             continue
         if (
             lower in {"bash", "sh", "dash", "zsh"}
             and index + 2 < len(tokens)
-            and tokens[index + 1] in {"-c", "-lc", "-ec", "-xc"}
-            and _contains_disk_format_command(tokens[index + 2])
+            and tokens[index + 1][0] in {"-c", "-lc", "-ec", "-xc"}
+            and _contains_disk_format_command(tokens[index + 2][0])
         ):
             return True
         if (
             lower in {"cmd", "cmd.exe"}
             and index + 2 < len(tokens)
-            and tokens[index + 1].casefold() in {"/c", "/k"}
-            and _contains_disk_format_command(" ".join(tokens[index + 2 :]))
+            and tokens[index + 1][0].casefold() in {"/c", "/k"}
+            and _contains_disk_format_command(
+                " ".join(value for value, _ in tokens[index + 2 :])
+            )
         ):
             return True
         if lower in {"format", "format.exe"}:
