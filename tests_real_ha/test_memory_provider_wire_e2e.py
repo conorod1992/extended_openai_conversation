@@ -345,6 +345,51 @@ async def test_responses_memory_prompt_injection_uses_real_sdk_wire(
 
 
 @pytest.mark.parametrize("api_mode", [API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES])
+async def test_memory_search_with_only_query_remains_optional_on_provider_wire(
+    hass: HomeAssistant, monkeypatch: Any, api_mode: str
+) -> None:
+    """Check the SDK wire and backend dispatch without synthetic null arguments."""
+    MockUser(id=_USER_ID, name="Optional Memory Wire User", is_owner=True).add_to_hass(
+        hass
+    )
+    _, agent = await _memory_agent(hass, api_mode)
+    await agent._memory.async_add(
+        _USER_ID,
+        "The lounge heating target is 19 C.",
+        "heating",
+        "explicit",
+    )
+    minimal = {"query": "lounge"}
+    first = (
+        _chat_sse_tool_call(_TOOL_CALL_ID, "memory_search", minimal)
+        if api_mode == API_MODE_CHAT_COMPLETIONS
+        else _responses_sse_tool_call(_TOOL_CALL_ID, "memory_search", minimal)
+    )
+    final = (
+        _chat_sse_text("The lounge target is 19 C.")
+        if api_mode == API_MODE_CHAT_COMPLETIONS
+        else _responses_sse_text("The lounge target is 19 C.")
+    )
+    wire = _install_wire(monkeypatch, agent, [first, final])
+    result = await _say(hass, agent, "Find my lounge settings.")
+
+    assert _speech(result) == "The lounge target is 19 C."
+    assert len(wire.requests) == 2
+    request_tools = [
+        tool if api_mode == API_MODE_RESPONSES else tool["function"]
+        for tool in wire.requests[0]["body"]["tools"]
+    ]
+    memory_search = next(
+        tool for tool in request_tools if tool["name"] == "memory_search"
+    )
+    assert memory_search["strict"] is False
+    assert memory_search["parameters"]["required"] == ["query"]
+    assert "The lounge heating target is 19 C." in _request_text(
+        wire.requests[1]["body"]
+    )
+
+
+@pytest.mark.parametrize("api_mode", [API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES])
 async def test_model_upsert_conflict_has_no_write_and_exposes_revision_on_real_sdk_wire(
     hass: HomeAssistant, monkeypatch: Any, api_mode: str
 ) -> None:
