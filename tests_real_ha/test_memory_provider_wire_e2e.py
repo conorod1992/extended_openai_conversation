@@ -387,9 +387,20 @@ async def test_memory_search_with_only_query_remains_optional_on_provider_wire(
     else:
         assert "strict" not in memory_search
     assert memory_search["parameters"]["required"] == ["query"]
-    assert "The lounge heating target is 19 C." in _request_text(
-        wire.requests[1]["body"]
-    )
+    second_request = wire.requests[1]["body"]
+    if api_mode == API_MODE_CHAT_COMPLETIONS:
+        returned = _memory_tool_result(second_request)
+    else:
+        output = next(
+            item["output"]
+            for item in second_request["input"]
+            if item.get("type") == "function_call_output"
+            and item.get("call_id") == _TOOL_CALL_ID
+        )
+        returned = json.loads(json.loads(output)["result"])
+    assert [item["content"] for item in returned["memories"]] == [
+        "The lounge heating target is 19 C."
+    ]
 
 
 @pytest.mark.parametrize("api_mode", [API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES])
