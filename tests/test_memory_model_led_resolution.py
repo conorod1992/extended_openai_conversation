@@ -85,7 +85,7 @@ async def test_unkeyed_exact_duplicate_is_noop_without_save():
     )
     before, saves = deepcopy(storage.data), storage.saves
     again = await model_call(
-        agent, "upsert", content="The living room light is dim!!!",
+        agent, "upsert", content="The living room light is dim.",
         category="devices", source="implicit", subject="living room lamp"
     )
     assert first["status"] == "created"
@@ -234,7 +234,7 @@ async def test_exact_proposal_matching_never_uses_stemming_or_overlap(monkeypatc
     )
     assert first["status"] == second["status"] == "created"
     duplicate = await model_call(
-        agent, "upsert", content="I prefer coffee!!!", category="preferences",
+        agent, "upsert", content="I prefer coffee.", category="preferences",
         source="implicit", key="preference.coffee.other",
     )
     assert duplicate["status"] == "needs_resolution"

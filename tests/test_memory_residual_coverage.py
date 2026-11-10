@@ -170,7 +170,7 @@ async def test_upsert_confirmation_applies_all_explicit_metadata() -> None:
 
     existing = await manager.async_upsert(
         "alice",
-        "Oscar is a Cavachon",
+        "Oscar is a Cavachon.",
         "animals",
         "explicit",
         subject="Oscar",
@@ -292,7 +292,7 @@ def test_duplicate_related_and_index_edge_paths() -> None:
     manager._index(second)
 
     assert manager._find_duplicate("alice", "Cavachon Oscar") is None
-    assert manager._find_duplicate("alice", "Oscar is a Cavachon!") == first
+    assert manager._find_duplicate("alice", "Oscar is a Cavachon.") == first
     assert (
         manager._find_related_candidate("alice", "Cavachon Oscar", None, None)
         == first

@@ -2344,8 +2344,8 @@ def _migrate_raw_record(raw: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _fact_equality(value: str) -> str:
-    """Normalize whitespace while preserving case-sensitive facts such as paths."""
-    return " ".join(unicodedata.normalize("NFC", value).split()).rstrip(".!?")
+    """Normalize whitespace without discarding significant case or punctuation."""
+    return " ".join(unicodedata.normalize("NFC", value).split())
 
 
 @lru_cache(maxsize=20_000)

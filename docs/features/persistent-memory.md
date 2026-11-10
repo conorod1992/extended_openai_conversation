@@ -48,7 +48,7 @@ Memory context enters conversation requests when selected automatically or retur
 
 Full private backups and selected custom transfers can contain complete Memory values, including owner scope and metadata. Their YAML encoding and ZIP transport are not encryption. Shareable Setup excludes Memory and continues redacting configured provider/HTTP credentials. Ordinary diagnostics and Usage remain content-free; explicitly enabled administrator request debugging can contain full request material, including remembered values.
 
-Storage versions remain unchanged. Older releases may reject these newly permitted records on restore or purge them at startup after a downgrade. Removing the filter cannot recover records already purged by an older release. Existing fact comparison ignores trailing sentence punctuation, so Memory is not byte-exact credential storage.
+Storage versions remain unchanged. Older releases may reject these newly permitted records on restore or purge them at startup after a downgrade. Removing the filter cannot recover records already purged by an older release. Literal duplicate comparison preserves case and punctuation, including trailing characters that may be part of a credential or identifier. A model proposal changing punctuation in a keyed fact requires resolution rather than reporting the old value as unchanged. Content whitespace is still normalized, and duplicate comparison treats canonically equivalent Unicode forms as equal, so Memory is not byte-exact credential storage.
 
 ### Deleting an assistant
 

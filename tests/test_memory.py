@@ -152,7 +152,7 @@ async def test_duplicate_prevention() -> None:
         "user-1", "Oscar is the user's dog.", "pets", "explicit"
     )
     duplicate = await memory.async_add(
-        "user-1", "Oscar is the user's dog", "personal", "explicit"
+        "user-1", "Oscar is the user's dog.", "personal", "explicit"
     )
 
     assert first["status"] == "created"
@@ -169,7 +169,7 @@ async def test_explicit_duplicate_promotes_implicit_memory_provenance() -> None:
     )
 
     confirmed = await memory.async_add(
-        "user-1", "User prefers tea", "preferences", "explicit"
+        "user-1", "User prefers tea.", "preferences", "explicit"
     )
 
     assert confirmed["status"] == "updated"

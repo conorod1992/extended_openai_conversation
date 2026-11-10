@@ -101,7 +101,7 @@ async def test_model_create_idempotent_noop_conflict_and_no_write_on_old_identit
     before, saves = deepcopy(storage.data), storage.saves
 
     duplicate = await model_call(
-        agent, "upsert", content="The kitchen target is 19 C!!!",
+        agent, "upsert", content="The kitchen target is 19 C.",
         category="heating", source="explicit", key="heating.kitchen.target"
     )
     assert duplicate["status"] == "unchanged"
@@ -119,6 +119,86 @@ async def test_model_create_idempotent_noop_conflict_and_no_write_on_old_identit
     assert replacement["candidate"]["revision"] == original_revision
     assert storage.data == before and storage.saves == saves
     assert len(await memory.async_list("alice")) == 1
+
+
+@pytest.mark.parametrize("suffix", ["!", "?", "."])
+async def test_terminal_punctuation_requires_revision_checked_keyed_correction(suffix):
+    memory, storage = await store()
+    agent = entity(memory)
+    values = {
+        "content": "The synthetic password is Example",
+        "category": "network",
+        "source": "implicit",
+        "key": "network.wifi.password",
+    }
+    first = await model_call(agent, "upsert", **values)
+    original = first["memory"]
+    before, saves = deepcopy(storage.data), storage.saves
+
+    duplicate = await model_call(agent, "upsert", **values)
+    assert duplicate["status"] == "unchanged"
+    assert duplicate["memory"]["revision"] == original["revision"]
+
+    changed_content = values["content"] + suffix
+    conflict = await model_call(
+        agent, "upsert", **{**values, "content": changed_content}
+    )
+    assert conflict["status"] == "needs_resolution"
+    assert conflict["reason"] == "key_collision"
+    assert conflict["applied"] is False
+    assert conflict["candidate"]["memory_id"] == original["memory_id"]
+    assert conflict["candidate"]["revision"] == original["revision"]
+    assert storage.data == before and storage.saves == saves
+
+    corrected = await model_call(
+        agent, "update", memory_id=original["memory_id"],
+        expected_revision=original["revision"], content=changed_content,
+    )
+    assert corrected["status"] == "updated"
+    assert corrected["memory"]["content"] == changed_content
+    assert corrected["memory"]["source"] == "implicit"
+    assert corrected["memory"]["revision"] != original["revision"]
+    saves = storage.saves
+    repeat = await model_call(
+        agent, "upsert", **{**values, "content": changed_content}
+    )
+    assert repeat["status"] == "unchanged"
+    assert storage.saves == saves
+
+    fresh = PersistentMemory(storage)
+    await fresh.async_initialize()
+    [restored] = await fresh.async_list("alice")
+    assert restored.memory_id == original["memory_id"]
+    assert restored.content == changed_content
+    assert memory_revision(restored) == corrected["memory"]["revision"]
+
+
+async def test_unkeyed_terminal_punctuation_distinctions_survive_creation_and_reload():
+    memory, storage = await store()
+    agent = entity(memory)
+    identities = {}
+    for suffix in ("", "!", "?", "."):
+        content = "The synthetic password is Example" + suffix
+        created = await model_call(
+            agent, "upsert", content=content, category="network", source="implicit"
+        )
+        assert created["status"] == "created"
+        identities[content] = created["memory"]["memory_id"]
+    assert len(set(identities.values())) == 4
+
+    before, saves = deepcopy(storage.data), storage.saves
+    for content, identity in identities.items():
+        duplicate = await model_call(
+            agent, "upsert", content=content, category="network", source="implicit"
+        )
+        assert duplicate["status"] == "unchanged"
+        assert duplicate["memory"]["memory_id"] == identity
+        assert duplicate["memory"]["content"] == content
+    assert storage.data == before and storage.saves == saves
+
+    fresh = PersistentMemory(storage)
+    await fresh.async_initialize()
+    assert {record.content: record.memory_id for record in await fresh.async_list("alice")} == identities
 
 
 async def test_model_legacy_add_alias_is_just_as_safe_as_upsert():

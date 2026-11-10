@@ -108,7 +108,7 @@ async def test_new_key_promotes_exact_unique_unkeyed_fact(operation: str) -> Non
     call = memory.async_add if operation == "add" else memory.async_upsert
     promoted = await call(
         "alice",
-        "Oscar is a Cavachon",
+        "Oscar is a Cavachon.",
         "pets",
         "explicit",
         subject="oscar",
