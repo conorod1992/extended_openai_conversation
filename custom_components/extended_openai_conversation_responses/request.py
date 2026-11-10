@@ -190,7 +190,8 @@ def format_function_tools(
         # nullable fields. Our optional tool arguments must remain truly optional.
         # Never change user-configured schemas or tools that explicitly set strict.
         if (
-            isinstance(function, dict)
+            api_mode == API_MODE_RESPONSES
+            and isinstance(function, dict)
             and function.get("type") in {
                 "memory",
                 "temporary_memory",
