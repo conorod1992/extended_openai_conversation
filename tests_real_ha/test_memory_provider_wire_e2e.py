@@ -382,7 +382,10 @@ async def test_memory_search_with_only_query_remains_optional_on_provider_wire(
     memory_search = next(
         tool for tool in request_tools if tool["name"] == "memory_search"
     )
-    assert memory_search["strict"] is False
+    if api_mode == API_MODE_RESPONSES:
+        assert memory_search["strict"] is False
+    else:
+        assert "strict" not in memory_search
     assert memory_search["parameters"]["required"] == ["query"]
     assert "The lounge heating target is 19 C." in _request_text(
         wire.requests[1]["body"]
