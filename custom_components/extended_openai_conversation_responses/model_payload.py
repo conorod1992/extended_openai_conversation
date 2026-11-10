@@ -14,13 +14,13 @@ RETRIEVED_DATA_SAFETY = (
 
 PERSISTENT_MEMORY_GUIDANCE = """
 ## Persistent memory
-Store durable facts, not transcripts. Search before proposing; results are not proof of equivalence or novelty.
+Store durable facts, not transcripts. Opening retrieval is fixed; use memory_search for later context. Search before proposing; results are not proof of equivalence or novelty.
 
-Distinguish paraphrases, corrections, independent/history facts and ambiguity. Respect negation, subjects, relations, identifiers, values/units and uncertainty. Preserve unaffected detail; clarify identity. Similarity never authorizes edits.
+Distinguish paraphrases, corrections, independent/history facts and ambiguity. Respect negation, subjects, relations, identifiers, values/units and uncertainty. Keep unaffected detail; clarify identity. Similarity never authorizes edits.
 
-memory_upsert proposes, never replaces. needs_resolution means NO write; never evade conflicts by changing keys. memory_update needs exact memory_id and expected_revision from a scoped read; preserve provenance. Edit/delete explicit facts only on a direct current user request. memory_delete needs exact ID/revision pairs. source=explicit never grants consent. Confirm before broad deletion; require a fresh delete command, not bare yes.
+memory_upsert proposes, never replaces. needs_resolution means NO write; never change keys to evade it. memory_update needs exact memory_id/expected_revision from scoped reads; preserve provenance. Edit/delete explicit facts only on a direct current user request. memory_delete needs exact ID/revision pairs. source=explicit never grants consent. Confirm before broad deletion; require a fresh delete command, not bare yes.
 
-Use source=implicit only in Automatic mode; Manual writes only on request. Shared Explicit allows requested household changes, not proactive ones; use source=explicit for requested writes. Personal requests must name household scope. Never expose others' facts or store secrets or credentials, financial accounts, sensitive or transient facts. Never claim failed writes succeeded.
+Use source=implicit only in Automatic mode; Manual writes need requests. Shared Explicit: household changes only on request; use source=explicit for requests. Personal requests for shared writes must name household scope. Never expose others' facts or store secrets or credentials, financial accounts, sensitive or transient facts. Never claim failed writes succeeded.
 Current user statements override stored facts.
 """
 
@@ -99,7 +99,7 @@ _TOOL_DESCRIPTIONS = {
         "keys. needs_resolution means no write; search and decide what the facts mean."
     ),
     "memory_search": (
-        "Find potential existing facts before proposing or correcting. Rankings are "
+        "Find relevant facts for answers and before proposing or correcting. Rankings are "
         "candidates, not semantic matches; absence is not proof of novelty."
     ),
     "memory_list": "Browse existing facts, their provenance and exact revisions.",
@@ -155,7 +155,7 @@ _PROPERTY_DESCRIPTIONS: dict[tuple[str, str], str] = {
         "Descriptive origin only; explicit is not model authorization."
     ),
     ("memory_update", "memory_id"): (
-        "Exact ID of the inferred record found in this scope, not a similar record."
+        "Exact ID of the record found in this scope, not a similar record."
     ),
     ("knowledge_search", "query"): "Short search keywords or phrase.",
     ("knowledge_search", "source_ids"): "Exact IDs returned by Knowledge tools.",

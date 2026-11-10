@@ -143,6 +143,8 @@ async def test_memory_store_bundle_prompt_and_tool_update_form_one_runtime_contr
 
         assert len(provider_prompts) == 1
         assert "Oscar is a Cavachon." in provider_prompts[0]
+        assert "Opening retrieval is fixed" in provider_prompts[0]
+        assert "use memory_search for later context" in provider_prompts[0]
         bundle = await entity._continuity.async_get_memory_bundle(
             "memory-runtime-acceptance", 30
         )
@@ -188,6 +190,7 @@ async def test_memory_store_bundle_prompt_and_tool_update_form_one_runtime_contr
         assert len(provider_prompts) == 2
         assert "Oscar is a Cavapoo." in provider_prompts[1]
         assert "Oscar is a Cavachon." not in provider_prompts[1]
+        assert "use memory_search for later context" in provider_prompts[1]
         assert list(
             await entity._continuity.async_get_memory_bundle(
                 "memory-runtime-acceptance", 30
