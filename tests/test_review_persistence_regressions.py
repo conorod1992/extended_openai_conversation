@@ -35,13 +35,11 @@ from tests.test_transfer_user_mapping import _prepared
         "authToken=synthetic-secret",
     ],
 )
-async def test_implicit_memory_rejects_credential_labels(text):
+async def test_implicit_memory_retains_credential_labels(text):
     manager = memory.PersistentMemory(FakeStorage())
     await manager.async_initialize()
-    with pytest.raises(ValueError):
-        await manager.async_add("alice", text, "general", "implicit")
-    assert not (await manager.async_backup_data())["memories"]
-    memory.validate_memory_privacy("Chopin is my favourite composer", automatic=True)
+    await manager.async_add("alice", text, "general", "implicit")
+    assert (await manager.async_backup_data())["memories"][0]["content"] == text
 
 
 @pytest.mark.parametrize(
@@ -52,8 +50,11 @@ async def test_implicit_memory_rejects_credential_labels(text):
         "The lapin is a rabbit",
     ],
 )
-def test_secret_suffix_inside_ordinary_word_is_not_a_credential(text):
-    memory.validate_memory_privacy(text, automatic=True)
+async def test_ordinary_words_remain_eligible(text):
+    manager = memory.PersistentMemory(FakeStorage())
+    await manager.async_initialize()
+    await manager.async_add("alice", text, "general", "implicit")
+    assert (await manager.async_list("alice"))[0].content == text
 
 
 async def test_private_rollback_and_selected_restore_preserve_malformed_destination():

@@ -16,44 +16,33 @@ from homeassistant.util import dt as dt_util
 from tests.test_temporary_memory import Storage, _record
 
 
-async def test_failed_privacy_purge_cannot_acknowledge_repaired_storage(
-    hass, monkeypatch
-):
-    store = TemporaryMemoryStore(
-        hass, 1, "temporary.purge-fault", private=True, atomic_writes=True
-    )
-    payload = {
-        "records": [None, {**_record(), "content": "password: synthetic-private-value"}]
-    }
+async def test_damaged_generation_never_attempts_a_content_purge(hass, monkeypatch):
+    store = TemporaryMemoryStore(hass, 1, "temporary.no-purge", private=True, atomic_writes=True)
+    payload = {"records": [None, {**_record(), "content": "password: synthetic-private-value"}]}
     await store.async_save(payload)
     original = Path(store.path).read_bytes()
     manager = TemporaryMemory(store)
-    with monkeypatch.context() as fault:
-        fault.setattr(
-            store, "async_save", AsyncMock(side_effect=OSError("write failed"))
-        )
-        with pytest.raises(OSError, match="write failed"):
+    monkeypatch.setattr(store, "async_save", AsyncMock(side_effect=OSError("write failed")))
+    for _ in range(2):
+        with pytest.raises(ValueError, match="needs repair"):
             await manager.async_initialize()
-    assert not manager.initialized
-    assert Path(store.path).read_bytes() == original
-    with pytest.raises(ValueError, match="needs repair"):
-        await manager.async_initialize()
-    assert not manager.initialized
-    assert json.loads(Path(store.path).read_text())["data"] == {"records": [None]}
+        assert not manager.initialized
+        assert Path(store.path).read_bytes() == original
+    store.async_save.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
     "damaged", [None, {"recoverable": "fact"}, {**_record(), "expires_at": "invalid"}]
 )
-@pytest.mark.parametrize("privacy_sibling", [False, True])
-async def test_malformed_generation_preserves_evidence_and_purges_only_privacy_rejections(
-    hass, damaged, privacy_sibling
+@pytest.mark.parametrize("sensitive_sibling", [False, True])
+async def test_malformed_generation_preserves_all_evidence_with_sensitive_siblings(
+    hass, damaged, sensitive_sibling
 ):
     store = TemporaryMemoryStore(
         hass, 1, "temporary.malformed", private=True, atomic_writes=True
     )
     records = [_record("valid"), damaged]
-    if privacy_sibling:
+    if sensitive_sibling:
         records.append(
             {**_record("private"), "content": "password: synthetic-private-value"}
         )
@@ -65,9 +54,8 @@ async def test_malformed_generation_preserves_evidence_and_purges_only_privacy_r
             await manager.async_initialize()
         assert not manager.initialized
         persisted = json.loads(Path(store.path).read_text())["data"]
-        assert persisted == {"records": records[:2], "opaque": "preserve"}
-        if not privacy_sibling:
-            assert Path(store.path).read_bytes() == evidence
+        assert persisted == {"records": records, "opaque": "preserve"}
+        assert Path(store.path).read_bytes() == evidence
         with pytest.raises(ValueError, match="needs repair"):
             await manager._async_reconcile_failed_save()
 

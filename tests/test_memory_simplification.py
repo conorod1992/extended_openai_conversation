@@ -129,7 +129,7 @@ async def temporary_command(manager, monkeypatch, action="temporary_add", *, adm
     return await management_ui.async_memories_command(request)
 
 
-async def test_temporary_add_manual_privacy_ownership_and_fresh_manager(monkeypatch):
+async def test_temporary_add_manual_ownership_and_fresh_manager(monkeypatch):
     storage = Storage()
     manager = TemporaryMemory(storage)
     await manager.async_initialize()
@@ -149,7 +149,7 @@ async def test_temporary_add_manual_privacy_ownership_and_fresh_manager(monkeypa
     assert TemporaryMemory.validate_backup_data(await fresh.async_backup_data())[0].source == "manual"
 
 
-async def test_automatic_creation_keeps_source_privacy_and_duplicate_behavior():
+async def test_automatic_creation_keeps_source_and_duplicate_behavior():
     storage = Storage()
     manager = TemporaryMemory(storage)
     await manager.async_initialize()
@@ -159,27 +159,26 @@ async def test_automatic_creation_keeps_source_privacy_and_duplicate_behavior():
     assert first["memory"]["memory_id"] == second["memory"]["memory_id"]
     assert second["memory"]["source"] == "automatic"
     assert len(await manager.async_list_owned("user:alice")) == 1
-    with pytest.raises(ValueError, match="explicit"):
-        await manager.async_add("conversation:one", "Health condition is asthma", "2026-09-02T12:00:00Z", owner_scope_id="user:alice")
-    # Internal automatic updates still require explicit consent for sensitive facts.
-    with pytest.raises(ValueError, match="explicit"):
-        await manager.async_update("conversation:one", first["memory"]["memory_id"], "Health condition is asthma", None, None, owner_scope_id="user:alice")
-    # An authenticated user's edit is that explicit consent and promotes provenance.
+    added = await manager.async_add("conversation:one", "Health condition is asthma", "2026-09-02T12:00:00Z", owner_scope_id="user:alice")
+    assert added["status"] == "created"
+    updated = await manager.async_update("conversation:one", first["memory"]["memory_id"], "Health condition is asthma", None, None, owner_scope_id="user:alice")
+    assert updated.source == "automatic"
+    # Authenticated Management retains its trusted provenance promotion.
     updated = await manager.async_update_owned("user:alice", first["memory"]["memory_id"], "Health condition is asthma", None, None)
     assert updated.source == "manual"
     assert updated.content == "Health condition is asthma"
     fresh = TemporaryMemory(storage)
     await fresh.async_initialize()
-    assert (await fresh.async_list_owned("user:alice"))[0].source == "manual"
+    assert fresh._records[first["memory"]["memory_id"]].source == "manual"
 
 
 @pytest.mark.parametrize("manual", [False, True])
-async def test_short_term_secret_rejection_applies_to_both_sources(manual):
+async def test_short_term_credentials_are_permitted_for_both_sources(manual):
     manager = TemporaryMemory(Storage())
     await manager.async_initialize()
-    with pytest.raises(ValueError, match="secret"):
-        await manager.async_add("user:alice", "Password is hunter2", "2026-09-02T12:00:00Z", owner_scope_id="user:alice", source="manual" if manual else "automatic")
-    assert not await manager.async_list_owned("user:alice")
+    result = await manager.async_add("user:alice", "Password is synthetic-value", "2026-09-02T12:00:00Z", owner_scope_id="user:alice", source="manual" if manual else "automatic")
+    assert result["status"] == "created"
+    assert (await manager.async_list_owned("user:alice"))[0].content == "Password is synthetic-value"
 
 
 @pytest.mark.parametrize("expiry", ["invalid", "2026-09-02T12:00:00", "2026-08-31T12:00:00Z", "2028-09-02T12:00:00Z"])

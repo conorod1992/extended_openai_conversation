@@ -276,24 +276,13 @@ async def test_new_key_never_promotes_a_different_owner(operation: str) -> None:
 
 @pytest.mark.parametrize("source", ["explicit", "implicit"])
 @pytest.mark.parametrize("operation", ["add", "upsert"])
-async def test_card_like_identifier_rejection_explains_false_positives(
-    source: str, operation: str
-) -> None:
+async def test_card_like_identifiers_are_retained(source: str, operation: str) -> None:
     memory = await _memory()
-    call = memory.async_add if operation == "add" else memory.async_upsert
-    with pytest.raises(memory_module.MemoryPrivacyRejected) as error:
-        await call(
-            "alice",
-            "Package tracking reference 4111111111111111.",
-            "deliveries",
-            source,
-        )
-    message = str(error.value)
-    assert "financial credential" in message
-    assert "unrelated long identifiers" in message
-    assert "without the identifier" in message
-    assert "4111111111111111" not in message
-    assert await memory.async_list("alice") == []
+    result = await getattr(memory, "async_" + operation)(
+        "alice", "Package tracking reference 4111111111111111.", "deliveries", source,
+    )
+    assert result["status"] == "created"
+    assert (await memory.async_list("alice"))[0].content == "Package tracking reference 4111111111111111."
 
 
 async def test_non_card_identifier_remains_allowed() -> None:

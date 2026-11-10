@@ -27,7 +27,9 @@ async def test_symbol_distinct_facts_are_not_duplicates(left, right):
 
 
 async def test_harmless_pin_suffix_and_legacy_memory_mode():
-    memory.validate_memory_privacy("Chopin is my favourite composer", automatic=False)
+    manager = memory.PersistentMemory(FakeStorage())
+    await manager.async_initialize()
+    await manager.async_add("alice", "Chopin is my favourite composer", "general", "explicit")
     assert normalize_agent_config({"functions": [], "memory_enabled": True, "memory_auto_create": True})["memory_mode"] == "automatic"
 
 
@@ -81,13 +83,12 @@ async def test_automatic_noop_preserves_manual_provenance():
     assert store.data == before
 
 
-def test_memory_import_checks_content_privacy():
+def test_memory_import_preserves_synthetic_credentials():
     prepared = _prepared()
-    record = replace(prepared.memories[0], content="Password is hunter2")
-    with pytest.raises(ValueError):
-        memory.PersistentMemory.validate_backup_data({"memories": [asdict(record)]})
-    with pytest.raises(ValueError):
-        TemporaryMemory.validate_backup_data({"records": [{**stored_record(0), "content": "Password is hunter2"}]})
+    record = replace(prepared.memories[0], content="Password is synthetic-import-value")
+    assert memory.PersistentMemory.validate_backup_data({"memories": [asdict(record)]}) == [record]
+    [temporary] = TemporaryMemory.validate_backup_data({"records": [{**stored_record(0), "content": "Password is synthetic-import-value"}]})
+    assert temporary.content == record.content
 
 
 async def test_volatile_usage_refuses_incomplete_backup():

@@ -15,7 +15,6 @@ from uuid import uuid4
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
-from .memory import MemoryPrivacyRejected, validate_memory_privacy
 from .persistence_hardening import (
     StorageRepairRequired,
     _async_settle_transactional_save,
@@ -121,9 +120,8 @@ class TemporaryMemory:
                 raise ValueError("Temporary Memory records have invalid structure")
             raw_records = data.get("records", []) if isinstance(data, Mapping) else []
             seen_ids: set[str] = set()
-            privacy_rejected: set[int] = set()
             damaged = False
-            for index, raw in enumerate(raw_records):
+            for raw in raw_records:
                 try:
                     record = _record_from_storage(raw)
                     if record.memory_id in seen_ids:
@@ -135,25 +133,9 @@ class TemporaryMemory:
                         self._records[record.memory_id] = record
                     else:
                         self.expired_pruned += 1
-                except MemoryPrivacyRejected:
-                    privacy_rejected.add(index)
-                    self._normalization_pending = True
                 except TypeError, ValueError:
                     damaged = True
             if damaged:
-                if privacy_rejected:
-                    # Purge only policy-rejected records. Keep every other raw
-                    # sibling and opaque field as repair evidence.
-                    await self._store.async_save(
-                        {
-                            **(data or {}),
-                            "records": [
-                                raw
-                                for index, raw in enumerate(raw_records)
-                                if index not in privacy_rejected
-                            ],
-                        }
-                    )
                 raise StorageRepairRequired("Temporary Memory")
             self._initialized = True
             if self.expired_pruned:
@@ -246,8 +228,6 @@ class TemporaryMemory:
         owner_scope_id = _require_owner_scope_id(owner_scope_id)
         content = _clean(content, MAX_CONTENT_LENGTH, "content")
         category = _clean(category, MAX_CATEGORY_LENGTH, "category")
-        validate_memory_privacy(content, automatic=source == "automatic")
-        validate_memory_privacy(category, automatic=source == "automatic")
         expiry = _parse_future_expiry(expires_at)
         async with async_storage_lock(self, self._lock):
             await self._async_initialize_locked()
@@ -345,16 +325,10 @@ class TemporaryMemory:
                 else current.content
             )
             effective_source = source or current.source
-            validate_memory_privacy(
-                new_content, automatic=effective_source == "automatic"
-            )
             new_category = (
                 _clean(category, MAX_CATEGORY_LENGTH, "category")
                 if category is not None
                 else current.category
-            )
-            validate_memory_privacy(
-                new_category, automatic=effective_source == "automatic"
             )
             new_expiry = (
                 _parse_future_expiry(expires_at).isoformat()
@@ -539,8 +513,6 @@ class TemporaryMemory:
                 seen_ids.add(record.memory_id)
                 _parse_expiry(record.expires_at)
                 normalized = _normalize_record_owner(record)
-            except MemoryPrivacyRejected:
-                continue
             except (TypeError, ValueError) as err:
                 raise StorageRepairRequired("Temporary Memory") from err
             if normalized is None:
@@ -777,8 +749,6 @@ def _record_from_storage(raw: Mapping[str, Any]) -> TemporaryMemoryRecord:
         or dt_util.parse_datetime(record.updated_at) is None
     ):
         raise _InvalidStoredMetadata("temporary memory timestamp is invalid")
-    validate_memory_privacy(record.content, automatic=record.source == "automatic")
-    validate_memory_privacy(record.category, automatic=record.source == "automatic")
     return replace(
         record,
         content=_clean(record.content, MAX_CONTENT_LENGTH, "content"),

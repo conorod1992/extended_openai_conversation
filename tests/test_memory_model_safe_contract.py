@@ -323,16 +323,16 @@ async def test_model_deletion_is_all_or_nothing_for_stale_and_foreign_ids():
     assert len(await memory.async_list("bob")) == 1
 
 
-async def test_model_source_explicit_cannot_escape_implicit_privacy_rules():
+async def test_model_source_explicit_can_store_sensitive_content_in_manual_mode():
     memory, storage = await store()
-    agent = entity(memory, automatic=False)
-    with pytest.raises(ValueError, match="sensitive"):
-        await model_call(
-            agent, "upsert", content="My medical diagnosis is example condition.",
-            category="health", source="explicit"
-        )
-    assert storage.saves == 0
-    assert await memory.async_list("alice") == []
+    result = await model_call(
+        entity(memory, automatic=False), "upsert",
+        content="My medical diagnosis is example condition.",
+        category="health", source="explicit",
+    )
+    assert result["status"] == "created"
+    assert storage.saves == 1
+    assert (await memory.async_list("alice"))[0].content == "My medical diagnosis is example condition."
 
 
 async def test_model_origin_cannot_claim_manual_shared_write_authority():
@@ -373,25 +373,20 @@ async def test_legacy_management_deletion_is_still_supported():
     assert await memory.async_list("alice") == []
 
 
-async def test_model_update_rejects_sensitive_fields_with_forged_explicit_source():
+async def test_model_sensitive_update_preserves_provenance_with_explicit_label():
     memory, storage = await store()
-    created = await memory.async_add(
-        "alice", "The household note is plain text.", "home", "implicit"
+    created = await memory.async_add("alice", "The household note is plain text.", "home", "implicit")
+    record = (await memory.async_list("alice"))[0]
+    result = await model_call(
+        entity(memory), "update", memory_id=created["memory"]["memory_id"],
+        expected_revision=memory_revision(record),
+        content="Medical diagnosis is example condition", source="explicit",
     )
-    memory_id = created["memory"]["memory_id"]
-    revision = memory_revision((await memory.async_list("alice"))[0])
-    before, saves = deepcopy(storage.data), storage.saves
-    with pytest.raises(ValueError, match="sensitive"):
-        await model_call(
-            entity(memory),
-            "update",
-            memory_id=memory_id,
-            expected_revision=revision,
-            content="Medical diagnosis is example condition",
-            source="explicit",
-        )
-    assert storage.saves == saves
-    assert storage.data == before
+    assert result["status"] == "updated"
+    [updated] = await memory.async_list("alice")
+    assert updated.content == "Medical diagnosis is example condition"
+    assert updated.source == "implicit"
+    assert storage.saves == 2
 
 
 async def test_model_multi_delete_rejects_protected_record_before_removing_anything():
@@ -522,24 +517,20 @@ async def test_direct_user_correction_and_forget_allow_explicit_record_without_p
     assert await memory.async_list("alice") == []
 
 
-async def test_model_correction_of_explicit_record_still_enforces_implicit_privacy():
+async def test_model_requested_sensitive_correction_preserves_explicit_provenance():
     memory, storage = await store()
-    added = await memory.async_add(
-        "alice", "The kitchen is painted white.", "home", "explicit"
-    )
+    added = await memory.async_add("alice", "The kitchen is painted white.", "home", "explicit")
     record = (await memory.async_list("alice"))[0]
-    before, saves = deepcopy(storage.data), storage.saves
-    with pytest.raises(ValueError, match="sensitive"):
-        await model_call(
-            entity(memory), "update", user_text="Update your memory with my medical diagnosis.",
-            memory_id=added["memory"]["memory_id"],
-            expected_revision=memory_revision(record),
-            content="My medical diagnosis is example condition.",
-            category="health", source="explicit",
-        )
-    assert storage.saves == saves
-    assert storage.data == before
-    assert (await memory.async_list("alice"))[0].source == "explicit"
+    result = await model_call(
+        entity(memory), "update", user_text="Update your memory with my medical diagnosis.",
+        memory_id=added["memory"]["memory_id"], expected_revision=memory_revision(record),
+        content="My medical diagnosis is example condition.", category="health", source="explicit",
+    )
+    assert result["status"] == "updated"
+    [updated] = await memory.async_list("alice")
+    assert updated.content == "My medical diagnosis is example condition."
+    assert updated.source == "explicit"
+    assert storage.saves == 2
 
 
 @pytest.mark.parametrize("automatic", [False, True])
