@@ -390,3 +390,28 @@ async def test_temporary_existing_operations_cannot_redirect_legacy_scope(
             confirm=True,
         )
     get.assert_not_awaited()
+
+
+@pytest.mark.parametrize("scope", ["user:user-7", "shared:household"])
+async def test_management_sensitive_content_keeps_revision_and_owner_checks(store, scope):
+    await command(
+        "add", admin=True, scope_id=scope,
+        content="The Wi-Fi password is synthetic-management-value.",
+        category="password: synthetic-category", subject="medical diagnosis: synthetic-condition",
+        key="sk-synthetic-management123",
+    )
+    [record] = (await command("list", admin=True, scope_id=scope))["memories"]
+    assert record["source"] == "explicit"
+    result = await command(
+        "update", admin=True, scope_id=scope, memory_id=record["memory_id"],
+        expected_revision=record["revision"], content="The gate PIN is 2468.",
+    )
+    assert result["memory"]["subject"] == record["subject"]
+    assert result["memory"]["content"] == "The gate PIN is 2468."
+    with pytest.raises(ValueError, match="changed since"):
+        await command(
+            "update", admin=True, scope_id=scope, memory_id=record["memory_id"],
+            expected_revision=record["revision"], content="Stale update",
+        )
+    with pytest.raises(HomeAssistantError, match="not available"):
+        await command("list", scope_id="user:other")
