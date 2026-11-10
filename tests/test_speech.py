@@ -99,6 +99,7 @@ def test_markdown_citation_and_bare_urls_are_removed_without_mutating_original()
             "As reported.",
         ),
         ("Read [Source](https://example.com) now.", "Read now."),
+        ("See [https://example.com/path?a=1](https://example.com) now.", "See now."),
         ("See [2](https://example.com) and continue.", "See and continue."),
         ("Show ![a photograph](https://example.com/image.png) next.", "Show next."),
         ("Read [the documentation](https://example.com/a(b)c).", "Read the documentation."),
