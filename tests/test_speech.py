@@ -79,6 +79,68 @@ def test_markdown_citation_and_bare_urls_are_removed_without_mutating_original()
     assert "https://example.com" in original
 
 
+@pytest.mark.parametrize(
+    "original,expected",
+    [
+        (
+            "The best option is [Philips Hue](https://philips.com) for your setup.",
+            "The best option is Philips Hue for your setup.",
+        ),
+        (
+            "Read **[Home Assistant](https://www.home-assistant.io)** today.",
+            "Read Home Assistant today.",
+        ),
+        (
+            "Try ([Philips Hue](https://philips.com)) for lighting.",
+            "Try Philips Hue for lighting.",
+        ),
+        (
+            "As reported ([apnews.com](https://apnews.com/article/example)).",
+            "As reported.",
+        ),
+        ("Read [Source](https://example.com) now.", "Read now."),
+        ("See [2](https://example.com) and continue.", "See and continue."),
+        ("Show ![a photograph](https://example.com/image.png) next.", "Show next."),
+        ("Read [the documentation](https://example.com/a(b)c).", "Read the documentation."),
+    ],
+)
+def test_speech_links_preserve_prose_not_citations_across_provider_splits(
+    original: str, expected: str
+) -> None:
+    assert process_speech_text(original, _config()) == expected
+    assert speech._final_whitespace_cleanup(_stream([original])) == expected
+    assert speech._final_whitespace_cleanup(_stream(list(original))) == expected
+    for split in range(len(original) + 1):
+        assert speech._final_whitespace_cleanup(
+            _stream([original[:split], original[split:]])
+        ) == expected, split
+
+
+@pytest.mark.parametrize(
+    "original,expected",
+    [
+        ("7. Juli ist ein Dienstag.", "7. Juli ist ein Dienstag."),
+        ("1. Mai ist ein Feiertag.", "1. Mai ist ein Feiertag."),
+        ("The total is\\n42. That's all.", "The total is\\n42. That's all."),
+        ("- 3 degrees tonight", "- 3 degrees tonight"),
+        ("- 30 degrees tonight", "- 30 degrees tonight"),
+        ("## Report\\n- **First** item\\n2. Second item", "Report\\nFirst item\\nSecond item"),
+        ("1. First item\\n2. Second item", "1. First item\\n2. Second item"),
+        ("- **First** item\\n\\n42. Total", "First item\\n42. Total"),
+    ],
+)
+def test_speech_line_prefixes_do_not_destroy_literal_numbers(
+    original: str, expected: str
+) -> None:
+    assert process_speech_text(original, _config()) == expected
+    assert speech._final_whitespace_cleanup(_stream([original])) == expected
+    assert speech._final_whitespace_cleanup(_stream(list(original))) == expected
+    for split in range(len(original) + 1):
+        assert speech._final_whitespace_cleanup(
+            _stream([original[:split], original[split:]])
+        ) == expected, split
+
+
 def test_common_markdown_is_simplified_conservatively() -> None:
     original = "## Update\n- **Heating** is `on`\n- Temperature is 20 C"
     assert (
@@ -321,11 +383,11 @@ def test_streaming_real_trace_shape() -> None:
         ),
         (
             "The result is **[here](https://example.com)**.",
-            "The result is.",
+            "The result is here.",
         ),
         (
             "The result is *[here](https://example.com)*.",
-            "The result is.",
+            "The result is here.",
         ),
         (
             "Answer. [Source](https://example.com)\n\nMore.",
@@ -345,7 +407,7 @@ def test_streaming_real_trace_shape() -> None:
         ),
         (
             "Read **details [here](https://example.com) now**.",
-            "Read details now.",
+            "Read details here now.",
         ),
     ],
 )
@@ -453,7 +515,7 @@ def test_final_incomplete_markdown_constructs_are_preserved() -> None:
 
 def test_nested_parentheses_in_markdown_url_are_suppressed() -> None:
     assert _stream(["Before [label](https://example.com/a(b)c) after"]) == (
-        "Before after"
+        "Before label after"
     )
 
 
@@ -949,7 +1011,7 @@ def test_removed_citations_keep_spoken_boundaries_and_formatting(
             "0871234567. That is the contact number.",
             "0871234567. That is the contact number.",
         ),
-        ("123456789. This is an ordered item.", "This is an ordered item."),
+        ("123456789. This is an ordered item.", "123456789. This is an ordered item."),
         (
             "1234567890. This is not an ordered item.",
             "1234567890. This is not an ordered item.",
