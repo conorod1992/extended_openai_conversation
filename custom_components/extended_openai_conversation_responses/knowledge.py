@@ -1180,7 +1180,7 @@ def _search_tokens(value: str, exact: set[str] | None = None) -> set[str]:
     exact = _tokens(value) if exact is None else exact
     terms = set(exact)
     for token in exact:
-        if not (token.isascii() and token.isalpha() and len(token) >= 4):
+        if not (token.isascii() and token.isalpha() and len(token) >= 3):
             continue
         # Avoid known technical and ambiguous collisions in the shared stemmer.
         if token in _SEARCH_FILLER_TERMS or token in {
