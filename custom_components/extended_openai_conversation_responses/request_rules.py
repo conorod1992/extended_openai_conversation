@@ -4039,13 +4039,20 @@ async def _async_evaluate_matched_rule(
     )
 
 
+# Keep signed numbers and decimal fractions together for whole-token matching.
+# A hyphen after a word character is still a separator.
+_TEXT_PUNCTUATION = re.compile(
+    r"(?<!\w)([\u2212-]?(?:\d+\.\d+|\.\d+)|[\u2212-]\d+)(?!\w)|[^\w\s']"
+)
+
+
 def _basic_normalize(text: str) -> str:
-    """Normalize punctuation and spacing without semantic transformations."""
-    value = unicodedata.normalize("NFKC", str(text)).casefold()
-    value = value.replace("\u2019", "'").replace("-", " ")
-    value = re.sub(r"[^\w\s']+", " ", value, flags=re.UNICODE)
-    value = re.sub(r"\s+", " ", value).strip()
-    return value
+    """Normalize punctuation and spacing while preserving numeric values."""
+    value = unicodedata.normalize("NFKC", str(text)).casefold().replace("\u2019", "'")
+    value = _TEXT_PUNCTUATION.sub(
+        lambda match: match[1].replace("\u2212", "-") if match[1] else " ", value
+    )
+    return " ".join(value.split())
 
 
 @lru_cache(maxsize=16)

@@ -50,6 +50,42 @@ def _record_action(message):
     return {"action": "rule_probe.record", "data": {"message": message}}
 
 
+@pytest.mark.parametrize("match_type", ["equals", "starts_with", "ends_with", "contains"])
+@pytest.mark.parametrize("negative_first", [False, True])
+async def test_signed_request_rule_dispatches_the_correct_ha_argument(
+    hass, monkeypatch, match_type, negative_first
+):
+    agent = await _agent(hass)
+    _provider(monkeypatch, agent, [])
+    captured = []
+
+    async def set_offset(call):
+        captured.append(call.data["offset"])
+
+    hass.services.async_register("rule_probe", "set_offset", set_offset)
+    cases = [("5.25", 5.25), ("-5.25", -5.25)]
+    if negative_first:
+        cases.reverse()
+    for order, (phrase_value, offset) in enumerate(cases):
+        await agent._request_rules.async_create(
+            {
+                **_local(
+                    [{"action": "rule_probe.set_offset", "data": {"offset": offset}}],
+                    phrase=f"set offset to {phrase_value}",
+                    match_type=match_type,
+                ),
+                "order": order,
+            }
+        )
+
+    prefix = "please " if match_type in {"ends_with", "contains"} else ""
+    suffix = " now" if match_type in {"starts_with", "contains"} else ""
+    for command_value in ("5.25", "-5.25", "\u22125.25"):
+        result = await _say(hass, agent, f"{prefix}set offset to {command_value}{suffix}")
+        assert _speech(result) == "Done"
+    assert captured == [5.25, -5.25, -5.25]
+
+
 @pytest.mark.parametrize("legacy", [True, False])
 @pytest.mark.parametrize("text", ["123456", "false", '{"level":62}'])
 async def test_configured_text_result_stays_text_through_rule_action_and_speech(
