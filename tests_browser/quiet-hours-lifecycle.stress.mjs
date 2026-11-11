@@ -120,7 +120,7 @@ test("nightly Quiet Hours surfaces unavailable and changing satellite candidates
     host._result.satellites[0].media_player_candidates = ["media_player.new_candidate"];
     host._render();
   });
-  await expect(panel.locator('[data-qh-satellite="assist_satellite.kitchen"] [data-qh-speaker-status]')).toHaveText("Speaker unavailable");
+  await expect(panel.locator('[data-qh-satellite="assist_satellite.kitchen"] [data-qh-speaker-status]')).toHaveText("Speaker temporarily unavailable");
   await selectEntity(panel, '[data-qh-satellite="assist_satellite.kitchen"] [data-kind="media_player_entity_id"]', "media_player.new_candidate");
   await expect.poll(() => panel.locator('[data-qh-satellite="assist_satellite.kitchen"] [data-kind="media_player_entity_id"]').evaluate(p => p.includeEntities)).toEqual(["media_player.new_candidate"]);
   await expectHarnessClean(page, errors);

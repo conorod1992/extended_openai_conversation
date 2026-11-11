@@ -39,11 +39,11 @@ function manualOverride(config, satelliteId) {
 
 function volumeStatus(panel, satellite) {
   const entityId = satellite.media_player_entity_id;
-  if (!entityId) return {label: "No speaker found", ready: false};
+  if (!entityId) return {label: "No compatible speaker found", ready: false};
   const state = panel._hass?.states?.[entityId];
   const volume = state?.attributes?.volume_level;
   if (!state || state.state === "unavailable" || state.state === "unknown" || typeof volume !== "number" || !Number.isFinite(volume)) {
-    return {label: "Speaker unavailable", ready: false};
+    return {label: "Speaker temporarily unavailable", ready: false};
   }
   return {label: "Speaker ready", ready: true};
 }
@@ -66,20 +66,24 @@ export function quietHoursSatellitePresentation(panel, satellite, config) {
     const entity = friendly ? `${friendly} (${choice.id})` : choice.id;
     return `${choice.manual ? "Manual" : "Automatic"} · ${entity}`;
   };
+  const mediaReview = !media.id && !media.pending && (satellite.media_player_candidates || []).length > 1;
   const speaker = media.pending ? {label: "Speaker selection pending save", ready: false}
+    : mediaReview ? {label: "Manual selection required", ready: false}
     : volumeStatus(panel, {media_player_entity_id: media.id});
   const wakeState = panel._hass?.states?.[wake.id]?.state;
   const wakeUnavailable = Boolean(wake.id) && (!wakeState || ["unknown", "unavailable"].includes(wakeState));
-  const candidates = satellite.wake_sound_candidates || [];
-  const wakeReview = !wake.id && !wake.pending && candidates.length > 1;
+  const wakeReview = !wake.id && !wake.pending && satellite.wake_sound_ambiguous === true;
   const wakeUsed = config.wake_sound !== "unchanged";
   return {
     media, wake, speaker,
-    mediaSummary: media.id || media.pending ? label(media) : "No speaker selected",
-    wakeSummary: wake.id ? `${label(wake)}${wakeUnavailable ? " — unavailable" : ""}`
+    mediaSummary: media.id ? `${label(media)}${speaker.ready ? "" : " — temporarily unavailable"}`
+      : media.pending ? label(media)
+      : mediaReview ? `Manual selection required · ${satellite.media_player_candidates.length} media players on this device`
+      : "No compatible speaker found",
+    wakeSummary: wake.id ? `${label(wake)}${wakeUnavailable ? " — temporarily unavailable" : ""}`
       : wake.pending ? label(wake)
-      : wakeReview ? `No automatic selection · ${candidates.length} switches available to review`
-      : "No compatible wake-word switch detected (optional)",
+      : wakeReview ? "Manual selection required · multiple recognised wake-word switches"
+      : "No compatible wake-word switch found (optional)",
     needsAttention: (!media.pending && !speaker.ready) || (wakeUsed && (wakeUnavailable || wakeReview)),
   };
 }
@@ -96,14 +100,14 @@ function satelliteCard(panel, satellite, config) {
     : autoMedia
       ? `Found automatically: ${panel._e(autoMedia)}`
       : mediaCandidates.length
-        ? "No speaker was selected automatically. Choose one of the media players attached to this satellite's device."
+        ? "Manual selection required. Choose the speaker from the media players registered to this satellite's device, including temporarily unavailable players."
         : "No media player entity is attached to this satellite's Home Assistant device.";
   const wakeHelp = satellite.wake_sound_source === "manual"
     ? "Manually selected for this satellite. Make sure this switch controls the chime played when the wake word is heard."
     : autoWake
       ? `Found automatically: ${panel._e(autoWake)}`
       : wakeCandidates.length
-        ? "No wake-word switch was selected automatically. Choose one of the switches attached to this satellite's device."
+        ? "Select a switch manually only if it controls the chime played when the wake word is heard. Other switches on this device do not establish support for this optional feature."
         : "No switch entity is attached to this satellite's Home Assistant device. That is normal for many satellites.";
   return `<article class="qh-satellite" data-qh-satellite="${panel._e(satellite.satellite_entity_id)}">
     <div class="qh-satellite-heading">
@@ -144,7 +148,7 @@ export function renderQuietHours(panel) {
       </div>
       <div class="qh-entity-note"><strong>Use Quiet Hours in automations</strong><code>${panel._e(result.state_entity_id || "binary_sensor.extended_openai_quiet_hours")}</code><small>This read-only entity is on for the whole Quiet Hours period, even if no speaker needs changing. You can use it to control LEDs or anything else in your own Home Assistant automations. The saved schedule can also be turned on or off with the Extended OpenAI actions <code>enable_quiet_hours</code> and <code>disable_quiet_hours</code>.</small></div>
     </section>
-    <section class="content-card"><div class="section-heading"><div><h2>Assist satellites</h2><p>Quiet Hours tries to find each satellite's speaker and wake-word sound automatically. If it picks the wrong entity, or cannot find one, choose the correct entity below.</p></div></div>${satellites.length ? `<div class="qh-satellites">${satellites.map((satellite) => satelliteCard(panel, satellite, config)).join("")}</div>` : `<p class="empty">No Assist satellites were found. Quiet Hours will keep checking and will pick them up when they become available.</p>`}</section>
+    <section class="content-card"><div class="section-heading"><div><h2>Assist satellites</h2><p>Quiet Hours selects controls automatically only when their association is unambiguous. Choose controls manually when needed. If discovery changes during an active period, existing owned controls stay managed until that period ends; your own changes and explicit selections still take precedence.</p></div></div>${satellites.length ? `<div class="qh-satellites">${satellites.map((satellite) => satelliteCard(panel, satellite, config)).join("")}</div>` : `<p class="empty">No Assist satellites were found. Quiet Hours will keep checking and will pick them up when they become available.</p>`}</section>
     `;
 }
 
