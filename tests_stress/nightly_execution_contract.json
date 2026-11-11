@@ -1,6 +1,10 @@
 {
   "schema": "eoai-nightly-execution-contract/v1",
   "pytest": [
+    "tests_real_ha/test_global_runtime_suspension.py::test_last_loaded_entry_unload_and_reload_preserve_global_policy[False]",
+    "tests_real_ha/test_global_runtime_suspension.py::test_last_loaded_entry_unload_and_reload_preserve_global_policy[True]",
+    "tests_real_ha/test_request_rules_script_semantics.py::test_apostrophe_sentence_rule_consumes_without_provider[straight-pattern]",
+    "tests_real_ha/test_request_rules_script_semantics.py::test_apostrophe_sentence_rule_consumes_without_provider[curly-pattern]",
     "tests_real_ha/test_usage_period_statistics.py::test_cumulative_restore_oracle_detects_increasing_meter_fault",
     "tests_real_ha/test_usage_period_statistics.py::test_cumulative_restore_corrects_recorder_sum_without_new_meter_cycle[False-0]",
     "tests_real_ha/test_usage_period_statistics.py::test_cumulative_restore_corrects_recorder_sum_without_new_meter_cycle[False-503]",
@@ -4510,6 +4514,7 @@
       "tests_real_ha/test_service_receipt_compatibility.py"
     ],
     "quiet-hours": [
+      "tests_real_ha/test_global_runtime_suspension.py",
       "tests_real_ha/test_quiet_hours_resilience.py",
       "tests_real_ha/test_quiet_hours_scheduling.py",
       "tests_stress/test_quiet_hours_edges.py",

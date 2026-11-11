@@ -26,6 +26,7 @@ from homeassistant.helpers import (
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
 from homeassistant.helpers.storage import Store
 
+from .global_runtime import global_runtime_available, require_global_runtime
 from .intercom_permissions import async_authorized_broadcast_targets
 from .operation_settlement import async_settle_owned_operation
 from .strict_store import PropagatingWriteStore
@@ -431,6 +432,9 @@ class IntercomManager:
         The full operation identity includes server epoch, deadline and client UUID.
         Never evict a live receipt to make room: that would make retry unsafe.
         """
+        require_global_runtime(self.hass)
+        if self._closed:
+            raise HomeAssistantError("Broadcast is unavailable")
         match = re.fullmatch(
             r"([0-9a-f]{32}):([0-9]{1,12}):([0-9a-f]{32})", operation_id
         )
@@ -549,6 +553,7 @@ class IntercomManager:
         context: Context | None = None,
         _admission_started: Callable[[], None] | None = None,
     ) -> BroadcastMessageSnapshot:
+        require_global_runtime(self.hass)
         if not self._enabled:
             raise HomeAssistantError(
                 "Broadcast is disabled. Enable it from the Extended OpenAI Overview."
@@ -577,6 +582,7 @@ class IntercomManager:
         )
         # Permission lookup may yield. Never expand selectors after authorization.
         # Current eligibility/origin changes may only remove authorized identities.
+        require_global_runtime(self.hass)
         if not self._enabled:
             raise HomeAssistantError(
                 "Broadcast is disabled. Enable it from the Extended OpenAI Overview."
@@ -665,7 +671,11 @@ class IntercomManager:
 
     @callback
     def _schedule_drain(self, entity_id: str) -> None:
-        if self._closed or entity_id in self._draining:
+        if (
+            self._closed
+            or not global_runtime_available(self.hass)
+            or entity_id in self._draining
+        ):
             return
         self._draining.add(entity_id)
         task = self.hass.async_create_task(self._async_drain(entity_id))
@@ -678,7 +688,7 @@ class IntercomManager:
             while queue:
                 item = queue[0]
                 delivery = item.deliveries[entity_id]
-                if not self._enabled:
+                if not self._enabled or not global_runtime_available(self.hass):
                     delivery.set("expired", "broadcast_disabled")
                     self._release_completed_message(item)
                     queue.popleft()
@@ -700,7 +710,7 @@ class IntercomManager:
                 if delivery.status == "expired":
                     queue.popleft()
                     continue
-                if not self._enabled:
+                if not self._enabled or not global_runtime_available(self.hass):
                     delivery.set("expired", "broadcast_disabled")
                     self._release_completed_message(item)
                     queue.popleft()
@@ -1013,9 +1023,11 @@ class IntercomManager:
 async def async_get_intercom(hass: HomeAssistant) -> IntercomManager:
     if hass.data.get(f"{DOMAIN}.removed") is True:
         raise HomeAssistantError("Extended OpenAI has been removed")
+    require_global_runtime(hass)
     manager = hass.data.get(DATA_KEY)
     if manager is None:
         manager = IntercomManager(hass)
         hass.data[DATA_KEY] = manager
     await manager.async_initialize()
+    require_global_runtime(hass)
     return manager

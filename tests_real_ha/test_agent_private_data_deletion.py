@@ -10,6 +10,7 @@ from custom_components.extended_openai_conversation_responses import (
 )
 from custom_components.extended_openai_conversation_responses.const import DOMAIN
 from homeassistant.config_entries import ConfigEntryDisabler
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.storage import Store
 from tests_real_ha.test_live_subentry_removal import (
     _entry,
@@ -58,6 +59,8 @@ async def test_subentry_removal_purges_private_stores_then_last_entry_stops_glob
     await sibling.async_save({"private": "keep sibling"})
     assert all(path.is_file() for path in owned)
     assert Path(sibling.path).is_file()
+    broadcast = await intercom.async_get_intercom(hass)
+    qh = await quiet_hours.async_get_quiet_hours(hass)
     if provider_state == "unloaded":
         assert await hass.config_entries.async_unload(entry.entry_id)
     elif provider_state == "disabled":
@@ -69,8 +72,10 @@ async def test_subentry_removal_purges_private_stores_then_last_entry_stops_glob
     await hass.async_block_till_done()
     assert all(not path.exists() for path in owned)
     assert Path(sibling.path).exists()
-    broadcast = await intercom.async_get_intercom(hass)
-    qh = await quiet_hours.async_get_quiet_hours(hass)
+    if provider_state != "loaded":
+        for getter in (intercom.async_get_intercom, quiet_hours.async_get_quiet_hours):
+            with pytest.raises(HomeAssistantError, match="loaded"):
+                await getter(hass)
     await hass.config_entries.async_remove(entry.entry_id)
     await hass.async_block_till_done()
     assert not Path(sibling.path).exists()

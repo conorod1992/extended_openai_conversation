@@ -30,6 +30,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
+from .global_runtime import global_runtime_available, require_global_runtime
 from .operational_errors import log_handled_failure
 from .persistence_hardening import _async_settle_transactional_save
 from .strict_store import PropagatingWriteStore, _async_settle_store_io
@@ -557,7 +558,11 @@ class QuietHoursManager:
 
     async def async_setup(self) -> None:
         async with self._lock:
-            if getattr(self, "_stopping", False) or self.startup_unavailable:
+            if (
+                getattr(self, "_stopping", False)
+                or self.startup_unavailable
+                or not global_runtime_available(self.hass)
+            ):
                 return
             if getattr(self, "_config_recovery_pending", False):
                 # A public getter may revisit an invalidated live manager. Its
@@ -997,7 +1002,11 @@ class QuietHoursManager:
         """Reconcile the scheduled policy using cross-version-safe discovery."""
         now = dt_util.now() if now is None else dt_util.as_local(now)
         async with self._lock:
-            if getattr(self, "_stopping", False) or self.startup_unavailable:
+            if (
+                getattr(self, "_stopping", False)
+                or self.startup_unavailable
+                or not global_runtime_available(self.hass)
+            ):
                 return
             recovering = getattr(self, "_config_recovery_pending", False)
             if not self._initialized and not recovering:
@@ -2296,7 +2305,11 @@ class QuietHoursManager:
 
     def _reschedule(self) -> None:
         self._cancel_scheduled_callbacks()
-        if getattr(self, "_stopping", False) or self.startup_unavailable:
+        if (
+            getattr(self, "_stopping", False)
+            or self.startup_unavailable
+            or not global_runtime_available(self.hass)
+        ):
             return
         if getattr(self, "_config_recovery_pending", False):
             self._unsubscribers.append(
@@ -2358,12 +2371,14 @@ class QuietHoursManager:
 
 async def async_get_quiet_hours(hass: HomeAssistant) -> QuietHoursManager:
     """Return the initialized integration-global manager."""
+    require_global_runtime(hass)
     domain_data = hass.data.setdefault(DOMAIN, {})
     manager = domain_data.get(_RUNTIME_KEY)
     if not isinstance(manager, QuietHoursManager):
         manager = QuietHoursManager(hass)
         domain_data[_RUNTIME_KEY] = manager
     await manager.async_setup()
+    require_global_runtime(hass)
     return manager
 
 

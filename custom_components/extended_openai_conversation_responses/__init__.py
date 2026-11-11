@@ -98,6 +98,7 @@ from .const import (
 from .debug import DebugOpenAIClientProxy
 from .debug_ui import async_setup_debug_ui
 from .delayed_tools import async_setup_delayed_tools
+from .global_runtime import global_runtime_lock, initialize_global_runtime
 from .ha_permissions import async_setup_ha_permissions
 from .helpers import (
     effective_api_provider,
@@ -195,8 +196,8 @@ def _schedule_sole_agent_prewarm(hass: HomeAssistant, entry: ConfigEntry) -> Non
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up Extended OpenAI Conversation (Responses)."""
+    initialize_global_runtime(hass)
     await async_setup_model_catalog(hass)
-    await async_get_quiet_hours(hass)
     apply_openai_compatibility()
     await async_migrate_integration(hass)
     from .agent_deletion import (
@@ -234,6 +235,7 @@ async def async_setup_entry(
     from .agent_deletion import KNOWN_AGENTS, async_delete_removed_subentries
     from .provider_errors import provider_authentication_snapshot
 
+    initialize_global_runtime(hass)
     authentication_snapshot = provider_authentication_snapshot(entry)
 
     # Re-enable can follow subentry deletion while the parent was unloaded.
@@ -264,9 +266,6 @@ async def async_setup_entry(
         )
         raise ConfigEntryNotReady(provider_log_remediation(err)) from err
 
-    hass.data.pop(f"{DOMAIN}.removed", None)
-    await async_get_quiet_hours(hass)
-    await async_setup_intercom_services(hass)
     hass.data.setdefault(KNOWN_AGENTS, {}).setdefault(entry.entry_id, set()).update(
         entry.subentries
     )
@@ -287,11 +286,17 @@ async def async_setup_entry(
     try:
         await async_setup_templates(hass, entry.entry_id)
         entry.async_on_unload(entry.add_update_listener(update_listener))
+        await _async_activate_global_effects(hass, entry.entry_id)
     except BaseException:
         try:
-            await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+            await async_settle_owned_operation(
+                _async_release_global_effects(hass, entry.entry_id)
+            )
         finally:
-            await async_unload_templates(hass, entry.entry_id)
+            try:
+                await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+            finally:
+                await async_unload_templates(hass, entry.entry_id)
         raise
     with suppress(Exception):
         # Optional cache preparation must never affect integration setup.
@@ -354,8 +359,58 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Platforms have unloaded. Cancellation must not abandon a retired manager
     # in the cache or allow its pending write to race a replacement generation.
-    await async_settle_owned_operation(retire_runtime_owners())
+    async def retire_all_owners() -> None:
+        try:
+            await _async_release_global_effects(hass, entry.entry_id)
+        finally:
+            await retire_runtime_owners()
+
+    await async_settle_owned_operation(retire_all_owners())
     return True
+
+
+async def _async_suspend_global_effects(hass: HomeAssistant) -> None:
+    """Retire volatile work; managers retain their durable recovery/settings stores."""
+    from .intercom import DATA_KEY
+
+    quiet = hass.data.get(DOMAIN, {}).get("quiet_hours_manager")
+    try:
+        if quiet is not None:
+            try:
+                await quiet.async_shutdown()
+            finally:
+                hass.data[DOMAIN].pop("quiet_hours_manager", None)
+    finally:
+        broadcast = hass.data.get(DATA_KEY)
+        if broadcast is not None:
+            try:
+                # Pending announcements do not survive the last-entry reload.
+                await broadcast.async_shutdown()
+            finally:
+                hass.data.pop(DATA_KEY, None)
+
+
+async def _async_activate_global_effects(hass: HomeAssistant, entry_id: str) -> None:
+    async with global_runtime_lock(hass):
+        owners = initialize_global_runtime(hass)
+        owners.add(entry_id)
+        hass.data.pop(f"{DOMAIN}.removed", None)
+        try:
+            await async_get_quiet_hours(hass)
+            await async_setup_intercom_services(hass)
+        except BaseException:
+            owners.discard(entry_id)
+            if not owners:
+                await async_settle_owned_operation(_async_suspend_global_effects(hass))
+            raise
+
+
+async def _async_release_global_effects(hass: HomeAssistant, entry_id: str) -> None:
+    async with global_runtime_lock(hass):
+        owners = initialize_global_runtime(hass)
+        owners.discard(entry_id)
+        if not owners:
+            await _async_suspend_global_effects(hass)
 
 
 async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:

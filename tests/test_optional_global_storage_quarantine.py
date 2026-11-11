@@ -153,6 +153,8 @@ async def test_optional_corruption_does_not_block_component_or_management_startu
     monkeypatch.setattr(transfer_staging, "async_get_transfer_staging", AsyncMock())
 
     assert await integration.async_setup(hass, {}) is True
+    quiet._store.async_load.assert_not_awaited()
+    await integration._async_activate_global_effects(hass, "loaded-entry")
     assert quiet.startup_unavailable and delayed._quarantined
     integration.async_setup_services.assert_awaited_once_with(hass, {})
     integration.async_setup_management_ui.assert_awaited_once_with(hass)
