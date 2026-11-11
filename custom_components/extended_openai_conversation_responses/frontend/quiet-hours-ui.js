@@ -128,7 +128,7 @@ export function renderQuietHours(panel) {
     return `<section class="page-intro"><h1>Quiet Hours</h1></section>
       <section class="content-card" role="alert"><h2>Quiet Hours unavailable</h2>
       <p>${panel._e(result.error || "Saved Quiet Hours storage needs repair. Restart Home Assistant after repairing it.")}</p>
-      <p>No Quiet Hours controls can be changed while saved storage is unavailable.</p></section>`;
+      <p>Quiet Hours cannot change devices or save settings while this feature is unavailable.</p></section>`;
   }
   const savedConfig = result.config || {};
   const config = panel._quietHoursDraft || savedConfig;

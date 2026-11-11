@@ -27,6 +27,15 @@ const baseConfig = {
   overrides: {},
 };
 
+test("unverified legacy ownership shows the recovery message without settings controls", () => {
+  const error = "Quiet Hours is paused because saved control records lack verified registry identities. All saved settings and restoration values are preserved. Administrator review is required.";
+  const html = renderQuietHours(panel({available:false, error}, {...baseConfig, enabled:false}));
+  assert.match(html, /Quiet Hours unavailable/);
+  assert.ok(html.includes(error));
+  assert.match(html, /cannot change devices or save settings/);
+  assert.doesNotMatch(html, /id="qh-enabled"|ha-entity-picker|id="qh-volume"/);
+});
+
 test("renders schedule semantics and automation hooks in plain language", () => {
   const html = renderQuietHours(panel({
     active: false,
