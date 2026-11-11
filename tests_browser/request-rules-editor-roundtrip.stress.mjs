@@ -109,8 +109,6 @@ async function configureCase(panel, item, index, groupId) {
     await panel.locator("#rule-matching-behavior").selectOption("custom");
     if (index % 2 === 0) await panel.locator("#rule-word-forms").uncheck();
     if (index % 2 !== 0) await panel.locator("#rule-wording").uncheck();
-    await panel.locator("#rule-fuzzy").check();
-    await panel.locator("#rule-threshold").fill(String(80 + index));
   }
   await panel.locator("#rule-save").click();
   await expect(panel.getByRole("heading", {name:nameFor(index, item), exact:true})).toBeVisible();
@@ -164,8 +162,8 @@ async function assertCase(panel, item, index, groupId) {
     await expect(panel.locator("#rule-matching-behavior")).toBeDisabled();
   } else if (item.custom) {
     await expect(panel.locator("#rule-matching-behavior")).toHaveValue("custom");
-    await expect(panel.locator("#rule-fuzzy")).toBeChecked();
-    await expect(panel.locator("#rule-threshold")).toHaveValue(String(80 + index));
+    await expect(panel.locator("#rule-fuzzy")).toHaveCount(0);
+    await expect(panel.locator("#rule-threshold")).toHaveCount(0);
   } else {
     await expect(panel.locator("#rule-matching-behavior")).toHaveValue("defaults");
   }

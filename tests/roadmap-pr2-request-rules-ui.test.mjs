@@ -32,6 +32,6 @@ test("Guide explains current Request Rules matching and AI handoff", async () =>
   assert.match(source, /Captured value/i);
   assert.match(source, /ExtendedOpenAI sentence patterns/i);
   assert.match(source, /global priority order/i);
-  assert.match(source, /Fuzzy matching/i);
+  assert.doesNotMatch(source, /Fuzzy matching/i);
   assert.doesNotMatch(source, /Home Assistant sentence patterns|Hassil sentence format/i);
 });

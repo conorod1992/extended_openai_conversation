@@ -15,28 +15,33 @@ async def test_explicit_confirmation_promotes_implicit_memory_and_survives_impli
 ):
     memory = await _memory()
     extra = {"key": "preference.drink"} if keyed else {}
-    created = await memory.async_upsert(
+    created = await memory.async_propose(
         "user", "I prefer tea", "preference", "implicit", **extra
     )
-    confirmed = await memory.async_upsert(
+    proposed = await memory.async_propose(
         "user", "I prefer tea", "preference", "explicit", **extra
     )
-    assert confirmed["status"] == "updated"
-    assert confirmed["memory"]["memory_id"] == created["memory"]["memory_id"]
-    assert confirmed["memory"]["source"] == "explicit"
-    retry = await memory.async_upsert(
+    assert proposed["status"] == "needs_resolution"
+    assert proposed["candidate"]["source"] == "implicit"
+    confirmed = await memory.async_update(
+        "user", created["memory"]["memory_id"], source="explicit",
+        expected_revision=proposed["candidate"]["revision"],
+    )
+    assert confirmed.memory_id == created["memory"]["memory_id"]
+    assert confirmed.source == "explicit"
+    retry = await memory.async_propose(
         "user", "I prefer tea", "preference", "implicit", **extra
     )
-    assert retry["status"] == "unchanged"
-    assert retry["memory"]["source"] == "explicit"
+    assert retry["status"] == "needs_resolution"
+    assert retry["candidate"]["source"] == "explicit"
 
 
 async def test_implicit_update_cannot_replace_existing_explicit_record():
     memory = await _memory()
-    original = await memory.async_upsert(
+    original = await memory.async_propose(
         "user", "I prefer tea", "preference", "explicit", key="preference.drink"
     )
-    result = await memory.async_upsert(
+    result = await memory.async_propose(
         "user", "I have a medical diagnosis of synthetic-condition", "health", "implicit", key="preference.drink"
     )
     assert result["status"] == "needs_resolution"
@@ -90,8 +95,8 @@ async def test_failed_clear_does_not_notify_or_remove_latest_run():
 
 async def test_implicit_keyed_write_cannot_replace_an_explicit_fact():
     memory = await _memory()
-    confirmed = await memory.async_upsert("user", "I prefer tea", "preference", "explicit", key="preference.drink")
-    inferred = await memory.async_upsert("user", "I prefer coffee", "preference", "implicit", key="preference.drink")
+    confirmed = await memory.async_propose("user", "I prefer tea", "preference", "explicit", key="preference.drink")
+    inferred = await memory.async_propose("user", "I prefer coffee", "preference", "implicit", key="preference.drink")
     assert inferred["status"] == "needs_resolution"
     assert inferred["candidate"] == confirmed["memory"]
     retained = await memory.async_search("user", "tea")
@@ -103,7 +108,7 @@ async def test_implicit_keyed_write_cannot_replace_an_explicit_fact():
 async def test_implicit_duplicate_cannot_reclassify_confirmed_fact(keyed):
     memory = await _memory()
     extra = {"key": "preference.drink"} if keyed else {}
-    confirmed = await memory.async_upsert("user", "I prefer tea", "preference", "explicit", **extra)
-    inferred = await memory.async_upsert("user", "I prefer tea", "other", "implicit", subject="inferred", **extra)
-    assert inferred["status"] == "unchanged"
-    assert inferred["memory"] == confirmed["memory"]
+    confirmed = await memory.async_propose("user", "I prefer tea", "preference", "explicit", **extra)
+    inferred = await memory.async_propose("user", "I prefer tea", "other", "implicit", subject="inferred", **extra)
+    assert inferred["status"] == "needs_resolution"
+    assert inferred["candidate"] == confirmed["memory"]

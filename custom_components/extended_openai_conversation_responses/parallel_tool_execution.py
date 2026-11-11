@@ -70,34 +70,6 @@ def resolve_parallel_safe_batch(
     return resolved
 
 
-async def async_execute_parallel_safe_batch(
-    resolved_calls: Sequence[ResolvedToolCall],
-    executor: ToolExecutor,
-) -> list[conversation.ToolResultContent]:
-    """Execute one proven-safe batch concurrently while preserving result order.
-
-    Tasks start together, but results are awaited in provider order. If an earlier
-    call fails, later results are not surfaced, matching the serial model-visible
-    failure order. Remaining read-only tasks are cancelled/collected before the
-    exception propagates.
-    """
-    tasks: list[asyncio.Future[conversation.ToolResultContent]] = [
-        asyncio.ensure_future(executor(function_tool, tool_input))
-        for function_tool, tool_input in resolved_calls
-    ]
-    results: list[conversation.ToolResultContent] = []
-    try:
-        for task in tasks:
-            results.append(await task)
-    except BaseException:
-        for task in tasks:
-            if not task.done():
-                task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        raise
-    return results
-
-
 async def async_execute_parallel_safe_batch_outcomes(
     resolved_calls: Sequence[ResolvedToolCall],
     executor: ToolExecutor,

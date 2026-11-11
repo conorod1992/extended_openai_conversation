@@ -674,40 +674,6 @@ async def async_was_unacknowledged_equivalent(
     return False
 
 
-def was_unacknowledged_equivalent(
-    entity: Any, chat_log: conversation.ChatLog, tool_input: llm.ToolInput
-) -> bool:
-    """Match only calls from an unresolved failed continuation in this conversation."""
-    conversation_id = getattr(chat_log, "conversation_id", None)
-    if not isinstance(conversation_id, str) or not conversation_id:
-        return False
-    if _replay_history_incomplete(entity, conversation_id):
-        return True
-    ledger = replay_safety(entity).schemas
-    records = ledger.get(chat_log.conversation_id, {})
-    if tool_input.tool_name in replay_safety(entity).uncertain_tools.get(
-        chat_log.conversation_id, ()
-    ):
-        return True
-    raw_signature = _signature(tool_input)
-    if raw_signature in records or any(
-        raw_signature in spec.get("_original_call_signatures", ())
-        for spec in records.values()
-    ):
-        return True
-    name_prefix = "[" + json.dumps(tool_input.tool_name) + ","
-    for signature, spec in records.items():
-        if _replay_spec_needs_executor(spec):
-            # Synchronous callers cannot safely prove this comparison. Block
-            # only a matching tool instead of launching an on-loop subprocess.
-            if signature.startswith(name_prefix):
-                return True
-            continue
-        if _signature(tool_input, spec) == signature:
-            return True
-    return False
-
-
 def clear_unacknowledged_calls(entity: Any, conversation_id: str | None) -> None:
     """A successful provider turn resolves ambiguity for this conversation."""
     if isinstance(conversation_id, str):

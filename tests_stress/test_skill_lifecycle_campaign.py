@@ -1,4 +1,4 @@
-"""Repeated installed-Skill publication, replacement, removal and discovery."""
+"""Repeated publication, replacement, legacy-removal recovery and discovery."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import pytest
 from custom_components.extended_openai_conversation_responses.skills import SkillManager
 from homeassistant.core import HomeAssistant
 from tests.lock_probe import LockProbe
+from tests.skill_transaction_fixtures import stage_legacy_removal
 from tests_stress.conftest import record
 
 
@@ -87,7 +88,8 @@ async def test_installed_skills_remain_atomic_during_repeated_lifecycle_changes(
             expected[name] = description
             publishes += 1
         elif action == "remove":
-            removed = await manager.async_remove_skill(name)
+            removed = stage_legacy_removal(manager, name, committed=True)
+            await manager.async_load_skills()
             assert removed is (name in expected)
             expected.pop(name, None)
             removals += 1
@@ -101,7 +103,8 @@ async def test_installed_skills_remain_atomic_during_repeated_lifecycle_changes(
     # Keep the full original random journey, adding only an unexercised minimum.
     if not successful_removals:
         name = next(iter(expected))
-        assert await manager.async_remove_skill(name)
+        assert stage_legacy_removal(manager, name, committed=True)
+        await manager.async_load_skills()
         del expected[name]
         removals += 1
         successful_removals += 1

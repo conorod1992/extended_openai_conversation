@@ -324,7 +324,7 @@ async def current_mutation_behaviour() -> dict[str, Any]:
             for user in {"alice", "bob"}
             for entry in await manager.async_list(user, limit=100)
         }
-        result = await manager.async_upsert(test["owner"], **test["incoming"])
+        result = await manager.async_propose(test["owner"], **test["incoming"])
         after = {
             entry.memory_id: entry
             for user in {"alice", "bob"}

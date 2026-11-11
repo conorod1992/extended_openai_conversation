@@ -32,7 +32,7 @@ from custom_components.extended_openai_conversation_responses.tool_replay_guard 
     effect_signature,
     remember_unacknowledged_calls,
     replay_safety,
-    was_unacknowledged_equivalent,
+    async_was_unacknowledged_equivalent,
 )
 from homeassistant.exceptions import HomeAssistantError
 from tests.test_function_tool_error_recovery import _call, _chat_log, _retain_calls
@@ -234,7 +234,7 @@ async def test_actual_effect_guard_closes_composite_raw_observer_gap(
     await _execute(entity, tool, first)
     remember_unacknowledged_calls(entity, log, set())
     retry = _call("retry", "effect", ALIAS)
-    assert not was_unacknowledged_equivalent(entity, log, retry)
+    assert not await async_was_unacknowledged_equivalent(entity, log, retry)
 
     async def execute(definition, call, *_):
         return await _execute(entity, definition, call)
@@ -430,7 +430,7 @@ async def test_response_variable_consumer_records_executed_inputs(hass, monkeypa
     assert first.tool_args == arguments
     remember_unacknowledged_calls(entity, log, set())
     retry = _call("retry", "effect", {**arguments, "noise": 2})
-    assert not was_unacknowledged_equivalent(entity, log, retry)
+    assert not await async_was_unacknowledged_equivalent(entity, log, retry)
     with (
         bind_effect_replay_scope(entity, log.conversation_id),
         pytest.raises(HomeAssistantError, match="not acknowledged"),

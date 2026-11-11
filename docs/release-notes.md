@@ -35,6 +35,10 @@ These notes describe the development branch being prepared for 7.0.0, compared w
 - Provider stream handling and retained history better preserve complete replies and tool-call/result relationships. Failed or cancelled requests retain available provider-reported Usage without adding local context estimates.
 - Management saves and restores retain committed outcomes across lost or malformed acknowledgements and refresh failures. Editors recover their own drafts without treating a failed refresh as proof that a save failed.
 
+### Retired optional Request Rules fuzzy matching
+
+Optional fuzzy matching, available in 6.8.3, has been removed. Text similarity cannot establish that two commands refer to the same target. Existing rules and backups remain valid: legacy enablement and threshold settings are discarded on load/import and omitted from new saves/exports. Rules retain their triggers, actions, conditions and priority, and still match deterministically. Add explicit alternatives for phrases that previously relied on fuzzy matching. Unmatched requests follow the configured normal handling path. Refresh existing editors after updating.
+
 ### Before upgrading
 
 1. Run **Home Assistant 2026.7.0 or newer**, as required by this repository's HACS metadata. Take a Home Assistant backup and a private agent backup before updating. Keep backups secure; agent backups do not include every Home Assistant dependency or global setting.

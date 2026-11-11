@@ -39,11 +39,6 @@ export function configurationDecisionBadges(key, defaults = {}) {
   return [];
 }
 
-function matchingSettings(rule, defaults) {
-  if (rule?.match_type === "sentence_pattern") return null;
-  return rule?.matching_behavior === "defaults" ? defaults : (rule?.matching || {});
-}
-
 export function requestRuleSummary(rule = {}, defaults = {}) {
   const phrases = Array.isArray(rule.phrases) ? rule.phrases : [];
   const match = MATCH_LABELS[rule.match_type] || titleCase(rule.match_type || "match");
@@ -53,11 +48,7 @@ export function requestRuleSummary(rule = {}, defaults = {}) {
     matching = `${phraseLabel} · ${match} · Hassil grammar`;
   } else {
     const source = rule.matching_behavior === "defaults" ? "Default matching" : "Custom matching";
-    const settings = matchingSettings(rule, defaults) || {};
-    const threshold = Number(settings.fuzzy_threshold ?? 90);
-    const fuzzyLabel = threshold >= 93 ? "conservative" : threshold >= 88 ? "normal" : "tolerant";
-    const fuzzy = settings.fuzzy ? ` · Fuzzy fallback: ${titleCase(fuzzyLabel)}` : "";
-    matching = `${phraseLabel} · ${match} · ${source}${fuzzy}`;
+    matching = `${phraseLabel} · ${match} · ${source}`;
   }
 
   if (rule.action_type === "local_action") {

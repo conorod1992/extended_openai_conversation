@@ -17,7 +17,7 @@ from custom_components.extended_openai_conversation_responses.execution_outcomes
 )
 from custom_components.extended_openai_conversation_responses.tool_replay_guard import (
     remember_unacknowledged_calls,
-    was_unacknowledged_equivalent,
+    async_was_unacknowledged_equivalent,
 )
 from tests.test_function_tool_error_recovery import (
     _call,
@@ -103,7 +103,7 @@ async def test_scheduled_commit_is_replay_protected_after_lost_acknowledgement(h
         _result(entity, call, {"result": "Scheduled"})
     )
     remember_unacknowledged_calls(entity, log, before)
-    assert was_unacknowledged_equivalent(
+    assert await async_was_unacknowledged_equivalent(
         entity, log, _call("queue-2", "effect", call.tool_args)
     )
 

@@ -46,7 +46,7 @@ Restore first validates the format and every category, drops temporary memories 
 
 ## Speech cleanup
 
-Speech post-processing cleans both progressive and completed TTS. A bounded streaming sanitizer removes Markdown links/citations, formatting, and bare URLs before Home Assistant's shared ChatLog listener can feed progressive TTS. The provider-neutral fallback works for Responses, Chat Completions, and compatible providers across arbitrary delta boundaries. The original provider text remains in ChatLog history, events, archive, and conversation context; Home Assistant currently shares one progressive listener between visual updates and TTS, so the live visual stream also receives the speech-safe deltas.
+Speech post-processing cleans both progressive and completed TTS. A bounded streaming sanitizer removes Markdown formatting and URL destinations before Home Assistant's shared ChatLog listener can feed progressive TTS. Human-readable link labels, including words such as Sources and numeric labels, are preserved; empty labels and labels that are themselves URLs or addresses are suppressed. The provider-neutral fallback works for Responses, Chat Completions, and compatible providers across arbitrary delta boundaries. The original provider text remains in ChatLog history, events, archive, and conversation context; Home Assistant currently shares one progressive listener between visual updates and TTS, so the live visual stream also receives the speech-safe deltas.
 
 Responses API `url_citation` annotations are retained on the native response item for replay and context. Annotation events may arrive after their cited text, so structured metadata supplements rather than replaces the textual streaming sanitizer.
 

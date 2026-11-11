@@ -8,7 +8,6 @@ from collections.abc import (
     Awaitable,
     Callable,
     Collection,
-    Iterable,
     Mapping,
     Sequence,
 )
@@ -16,10 +15,8 @@ from contextlib import suppress
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass, field
-from difflib import SequenceMatcher
 from functools import lru_cache
 from hashlib import sha256
-from itertools import pairwise
 import json
 import logging
 import re
@@ -141,8 +138,6 @@ _REQUEST_RESET_SENTINEL = "__request_rule_reset__"
 DEFAULT_MATCHING = {
     "word_forms": True,
     "wording_alternatives": True,
-    "fuzzy": False,
-    "fuzzy_threshold": 90,
 }
 
 # Phrase mappings are deliberately small and directional. Both sides normalize to
@@ -207,15 +202,6 @@ class CompiledPhrase:
     sentence_pattern: CompiledSentencePattern | None = None
 
 
-_MATCH_RANK = {
-    "equals": 5,
-    "sentence_pattern": 4,
-    "starts_with": 3,
-    "ends_with": 2,
-    "contains": 1,
-}
-
-
 @dataclass(frozen=True, slots=True)
 class _MatchingSnapshot:
     """One privately owned generation, published only after compilation finishes."""
@@ -225,7 +211,6 @@ class _MatchingSnapshot:
     deterministic: tuple[
         tuple[dict[str, Any], dict[str, Any], CompiledPhrase], ...
     ] = ()
-    fuzzy: tuple[tuple[dict[str, Any], dict[str, Any], CompiledPhrase], ...] = ()
 
 
 def _match_compiled_sentence(
@@ -265,8 +250,6 @@ class _MatchCursor:
         self.sentence_text: PreparedSentenceText | None = None
         self.budget = MatchBudget()
         self.seen: set[str] = set()
-        self.last_accepted_order: int | None = None
-        self.fuzzy_matches: list[RuleMatch] | None = None
 
     def _candidate(self, settings: dict[str, Any]) -> str:
         key = (
@@ -280,7 +263,7 @@ class _MatchCursor:
         return self.normalized[key]
 
     def next_match(self) -> RuleMatch | None:
-        """Return the next strict candidate, then ranked fuzzy fallback candidates."""
+        """Return the next deterministic candidate in global rule order."""
         phrases = self.snapshot.deterministic
         while self.position < len(phrases):
             rule, settings, compiled = phrases[self.position]
@@ -303,54 +286,7 @@ class _MatchCursor:
             ):
                 self.seen.add(rule["id"])
                 return RuleMatch(rule, compiled.original, False, 100.0)
-        if self.fuzzy_matches is None:
-            ranked: dict[str, tuple[tuple[float, int, int], RuleMatch]] = {}
-            for rule, settings, compiled in self.snapshot.fuzzy:
-                if rule["id"] in self.seen:
-                    continue
-                score = _fuzzy_score(
-                    self._candidate(settings),
-                    cast(str, compiled.normalized),
-                    rule["match_type"],
-                    self.budget,
-                )
-                if score < settings["fuzzy_threshold"]:
-                    continue
-                rank = (score, _MATCH_RANK[rule["match_type"]], -rule["order"])
-                previous = ranked.get(rule["id"])
-                if previous is None or rank > previous[0]:
-                    ranked[rule["id"]] = (
-                        rank,
-                        RuleMatch(rule, compiled.original, True, score),
-                    )
-            self.fuzzy_matches = [
-                match
-                for _, match in sorted(
-                    ranked.values(), key=lambda item: item[0], reverse=True
-                )
-            ]
-        if not self.fuzzy_matches:
-            return None
-        if self.last_accepted_order is None:
-            result = self.fuzzy_matches.pop(0)
-        else:
-            later = (
-                match
-                for match in self.fuzzy_matches
-                if match.rule["order"] > self.last_accepted_order
-            )
-            later_result = min(
-                later, key=lambda match: match.rule["order"], default=None
-            )
-            if later_result is None:
-                return None
-            result = later_result
-            self.fuzzy_matches.remove(result)
-        return result
-
-    def accept(self, match: RuleMatch) -> None:
-        """Advance continuation ordering only after a candidate is eligible."""
-        self.last_accepted_order = match.rule["order"]
+        return None
 
 
 class RequestRuleStore(PropagatingWriteStore):
@@ -553,6 +489,9 @@ class RequestRules:
                     try:
                         self._defaults = validate_matching_settings(
                             stored.get("defaults", DEFAULT_MATCHING)
+                        )
+                        migrated = migrated or self._defaults != stored.get(
+                            "defaults", DEFAULT_MATCHING
                         )
                     except ValueError:
                         _LOGGER.warning("Ignoring invalid stored Request Rule defaults")
@@ -1057,7 +996,7 @@ class RequestRules:
     def match(
         self, text: str, excluded_ids: frozenset[str] = frozenset()
     ) -> RuleMatch | None:
-        """Use list-order deterministic precedence, with fuzzy only as fallback."""
+        """Use list-order deterministic precedence."""
         snapshot = self._committed_matching_snapshot
         validate_match_input(text)
         normalized_candidates: dict[tuple[bool, bool], str] = {}
@@ -1091,22 +1030,7 @@ class RequestRules:
             ):
                 return RuleMatch(rule, compiled.original, False, 100.0)
 
-        fuzzy: list[tuple[tuple[float, int, int], RuleMatch]] = []
-        for rule, settings, compiled in snapshot.fuzzy:
-            if rule["id"] in excluded_ids:
-                continue
-            score = _fuzzy_score(
-                candidate(settings),
-                cast(str, compiled.normalized),
-                rule["match_type"],
-                sentence_budget,
-            )
-            if score >= settings["fuzzy_threshold"]:
-                result = RuleMatch(rule, compiled.original, True, score)
-                fuzzy.append(
-                    ((score, _MATCH_RANK[rule["match_type"]], -rule["order"]), result)
-                )
-        return max(fuzzy, key=lambda item: item[0])[1] if fuzzy else None
+        return None
 
     async def async_match(self, hass: HomeAssistant, text: str) -> RuleMatch | None:
         match, _ = await self.async_match_with_skipped(hass, text)
@@ -1196,7 +1120,6 @@ class RequestRules:
             if match is None:
                 return
             if await self._async_conditions_pass(hass, match):
-                cursor.accept(match)
                 yield match
             else:
                 skipped.append(
@@ -1240,7 +1163,6 @@ class RequestRules:
             replace(snapshot.phrases),
             snapshot.wording_groups,
             replace(snapshot.deterministic),
-            replace(snapshot.fuzzy),
         )
 
     def _reorder_matching_snapshot(self) -> None:
@@ -1261,13 +1183,8 @@ class RequestRules:
             )
 
         phrases = ordered(snapshot.phrases)
-        fuzzy = tuple(
-            item
-            for item in phrases
-            if item[2].sentence_pattern is None and item[1]["fuzzy"]
-        )
         self._matching_snapshot = _MatchingSnapshot(
-            phrases, snapshot.wording_groups, phrases, fuzzy
+            phrases, snapshot.wording_groups, phrases
         )
 
     async def async_set_groups(
@@ -1396,16 +1313,10 @@ class RequestRules:
                 compiled_rules.extend(
                     (rule, dict(settings), phrase) for phrase in phrases
                 )
-        fuzzy_rules = tuple(
-            (rule, settings, phrase)
-            for rule, settings, phrase in compiled_rules
-            if phrase.sentence_pattern is None and settings["fuzzy"]
-        )
         self._matching_snapshot = _MatchingSnapshot(
             tuple(compiled_rules),
             tuple(_copy_wording_groups(self._wording_groups)),
             tuple(compiled_rules),
-            fuzzy_rules,
         )
         self._diagnostics = diagnostics
         return order_changed
@@ -1658,20 +1569,21 @@ def validate_matching_settings(value: Any) -> dict[str, Any]:
     """Validate global or custom lightweight matching settings."""
     if not isinstance(value, Mapping):
         raise ValueError("matching settings must be an object")
-    unknown = set(value) - set(DEFAULT_MATCHING)
+    unknown = set(value) - set(DEFAULT_MATCHING) - {"fuzzy", "fuzzy_threshold"}
     if unknown:
         raise ValueError("unknown matching settings: " + ", ".join(sorted(unknown)))
-    result = {**DEFAULT_MATCHING, **value}
-    for key in ("word_forms", "wording_alternatives", "fuzzy"):
+    if "fuzzy" in value and not isinstance(value["fuzzy"], bool):
+        raise ValueError("fuzzy must be true or false")
+    if "fuzzy_threshold" in value:
+        threshold = value["fuzzy_threshold"]
+        if type(threshold) is not int or not 70 <= threshold <= 100:
+            raise ValueError("fuzzy_threshold must be an integer from 70 to 100")
+    # 6.8.3 stores and backups may contain these retired optional settings.
+    # Accept and discard only the known legacy keys; never discard their rule.
+    result = {key: value.get(key, default) for key, default in DEFAULT_MATCHING.items()}
+    for key in DEFAULT_MATCHING:
         if not isinstance(result[key], bool):
             raise ValueError(f"{key} must be true or false")
-    threshold = result["fuzzy_threshold"]
-    if (
-        isinstance(threshold, bool)
-        or not isinstance(threshold, int)
-        or not 70 <= threshold <= 100
-    ):
-        raise ValueError("fuzzy_threshold must be an integer from 70 to 100")
     return result
 
 
@@ -4224,308 +4136,6 @@ def _deterministic_match(text: str, phrase: str, match_type: str) -> bool:
     if match_type == "ends_with":
         return text == phrase or text.endswith(" " + phrase)
     return text == phrase or f" {phrase} " in f" {text} "
-
-
-# A fuzzy candidate must keep command polarity, negation and quantities exact.
-# This is intentionally conservative: a typo in an action word must not
-# accidentally choose a different action. Names of short targets are likewise
-# too ambiguous to substitute safely (for example, hall versus wall).
-_FUZZY_EXACT_WORDS = frozenset(
-    {
-        "on",
-        "off",
-        "no",
-        "not",
-        "never",
-        "without",
-        "don't",
-        "dont",
-        "didn't",
-        "didnt",
-        "can't",
-        "cant",
-        "cannot",
-        "won't",
-        "wont",
-        "lock",
-        "unlock",
-        "locked",
-        "unlocked",
-        "locking",
-        "unlocking",
-        "open",
-        "close",
-        "opened",
-        "closed",
-        "opening",
-        "closing",
-        "arm",
-        "disarm",
-        "armed",
-        "disarmed",
-        "arming",
-        "disarming",
-        "enable",
-        "disable",
-        "enabled",
-        "disabled",
-        "enabling",
-        "disabling",
-        "start",
-        "stop",
-        "started",
-        "stopped",
-        "starting",
-        "stopping",
-        "mute",
-        "unmute",
-        "muted",
-        "unmuted",
-        "muting",
-        "unmuting",
-        "play",
-        "pause",
-        "resume",
-        "cancel",
-        "uncancel",
-        "increase",
-        "decrease",
-        "raise",
-        "lower",
-        "up",
-        "down",
-        "heat",
-        "cool",
-        "add",
-        "remove",
-        "delete",
-        "create",
-        "zero",
-        "one",
-        "two",
-        "three",
-        "four",
-        "five",
-        "six",
-        "seven",
-        "eight",
-        "nine",
-        "ten",
-        "eleven",
-        "twelve",
-        "thirteen",
-        "fourteen",
-        "fifteen",
-        "sixteen",
-        "seventeen",
-        "eighteen",
-        "nineteen",
-        "twenty",
-        "thirty",
-        "forty",
-        "fifty",
-        "sixty",
-        "seventy",
-        "eighty",
-        "ninety",
-        "hundred",
-        "thousand",
-    }
-)
-_FUZZY_OPTIONAL_ARTICLES = frozenset({"a", "an", "the"})
-
-
-# Only well-established, meaning-preserving speech compounds. Joining arbitrary
-# words (e.g. "now here" and "nowhere") would undo the polarity/target guard.
-_FUZZY_SAFE_COMPOUND_PAIRS = frozenset(
-    {
-        ("good", "night"),
-        ("good", "morning"),
-        ("good", "evening"),
-        ("living", "room"),
-        ("bed", "room"),
-        ("bath", "room"),
-        ("dining", "room"),
-        ("hall", "way"),
-        ("front", "door"),
-        ("back", "door"),
-    }
-)
-_FUZZY_SAFE_COMPOUND_WORDS = frozenset(
-    "".join(pair) for pair in _FUZZY_SAFE_COMPOUND_PAIRS
-)
-
-
-def _fuzzy_join_safe_compounds(words: list[str]) -> list[str]:
-    """Canonicalize only approved adjacent word pairs for fuzzy compatibility."""
-    joined: list[str] = []
-    index = 0
-    while index < len(words):
-        if (
-            index + 1 < len(words)
-            and (words[index], words[index + 1]) in _FUZZY_SAFE_COMPOUND_PAIRS
-        ):
-            joined.append(words[index] + words[index + 1])
-            index += 2
-        else:
-            joined.append(words[index])
-            index += 1
-    return joined
-
-
-def _fuzzy_has_safe_compound(words: list[str]) -> bool:
-    return any(word in _FUZZY_SAFE_COMPOUND_WORDS for word in words) or any(
-        (left, right) in _FUZZY_SAFE_COMPOUND_PAIRS for left, right in pairwise(words)
-    )
-
-
-def _fuzzy_word_is_typo(expected: str, observed: str) -> bool:
-    """Permit small spelling errors, not unrelated or sensitive word changes."""
-    if expected == observed:
-        return True
-    if (
-        expected in _FUZZY_EXACT_WORDS
-        or observed in _FUZZY_EXACT_WORDS
-        or any(char.isdigit() for char in expected + observed)
-        or (len(expected) <= 4 and len(observed) <= 4)
-        or expected[0] != observed[0]
-        or abs(len(expected) - len(observed)) > 1
-    ):
-        return False
-    matcher = SequenceMatcher(None, expected, observed, autojunk=False)
-    if matcher.ratio() < 0.7:
-        return False
-    edits = 0
-    for kind, a_start, a_end, b_start, b_end in matcher.get_opcodes():
-        if kind != "equal":
-            edits += max(a_end - a_start, b_end - b_start)
-            if edits > 2:
-                return False
-    return True
-
-
-def _fuzzy_aligned_words_compatible(
-    expected: list[str], observed: list[str], *, joined: bool = False
-) -> bool:
-    """Preserve word-level typo matching and one optional article."""
-    if abs(len(expected) - len(observed)) > 1:
-        return False
-    skip_expected = len(expected) > len(observed)
-    skip_observed = len(observed) > len(expected)
-    i = j = 0
-    while i < len(expected) and j < len(observed):
-        if expected[i] == observed[j]:
-            i += 1
-            j += 1
-        elif skip_expected and expected[i] in _FUZZY_OPTIONAL_ARTICLES:
-            i += 1
-            skip_expected = False
-        elif skip_observed and observed[j] in _FUZZY_OPTIONAL_ARTICLES:
-            j += 1
-            skip_observed = False
-        elif (
-            # A newly joined word must match exactly, not turn an innocuous
-            # compound into a different word through fuzzy substitution.
-            not (
-                joined
-                and (
-                    expected[i] in _FUZZY_SAFE_COMPOUND_WORDS
-                    or observed[j] in _FUZZY_SAFE_COMPOUND_WORDS
-                )
-            )
-            and _fuzzy_word_is_typo(expected[i], observed[j])
-        ):
-            i += 1
-            j += 1
-        else:
-            return False
-    if i < len(expected):
-        return (
-            skip_expected
-            and i == len(expected) - 1
-            and expected[i] in _FUZZY_OPTIONAL_ARTICLES
-        )
-    if j < len(observed):
-        return (
-            skip_observed
-            and j == len(observed) - 1
-            and observed[j] in _FUZZY_OPTIONAL_ARTICLES
-        )
-    return True
-
-
-def _fuzzy_words_compatible(phrase: str, candidate: str) -> bool:
-    """Try ordinary typo alignment before specifically approved compound joins."""
-    expected, observed = phrase.split(), candidate.split()
-    if _fuzzy_aligned_words_compatible(expected, observed):
-        return True
-    joined_expected = _fuzzy_join_safe_compounds(expected)
-    joined_observed = _fuzzy_join_safe_compounds(observed)
-    if joined_expected == expected and joined_observed == observed:
-        return False
-    return _fuzzy_aligned_words_compatible(
-        joined_expected, joined_observed, joined=True
-    )
-
-
-def _fuzzy_score(
-    text: str, phrase: str, match_type: str, budget: MatchBudget | None = None
-) -> float:
-    """Score only word-safe candidates, retaining existing ranking and work bounds."""
-    if budget is None:
-        budget = MatchBudget()
-    budget.consume(len(text) + len(phrase))
-    candidates: Iterable[str]
-    if match_type == "equals":
-        candidates = [text]
-    else:
-        words = text.split()
-        phrase_words = phrase.split()
-        size = max(1, len(phrase_words))
-        # Article omissions and safe compound joins change the word count.
-        # Bound alternative windows and charge each one against the existing
-        # MatchBudget; other fuzzy calls retain their original window size.
-        has_article = any(
-            word in _FUZZY_OPTIONAL_ARTICLES for word in (*phrase_words, *words)
-        )
-        has_compound = _fuzzy_has_safe_compound(
-            phrase_words
-        ) or _fuzzy_has_safe_compound(words)
-        slack = int(has_article) + (2 if has_compound else 0)
-        sizes = tuple(
-            length
-            for length in range(max(1, size - slack), size + slack + 1)
-            if length <= len(words)
-        )
-        if match_type == "starts_with":
-            candidates = (" ".join(words[:length]) for length in sizes)
-        elif match_type == "ends_with":
-            candidates = (" ".join(words[-length:]) for length in sizes)
-        else:
-            candidates = (
-                " ".join(words[index : index + length])
-                for length in sizes
-                for index in range(len(words) - length + 1)
-            )
-    best = 0.0
-    seen: set[str] = set()
-    for candidate in candidates:
-        budget.consume(len(candidate) + len(phrase))
-        if candidate in seen:
-            continue
-        seen.add(candidate)
-        matcher = SequenceMatcher(None, phrase, candidate)
-        if matcher.real_quick_ratio() <= best or matcher.quick_ratio() <= best:
-            continue
-        # This charge already bounds the word-local comparisons as well as
-        # the final whole-phrase ratio; both reuse the same request budget.
-        budget.consume(max(1, len(candidate) * len(phrase)))
-        if not _fuzzy_words_compatible(phrase, candidate):
-            continue
-        best = max(best, matcher.ratio())
-        if best == 1:
-            break
-    return best * 100
 
 
 def _duplicate_rule_name(source_name: str, rules: Sequence[Mapping[str, Any]]) -> str:

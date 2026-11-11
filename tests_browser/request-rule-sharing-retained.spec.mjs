@@ -13,7 +13,7 @@ const pack = {
     id:"retained-source", name:"Retained sharing rule", enabled:true,
     phrases:["retained sharing phrase"], match_type:"equals", action_type:"model_routing",
     action:{model:"gpt-5-mini", reasoning_effort:"", scope:"request", reset:false, continue_to_ai:true, success_response:"Updated"},
-    matching_behavior:"defaults", matching:{word_forms:true, wording_alternatives:true, fuzzy:false, fuzzy_threshold:90},
+    matching_behavior:"defaults", matching:{word_forms:true, wording_alternatives:true},
     order:0, conditions:[], group_id:null, continue_matching:false, ai_input_mode:"original", ai_input_capture:null,
   }],
 };

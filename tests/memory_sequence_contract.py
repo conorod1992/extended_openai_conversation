@@ -18,7 +18,7 @@ async def run_memory_sequence(storage_factory, *, seed, steps, trace):
         for index in range(4):
             key = f"preference.drink{index}"
             content = f"Tea preference marker {index}"
-            result = await memory.async_upsert(
+            result = await memory.async_propose(
                 user, content, "preference", "implicit", key=key
             )
             oracle[user, key] = (content, "implicit", result["memory"]["memory_id"])
@@ -55,16 +55,18 @@ async def run_memory_sequence(storage_factory, *, seed, steps, trace):
                     if operation in ("confirm", "infer_same")
                     else f"Tea preference marker revised {step}"
                 )
-                result = await memory.async_upsert(
+                result = await memory.async_propose(
                     user, incoming_content, "preference", incoming_source, key=key
                 )
-                if source == "explicit" and incoming_source == "implicit":
-                    assert result["status"] == (
-                        "unchanged"
-                        if content == incoming_content
-                        else "needs_resolution"
+                unchanged = source == incoming_source and content == incoming_content
+                assert result["status"] == ("unchanged" if unchanged else "needs_resolution")
+                if not unchanged and operation in ("confirm", "explicit_change"):
+                    candidate = result["candidate"]
+                    assert candidate["memory_id"] == memory_id
+                    await memory.async_update(
+                        user, memory_id, content=incoming_content, source=incoming_source,
+                        expected_revision=candidate["revision"],
                     )
-                else:
                     oracle[user, key] = (incoming_content, incoming_source, memory_id)
             for owner in ("user:alice", "user:bob"):
                 records = await memory.async_list(owner)

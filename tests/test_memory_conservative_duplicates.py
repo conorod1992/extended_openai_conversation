@@ -1,6 +1,4 @@
-"""Related unkeyed facts require resolution instead of suppressing corrections."""
-
-from copy import deepcopy
+"""Proposals preserve existing facts; only exact identities require resolution."""
 
 import pytest
 
@@ -24,58 +22,55 @@ from tests.test_memory_v2 import FakeStorage
         ("I take 5 tablets every day.", "I take 6 tablets every day."),
     ],
 )
-async def test_changed_fact_requires_resolution_without_mutating_old_fact(
+async def test_different_unkeyed_proposal_does_not_mutate_old_fact(
     existing, incoming
 ):
     storage = FakeStorage()
     memory = PersistentMemory(storage)
     await memory.async_initialize()
-    created = await memory.async_upsert("alice", existing, "personal", "explicit")
-    snapshot = deepcopy(storage.data)
-    result = await memory.async_upsert("alice", incoming, "preferences", "explicit")
-    assert result["status"] == "needs_resolution"
-    assert result["candidate"]["memory_id"] == created["memory"]["memory_id"]
-    assert storage.data == snapshot
+    created = await memory.async_propose("alice", existing, "personal", "explicit")
+    result = await memory.async_propose("alice", incoming, "preferences", "explicit")
+    assert result["status"] == "created"
     records = await memory.async_list("alice")
-    assert len(records) == 1
-    assert records[0].content == existing
-    assert records[0].category == "personal"
+    assert len(records) == 2
+    retained = next(r for r in records if r.memory_id == created["memory"]["memory_id"])
+    assert retained.content == existing
+    assert retained.category == "personal"
 
 
-async def test_literal_duplicates_deduplicate_and_keys_replace():
+async def test_literal_proposal_duplicates_noop_and_key_collisions_do_not_write():
     memory = PersistentMemory(FakeStorage())
     await memory.async_initialize()
-    first = await memory.async_upsert(
+    first = await memory.async_propose(
         "alice", "I prefer tea to coffee.", "preferences", "explicit"
     )
-    duplicate = await memory.async_upsert(
+    duplicate = await memory.async_propose(
         "alice", "I prefer tea to coffee.", "preferences", "explicit"
     )
     assert duplicate["status"] == "unchanged"
     assert duplicate["memory"]["memory_id"] == first["memory"]["memory_id"]
-    punctuation_change = await memory.async_upsert(
+    punctuation_change = await memory.async_propose(
         "alice", "I prefer tea to coffee!!!", "preferences", "explicit"
     )
-    assert punctuation_change["status"] == "needs_resolution"
-    assert punctuation_change["candidate"]["memory_id"] == first["memory"]["memory_id"]
-    assert (await memory.async_list("alice"))[0].content == "I prefer tea to coffee."
-    keyed = await memory.async_upsert(
+    assert punctuation_change["status"] == "created"
+    assert any(r.content == "I prefer tea to coffee." for r in await memory.async_list("alice"))
+    keyed = await memory.async_propose(
         "bob",
         "I prefer tea to coffee.",
         "preferences",
         "explicit",
         key="drink.preference",
     )
-    replaced = await memory.async_upsert(
+    replaced = await memory.async_propose(
         "bob",
         "I prefer coffee to tea.",
         "preferences",
         "explicit",
         key="drink.preference",
     )
-    assert replaced["status"] == "updated"
-    assert replaced["memory"]["memory_id"] == keyed["memory"]["memory_id"]
-    assert replaced["memory"]["content"] == "I prefer coffee to tea."
+    assert replaced["status"] == "needs_resolution"
+    assert replaced["candidate"]["memory_id"] == keyed["memory"]["memory_id"]
+    assert replaced["candidate"]["content"] == "I prefer tea to coffee."
 
 
 async def test_duplicate_detection_does_not_build_overlap_sets(monkeypatch):

@@ -1044,7 +1044,7 @@
     "tests/test_skill_filesystem_concurrency.py::test_publish_rescans_without_reentering_non_reentrant_lock",
     "tests/test_skill_filesystem_concurrency.py::test_repeated_cancellation_keeps_lock_until_reload_settles",
     "tests/test_skill_filesystem_concurrency.py::test_runtime_hardening_keeps_manager_owned_boundary",
-    "tests/test_skill_filesystem_concurrency.py::test_scan_publish_and_remove_share_one_serialized_boundary",
+    "tests/test_skill_filesystem_concurrency.py::test_scan_publish_and_replace_share_one_serialized_boundary",
     "tests/test_skill_filesystem_concurrency.py::test_staging_is_outside_discovery_and_incomplete_paths_stay_hidden",
     "tests/test_transfer_staging.py::test_failed_allocation_retries_and_reclaims_only_owned_residue",
     "tests/test_transfer_staging.py::test_failed_callback_cannot_discard_replacement_owner",

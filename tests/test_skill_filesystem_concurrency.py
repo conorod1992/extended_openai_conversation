@@ -111,10 +111,10 @@ async def test_staging_is_outside_discovery_and_incomplete_paths_stay_hidden(
     assert manager.get_all_skills() == []
 
 
-async def test_scan_publish_and_remove_share_one_serialized_boundary(
+async def test_scan_publish_and_replace_share_one_serialized_boundary(
     hass, tmp_path, monkeypatch
 ) -> None:
-    """Concurrent operations never expose staging or partial removal state."""
+    """Concurrent operations never expose staging or partial replacement state."""
     manager = await _manager(hass, tmp_path)
     _write_skill(manager.user_skills_dir / "alpha", "Alpha")
     await manager.async_load_skills()
@@ -122,6 +122,8 @@ async def test_scan_publish_and_remove_share_one_serialized_boundary(
 
     staged_beta = manager.staging_dir / "beta.download-test"
     _write_skill(staged_beta, "Beta")
+    staged_alpha = manager.staging_dir / "alpha.download-test"
+    _write_skill(staged_alpha, "Updated alpha")
 
     probe = LockProbe(manager._filesystem_lock)
     monkeypatch.setattr(manager, "_filesystem_lock", probe)
@@ -132,18 +134,17 @@ async def test_scan_publish_and_remove_share_one_serialized_boundary(
             manager.async_publish_staged_skill("beta", staged_beta)
         )
         scan = asyncio.create_task(manager.async_load_skills())
-        remove = asyncio.create_task(manager.async_remove_skill("alpha"))
+        replace = asyncio.create_task(manager.async_publish_staged_skill("alpha", staged_alpha))
         attempts = [await probe.next_attempt() for _ in range(3)]
-        assert set(attempts) == {publish, scan, remove}
+        assert set(attempts) == {publish, scan, replace}
         assert not publish.done()
         assert not scan.done()
-        assert not remove.done()
+        assert not replace.done()
 
-    _, _, removed = await asyncio.gather(publish, scan, remove)
-    assert removed is True
-    assert not (manager.user_skills_dir / "alpha").exists()
+    await asyncio.gather(publish, scan, replace)
+    assert manager.get_skill("alpha").description == "Updated alpha"
     assert (manager.user_skills_dir / "beta" / "SKILL.md").is_file()
-    assert [skill.name for skill in manager.get_all_skills()] == ["beta"]
+    assert {skill.name for skill in manager.get_all_skills()} == {"alpha", "beta"}
 
 
 async def test_publish_rescans_without_reentering_non_reentrant_lock(

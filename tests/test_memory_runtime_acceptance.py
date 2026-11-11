@@ -80,7 +80,7 @@ async def test_memory_store_bundle_prompt_and_tool_update_form_one_runtime_contr
     """Stored facts reach the provider seam and bundle reuse resolves updated state."""
     memory = PersistentMemory(FakeStorage())
     await memory.async_initialize()
-    created = await memory.async_upsert(
+    created = await memory.async_propose(
         "alice",
         "Oscar is a Cavachon.",
         "pets",

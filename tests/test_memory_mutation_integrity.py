@@ -110,12 +110,12 @@ async def test_durable_save_failure_rolls_back_live_manager(operation: str) -> N
                 "alice", "Breakfast is usually porridge.", "preferences", "explicit"
             )
         elif operation == "keyed_upsert":
-            await memory.async_upsert(
+            await memory.async_propose(
                 "alice",
                 "Oscar is a Cavapoo.",
                 "pets",
                 "explicit",
-                key="pet.oscar.breed",
+                key="pet.oscar.new_fact",
             )
         elif operation == "update":
             await memory.async_update(
@@ -153,14 +153,14 @@ async def test_concurrent_keyed_upserts_serialize_to_one_canonical_record() -> N
     memory = await _memory(storage)
 
     first, second = await asyncio.gather(
-        memory.async_upsert(
+        memory.async_propose(
             "alice",
             "Oscar is a Cavachon.",
             "pets",
             "explicit",
             key="pet.oscar.breed",
         ),
-        memory.async_upsert(
+        memory.async_propose(
             "alice",
             "Oscar is a Cavapoo.",
             "pets",
@@ -169,7 +169,7 @@ async def test_concurrent_keyed_upserts_serialize_to_one_canonical_record() -> N
         ),
     )
 
-    assert {first["status"], second["status"]} == {"created", "updated"}
+    assert {first["status"], second["status"]} == {"created", "needs_resolution"}
     records = await memory.async_list("alice")
     assert len(records) == 1
     assert records[0].key == "pet.oscar.breed"

@@ -563,169 +563,6 @@ class PersistentMemory:
                 "memory": memory_as_dict(new_record, include_revision=True),
             }
 
-    async def async_upsert(
-        self,
-        user_id: str,
-        content: str,
-        category: str,
-        source: str,
-        subject: str | _UnsetType | None = _UNSET,
-        key: str | _UnsetType | None = _UNSET,
-        valid_from: str | _UnsetType | None = _UNSET,
-    ) -> dict[str, Any]:
-        """Create or update by canonical key, or surface a likely conflict."""
-        content = _clean_content(content)
-        category = _clean_category(category)
-        cleaned_subject = (
-            _UNSET
-            if isinstance(subject, _UnsetType)
-            else _clean_optional(subject, "subject", MAX_SUBJECT_LENGTH)
-        )
-        cleaned_key = _UNSET if isinstance(key, _UnsetType) else _clean_key(key)
-        cleaned_valid_from = (
-            _UNSET
-            if isinstance(valid_from, _UnsetType)
-            else _clean_timestamp(valid_from, "valid_from")
-        )
-        if source not in {"explicit", "implicit"}:
-            raise ValueError("source must be explicit or implicit")
-        async with async_storage_lock(self._storage, self._lock):
-            self._require_writable()
-            timestamp = dt_util.utcnow().isoformat()
-            keyed_identity = isinstance(cleaned_key, str)
-            if isinstance(cleaned_key, str) and (
-                memory_id := self._key_index.get((user_id, cleaned_key))
-            ):
-                current = self._memories[memory_id]
-                if current.source == "explicit" and source == "implicit":
-                    if current.content != content:
-                        return {
-                            "status": "needs_resolution",
-                            "candidate": memory_as_dict(current),
-                        }
-                    return {"status": "unchanged", "memory": memory_as_dict(current)}
-                changes: dict[str, Any] = {
-                    "content": content,
-                    "category": category,
-                    "key": cleaned_key,
-                    "source": "explicit" if current.source == "explicit" else source,
-                }
-                if cleaned_subject is not _UNSET:
-                    changes["subject"] = cleaned_subject
-                if cleaned_valid_from is not _UNSET:
-                    changes["valid_from"] = cleaned_valid_from
-                _set_updated_at_if_substantive(current, changes, timestamp)
-                updated = self._replace_record(current, **changes)
-                await self._async_save_locked()
-                return {
-                    "status": "unchanged" if updated == current else "updated",
-                    "memory": memory_as_dict(updated),
-                }
-
-            if keyed_identity:
-                # Only a uniquely identified unkeyed fact may acquire a key.
-                # Preserve the same explicit-over-implicit ownership guarantee
-                # as an upsert to an already keyed fact.
-                duplicate = self._find_unique_unkeyed_duplicate(
-                    user_id,
-                    content,
-                    cleaned_subject if isinstance(cleaned_subject, str) else None,
-                    cleaned_valid_from if isinstance(cleaned_valid_from, str) else None,
-                )
-                if duplicate is not None:
-                    if duplicate.source == "explicit" and source == "implicit":
-                        return {
-                            "status": "unchanged",
-                            "memory": memory_as_dict(duplicate),
-                        }
-                    promotion_changes: dict[str, Any] = {
-                        "key": cleaned_key,
-                        "category": category,
-                        "source": "explicit"
-                        if duplicate.source == "explicit"
-                        else source,
-                    }
-                    if cleaned_subject is not _UNSET:
-                        promotion_changes["subject"] = cleaned_subject
-                    if cleaned_valid_from is not _UNSET:
-                        promotion_changes["valid_from"] = cleaned_valid_from
-                    _set_updated_at_if_substantive(
-                        duplicate, promotion_changes, timestamp
-                    )
-                    updated = self._replace_record(duplicate, **promotion_changes)
-                    await self._async_save_locked()
-                    return {
-                        "status": "updated",
-                        "memory": memory_as_dict(updated),
-                    }
-
-            if not keyed_identity:
-                duplicate = self._find_duplicate(
-                    user_id,
-                    content,
-                    cleaned_subject if isinstance(cleaned_subject, str) else None,
-                )
-                if duplicate:
-                    if duplicate.source == "explicit" and source == "implicit":
-                        return {
-                            "status": "unchanged",
-                            "memory": memory_as_dict(duplicate),
-                        }
-                    changes = {
-                        "category": category,
-                        "source": "explicit"
-                        if duplicate.source == "explicit"
-                        else source,
-                    }
-                    if cleaned_subject is not _UNSET:
-                        changes["subject"] = cleaned_subject
-                    if cleaned_key is not _UNSET:
-                        changes["key"] = cleaned_key
-                    if cleaned_valid_from is not _UNSET:
-                        changes["valid_from"] = cleaned_valid_from
-                    _set_updated_at_if_substantive(duplicate, changes, timestamp)
-                    updated = self._replace_record(duplicate, **changes)
-                    await self._async_save_locked()
-                    return {
-                        "status": "unchanged" if updated == duplicate else "updated",
-                        "memory": memory_as_dict(updated),
-                    }
-                candidate = self._find_related_candidate(
-                    user_id,
-                    content,
-                    cleaned_subject if isinstance(cleaned_subject, str) else None,
-                    None,
-                )
-                if candidate is not None:
-                    return {
-                        "status": "needs_resolution",
-                        "candidate": memory_as_dict(candidate),
-                    }
-
-            if len(self._memories) >= MAX_MEMORIES_PER_AGENT:
-                raise ValueError(
-                    "memory limit reached; delete memories before adding more"
-                )
-            memory = MemoryRecord(
-                memory_id=uuid4().hex,
-                user_id=user_id,
-                content=content,
-                category=category,
-                source=source,
-                created_at=timestamp,
-                updated_at=timestamp,
-                subject=(cleaned_subject if isinstance(cleaned_subject, str) else None),
-                key=cleaned_key if isinstance(cleaned_key, str) else None,
-                valid_from=(
-                    cleaned_valid_from if isinstance(cleaned_valid_from, str) else None
-                ),
-            )
-            self._assert_key_available(memory)
-            self._memories[memory.memory_id] = memory
-            self._index(memory)
-            await self._async_save_locked()
-            return {"status": "created", "memory": memory_as_dict(memory)}
-
     async def async_search(
         self,
         user_id: str | Sequence[str],
@@ -1267,8 +1104,8 @@ class PersistentMemory:
     ) -> MemoryRecord | None:
         """Deduplicate only order-preserving normalized equality.
 
-        Word overlap identifies related facts in _find_related_candidate; it
-        cannot establish equivalence (preferences, negation and numbers matter).
+        Word overlap cannot establish equivalence: preferences, negation and
+        numbers matter.
         """
         normalized = _fact_equality(content)
         matches = [
@@ -1356,35 +1193,6 @@ class PersistentMemory:
             )
         ]
         return sorted(matches, key=lambda memory: memory.memory_id)
-
-    def _find_related_candidate(
-        self, user_id: str, content: str, subject: str | None, key: str | None
-    ) -> MemoryRecord | None:
-        incoming = _cached_memory_tokens(content)
-        key_root = key.rsplit(".", 1)[0] if key and "." in key else None
-        best: tuple[float, str, MemoryRecord] | None = None
-        for memory in self._memories.values():
-            if memory.user_id != user_id or (
-                subject
-                and memory.subject
-                and _subject_identity(subject) != _subject_identity(memory.subject)
-            ):
-                continue
-            existing = _cached_memory_tokens(memory.content)
-            union = incoming | existing
-            similarity = len(incoming & existing) / len(union) if union else 0.0
-            if (
-                subject
-                and memory.subject
-                and _subject_identity(subject) == _subject_identity(memory.subject)
-            ) or (subject and _cached_memory_tokens(subject) & existing):
-                similarity += 0.3
-            if key_root and memory.key and memory.key.startswith(f"{key_root}."):
-                similarity += 0.35
-            candidate = (similarity, memory.memory_id, memory)
-            if best is None or candidate[:2] > best[:2]:
-                best = candidate
-        return best[2] if best is not None and best[0] >= 0.62 else None
 
     def _owned_memory(self, user_id: str, memory_id: str) -> MemoryRecord:
         memory = self._memories.get(memory_id)

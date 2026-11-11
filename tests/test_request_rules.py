@@ -363,7 +363,8 @@ async def test_sentence_and_fuzzy_conditions_skip_to_next_eligible(
     )
     second["conditions"] = later["conditions"]
     rules = await manager(first, second)
-    assert (await rules.async_match(hass, "hellp")).rule["name"] == "Fuzzy second"
+    assert (await rules.async_match(hass, "hello")).rule["name"] == "Fuzzy second"
+    assert await rules.async_match(hass, "hellp") is None
 
 
 def test_only_when_validation_and_legacy_default() -> None:
@@ -634,7 +635,7 @@ async def test_group_name_change_does_not_rebuild_matcher() -> None:
     assert rules._matching_snapshot.phrases[0][2] is snapshot.phrases[0][2]
 
 
-async def test_condition_failed_exact_keeps_earlier_fuzzy_fallback(
+async def test_failed_exact_condition_does_not_enable_legacy_fuzzy_fallback(
     hass, monkeypatch
 ) -> None:
     fuzzy = {
@@ -678,13 +679,13 @@ async def test_condition_failed_exact_keeps_earlier_fuzzy_fallback(
     match, skipped = await rules.async_match_with_skipped(
         hass, "turn on the kitchen light"
     )
-    assert match is not None and match.rule["name"] == "Fallback"
+    assert match is None
     assert skipped == [
         {"id": "exact", "name": "Exact", "reason": "conditions_false"}
     ]
 
 
-async def test_condition_failed_best_fuzzy_tries_next_eligible_candidate(
+async def test_legacy_fuzzy_conditions_skip_to_next_deterministic_candidate(
     hass, monkeypatch
 ) -> None:
     fuzzy = {
@@ -693,13 +694,13 @@ async def test_condition_failed_best_fuzzy_tries_next_eligible_candidate(
         "fuzzy": True,
         "fuzzy_threshold": 70,
     }
-    best = local_rule("Best", phrases=["ligh"], order=0, behavior="custom", matching=fuzzy)
+    best = local_rule("Best", phrases=["light"], order=0, behavior="custom", matching=fuzzy)
     best["conditions"] = [
         {"condition": "state", "entity_id": "input_boolean.no", "state": "on"}
     ]
     fallback = local_rule(
         "Fallback",
-        phrases=["ligth"],
+        phrases=["light"],
         order=1,
         behavior="custom",
         matching=fuzzy,
@@ -733,7 +734,7 @@ async def test_condition_failed_best_fuzzy_tries_next_eligible_candidate(
     ]
 
 
-async def test_fuzzy_chain_never_returns_to_earlier_priority() -> None:
+async def test_legacy_fuzzy_chain_keeps_deterministic_order() -> None:
     fuzzy = {
         "word_forms": False,
         "wording_alternatives": False,
@@ -742,14 +743,13 @@ async def test_fuzzy_chain_never_returns_to_earlier_priority() -> None:
     }
     rules = await manager(
         local_rule("First", phrases=["liagt"], order=0),
-        local_rule("Second", phrases=["ligh"], order=1),
-        local_rule("Third", phrases=["ligth"], order=2),
+        local_rule("Second", phrases=["light"], order=1),
+        local_rule("Third", phrases=["light"], order=2),
         defaults=fuzzy,
     )
     cursor = _MatchCursor(rules._matching_snapshot, "light")
     first = cursor.next_match()
     assert first is not None and first.rule["name"] == "Second"
-    cursor.accept(first)
     second = cursor.next_match()
     assert second is not None and second.rule["name"] == "Third"
     assert cursor.next_match() is None
@@ -1044,7 +1044,7 @@ async def test_match_cursor_deduplicates_matching_phrases_for_one_rule() -> None
         ["open kitchen light", "open kitchen lights", "turn off music"],
     ],
 )
-async def test_match_cursor_keeps_best_fuzzy_phrase_per_rule(phrases) -> None:
+async def test_match_cursor_keeps_authored_phrase_per_legacy_rule(phrases) -> None:
     matching = {
         "word_forms": False,
         "wording_alternatives": False,
@@ -1060,12 +1060,12 @@ async def test_match_cursor_keeps_best_fuzzy_phrase_per_rule(phrases) -> None:
         )
     )
     cursor = _MatchCursor(
-        rules._committed_matching_snapshot, "open kitchen lightz"
+        rules._committed_matching_snapshot, "open kitchen light"
     )
 
     match = cursor.next_match()
 
-    assert match is not None and match.fuzzy
+    assert match is not None and not match.fuzzy
     assert match.phrase == "open kitchen light"
     assert cursor.next_match() is None
 
@@ -1751,7 +1751,7 @@ async def test_global_defaults_and_per_rule_override() -> None:
     assert rules.match("lights").rule["name"] == "Custom"
 
 
-async def test_fuzzy_is_fallback_and_threshold_boundary() -> None:
+async def test_legacy_fuzzy_threshold_does_not_enable_fallback() -> None:
     fuzzy = {**DEFAULT_MATCHING, "fuzzy": True, "fuzzy_threshold": 90}
     rules = await manager(
         local_rule(
@@ -1759,7 +1759,8 @@ async def test_fuzzy_is_fallback_and_threshold_boundary() -> None:
         )
     )
     match = rules.match("good nigt")
-    assert match is not None and match.fuzzy
+    assert match is None
+    assert rules.match("good night") is not None
     strict = await manager(
         local_rule(
             name="Too strict",

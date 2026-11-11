@@ -205,8 +205,8 @@ async def test_duplicate_batch_cleanup_covers_separate_assistant_entries(hass):
     assert retained == originals
 
 
-def test_skipped_calls_do_not_enter_replay_ledger(hass) -> None:
-    from custom_components.extended_openai_conversation_responses.tool_replay_guard import remember_unacknowledged_calls, was_unacknowledged_equivalent
+async def test_skipped_calls_do_not_enter_replay_ledger(hass) -> None:
+    from custom_components.extended_openai_conversation_responses.tool_replay_guard import remember_unacknowledged_calls, async_was_unacknowledged_equivalent
     from custom_components.extended_openai_conversation_responses.tool_exchange import append_unresolved_tool_results
     entity = _entity(hass)
     chat_log = _chat_log(hass)
@@ -217,12 +217,12 @@ def test_skipped_calls_do_not_enter_replay_ledger(hass) -> None:
     record_dispatch(entity, failed)
     append_unresolved_tool_results(chat_log, entity.entity_id, [failed, skipped], failed_call_id=failed.id, error=HomeAssistantError("failed"))
     remember_unacknowledged_calls(entity, chat_log, existing)
-    assert was_unacknowledged_equivalent(entity, chat_log, failed)
-    assert not was_unacknowledged_equivalent(entity, chat_log, skipped)
+    assert await async_was_unacknowledged_equivalent(entity, chat_log, failed)
+    assert not await async_was_unacknowledged_equivalent(entity, chat_log, skipped)
 
 
-def test_synthetic_failure_without_dispatch_does_not_block_retry(hass) -> None:
-    from custom_components.extended_openai_conversation_responses.tool_replay_guard import remember_unacknowledged_calls, was_unacknowledged_equivalent
+async def test_synthetic_failure_without_dispatch_does_not_block_retry(hass) -> None:
+    from custom_components.extended_openai_conversation_responses.tool_replay_guard import remember_unacknowledged_calls, async_was_unacknowledged_equivalent
     from custom_components.extended_openai_conversation_responses.tool_exchange import append_unresolved_tool_results
     entity = _entity(hass)
     chat_log = _chat_log(hass)
@@ -230,7 +230,7 @@ def test_synthetic_failure_without_dispatch_does_not_block_retry(hass) -> None:
     _retain_calls(chat_log, [call])
     append_unresolved_tool_results(chat_log, entity.entity_id, [call], error=HomeAssistantError("stream aborted before dispatch"))
     remember_unacknowledged_calls(entity, chat_log, set())
-    assert not was_unacknowledged_equivalent(entity, chat_log, call)
+    assert not await async_was_unacknowledged_equivalent(entity, chat_log, call)
 
 
 @pytest.mark.parametrize(

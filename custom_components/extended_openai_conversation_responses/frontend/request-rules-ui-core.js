@@ -20,10 +20,6 @@ export function refreshRuleSharingGroups(panel) {
   sharingGroupOptions.set(select,signature);
 }
 
-export const fuzzyThresholdValue = (value) => {
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed >= 70 && parsed <= 100 ? parsed : 90;
-};
 const matchLabel = (value) => ({equals:"Equals",starts_with:"Starts with",ends_with:"Ends with",contains:"Contains",sentence_pattern:"Sentence pattern"}[value] || value);
 const titleCase = (value) => String(value || "").replaceAll("_"," ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 
@@ -36,11 +32,7 @@ export function requestRuleSummary(rule = {}, defaults = {}) {
     matching = `${phraseLabel} · ExtendedOpenAI sentence pattern`;
   } else {
     const source = rule.matching_behavior === "defaults" ? "Default matching" : "Custom matching";
-    const settings = rule.matching_behavior === "defaults" ? defaults : (rule.matching || {});
-    const threshold = Number(settings.fuzzy_threshold ?? 90);
-    const fuzzyLabel = threshold >= 93 ? "conservative" : threshold >= 88 ? "normal" : "tolerant";
-    const fuzzy = settings.fuzzy ? ` · Fuzzy fallback: ${titleCase(fuzzyLabel)}` : "";
-    matching = `${phraseLabel} · ${match} · ${source}${fuzzy}`;
+    matching = `${phraseLabel} · ${match} · ${source}`;
   }
   if (rule.action_type === "local_action") {
     return {
@@ -138,7 +130,7 @@ function acknowledgeRuleGroupControls(panel, dialog, submitted) {
   if (newName.value === submitted.newName) newName.value = "";
 }
 
-export const matchingControls = (prefix, values, hidden = false) => `<div id="${prefix}-matching-controls" class="matching-settings" ${hidden ? "hidden" : ""}><label class="matching-setting"><span class="matching-copy"><span class="matching-title">Normalize word forms</span><small>Treats simple variations such as “light” and “lights” as the same.</small></span><input id="${prefix}-word-forms" type="checkbox" ${values.word_forms ? "checked" : ""}></label><label class="matching-setting"><span class="matching-copy"><span class="matching-title">Wording alternatives</span><small>Uses your saved alternative phrases, such as “switch on” matching “turn on”.</small></span><input id="${prefix}-wording" type="checkbox" ${values.wording_alternatives ? "checked" : ""}></label><label class="matching-setting"><span class="matching-copy"><span class="matching-title">Fuzzy matching</span><small>Allows small speech-recognition or typing mistakes when no normal match succeeds.</small></span><input id="${prefix}-fuzzy" type="checkbox" ${values.fuzzy ? "checked" : ""}></label><label class="matching-setting fuzzy-sensitivity ${values.fuzzy ? "" : "is-disabled"}"><span class="matching-copy"><span class="matching-title">Fuzzy sensitivity</span><small>Controls how close a phrase must be before fuzzy matching is accepted. Conservative is least likely to match the wrong rule.</small></span><span class="matching-control"><input id="${prefix}-threshold" type="number" min="70" max="100" step="1" value="${fuzzyThresholdValue(values.fuzzy_threshold)}" ${values.fuzzy ? "" : "disabled"}></span></label></div>`;
+export const matchingControls = (prefix, values, hidden = false) => `<div id="${prefix}-matching-controls" class="matching-settings" ${hidden ? "hidden" : ""}><label class="matching-setting"><span class="matching-copy"><span class="matching-title">Normalize word forms</span><small>Treats simple variations such as “light” and “lights” as the same.</small></span><input id="${prefix}-word-forms" type="checkbox" ${values.word_forms ? "checked" : ""}></label><label class="matching-setting"><span class="matching-copy"><span class="matching-title">Wording alternatives</span><small>Uses your saved alternative phrases, such as “switch on” matching “turn on”.</small></span><input id="${prefix}-wording" type="checkbox" ${values.wording_alternatives ? "checked" : ""}></label></div>`;
 
 const wordingEditor = (panel, groups) => `<details class="wording-editor eoc-details-base"><summary>Edit wording alternatives</summary><p class="help">Add different ways of saying the same thing. Separate alternatives with commas; put phrases containing commas inside double quotes.</p><div id="wording-groups">${groups.map((group) => `<div class="wording-group"><label>Main phrase<textarea class="wording-canonical" rows="2" maxlength="100">
 ${panel._e(group.canonical)}</textarea></label><label>Other ways to say it<textarea class="wording-alternatives" rows="2" placeholder="Comma-separated alternatives">
@@ -172,7 +164,7 @@ function ruleVisible(rule, groupFilter, search) {
 
 function renderRulesPage(panel, {query = panel._query || "", inPlaceSearch = false} = {}) {
   const result = panel._result || {}, rules = result.rules || [];
-  const defaults = {...{word_forms:true,wording_alternatives:true,fuzzy:false,fuzzy_threshold:90}, ...((panel._rulesSettingsDraft || result).defaults || {})};
+  const defaults = {...{word_forms:true,wording_alternatives:true}, ...((panel._rulesSettingsDraft || result).defaults || {})};
   const search = inPlaceSearch ? "" : String(query).trim().toLowerCase();
   const groupFilter = panel._ruleGroupFilter || "all";
   const scoped = groupFilter !== "all" || Boolean(String(query).trim());
@@ -184,7 +176,7 @@ function renderRulesPage(panel, {query = panel._query || "", inPlaceSearch = fal
       <p class="help rule-filter-help" ${groupFilter === "all" && !search ? "hidden" : ""}>Switch to All rules to change priority.</p>
       <section class="rule-list">${globalRuleMarkup(panel,filtered)} ${rules.length || scoped ? "" : EMPTY_RULES_MARKUP}<section class="content-card empty-state" data-eoc-rule-search-empty ${inPlaceSearch || filtered.length || !rules.length && !scoped ? "hidden" : ""}>${requestRuleEmptyContent(query, groupFilter)}</section></section>
     </section>
-    <section class="content-card rule-settings" aria-labelledby="rule-matching-title"><div class="section-heading"><div><h2 id="rule-matching-title">Matching defaults</h2><p>Used by rules that have not chosen custom matching.</p></div></div><details class="eoc-details-base"><summary>Show default settings</summary><p class="help">Normal matches are always preferred before fuzzy matching is tried.</p>${matchingControls("rules-default",defaults)}</details></section>
+    <section class="content-card rule-settings" aria-labelledby="rule-matching-title"><div class="section-heading"><div><h2 id="rule-matching-title">Matching defaults</h2><p>Used by rules that have not chosen custom matching.</p></div></div><details class="eoc-details-base"><summary>Show default settings</summary><p class="help">Matching uses normalized text and explicitly authored alternatives.</p>${matchingControls("rules-default",defaults)}</details></section>
     <section class="content-card rule-wording" aria-labelledby="rule-wording-title"><div class="section-heading"><div><h2 id="rule-wording-title">Wording alternatives</h2><p>Manage different ways of saying the same thing.</p></div></div>${wordingEditor(panel,(panel._rulesSettingsDraft || result).wording_groups || [])}</section>
     <section class="content-card rule-test-tools" aria-labelledby="rule-test-title"><div class="section-heading"><div><h2 id="rule-test-title">Test rules</h2><p>Preview a match safely before choosing to run a live request.</p></div></div>${SAFE_TESTER}${LIVE_TESTER}</section>
     <details id="rule-sharing" class="content-card eoc-details-base rule-sharing"><summary>Sharing</summary><p class="help">Import or export Request Rules for reuse or sharing.</p><div id="rule-sharing-content"></div></details>
@@ -305,7 +297,6 @@ export function applyRequestRuleMutation(panel, action, result, context={}) {
   return true;
 }
 
-const setFuzzyState=(root,prefix)=>{const toggle=root.querySelector(`#${prefix}-fuzzy`),select=root.querySelector(`#${prefix}-threshold`);if(!toggle||!select)return;select.disabled=!toggle.checked;select.closest(".fuzzy-sensitivity")?.classList.toggle("is-disabled",!toggle.checked);};
 function bindWordingEditor(panel){
   const root=panel.shadowRoot;
   const bindRemove=()=>root.querySelectorAll(".wording-remove").forEach(button=>bindOwnedEvent(button,"click","wording-remove",()=>button.closest(".wording-group")?.remove()));
@@ -346,7 +337,6 @@ export function bindRequestRulesCore(panel,{openEditor,activateSafeTester,activa
   const sharing=root.querySelector("#rule-sharing");
   bindOwnedEvent(sharing,"toggle","rule-sharing",()=>{if(sharing.open)void initializeRuleSharing(panel,sharing);});
   if(sharing?.open)void initializeRuleSharing(panel,sharing);
-  setFuzzyState(root,"rules-default"); bindOwnedEvent(root.querySelector("#rules-default-fuzzy"),"change","rule-default-fuzzy",()=>setFuzzyState(root,"rules-default"));
   bindWordingEditor(panel);
   const filter=root.querySelector("#rule-group-filter");
   bindOwnedEvent(filter,"change","rule-group-filter",()=>{panel._ruleGroupFilter=filter.value;reconcileRequestRules(panel);root.querySelector("#rule-search")?.dispatchEvent(new Event("input",{bubbles:true}));});

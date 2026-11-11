@@ -220,10 +220,6 @@ async def test_exact_proposal_matching_never_uses_stemming_or_overlap(monkeypatc
     memory, _storage = await store()
     agent = entity(memory)
 
-    def unexpected_related_candidate(*_args):
-        raise AssertionError("Model proposal admission must not use lexical overlap")
-
-    monkeypatch.setattr(memory, "_find_related_candidate", unexpected_related_candidate)
     first = await model_call(
         agent, "upsert", content="I prefer coffee.", category="preferences",
         source="implicit", key="preference.coffee",

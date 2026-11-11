@@ -8,11 +8,13 @@ Speech processing creates a cleaner version of the assistant response for text-t
 
 The built-in cleanup can remove content that is useful on screen but awkward when spoken, including:
 
-- Markdown links and citation-style text
+- Markdown link destinations (readable labels are preserved)
 - formatting markers
 - bare URLs
 
 It works with Responses, Chat Completions and compatible providers. It also keeps track of text across streamed chunks, so a Markdown link or URL split across several pieces can still be removed before it is spoken.
+
+Link labels such as `Sources`, `References`, and `1` remain spoken. Only empty labels and labels that are themselves URLs or addresses are suppressed; cleanup does not guess whether a label is a citation.
 
 Inline code preserves literal operators and URLs while its backtick delimiters are removed, including when enclosed in emphasis. Final whitespace cleanup preserves parentheses such as `call()`. Configured replacement rules can deliberately change this content.
 

@@ -294,7 +294,7 @@ async def test_request_rule_save_failure_rolls_back_live_configuration() -> None
     before = manager.snapshot()["defaults"]
 
     changed = dict(DEFAULT_MATCHING)
-    changed["fuzzy"] = not changed["fuzzy"]
+    changed["word_forms"] = not changed["word_forms"]
     storage.fail_saves = True
     with pytest.raises(RuntimeError, match="simulated Store save failure"):
         await manager.async_set_defaults(changed)

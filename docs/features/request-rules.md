@@ -20,7 +20,7 @@ The editor follows the way a command is usually designed:
 
 ## Only when conditions
 
-Rules with no conditions behave exactly as before. For a conditional rule, phrase or sentence-pattern matching runs first. Only if the text matches are its Home Assistant conditions evaluated. A false condition skips that rule and checks later text-matching rules in global priority order. This also applies to fuzzy fallback candidates. The first text match whose conditions pass is the next eligible rule. By default it handles the request and stops matching; a rule with **Continue matching after this rule** enabled can allow later eligible rules to run too.
+Rules with no conditions behave exactly as before. For a conditional rule, phrase or sentence-pattern matching runs first. Only if the text matches are its Home Assistant conditions evaluated. A false condition skips that rule and checks later text-matching rules in global priority order. The first text match whose conditions pass is the next eligible rule. By default it handles the request and stops matching; a rule with **Continue matching after this rule** enabled can allow later eligible rules to run too.
 
 The **Only when** editor uses Home Assistant's condition selector. For example, an Equals rule for `good night` can require a state condition that `input_boolean.bedtime` is `on`. You can use native nested `and`/`or`/`not`, numeric state, time, template, device, and other conditions offered by Home Assistant. Saved condition structures remain intact when the rule is edited. A missing device does not prevent disabling a rule. Rule Pack review reports unavailable device conditions as dependencies and imports those rules disabled. Malformed conditions are still rejected; enabling a rule requires its condition dependencies to be available.
 
@@ -82,9 +82,10 @@ Reasoning effort is validated against the model that will actually receive it, i
 
 - **Normalize word forms** handles conservative English forms such as `light/lights`.
 - **Wording alternatives** map different ways of saying the same thing to a main phrase. The seeded alternatives preserve the previous built-in behavior, such as `switch on` to `turn on` and `television` to `tv`. Alternatives can be added, edited, and removed. Ambiguous duplicate phrases are rejected.
-- **Fuzzy matching** tolerates small speech-recognition differences only after strict matching fails. Conservative, Normal, and Tolerant correspond to progressively lower thresholds. Sensitivity is unavailable when fuzzy matching is off. Fuzzy candidates must preserve command/negation words and numeric values, and must align word by word with only small spelling differences (plus a single optional article such as “the”). This does not change the intentional breadth of strict **Contains** and other strict match modes.
 
-Strict matching always wins over fuzzy matching. Deterministic rules are evaluated from top to bottom in the order shown on the Request Rules screen. The first eligible strict match handles the request by default, regardless of match type. A rule with **Continue matching** on can let later strict matches run. Fuzzy matching is considered only after strict candidates are exhausted. When no strict rule matched, the first fuzzy candidate is chosen by its existing score-based ranking; continuation then checks only later-priority fuzzy rules in global order.
+Deterministic rules are evaluated from top to bottom in the order shown on the Request Rules screen. The first eligible match handles the request by default, regardless of match type. A rule with **Continue matching** on can let later matching rules run.
+
+Optional fuzzy matching was retired in 7.0.0. Saved 6.8.3 rules and backups remain loadable: legacy `fuzzy` and `fuzzy_threshold` settings are accepted and discarded, while all other rule settings are preserved. Previously fuzzy-only phrases now follow the normal unmatched-request route. Add explicit trigger phrases or wording alternatives for variations you want to accept. Newly saved configurations and exports omit the retired settings.
 
 Eligibility is checked before a candidate runs: a candidate whose **Only when** conditions are false is skipped, while conditions are never evaluated for rules whose text did not match. An eligible rule then follows the normal stop-or-continue behavior described above.
 
@@ -94,7 +95,7 @@ For example, if an earlier **Contains** rule and a later **Equals** rule both ma
 
 Choose **ExtendedOpenAI sentence pattern** when parts of a command can vary. The editor provides **Optional**, **Choice**, **Variable**, and **Number range** insertion helpers; they build the same raw syntax shown below, which remains fully editable. This is a small syntax owned by ExtendedOpenAI; it is not a promise of compatibility with Home Assistant/Hassil grammar. Patterns are parsed and compiled when rules are loaded or saved, then matched by a bounded finite-state matcher.
 
-Sentence patterns are case-insensitive but otherwise use their own exact grammar path. Fuzzy matching, wording alternatives, and word-form normalization do not apply.
+Sentence patterns are case-insensitive but otherwise use their own exact grammar path. Wording alternatives and word-form normalization do not apply.
 
 Literal spelling and constrained choices use the same Unicode and whitespace normalization as the input. Sentence-ending punctuation (`.`, `!`, `?`, `。`, and `؟`, including fullwidth equivalents) may follow a complete command. Punctuation explicitly written in a pattern still has to match; punctuation in the middle of a command is literal.
 

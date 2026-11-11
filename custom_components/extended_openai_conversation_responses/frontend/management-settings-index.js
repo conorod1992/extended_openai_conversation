@@ -67,7 +67,7 @@ export const SETTINGS_INDEX = [
   ]),
 
   ...settingsFor("capabilities", "request-rules", [
-    ["Request Rules", "Fast local commands and model-routing rules.", "phrases fuzzy synonyms local commands model routing"],
+    ["Request Rules", "Fast local commands and model-routing rules.", "phrases synonyms local commands model routing"],
   ]),
 
   ...settingsFor("capabilities", "functions", [

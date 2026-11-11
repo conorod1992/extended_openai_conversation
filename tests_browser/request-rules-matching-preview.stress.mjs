@@ -12,14 +12,9 @@ test("nightly Request Rules defaults and wording edits persist, recover from fai
 
   await panel.locator("#rules-default-word-forms").uncheck();
   await panel.locator("#rules-default-wording").uncheck();
-  await panel.locator("#rules-default-fuzzy").check();
-  await expect(panel.locator("#rules-default-threshold")).toBeEnabled();
-  await panel.locator("#rules-default-threshold").fill("100");
-  await panel.locator("#rules-default-threshold").fill("70");
-  await panel.locator("#rules-default-fuzzy").uncheck();
-  await expect(panel.locator("#rules-default-threshold")).toBeDisabled();
-  await panel.locator("#rules-default-fuzzy").check();
-  await expect(panel.locator("#rules-default-threshold")).toHaveValue("70");
+  await expect(panel.locator("#rules-default-threshold")).toHaveCount(0);
+  await expect(panel.locator("#rules-default-threshold")).toHaveCount(0);
+  await expect(panel.locator("#rules-default-threshold")).toHaveCount(0);
   await panel.locator("#wording-add").click();
   const wording = panel.locator(".wording-group").last();
   await wording.locator(".wording-canonical").fill("café");
@@ -55,13 +50,13 @@ test("nightly Request Rules defaults and wording edits persist, recover from fai
   await panel.locator(".rule-settings details").evaluate((details) => { details.open = true; });
   await expect(panel.locator("#rules-default-word-forms")).not.toBeChecked();
   await expect(panel.locator("#rules-default-wording")).not.toBeChecked();
-  await expect(panel.locator("#rules-default-fuzzy")).toBeChecked();
-  await expect(panel.locator("#rules-default-threshold")).toHaveValue("70");
+  await expect(panel.locator("#rules-default-fuzzy")).toHaveCount(0);
+  await expect(panel.locator("#rules-default-threshold")).toHaveCount(0);
   await expect(panel.locator(".wording-canonical").last()).toHaveValue("café");
   await expect(panel.locator(".wording-alternatives").last()).toHaveValue("coffee, café crème");
 
   await testInfo.attach("request-rule-matching-settings", {
-    body:JSON.stringify({defaults:{word_forms:false,wording_alternatives:false,fuzzy:true,fuzzy_threshold:70},unicodeWordingPersisted:true,failedSaveRetried:true,freshLoadVerified:true}, null, 2),
+    body:JSON.stringify({defaults:{word_forms:false,wording_alternatives:false},unicodeWordingPersisted:true,failedSaveRetried:true,freshLoadVerified:true}, null, 2),
     contentType:"application/json",
   });
   await expectHarnessClean(page, errors);

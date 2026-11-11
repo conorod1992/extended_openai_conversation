@@ -98,14 +98,14 @@ def test_markdown_citation_and_bare_urls_are_removed_without_mutating_original()
             "As reported ([apnews.com](https://apnews.com/article/example)).",
             "As reported.",
         ),
-        ("Read [Source](https://example.com) now.", "Read now."),
+        ("Read [Source](https://example.com) now.", "Read Source now."),
         ("See [https://example.com/path?a=1](https://example.com) now.", "See now."),
-        ("See [2](https://example.com) and continue.", "See and continue."),
+        ("See [2](https://example.com) and continue.", "See 2 and continue."),
         ("Show ![a photograph](https://example.com/image.png) next.", "Show next."),
         ("Read [the documentation](https://example.com/a(b)c).", "Read the documentation."),
     ],
 )
-def test_speech_links_preserve_prose_not_citations_across_provider_splits(
+def test_speech_links_preserve_labels_across_provider_splits(
     original: str, expected: str
 ) -> None:
     assert process_speech_text(original, _config()) == expected
@@ -375,11 +375,11 @@ def test_streaming_real_trace_shape() -> None:
     "original,expected",
     [
         (
-            "Summary.\n\n[Source](https://example.com)\n\n## Next steps\n- Take a coat.",
+            "Summary.\n\n[example.com](https://example.com)\n\n## Next steps\n- Take a coat.",
             "Summary.\nNext steps\nTake a coat.",
         ),
         (
-            "Answer.\n[Source](https://example.com)\n- First\n2. Second\n> Note",
+            "Answer.\n[example.com](https://example.com)\n- First\n2. Second\n> Note",
             "Answer.\nFirst\nSecond\nNote",
         ),
         (
@@ -391,19 +391,19 @@ def test_streaming_real_trace_shape() -> None:
             "The result is here.",
         ),
         (
-            "Answer. [Source](https://example.com)\n\nMore.",
+            "Answer. [example.com](https://example.com)\n\nMore.",
             "Answer. More.",
         ),
         (
-            "Answer. [Source](https://example.com) ## literal inline heading",
+            "Answer. [example.com](https://example.com) ## literal inline heading",
             "Answer. ## literal inline heading",
         ),
         (
-            "Answer. [Source](https://example.com)\n#hashtag stays literal",
+            "Answer. [example.com](https://example.com)\n#hashtag stays literal",
             "Answer. #hashtag stays literal",
         ),
         (
-            "The answer is 2**3. [Source](https://example.com)\n2**3 again",
+            "The answer is 2**3. [example.com](https://example.com)\n2**3 again",
             "The answer is 2**3. 2**3 again",
         ),
         (
@@ -489,7 +489,7 @@ def test_streaming_buffer_limit_rejects_too_small_values() -> None:
 def test_empty_delta_and_terminal_separator_are_safe() -> None:
     sanitizer = StreamingSpeechSanitizer()
     assert sanitizer.feed("") == ""
-    assert sanitizer.feed("Answer [source](https://example.com)") == "Answer"
+    assert sanitizer.feed("Answer [example.com](https://example.com)") == "Answer"
     assert sanitizer.finish() == ""
 
 
@@ -576,7 +576,7 @@ def test_delta_listener_forwards_role_non_string_and_metadata_only_deltas() -> N
 
     listener(chat_log, {"role": "assistant"})
     listener(chat_log, {"content": 42})
-    listener(chat_log, {"content": "[source](https://example.com)", "id": "chunk"})
+    listener(chat_log, {"content": "[example.com](https://example.com)", "id": "chunk"})
 
     assert heard == [
         {"role": "assistant"},
@@ -753,7 +753,7 @@ def test_delta_listener_drops_content_only_suppressed_delta_and_flushes_tail() -
     )
     chat_log = object()
 
-    listener(chat_log, {"content": "[source](https://example.com)"})
+    listener(chat_log, {"content": "[example.com](https://example.com)"})
     assert heard == []
 
     listener(chat_log, {"content": "tail "})
@@ -920,10 +920,10 @@ def test_literal_operators_and_code_survive_all_stream_splits(text, expected):
 @pytest.mark.parametrize(
     "citation",
     [
-        "**[source](https://example.com)**",
-        "*[source](https://example.com)*",
-        "([source](https://example.com))",
-        "[source](https://example.com)",
+        "**[example.com](https://example.com)**",
+        "*[example.com](https://example.com)*",
+        "([example.com](https://example.com))",
+        "[example.com](https://example.com)",
     ],
 )
 @pytest.mark.parametrize("spacing", [" ", "   ", "        ", "\t \t", "\n\n"])
@@ -948,7 +948,7 @@ def test_pending_url_prefix_after_removed_citation_keeps_literal_text(
 ) -> None:
     # If the apparent URL becomes ordinary prose, replay only held whitespace,
     # not parts of the already suppressed citation.
-    original = f"Hello **[source](https://example.com)** {continuation}"
+    original = f"Hello **[example.com](https://example.com)** {continuation}"
     expected = f"Hello {continuation}"
     assert process_speech_text(original, _config()) == expected
     for split in range(len(original) + 1):
@@ -961,19 +961,19 @@ def test_pending_url_prefix_after_removed_citation_keeps_literal_text(
     "original,expected",
     [
         (
-            "The lights are off    [source](https://example.com) and the door is locked.",
+            "The lights are off    [example.com](https://example.com) and the door is locked.",
             "The lights are off and the door is locked.",
         ),
         (
-            "Summary.\n\n  [source](https://example.com)\n\n## Next steps\n- Take a coat.",
+            "Summary.\n\n  [example.com](https://example.com)\n\n## Next steps\n- Take a coat.",
             "Summary.\nNext steps\nTake a coat.",
         ),
         (
-            "**Result**[source](https://example.com) **Explanation**.",
+            "**Result**[example.com](https://example.com) **Explanation**.",
             "Result Explanation.",
         ),
         (
-            "Hello **_[source](https://example.com)_** world.",
+            "Hello **_[example.com](https://example.com)_** world.",
             "Hello world.",
         ),
     ],
@@ -1131,12 +1131,12 @@ def test_complete_speech_keeps_cleaning_after_long_unclosed_link() -> None:
     [
         "**bold** and __strong__.",
         "## Heading\n- **Item**\n2. Second item.",
-        "Read [source](https://example.com) and continue.",
+        "Read [example.com](https://example.com) and continue.",
         "2**3; literal operators are preserved.",
         "*outer **inner** outer*",
         "Use \`code **not bold**\` and **real bold**.",
         r"A \*literal\* and **bold**.",
-        "Hello **_[source](https://example.com)_** world.",
+        "Hello **_[example.com](https://example.com)_** world.",
     ],
 )
 def test_completed_speech_uses_the_same_supported_formatting_rules(
@@ -1271,8 +1271,11 @@ def test_completed_speech_many_numeric_literals_reach_later_markup() -> None:
 
 
 def test_completed_speech_many_links_keep_one_spoken_boundary() -> None:
-    source = "Before " + ("[source](https://example.com/path(v1)) " * 200) + "after."
+    source = "Before " + ("[example.com](https://example.com/path(v1)) " * 200) + "after."
     assert process_speech_text(source, _config()) == "Before after."
+
+    source = "Before " + ("[source](https://example.com/path(v1)) " * 200) + "after."
+    assert process_speech_text(source, _config()) == "Before " + "source " * 200 + "after."
 
 
 def test_completed_speech_many_unclosed_parentheses_do_not_block_later_text() -> None:
@@ -1286,7 +1289,7 @@ async def test_local_rule_speech_uses_completed_cleanup_without_changing_history
     from unittest.mock import AsyncMock, MagicMock
     from homeassistant.helpers import intent
 
-    original = "**Done** [source](https://example.com)"
+    original = "**Done** [example.com](https://example.com)"
     response = intent.IntentResponse(language="en")
     response.async_set_speech(original)
     continuity = SimpleNamespace(async_record_success=AsyncMock())
@@ -1391,3 +1394,40 @@ async def test_local_rule_speech_disabled_preserves_original(hass):
         original, None, "continuity", "claim", None,
     )
     assert result.response.speech["plain"]["speech"] == original
+
+
+@pytest.mark.parametrize("label", [
+    "Home Assistant", "Source", "Sources", "Reference", "References",
+    "Citation", "Citations", "1", "2", "123",
+])
+@pytest.mark.parametrize("before,after", [
+    ("", " first."), ("Read ", " first."), ("Read ", "."),
+    ("Choose ", ", then continue!"), ("", ". First option."),
+])
+def test_readable_link_labels_survive_every_stream_split(label, before, after):
+    original = f"{before}[{label}](https://example.com/path?a=1){after}"
+    expected = f"{before}{label}{after}"
+    assert process_speech_text(original, _config()) == expected
+    assert speech._final_whitespace_cleanup(_stream(list(original))) == expected
+    for split in range(len(original) + 1):
+        assert speech._final_whitespace_cleanup(
+            _stream([original[:split], original[split:]])
+        ) == expected, split
+
+
+@pytest.mark.parametrize("original,expected", [
+    ("Choose [1](https://a.example)[2](https://b.example).", "Choose 12."),
+    ("Read [Sources](https://a.example), [References](https://b.example)!", "Read Sources, References!"),
+    ("Read [](https://a.example) first.", "Read first."),
+    ("Read [https://a.example](https://b.example) first.", "Read first."),
+    ("Read [a.example/path](https://b.example) first.", "Read first."),
+    ("Read **[Sources](https://a.example)** first.", "Read Sources first."),
+    ("Choose [1](https://a.example) for the first option.", "Choose 1 for the first option."),
+])
+def test_readable_and_empty_address_labels_stream_like_completed(original, expected):
+    assert process_speech_text(original, _config()) == expected
+    for split in range(len(original) + 1):
+        assert speech._final_whitespace_cleanup(
+            _stream([original[:split], original[split:]])
+        ) == expected, split
+    assert speech._final_whitespace_cleanup(_stream(list(original))) == expected

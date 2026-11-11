@@ -69,14 +69,14 @@ async def test_rule_revision_detects_aba_during_suspended_writer(stress_trace) -
     """The matcher may return to A while a management writer holds A's token."""
     rules = await manager(rule("initial", "turn on"))
     original = rules.revision()
-    await rules.async_set_defaults({**DEFAULT_MATCHING, "fuzzy": True})
+    await rules.async_set_defaults({**DEFAULT_MATCHING, "word_forms": False})
     record(stress_trace, "request_rules_to_b", revision=rules.revision())
     await rules.async_set_defaults(DEFAULT_MATCHING)
     record(stress_trace, "request_rules_to_a", revision=rules.revision())
     assert rules.revision() != original
     with pytest.raises(ValueError, match="changed in another tab"):
         await rules.async_set_defaults(
-            {**DEFAULT_MATCHING, "fuzzy_threshold": 91},
+            {**DEFAULT_MATCHING, "word_forms": False},
             expected_revision=original,
         )
     assert rules.snapshot()["defaults"] == DEFAULT_MATCHING
@@ -95,8 +95,6 @@ def test_behavioral_inventory_is_classified() -> None:
     assert set(DEFAULT_MATCHING) == {
         "word_forms",
         "wording_alternatives",
-        "fuzzy",
-        "fuzzy_threshold",
     }
 
 

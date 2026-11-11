@@ -330,40 +330,6 @@ class SkillManager:
 
         await self._async_run_locked(publish_locked)
 
-    async def async_remove_skill(self, skill_name: str) -> bool:
-        """Remove one Skill without exposing a partially deleted directory."""
-        self._validate_direct_skill_name(skill_name)
-        target = self.user_skills_dir / skill_name
-        backup = self.staging_dir / f"{skill_name}.remove-{uuid4().hex}"
-
-        async def remove_locked() -> bool:
-            await self._hass.async_add_executor_job(
-                recover_transactions, self.staging_dir, self.user_skills_dir
-            )
-            if not await self._hass.async_add_executor_job(target.exists):
-                return False
-            journal = await self._hass.async_add_executor_job(
-                prepare_transaction, self.staging_dir, target, backup, None
-            )
-            try:
-                await self._hass.async_add_executor_job(
-                    self._stage_removal_sync, target, backup
-                )
-                loaded = await self._async_discover_skills_locked()
-                await self._hass.async_add_executor_job(commit_transaction, journal)
-            except BaseException:
-                await self._hass.async_add_executor_job(
-                    recover_transaction, journal, self.user_skills_dir
-                )
-                raise
-            self._skills = loaded
-            await self._hass.async_add_executor_job(
-                recover_transaction, journal, self.user_skills_dir
-            )
-            return True
-
-        return await self._async_run_locked(remove_locked)
-
     @staticmethod
     def _validate_direct_skill_name(skill_name: str) -> None:
         if (
@@ -393,17 +359,6 @@ class SkillManager:
     def _rollback_staged_skill_sync(target: Path, backup: Path) -> None:
         SkillManager._remove_path_sync(target)
         if backup.exists():
-            backup.rename(target)
-
-    @staticmethod
-    def _stage_removal_sync(target: Path, backup: Path) -> None:
-        backup.parent.mkdir(parents=True, exist_ok=True)
-        SkillManager._remove_path_sync(backup)
-        target.rename(backup)
-
-    @staticmethod
-    def _restore_removed_skill_sync(target: Path, backup: Path) -> None:
-        if backup.exists() and not target.exists():
             backup.rename(target)
 
     @staticmethod

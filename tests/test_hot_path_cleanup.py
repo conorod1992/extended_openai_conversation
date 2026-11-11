@@ -13,7 +13,6 @@ import pytest
 from custom_components.extended_openai_conversation_responses import (
     debug,
     local_intents,
-    request_rules,
 )
 from custom_components.extended_openai_conversation_responses.request_rules import (
     RequestRules,
@@ -156,10 +155,6 @@ async def test_request_rule_deterministic_match_never_runs_fuzzy_scoring(
     """Existing deterministic precedence should short-circuit fuzzy work entirely."""
     manager = _compiled_manager()
 
-    def unexpected_fuzzy(*_args):
-        raise AssertionError("fuzzy scoring should be skipped")
-
-    monkeypatch.setattr(request_rules, "_fuzzy_score", unexpected_fuzzy)
     match = manager.match("turn on")
 
     assert match is not None
@@ -167,26 +162,13 @@ async def test_request_rule_deterministic_match_never_runs_fuzzy_scoring(
     assert match.phrase == "turn on"
 
 
-async def test_request_rule_fuzzy_matching_still_runs_as_fallback(
+async def test_request_rule_legacy_fuzzy_does_not_match_unrelated_words(
     hass, monkeypatch
 ) -> None:
-    """Fuzzy behavior remains available when no deterministic candidate matches."""
+    """Unmatched requests stay unmatched despite legacy fuzzy settings."""
     manager = _compiled_manager()
-    calls = 0
-
-    def fuzzy(_candidate: str, phrase: str, _match_type: str, _budget=None) -> float:
-        nonlocal calls
-        calls += 1
-        return 95.0 if phrase == "something else" else 0.0
-
-    monkeypatch.setattr(request_rules, "_fuzzy_score", fuzzy)
-    match = manager.match("unrelated words")
-
-    assert calls == 2
-    assert match is not None
-    assert match.fuzzy is True
-    assert match.phrase == "something else"
-
+    assert manager.match("unrelated words") is None
+    assert manager.match("turn on") is not None
 
 @pytest.mark.parametrize(
     ("payload", "expected"),
