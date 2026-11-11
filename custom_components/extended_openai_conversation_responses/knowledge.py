@@ -562,7 +562,7 @@ class KnowledgeLibrary:
             query_weights = {
                 token: (
                     0.2
-                    if token.startswith("morph:")
+                    if token.startswith(("morph:", "spelling:"))
                     else _SEARCH_FILLER_WEIGHT
                     if has_salient_terms and token in _SEARCH_FILLER_TERMS
                     else 1.0
@@ -1157,11 +1157,15 @@ def _clean_content(value: str) -> str:
 
 def _search_tokens(value: str, exact: set[str] | None = None) -> set[str]:
     """Index exact lexical forms plus low-weight, separately tagged variants."""
-    from .retrieval_text import _stem
+    from .retrieval_text import _HYPHEN_SPELLING_ALIASES, _stem
 
     exact = _tokens(value) if exact is None else exact
     terms = set(exact)
     for token in exact:
+        if alias := _HYPHEN_SPELLING_ALIASES.get(token):
+            # Alias-only hits must not inherit the literal-match priority, even
+            # when the alternate spelling occurs in a higher-weight title.
+            terms.add("spelling:" + min(token, alias))
         if not (token.isascii() and token.isalpha() and len(token) >= 3):
             continue
         # Avoid known technical and ambiguous collisions in the shared stemmer.
@@ -1181,7 +1185,7 @@ def _search_tokens(value: str, exact: set[str] | None = None) -> set[str]:
 def _tokens(value: str) -> set[str]:
     from .retrieval_text import cjk_terms, lexical_terms
 
-    return set(lexical_terms(value)) | cjk_terms(value)
+    return set(lexical_terms(value, include_spelling_aliases=False)) | cjk_terms(value)
 
 
 def _normalize(value: str) -> str:
