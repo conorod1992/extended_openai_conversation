@@ -50,7 +50,7 @@ async def test_real_ha_voice_broadcast_waits_for_idle_target_and_skips_origin(
     assert agent is not None
     provider_path = AsyncMock(
         side_effect=AssertionError(
-            "Targeted local broadcast unexpectedly fell through to the provider"
+            "Built-in Broadcast unexpectedly fell through to the provider"
         )
     )
     monkeypatch.setattr(agent, "_async_handle_message_with_ha_tools", provider_path)
@@ -80,7 +80,7 @@ async def test_real_ha_voice_broadcast_waits_for_idle_target_and_skips_origin(
         hass,
         SERVICE_PROCESS,
         {
-            "text": "broadcast to everyone dinner is ready",
+            "text": "broadcast dinner is ready",
             "agent_id": entity_id,
             "satellite_id": "assist_satellite.kitchen",
             "language": "en",
@@ -135,7 +135,7 @@ async def test_public_broadcast_preserves_originating_context(hass, monkeypatch,
     user = MockUser(is_owner=True)
     user.add_to_hass(hass)
     agent = await _agent(
-        hass, functions=[_send_broadcast_tool()], local_intents_enabled=route == "local"
+        hass, functions=[_send_broadcast_tool()], local_intents_enabled=False
     )
     manager = await async_get_intercom(hass)
     await manager.async_set_enabled(True)
@@ -170,7 +170,7 @@ async def test_public_broadcast_preserves_originating_context(hass, monkeypatch,
             hass,
             SERVICE_PROCESS,
             {
-                "text": "broadcast to everyone dinner is ready"
+                "text": "broadcast dinner is ready"
                 if route == "local"
                 else "Announce dinner",
                 "agent_id": agent.entity_id,
@@ -470,3 +470,54 @@ async def test_broadcast_replay_identity_is_shared_across_routes(
         assert announcements == ["Dinner is ready", "Good morning", "Dinner is ready"]
     finally:
         await manager.async_shutdown()
+
+
+@pytest.mark.parametrize("tool_enabled", [False, True])
+async def test_documented_kitchen_rule_uses_real_script_and_current_tool_state(hass, monkeypatch, tool_enabled):
+    from custom_components.extended_openai_conversation_responses.const import CONF_FUNCTION_TOOLS
+    from tests_real_ha.test_cross_feature_acceptance import _agent, _say, _speech
+    from tests_real_ha.test_provider_wire_e2e import _install_wire
+    from tests_real_ha.test_request_rules_script_semantics import _local
+    from tests_stress.test_native_broadcast_authorization import _send_broadcast_tool
+    tool = _send_broadcast_tool()
+    tool["enabled"] = tool_enabled
+    agent = await _agent(hass, **{CONF_FUNCTION_TOOLS:[tool]})
+    wire = _install_wire(monkeypatch, agent, [])
+    manager = await async_get_intercom(hass)
+    await manager.async_set_enabled(True)
+    await manager.async_set_builtin_voice_command(False)
+    hass.states.async_set("assist_satellite.kitchen", "responding", {
+        "friendly_name":"Kitchen", ATTR_SUPPORTED_FEATURES:ANNOUNCE_FEATURE})
+    monkeypatch.setattr(manager, "_schedule_drain", lambda _: None)
+    monkeypatch.setattr(intercom, "async_call_later", lambda *_: lambda: None)
+    rule = _local([{
+        "action":"extended_openai_conversation_responses.call_function",
+        "data":{"function":"send_broadcast", "arguments":{"destination":"kitchen", "message":"{{ message }}"}},
+    }], phrase="tell the kitchen {message}", match_type="sentence_pattern", success="Broadcast queued.")
+    await agent._request_rules.async_create(rule)
+    result = await _say(hass, agent, "tell the kitchen dinner is ready")
+    assert _speech(result, successful=tool_enabled) == ("Broadcast queued." if tool_enabled else "Failed safely")
+    assert wire.requests == []
+    assert len(manager.history()) == int(tool_enabled)
+    if tool_enabled:
+        assert manager.history()[0]["message"] == "dinner is ready"
+        assert manager.history()[0]["targets"] == ["assist_satellite.kitchen"]
+    await manager.async_shutdown()
+
+
+@pytest.mark.parametrize("reason", ["master-off", "shortcut-off", "legacy-exclusion", "targeted", "timed"])
+async def test_unmatched_or_disabled_command_never_uses_generic_hass_broadcast(hass, monkeypatch, reason):
+    from tests_real_ha.test_cross_feature_acceptance import _agent, _say, _speech
+    from tests_real_ha.test_provider_wire_e2e import _install_wire, _chat_sse_text
+    agent = await _agent(hass, local_intents_enabled=True,
+        local_intent_exclusions=["HassBroadcast"] if reason == "legacy-exclusion" else [])
+    manager = await async_get_intercom(hass)
+    await manager.async_set_enabled(reason != "master-off")
+    await manager.async_set_builtin_voice_command(reason != "shortcut-off")
+    wire = _install_wire(monkeypatch, agent, [_chat_sse_text("AI fallback")])
+    text = {"targeted":"Broadcast to kitchen saying hello", "timed":"Broadcast in ten minutes dinner"}.get(reason, "Broadcast dinner")
+    result = await _say(hass, agent, text)
+    assert _speech(result) == "AI fallback"
+    assert len(wire.requests) == 1
+    assert manager.history() == []
+    await manager.async_shutdown()

@@ -186,6 +186,10 @@ Request captures and Function results stay separate. `{device}` remains a reques
 
 Function execution success is determined by the execution outcome, not the truthiness of its result: `false`, `0`, empty string, and null are valid values. Retained results are limited to 16 KiB and eight levels of nesting. The safe Match Preview lists the Function Tool and alias but never runs it or invents a result. Live Test can run it after the normal explicit confirmation. **Function results are not automatically sent to the AI provider**, including when Continue to AI is on; the provider receives the selected AI input.
 
+### Example: targeted Broadcast
+
+Use `tell the kitchen {message}` with **ExtendedOpenAI sentence pattern** and **Run actions locally**. The native **Call configured function** action uses **Function tool:** `send_broadcast`, with **Arguments** `destination: kitchen` (fixed) and `message: "{{ message }}"` (captured). Leave **Continue to AI** off. The tool and any containing Function Group must be configured and enabled, and Broadcast must be globally enabled. See the [complete Broadcast example](broadcast.md#custom-phrase-tell-the-kitchen) for the current editor fields and YAML.
+
 ## Groups and priority
 
 Groups help organize and filter rules. They do not affect priority. Use **Show** to view all rules, Ungrouped rules, or one group. Filtered rules keep their global priority numbers. Switch to **All rules** to change priority. Search and group filters only change what is visible.

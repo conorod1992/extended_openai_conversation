@@ -56,3 +56,16 @@ assert.match(backupSection, /not encrypted/);
 assert.match(backupSection, /explicit shared-connection choice/);
 assert.doesNotMatch(backupSection, /Provider API keys, OAuth tokens, parent config-entry credentials.*are excluded/);
 assert.doesNotMatch(backupSection, /Re-enter provider credentials separately|Reconnect or re-enter provider credentials separately/);
+
+
+const broadcastGuide = GUIDE_TOPICS.find(topic => topic.id === "broadcast");
+const broadcastText = broadcastGuide.body.map(block => [block.title || "", block.text || (block.items || []).join(" ")].join(" ")).join(" ");
+assert.match(broadcastText, /Broadcast dinner is ready/);
+assert.match(broadcastText, /Built-in voice command/);
+assert.match(broadcastText, /tell the kitchen \{message\}/);
+assert.match(broadcastText, /6\.8\.3/);
+assert.match(broadcastText, /upstream/);
+assert.match(broadcastText, /CONTROL/);
+assert.doesNotMatch(broadcastText, /clear targeted wording can be resolved without/);
+const broadcastCode = broadcastGuide.body.find(block => block.type === "code").text;
+assert.equal(broadcastCode, '- action: extended_openai_conversation_responses.call_function\n  data:\n    function: send_broadcast\n    arguments:\n      destination: kitchen\n      message: "{{ message }}"');
