@@ -11,6 +11,11 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 
 from .const import DOMAIN
+from .global_runtime import (
+    global_runtime_available,
+    global_runtime_lock,
+    require_global_runtime,
+)
 from .operational_errors import log_handled_failure
 from .quiet_hours_runtime import (
     DEFAULT_END,
@@ -246,16 +251,38 @@ def _register_quiet_hours_actions(hass: HomeAssistant) -> None:
         )
 
 
+async def async_restore_saved_quiet_hours(hass: HomeAssistant) -> None:
+    """Attempt durable restoration once before any entry/provider can load.
+
+    This manager is never cached or exposed to public actions. Failed/unavailable
+    controls remain in the existing private store for a later recovery attempt.
+    """
+    async with global_runtime_lock(hass):
+        if global_runtime_available(hass):
+            return
+        try:
+            manager = _RuntimeQuietHoursManager(hass)
+            await manager.async_restore_saved_controls()
+        except Exception as err:
+            log_handled_failure(
+                logging.getLogger(__name__),
+                "Quiet Hours startup restoration deferred",
+                err,
+            )
+
+
 async def async_get_quiet_hours(hass: HomeAssistant) -> QuietHoursManager:
     """Return the initialized integration-global Quiet Hours manager."""
     if hass.data.get(f"{DOMAIN}.removed") is True:
         raise HomeAssistantError("Extended OpenAI has been removed")
+    require_global_runtime(hass)
     domain_data = hass.data.setdefault(DOMAIN, {})
     manager = domain_data.get(_RUNTIME_KEY)
     if not isinstance(manager, QuietHoursManager):
         manager = QuietHoursManager(hass)
         domain_data[_RUNTIME_KEY] = manager
     await manager.async_setup()
+    require_global_runtime(hass)
     _register_quiet_hours_actions(hass)
     return manager
 

@@ -397,7 +397,7 @@ async def test_guest_mode_tool_and_permission_matrix() -> None:
     )
     assert result == {"status": "restricted"}
     restrict.assert_awaited_once_with(
-        active_from="08:00", active_until="18:00", make_indefinite=True
+        active_from="08:00", active_until="18:00", make_indefinite=True, start_now=False
     )
 
     policy = GuestCapabilityPolicy(

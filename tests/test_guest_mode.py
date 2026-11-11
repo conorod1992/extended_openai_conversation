@@ -891,3 +891,46 @@ def test_request_policy_intersection_never_restores_authority():
     assert not disabled.allows_entity_control("light.later")
     assert not disabled.allows_configured_tool("safe")
     assert not disabled.private_capabilities
+
+
+@pytest.mark.parametrize("start", [None, "2026-08-22T12:00:00+00:00", "2026-08-20T12:00:00+00:00"])
+@pytest.mark.parametrize("end", [None, "2026-08-23T12:00:00+00:00"])
+async def test_explicit_start_now_is_monotonic_and_persisted(hass, start, end):
+    manager = _manager(hass)
+    now = _time("2026-08-21T12:00:00")
+    if start:
+        await manager.async_update_trusted(active_from=start, active_until=end, now=now)
+    status = await manager.async_restrict(start_now=True, active_until=end, now=now)
+    assert status["currently_active"]
+    assert status["active_from"] == (min(start, now.isoformat()) if start else now.isoformat())
+    assert status["active_until"] == end
+    saved = manager._store.async_save.call_args.args[0]
+    assert saved["schedule"]["active_from"] == status["active_from"]
+    assert (await manager.async_backup_data())["schedule"]["active_until"] == end
+
+
+@pytest.mark.parametrize("value", [None, 0, 1, "true", "false", [], {}])
+async def test_start_now_rejects_invalid_types_without_mutation(hass, value):
+    manager = _manager(hass)
+    with pytest.raises(ValueError, match="start_now"):
+        await manager.async_restrict(start_now=value)
+    manager._store.async_save.assert_not_called()
+
+
+async def test_start_now_conflict_and_expired_schedule(hass):
+    manager = _manager(hass)
+    now = _time("2026-08-21T12:00:00")
+    with pytest.raises(ValueError, match="start_now"):
+        await manager.async_restrict(start_now=True, active_from=now.isoformat(), now=now)
+    await manager.async_update_trusted(active_from="2026-08-19T12:00:00+00:00", active_until="2026-08-20T12:00:00+00:00", now=now)
+    status = await manager.async_restrict(start_now=True, now=now)
+    assert status["active_from"] == now.isoformat()
+    assert status["state"] == "active_indefinitely"
+
+
+async def test_guest_tool_dispatch_passes_start_now_without_coercion():
+    entity = object.__new__(ExtendedOpenAIAgentEntity)
+    entity.subentry = SimpleNamespace(data={CONF_GUEST_MODE_ENABLED: True})
+    entity._guest_mode = SimpleNamespace(async_restrict=AsyncMock(return_value={"state": "active"}))
+    await entity._async_execute_guest_mode_tool({"start_now": "invalid"})
+    assert entity._guest_mode.async_restrict.call_args.kwargs["start_now"] == "invalid"

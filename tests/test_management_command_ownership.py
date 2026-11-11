@@ -90,7 +90,7 @@ async def main():
     hass.http.async_register_static_paths = AsyncMock()
     hass.async_add_executor_job = AsyncMock(side_effect=lambda callback, *args: callback(*args))
     async_io = (
-        "async_setup_model_catalog", "async_get_quiet_hours", "async_setup_delayed_tools",
+        "async_setup_model_catalog", "async_get_quiet_hours", "async_restore_saved_quiet_hours", "async_setup_delayed_tools",
         "async_migrate_integration", "async_recover_pending_restores", "async_setup_ha_permissions",
         "async_setup_services", "async_setup_intercom_services",
     )

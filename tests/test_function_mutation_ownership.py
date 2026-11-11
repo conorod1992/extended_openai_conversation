@@ -455,3 +455,16 @@ async def test_quarantine_preserves_existing_skill_problem_and_allows_repair(
     )
     assert saved[-1] == damaged and subentry.data["skills"] == ["selected"]
     assert hass.config_entries.updates == 2
+
+
+@pytest.mark.parametrize("settings", [
+    {"chat_model": "o3-pro", "api_mode": "responses", "reasoning_effort": None},
+    {"chat_model": "o3-pro", "api_mode": "responses"},
+    {"chat_model": "o3-pro", "api_mode": "responses", "reasoning_effort": "high"},
+])
+async def test_openai_o3_pro_function_mutations_keep_raw_settings(mutation_agent, settings):
+    hass, entry, subentry = mutation_agent
+    entry.data = {"api_provider": "openai"}
+    await tool_settings_witness(mutation_agent, settings, "yaml")
+    hass.config_entries.updates = 0
+    await test_group_service_then_management_retains_exact_tool_yaml(mutation_agent)

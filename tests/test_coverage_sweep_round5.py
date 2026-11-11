@@ -1015,7 +1015,7 @@ async def test_service_function_tool_enable_updates_requested_tool(
         mutations, "validate_function_tools", Mock(return_value=deepcopy(configured))
     )
     monkeypatch.setattr(
-        mutations, "merge_agent_config", Mock(side_effect=lambda _base, update: update)
+        mutations, "merge_agent_config", Mock(side_effect=lambda _base, update, *, provider=None: update)
     )
     update = Mock()
     monkeypatch.setattr(services, "update_live_subentry", update)
@@ -1059,7 +1059,7 @@ async def test_service_function_group_enable_missing_and_success_paths(
         )
 
     monkeypatch.setattr(
-        mutations, "merge_agent_config", Mock(side_effect=lambda _base, update: update)
+        mutations, "merge_agent_config", Mock(side_effect=lambda _base, update, *, provider=None: update)
     )
     update = Mock()
     monkeypatch.setattr(services, "update_live_subentry", update)

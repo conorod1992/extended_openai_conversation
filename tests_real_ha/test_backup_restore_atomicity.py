@@ -175,3 +175,50 @@ async def test_loaded_restore_rolls_back_earlier_subsystems_when_later_apply_fai
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
     assert entry.state is ConfigEntryState.NOT_LOADED
+
+
+
+@pytest.mark.parametrize("interrupted", [False, True])
+async def test_cross_provider_private_restore_and_committed_replay(hass, monkeypatch, interrupted):
+    from custom_components.extended_openai_conversation_responses import restore_recovery, transfer
+    from custom_components.extended_openai_conversation_responses.provider_credentials import restore_private_provider_connection
+    from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry as setup
+    old_connection = {"api_provider": "azure", "base_url": "https://example.openai.azure.com", "api_version": "2025-04-01-preview", "api_key": "test-azure", "skip_authentication": True}
+    new_connection = {"api_provider": "openai", "api_key": "test-openai", "skip_authentication": True}
+    entry = _make_entry("Provider journal context", include_ai_task=False, data=old_connection, conversation_options={"chat_model": "o3-pro", "api_mode": "responses", "reasoning_effort": "high"})
+    await setup(hass, entry)
+    subentry = _conversation_subentry(entry)
+    expected = dict(entry.data)
+    source = await backup.async_collect_backup_snapshot(hass, entry, subentry)
+    source["provider_connection"] = new_connection
+    source["agent"]["config"] = {**subentry.data, "reasoning_effort": None}
+    target_config = deepcopy(source["agent"]["config"])
+    artifact = backup.finalize_backup_snapshot(source)["document"]
+    persist = restore_recovery._async_persist_config_entries
+    writes = 0
+    async def interrupted_persist(*args):
+        nonlocal writes
+        writes += 1
+        if writes == 1:
+            raise OSError("configuration publication interrupted")
+        await persist(*args)
+    if interrupted:
+        monkeypatch.setattr(restore_recovery, "_async_persist_config_entries", interrupted_persist)
+        with pytest.raises(backup.BackupError, match="completion is pending"):
+            await transfer.async_restore_transfer(hass, entry, subentry, artifact, sections=[transfer.SECTION_CONFIGURATION], provider_connection=new_connection, expected_provider_data=expected)
+        journal = await restore_recovery._journal_store(hass, entry.entry_id, subentry.subentry_id).async_load()
+        assert journal["phase"] == "committed"
+        assert journal["configuration_providers"] == {"target": "openai", "rollback": "azure"}
+        assert dict(entry.data) == expected
+        assert await restore_recovery.async_recover_pending_restore(hass, entry, subentry)
+        # Parent credentials remain a separately confirmed operation, even after replay.
+        assert dict(entry.data) == expected
+        restore_private_provider_connection(hass, entry, new_connection, expected, confirmed=True)
+    else:
+        result = await transfer.async_restore_transfer(hass, entry, subentry, artifact, sections=[transfer.SECTION_CONFIGURATION], provider_connection=new_connection, expected_provider_data=expected)
+        assert result["provider_connection_restored"]
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert dict(subentry.data) == target_config
+    assert dict(entry.data) == new_connection
+    assert await restore_recovery._journal_store(hass, entry.entry_id, subentry.subentry_id).async_load() is None
+    assert await hass.config_entries.async_unload(entry.entry_id)

@@ -2880,3 +2880,27 @@ async def test_documented_kitchen_broadcast_rule_resolves_captured_message(hass,
     queued.assert_awaited_once()
     assert queued.await_args.args == ("dinner is ready",)
     assert queued.await_args.kwargs["area_ids"] == ["kitchen"]
+
+
+@pytest.mark.parametrize(("pattern", "text", "slots"), [
+    ("what's the time", "What’s the time?", {}),
+    ("what’s the time", "What's the time!", {}),
+    ("[what's ](the|your) time", "What’s your time.", {}),
+    ("remember {fact=it's fine|all’s well}", "Remember It’s fine?", {"fact": "It's fine"}),
+    ("remember {fact}", "Remember Zoë’s Ｃ＋＋ – notes!", {"fact": "Zoë's C++ – notes"}),
+])
+async def test_sentence_apostrophes_match_preview_and_local_evaluation(hass, pattern, text, slots):
+    from custom_components.extended_openai_conversation_responses.request_rule_match_preview import request_rule_match_preview
+
+    rules = await manager(local_rule(phrases=[pattern], match_type="sentence_pattern"))
+    match = await rules.async_match(hass, text)
+    assert match is not None
+    assert match.slots == slots
+    preview = request_rule_match_preview(match)
+    assert preview["captured_values"] == slots
+    assert preview["would_do"]["provider_input"] == "none"
+    hass.services = FakeServices()
+    outcome = await async_evaluate_rule(hass, rules, RequestRuleRuntime(), text, "apostrophes")
+    assert outcome is not None and outcome.consume
+    assert outcome.response == "Done"
+    assert len(hass.services.calls) == 1

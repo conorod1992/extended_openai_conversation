@@ -931,3 +931,12 @@ async def test_script_cleanup_does_not_mask_public_cancellation(
     assert hass.bus.async_listeners().get("script_probe_release", 0) == 0
     assert _speech(await _say(hass, agent, "independent healthy turn")) == "Healthy"
     assert len(effects) == 1
+
+
+@pytest.mark.parametrize("pattern,text", [("what's the time", "What’s the time?"), ("what’s the time", "What's the time!")], ids=["straight-pattern", "curly-pattern"])
+async def test_apostrophe_sentence_rule_consumes_without_provider(hass, monkeypatch, pattern, text):
+    agent = await _agent(hass)
+    sent = _provider(monkeypatch, agent, [])
+    await agent._request_rules.async_create(_local([{"variables": {"local": True}}], phrase=pattern, match_type="sentence_pattern", success="Local answer"))
+    assert _speech(await _say(hass, agent, text)) == "Local answer"
+    assert sent == []

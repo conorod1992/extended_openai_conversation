@@ -155,7 +155,11 @@ def _safe_configuration(value: Any, *, schema: bool = False) -> Any:
 
 
 def _configuration_snapshot_preserving_quarantine(
-    data: Any, *, frontend_shape: bool, persisted_source: bool = True
+    data: Any,
+    *,
+    frontend_shape: bool,
+    persisted_source: bool = True,
+    provider: str | None = None,
 ) -> dict[str, Any]:
     """Normalize known config without discarding opaque later-version fields."""
     raw = dict(data)
@@ -165,12 +169,16 @@ def _configuration_snapshot_preserving_quarantine(
 
     def normalize(value: dict[str, Any], *, decoded: bool = False) -> dict[str, Any]:
         if frontend_shape:
-            return agent_config_snapshot(value, preparsed_function_tools=decoded)
+            return agent_config_snapshot(
+                value, preparsed_function_tools=decoded, provider=provider
+            )
         if persisted_source and not decoded:
-            return normalize_persisted_agent_config(value)
+            return normalize_persisted_agent_config(value, provider=provider)
         # A backup is also a repair path for older inactive Skill selections.
         # All other scalar, Function and permission validation remains strict.
-        return normalize_agent_config(value, allow_unavailable_skills=True)
+        return normalize_agent_config(
+            value, allow_unavailable_skills=True, provider=provider
+        )
 
     try:
         snapshot = normalize(known)
@@ -207,21 +215,43 @@ def _configuration_snapshot_preserving_quarantine(
     return json_safe_function_fields(projected) if frontend_shape else projected
 
 
-def export_configuration_snapshot(data: Any) -> dict[str, Any]:
+def export_configuration_snapshot(
+    data: Any, *, provider: str | None = None
+) -> dict[str, Any]:
     """Return the backup/export projection, preserving quarantined Function fields."""
-    return _configuration_snapshot_preserving_quarantine(data, frontend_shape=True)
-
-
-def recoverable_configuration_snapshot(data: Any) -> dict[str, Any]:
-    """Return persistence-shaped validated config that retains quarantined Functions."""
     return _configuration_snapshot_preserving_quarantine(
-        data, frontend_shape=False, persisted_source=False
+        data, frontend_shape=True, provider=provider
     )
 
 
-def private_configuration_snapshot(data: Any) -> dict[str, Any]:
+def recoverable_configuration_snapshot(
+    data: Any, *, provider: str | None = None
+) -> dict[str, Any]:
+    """Return persistence-shaped validated config that retains quarantined Functions."""
+    return _configuration_snapshot_preserving_quarantine(
+        data, frontend_shape=False, persisted_source=False, provider=provider
+    )
+
+
+def private_configuration_snapshot(
+    data: Any, *, provider: str | None = None
+) -> dict[str, Any]:
     """Return directly persistable recovery config, retaining opaque malformed YAML."""
-    return _configuration_snapshot_preserving_quarantine(data, frontend_shape=False)
+    return _configuration_snapshot_preserving_quarantine(
+        data, frontend_shape=False, provider=provider
+    )
+
+
+def source_api_provider(document: Mapping[str, Any]) -> str | None:
+    """Use a known private source connection; providerless exports stay unknown."""
+    connection = document.get("provider_connection")
+    if not isinstance(connection, Mapping) or not connection:
+        return None
+    from .helpers import effective_api_provider
+
+    return effective_api_provider(
+        connection.get("api_provider"), connection.get("base_url")
+    )
 
 
 def _backup_lock(hass: HomeAssistant, entry_id: str, subentry_id: str) -> asyncio.Lock:
@@ -322,6 +352,7 @@ def inspect_backup(
     max_bytes: int = MAX_LEGACY_EXPORT_BYTES,
     private_journal: bool = False,
     header_only: bool = False,
+    provider: str | None = None,
 ) -> PreparedRestore:
     """Parse and validate every category without mutating agent state."""
     if isinstance(value, PreparedRestore):
@@ -331,6 +362,7 @@ def inspect_backup(
         target_agent_id,
         private_journal=private_journal,
         header_only=header_only,
+        provider=provider,
     )
 
 
@@ -340,6 +372,7 @@ async def async_inspect_backup(
     *,
     max_bytes: int | None = None,
     private_journal: bool = False,
+    provider: str | None = None,
 ) -> PreparedRestore:
     """Process bounded JSON and bulk categories off-loop; retain HA-aware schema context."""
     if isinstance(value, PreparedRestore):
@@ -365,6 +398,7 @@ async def async_inspect_backup(
         target_agent_id,
         private_journal=private_journal,
         validated_categories=categories,
+        provider=provider,
     )
 
 
@@ -455,6 +489,7 @@ def _inspect_decoded_backup(
     *,
     private_journal: bool = False,
     header_only: bool = False,
+    provider: str | None = None,
     validated_categories: dict[str, Any] | None = None,
 ) -> PreparedRestore:
     """Validate the decoded envelope and categories, including HA-aware schemas."""
@@ -549,12 +584,22 @@ def _inspect_decoded_backup(
         config = (
             deepcopy(raw_config)
             if private_journal or version == PRIVATE_BACKUP_VERSION
-            else recoverable_configuration_snapshot(raw_config)
+            else recoverable_configuration_snapshot(
+                raw_config,
+                provider=provider
+                if provider is not None
+                else source_api_provider(value),
+            )
         )
         if private_journal or version == PRIVATE_BACKUP_VERSION:
             # Validate an effective projection, never replace authoritative
             # private source with reserialized YAML or injected defaults.
-            private_configuration_snapshot(raw_config)
+            private_configuration_snapshot(
+                raw_config,
+                provider=provider
+                if provider is not None
+                else source_api_provider(value),
+            )
         categories = (
             validated_categories
             if validated_categories is not None
@@ -635,7 +680,7 @@ async def _managers(
 
 
 async def _snapshot_for_restore(
-    participants: AgentDataParticipants, subentry: Any
+    participants: AgentDataParticipants, subentry: Any, *, provider: str | None = None
 ) -> PreparedRestore:
     raw_categories = {
         "archive": await participants.archive.async_recovery_data(),
@@ -658,7 +703,7 @@ async def _snapshot_for_restore(
     request_rule_backup = RequestRules.validate_backup_data(
         await participants.request_rules.async_backup_data()
     )
-    private_configuration_snapshot(subentry.data)
+    private_configuration_snapshot(subentry.data, provider=provider)
     return PreparedRestore(
         subentry.title,
         # Recovery applies this mapping directly, including during same-process

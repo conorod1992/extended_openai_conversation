@@ -22,9 +22,10 @@ def test_backup_recovery_preserves_absence_of_function_fields(monkeypatch) -> No
 
     calls = 0
 
-    def normalize(value, *, preparsed_function_tools=False):
+    def normalize(value, *, preparsed_function_tools=False, provider=None):
         nonlocal calls
         calls += 1
+        assert provider is None
         assert preparsed_function_tools is (calls > 1)
         if calls == 1:
             raise ValueError("broken function config")

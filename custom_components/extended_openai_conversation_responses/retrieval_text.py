@@ -173,12 +173,27 @@ def lexical_tokens(value: str) -> list[str]:
     return _LEXICAL_TOKEN.findall(normalized)
 
 
-def lexical_terms(value: str) -> list[str]:
+def lexical_terms(value: str, *, include_spelling_aliases: bool = True) -> list[str]:
     """Keep short identifiers and index compounds alongside their components."""
-    return lexical_terms_from_tokens(lexical_tokens(value))
+    return lexical_terms_from_tokens(
+        lexical_tokens(value), include_spelling_aliases=include_spelling_aliases
+    )
 
 
-def lexical_terms_from_tokens(tokens: Iterable[str]) -> list[str]:
+# Established spellings only: arbitrary hyphen removal conflates distinct words.
+_HYPHEN_SPELLING_ALIASES = {
+    "wi-fi": "wifi",
+    "wifi": "wi-fi",
+    "e-mail": "email",
+    "email": "e-mail",
+    "set-up": "setup",
+    "setup": "set-up",
+}
+
+
+def lexical_terms_from_tokens(
+    tokens: Iterable[str], *, include_spelling_aliases: bool = True
+) -> list[str]:
     """Expand already normalized lexical tokens without rescanning their text."""
     terms: list[str] = []
     for token in tokens:
@@ -186,6 +201,8 @@ def lexical_terms_from_tokens(tokens: Iterable[str]) -> list[str]:
         stem = token[:-2] if token.endswith("'s") else token
         if stem != token:
             terms.append(stem)
+        if include_spelling_aliases and (alias := _HYPHEN_SPELLING_ALIASES.get(stem)):
+            terms.append(alias)
         if "-" in stem:
             terms.extend(part for part in stem.split("-") if part)
     return terms

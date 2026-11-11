@@ -164,6 +164,7 @@ def test_llm_guest_mode_tool_is_structurally_one_way() -> None:
         "active_from",
         "active_until",
         "make_indefinite",
+        "start_now",
     }
     forbidden = {"enabled", "disable", "cancel", "operation", "indefinite"}
     assert forbidden.isdisjoint(parameters["properties"])

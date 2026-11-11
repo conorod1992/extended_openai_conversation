@@ -592,17 +592,21 @@
     {
       "type": "function",
       "name": "guest_mode_restrict",
-      "description": "Enable, start sooner, or extend Guest Mode; never weaken it.",
+      "description": "Enable, start sooner, or extend Guest Mode; never weaken it. For immediate activation use start_now=true, including over a future schedule. Without a start argument, preserve an existing active/future start; otherwise start now. Existing expiry is retained unless extended or made indefinite.",
       "parameters": {
         "type": "object",
         "properties": {
           "active_from": {
             "type": "string",
-            "description": "ISO 8601; omit to start now."
+            "description": "ISO 8601 start; may only move an existing start earlier. Do not combine with start_now=true."
           },
           "active_until": {
             "type": "string",
             "description": "ISO 8601 expiry; extensions only."
+          },
+          "start_now": {
+            "type": "boolean",
+            "description": "Use true to activate immediately using backend time. Do not supply active_from with true."
           },
           "make_indefinite": {
             "type": "boolean"
@@ -1395,17 +1399,21 @@
       "type": "function",
       "function": {
         "name": "guest_mode_restrict",
-        "description": "Enable, start sooner, or extend Guest Mode; never weaken it.",
+        "description": "Enable, start sooner, or extend Guest Mode; never weaken it. For immediate activation use start_now=true, including over a future schedule. Without a start argument, preserve an existing active/future start; otherwise start now. Existing expiry is retained unless extended or made indefinite.",
         "parameters": {
           "type": "object",
           "properties": {
             "active_from": {
               "type": "string",
-              "description": "ISO 8601; omit to start now."
+              "description": "ISO 8601 start; may only move an existing start earlier. Do not combine with start_now=true."
             },
             "active_until": {
               "type": "string",
               "description": "ISO 8601 expiry; extensions only."
+            },
+            "start_now": {
+              "type": "boolean",
+              "description": "Use true to activate immediately using backend time. Do not supply active_from with true."
             },
             "make_indefinite": {
               "type": "boolean"
