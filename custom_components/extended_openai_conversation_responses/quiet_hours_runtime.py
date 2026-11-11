@@ -18,7 +18,7 @@ import logging
 import math
 from typing import Any, cast
 
-from homeassistant.const import EVENT_CORE_CONFIG_UPDATE
+from homeassistant.const import EVENT_CORE_CONFIG_UPDATE, EntityCategory
 from homeassistant.core import Context, Event, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr, entity_registry as er
@@ -326,7 +326,7 @@ def _wake_sound_controls(
         and entry.disabled_by is None
         and entry.platform == "esphome"
         and entry.original_name == "Wake sound"
-        and entry.entity_category == "config"
+        and entry.entity_category == EntityCategory.CONFIG
     ]
 
 

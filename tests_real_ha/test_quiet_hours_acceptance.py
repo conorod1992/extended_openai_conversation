@@ -11,6 +11,7 @@ from custom_components.extended_openai_conversation_responses.const import DOMAI
 from custom_components.extended_openai_conversation_responses.quiet_hours import (
     async_get_quiet_hours,
 )
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.util import dt as dt_util
@@ -228,7 +229,7 @@ def _install_satellite_entities(hass: HomeAssistant) -> tuple[str, str, str]:
         suggested_object_id="bedroom_voice_wake_sound",
         device_id=device.id,
         original_name="Wake sound",
-        entity_category="config",
+        entity_category=EntityCategory.CONFIG,
     )
 
     hass.states.async_set(
@@ -315,7 +316,7 @@ async def test_active_ambiguous_controls_survive_real_store_restart(hass: HomeAs
     device_id = registry.async_get(satellite).device_id
     registry.async_get_or_create("media_player", "other", "other-player", device_id=device_id)
     registry.async_get_or_create("switch", "esphome", "other-wake", device_id=device_id,
-                                 original_name="Wake sound", entity_category="config")
+                                 original_name="Wake sound", entity_category=EntityCategory.CONFIG)
     await manager.async_reconcile()
     assert hass.states.get(media).attributes["volume_level"] == 0.2
     assert hass.states.get(wake).state == "off"
