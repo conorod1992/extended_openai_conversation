@@ -26,9 +26,15 @@ This controls the short sound played when a compatible satellite detects its wak
 
 ## Satellite discovery and overrides
 
-Extended OpenAI discovers Assist satellites from Home Assistant and tries to associate each one with its speaker media player and wake-word sound switch. The Quiet Hours page shows the detected entities and whether the speaker is currently usable. Manual selections follow the Home Assistant entity registry when a satellite, speaker or wake-sound switch is renamed, including across restarts. Removing a selected entity does not transfer its selection or restoration ownership to another entity that reuses its old ID.
+Extended OpenAI discovers Assist satellites from Home Assistant and selects controls automatically only when their association is unambiguous. The Quiet Hours page distinguishes automatic and manual selections, **Manual selection required**, no compatible control, and a selected control that is temporarily unavailable.
 
-Use the per-satellite overrides when automatic discovery finds the wrong entity or cannot identify one. Leaving an override empty returns that satellite to automatic discovery.
+For speaker volume, exactly one enabled media player registered to the satellite's Home Assistant device is selected automatically. With multiple registered media players, select the correct speaker manually. Offline players and players without a current volume attribute still count; changes in availability, names, entity IDs, or platforms cannot make one player win over another. With no registered player, no speaker is selected. A selected speaker is adjusted only when it reports a usable volume.
+
+Automatic wake-word sound selection is limited to one recognised stock Voice PE configuration switch: an ESPHome switch whose original firmware name is **Wake sound**, on a device identified as **Nabu Casa / Home Assistant Voice PE**. Multiple such switches require a manual selection. Generic switches, descriptive user names, and other devices or custom firmware do not establish this optional capability; select a switch manually only if it controls the wake-word chime. Unsupported wake-word sound is not a fault.
+
+Saved manual selections take precedence. They follow the Home Assistant entity registry when a satellite, speaker or wake-sound switch is renamed, including across restarts. Removing a selected entity does not transfer its selection or restoration ownership to another entity that reuses its old ID. Leaving an override empty returns that satellite to conservative automatic discovery.
+
+If discovery becomes ambiguous during a quiet period, EOAI retains verified existing ownership until that period ends, including after a restart. It does not transfer that ownership to a different automatic candidate or save the old association as a manual override. Your independent changes still release ownership, and explicit selection changes use the normal restoration and retargeting rules. The next quiet period uses the new discovery rules. An unavailable control's restoration obligation remains stored until restoration can be safely completed.
 
 ## Use the schedule in automations
 
