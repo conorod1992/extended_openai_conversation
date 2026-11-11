@@ -93,9 +93,8 @@ async def test_retrieval_ties_use_id_and_ignore_old_metadata_and_edits(hybrid):
 
 
 def test_model_and_management_schemas_have_no_removed_controls():
-    from custom_components.extended_openai_conversation_responses.const import MEMORY_PROMPT
     from custom_components.extended_openai_conversation_responses.model_payload import PERSISTENT_MEMORY_GUIDANCE
-    for guidance in (MEMORY_PROMPT, PERSISTENT_MEMORY_GUIDANCE):
+    for guidance in (PERSISTENT_MEMORY_GUIDANCE,):
         # Ordinary factual confirmation is allowed; only obsolete control
         # fields and refresh-confirmation commands are forbidden.
         for removed_control in ("importance", "last_confirmed_at", "refresh_confirmation"):

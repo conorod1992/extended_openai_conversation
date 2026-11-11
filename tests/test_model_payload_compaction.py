@@ -8,8 +8,6 @@ from typing import Any
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_CHAT_COMPLETIONS,
     API_MODE_RESPONSES,
-    KNOWLEDGE_PROMPT,
-    MEMORY_PROMPT,
 )
 from custom_components.extended_openai_conversation_responses.conversation_archive import (
     archive_tools,
@@ -216,8 +214,9 @@ def test_provider_formatter_respects_user_and_explicit_strict_contracts() -> Non
 
 def test_compact_guidance_retains_memory_and_knowledge_safety_semantics() -> None:
     """The largest fixed guidance blocks keep their behavioral requirements."""
-    assert len(PERSISTENT_MEMORY_GUIDANCE) < len(MEMORY_PROMPT) * 0.7
-    assert len(KNOWLEDGE_GUIDANCE) < len(KNOWLEDGE_PROMPT) * 0.7
+    # Historical guidance lengths; unused runtime constants were retired.
+    assert len(PERSISTENT_MEMORY_GUIDANCE) < 1971 * 0.7
+    assert len(KNOWLEDGE_GUIDANCE) < 1806 * 0.7
 
     memory_guidance = _normalized_text(PERSISTENT_MEMORY_GUIDANCE)
     knowledge_guidance = _normalized_text(KNOWLEDGE_GUIDANCE)
