@@ -224,7 +224,7 @@ def test_compact_guidance_retains_memory_and_knowledge_safety_semantics() -> Non
 
     for phrase in (
         "memory_upsert",
-        "source=implicit",
+        "intent=user_request",
         "household scope",
         "Do not reject requested memories solely for credentials",
         "retention and sharing preferences",
@@ -233,7 +233,7 @@ def test_compact_guidance_retains_memory_and_knowledge_safety_semantics() -> Non
         "needs_resolution",
         "not proof of equivalence",
         "Confirm before broad deletion",
-        "direct current",
+        "current-user persistence request",
         "Shared Explicit",
     ):
         assert phrase in memory_guidance

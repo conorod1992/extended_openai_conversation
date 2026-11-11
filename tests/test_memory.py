@@ -369,7 +369,7 @@ async def test_implicit_tool_write_is_structurally_disabled() -> None:
     )
     context = SimpleNamespace(context=SimpleNamespace(user_id="user-1"))
 
-    with pytest.raises(ValueError, match="automatic memory creation"):
+    with pytest.raises(ValueError, match="automatic memory mutations"):
         await entity._async_execute_memory_tool(
             "add",
             {
@@ -388,6 +388,7 @@ async def test_implicit_tool_write_is_structurally_disabled() -> None:
             "content": "User prefers Celsius.",
             "category": "preferences",
             "source": "explicit",
+            "intent": "user_request",
         },
         context,
     )
@@ -413,6 +414,7 @@ async def test_upsert_tool_preserves_omitted_metadata_arguments() -> None:
             "content": "Oscar is a Cavapoo.",
             "category": "pets",
             "source": "explicit",
+            "intent": "user_request",
             "key": "pet.oscar.breed",
         },
         context,

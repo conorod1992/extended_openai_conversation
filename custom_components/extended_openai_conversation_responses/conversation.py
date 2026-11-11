@@ -10,7 +10,6 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 import logging
 from pathlib import Path
-import re
 import time
 from types import SimpleNamespace
 from typing import Any, Literal, cast
@@ -273,82 +272,6 @@ from .usage import async_get_usage, extract_usage
 from .voice_identity_runtime import voice_identity_scope, voice_source_device_id
 
 _LOGGER = logging.getLogger(__name__)
-
-
-# Source labels provided by the model are descriptive, not user authority.
-# Authorize newly permitted mutations only from the raw current user turn.
-_MEMORY_DIRECT_COMMAND = re.compile(
-    r"^\s*(?:(?:please|could\s+you|can\s+you|would\s+you|will\s+you|"
-    r"i\s+want\s+you\s+to|i(?:'d|\s+would)\s+like\s+you\s+to)\s+)*"
-    r"(?P<verb>remember|memorise|memorize|save|store|add|update|change|"
-    r"correct|edit|fix|forget|delete|remove|erase)\b",
-    re.IGNORECASE,
-)
-_MEMORY_TRAILING_COMMAND = re.compile(
-    r"(?:[.!?]\s+|;\s+)(?:please\s+)?"
-    r"(?P<verb>remember|update|change|correct|edit|fix|forget|delete|remove)\s+"
-    r"(?:(?:this|that|it)\s+)?(?:(?:in|to|from)\s+)?"
-    r"(?:(?:your|the|my|our)\s+)?(?:stored\s+)?memor(?:y|ies)\s*[.!?]*\s*$",
-    re.IGNORECASE,
-)
-_HOUSEHOLD_MEMORY_REQUEST = re.compile(
-    r"\b(?:for\s+(?:(?:the|our|my)\s+)?household|"
-    r"(?:the|our|my)\s+household\s+memor(?:y|ies)|"
-    r"household\s+memor(?:y|ies)|shared\s+memor(?:y|ies)|"
-    r"for\s+everyone|for\s+all\s+(?:of\s+us|users))\b",
-    re.IGNORECASE,
-)
-_MEMORY_OBJECT_RE = re.compile(
-    r"\bmemor(?:y|ies)\b|\bwhat\s+(?:you|it)\s+remember\b", re.IGNORECASE
-)
-_MEMORY_REQUEST_VERBS = {
-    "add": {"remember", "memorise", "memorize", "save", "store", "add"},
-    "update": {
-        "remember",
-        "memorise",
-        "memorize",
-        "save",
-        "store",
-        "add",
-        "update",
-        "change",
-        "correct",
-        "edit",
-        "fix",
-    },
-    "delete": {"forget", "delete", "remove", "erase"},
-}
-
-
-def _direct_memory_user_request(operation: str, selector: Any) -> bool:
-    """Require direct current-turn memory intent before expanding authority."""
-    turn = _ACTIVE_TURN.get()
-    utterance = turn.user_request_text
-    if not isinstance(utterance, str) or not 0 < len(utterance) <= 10_000:
-        return False
-    match = _MEMORY_DIRECT_COMMAND.search(utterance)
-    trailing_memory_command = match is None
-    if trailing_memory_command:
-        match = _MEMORY_TRAILING_COMMAND.search(utterance)
-    if match is None:
-        return False
-    verb = match.group("verb").lower()
-    if verb not in _MEMORY_REQUEST_VERBS[operation]:
-        return False
-    # A trailing "Update your memory" already names its object inside the
-    # matched span. For initial commands, avoid treating "change a thermostat"
-    # or "delete a file" as memory authorization.
-    if (
-        not trailing_memory_command
-        and verb not in {"remember", "memorise", "memorize", "forget"}
-        and _MEMORY_OBJECT_RE.search(utterance[match.end() :]) is None
-    ):
-        return False
-    if selector == "household" and (
-        turn.scope is None or turn.scope.scope_type != "shared"
-    ):
-        return _HOUSEHOLD_MEMORY_REQUEST.search(utterance) is not None
-    return True
 
 
 # Live changes may tighten this policy; nested requests resolve their own policy.
@@ -1098,7 +1021,6 @@ class ExtendedOpenAIAgentEntity(
             turn_token = _ACTIVE_TURN.set(
                 ConversationTurnContext(
                     scope=scope,
-                    user_request_text=user_input.text,
                     archive=(session_key, archive_session.session_id)
                     if archive_session
                     else None,
@@ -2847,27 +2769,10 @@ class ExtendedOpenAIAgentEntity(
                 or not isinstance(source, str)
             ):
                 raise ValueError("content, category, and source must be strings")
-            if source == "implicit" and not automatic_memory_enabled(
-                self.subentry.data
-            ):
-                raise ValueError("automatic memory creation is disabled")
-            scope = _ACTIVE_TURN.get().scope
-            if (
-                source == "implicit"
-                and scope is not None
-                and scope.scope_type == "shared"
-                and self.subentry.data.get(
-                    CONF_SHARED_MEMORY_MODE, DEFAULT_SHARED_MEMORY_MODE
-                )
-                != SHARED_MEMORY_AUTOMATIC
-            ):
-                raise ValueError("automatic shared memory creation is disabled")
-            # An origin label never authorizes Shared Explicit by itself.
-            requested = _direct_memory_user_request("add", arguments.get("scope"))
             write_scope_id = self._current_write_memory_scope_id(
                 arguments.get("scope"),
                 llm_context,
-                source="explicit" if requested and source == "explicit" else "implicit",
+                intent=arguments.get("intent", "automatic"),
             )
             metadata = {
                 name: arguments[name]
@@ -2983,25 +2888,14 @@ class ExtendedOpenAIAgentEntity(
                 )
             ):
                 raise ValueError("memory_id and at least one valid update are required")
-            # Explicit provenance can be corrected on a direct user request.
-            # The model's source label does not grant this permission.
-            requested = _direct_memory_user_request("update", arguments.get("scope"))
-            default_source = (
-                "explicit"
-                if requested or not automatic_memory_enabled(self.subentry.data)
-                else "implicit"
-            )
-            source = arguments.get("source", default_source)
-            if source not in ("explicit", "implicit"):
+            requested = arguments.get("intent", "automatic") == "user_request"
+            source = arguments.get("source")
+            if source is not None and source not in ("explicit", "implicit"):
                 raise ValueError("source must be explicit or implicit")
-            if source == "implicit" and not automatic_memory_enabled(
-                self.subentry.data
-            ):
-                raise ValueError("automatic memory creation is disabled")
             write_scope_id = self._current_write_memory_scope_id(
                 arguments.get("scope"),
                 llm_context,
-                source="explicit" if requested and source == "explicit" else "implicit",
+                intent=arguments.get("intent", "automatic"),
             )
             memory = await self._memory.async_update(
                 write_scope_id,
@@ -3011,7 +2905,10 @@ class ExtendedOpenAIAgentEntity(
                 **metadata,
                 clear_fields=clear_fields,
                 expected_revision=expected_revision,
-                allow_explicit_edit=requested,
+                # Admission above permits requested edits or Automatic corrections,
+                # including explicit facts; the store still preserves provenance.
+                allow_explicit_edit=requested
+                or automatic_memory_enabled(self.subentry.data),
                 model_origin=True,
             )
             if write_scope_id not in readable_scope_ids:
@@ -3047,11 +2944,11 @@ class ExtendedOpenAIAgentEntity(
             if "memory_ids" in arguments:
                 # Old generated tool calls never bypass the revision gate.
                 raise ValueError("legacy memory_ids cannot authorize model deletion")
-            requested = _direct_memory_user_request("delete", arguments.get("scope"))
+            requested = arguments.get("intent", "automatic") == "user_request"
             write_scope_id = self._current_write_memory_scope_id(
                 arguments.get("scope"),
                 llm_context,
-                source="explicit" if requested else "implicit",
+                intent=arguments.get("intent", "automatic"),
             )
             deleted = await self._memory.async_delete(
                 write_scope_id,
@@ -3060,7 +2957,8 @@ class ExtendedOpenAIAgentEntity(
                     target["memory_id"]: target["expected_revision"]
                     for target in targets
                 },
-                allow_explicit_delete=requested,
+                allow_explicit_delete=requested
+                or automatic_memory_enabled(self.subentry.data),
             )
             return {"status": "deleted", "deleted": deleted}
         raise ValueError("unknown memory operation")
@@ -3152,9 +3050,15 @@ class ExtendedOpenAIAgentEntity(
         selector: Any,
         llm_context: llm.LLMContext | None,
         *,
-        source: str,
+        intent: Any,
     ) -> str:
         """Resolve a deliberate write target; never infer another user's owner."""
+        # Intent is the conversation LLM's semantic decision, not independent
+        # evidence of consent. Enforce only objective mode/scope permissions here.
+        # Legacy calls default to automatic at the dispatcher, never to requested.
+        if intent not in ("automatic", "user_request"):
+            raise ValueError("intent must be automatic or user_request")
+        requested = intent == "user_request"
         policy = self._effective_guest_policy()
         if policy.guest_active:
             if not policy.shared_memory_write:
@@ -3168,6 +3072,8 @@ class ExtendedOpenAIAgentEntity(
         if scope is None:
             if selector == "household":
                 raise ValueError("household scope requires a resolved conversation")
+            if not requested and not automatic_memory_enabled(self.subentry.data):
+                raise ValueError("automatic memory mutations are disabled")
             return memory_user_id(llm_context)
         if scope.scope_type == "shared":
             if selector == "personal":
@@ -3187,8 +3093,15 @@ class ExtendedOpenAIAgentEntity(
             )
             if shared_mode == SHARED_MEMORY_DISABLED:
                 raise ValueError("shared household memory is disabled")
-            if source == "implicit" and shared_mode != SHARED_MEMORY_AUTOMATIC:
-                raise ValueError("automatic shared memory creation is disabled")
+            if not requested:
+                if shared_mode != SHARED_MEMORY_AUTOMATIC:
+                    raise ValueError("automatic shared memory mutations are disabled")
+                if scope.scope_type != "shared":
+                    raise ValueError(
+                        "personal-to-household writes require a user request"
+                    )
+        if not requested and not automatic_memory_enabled(self.subentry.data):
+            raise ValueError("automatic memory mutations are disabled")
         return target
 
     async def _async_execute_temporary_memory_tool(

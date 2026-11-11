@@ -74,11 +74,11 @@ def entity(memory, *, automatic=True, shared=SHARED_MEMORY_EXPLICIT):
 async def model_call(
     agent, operation, *, user_text=None, turn_scope=None, **arguments
 ):
+    """Script a tool decision; user_text labels a scenario and grants no authority."""
     token = _ACTIVE_TURN.set(
         replace(
             _ACTIVE_TURN.get(),
             scope=turn_scope or user_scope("alice", source="test"),
-            user_request_text=user_text,
         )
     )
     try:
@@ -266,12 +266,12 @@ async def test_model_update_requires_revision_and_preserves_provenance():
     original_saves = storage.saves
 
     with pytest.raises(ValueError, match="expected_revision|update"):
-        await model_call(agent, "update", memory_id=memory_id,
+        await model_call(agent, "update", intent="user_request", memory_id=memory_id,
                          content="The air filter was cleaned.", source="explicit")
     assert storage.saves == original_saves
 
     result = await model_call(
-        agent, "update", memory_id=memory_id, expected_revision=revision,
+        agent, "update", intent="user_request", memory_id=memory_id, expected_revision=revision,
         content="The air filter was cleaned.", source="explicit"
     )
     assert result["status"] == "updated"
@@ -279,7 +279,7 @@ async def test_model_update_requires_revision_and_preserves_provenance():
     assert result["memory"]["revision"] != revision
     assert (await memory.async_list("alice"))[0].source == "implicit"
     with pytest.raises(ValueError, match="changed"):
-        await model_call(agent, "update", memory_id=memory_id,
+        await model_call(agent, "update", intent="user_request", memory_id=memory_id,
                          expected_revision=revision, content="Outdated correction")
     assert (await memory.async_list("alice"))[0].content == "The air filter was cleaned."
 
@@ -292,7 +292,7 @@ async def test_manual_model_update_rejects_proactive_changes_without_mutating_st
     original = (await memory.async_list("alice"))[0]
     before, saves = deepcopy(storage.data), storage.saves
 
-    with pytest.raises(ValueError, match="automatic memory creation is disabled"):
+    with pytest.raises(ValueError, match="automatic memory mutations are disabled"):
         await model_call(
             entity(memory, automatic=False),
             "update",
@@ -309,8 +309,8 @@ async def test_manual_model_update_rejects_proactive_changes_without_mutating_st
 
 @pytest.mark.parametrize(
     ("automatic", "source_arguments"),
-    [(False, {"source": "explicit"}), (False, {}), (True, {"source": "implicit"})],
-    ids=["manual-requested", "manual-legacy-default", "automatic-proactive"],
+    [(False, {"intent": "user_request", "source": "explicit"}), (False, {"intent": "user_request"}), (True, {"source": "implicit"})],
+    ids=["manual-requested", "manual-requested-optional-source", "automatic-proactive"],
 )
 async def test_allowed_model_updates_preserve_inferred_provenance(
     automatic, source_arguments
@@ -341,20 +341,20 @@ async def test_allowed_model_updates_preserve_inferred_provenance(
     assert storage.saves == saves + 1
 
 
-async def test_model_cannot_edit_or_delete_explicit_memory_without_user_request():
+async def test_manual_model_cannot_edit_or_delete_explicit_memory_without_user_request():
     memory, storage = await store()
     created = await memory.async_add(
         "alice", "My preferred colour is blue.", "preferences", "explicit"
     )
     memory_id = created["memory"]["memory_id"]
     revision = memory_revision((await memory.async_list("alice"))[0])
-    agent = entity(memory)
+    agent = entity(memory, automatic=False)
     before, saves = deepcopy(storage.data), storage.saves
 
-    with pytest.raises(ValueError, match="authenticated management editing"):
+    with pytest.raises(ValueError, match="automatic memory mutations are disabled"):
         await model_call(agent, "update", memory_id=memory_id,
                          expected_revision=revision, content="Purple", source="explicit")
-    with pytest.raises(ValueError, match="authenticated management deletion"):
+    with pytest.raises(ValueError, match="automatic memory mutations are disabled"):
         await model_call(agent, "delete", targets=[
             {"memory_id": memory_id, "expected_revision": revision}
         ])
@@ -406,7 +406,7 @@ async def test_model_deletion_is_all_or_nothing_for_stale_and_foreign_ids():
 async def test_model_source_explicit_can_store_sensitive_content_in_manual_mode():
     memory, storage = await store()
     result = await model_call(
-        entity(memory, automatic=False), "upsert",
+        entity(memory, automatic=False), "upsert", intent="user_request",
         content="My medical diagnosis is example condition.",
         category="health", source="explicit",
     )
@@ -418,7 +418,7 @@ async def test_model_source_explicit_can_store_sensitive_content_in_manual_mode(
 async def test_model_origin_cannot_claim_manual_shared_write_authority():
     memory, storage = await store()
     agent = entity(memory, automatic=False, shared=SHARED_MEMORY_EXPLICIT)
-    with pytest.raises(ValueError, match="automatic shared memory creation is disabled"):
+    with pytest.raises(ValueError, match="automatic shared memory mutations are disabled"):
         await model_call(
             agent, "upsert", content="The pantry shelves are green.",
             category="household", source="explicit", scope="household",
@@ -476,9 +476,9 @@ async def test_model_multi_delete_rejects_protected_record_before_removing_anyth
     records = await memory.async_list("alice")
     revisions = {record.memory_id: memory_revision(record) for record in records}
     before, saves = deepcopy(storage.data), storage.saves
-    with pytest.raises(ValueError, match="authenticated management deletion"):
+    with pytest.raises(ValueError, match="automatic memory mutations are disabled"):
         await model_call(
-            entity(memory),
+            entity(memory, automatic=False),
             "delete",
             targets=[
                 {"memory_id": inferred["memory"]["memory_id"],
@@ -563,14 +563,14 @@ async def test_direct_user_correction_and_forget_allow_explicit_record_without_p
     original = (await memory.async_list("alice"))[0]
     identity = added["memory"]["memory_id"]
     revision = memory_revision(original)
-    with pytest.raises(ValueError, match="authenticated management editing"):
+    with pytest.raises(ValueError, match="automatic memory mutations are disabled"):
         await model_call(
             agent, "update", user_text="Please change the thermostat.",
             memory_id=identity, expected_revision=revision,
             content="Oscar prefers the green dinosaur.", source="explicit",
         )
     changed = await model_call(
-        agent, "update",
+        agent, "update", intent="user_request",
         user_text="Actually, Oscar prefers the green dinosaur now. Update your memory.",
         memory_id=identity, expected_revision=revision,
         content="Oscar prefers the green dinosaur.",
@@ -582,14 +582,14 @@ async def test_direct_user_correction_and_forget_allow_explicit_record_without_p
     assert stored.content == "Oscar prefers the green dinosaur."
     assert memory_revision(stored) != revision
 
-    with pytest.raises(ValueError, match="authenticated management deletion"):
+    with pytest.raises(ValueError, match="automatic memory mutations are disabled"):
         await model_call(
             agent, "delete",
             user_text="Please remember that Oscar prefers the green dinosaur.",
             targets=[{"memory_id": identity, "expected_revision": memory_revision(stored)}],
         )
     deleted = await model_call(
-        agent, "delete", user_text="Please forget Oscar's favourite toy.",
+        agent, "delete", intent="user_request", user_text="Please forget Oscar's favourite toy.",
         targets=[{"memory_id": identity, "expected_revision": memory_revision(stored)}],
     )
     assert deleted == {"status": "deleted", "deleted": 1}
@@ -602,7 +602,7 @@ async def test_model_requested_sensitive_correction_preserves_explicit_provenanc
     added = await memory.async_add("alice", "The kitchen is painted white.", "home", "explicit")
     record = (await memory.async_list("alice"))[0]
     result = await model_call(
-        entity(memory), "update", user_text="Update your memory with my medical diagnosis.",
+        entity(memory), "update", intent="user_request", user_text="Update your memory with my medical diagnosis.",
         memory_id=added["memory"]["memory_id"], expected_revision=memory_revision(record),
         content="My medical diagnosis is example condition.", category="health", source="explicit",
     )
@@ -614,36 +614,16 @@ async def test_model_requested_sensitive_correction_preserves_explicit_provenanc
 
 
 @pytest.mark.parametrize("automatic", [False, True])
-async def test_shared_explicit_household_create_requires_direct_instruction_and_scope(
-    automatic,
-):
+async def test_shared_explicit_household_create_requires_requested_intent(automatic):
     memory, storage = await store()
     agent = entity(memory, automatic=automatic, shared=SHARED_MEMORY_EXPLICIT)
-    args = dict(
-        content="The pantry shelves are green.", category="household",
-        scope="household", source="explicit",
-    )
-    for user_text in (
-        None,
-        "Remember that the pantry shelves are green.",
-        'The note says "remember for the household the pantry shelves are green."',
-        "Can you explain how to remember household things?",
-        "Please change the thermostat.",
-    ):
-        with pytest.raises(ValueError, match="automatic shared memory creation is disabled"):
-            await model_call(agent, "upsert", user_text=user_text, **args)
+    args = dict(content="The pantry shelves are green.", category="household",
+                scope="household", source="explicit")
+    # Neither an explicit source label nor an English command grants permission.
+    with pytest.raises(ValueError, match="automatic shared memory mutations"):
+        await model_call(agent, "upsert", user_text="Remember for the household.", **args)
     assert storage.saves == 0
-    with pytest.raises(ValueError, match="automatic"):
-        await model_call(
-            agent, "upsert",
-            user_text="Remember for the household that the pantry shelves are green.",
-            **{**args, "source": "implicit"},
-        )
-    result = await model_call(
-        agent, "upsert",
-        user_text="Please remember for the household that the pantry shelves are green.",
-        **args,
-    )
+    result = await model_call(agent, "upsert", intent="user_request", **args)
     assert result["status"] == "created"
     assert result["memory"]["source"] == "explicit"
     assert len(await memory.async_list("shared:household")) == 1
@@ -656,14 +636,14 @@ async def test_shared_explicit_voice_accepts_direct_memory_operations_but_not_pr
     voice = shared_scope(source="test")
     created = await model_call(
         agent, "upsert", turn_scope=voice,
-        user_text="Remember that recycling is collected on Thursday.",
+        intent="user_request", user_text="Remember that recycling is collected on Thursday.",
         content="Recycling is collected on Thursday.",
         category="household", source="explicit",
     )
     assert created["status"] == "created"
     saved = (await memory.async_list("shared:household"))[0]
     old_rev = memory_revision(saved)
-    with pytest.raises(ValueError, match="automatic shared memory creation is disabled"):
+    with pytest.raises(ValueError, match="automatic shared memory mutations are disabled"):
         await model_call(
             agent, "update", turn_scope=voice,
             memory_id=saved.memory_id, expected_revision=old_rev,
@@ -671,7 +651,7 @@ async def test_shared_explicit_voice_accepts_direct_memory_operations_but_not_pr
         )
     corrected = await model_call(
         agent, "update", turn_scope=voice,
-        user_text="Correct your memory: recycling is collected on Friday.",
+        intent="user_request", user_text="Correct your memory: recycling is collected on Friday.",
         memory_id=saved.memory_id, expected_revision=old_rev,
         content="Recycling is collected on Friday.",
     )
@@ -682,12 +662,12 @@ async def test_shared_explicit_voice_accepts_direct_memory_operations_but_not_pr
     with pytest.raises(ValueError, match="changed"):
         await model_call(
             agent, "delete", turn_scope=voice,
-            user_text="Forget the recycling collection schedule.",
+            intent="user_request", user_text="Forget the recycling collection schedule.",
             targets=[{"memory_id": saved.memory_id, "expected_revision": old_rev}],
         )
     deleted = await model_call(
         agent, "delete", turn_scope=voice,
-        user_text="Forget the recycling collection schedule.",
+        intent="user_request", user_text="Forget the recycling collection schedule.",
         targets=[{"memory_id": saved.memory_id, "expected_revision": memory_revision(current)}],
     )
     assert deleted == {"status": "deleted", "deleted": 1}
@@ -706,7 +686,7 @@ async def test_user_requested_mixed_delete_is_atomic_with_explicit_records():
     before, saves = deepcopy(storage.data), storage.saves
     with pytest.raises(ValueError, match="changed"):
         await model_call(
-            agent, "delete", user_text="Please delete these memories.",
+            agent, "delete", intent="user_request", user_text="Please delete these memories.",
             targets=[
                 {"memory_id": identities[0], "expected_revision": by_id[identities[0]]},
                 {"memory_id": identities[1], "expected_revision": "0" * 64},
@@ -714,7 +694,7 @@ async def test_user_requested_mixed_delete_is_atomic_with_explicit_records():
         )
     assert storage.data == before and storage.saves == saves
     done = await model_call(
-        agent, "delete", user_text="Please delete these memories.",
+        agent, "delete", intent="user_request", user_text="Please delete these memories.",
         targets=[
             {"memory_id": target, "expected_revision": by_id[target]} for target in identities
         ],

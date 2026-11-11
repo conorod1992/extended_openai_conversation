@@ -1778,9 +1778,10 @@ def memory_tools() -> list[dict[str, Any]]:
                         "source": {
                             "type": "string",
                             "enum": ["explicit", "implicit"],
-                            "description": "Whether the user explicitly asked or this is proactively useful.",
+                            "description": "Descriptive provenance only; use intent for the operation decision.",
                         },
                         **_memory_metadata_schema(include_scope=True),
+                        **_memory_intent_schema(),
                     },
                     "required": ["content", "category", "source"],
                     "additionalProperties": False,
@@ -1806,6 +1807,7 @@ def memory_tools() -> list[dict[str, Any]]:
                             ),
                         },
                         **_memory_metadata_schema(include_scope=True),
+                        **_memory_intent_schema(),
                     },
                     "required": ["content", "category", "source"],
                     "additionalProperties": False,
@@ -1852,7 +1854,7 @@ def memory_tools() -> list[dict[str, Any]]:
         {
             "spec": {
                 "name": "memory_update",
-                "description": "Revision-checked correction of a scoped memory. Explicit records require a direct current-turn user request; provenance stays unchanged.",
+                "description": "Revision-checked correction of a scoped memory. Set intent for requested or Automatic corrections; provenance stays unchanged.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -1865,11 +1867,12 @@ def memory_tools() -> list[dict[str, Any]]:
                         "source": {
                             "type": "string",
                             "enum": ["explicit", "implicit"],
-                            "description": "Requested origin; proactive updates require Automatic mode. This label cannot elevate privileges or change provenance.",
+                            "description": "Legacy descriptive origin only; cannot authorize edits or change provenance.",
                         },
                         "content": {"type": "string"},
                         "category": {"type": "string"},
                         **_memory_metadata_schema(include_scope=True),
+                        **_memory_intent_schema(),
                         "clear_fields": {
                             "type": "array",
                             "items": {
@@ -1890,7 +1893,7 @@ def memory_tools() -> list[dict[str, Any]]:
         {
             "spec": {
                 "name": "memory_delete",
-                "description": "Delete scoped memories by exact ID and revision. Explicit records require a direct user forget/delete request. Confirm before broad deletion.",
+                "description": "Delete scoped memories by exact ID and revision. Set intent for requested or Automatic maintenance. Confirm before broad deletion.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -1912,6 +1915,7 @@ def memory_tools() -> list[dict[str, Any]]:
                             "maxItems": 50,
                         },
                         "scope": {"type": "string", "enum": ["personal", "household"]},
+                        **_memory_intent_schema(),
                     },
                     "required": ["targets"],
                     "additionalProperties": False,
@@ -1920,6 +1924,20 @@ def memory_tools() -> list[dict[str, Any]]:
             "function": {"type": "memory", "operation": "delete"},
         },
     ]
+
+
+def _memory_intent_schema() -> dict[str, Any]:
+    return {
+        "intent": {
+            "type": "string",
+            "enum": ["automatic", "user_request"],
+            "description": (
+                "Your interpretation: user_request only when the current user asks "
+                "to modify persistent Memory in the target scope; otherwise automatic. "
+                "Not proof of consent. Omission means automatic; source never authorizes."
+            ),
+        }
+    }
 
 
 def _memory_metadata_schema(*, include_scope: bool) -> dict[str, Any]:

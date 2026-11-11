@@ -107,6 +107,7 @@ async def test_persistent_memory_dispatcher_routes_read_and_write_operations() -
         "update",
         {
             "memory_id": "memory-1",
+            "intent": "user_request",
             "expected_revision": memory_revision(record),
             "content": "Oscar is a Cavachon.",
             "clear_fields": ["subject"],
@@ -114,7 +115,7 @@ async def test_persistent_memory_dispatcher_routes_read_and_write_operations() -
         llm_context,
     )
     deleted = await entity._async_execute_memory_tool(
-        "delete", {"targets": [{"memory_id": "memory-1", "expected_revision": memory_revision(record)}]}, llm_context
+        "delete", {"intent": "user_request", "targets": [{"memory_id": "memory-1", "expected_revision": memory_revision(record)}]}, llm_context
     )
 
     entity._async_search_memories.assert_awaited_once_with(
@@ -130,13 +131,13 @@ async def test_persistent_memory_dispatcher_routes_read_and_write_operations() -
         None,
         clear_fields=["subject"],
         expected_revision=memory_revision(record),
-        allow_explicit_edit=False,
+        allow_explicit_edit=True,
         model_origin=True,
     )
     entity._memory.async_delete.assert_awaited_once_with(
         "user-1", ["memory-1"],
         expected_revisions={"memory-1": memory_revision(record)},
-        allow_explicit_delete=False,
+        allow_explicit_delete=True,
     )
     assert searched["memories"][0]["memory_id"] == "memory-1"
     assert listed["memories"][0]["memory_id"] == "memory-1"

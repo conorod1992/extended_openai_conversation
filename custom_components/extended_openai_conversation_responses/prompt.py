@@ -23,6 +23,7 @@ from .const import (
     CONF_EXPOSED_ENTITIES_ENABLED,
     CONF_EXPOSED_ENTITIES_TEMPLATE,
     CONF_PROMPT,
+    CONF_SHARED_MEMORY_MODE,
     CONF_TEMPORARY_MEMORY,
     CONTINUE_CONVERSATION_CONDITIONAL,
     DEFAULT_ARCHIVE_ENABLED,
@@ -31,8 +32,11 @@ from .const import (
     DEFAULT_EXPOSED_ENTITIES_CONTEXT_TEMPLATE,
     DEFAULT_EXPOSED_ENTITIES_TEMPLATE,
     DEFAULT_PROMPT,
+    DEFAULT_SHARED_MEMORY_MODE,
     DEFAULT_TEMPORARY_MEMORY,
     LEGACY_DEFAULT_PROMPTS,
+    SHARED_MEMORY_AUTOMATIC,
+    SHARED_MEMORY_DISABLED,
     TEMPORARY_MEMORY_EAGER,
     TEMPORARY_MEMORY_OFF,
 )
@@ -199,8 +203,19 @@ def _persistent_memory_instructions(options: Any) -> str:
     text = PERSISTENT_MEMORY_GUIDANCE
     if not automatic_memory_enabled(options):
         text += (
-            "\nAutomatic creation is disabled: write only when the user explicitly "
-            "asks, using memory_upsert with source=explicit.\n"
+            "\nPersonal mode: Manual. All mutations need intent=user_request; "
+            "automatic mutations are disabled, including for household Memory.\n"
+        )
+    else:
+        text += "\nPersonal mode: Automatic. Clear natural corrections may persist.\n"
+    shared = options.get(CONF_SHARED_MEMORY_MODE, DEFAULT_SHARED_MEMORY_MODE)
+    if shared == SHARED_MEMORY_DISABLED:
+        text += "Household Memory: disabled.\n"
+    elif shared == SHARED_MEMORY_AUTOMATIC:
+        text += "Household mode: Shared Automatic within shared scope.\n"
+    else:
+        text += (
+            "Household mode: Shared Explicit; all mutations need intent=user_request.\n"
         )
     return text
 
