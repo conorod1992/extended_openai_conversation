@@ -244,6 +244,18 @@ def test_unloaded_inventory_never_falls_back_to_live_controls(
     assert _discover(s).wake_sound_entity_id is None
 
 
+def test_child_device_without_firmware_metadata_requires_manual_wake_selection(
+    setup_controls,
+):
+    s = setup_controls
+    del s.device.manufacturer
+    del s.device.model
+    result = _discover(s)
+    assert result.media_player_entity_id == MEDIA
+    assert result.wake_sound_entity_id is None
+    assert not result.wake_sound_ambiguous
+
+
 def _add_ambiguity(s):
     s.entries["media_player.other"] = _entry("media_player.other")
     s.entries["switch.other_wake"] = _entry("switch.other_wake")

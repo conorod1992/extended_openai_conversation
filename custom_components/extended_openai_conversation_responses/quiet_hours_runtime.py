@@ -378,8 +378,11 @@ def discover_satellite_capabilities(
                 raise
             same_device = []
         device = dr.async_get(hass).async_get(device_id) if device_id else None
-        manufacturer = device.manufacturer if device is not None else None
-        model = device.model if device is not None else None
+        # Newer HA also has child entries without manufacturer/model. Missing
+        # metadata cannot establish this firmware convention; do not infer it
+        # from a parent device or prevent independent speaker discovery.
+        manufacturer = getattr(device, "manufacturer", None)
+        model = getattr(device, "model", None)
         override = overrides.get(state.entity_id)
         auto_media = _pick_media_player(same_device)
         auto_wake = _pick_wake_sound(same_device, manufacturer, model)
