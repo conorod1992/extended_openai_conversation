@@ -100,11 +100,11 @@ async def websocket_broadcast(
                 raise HomeAssistantError("enabled must be true or false")
             if msg["action"] == "set_builtin_voice_command":
                 await manager.async_set_builtin_voice_command(enabled)
-                result = {"builtin_voice_command": manager.builtin_voice_command}
+                settings_result = {"builtin_voice_command": manager.builtin_voice_command}
             else:
                 await manager.async_set_enabled(enabled)
-                result = {"enabled": manager.enabled}
-            connection.send_result(msg["id"], result)
+                settings_result = {"enabled": manager.enabled}
+            connection.send_result(msg["id"], settings_result)
             return
         message = str(msg.get("message", "")).strip()
         if not message:
