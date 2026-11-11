@@ -41,7 +41,7 @@ Create a Request Rule with:
 
 The published 6.8.3 free-form targeted local parser has been removed. Its `tell`, `announce`, `send`, and targeted `Broadcast to …` phrases now need Request Rules or AI. Backend destination resolution and delivery remain available to the UI, Function Tool and Home Assistant action.
 
-Existing Broadcast master-switch values are preserved. Older global storage without the new field defaults **Built-in voice command** to on. Explicit saved per-agent `HassBroadcast` exclusions remain opt-outs from the new command, even when general local handling is off; the global switch does not override them. They appear as unavailable legacy choices in the local-handling exception list, so they can be retained or explicitly removed. New agents do not offer `HassBroadcast` as a generic delegated intent. No automatic migration rewrites agent exclusions.
+Existing Broadcast master-switch values are preserved. Older global storage without the new field defaults **Built-in voice command** to on. Explicit saved per-agent `HassBroadcast` exclusions remain opt-outs from the new command, even when general local handling is off; the global switch does not override them. They appear as unavailable legacy choices in the local-handling exception list, so they can be retained or explicitly removed. New agents do not offer `HassBroadcast` as a generic delegated intent. To clear a legacy exclusion, temporarily enable general local handling, uncheck `HassBroadcast` under **Review saved choices**, then restore your preferred local-handling setting before saving. No automatic migration rewrites agent exclusions.
 
 ## Capacity limits
 

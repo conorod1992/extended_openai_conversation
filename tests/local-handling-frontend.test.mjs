@@ -40,3 +40,14 @@ assert.match(html, /class="notice warning local-handling-warning" role="status"/
 assert.match(html, /<details class="local-handling-help">/);
 assert.doesNotMatch(html, /notice local-handling-explainer/);
 assert.match(html, /JarvisV2/);
+
+
+panel._result.local_handling.intents = [
+  {intent:"HassBroadcast",label:"Broadcast",available:false},
+  {intent:"HassMissing",label:"Missing",available:false},
+];
+const legacy = renderLocalHandling(panel, {...config,local_intents_enabled:false,local_intent_exclusions:["HassBroadcast"]});
+assert.match(legacy, /legacy Broadcast opt-out also applies while local handling is off/);
+assert.match(legacy, /Legacy Broadcast shortcut opt-out; EOAI never delegates this HA intent/);
+assert.equal(legacy.split("Not currently available in Home Assistant").length, 2, "only the genuinely missing intent uses HA availability wording");
+assert.match(legacy, /value="HassBroadcast" checked/);
