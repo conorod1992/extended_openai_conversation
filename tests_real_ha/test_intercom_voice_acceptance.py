@@ -521,3 +521,55 @@ async def test_unmatched_or_disabled_command_never_uses_generic_hass_broadcast(h
     assert len(wire.requests) == 1
     assert manager.history() == []
     await manager.async_shutdown()
+
+
+@pytest.mark.parametrize("change", ["guest", "shortcut"])
+async def test_pending_builtin_admission_rechecks_live_policy(hass, monkeypatch, change):
+    import asyncio
+    from pytest_homeassistant_custom_component.common import MockUser
+    from custom_components.extended_openai_conversation_responses import intercom_permissions
+    from tests_real_ha.test_cross_feature_acceptance import _agent
+    from tests_real_ha.test_provider_wire_e2e import _install_wire
+
+    agent = await _agent(hass, local_intents_enabled=False)
+    wire = _install_wire(monkeypatch, agent, [])
+    manager = await async_get_intercom(hass)
+    await manager.async_set_enabled(True)
+    hass.states.async_set("assist_satellite.kitchen", "responding", {ATTR_SUPPORTED_FEATURES:ANNOUNCE_FEATURE})
+    monkeypatch.setattr(manager, "_schedule_drain", lambda _: None)
+    monkeypatch.setattr(intercom, "async_call_later", lambda *_: lambda: None)
+    user = MockUser(is_owner=True)
+    user.add_to_hass(hass)
+    context = Context(user_id=user.id)
+    entered, release = asyncio.Event(), asyncio.Event()
+    authorize = intercom_permissions.async_require_control_permission
+    async def blocked_authorization(*args, **kwargs):
+        result = await authorize(*args, **kwargs)
+        entered.set()
+        await release.wait()
+        return result
+    monkeypatch.setattr(intercom_permissions, "async_require_control_permission", blocked_authorization)
+    pending = asyncio.create_task(conversation.async_converse(
+        hass=hass, text="Broadcast Dinner", conversation_id=None, context=context,
+        language="en", agent_id=agent.entry.entry_id))
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        if change == "guest":
+            await agent._guest_mode.async_update_trusted(indefinite=True)
+        else:
+            await manager.async_set_builtin_voice_command(False)
+        release.set()
+        result = await asyncio.wait_for(pending, 5)
+        assert result.response.error_code is not None
+        assert manager.history() == []
+        assert manager.pending() == []
+        assert wire.requests == []
+        if change == "shortcut":
+            await manager.async_send("Manual send still works", whole_home=True, context=context)
+            assert len(manager.history()) == 1
+    finally:
+        release.set()
+        if not pending.done():
+            pending.cancel()
+        await asyncio.gather(pending, return_exceptions=True)
+        await manager.async_shutdown()

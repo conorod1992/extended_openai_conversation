@@ -3195,7 +3195,9 @@
     "tests_real_ha/test_intercom_voice_acceptance.py::test_unmatched_or_disabled_command_never_uses_generic_hass_broadcast[shortcut-off]",
     "tests_real_ha/test_intercom_voice_acceptance.py::test_unmatched_or_disabled_command_never_uses_generic_hass_broadcast[legacy-exclusion]",
     "tests_real_ha/test_intercom_voice_acceptance.py::test_unmatched_or_disabled_command_never_uses_generic_hass_broadcast[targeted]",
-    "tests_real_ha/test_intercom_voice_acceptance.py::test_unmatched_or_disabled_command_never_uses_generic_hass_broadcast[timed]"
+    "tests_real_ha/test_intercom_voice_acceptance.py::test_unmatched_or_disabled_command_never_uses_generic_hass_broadcast[timed]",
+    "tests_real_ha/test_intercom_voice_acceptance.py::test_pending_builtin_admission_rechecks_live_policy[guest]",
+    "tests_real_ha/test_intercom_voice_acceptance.py::test_pending_builtin_admission_rechecks_live_policy[shortcut]"
   ],
   "browser": {
     "browser": [

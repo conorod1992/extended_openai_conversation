@@ -2,7 +2,7 @@
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import ANY, AsyncMock
 
 import pytest
 
@@ -84,7 +84,13 @@ async def test_no_manager_or_storage_for_ineligible_request(
     monkeypatch.setattr(broadcast_command, "async_get_intercom", get)
     assert (
         await broadcast_command.async_try_broadcast_command(
-            hass, _input(text), options, guest_active=guest
+            hass,
+            _input(text),
+            options,
+            guest_active=guest,
+            live_guest_active=lambda: (_ for _ in ()).throw(
+                AssertionError("ineligible request must remain lazy")
+            ),
         )
         is None
     )
@@ -118,6 +124,7 @@ async def test_independent_switches_and_real_origin(
             origin_entity_id="assist_satellite.hall",
             origin_device_id="hall-device",
             source="local_voice",
+            _admission_started=ANY,
         )
     else:
         assert result is None

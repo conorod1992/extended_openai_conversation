@@ -1261,6 +1261,9 @@ class ExtendedOpenAIAgentEntity(
                     user_input,
                     request_options,
                     guest_active=guest_active,
+                    live_guest_active=lambda: (
+                        self._effective_guest_policy().guest_active
+                    ),
                 )
                 if local_intent is None:
                     local_intent = await async_try_handle_local_intent(

@@ -27,6 +27,7 @@ from homeassistant.helpers.event import async_call_later, async_track_state_chan
 from homeassistant.helpers.storage import Store
 
 from .intercom_permissions import async_authorized_broadcast_targets
+from .operation_settlement import async_settle_owned_operation
 from .strict_store import PropagatingWriteStore
 
 DOMAIN = "extended_openai_conversation_responses"
@@ -218,48 +219,53 @@ class IntercomManager:
         return self._builtin_voice_command
 
     async def async_set_builtin_voice_command(self, enabled: bool) -> None:
-        """Commit both preferences atomically, publishing only after durable save."""
+        """Commit both preferences without abandoning a write on cancellation."""
         async with self._state_lock:
             settings = {
                 **self._settings,
                 "enabled": self._enabled,
                 "builtin_voice_command": bool(enabled),
             }
-            await self._store.async_save(settings)
-            self._settings = settings
-            self._builtin_voice_command = bool(enabled)
-            self._loaded = True
+            await async_settle_owned_operation(self._async_commit_settings(settings))
 
     async def async_set_enabled(self, enabled: bool) -> None:
-        """Persist the Broadcast master switch and stop pending deliveries when off."""
+        """Persist the master switch and stop pending deliveries when off."""
         async with self._state_lock:
-            new_enabled = bool(enabled)
             settings = {
                 **self._settings,
-                "enabled": new_enabled,
+                "enabled": bool(enabled),
                 "builtin_voice_command": self._builtin_voice_command,
             }
-            await self._store.async_save(settings)
-            self._settings = settings
-            self._enabled = new_enabled
-            self._loaded = True
-            if not self._enabled:
-                for entity_id, queue in list(self._queues.items()):
-                    retained: deque[BroadcastMessage] = deque()
-                    for item in queue:
-                        delivery = item.deliveries.get(entity_id)
-                        if delivery is None:
-                            continue
-                        if delivery.status == "delivering":
-                            retained.append(item)
-                            continue
-                        if delivery.status not in {"delivered", "failed", "expired"}:
-                            delivery.set("expired", "broadcast_disabled")
-                        self._release_completed_message(item)
-                    queue.clear()
-                    queue.extend(retained)
-                    if not queue:
-                        self._queues.pop(entity_id, None)
+            await async_settle_owned_operation(
+                self._async_commit_settings(settings, stop_pending=not bool(enabled))
+            )
+
+    async def _async_commit_settings(
+        self, settings: dict[str, Any], *, stop_pending: bool = False
+    ) -> None:
+        """Publish only after save; the caller holds the state lock until settled."""
+        await self._store.async_save(settings)
+        self._settings = settings
+        self._enabled = settings["enabled"]
+        self._builtin_voice_command = settings["builtin_voice_command"]
+        self._loaded = True
+        if stop_pending:
+            for entity_id, queue in list(self._queues.items()):
+                retained: deque[BroadcastMessage] = deque()
+                for item in queue:
+                    delivery = item.deliveries.get(entity_id)
+                    if delivery is None:
+                        continue
+                    if delivery.status == "delivering":
+                        retained.append(item)
+                        continue
+                    if delivery.status not in {"delivered", "failed", "expired"}:
+                        delivery.set("expired", "broadcast_disabled")
+                    self._release_completed_message(item)
+                queue.clear()
+                queue.extend(retained)
+                if not queue:
+                    self._queues.pop(entity_id, None)
 
     async def async_shutdown(self) -> None:
         """Stop listeners, timers and every queued delivery without changing settings."""
