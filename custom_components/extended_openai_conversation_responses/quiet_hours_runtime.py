@@ -304,7 +304,9 @@ def _pick_media_player(entries: list[er.RegistryEntry]) -> str | None:
 
 
 def _wake_sound_controls(
-    entries: list[er.RegistryEntry], device: dr.DeviceEntry | None
+    entries: list[er.RegistryEntry],
+    manufacturer: str | None = None,
+    model: str | None = None,
 ) -> list[er.RegistryEntry]:
     """Recognise the stock Voice PE firmware convention, not user-facing names.
 
@@ -312,7 +314,7 @@ def _wake_sound_controls(
     and exposes the configuration switch with original_name="Wake sound".
     Custom firmware and other devices require an explicit selection.
     """
-    if device is None or (device.manufacturer, device.model) != (
+    if (manufacturer, model) != (
         "Nabu Casa",
         "Home Assistant Voice PE",
     ):
@@ -329,9 +331,11 @@ def _wake_sound_controls(
 
 
 def _pick_wake_sound(
-    entries: list[er.RegistryEntry], device: dr.DeviceEntry | None = None
+    entries: list[er.RegistryEntry],
+    manufacturer: str | None = None,
+    model: str | None = None,
 ) -> str | None:
-    candidates = _wake_sound_controls(entries, device)
+    candidates = _wake_sound_controls(entries, manufacturer, model)
     return candidates[0].entity_id if len(candidates) == 1 else None
 
 
@@ -374,9 +378,11 @@ def discover_satellite_capabilities(
                 raise
             same_device = []
         device = dr.async_get(hass).async_get(device_id) if device_id else None
+        manufacturer = device.manufacturer if device is not None else None
+        model = device.model if device is not None else None
         override = overrides.get(state.entity_id)
         auto_media = _pick_media_player(same_device)
-        auto_wake = _pick_wake_sound(same_device, device)
+        auto_wake = _pick_wake_sound(same_device, manufacturer, model)
         media = (
             override.media_player_entity_id
             if override and override.media_player_entity_id
@@ -428,7 +434,10 @@ def discover_satellite_capabilities(
                         if entry.entity_id.startswith("switch.")
                     )
                 ),
-                wake_sound_ambiguous=len(_wake_sound_controls(same_device, device)) > 1,
+                wake_sound_ambiguous=len(
+                    _wake_sound_controls(same_device, manufacturer, model)
+                )
+                > 1,
             )
         )
     return result

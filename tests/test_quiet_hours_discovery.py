@@ -1,5 +1,6 @@
 """Conservative discovery and the boundary with persisted active ownership."""
 
+import asyncio
 from copy import deepcopy
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -414,35 +415,83 @@ async def test_ambiguous_ownership_checks_registry_identity(setup_controls, chan
 
 
 @pytest.mark.parametrize("clear", [False, True])
+@pytest.mark.parametrize("kind", ["volume", "switch"])
 async def test_explicit_midperiod_selection_uses_departure_contract(
-    setup_controls, clear
+    setup_controls, clear, kind
 ):
     s = setup_controls
+    entity, field, other, baseline, quiet = (
+        (MEDIA, "media_player_entity_id", "media_player.other", 0.8, 0.2)
+        if kind == "volume"
+        else (WAKE, "wake_sound_entity_id", "switch.other_wake", "turn_on", "turn_off")
+    )
     config = s.manager.config.as_dict()
-    config["overrides"] = {SAT: {"media_player_entity_id": MEDIA}}
+    config["overrides"] = {SAT: {field: entity}}
     await s.manager.async_update_config(config)
     _add_ambiguity(s)
-    other = "media_player.other"
-    s.report(other, 0.7)
-    config["overrides"] = {} if clear else {SAT: {"media_player_entity_id": other}}
+    s.report(other, 0.7 if kind == "volume" else "on")
+    config["overrides"] = {} if clear else {SAT: {field: other}}
     await s.manager.async_update_config(config)
-    assert (MEDIA, 0.8) in s.calls
-    assert ((other, 0.2) in s.calls) is not clear
-    assert MEDIA not in s.manager.active["controls"]
+    assert (entity, baseline) in s.calls
+    assert ((other, quiet) in s.calls) is not clear
+    assert entity not in s.manager.active["controls"]
 
 
+@pytest.mark.parametrize("after_commit", [False, True])
+@pytest.mark.parametrize("failure", [OSError, asyncio.CancelledError])
 async def test_failed_manual_clear_save_restores_authoritative_ownership(
     setup_controls,
+    after_commit,
+    failure,
 ):
     s = setup_controls
     config = s.manager.config.as_dict()
     config["overrides"] = {SAT: {"media_player_entity_id": MEDIA}}
     await s.manager.async_update_config(config)
     _add_ambiguity(s)
-    s.manager._store.async_save.side_effect = OSError("write failed")
+    save = s.manager._store.async_save.side_effect
+    failed = False
+
+    async def fail_once(value):
+        nonlocal failed
+        if failed:
+            return await save(value)
+        failed = True
+        assert value["config"]["overrides"] == {}
+        assert value["active"]["controls"][MEDIA]["restoration_pending"]
+        if after_commit:
+            await save(value)
+        raise failure("interrupted write")
+
+    s.manager._store.async_save.side_effect = fail_once
     config["overrides"] = {}
-    with pytest.raises(OSError):
+    with pytest.raises(failure):
         await s.manager.async_update_config(config)
-    assert s.manager.config.overrides[0].media_player_entity_id == MEDIA
-    assert not s.manager.active["controls"][MEDIA].get("restoration_pending")
-    assert (MEDIA, 0.8) not in s.calls
+    if after_commit:
+        assert s.manager.config.overrides == ()
+        assert MEDIA not in s.manager.active["controls"]
+        assert (MEDIA, 0.8) in s.calls
+    else:
+        assert s.manager.config.overrides[0].media_player_entity_id == MEDIA
+        assert not s.manager.active["controls"][MEDIA].get("restoration_pending")
+        assert (MEDIA, 0.8) not in s.calls
+
+
+@pytest.mark.parametrize("observed_end", [False, True])
+async def test_ambiguous_unavailable_owner_does_not_carry_into_next_occurrence(
+    setup_controls, observed_end
+):
+    s = setup_controls
+    await s.manager.async_reconcile(now=START)
+    _add_ambiguity(s)
+    s.states[MEDIA].state = s.states[WAKE].state = "unavailable"
+    if observed_end:
+        await s.manager.async_reconcile(now=END)
+    await s.manager.async_reconcile(now=NEXT)
+    assert all(c["restoration_pending"] for c in s.manager.active["controls"].values())
+    s.manager._active = s.manager._normalize_active(deepcopy(s.stored["active"]))
+    s.report(MEDIA, 0.2)
+    s.report(WAKE, "off")
+    await s.manager.async_reconcile(now=NEXT)
+    assert s.calls[-2:] == [(MEDIA, 0.8), (WAKE, "turn_on")]
+    assert s.manager.active["controls"] == {}
