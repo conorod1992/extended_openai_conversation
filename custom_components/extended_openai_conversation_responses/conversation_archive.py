@@ -1658,7 +1658,7 @@ def archive_tools() -> list[dict[str, Any]]:
     return [
         _tool(
             "conversation_search",
-            "Search prior retained discussions only when the user refers to them. Dates use Home Assistant's configured time zone. When has_more is true, repeat the same query and filters with offset increased by the returned limit.",
+            "Search prior retained conversations.",
             {
                 "query": {"type": "string", "minLength": 1},
                 "offset": {
@@ -1675,7 +1675,7 @@ def archive_tools() -> list[dict[str, Any]]:
         ),
         _tool(
             "conversation_get",
-            "Read a bounded page from one search result. Continue with next_start_turn and next_text_offset as start_turn and text_offset until has_more is false.",
+            "Read a page from one retained conversation.",
             {
                 "session_id": {"type": "string"},
                 "start_turn": {"type": "integer", "minimum": 0},
@@ -1687,7 +1687,7 @@ def archive_tools() -> list[dict[str, Any]]:
         ),
         _tool(
             "conversation_private",
-            "Make the exact active conversation private and delete its retained turns.",
+            "Stop retaining this conversation and delete its retained turns.",
             {},
             [],
             "private",
@@ -1701,14 +1701,14 @@ def archive_tools() -> list[dict[str, Any]]:
         ),
         _tool(
             "conversation_delete_current",
-            "Delete the exact active retained conversation.",
+            "Delete the current retained conversation.",
             {},
             [],
             "delete_current",
         ),
         _tool(
             "conversation_delete_selected",
-            "Delete only explicitly selected retained sessions after user confirmation.",
+            "Delete confirmed selected retained sessions.",
             {
                 "session_ids": {
                     "type": "array",
@@ -1723,7 +1723,7 @@ def archive_tools() -> list[dict[str, Any]]:
         ),
         _tool(
             "conversation_delete_date_range",
-            "Bulk-delete sessions by their last retained turn, using dates in Home Assistant's configured time zone, after user confirmation.",
+            "Delete confirmed retained sessions in a date range.",
             {
                 "start_date": {"type": "string"},
                 "end_date": {"type": "string"},

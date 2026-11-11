@@ -73,8 +73,7 @@ CONTINUE_CONVERSATION_TOOL = {
     "spec": {
         "name": CONTINUE_CONVERSATION_TOOL_NAME,
         "description": (
-            "Return the final spoken response and whether the user is expected to "
-            "reply immediately. Use this only when the final answer is ready."
+            "Return the final spoken answer and whether to listen for an immediate reply."
         ),
         "strict": True,
         "parameters": {
@@ -82,11 +81,11 @@ CONTINUE_CONVERSATION_TOOL = {
             "properties": {
                 "response": {
                     "type": "string",
-                    "description": "The complete plain-text response spoken to the user.",
+                    "description": "Complete spoken answer.",
                 },
                 "continue_conversation": {
                     "type": "boolean",
-                    "description": "Whether to listen for an immediate follow-up.",
+                    "description": "Expect an immediate reply.",
                 },
             },
             "required": ["response", "continue_conversation"],

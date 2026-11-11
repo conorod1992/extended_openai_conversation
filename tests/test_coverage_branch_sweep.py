@@ -631,7 +631,7 @@ def test_model_payload_loader_keeps_non_string_description_and_non_mapping_prope
     assert prepare_model_function_tools([tool]) == [tool]
 
 
-def test_model_payload_property_compaction_ignores_non_mapping_schema() -> None:
+def test_model_payload_preserves_authoritative_and_non_mapping_schemas() -> None:
     from custom_components.extended_openai_conversation_responses.model_payload import (
         prepare_model_function_tools,
     )
@@ -652,11 +652,8 @@ def test_model_payload_property_compaction_ignores_non_mapping_schema() -> None:
 
     result = prepare_model_function_tools([tool])[0]
 
-    assert result["spec"]["parameters"]["properties"]["query"] == "not-a-schema"
-    assert (
-        result["spec"]["parameters"]["properties"]["source_ids"]["description"]
-        == "Exact IDs returned by Knowledge tools."
-    )
+    assert result == tool
+    assert result["spec"]["parameters"]["properties"] is not tool["spec"]["parameters"]["properties"]
 
 
 def test_template_working_directory_absolute_path_is_not_rebased(hass, monkeypatch) -> None:

@@ -94,85 +94,6 @@ default.
 """
 
 
-_TOOL_DESCRIPTIONS = {
-    "memory_upsert": (
-        "Propose a NEW durable fact; never overwrite or bypass a conflict by changing "
-        "keys. needs_resolution means no write; search and decide what the facts mean."
-    ),
-    "memory_search": (
-        "Find relevant facts for answers and before proposing or correcting. Rankings are "
-        "candidates, not semantic matches; absence is not proof of novelty."
-    ),
-    "memory_list": "Browse existing facts, their provenance and exact revisions.",
-    "memory_update": (
-        "Correct a scoped record using its exact ID and current revision. "
-        "Use intent=user_request for a current user correction request, or automatic "
-        "for clear corrections in Automatic mode. Never guess missing fields."
-    ),
-    "memory_delete": (
-        "Delete only specifically identified scoped records using their exact "
-        "IDs and fresh revisions. Set intent=user_request for current user requests, "
-        "or automatic for clear obsolete facts in Automatic mode. Confirm before broad deletion."
-    ),
-    "temporary_memory_add": "Silently store a short-lived fact.",
-    "temporary_memory_update": "Silently update an active temporary memory.",
-    "temporary_memory_delete": "Silently delete active temporary memories.",
-    "knowledge_search": "Search the local Knowledge Library.",
-    "knowledge_list": "Browse Knowledge source titles and descriptions.",
-    "knowledge_get": "Read a Knowledge source page by exact source ID.",
-    "conversation_search": "Search prior retained conversations.",
-    "conversation_get": "Read a page from one retained conversation.",
-    "conversation_private": (
-        "Stop retaining this conversation and delete its retained turns."
-    ),
-    "conversation_resume_saving": "Start a new retained session after private mode.",
-    "conversation_delete_current": "Delete the current retained conversation.",
-    "conversation_delete_selected": "Delete confirmed selected retained sessions.",
-    "conversation_delete_date_range": (
-        "Delete confirmed retained sessions in a date range."
-    ),
-    "guest_mode_restrict": (
-        "Enable, start sooner, or extend Guest Mode; never weaken it."
-    ),
-    "set_continue_conversation": (
-        "Return the final spoken answer and whether to listen for an immediate reply."
-    ),
-}
-
-_PROPERTY_DESCRIPTIONS: dict[tuple[str, str], str] = {
-    ("memory_update", "expected_revision"): (
-        "Current revision from memory_search, memory_list or opening context; "
-        "never guess."
-    ),
-    ("memory_upsert", "key"): (
-        "Stable canonical identifier for this exact subject; never change it "
-        "to evade a conflict."
-    ),
-    ("memory_upsert", "subject"): (
-        "Specific person, device or item the assertion concerns; never infer "
-        "another person's preference."
-    ),
-    ("memory_upsert", "source"): (
-        "Descriptive origin only; explicit is not model authorization."
-    ),
-    ("memory_update", "memory_id"): (
-        "Exact ID of the record found in this scope, not a similar record."
-    ),
-    ("knowledge_search", "query"): "Short search keywords or phrase.",
-    ("knowledge_search", "source_ids"): "Exact IDs returned by Knowledge tools.",
-    ("knowledge_list", "query"): "Optional title/description filter.",
-    ("knowledge_get", "source_id"): "Exact returned source ID.",
-    ("temporary_memory_add", "expires_at"): "ISO 8601 with timezone.",
-    ("guest_mode_restrict", "active_from"): "ISO 8601; omit to start now.",
-    ("guest_mode_restrict", "active_until"): "ISO 8601 expiry; extensions only.",
-    ("set_continue_conversation", "response"): "Complete spoken answer.",
-    (
-        "set_continue_conversation",
-        "continue_conversation",
-    ): "Expect an immediate reply.",
-}
-
-
 def _compact_loader_description(description: str) -> str:
     """Shorten only the loader boilerplate while preserving every group entry."""
     marker = "Available groups:\n"
@@ -189,14 +110,13 @@ def _compact_loader_description(description: str) -> str:
 def prepare_model_function_tools(
     function_tools: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Return provider-facing copies with only redundant prose removed.
+    """Return independent provider schemas with loader boilerplate compacted.
 
     Configured Function Tool JSON schemas are preserved exactly. Integration-owned
-    internal tools may still have redundant prose compacted before provider delivery,
-    but user-visible native schemas are never silently widened, narrowed, or otherwise
-    rewritten. The legacy memory_add operation stays executable by the backend but is
-    omitted from new model-facing tool lists because memory_upsert fully covers
-    creation.
+    tool descriptions live with their definitions. Only the internal Function Group
+    loader's dynamic catalogue boilerplate is compacted here. The legacy memory_add
+    operation stays executable by the backend but is omitted from new model-facing
+    tool lists because memory_upsert fully covers creation.
     """
     compacted: list[dict[str, Any]] = []
     for tool in function_tools:
@@ -222,27 +142,6 @@ def prepare_model_function_tools(
             description = spec.get("description")
             if isinstance(description, str):
                 spec["description"] = _compact_loader_description(description)
-
-        integration_owned = (
-            function.get("type")
-            in {
-                "memory",
-                "temporary_memory",
-                "knowledge",
-                "archive",
-                "guest_mode",
-            }
-            or name == "set_continue_conversation"
-        )
-        if integration_owned and name in _TOOL_DESCRIPTIONS:
-            spec["description"] = _TOOL_DESCRIPTIONS[name]
-
-        properties = spec.get("parameters", {}).get("properties", {})
-        if isinstance(properties, dict):
-            for property_name, property_schema in properties.items():
-                replacement = _PROPERTY_DESCRIPTIONS.get((name, property_name))
-                if replacement is not None and isinstance(property_schema, dict):
-                    property_schema["description"] = replacement
 
         compacted.append(current)
     return compacted
