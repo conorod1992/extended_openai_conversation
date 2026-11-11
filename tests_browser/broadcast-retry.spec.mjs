@@ -100,3 +100,24 @@ for (const bundled of [false, true]) test(`Broadcast retains admitted send owner
   }
   await expectHarnessClean(page, errors);
 });
+
+
+for (const bundled of [false, true]) test(`Built-in Broadcast setting persists independently (${bundled ? "bundle" : "source"})`, async ({page}) => {
+  const errors = trackPageErrors(page);
+  await page.goto(fixtureUrl("overview", bundled ? "&bundle=1" : ""));
+  const panel = page.locator("extended-openai-management-panel");
+  const shortcut = panel.locator("#broadcast-builtin-voice-command");
+  await expect(shortcut).toBeChecked();
+  await expect(panel.locator("#broadcast-enabled")).not.toBeChecked();
+  await shortcut.uncheck();
+  await expect(shortcut).not.toBeChecked();
+  await panel.locator("#broadcast-enabled").check();
+  await expect(shortcut).not.toBeChecked();
+  await panel.locator("#broadcast-message").fill("Retained draft");
+  await shortcut.check();
+  await expect(shortcut).toBeChecked();
+  await expect(panel.locator("#broadcast-message")).toHaveValue("Retained draft");
+  await expect(panel.locator("#broadcast-enabled")).toBeChecked();
+  expect(await page.evaluate(() => window.browserHarness.calls.filter(call => call.action === "set_builtin_voice_command").map(call => call.enabled))).toEqual([false, true]);
+  await expectHarnessClean(page, errors);
+});

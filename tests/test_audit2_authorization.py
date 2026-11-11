@@ -325,7 +325,7 @@ async def test_broadcast_snapshot_filters_history_targets_and_origins(
             ]
         }
 
-    broadcast = SimpleNamespace(enabled=True, catalog=catalog, history=lambda: history, pending=lambda: history, retry_token=lambda: "retry-window")
+    broadcast = SimpleNamespace(enabled=True, builtin_voice_command=True, catalog=catalog, history=lambda: history, pending=lambda: history, retry_token=lambda: "retry-window")
     monkeypatch.setattr(
         intercom_panel, "async_get_intercom", AsyncMock(return_value=broadcast)
     )

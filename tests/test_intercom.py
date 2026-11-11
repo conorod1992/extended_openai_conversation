@@ -20,68 +20,7 @@ from custom_components.extended_openai_conversation_responses.intercom import (
     BroadcastMessage,
     Delivery,
     IntercomManager,
-    parse_targeted_broadcast,
 )
-
-
-def test_targeted_parser_resolves_named_destination(monkeypatch) -> None:
-    manager = SimpleNamespace()
-    manager.catalog = lambda: {
-        "satellites": [],
-        "devices": [],
-        "areas": [{"id": "kitchen", "name": "Kitchen", "aliases": []}],
-        "floors": [],
-        "labels": [],
-    }
-    manager.resolve_named_target = lambda name, **kwargs: (
-        {"area_ids": ["kitchen"], "name": "Kitchen"}
-        if name.casefold() == "kitchen"
-        else None
-    )
-
-    assert parse_targeted_broadcast(
-        "Broadcast to kitchen that dinner is ready", manager
-    ) == ({"area_ids": ["kitchen"]}, "dinner is ready")
-    assert parse_targeted_broadcast("What time is dinner?", manager) is None
-
-
-def test_targeted_parser_checks_aliases(monkeypatch) -> None:
-    manager = SimpleNamespace()
-    manager.catalog = lambda: {
-        "satellites": [],
-        "devices": [],
-        "areas": [
-            {"id": "kitchen", "name": "Kitchen", "aliases": ["Cooking area"]}
-        ],
-        "floors": [],
-        "labels": [],
-    }
-    manager.resolve_named_target = lambda name, **kwargs: (
-        {"area_ids": ["kitchen"], "name": "Kitchen"}
-        if name.casefold() == "cooking area"
-        else None
-    )
-
-    assert parse_targeted_broadcast(
-        "Tell cooking area dinner is ready", manager
-    ) == ({"area_ids": ["kitchen"]}, "dinner is ready")
-
-
-def test_targeted_parser_supports_whole_home(monkeypatch) -> None:
-    manager = SimpleNamespace()
-    manager.catalog = lambda: {
-        "satellites": [], "devices": [], "areas": [], "floors": [], "labels": []
-    }
-    manager.resolve_named_target = lambda name, **kwargs: (
-        {"whole_home": True, "name": name}
-        if name.casefold() == "everyone"
-        else None
-    )
-
-    assert parse_targeted_broadcast("Tell everyone dinner is ready", manager) == (
-        {"whole_home": True},
-        "dinner is ready",
-    )
 
 
 @pytest.mark.asyncio
@@ -510,13 +449,6 @@ async def test_async_get_intercom_reuses_manager_and_initializes_each_access(has
     assert initialize.await_count == 2
 
 
-def test_targeted_request_detection_is_deliberately_narrow() -> None:
-    assert intercom.is_targeted_broadcast_request("Broadcast to kitchen dinner is ready")
-    assert intercom.is_targeted_broadcast_request("Tell upstairs good night")
-    assert not intercom.is_targeted_broadcast_request("Broadcast dinner is ready")
-    assert not intercom.is_targeted_broadcast_request("What should I tell everyone?")
-
-
 def test_resolve_named_target_handles_whole_home_alias_and_unknown(monkeypatch, hass) -> None:
     manager = IntercomManager(hass)
     monkeypatch.setattr(
@@ -540,30 +472,6 @@ def test_resolve_named_target_handles_whole_home_alias_and_unknown(monkeypatch, 
         "name": "Kitchen",
     }
     assert manager.resolve_named_target("garage") is None
-
-
-def test_parser_rejects_known_target_without_payload(monkeypatch, hass) -> None:
-    manager = IntercomManager(hass)
-    monkeypatch.setattr(
-        manager,
-        "catalog",
-        lambda: {
-            "satellites": [],
-            "devices": [],
-            "areas": [{"id": "kitchen", "name": "Kitchen", "aliases": []}],
-            "floors": [],
-            "labels": [],
-        },
-    )
-    monkeypatch.setattr(
-        manager,
-        "resolve_named_target",
-        lambda name: {"area_ids": ["kitchen"], "name": "Kitchen"}
-        if name.casefold() == "kitchen"
-        else None,
-    )
-
-    assert intercom.parse_targeted_broadcast("Broadcast to kitchen", manager) is None
 
 
 def test_target_match_without_device_uses_entity_labels(hass, monkeypatch) -> None:
@@ -675,7 +583,7 @@ async def test_disabling_handles_missing_terminal_pending_and_inflight_deliverie
     assert failed.deliveries[entity_id].status == "failed"
     assert expired.deliveries[entity_id].status == "expired"
     assert list(manager._queues[entity_id]) == [inflight]
-    manager._store.async_save.assert_awaited_once_with({"enabled": False})
+    manager._store.async_save.assert_awaited_once_with({"enabled": False, "builtin_voice_command": True})
 
 
 def test_capability_and_area_resolution_cover_absent_registry_metadata(hass, monkeypatch) -> None:

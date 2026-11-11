@@ -108,13 +108,3 @@ async def test_quiet_hours_restores_same_registered_speaker_after_rename(hass, m
     manager._async_set_volume = AsyncMock()
     await manager._async_restore_locked()
     manager._async_set_volume.assert_awaited_once_with("media_player.new", 0.8)
-
-
-async def test_broadcast_exclusion_precedes_local_interception(hass, monkeypatch):
-    from custom_components.extended_openai_conversation_responses import local_intents
-
-    intercept = AsyncMock(return_value=object())
-    monkeypatch.setattr(local_intents, "_async_try_targeted_broadcast", intercept)
-    monkeypatch.setattr(local_intents.conversation, "async_handle_intents", None)
-    await local_intents.async_try_handle_local_intent(hass, SimpleNamespace(text="broadcast a message"), SimpleNamespace(), {"local_intents_enabled":True, "local_intent_exclusions":["HassBroadcast"]}, guest_active=False)
-    intercept.assert_not_awaited()

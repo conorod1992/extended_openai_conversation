@@ -2853,3 +2853,30 @@ async def test_storage_v4_migration_is_additive() -> None:
     store = object.__new__(RequestRuleStore)
     old = {"defaults": dict(DEFAULT_MATCHING), "rules": [local_rule()]}
     assert await store._async_migrate_func(4, 0, old) == old
+
+
+async def test_documented_kitchen_broadcast_rule_resolves_captured_message(hass, monkeypatch):
+    from custom_components.extended_openai_conversation_responses.functions.native import NativeFunction
+    from custom_components.extended_openai_conversation_responses.functions import native
+    from homeassistant.core import Context
+    rule = local_rule(phrases=["tell the kitchen {message}"], match_type="sentence_pattern")
+    rule["action"]["success_response"] = "Broadcast queued."
+    rule["action"]["actions"] = [{
+        "action": "extended_openai_conversation_responses.call_function",
+        "data": {"function": "send_broadcast", "arguments": {"destination":"kitchen", "message":"{{ message }}"}},
+    }]
+    queued = AsyncMock(return_value={"id":"admission", "targets":["assist_satellite.kitchen"], "deliveries":{}})
+    broadcast_manager = SimpleNamespace(resolve_named_target=lambda name: {"area_ids":["kitchen"], "name":"Kitchen"}, async_send=queued)
+    monkeypatch.setattr(native, "async_get_intercom", AsyncMock(return_value=broadcast_manager))
+    context = Context()
+    calls = []
+    async def execute(name, arguments):
+        calls.append((name, dict(arguments)))
+        return await NativeFunction().send_broadcast(hass, {}, arguments, SimpleNamespace(context=context), [])
+    result = await async_evaluate_rule(hass, await manager(rule), RequestRuleRuntime(),
+        "tell the kitchen dinner is ready", "kitchen-rule", function_executor=execute, context=context)
+    assert result.successful and result.consume and result.response == "Broadcast queued."
+    assert calls == [("send_broadcast", {"destination":"kitchen", "message":"dinner is ready"})]
+    queued.assert_awaited_once()
+    assert queued.await_args.args == ("dinner is ready",)
+    assert queued.await_args.kwargs["area_ids"] == ["kitchen"]

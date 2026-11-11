@@ -23,6 +23,7 @@ const ROUTE_STYLE = `/* Guide route */
 .guide-topic summary small{font-size:13px;font-weight:400;line-height:1.45}
 .guide-topic-body{max-width:920px;padding:0 0 22px;font-size:14px;line-height:1.65}
 .guide-topic-body>p{margin:10px 0}
+.guide-topic-body pre{overflow:auto;padding:12px;border-radius:8px;background:var(--secondary-background-color)}
 .guide-topic-body h3{margin:22px 0 8px;font-size:16px}
 .guide-topic-body ul,.guide-topic-body ol{margin:10px 0;padding-left:26px}
 .guide-topic-body li{margin:6px 0}
@@ -142,6 +143,7 @@ function renderGuideBlock(panel, block) {
   if (typeof block === "string") return `<p>${panel._e(block)}</p>`;
   if (!block || typeof block !== "object") return "";
 
+  if (block.type === "code") return `<pre><code>${panel._e(block.text || "")}</code></pre>`;
   if (block.type === "heading") {
     return `<h3>${panel._e(block.text || "")}</h3>`;
   }

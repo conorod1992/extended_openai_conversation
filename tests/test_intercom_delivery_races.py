@@ -452,30 +452,6 @@ def test_expire_isolates_inflight_and_unrelated_queue_entries(hass) -> None:
     assert list(manager._queues[bedroom]) == [target]
 
 
-def test_parser_returns_resolved_target_and_payload(monkeypatch, hass) -> None:
-    manager = IntercomManager(hass)
-    monkeypatch.setattr(
-        manager,
-        "catalog",
-        lambda: {
-            "satellites": [],
-            "devices": [],
-            "areas": [
-                {"id": "kitchen", "name": "Kitchen", "aliases": ["Cooking Area"]}
-            ],
-            "floors": [],
-            "labels": [],
-        },
-    )
-
-    assert intercom.parse_targeted_broadcast(
-        "Broadcast to cooking area: Dinner is ready", manager
-    ) == ({"area_ids": ["kitchen"]}, "Dinner is ready")
-    assert intercom.parse_targeted_broadcast(
-        "Tell Kitchen that lights out", manager
-    ) == ({"area_ids": ["kitchen"]}, "lights out")
-
-
 def _residual2_message(
     entity_id: str,
     *,

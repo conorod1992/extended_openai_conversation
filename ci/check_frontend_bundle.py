@@ -45,7 +45,12 @@ DIST = Path("custom_components/extended_openai_conversation_responses/frontend/d
 # independently fixed management entry and CSS ceilings.
 # Bounded reverse transcript paging adds 358 minified JS bytes to 882,770.
 # Allow 400 reviewed bytes; the management-entry and CSS limits stay unchanged.
-CEILINGS = {"javascript": 883_250, "css": 65_000, "management_entry": 120_000}
+# The Broadcast switch, ownership guards, legacy opt-out guidance and Guide
+# add 4,367 JS bytes (883,128 -> 887,495). Keep the reviewed 887,500 ceiling;
+# keep the independent management-entry and CSS ceilings unchanged.
+# Retained Broadcast setting controls need 19 more bytes for owned cleanup.
+# Allow 887,550 total JS bytes; keep the entry and CSS ceilings unchanged.
+CEILINGS = {"javascript": 887_550, "css": 65_000, "management_entry": 120_000}
 
 
 def measure(dist: Path) -> dict[str, int]:

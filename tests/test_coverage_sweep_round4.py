@@ -374,7 +374,6 @@ def test_request_rule_match_returns_first_deterministic_candidate() -> None:
     assert result.fuzzy is False
 
 
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "method_name",
@@ -550,7 +549,6 @@ async def test_parallel_outcome_cleanup_cancels_pending_task_on_gather_failure(
     assert pending.cancelled()
 
 
-
 @pytest.mark.asyncio
 async def test_skill_source_ref_explicit_version_and_development_fallback(
     hass, monkeypatch
@@ -721,7 +719,6 @@ async def test_service_call_function_without_result_alias_uses_active_executor(
     executor.assert_awaited_once_with("demo", {"value": 1})
 
 
-
 @pytest.mark.asyncio
 async def test_async_get_intercom_rejects_removed_integration(hass) -> None:
     from custom_components.extended_openai_conversation_responses import intercom
@@ -744,61 +741,6 @@ async def test_async_get_intercom_creates_and_initializes_manager(hass, monkeypa
     assert result is manager
     assert hass.data[intercom.DATA_KEY] is manager
     manager.async_initialize.assert_awaited_once()
-
-
-def test_targeted_broadcast_parser_handles_non_target_and_unresolved_candidate() -> None:
-    from custom_components.extended_openai_conversation_responses import intercom
-
-    manager = SimpleNamespace(
-        catalog=Mock(
-            return_value={
-                "satellites": [
-                    {"name": "Kitchen", "aliases": ["Cooking"], "id": "satellite.kitchen"}
-                ],
-                "devices": [],
-                "areas": [],
-                "floors": [],
-                "labels": [],
-            }
-        ),
-        resolve_named_target=Mock(return_value=None),
-    )
-
-    assert intercom.parse_targeted_broadcast("hello there", manager) is None
-    assert intercom.parse_targeted_broadcast("tell Kitchen hello", manager) is None
-    manager.resolve_named_target.assert_called()
-
-
-def test_targeted_broadcast_parser_resolves_alias_and_strips_display_name() -> None:
-    from custom_components.extended_openai_conversation_responses import intercom
-
-    manager = SimpleNamespace(
-        catalog=Mock(
-            return_value={
-                "satellites": [
-                    {"name": "Kitchen", "aliases": ["Cooking"], "id": "satellite.kitchen"}
-                ],
-                "devices": [],
-                "areas": [],
-                "floors": [],
-                "labels": [],
-            }
-        ),
-        resolve_named_target=Mock(
-            return_value={"entity_ids": ["assist_satellite.kitchen"], "name": "Kitchen"}
-        ),
-    )
-
-    result = intercom.parse_targeted_broadcast(
-        "announce to Cooking, message ready",
-        manager,
-    )
-
-    assert result == (
-        {"entity_ids": ["assist_satellite.kitchen"]},
-        "message ready",
-    )
-
 
 
 @pytest.mark.asyncio
@@ -858,7 +800,6 @@ async def test_guest_mode_backup_fails_closed_when_persistence_unavailable(hass)
         await manager.async_backup_data()
 
 
-
 @pytest.mark.asyncio
 async def test_knowledge_initialization_rejects_invalid_root_and_sources() -> None:
     from custom_components.extended_openai_conversation_responses import knowledge
@@ -899,7 +840,6 @@ def test_knowledge_chunk_split_handles_paragraph_line_and_overlap_boundaries(
     assert all(text for _offset, text in chunks)
     assert chunks[0][0] == 0
     assert chunks[-1][0] < len(content)
-
 
 
 @pytest.mark.parametrize(
@@ -1010,7 +950,6 @@ def test_skill_directory_capture_records_loaded_directory(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="Skill not found"):
         manager.get_skill_directory("missing")
-
 
 
 @pytest.mark.asyncio
@@ -1136,7 +1075,6 @@ def test_debug_continuity_resolution_records_projection(monkeypatch) -> None:
     assert trace.continuity["resolved_conversation_id"] == "resolved"
     assert trace.continuity["restored_history_items"] == 2
     assert trace.continuity["device_id"] == "device-1"
-
 
 
 @pytest.mark.asyncio

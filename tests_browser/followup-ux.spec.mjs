@@ -98,6 +98,22 @@ test("inactive Local Handling summarizes saved exclusions and restores the edita
   await expect(choices.locator('[data-local-intent-exclusion][value="HassTurnOn"]')).toBeChecked();
   await expect.poll(()=>panel.evaluate(host=>host._draft.local_intent_exclusions)).toEqual(["HassTurnOn","HassSetTimer"]);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await panel.evaluate(host=>{
+    host._draft.local_intents_enabled=false;
+    host._draft.local_intent_exclusions.push("HassBroadcast");
+    host._result.local_handling.intents.push({intent:"HassBroadcast",label:"Broadcast",available:false});
+    host._render();
+  });
+  await expect(choices.locator(".local-handling-saved-summary")).toContainText("legacy Broadcast opt-out also applies while local handling is off");
+  await panel.locator('[data-config="local_intents_enabled"]').check();
+  const legacy=choices.locator('[data-local-intent-exclusion][value="HassBroadcast"]');
+  await expect(legacy).toBeChecked();
+  await expect(legacy.locator("..")).toContainText("EOAI never delegates this HA intent");
+  await expect(legacy.locator("..")).not.toContainText("Not currently available in Home Assistant");
+  await legacy.uncheck();
+  await panel.locator('[data-config="local_intents_enabled"]').uncheck();
+  await expect.poll(()=>panel.evaluate(host=>host._draft.local_intent_exclusions)).toEqual(["HassTurnOn","HassSetTimer"]);
+
 });
 
 test("disabled Model and Speech explanations remain readable while their controls stay disabled", async ({page}) => {

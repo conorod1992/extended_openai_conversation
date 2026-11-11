@@ -47,7 +47,8 @@ for (const admin of [true, false]) {
         );
         return {
           hasIntro: Boolean(root.querySelector(".broadcast-heading p")?.textContent.trim()),
-          hasState: Boolean(root.querySelector(".broadcast-toggle-row p")?.textContent.trim()),
+          hasState: Boolean(root.querySelectorAll(".broadcast-toggle-row")[0]?.querySelector("p")?.textContent.trim()),
+          hasCommandHelp: root.querySelectorAll(".broadcast-toggle-row")[1]?.querySelector("p")?.textContent.includes("without AI"),
           hasFootnote: Boolean(root.querySelector(".setup-health-footnote")?.textContent.trim()),
           iconHidden: root.querySelector(".setup-health-footnote ha-icon")?.getAttribute("aria-hidden") === "true",
         };
@@ -80,6 +81,7 @@ for (const admin of [true, false]) {
       expect(overview.hasIntro).toBe(true);
       expect(overview.hasFootnote).toBe(true);
       expect(overview.iconHidden).toBe(true);
+      expect(overview.hasCommandHelp).toBe(true);
     }
     expect(result.overview.map(o => o.hasState)).toEqual([true, false]);
     await expectHarnessClean(page, errors);

@@ -16,7 +16,7 @@ const requestDebugType = "extended_openai_conversation_responses/request_debug";
 const modelCatalogType = "extended_openai_conversation_responses/model_catalog";
 const credentialType = "extended_openai_conversation_responses/management/update_api_key";
 const calls = [];
-const broadcast = {enabled: false, history: []};
+const broadcast = {enabled: false, builtin_voice_command:true, history: []};
 history.replaceState({}, "", `/extended-openai/${route}`);
 
 const hass = {
@@ -32,11 +32,16 @@ const hass = {
     if (message.type === backupTransferType) return backupTransfer(message);
     if (message.type === requestDebugType) return backend.debugCall(message);
     if (message.type === broadcastType) {
-      if (message.action === "snapshot") return {enabled: broadcast.enabled, can_manage: isAdmin, retry_token:"fixture-window", catalog: {satellites: [], areas: []}, history: structuredClone(broadcast.history)};
+      if (message.action === "snapshot") return {enabled: broadcast.enabled, builtin_voice_command:broadcast.builtin_voice_command, can_manage: isAdmin, retry_token:"fixture-window", catalog: {satellites: [], areas: []}, history: structuredClone(broadcast.history)};
       if (message.action === "set_enabled") {
         if (!isAdmin || typeof message.enabled !== "boolean") throw new Error("Invalid EOAI Broadcast setting request");
         broadcast.enabled = message.enabled;
         return {enabled: broadcast.enabled};
+      }
+      if (message.action === "set_builtin_voice_command") {
+        if (!isAdmin || typeof message.enabled !== "boolean") throw new Error("Invalid EOAI Broadcast setting request");
+        broadcast.builtin_voice_command = message.enabled;
+        return {builtin_voice_command:broadcast.builtin_voice_command};
       }
       if (message.action === "send") {
         if (!isAdmin || !String(message.message || "").trim() || (!message.whole_home && !message.entity_ids?.length)) throw new Error("Invalid EOAI Broadcast send request");
