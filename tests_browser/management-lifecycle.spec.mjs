@@ -179,7 +179,9 @@ test("large route styles arrive with their lazy feature and keep mobile layouts"
   ).display)).toBe("grid");
 
   await panel.evaluate(host => host._navigate("overview"));
-  await expect(panel.locator(".broadcast-toggle-row")).toBeVisible();
+  await expect(panel.locator(".broadcast-toggle-row")).toHaveCount(2);
+  await expect(panel.locator(".broadcast-toggle-row").nth(0)).toBeVisible();
+  await expect(panel.locator(".broadcast-toggle-row").nth(1)).toBeVisible();
   expect(await panel.evaluate(host => getComputedStyle(
     host.shadowRoot.querySelector(".broadcast-toggle-row"),
   ).display)).toBe("flex");

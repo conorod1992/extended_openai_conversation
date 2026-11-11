@@ -153,19 +153,12 @@ async def test_excluded_match_falls_through(
 async def test_unresolved_targeted_broadcast_blocks_greedy_whole_home_intent(
     hass, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def no_targeted_match(*args, **kwargs):
-        return None
-
     async def fake_handle(hass, user_input, chat_log, *, intent_filter=None):
         assert intent_filter is not None
         assert intent_filter(_recognize("HassBroadcast"))
         assert not intent_filter(_recognize("HassTurnOn"))
         return None
 
-    monkeypatch.setattr(local_intents, "_async_try_targeted_broadcast", no_targeted_match)
-    monkeypatch.setattr(
-        local_intents, "is_targeted_broadcast_request", lambda _text: True
-    )
     monkeypatch.setattr(conversation, "async_handle_intents", fake_handle)
 
     result = await async_try_handle_local_intent(
@@ -180,20 +173,14 @@ async def test_unresolved_targeted_broadcast_blocks_greedy_whole_home_intent(
 
 
 @pytest.mark.asyncio
-async def test_disabled_broadcast_does_not_run_targeted_local_route(
+async def test_generic_broadcast_is_blocked_without_a_broadcast_manager(
     hass, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    manager = SimpleNamespace(enabled=False)
-
-    async def fake_get_manager(_hass):
-        return manager
-
     async def fake_handle(hass, user_input, chat_log, *, intent_filter=None):
         assert intent_filter is not None
         assert intent_filter(_recognize("HassBroadcast"))
         return None
 
-    monkeypatch.setattr(local_intents, "async_get_intercom", fake_get_manager)
     monkeypatch.setattr(conversation, "async_handle_intents", fake_handle)
 
     result = await async_try_handle_local_intent(
@@ -292,171 +279,9 @@ async def test_delayed_command_setting_is_applied_to_home_assistant_filter(
 
 
 @pytest.mark.asyncio
-async def test_targeted_broadcast_skips_non_text_without_loading_manager(
-    hass, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    called = False
-
-    async def fake_get_manager(_hass):
-        nonlocal called
-        called = True
-        return SimpleNamespace(enabled=True)
-
-    monkeypatch.setattr(local_intents, "async_get_intercom", fake_get_manager)
-
-    result = await local_intents._async_try_targeted_broadcast(
-        hass, cast(Any, SimpleNamespace(text=None))
-    )
-
-    assert result is None
-    assert not called
-
-
-@pytest.mark.asyncio
-async def test_targeted_broadcast_enabled_manager_can_have_no_parse_match(
-    hass, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    manager = SimpleNamespace(enabled=True)
-
-    async def fake_get_manager(_hass):
-        return manager
-
-    monkeypatch.setattr(local_intents, "async_get_intercom", fake_get_manager)
-    monkeypatch.setattr(
-        local_intents, "parse_targeted_broadcast", lambda _text, _manager: None
-    )
-
-    assert (
-        await local_intents._async_try_targeted_broadcast(
-            hass, cast(Any, SimpleNamespace(text="turn on the kitchen"))
-        )
-        is None
-    )
-
-
-@pytest.mark.asyncio
-async def test_targeted_broadcast_queues_resolved_target_with_origin_context(
-    hass, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    calls: list[tuple[str, dict[str, Any]]] = []
-
-    async def async_send(message: str, **kwargs: Any) -> None:
-        calls.append((message, kwargs))
-
-    manager = SimpleNamespace(enabled=True, async_send=async_send, resolve_targets=lambda **_: ["assist_satellite.kitchen"])
-
-    async def fake_get_manager(_hass):
-        return manager
-
-    monkeypatch.setattr(local_intents, "async_get_intercom", fake_get_manager)
-    monkeypatch.setattr(
-        local_intents,
-        "parse_targeted_broadcast",
-        lambda _text, _manager: (
-            {"entity_ids": ["assist_satellite.kitchen"]},
-            "Dinner is ready",
-        ),
-    )
-
-    context = SimpleNamespace(user_id=None)
-    result = await local_intents._async_try_targeted_broadcast(
-        hass,
-        cast(
-            Any,
-            SimpleNamespace(
-                text="Broadcast to kitchen that dinner is ready",
-                context=context,
-                language="en-IE",
-                satellite_id="assist_satellite.hall",
-                device_id="device-1",
-            ),
-        ),
-    )
-
-    assert result is not None
-    assert result.intent_name == "ExtendedBroadcast"
-    assert calls == [
-        (
-            "Dinner is ready",
-            {
-                "entity_ids": ["assist_satellite.kitchen"],
-                "origin_entity_id": "assist_satellite.hall",
-                "origin_device_id": "device-1",
-                "source": "local_voice",
-                "context": context,
-            },
-        )
-    ]
-
-    assert calls[0][1]["context"] is context
-
-
-@pytest.mark.asyncio
-async def test_targeted_broadcast_with_no_other_speaker_returns_local_explanation(
-    hass, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    sends: list[str] = []
-    resolved: list[dict[str, Any]] = []
-
-    async def send(message: str, **_kwargs: Any) -> None:
-        sends.append(message)
-
-    def resolve_targets(**kwargs: Any) -> list[str]:
-        resolved.append(kwargs)
-        return []
-
-    manager = SimpleNamespace(
-        enabled=True,
-        async_send=send,
-        resolve_targets=resolve_targets,
-    )
-
-    async def get_manager(_hass):
-        return manager
-
-    monkeypatch.setattr(local_intents, "async_get_intercom", get_manager)
-    monkeypatch.setattr(
-        local_intents,
-        "parse_targeted_broadcast",
-        lambda _text, _manager: ({"whole_home": True}, "Dinner is ready"),
-    )
-    user_input = cast(
-        Any,
-        SimpleNamespace(
-            text="Tell everyone dinner is ready",
-            satellite_id="assist_satellite.kitchen",
-            device_id="device-kitchen",
-            context=SimpleNamespace(user_id="owner"),
-            language="en-IE",
-        ),
-    )
-    result = await local_intents._async_try_targeted_broadcast(hass, user_input)
-    assert result is not None
-    assert result.intent_name == "ExtendedBroadcast"
-    assert "another available speaker" in result.response.speech["plain"]["speech"]
-    assert not sends
-    assert resolved == [
-        {
-            "whole_home": True,
-            "entity_ids": None,
-            "device_ids": None,
-            "area_ids": None,
-            "floor_ids": None,
-            "label_ids": None,
-            "origin_entity_id": "assist_satellite.kitchen",
-            "origin_device_id": "device-kitchen",
-        }
-    ]
-
-
-@pytest.mark.asyncio
 async def test_missing_home_assistant_intent_handler_falls_through(
     hass, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def no_targeted_match(*args, **kwargs):
-        return None
-
-    monkeypatch.setattr(local_intents, "_async_try_targeted_broadcast", no_targeted_match)
     monkeypatch.setattr(conversation, "async_handle_intents", None)
 
     assert (
@@ -477,13 +302,9 @@ async def test_response_without_filter_match_reports_unknown_intent(
 ) -> None:
     response = ha_intent.IntentResponse(language="en")
 
-    async def no_targeted_match(*args, **kwargs):
-        return None
-
     async def fake_handle(hass, user_input, chat_log, *, intent_filter=None):
         return response
 
-    monkeypatch.setattr(local_intents, "_async_try_targeted_broadcast", no_targeted_match)
     monkeypatch.setattr(conversation, "async_handle_intents", fake_handle)
 
     result = await async_try_handle_local_intent(
@@ -610,50 +431,6 @@ def test_pipeline_conflicts_tolerate_unavailable_pipeline_state(
     assert conflicting_assist_pipelines(hass, "entry", "agent") == []
 
 
-@pytest.mark.asyncio
-async def test_resolved_targeted_broadcast_short_circuits_ha_intent_engine(
-    hass, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A resolved targeted broadcast must not fall through to HassBroadcast."""
-    response = ha_intent.IntentResponse(language="en-IE")
-    response.async_set_speech("Broadcast queued.")
-    targeted = local_intents.LocalIntentResult(
-        response=response,
-        intent_name="ExtendedBroadcast",
-    )
-    handle_calls = 0
-
-    async def fake_targeted(_hass: Any, _user_input: Any):
-        return targeted
-
-    async def fake_handle(*_args: Any, **_kwargs: Any):
-        nonlocal handle_calls
-        handle_calls += 1
-        raise AssertionError("resolved targeted broadcast fell through to HA intents")
-
-    monkeypatch.setattr(local_intents, "_async_try_targeted_broadcast", fake_targeted)
-    monkeypatch.setattr(conversation, "async_handle_intents", fake_handle)
-
-    result = await local_intents.async_try_handle_local_intent(
-        hass,
-        cast(
-            Any,
-            SimpleNamespace(
-                text="Broadcast to the kitchen that dinner is ready",
-                language="en-IE",
-            ),
-        ),
-        cast(Any, SimpleNamespace()),
-        {local_intents.CONF_LOCAL_INTENTS_ENABLED: True},
-        guest_active=False,
-    )
-
-    assert result is targeted
-    assert result.intent_name == "ExtendedBroadcast"
-    assert result.response is response
-    assert handle_calls == 0
-
-
 def test_conversation_entity_resolution_returns_none_when_no_agent_matches(
     hass, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -758,3 +535,16 @@ async def test_local_failure_repairs_only_unanswered_calls_and_preserves_cancell
         assert results[0] is result
     else:
         assert "PRIVATE_" not in str(tool_result_data(results[0]))
+
+
+@pytest.mark.parametrize("exclusions", [[], ["HassBroadcast"]])
+def test_broadcast_is_never_eligible_for_generic_delegation(exclusions):
+    assert not should_handle_locally(_recognize("HassBroadcast"), exclusions, False)
+    assert should_handle_locally(_recognize("HassTurnOn"), exclusions, False)
+
+
+def test_catalog_hides_broadcast_unless_retaining_saved_opt_out(hass, monkeypatch):
+    monkeypatch.setattr(ha_intent, "async_get", lambda _: [SimpleNamespace(intent_type="HassBroadcast"), SimpleNamespace(intent_type="HassTurnOn")])
+    assert [row["intent"] for row in registered_intent_catalog(hass)] == ["HassTurnOn"]
+    saved = registered_intent_catalog(hass, ["HassBroadcast"])
+    assert next(row for row in saved if row["intent"] == "HassBroadcast")["available"] is False

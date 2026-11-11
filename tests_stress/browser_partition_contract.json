@@ -295,7 +295,9 @@
       "tests_browser/voice-mapping-retained.spec.mjs::chromium::voice-mapping-retained.spec.mjs::empty and pending Voice rows stay dirty off route and Discard retires late registry completions",
       "tests_browser/voice-mapping-retained.spec.mjs::chromium::voice-mapping-retained.spec.mjs::failed Voice lookup remains editable after navigation and remount and blocks global Save",
       "tests_browser/voice-recovery-hourly-review.spec.mjs::chromium::voice-recovery-hourly-review.spec.mjs::Voice recovery publishes invalid rows into an already edited replacement panel",
-      "tests_browser/voice-user-owner-hydration-review.spec.mjs::chromium::voice-user-owner-hydration-review.spec.mjs::delayed user catalogue keeps the displayed Voice owner and committed mapping consistent"
+      "tests_browser/voice-user-owner-hydration-review.spec.mjs::chromium::voice-user-owner-hydration-review.spec.mjs::delayed user catalogue keeps the displayed Voice owner and committed mapping consistent",
+      "tests_browser/broadcast-retry.spec.mjs::chromium::broadcast-retry.spec.mjs::Built-in Broadcast setting persists independently (source)",
+      "tests_browser/broadcast-retry.spec.mjs::chromium::broadcast-retry.spec.mjs::Built-in Broadcast setting persists independently (bundle)"
     ],
     "native": [
       "ci/frontend_latency/accessibility.spec.mjs::chromium::accessibility.spec.mjs::scan genuine HA route and editor accessibility semantics",

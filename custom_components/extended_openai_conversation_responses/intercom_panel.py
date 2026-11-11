@@ -22,7 +22,9 @@ _SETUP_KEY = f"{DOMAIN}.broadcast_api_setup"
 @ha_websocket_command(
     {
         vol.Required("type"): WS_BROADCAST,
-        vol.Required("action"): vol.In(["snapshot", "send", "set_enabled"]),
+        vol.Required("action"): vol.In(
+            ["snapshot", "send", "set_enabled", "set_builtin_voice_command"]
+        ),
         vol.Optional("message"): str,
         vol.Optional("whole_home"): bool,
         vol.Optional("entity_ids"): [str],
@@ -79,6 +81,7 @@ async def websocket_broadcast(
                 msg["id"],
                 {
                     "enabled": manager.enabled,
+                    "builtin_voice_command": manager.builtin_voice_command,
                     "can_manage": connection.user.is_admin,
                     "catalog": catalog,
                     "history": history,
@@ -87,7 +90,7 @@ async def websocket_broadcast(
                 },
             )
             return
-        if msg["action"] == "set_enabled":
+        if msg["action"] in {"set_enabled", "set_builtin_voice_command"}:
             if not connection.user.is_admin:
                 raise HomeAssistantError(
                     "Administrator permission is required to change Broadcast settings"
@@ -95,8 +98,15 @@ async def websocket_broadcast(
             enabled = msg.get("enabled")
             if not isinstance(enabled, bool):
                 raise HomeAssistantError("enabled must be true or false")
-            await manager.async_set_enabled(enabled)
-            connection.send_result(msg["id"], {"enabled": manager.enabled})
+            if msg["action"] == "set_builtin_voice_command":
+                await manager.async_set_builtin_voice_command(enabled)
+                settings_result = {
+                    "builtin_voice_command": manager.builtin_voice_command
+                }
+            else:
+                await manager.async_set_enabled(enabled)
+                settings_result = {"enabled": manager.enabled}
+            connection.send_result(msg["id"], settings_result)
             return
         message = str(msg.get("message", "")).strip()
         if not message:

@@ -1073,7 +1073,7 @@
     "tests_real_ha/test_action_failure_safety.py::test_local_dispatch_has_one_accurate_run_and_completion[raise]",
     "tests_real_ha/test_action_failure_safety.py::test_local_dispatch_has_one_accurate_run_and_completion[success]",
     "tests_real_ha/test_action_failure_safety.py::test_local_dispatch_has_one_accurate_run_and_completion[unmatched]",
-    "tests_real_ha/test_action_failure_safety.py::test_origin_only_targeted_broadcast_is_handled_failure",
+    "tests_real_ha/test_action_failure_safety.py::test_origin_only_builtin_broadcast_is_handled_failure",
     "tests_real_ha/test_action_failure_safety.py::test_real_rule_stops_after_backend_failure[business-False-False]",
     "tests_real_ha/test_action_failure_safety.py::test_real_rule_stops_after_backend_failure[business-False-True]",
     "tests_real_ha/test_action_failure_safety.py::test_real_rule_stops_after_backend_failure[business-True-False]",
@@ -3188,7 +3188,16 @@
     "tests_real_ha/test_quiet_hours_timezone.py::test_timezone_update_reconciles_public_state_controls_and_deadlines[True]",
     "tests_real_ha/test_quiet_hours_timezone.py::test_timezone_listener_preserves_overlapping_ownership_and_retires_on_shutdown[False]",
     "tests_real_ha/test_quiet_hours_timezone.py::test_timezone_listener_preserves_overlapping_ownership_and_retires_on_shutdown[True]",
-    "tests/test_conversation_archive.py::test_archive_search_discards_question_filler_without_losing_literal_queries"
+    "tests/test_conversation_archive.py::test_archive_search_discards_question_filler_without_losing_literal_queries",
+    "tests_real_ha/test_intercom_voice_acceptance.py::test_documented_kitchen_rule_uses_real_script_and_current_tool_state[False]",
+    "tests_real_ha/test_intercom_voice_acceptance.py::test_documented_kitchen_rule_uses_real_script_and_current_tool_state[True]",
+    "tests_real_ha/test_intercom_voice_acceptance.py::test_unmatched_or_disabled_command_never_uses_generic_hass_broadcast[master-off]",
+    "tests_real_ha/test_intercom_voice_acceptance.py::test_unmatched_or_disabled_command_never_uses_generic_hass_broadcast[shortcut-off]",
+    "tests_real_ha/test_intercom_voice_acceptance.py::test_unmatched_or_disabled_command_never_uses_generic_hass_broadcast[legacy-exclusion]",
+    "tests_real_ha/test_intercom_voice_acceptance.py::test_unmatched_or_disabled_command_never_uses_generic_hass_broadcast[targeted]",
+    "tests_real_ha/test_intercom_voice_acceptance.py::test_unmatched_or_disabled_command_never_uses_generic_hass_broadcast[timed]",
+    "tests_real_ha/test_intercom_voice_acceptance.py::test_pending_builtin_admission_rechecks_live_policy[guest]",
+    "tests_real_ha/test_intercom_voice_acceptance.py::test_pending_builtin_admission_rechecks_live_policy[shortcut]"
   ],
   "browser": {
     "browser": [
@@ -3527,7 +3536,9 @@
       "tests_browser/voice-mapping-retained.spec.mjs::chromium::voice-mapping-retained.spec.mjs::empty and pending Voice rows stay dirty off route and Discard retires late registry completions",
       "tests_browser/voice-mapping-retained.spec.mjs::chromium::voice-mapping-retained.spec.mjs::failed Voice lookup remains editable after navigation and remount and blocks global Save",
       "tests_browser/voice-recovery-hourly-review.spec.mjs::chromium::voice-recovery-hourly-review.spec.mjs::Voice recovery publishes invalid rows into an already edited replacement panel",
-      "tests_browser/voice-user-owner-hydration-review.spec.mjs::chromium::voice-user-owner-hydration-review.spec.mjs::delayed user catalogue keeps the displayed Voice owner and committed mapping consistent"
+      "tests_browser/voice-user-owner-hydration-review.spec.mjs::chromium::voice-user-owner-hydration-review.spec.mjs::delayed user catalogue keeps the displayed Voice owner and committed mapping consistent",
+      "tests_browser/broadcast-retry.spec.mjs::chromium::broadcast-retry.spec.mjs::Built-in Broadcast setting persists independently (source)",
+      "tests_browser/broadcast-retry.spec.mjs::chromium::broadcast-retry.spec.mjs::Built-in Broadcast setting persists independently (bundle)"
     ],
     "browser-firefox": [
       "tests_browser/abnormal-frontend-resilience.stress.mjs::firefox::abnormal-frontend-resilience.stress.mjs::IME composition interrupted by blur preserves one exact value without duplicate mutation",

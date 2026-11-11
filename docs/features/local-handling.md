@@ -1,8 +1,10 @@
 # Local handling
 
-Extended OpenAI can try Home Assistant's built-in command handling after Request Rules and before sending a request to Function Tools or the model. Configure it under **Extended OpenAI → Capabilities → Home Assistant & local handling** for the selected agent.
+Extended OpenAI can try Home Assistant's built-in command handling after Request Rules and before sending a request to Function Tools or the model. The independently enabled [Broadcast shortcut](broadcast.md#built-in-voice-command) runs between Request Rules and general local handling. Configure it under **Extended OpenAI → Capabilities → Home Assistant & local handling** for the selected agent.
 
 When enabled, a matching built-in command is handled locally. Requests that do not match, or command types you exclude, continue to Function Tools and AI. The command-type list is supplied by Home Assistant and may vary with the installed intents.
+
+EOAI always excludes `HassBroadcast` from generic delegation. The simple `Broadcast {message}` command has its own global Overview switch. A saved legacy `HassBroadcast` exclusion also suppresses that shortcut for its agent; it is retained as an unavailable choice until explicitly removed. Turning general local handling off does not turn the independent Broadcast shortcut off.
 
 ## Delayed device commands
 

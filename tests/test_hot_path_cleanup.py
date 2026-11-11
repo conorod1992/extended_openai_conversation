@@ -115,21 +115,6 @@ def test_debug_stream_event_is_converted_once() -> None:
     assert request.response_events[0]["delta"] == "hello"
 
 
-async def test_non_broadcast_local_intent_does_not_initialize_intercom(
-    monkeypatch,
-) -> None:
-    """Ordinary local intents should not pay the Broadcast Store cold-load cost."""
-
-    async def unexpected_intercom(_hass):
-        raise AssertionError("Intercom should not be initialized")
-
-    monkeypatch.setattr(local_intents, "async_get_intercom", unexpected_intercom)
-    result = await local_intents._async_try_targeted_broadcast(
-        object(), SimpleNamespace(text="turn on the kitchen light")
-    )
-    assert result is None
-
-
 def _compiled_manager() -> RequestRules:
     # Call from an async test with the hass fixture: compiling the response
     # action validates an HA template and must not inherit another test's context.

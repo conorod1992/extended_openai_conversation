@@ -27,6 +27,7 @@ from homeassistant.helpers.event import async_call_later, async_track_state_chan
 from homeassistant.helpers.storage import Store
 
 from .intercom_permissions import async_authorized_broadcast_targets
+from .operation_settlement import async_settle_owned_operation
 from .strict_store import PropagatingWriteStore
 
 DOMAIN = "extended_openai_conversation_responses"
@@ -181,6 +182,8 @@ class IntercomManager:
             hass, STORAGE_VERSION, STORAGE_KEY
         )
         self._enabled = False
+        self._builtin_voice_command = True
+        self._settings: dict[str, Any] = {}
         self._closed = False
         self._drain_tasks: set[asyncio.Task[Any]] = set()
         self._expiry_unsubscribers: set[Any] = set()
@@ -198,7 +201,11 @@ class IntercomManager:
             if self._loaded:
                 return
             stored = await self._store.async_load()
-            self._enabled = bool(stored.get("enabled", False)) if stored else False
+            self._settings = dict(stored or {})
+            self._enabled = bool(self._settings.get("enabled", False))
+            self._builtin_voice_command = bool(
+                self._settings.get("builtin_voice_command", True)
+            )
             self._loaded = True
 
     @property
@@ -206,30 +213,59 @@ class IntercomManager:
         """Return whether Extended OpenAI Broadcast is enabled."""
         return self._enabled
 
-    async def async_set_enabled(self, enabled: bool) -> None:
-        """Persist the Broadcast master switch and stop pending deliveries when off."""
+    @property
+    def builtin_voice_command(self) -> bool:
+        """Return the independently saved built-in shortcut preference."""
+        return self._builtin_voice_command
+
+    async def async_set_builtin_voice_command(self, enabled: bool) -> None:
+        """Commit both preferences without abandoning a write on cancellation."""
         async with self._state_lock:
-            new_enabled = bool(enabled)
-            await self._store.async_save({"enabled": new_enabled})
-            self._enabled = new_enabled
-            self._loaded = True
-            if not self._enabled:
-                for entity_id, queue in list(self._queues.items()):
-                    retained: deque[BroadcastMessage] = deque()
-                    for item in queue:
-                        delivery = item.deliveries.get(entity_id)
-                        if delivery is None:
-                            continue
-                        if delivery.status == "delivering":
-                            retained.append(item)
-                            continue
-                        if delivery.status not in {"delivered", "failed", "expired"}:
-                            delivery.set("expired", "broadcast_disabled")
-                        self._release_completed_message(item)
-                    queue.clear()
-                    queue.extend(retained)
-                    if not queue:
-                        self._queues.pop(entity_id, None)
+            settings = {
+                **self._settings,
+                "enabled": self._enabled,
+                "builtin_voice_command": bool(enabled),
+            }
+            await async_settle_owned_operation(self._async_commit_settings(settings))
+
+    async def async_set_enabled(self, enabled: bool) -> None:
+        """Persist the master switch and stop pending deliveries when off."""
+        async with self._state_lock:
+            settings = {
+                **self._settings,
+                "enabled": bool(enabled),
+                "builtin_voice_command": self._builtin_voice_command,
+            }
+            await async_settle_owned_operation(
+                self._async_commit_settings(settings, stop_pending=not bool(enabled))
+            )
+
+    async def _async_commit_settings(
+        self, settings: dict[str, Any], *, stop_pending: bool = False
+    ) -> None:
+        """Publish only after save; the caller holds the state lock until settled."""
+        await self._store.async_save(settings)
+        self._settings = settings
+        self._enabled = settings["enabled"]
+        self._builtin_voice_command = settings["builtin_voice_command"]
+        self._loaded = True
+        if stop_pending:
+            for entity_id, queue in list(self._queues.items()):
+                retained: deque[BroadcastMessage] = deque()
+                for item in queue:
+                    delivery = item.deliveries.get(entity_id)
+                    if delivery is None:
+                        continue
+                    if delivery.status == "delivering":
+                        retained.append(item)
+                        continue
+                    if delivery.status not in {"delivered", "failed", "expired"}:
+                        delivery.set("expired", "broadcast_disabled")
+                    self._release_completed_message(item)
+                queue.clear()
+                queue.extend(retained)
+                if not queue:
+                    self._queues.pop(entity_id, None)
 
     async def async_shutdown(self) -> None:
         """Stop listeners, timers and every queued delivery without changing settings."""
@@ -983,64 +1019,3 @@ async def async_get_intercom(hass: HomeAssistant) -> IntercomManager:
         hass.data[DATA_KEY] = manager
     await manager.async_initialize()
     return manager
-
-
-def is_targeted_broadcast_request(text: str) -> bool:
-    """Return whether wording claims a specific broadcast destination."""
-    value = re.sub(r"\s+", " ", text.strip())
-    return any(
-        re.match(pattern, value, flags=re.IGNORECASE)
-        for pattern in (
-            r"^(?:broadcast|announce|send)(?: a message)? to .+$",
-            r"^tell .+$",
-        )
-    )
-
-
-def parse_targeted_broadcast(
-    text: str, manager: IntercomManager
-) -> tuple[dict[str, Any], str] | None:
-    """Parse deliberately explicit targeted broadcast wording without an LLM call."""
-    value = re.sub(r"\s+", " ", text.strip())
-    patterns = (
-        r"^(?:broadcast|announce|send)(?: a message)? to (?P<rest>.+)$",
-        r"^tell (?P<rest>.+)$",
-    )
-    rest = None
-    for pattern in patterns:
-        match = re.match(pattern, value, flags=re.IGNORECASE)
-        if match:
-            rest = match.group("rest")
-            break
-    if rest is None:
-        return None
-    catalog = manager.catalog()
-    candidates = [
-        *(
-            candidate
-            for group in ("satellites", "devices", "areas", "floors", "labels")
-            for item in catalog[group]
-            for candidate in [str(item["name"]), *(item.get("aliases") or [])]
-        ),
-        "everyone",
-        "everywhere",
-        "whole home",
-        "the whole house",
-        "all devices",
-        "all speakers",
-    ]
-    for candidate in sorted(set(candidates), key=len, reverse=True):
-        prefix = re.escape(candidate)
-        payload_match = re.match(
-            rf"^(?:the )?{prefix}(?:\s+(?:that|saying|message)\s+|[:,]\s*|\s+)(?P<message>.+)$",
-            rest,
-            flags=re.IGNORECASE,
-        )
-        if payload_match:
-            target = manager.resolve_named_target(candidate, catalog=catalog)
-            if target is None:
-                continue
-            payload = payload_match.group("message").strip()
-            target.pop("name", None)
-            return target, payload
-    return None

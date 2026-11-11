@@ -116,10 +116,6 @@ async def test_storage_lock_falls_back_for_non_guarded_storage() -> None:
     assert not lock.locked()
 
 
-
-
-
-
 def test_make_schema_nullable_leaves_already_nullable_schema_unchanged() -> None:
     schema = {"type": ["string", "null"]}
     _make_schema_nullable(schema)
@@ -308,7 +304,6 @@ async def test_debug_endpoint_without_trace_is_transparent(monkeypatch) -> None:
     delegate.create.assert_awaited_once_with(model="test")
 
 
-
 @pytest.mark.asyncio
 async def test_diagnostics_survives_provider_usage_and_sdk_metadata_failures(
     hass, monkeypatch
@@ -470,7 +465,6 @@ async def test_diagnostics_reports_previously_failed_optional_subsystems_without
         "archive": archive,
     }[subsystem_key]
     loader.assert_not_awaited()
-
 
 
 def test_effective_skill_loader_status_success_carries_loadable_skills() -> None:
@@ -682,7 +676,6 @@ def test_template_skill_dir_requires_initialized_manager(hass, monkeypatch) -> N
 
     with pytest.raises(ValueError, match="SkillManager not initialized"):
         manager._get_skill_dir("missing")
-
 
 
 @pytest.mark.asyncio
@@ -947,7 +940,6 @@ def test_runtime_failure_token_length_can_be_recorded_as_local_reply() -> None:
     entity._fire_conversation_finished.assert_called_once()
 
 
-
 def test_request_rule_groups_reject_duplicate_ids() -> None:
     from custom_components.extended_openai_conversation_responses import request_rules
 
@@ -1045,9 +1037,6 @@ def test_request_rule_result_references_recurse_through_identity_named_payloads(
     }
 
 
-
-
-
 @pytest.mark.parametrize(
     "value",
     [
@@ -1094,35 +1083,6 @@ def test_guest_slot_resolution_recurses_through_supported_shapes() -> None:
         },
         "count": 2,
     }
-
-
-
-@pytest.mark.asyncio
-async def test_targeted_broadcast_parse_miss_returns_to_normal_routing(
-    hass, monkeypatch
-) -> None:
-    from custom_components.extended_openai_conversation_responses import local_intents
-
-    manager = SimpleNamespace(enabled=True)
-    monkeypatch.setattr(
-        local_intents, "async_get_intercom", AsyncMock(return_value=manager)
-    )
-    monkeypatch.setattr(
-        local_intents, "is_targeted_broadcast_request", Mock(return_value=True)
-    )
-    monkeypatch.setattr(
-        local_intents, "parse_targeted_broadcast", Mock(return_value=None)
-    )
-    user_input = SimpleNamespace(
-        text="broadcast to nowhere hello",
-        context=None,
-        satellite_id=None,
-        device_id=None,
-    )
-
-    assert (
-        await local_intents._async_try_targeted_broadcast(hass, user_input) is None
-    )
 
 
 def test_native_statistics_schema_migration_skips_already_strict_schema() -> None:
@@ -1233,7 +1193,6 @@ def test_model_retirement_rule_override_returns_rule_specific_message(
     assert result is not None
     assert "Request Rule selected retired model retired-model" in result
     create_issue.assert_called_once()
-
 
 
 @pytest.mark.parametrize(
@@ -1410,7 +1369,6 @@ def test_transfer_configuration_mapping_handles_non_mapping_and_devices() -> Non
     assert config[transfer.CONF_VOICE_DEFAULT_USER_ID] == "alice"
 
 
-
 @pytest.mark.asyncio
 async def test_restore_journal_load_handles_missing_unreadable_and_corrupt_files(
     hass, monkeypatch
@@ -1572,7 +1530,6 @@ async def test_finish_restore_reload_discards_successful_pending_marker(
     assert pending == set()
 
 
-
 @pytest.mark.asyncio
 async def test_export_chunk_rejects_out_of_range_and_missing_staged_archive(
     hass, tmp_path, monkeypatch
@@ -1713,7 +1670,6 @@ async def test_restore_import_requires_preview_token(hass) -> None:
             subentry,
             {"session_id": session_id},
         )
-
 
 
 def test_local_handling_snapshot_falls_back_for_lightweight_hass(monkeypatch) -> None:

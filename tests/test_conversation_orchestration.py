@@ -957,3 +957,70 @@ async def test_archive_privacy_transitions_do_not_save_the_current_private_turn(
     if not should_save:
         assert "Current private request" not in str(storage.partitions)
         assert "Current answer" not in str(storage.partitions)
+
+
+@pytest.mark.parametrize("failure", [False, True])
+@pytest.mark.parametrize("with_usage", [False, True])
+async def test_broadcast_shortcut_uses_local_completion_and_never_retries(monkeypatch, failure, with_usage):
+    from custom_components.extended_openai_conversation_responses import broadcast_command
+    from homeassistant.exceptions import HomeAssistantError
+    entity, user_input, chat_log, policy, process = _pipeline_fixture(monkeypatch, text="Broadcast Dinner")
+    entity._effective_guest_policy = MagicMock(return_value=policy)
+    manager = SimpleNamespace(enabled=True, builtin_voice_command=True, async_send=AsyncMock(side_effect=HomeAssistantError("admission failed") if failure else None))
+    monkeypatch.setattr(broadcast_command, "async_get_intercom", AsyncMock(return_value=manager))
+    local = AsyncMock(side_effect=AssertionError("shortcut must consume the request"))
+    monkeypatch.setattr(conversation_module, "async_try_handle_local_intent", local)
+    archive = SimpleNamespace(async_record_turn=AsyncMock())
+    if with_usage:
+        entity._usage = _UsageRecorder(successful=not failure)
+        entity._usage.mark_current_run_failed = MagicMock()
+        entity._archive = archive
+        entity._async_begin_archive_session = AsyncMock(return_value=SimpleNamespace(session_id="archive-1"))
+    result = await process()
+    assert (result.response.error_code is not None) is failure
+    assert manager.async_send.await_count == 1
+    entity._async_handle_message_with_ha_tools.assert_not_awaited()
+    local.assert_not_awaited()
+    assert entity._continuity.async_record_success.await_count == int(not failure)
+    if with_usage:
+        archive.async_record_turn.assert_awaited_once()
+    event = entity.hass.bus.async_fire.call_args.args[1]
+    assert event["handled_locally"] is True
+    assert event["status"] == ("error" if failure else "local")
+
+
+@pytest.mark.parametrize("consume", [False, True])
+async def test_request_rules_precede_broadcast_even_for_ai_handoff(monkeypatch, consume):
+    entity, _, _, _, process = _pipeline_fixture(monkeypatch, text="Broadcast Dinner")
+    entity._request_rules = object()
+    entity._request_rule_runtime = _rule_runtime(effective_options=MagicMock(return_value={}))
+    evaluation = RuleEvaluation(match=RuleMatch({"id":"rule", "name":"Broadcast rule"}, "Broadcast Dinner", False, 100.0), consume=consume, response="Rule handled")
+    monkeypatch.setattr(conversation_module, "async_evaluate_rule", AsyncMock(return_value=evaluation))
+    shortcut = AsyncMock(side_effect=AssertionError("a rule already owns this request"))
+    monkeypatch.setattr(conversation_module, "async_try_broadcast_command", shortcut)
+    entity._async_handle_message_with_ha_tools.return_value = conversation.ConversationResult(response=intent.IntentResponse(language="en"), conversation_id="conversation-1")
+    await process()
+    shortcut.assert_not_awaited()
+    assert entity._async_handle_message_with_ha_tools.await_count == int(not consume)
+
+
+async def test_broadcast_failure_after_queue_insertion_never_repeats_effect(hass, monkeypatch):
+    from custom_components.extended_openai_conversation_responses import broadcast_command
+    from custom_components.extended_openai_conversation_responses.intercom import IntercomManager
+    from homeassistant.exceptions import HomeAssistantError
+    entity, _, _, _, process = _pipeline_fixture(monkeypatch, text="Broadcast Dinner")
+    manager = IntercomManager(hass)
+    manager._enabled = True
+    monkeypatch.setattr(manager, "resolve_targets", lambda **_: ["assist_satellite.kitchen"])
+    def fail_after_insertion(_entity_id):
+        raise HomeAssistantError("delivery setup failed after insertion")
+    monkeypatch.setattr(manager, "_schedule_drain", fail_after_insertion)
+    monkeypatch.setattr(broadcast_command, "async_get_intercom", AsyncMock(return_value=manager))
+    send = AsyncMock(wraps=manager.async_send)
+    manager.async_send = send
+    result = await process()
+    assert result.response.error_code is not None
+    send.assert_awaited_once()
+    assert len(manager.history()) == len(manager._queues["assist_satellite.kitchen"]) == 1
+    entity._async_handle_message_with_ha_tools.assert_not_awaited()
+    assert entity.hass.bus.async_fire.call_args.args[1]["handled_locally"] is True

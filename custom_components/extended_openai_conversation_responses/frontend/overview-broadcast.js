@@ -1,4 +1,4 @@
-import {callMutation, captureConfigurationOwner, presentAcknowledgedMutation, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
+import {callMutation, captureConfigurationOwner, configurationSubmissionIsCurrent, presentAcknowledgedMutation, requireMutationAcknowledgement} from "./configuration-acknowledgement.js";
 import {acknowledgeBroadcast} from "./broadcast-acknowledgement.js";
 import {broadcastAttempt, sameBroadcastPayload, retireBroadcastAttempt} from "./broadcast-retry.js";
 import {watchLiveStatus, stopLiveStatus} from "./management-live-status.js";
@@ -67,6 +67,7 @@ function broadcastMarkup(panel, snapshot) {
   const message = panel._broadcastMessage || "";
   const enabled = snapshot.enabled === true;
   const canManage = snapshot.can_manage === true;
+  const builtinVoiceCommand = snapshot.builtin_voice_command !== false;
   const active = snapshot.pending || [];
   const activeIds = new Set(active.map(item => item.id));
   const history = [...active, ...(snapshot.history || []).filter(item => !activeIds.has(item.id))];
@@ -75,6 +76,10 @@ function broadcastMarkup(panel, snapshot) {
     <div class="broadcast-toggle-row">
       <div><strong>Enable Broadcast</strong>${enabled ? "" : "<p>Broadcast is currently off.</p>"}</div>
       ${canManage ? `<label class="switch-control" for="broadcast-enabled"><input id="broadcast-enabled" type="checkbox" role="switch" aria-label="Enable Broadcast" ${enabled ? "checked" : ""}><span class="switch-track" aria-hidden="true"></span></label>` : `<strong class="status-pill ${enabled ? "status-on" : "status-off"}">${enabled ? "On" : "Off"}</strong>`}
+    </div>
+    <div class="broadcast-toggle-row">
+      <div><strong>Built-in voice command</strong><p>Handle ‘Broadcast [message]’ locally without AI. Turn this off to manage Broadcast commands using Request Rules or your AI model.</p></div>
+      ${canManage ? `<label class="switch-control" for="broadcast-builtin-voice-command"><input id="broadcast-builtin-voice-command" type="checkbox" role="switch" aria-label="Built-in voice command" ${builtinVoiceCommand ? "checked" : ""}><span class="switch-track" aria-hidden="true"></span></label>` : `<strong class="status-pill ${builtinVoiceCommand ? "status-on" : "status-off"}">${builtinVoiceCommand ? "On" : "Off"}</strong>`}
     </div>
     ${enabled ? `
       <div class="broadcast-compose">
@@ -110,19 +115,31 @@ function broadcastMarkup(panel, snapshot) {
 
 function bindBroadcastControls(panel, snapshot) {
   const root = panel.shadowRoot;
-  root.querySelector("#broadcast-enabled")?.addEventListener("change", async (event) => {
-    const enabled = event.target.checked;
-    event.target.disabled = true;
+  for (const [selector, action, field, label] of [
+    ["#broadcast-enabled", "set_enabled", "enabled", "Broadcast"],
+    ["#broadcast-builtin-voice-command", "set_builtin_voice_command", "builtin_voice_command", "Built-in voice command"],
+  ]) root.querySelector(selector)?.addEventListener("change", async (event) => {
+    const control = event.target;
+    const enabled = control.checked;
+    control.disabled = true;
     const submission = captureConfigurationOwner(panel);
+    const authenticated = captureAuthentication(panel);
+    const current = () => authenticated() && configurationSubmissionIsCurrent(panel, submission)
+      && panel.isConnected !== false && panel._viewKey?.() === "overview";
     try {
-      const result = await callMutation(() => panel._hass.callWS({type: WS_BROADCAST, action: "set_enabled", enabled}));
-      requireMutationAcknowledgement(typeof result?.enabled === "boolean", "changing Broadcast");
-      await presentAcknowledgedMutation(panel, submission, `Broadcast ${result.enabled ? "enabled" : "disabled"}`, async () => {
-        if (!await loadBroadcast(panel)) throw Error("Broadcast status could not be refreshed.");
+      const result = await callMutation(() => panel._hass.callWS({type: WS_BROADCAST, action, enabled}));
+      requireMutationAcknowledgement(typeof result?.[field] === "boolean", `changing ${label}`);
+      await presentAcknowledgedMutation(panel, current, `${label} ${result[field] ? "enabled" : "disabled"}`, async () => {
+        if (!await loadBroadcast(panel, current)) throw Error("Broadcast status could not be refreshed.");
       }, result);
     } catch (err) {
-      panel._toast(`Unable to change Broadcast: ${err.message || String(err)}`, true);
-      await loadBroadcast(panel);
+      if (!current()) return;
+      panel._toast(`Unable to change ${label}: ${err.message || String(err)}`, true);
+      await loadBroadcast(panel, current);
+    } finally {
+      // Authentication can retire the acknowledgement while retaining this
+      // owner's controls. Release only this operation's original input.
+      control.disabled = false;
     }
   });
   root.querySelector("#broadcast-message")?.addEventListener("input", (event) => { panel._broadcastMessage = event.target.value; panel._broadcastDraftRevision = (panel._broadcastDraftRevision || 0) + 1; });
@@ -262,15 +279,15 @@ function applyBroadcastError(panel, err) {
   host.innerHTML = `<div class="error" role="alert">Unable to load Broadcast: ${panel._e(err.message || String(err))}</div>`;
 }
 
-async function loadBroadcast(panel) {
+async function loadBroadcast(panel, owns = () => true) {
   const current = captureAuthentication(panel);
   const token = panel._eocBroadcastReadToken = (panel._eocBroadcastReadToken || 0) + 1;
   try {
     const snapshot = await panel._hass.callWS({type: WS_BROADCAST, action: "snapshot"});
-    if (current() && panel._eocBroadcastReadToken === token) applyBroadcastSnapshot(panel, snapshot);
+    if (current() && owns() && panel._eocBroadcastReadToken === token) applyBroadcastSnapshot(panel, snapshot);
     return true;
   } catch (err) {
-    if (current() && panel._eocBroadcastReadToken === token) applyBroadcastError(panel, err);
+    if (current() && owns() && panel._eocBroadcastReadToken === token) applyBroadcastError(panel, err);
     return false;
   }
 }
