@@ -979,12 +979,11 @@ class QuietHoursManager:
                     (self._active or {}).get("controls", {}).items()
                 ):
                     if self._retain_ambiguous_control(entity_id, control, [item]):
-                        field = (
-                            "media_player_entity_id"
+                        item = (
+                            replace(item, media_player_entity_id=None)
                             if control["kind"] == "volume"
-                            else "wake_sound_entity_id"
+                            else replace(item, wake_sound_entity_id=None)
                         )
-                        item = replace(item, **{field: None})
                 capabilities[index] = item
             await self._async_reconcile_controls_locked(capabilities)
             await self._async_retry_pending_restores_locked()
