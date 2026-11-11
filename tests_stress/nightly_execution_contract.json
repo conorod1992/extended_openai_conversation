@@ -1,6 +1,8 @@
 {
   "schema": "eoai-nightly-execution-contract/v1",
   "pytest": [
+    "tests_real_ha/test_global_runtime_suspension.py::test_crash_startup_restores_without_successful_provider_setup[False]",
+    "tests_real_ha/test_global_runtime_suspension.py::test_crash_startup_restores_without_successful_provider_setup[True]",
     "tests_real_ha/test_global_runtime_suspension.py::test_last_loaded_entry_unload_and_reload_preserve_global_policy[False]",
     "tests_real_ha/test_global_runtime_suspension.py::test_last_loaded_entry_unload_and_reload_preserve_global_policy[True]",
     "tests_real_ha/test_request_rules_script_semantics.py::test_apostrophe_sentence_rule_consumes_without_provider[straight-pattern]",

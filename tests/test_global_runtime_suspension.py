@@ -343,3 +343,194 @@ async def test_suspension_cancels_running_broadcast_call(hass, monkeypatch):
     await integration._async_release_global_effects(hass, "entry")
     assert cancelled.is_set()
     assert not manager._drain_tasks and not manager._queues
+
+
+@pytest.mark.parametrize("condition", ["owned", "unavailable", "failure", "manual"])
+async def test_startup_restoration_only_settles_saved_owned_controls(
+    hass, monkeypatch, condition
+):
+    from copy import deepcopy
+    from datetime import UTC, datetime
+    from unittest.mock import Mock
+
+    from tests.test_quiet_hours_runtime import (
+        _config,
+        _install_registry,
+        _install_services,
+        _seed_room,
+        _stateful_public_manager,
+    )
+
+    _install_registry(monkeypatch, "bedroom")
+    live = _stateful_public_manager(hass)
+    _seed_room(hass, "bedroom", volume=0.8)
+    live._config = _config(wake_sound="unchanged")
+    now = datetime(2026, 11, 11, 23, tzinfo=UTC)
+    monkeypatch.setattr(quiet_hours_runtime.dt_util, "now", lambda: now)
+    calls, _ = await _install_services(hass)
+    await live.async_reconcile(now=now)
+    saved = deepcopy(live._store.async_save.call_args.args[0])
+    # Crash: retain physical device and disk state; no graceful shutdown.
+    hass.states.async_remove("binary_sensor.extended_openai_quiet_hours")
+    hass.data[OWNERS] = set()
+    calls.clear()
+    media = "media_player.bedroom"
+    if condition == "unavailable":
+        hass.states.async_set(media, "unavailable", {"volume_level": 0.2})
+    elif condition == "manual":
+        hass.states.async_set(media, "idle", {"volume_level": 0.45})
+    elif condition == "failure":
+        hass.services.async_call.side_effect = HomeAssistantError("speaker failed")
+    recovery = quiet_hours_runtime.QuietHoursManager(hass)
+    recovery._store = SimpleNamespace(
+        async_load=AsyncMock(return_value=saved), async_save=AsyncMock()
+    )
+    recovery._publish_state = Mock(side_effect=AssertionError("must not publish"))
+    listeners = hass.bus.async_listen.call_count
+    await recovery.async_restore_saved_controls()
+    assert not recovery._unsubscribers and recovery._timezone_unsubscribe is None
+    assert hass.bus.async_listen.call_count == listeners
+    assert hass.states.get("binary_sensor.extended_openai_quiet_hours") is None
+    assert recovery._stopping
+    assert "quiet_hours_manager" not in hass.data.get(DOMAIN, {})
+    if condition in {"unavailable", "failure"}:
+        persisted = recovery._store.async_save.call_args.args[0]
+        control = persisted["active"]["controls"][media]
+        assert control["original_value"] == 0.8 and control["restoration_pending"]
+        assert not calls
+    elif condition == "manual":
+        assert hass.states.get(media).attributes["volume_level"] == 0.45
+        assert not calls
+    else:
+        assert calls == [(media, 0.8)]
+        assert recovery.active is None
+        assert hass.states.get(media).attributes["volume_level"] == 0.8
+        assert recovery.config.enabled
+
+
+async def test_component_startup_restores_before_failed_provider_auth(
+    hass, monkeypatch
+):
+    from copy import deepcopy
+    from datetime import UTC, datetime
+
+    from custom_components.extended_openai_conversation_responses import (
+        agent_deletion,
+        transfer_staging,
+    )
+    from homeassistant.exceptions import ConfigEntryAuthFailed
+    from tests.test_quiet_hours_runtime import (
+        _config,
+        _install_registry,
+        _install_services,
+        _seed_room,
+        _stateful_public_manager,
+    )
+    from tests.test_reauthentication import _authentication_error
+
+    _install_registry(monkeypatch, "bedroom")
+    live = _stateful_public_manager(hass)
+    _seed_room(hass, "bedroom", volume=0.8)
+    live._config = _config(wake_sound="unchanged")
+    now = datetime(2026, 11, 11, 23, tzinfo=UTC)
+    monkeypatch.setattr(quiet_hours_runtime.dt_util, "now", lambda: now)
+    await _install_services(hass)
+    await live.async_reconcile(now=now)
+    saved = deepcopy(live._store.async_save.call_args.args[0])
+    hass.states.async_remove("binary_sensor.extended_openai_quiet_hours")
+    recovery = quiet_hours_runtime.QuietHoursManager(hass)
+    recovery._store = SimpleNamespace(
+        async_load=AsyncMock(return_value=saved), async_save=AsyncMock()
+    )
+    monkeypatch.setattr(quiet_hours, "_RuntimeQuietHoursManager", lambda _: recovery)
+    for name in [
+        "async_setup_model_catalog",
+        "async_migrate_integration",
+        "async_setup_delayed_tools",
+        "async_recover_pending_restores",
+        "async_setup_ha_permissions",
+        "async_setup_services",
+        "async_setup_intercom_services",
+        "async_setup_debug_ui",
+        "async_setup_management_ui",
+    ]:
+        monkeypatch.setattr(integration, name, AsyncMock())
+    monkeypatch.setattr(agent_deletion, "async_setup_agent_deletion", lambda *_: None)
+    monkeypatch.setattr(agent_deletion, "async_reconcile_agent_storage", AsyncMock())
+    monkeypatch.setattr(agent_deletion, "async_delete_removed_subentries", AsyncMock())
+    monkeypatch.setattr(transfer_staging, "async_get_transfer_staging", AsyncMock())
+    monkeypatch.setattr(integration, "setup_backup_transfer_websocket", lambda *_: None)
+    monkeypatch.setattr(
+        integration, "setup_provider_credentials_websocket", lambda *_: None
+    )
+    monkeypatch.setattr(
+        integration,
+        "get_authenticated_client",
+        AsyncMock(side_effect=_authentication_error()),
+    )
+    assert await integration.async_setup(hass, {})
+    with pytest.raises(ConfigEntryAuthFailed):
+        await integration.async_setup_entry(hass, _Entry("failed", 0))
+    assert hass.states.get("media_player.bedroom").attributes["volume_level"] == 0.8
+    assert hass.data[OWNERS] == set()
+    assert "quiet_hours_manager" not in hass.data.get(DOMAIN, {})
+    assert hass.states.get("binary_sensor.extended_openai_quiet_hours") is None
+    with pytest.raises(HomeAssistantError):
+        await quiet_hours.async_get_quiet_hours(hass)
+    with pytest.raises(HomeAssistantError):
+        await intercom.async_get_intercom(hass)
+
+
+@pytest.mark.parametrize(
+    "saved,quarantined",
+    [
+        (None, False),
+        ({"config": []}, True),
+        (
+            {
+                "active": {
+                    "controls": {
+                        "media_player.old": {
+                            "kind": "volume",
+                            "original_value": 0.8,
+                            "quiet_value": 0.2,
+                        }
+                    }
+                }
+            },
+            True,
+        ),
+    ],
+)
+async def test_startup_restore_preserves_missing_corrupt_and_unverified_storage(
+    hass, saved, quarantined
+):
+    from copy import deepcopy
+
+    recovery = quiet_hours_runtime.QuietHoursManager(hass)
+    original = deepcopy(saved)
+    recovery._store = SimpleNamespace(
+        async_load=AsyncMock(return_value=saved), async_save=AsyncMock()
+    )
+    hass.data[OWNERS] = set()
+    await recovery.async_restore_saved_controls()
+    assert recovery.startup_unavailable is quarantined
+    assert saved == original
+    recovery._store.async_save.assert_not_awaited()
+    hass.services.async_call.assert_not_awaited()
+    assert not recovery._unsubscribers and recovery._timezone_unsubscribe is None
+
+
+async def test_startup_restoration_never_interrupts_an_operating_manager(
+    hass, monkeypatch
+):
+    hass.data[OWNERS] = {"live"}
+
+    from unittest.mock import Mock
+
+    factory = Mock(
+        side_effect=AssertionError("must not create a recovery manager while loaded")
+    )
+    monkeypatch.setattr(quiet_hours, "_RuntimeQuietHoursManager", factory)
+    await quiet_hours.async_restore_saved_quiet_hours(hass)
+    factory.assert_not_called()

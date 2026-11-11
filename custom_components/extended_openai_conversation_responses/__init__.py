@@ -120,7 +120,7 @@ from .openai_compat import apply_openai_compatibility
 from .operation_settlement import async_settle_owned_operation
 from .prompt_cache import PerformanceOpenAIClientProxy
 from .provider_credentials import setup_provider_credentials_websocket
-from .quiet_hours import async_get_quiet_hours
+from .quiet_hours import async_get_quiet_hours, async_restore_saved_quiet_hours
 from .restore_recovery import async_recover_pending_restores
 from .services import async_setup_services
 from .template import async_setup_templates, async_unload_templates
@@ -198,6 +198,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up Extended OpenAI Conversation (Responses)."""
     initialize_global_runtime(hass)
     await async_setup_model_catalog(hass)
+    await async_restore_saved_quiet_hours(hass)
     apply_openai_compatibility()
     await async_migrate_integration(hass)
     from .agent_deletion import (

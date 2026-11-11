@@ -573,56 +573,82 @@ class QuietHoursManager:
             elif self._initialized:
                 return
             else:
-                # Parse a complete generation before installing any of it. Missing
-                # storage is a legitimate fresh install; a malformed saved payload
-                # must never become default configuration with lost restore baselines.
-                try:
-                    stored = await _async_settle_store_io(self._store.async_load())
-                    if stored is not None and not isinstance(stored, Mapping):
-                        raise ValueError("Quiet Hours storage must be an object")
-                    raw = stored if stored is not None else {}
-                    if not self._check_saved_ownership(raw.get("active")):
-                        return
-                    config = _config_from_data(raw.get("config"))
-                    identities = self._normalize_selection_identities(
-                        raw.get("selection_identities"), config
-                    )
-                    active = self._normalize_active(raw.get("active"))
-                    if raw.get("active") is not None and active is None:
-                        raise ValueError("Quiet Hours saved ownership is invalid")
-                except (
-                    HomeAssistantError,
-                    OSError,
-                    ValueError,
-                    TypeError,
-                    AttributeError,
-                ) as err:
-                    if self.startup_unavailable:
-                        # The Store's migration guard already recorded the
-                        # specific recovery reason without rewriting its file.
-                        return
-                    # The feature remains unavailable for this process. In particular,
-                    # neither an empty state nor speculative controls may be persisted.
-                    self._startup_unavailable_reason = (
-                        "Quiet Hours saved storage is unreadable or malformed. "
-                        "Its data is preserved; repair it while Home Assistant is "
-                        "stopped, then restart Home Assistant."
-                    )
-                    logging.getLogger(__name__).error(
-                        "Quiet Hours disabled: saved storage needs repair (%s)",
-                        type(err).__name__,
-                    )
+                if not await self._async_load_initial_state_locked():
                     return
-                self._config = config
-                self._selection_identities = identities
-                self._active = active
-                self._config_recovery_pending = False
-                self._initialized = True
                 self._reschedule()
                 self._timezone_unsubscribe = self.hass.bus.async_listen(
                     EVENT_CORE_CONFIG_UPDATE, self._handle_core_config_update
                 )
         await self.async_reconcile()
+
+    async def _async_load_initial_state_locked(self) -> bool:
+        # Parse a complete generation before installing any of it. Missing
+        # storage is a legitimate fresh install; a malformed saved payload
+        # must never become default configuration with lost restore baselines.
+        try:
+            stored = await _async_settle_store_io(self._store.async_load())
+            if stored is not None and not isinstance(stored, Mapping):
+                raise ValueError("Quiet Hours storage must be an object")
+            raw = stored if stored is not None else {}
+            if not self._check_saved_ownership(raw.get("active")):
+                return False
+            config = _config_from_data(raw.get("config"))
+            identities = self._normalize_selection_identities(
+                raw.get("selection_identities"), config
+            )
+            active = self._normalize_active(raw.get("active"))
+            if raw.get("active") is not None and active is None:
+                raise ValueError("Quiet Hours saved ownership is invalid")
+        except (
+            HomeAssistantError,
+            OSError,
+            ValueError,
+            TypeError,
+            AttributeError,
+        ) as err:
+            if self.startup_unavailable:
+                # The Store's migration guard already recorded the
+                # specific recovery reason without rewriting its file.
+                return False
+            # The feature remains unavailable for this process. In particular,
+            # neither an empty state nor speculative controls may be persisted.
+            self._startup_unavailable_reason = (
+                "Quiet Hours saved storage is unreadable or malformed. "
+                "Its data is preserved; repair it while Home Assistant is "
+                "stopped, then restart Home Assistant."
+            )
+            logging.getLogger(__name__).error(
+                "Quiet Hours disabled: saved storage needs repair (%s)",
+                type(err).__name__,
+            )
+            return False
+        self._config = config
+        self._selection_identities = identities
+        self._active = active
+        self._config_recovery_pending = False
+        self._initialized = True
+        return True
+
+    async def async_restore_saved_controls(self) -> None:
+        """Settle prior ownership once, without starting or publishing a policy.
+
+        Use a fresh, uncached manager. Stopping fences any readback/recovery path
+        that might otherwise reschedule automation while saved state is loaded.
+        """
+        if self._initialized:
+            raise RuntimeError(
+                "Startup restoration requires a fresh Quiet Hours manager"
+            )
+        self._stopping = True
+
+        async def restore() -> None:
+            async with self._lock:
+                if not await self._async_load_initial_state_locked():
+                    return
+                if self._active is not None:
+                    await self._async_restore_locked(preserve_released=True)
+
+        await _async_settle_store_io(restore())
 
     async def async_shutdown(self) -> None:
         # Unsubscribing cannot retract callbacks already queued on this lock.
