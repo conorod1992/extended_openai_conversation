@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from unittest.mock import AsyncMock
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -60,7 +59,7 @@ async def test_identical_policy_saves_do_not_reclaim_manual_choice(hass, kind, r
 
 
 @pytest.mark.parametrize("restart", [False, True])
-async def test_delayed_corrective_feedback_does_not_exhaust_volume_budget(
+async def test_delayed_rounded_feedback_restores_without_extra_volume_commands(
     hass, restart
 ):
     _, media_player_id, _ = _install_satellite_entities(hass)
@@ -78,7 +77,7 @@ async def test_delayed_corrective_feedback_does_not_exhaust_volume_budget(
     async def volume_set(call: ServiceCall) -> None:
         requested = call.data["volume_level"]
         calls.append(requested)
-        if len(calls) == 2:
+        if len(calls) == 1:
             pending.append((requested, call.context))
         else:
             publish(requested, call.context)
@@ -97,7 +96,9 @@ async def test_delayed_corrective_feedback_does_not_exhaust_volume_budget(
         }
     )
     await hass.async_block_till_done()
-    assert calls == pytest.approx([0.23, 0.18])
+    assert calls == [0.23]
+    publish(*pending.pop())
+    await manager.async_reconcile()
     if restart:
         manager._cancel_scheduled_callbacks()
         if manager._registry_unsubscribe is not None:
@@ -106,16 +107,13 @@ async def test_delayed_corrective_feedback_does_not_exhaust_volume_budget(
         hass.data[DOMAIN].pop(_RUNTIME_KEY, None)
         manager = await async_get_quiet_hours(hass)
     await manager.async_reconcile()
-    assert calls == pytest.approx([0.23, 0.18])
-    publish(*pending.pop())
-    await manager.async_reconcile()
     assert hass.states.get(media_player_id).attributes["volume_level"] == pytest.approx(
-        0.2
+        0.25
     )
-    assert calls == pytest.approx([0.23, 0.18])
+    assert calls == [0.23]
     await manager.async_update_config({**manager.config.as_dict(), "enabled": False})
     await hass.async_block_till_done()
-    assert calls == pytest.approx([0.23, 0.18, 0.60])
+    assert calls == [0.23, 0.60]
 
 
 @pytest.mark.parametrize("restart", [False, True])
@@ -157,20 +155,14 @@ async def test_quantized_retarget_without_state_report_restores_baseline(
     )
     await hass.async_block_till_done()
     owned_report = hass.states.get(media_player_id)
-    assert owned_report.attributes["volume_level"] <= requested
-    deferred_correction = restart and retarget == 0.19
-    if deferred_correction:
-        # Persist the no-report retarget before any correction. A newly loaded
-        # manager must recover the earlier report's ownership, not just its value.
-        manager._async_correct_volume_ceiling_locked = AsyncMock()
+    assert owned_report.attributes["volume_level"] == pytest.approx(
+        round(requested / 0.05) * 0.05
+    )
     await manager.async_update_config(
         {**manager.config.as_dict(), "max_volume": retarget}
     )
     await hass.async_block_till_done()
-    if not deferred_correction:
-        assert hass.states.get(media_player_id).attributes["volume_level"] <= retarget
-    if retarget == 0.22 or deferred_correction:
-        assert hass.states.get(media_player_id) is owned_report
+    assert hass.states.get(media_player_id) is owned_report
     if restart:
         manager._cancel_scheduled_callbacks()
         if manager._registry_unsubscribe is not None:
@@ -179,18 +171,13 @@ async def test_quantized_retarget_without_state_report_restores_baseline(
         hass.data[DOMAIN].pop(_RUNTIME_KEY, None)
         manager = await async_get_quiet_hours(hass)
         await hass.async_block_till_done()
-    assert hass.states.get(media_player_id).attributes["volume_level"] <= retarget
+    assert hass.states.get(media_player_id) is owned_report
     await manager.async_update_config({**manager.config.as_dict(), "enabled": False})
     await hass.async_block_till_done()
     assert hass.states.get(media_player_id).attributes["volume_level"] == pytest.approx(
         0.60
     )
-    expected = {
-        0.22: [0.21, 0.22, 0.60],
-        0.24: [0.23, 0.18, 0.24, 0.21, 0.60],
-        0.19: [0.21, 0.19, 0.16, 0.60],
-    }
-    assert calls == pytest.approx(expected[retarget])
+    assert calls == [requested, retarget, 0.60]
 
 
 def _active_window() -> tuple[str, str]:

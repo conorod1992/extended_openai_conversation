@@ -24,7 +24,6 @@ async def test_unchanged_target_releases_manual_adjustment_before_later_restore(
     )
     entity_id = "media_player.bedroom" if kind == "volume" else "switch.wake_sound"
     manager._active = _active(entity_id, kind)
-    manager._active["controls"][entity_id]["ceiling_attempts"] = 3
     if restart:
         manager._active = manager._normalize_active(deepcopy(manager.active))
     state = SimpleNamespace(

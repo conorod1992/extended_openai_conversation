@@ -78,137 +78,42 @@ START = datetime(2026, 10, 18, 23, tzinfo=UTC)
 END = datetime(2026, 10, 19, 8, tzinfo=UTC)
 
 
-@pytest.mark.parametrize("restart", [False, True])
-async def test_delayed_corrective_report_does_not_issue_further_lower_commands(
-    hass, monkeypatch, restart
-):
-    manager, state, calls, _, report = _speaker(hass, monkeypatch)
-    original = hass.services.async_call.side_effect
-    pending = []
-
-    async def service(domain, name, data, **kwargs):
-        if not calls:
-            await original(domain, name, data, **kwargs)
-        else:
-            calls.append(data["volume_level"])
-            pending.append((data["volume_level"], kwargs["context"]))
-
-    hass.services.async_call.side_effect = service
-    await manager.async_reconcile(now=START)
-    assert calls == pytest.approx([0.23, 0.18])
-    if restart:
-        manager._active = manager._normalize_active(deepcopy(manager.active))
-    await manager.async_reconcile(now=START)
-    assert calls == pytest.approx([0.23, 0.18]), (
-        "unchanged old feedback must not exhaust the budget"
-    )
-    report(*pending.pop())
-    await manager.async_reconcile(now=START)
-    assert state.attributes["volume_level"] == pytest.approx(0.2)
-    assert calls == pytest.approx([0.23, 0.18])
-
-
-async def test_missing_feedback_retries_only_after_settling_with_persisted_budget(
+async def test_no_device_report_does_not_repeat_or_restore_the_command(
     hass, monkeypatch
 ):
-    manager, state, calls, _, _ = _speaker(hass, monkeypatch)
-    clock = [START]
-    monkeypatch.setattr(runtime.dt_util, "utcnow", lambda: clock[0])
-
-    async def service(domain, name, data, **kwargs):
-        calls.append(data["volume_level"])
-        if len(calls) == 1:
-            state.attributes["volume_level"] = 0.25
-            state.context = kwargs["context"]
-
-    hass.services.async_call.side_effect = service
+    manager, state, calls, reports, _ = _speaker(hass, monkeypatch, delayed=True)
     await manager.async_reconcile(now=START)
-    for expected in [3, 4, 4]:
-        manager._active = manager._normalize_active(deepcopy(manager.active))
-        await manager.async_reconcile(now=START)
-        previous = len(calls)
-        clock[0] += runtime._VOLUME_SETTLE_INTERVAL
-        await manager.async_reconcile(now=START)
-        assert len(calls) == expected
-        assert len(calls) <= previous + 1
-    assert calls == pytest.approx([0.23, 0.18, 0.13, 0.0])
+    manager._active = manager._normalize_active(deepcopy(manager.active))
+    await manager.async_reconcile(now=START)
+    await manager.async_reconcile(now=END)
+    assert len(reports) == 1
+    assert calls == [0.23]
+    assert state.attributes["volume_level"] == 0.8
 
 
 @pytest.mark.parametrize("original", [0.60, 0.24])
-@pytest.mark.parametrize("restart", [False, True])
-async def test_upward_rounding_is_corrected_below_ceiling_and_restores(
-    hass, monkeypatch, original, restart
+async def test_legacy_correction_metadata_preserves_rounded_restoration(
+    hass, monkeypatch, original
 ):
     manager, state, calls, _, _ = _speaker(hass, monkeypatch)
     state.attributes["volume_level"] = original
     await manager.async_reconcile(now=START)
-    assert state.attributes["volume_level"] <= manager.config.max_volume
+    raw = deepcopy(manager.active)
+    raw["controls"]["media_player.test"].update(
+        ceiling_attempts=2, ceiling_target=0.13, ceiling_settle_until=END.isoformat()
+    )
+    manager._active = manager._normalize_active(raw)
     control = manager.active["controls"]["media_player.test"]
+    assert not any(key.startswith("ceiling_") for key in control)
     assert control["quiet_value"] == 0.23
     assert control["original_value"] == original
-    assert control["attained_value"] == state.attributes["volume_level"]
-    count = len(calls)
-    if restart:
-        manager._active = manager._normalize_active(deepcopy(manager.active))
-        state.context = Context()
+    assert control["attained_value"] == pytest.approx(0.25)
+    assert control["attained_context_id"] == state.context.id
+    state.context = Context()
     await manager.async_reconcile(now=START)
-    assert len(calls) == count
+    assert calls == [0.23]
     await manager.async_reconcile(now=END)
-    assert calls[-1] == original
-
-
-@pytest.mark.parametrize("manual", [False, True])
-async def test_ceiling_correction_is_bounded_when_device_does_not_move(
-    hass, monkeypatch, manual
-):
-    manager, state, calls, _, _ = _speaker(hass, monkeypatch)
-
-    async def service(domain, name, data, **kwargs):
-        calls.append(data["volume_level"])
-        if len(calls) == 1:
-            state.attributes["volume_level"] = 0.25
-            state.context = kwargs["context"]
-        elif manual:
-            state.attributes["volume_level"] = 0.4
-            state.context = Context()
-        # Otherwise subsequent commands succeed but publish no new state.
-
-    hass.services.async_call.side_effect = service
-    await manager.async_reconcile(now=START)
-    assert 1 < len(calls) <= 4
-    count = len(calls)
-    manager._active = manager._normalize_active(deepcopy(manager.active))
-    await manager.async_reconcile(now=START)
-    await manager.async_reconcile(now=START)
-    assert len(calls) == count
-    await manager.async_reconcile(now=END)
-    if manual:
-        assert state.attributes["volume_level"] == 0.4
-        assert len(calls) == count
-    else:
-        assert calls[-1] == 0.8
-
-
-async def test_corrective_effect_with_lost_acknowledgement_keeps_restoration_owner(
-    hass, monkeypatch
-):
-    manager, state, calls, _, _ = _speaker(hass, monkeypatch)
-    original = hass.services.async_call.side_effect
-
-    async def service(*args, **kwargs):
-        await original(*args, **kwargs)
-        if len(calls) == 2:
-            raise HomeAssistantError("Corrected volume, but acknowledgement was lost")
-
-    hass.services.async_call.side_effect = service
-    await manager.async_reconcile(now=START)
-    assert state.attributes["volume_level"] == pytest.approx(0.2)
-    manager._active = manager._normalize_active(deepcopy(manager.active))
-    await manager.async_reconcile(now=START)
-    assert len(calls) == 2
-    await manager.async_reconcile(now=END)
-    assert state.attributes["volume_level"] == pytest.approx(0.8)
-    assert calls == pytest.approx([0.23, 0.18, 0.8])
+    assert calls == [0.23, original]
 
 
 @pytest.mark.parametrize("requested", [0.2, 0.23])
@@ -218,16 +123,16 @@ async def test_rounding_restores_original_and_survives_storage_roundtrip(
 ):
     manager, state, calls, _, _ = _speaker(hass, monkeypatch, requested=requested)
     await manager.async_reconcile(now=START)
-    assert state.attributes["volume_level"] == pytest.approx(0.2)
+    assert state.attributes["volume_level"] == pytest.approx(
+        round(requested / 0.05) * 0.05
+    )
     assert manager.active["controls"]["media_player.test"]["quiet_value"] == requested
     if restart:
         manager._active = manager._normalize_active(deepcopy(manager.active))
         state.context = Context()
     await manager.async_reconcile(now=END)
     assert state.attributes["volume_level"] == pytest.approx(0.8)
-    assert calls == pytest.approx(
-        [requested, *([0.18] if requested == 0.23 else []), 0.8]
-    )
+    assert calls == [requested, 0.8]
     assert manager.active is None
 
 
@@ -239,7 +144,7 @@ async def test_manual_adjustment_after_rounded_application_is_not_restored(
     report(0.35, Context())
     await manager.async_reconcile(now=END)
     assert state.attributes["volume_level"] == pytest.approx(0.35)
-    assert calls == pytest.approx([0.23, 0.18])
+    assert calls == [0.23]
     assert manager.active is None
 
 
@@ -254,9 +159,7 @@ async def test_delayed_rounded_report_is_attributed_before_restore(
         await manager.async_reconcile(now=START)
     await manager.async_reconcile(now=END)
     assert state.attributes["volume_level"] == pytest.approx(0.8)
-    assert calls == pytest.approx(
-        [0.23, *([0.18] if observe_while_active else []), 0.8]
-    )
+    assert calls == [0.23, 0.8]
 
 
 async def test_rounded_effect_with_lost_acknowledgement_is_restored(hass, monkeypatch):
@@ -278,7 +181,7 @@ async def test_retarget_uses_new_rounded_value_without_repeated_volume_calls(
     assert state.attributes["volume_level"] == pytest.approx(0.3)
     await manager.async_reconcile(now=END)
     assert state.attributes["volume_level"] == pytest.approx(0.8)
-    assert calls == pytest.approx([0.23, 0.18, 0.31, 0.8])
+    assert calls == [0.23, 0.31, 0.8]
 
 
 @pytest.mark.parametrize("restart", [False, True])
@@ -302,42 +205,3 @@ async def test_retarget_within_same_volume_step_preserves_restoration_baseline(
     await manager.async_reconcile(now=END)
     assert state.attributes["volume_level"] == pytest.approx(0.8)
     assert calls == [0.21, 0.22, 0.8]
-
-
-@pytest.mark.parametrize("restart_before_correction", [False, True])
-@pytest.mark.parametrize("manual", [False, True])
-async def test_lower_same_step_ceiling_retains_owned_report_across_recovery(
-    hass, monkeypatch, restart_before_correction, manual
-):
-    manager, state, calls, _, _ = _speaker(
-        hass, monkeypatch, requested=0.21, unchanged_reports=False
-    )
-    await manager.async_reconcile(now=START)
-    owned_context = state.context
-    # Model a persisted successful retarget that publishes no new device state.
-    # Recovery must distinguish its command identity from the last owned report.
-    if restart_before_correction:
-        correct = manager._async_correct_volume_ceiling_locked
-        manager._async_correct_volume_ceiling_locked = AsyncMock()
-    manager._config = replace(manager.config, max_volume=0.19)
-    await manager.async_reconcile(now=START)
-    if restart_before_correction:
-        assert state.context is owned_context
-        manager._active = manager._normalize_active(deepcopy(manager.active))
-        manager._async_correct_volume_ceiling_locked = correct
-    if manual:
-        # Even the identical attained value with a different context must not
-        # qualify as the old owned report for further corrective commands.
-        state.attributes["volume_level"] = 0.2
-        state.context = Context()
-        count = len(calls)
-        await manager.async_reconcile(now=START)
-        assert len(calls) == count
-        return
-    await manager.async_reconcile(now=START)
-    assert state.attributes["volume_level"] == pytest.approx(0.15)
-    assert calls == pytest.approx([0.21, 0.19, 0.16])
-    manager._active = manager._normalize_active(deepcopy(manager.active))
-    await manager.async_reconcile(now=END)
-    assert state.attributes["volume_level"] == pytest.approx(0.8)
-    assert calls == pytest.approx([0.21, 0.19, 0.16, 0.8])
