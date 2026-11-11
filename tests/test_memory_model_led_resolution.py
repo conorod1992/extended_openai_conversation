@@ -324,7 +324,7 @@ def test_provider_bound_descriptions_explain_semantics_not_just_tool_names():
     assert "needs_resolution" in tools["memory_upsert"]["description"]
     assert "not proof" in tools["memory_search"]["description"]
     assert "revision" in tools["memory_update"]["description"]
-    assert "direct user" in tools["memory_delete"]["description"]
+    assert "intent=user_request" in tools["memory_delete"]["description"]
     assert "never change it" in tools["memory_upsert"]["parameters"]["properties"]["key"]["description"]
     compact_guidance = " ".join(PERSISTENT_MEMORY_GUIDANCE.split())
     assert "independent/history facts" in compact_guidance

@@ -23,6 +23,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     CONF_MEMORY_MODE,
     CONF_SHARED_MEMORY_MODE,
     CONF_TEMPORARY_MEMORY,
+    CONF_VOICE_SCOPE_POLICY,
     CONVERSATION_CONTINUITY_USER,
     MEMORY_MODE_MANUAL,
     SHARED_MEMORY_EXPLICIT,
@@ -79,6 +80,7 @@ def _chat_sse_memory_upsert() -> bytes:
                                         "content": _NEW_MEMORY,
                                         "category": "projects",
                                         "source": "explicit",
+                                        "intent": "user_request",
                                     },
                                     separators=(",", ":"),
                                 ),
@@ -94,19 +96,23 @@ def _chat_sse_memory_upsert() -> bytes:
 
 
 async def _memory_agent(
-    hass: HomeAssistant, api_mode: str, *, shared_mode: str | None = None
+    hass: HomeAssistant, api_mode: str, *, shared_mode: str | None = None,
+    memory_mode: str = MEMORY_MODE_MANUAL,
+    voice_scope: str | None = None,
 ):
     """Load a genuine conversation agent with both Memory systems enabled."""
     options = {
         CONF_API_MODE: api_mode,
         CONF_CHAT_MODEL: "gpt-5.6",
         CONF_CONVERSATION_CONTINUITY: CONVERSATION_CONTINUITY_USER,
-        CONF_MEMORY_MODE: MEMORY_MODE_MANUAL,
+        CONF_MEMORY_MODE: memory_mode,
         CONF_MEMORY_AUTO_RETRIEVE_LIMIT: 3,
         CONF_TEMPORARY_MEMORY: TEMPORARY_MEMORY_BALANCED,
     }
     if shared_mode is not None:
         options[CONF_SHARED_MEMORY_MODE] = shared_mode
+    if voice_scope is not None:
+        options[CONF_VOICE_SCOPE_POLICY] = voice_scope
     entry = _make_entry(
         "Memory Provider Wire",
         include_ai_task=False,
@@ -427,6 +433,7 @@ async def test_model_upsert_conflict_has_no_write_and_exposes_revision_on_real_s
         "content": "The lounge heating target is 21 C.",
         "category": "heating",
         "source": "explicit",
+        "intent": "user_request",
         "key": "heating.lounge.target",
     }
     first = (
@@ -466,8 +473,8 @@ async def test_model_upsert_conflict_has_no_write_and_exposes_revision_on_real_s
     assert "not proof" in descriptions["memory_search"]
     assert "facts for answers" in descriptions["memory_search"]
     assert "revision" in descriptions["memory_update"]
-    assert "direct user correction" in descriptions["memory_update"]
-    assert "direct user" in descriptions["memory_delete"]
+    assert "intent=user_request" in descriptions["memory_update"]
+    assert "intent=user_request" in descriptions["memory_delete"]
     assert "Confirm before broad deletion" in descriptions["memory_delete"]
     assert "Confirm before broad deletion" in _request_text(request)
     assert "Opening retrieval is fixed" in _request_text(request)
@@ -501,6 +508,7 @@ async def test_model_selected_inferred_revision_update_persists_through_provider
     proposed = {
         "memory_id": original.memory_id,
         "expected_revision": revision,
+        "intent": "user_request",
         "content": "The lounge heating target is 21 C.",
     }
     first = (
@@ -547,6 +555,7 @@ async def test_related_model_proposals_can_coexist_on_both_provider_wires(
                 "content": "Oscar likes beef.",
                 "category": "pets",
                 "source": "explicit",
+                "intent": "user_request",
                 "subject": "Oscar",
                 "key": "oscar.food.beef",
             },
@@ -558,6 +567,7 @@ async def test_related_model_proposals_can_coexist_on_both_provider_wires(
                 "content": "Oscar likes beef.",
                 "category": "pets",
                 "source": "explicit",
+                "intent": "user_request",
                 "subject": "Oscar",
                 "key": "oscar.food.beef",
             },
@@ -588,7 +598,7 @@ async def test_related_model_proposals_can_coexist_on_both_provider_wires(
 async def test_direct_explicit_correction_is_authorized_on_actual_provider_wire(
     hass: HomeAssistant, monkeypatch: Any, api_mode: str
 ) -> None:
-    """Raw HA user turn authorizes an explicit record's correction on either API."""
+    """Scripted model interpretation admits a requested correction on either API."""
     MockUser(id=_USER_ID, name="Explicit Correction Wire User", is_owner=True).add_to_hass(hass)
     _, agent = await _memory_agent(hass, api_mode)
     await agent._memory.async_add(
@@ -600,6 +610,7 @@ async def test_direct_explicit_correction_is_authorized_on_actual_provider_wire(
     args = {
         "memory_id": original.memory_id,
         "expected_revision": revision,
+        "intent": "user_request",
         "content": "The lounge heating target is 21 C.",
     }
     call = (
@@ -639,6 +650,7 @@ async def test_direct_household_save_works_in_shared_explicit_mode_on_provider_w
         "content": "The pantry shelves are green.",
         "category": "household",
         "source": "explicit",
+        "intent": "user_request",
         "scope": "household",
     }
     call = (

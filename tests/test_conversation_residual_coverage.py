@@ -557,13 +557,14 @@ async def test_memory_tool_validation_and_shared_automatic_write_guard() -> None
         with pytest.raises(ValueError, match=message):
             await Agent._async_execute_memory_tool(agent, operation, arguments, None)
 
-    agent._current_write_memory_scope_id = Mock()
+    agent._current_write_memory_scope_id = lambda *args, **kwargs: Agent._current_write_memory_scope_id(agent, *args, **kwargs)
+    agent._memory.async_propose = AsyncMock()
     token = conversation_module._ACTIVE_TURN.set(
         replace(conversation_module._ACTIVE_TURN.get(), scope=shared_scope(source="test"))
     )
     try:
         with pytest.raises(
-            ValueError, match="automatic shared memory creation is disabled"
+            ValueError, match="automatic shared memory mutations are disabled"
         ):
             await Agent._async_execute_memory_tool(
                 agent,
@@ -573,7 +574,7 @@ async def test_memory_tool_validation_and_shared_automatic_write_guard() -> None
             )
     finally:
         conversation_module._ACTIVE_TURN.reset(token)
-    agent._current_write_memory_scope_id.assert_not_called()
+    agent._memory.async_propose.assert_not_awaited()
 
 
 def test_memory_scope_resolution_covers_guest_shared_and_unretained_paths() -> None:
@@ -622,7 +623,7 @@ def test_memory_scope_resolution_covers_guest_shared_and_unretained_paths() -> N
     )
     try:
         assert (
-            Agent._current_write_memory_scope_id(agent, None, None, source="explicit")
+            Agent._current_write_memory_scope_id(agent, None, None, intent="user_request")
             == SHARED_HOUSEHOLD_SCOPE_ID
         )
     finally:
@@ -632,14 +633,14 @@ def test_memory_scope_resolution_covers_guest_shared_and_unretained_paths() -> N
         True, shared_memory_write=False
     )
     with pytest.raises(RuntimeError, match=conversation_module.GUEST_MODE_UNAVAILABLE):
-        Agent._current_write_memory_scope_id(agent, None, None, source="explicit")
+        Agent._current_write_memory_scope_id(agent, None, None, intent="user_request")
 
     agent._effective_guest_policy = GuestCapabilityPolicy.unrestricted
     with pytest.raises(ValueError, match="scope must be personal or household"):
-        Agent._current_write_memory_scope_id(agent, "other", None, source="explicit")
+        Agent._current_write_memory_scope_id(agent, "other", None, intent="user_request")
     with pytest.raises(ValueError, match="household scope requires"):
         Agent._current_write_memory_scope_id(
-            agent, "household", None, source="explicit"
+            agent, "household", None, intent="user_request"
         )
 
     token = conversation_module._ACTIVE_TURN.set(
@@ -647,7 +648,7 @@ def test_memory_scope_resolution_covers_guest_shared_and_unretained_paths() -> N
     )
     try:
         with pytest.raises(RuntimeError, match="disabled for this data scope"):
-            Agent._current_write_memory_scope_id(agent, None, None, source="explicit")
+            Agent._current_write_memory_scope_id(agent, None, None, intent="user_request")
     finally:
         conversation_module._ACTIVE_TURN.reset(token)
 

@@ -763,12 +763,12 @@ def test_scope_composition_and_strict_write_destinations() -> None:
             SHARED_HOUSEHOLD_SCOPE_ID,
         ]
         assert (
-            entity._current_write_memory_scope_id(None, context, source="explicit")
+            entity._current_write_memory_scope_id(None, context, intent="user_request")
             == "alice"
         )
         assert (
             entity._current_write_memory_scope_id(
-                "household", context, source="explicit"
+                "household", context, intent="user_request"
             )
             == SHARED_HOUSEHOLD_SCOPE_ID
         )
@@ -784,7 +784,7 @@ def test_scope_composition_and_strict_write_destinations() -> None:
         ]
         with pytest.raises(ValueError, match="cannot write personal"):
             entity._current_write_memory_scope_id(
-                "personal", context, source="explicit"
+                "personal", context, intent="user_request"
             )
     finally:
         _ACTIVE_TURN.reset(token)

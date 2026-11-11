@@ -163,6 +163,7 @@ async def test_memory_store_bundle_prompt_and_tool_update_form_one_runtime_contr
                     "content": "Oscar is a Cavapoo.",
                     "category": "pets",
                     "source": "explicit",
+                    "intent": "user_request",
                     "subject": "Oscar",
                     "key": "pet.oscar.breed",
                 },

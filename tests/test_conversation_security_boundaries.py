@@ -176,7 +176,7 @@ def test_shared_conversation_cannot_write_personal_memory() -> None:
                 agent,
                 "personal",
                 None,
-                source="explicit",
+                intent="user_request",
             )
     finally:
         conversation_module._ACTIVE_TURN.reset(token)
@@ -194,7 +194,7 @@ def test_personal_conversation_cannot_write_disabled_household_memory() -> None:
                 agent,
                 "household",
                 None,
-                source="explicit",
+                intent="user_request",
             )
     finally:
         conversation_module._ACTIVE_TURN.reset(token)
@@ -209,13 +209,13 @@ def test_implicit_household_write_requires_automatic_shared_memory() -> None:
     try:
         with pytest.raises(
             ValueError,
-            match="automatic shared memory creation is disabled",
+            match="automatic shared memory mutations are disabled",
         ):
             Agent._current_write_memory_scope_id(
                 agent,
                 "household",
                 None,
-                source="implicit",
+                intent="automatic",
             )
     finally:
         conversation_module._ACTIVE_TURN.reset(token)
@@ -236,7 +236,7 @@ def test_guest_cannot_select_personal_memory_for_write() -> None:
                 agent,
                 "personal",
                 None,
-                source="explicit",
+                intent="user_request",
             )
     finally:
         conversation_module._ACTIVE_TURN.reset(token)
