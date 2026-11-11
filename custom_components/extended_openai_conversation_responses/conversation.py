@@ -2547,6 +2547,7 @@ class ExtendedOpenAIAgentEntity(
             active_from=arguments.get("active_from"),
             active_until=arguments.get("active_until"),
             make_indefinite=arguments.get("make_indefinite", False) is True,
+            start_now=arguments.get("start_now", False),
         )
 
     def _guest_integration_allowed(self, function_type: str, operation: str) -> bool:

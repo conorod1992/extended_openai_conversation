@@ -366,9 +366,14 @@ class GuestModeManager:
         active_from: str | None = None,
         active_until: str | None = None,
         make_indefinite: bool = False,
+        start_now: bool = False,
         now: Any | None = None,
     ) -> dict[str, Any]:
         """Apply a monotonic LLM restriction that can only widen the interval."""
+        if not isinstance(start_now, bool):
+            raise ValueError("start_now must be a boolean")
+        if start_now and active_from is not None:
+            raise ValueError("start_now and active_from cannot be supplied together")
         current = _as_utc(now or dt_util.utcnow())
         requested_start = (
             _parse_timestamp(self.hass, active_from, "active_from")
@@ -401,7 +406,7 @@ class GuestModeManager:
                 # must not activate a future window ahead of schedule.
                 start = (
                     min(existing_start, requested_start)
-                    if active_from is not None
+                    if active_from is not None or start_now
                     else existing_start
                 )
                 if existing_end is None or make_indefinite:
@@ -791,18 +796,25 @@ def guest_mode_restrict_tool() -> dict[str, Any]:
         "spec": {
             "name": "guest_mode_restrict",
             "description": (
-                "Enable, start sooner, or extend Guest Mode; never weaken it."
+                "Enable, start sooner, or extend Guest Mode; never weaken it. "
+                "For immediate activation use start_now=true, including over a future schedule. "
+                "Without a start argument, preserve an existing active/future start; "
+                "otherwise start now. Existing expiry is retained unless extended or made indefinite."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "active_from": {
                         "type": "string",
-                        "description": "ISO 8601; omit to start now.",
+                        "description": "ISO 8601 start; may only move an existing start earlier. Do not combine with start_now=true.",
                     },
                     "active_until": {
                         "type": "string",
                         "description": "ISO 8601 expiry; extensions only.",
+                    },
+                    "start_now": {
+                        "type": "boolean",
+                        "description": "Use true to activate immediately using backend time. Do not supply active_from with true.",
                     },
                     "make_indefinite": {"type": "boolean"},
                 },
