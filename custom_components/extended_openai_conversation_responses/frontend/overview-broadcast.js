@@ -119,8 +119,9 @@ function bindBroadcastControls(panel, snapshot) {
     ["#broadcast-enabled", "set_enabled", "enabled", "Broadcast"],
     ["#broadcast-builtin-voice-command", "set_builtin_voice_command", "builtin_voice_command", "Built-in voice command"],
   ]) root.querySelector(selector)?.addEventListener("change", async (event) => {
-    const enabled = event.target.checked;
-    event.target.disabled = true;
+    const control = event.target;
+    const enabled = control.checked;
+    control.disabled = true;
     const submission = captureConfigurationOwner(panel);
     const authenticated = captureAuthentication(panel);
     const current = () => authenticated() && configurationSubmissionIsCurrent(panel, submission)
@@ -135,6 +136,10 @@ function bindBroadcastControls(panel, snapshot) {
       if (!current()) return;
       panel._toast(`Unable to change ${label}: ${err.message || String(err)}`, true);
       await loadBroadcast(panel, current);
+    } finally {
+      // Authentication can retire the acknowledgement while retaining this
+      // owner's controls. Release only this operation's original input.
+      control.disabled = false;
     }
   });
   root.querySelector("#broadcast-message")?.addEventListener("input", (event) => { panel._broadcastMessage = event.target.value; panel._broadcastDraftRevision = (panel._broadcastDraftRevision || 0) + 1; });

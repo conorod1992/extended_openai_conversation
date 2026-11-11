@@ -685,3 +685,64 @@ for (const master of [false, true]) test(`Built-in Broadcast switch remains inde
   await bindBroadcast(panel, Promise.resolve({enabled:master,builtin_voice_command:true,can_manage:true,catalog:{satellites:[]}}));
   assert.match(card.innerHTML, /id="broadcast-builtin-voice-command"[^>]*checked/);
 });
+
+for (const [selector, action, field] of [
+  ["#broadcast-enabled", "set_enabled", "enabled"],
+  ["#broadcast-builtin-voice-command", "set_builtin_voice_command", "builtin_voice_command"],
+]) for (const rejected of [false, true]) for (const returnBeforeSettlement of [false, true]) {
+  test(`Broadcast setting becomes usable after retired authentication: ${action}, rejected=${rejected}, returnBeforeSettlement=${returnBeforeSettlement}`, async () => {
+    const {panel, control} = host();
+    panel._viewKey = () => "overview"; panel._e = String; panel.style = {};
+    control("#broadcast-card");
+    const toggle = control(selector);
+    const state = {enabled:false, builtin_voice_command:true, can_manage:true, catalog:{satellites:[]}};
+    let finish, writes = 0, reads = 0;
+    panel._hass.callWS = request => {
+      if (request.action === "snapshot") { reads++; return Promise.resolve(state); }
+      assert.equal(request.action, action);
+      writes++;
+      return new Promise((resolve, reject) => { finish = () => rejected ? reject(Error("connection lost")) : resolve({[field]:false}); });
+    };
+    await bindBroadcast(panel, Promise.resolve(state));
+    toggle.checked = false;
+    const pending = toggle.change({target:toggle});
+    assert.equal(toggle.disabled, true);
+    const original = panel.hass;
+    panel.hass = {...original, user:{id:"other-user"}};
+    if (returnBeforeSettlement) panel.hass = original;
+    finish();
+    await pending;
+    if (!returnBeforeSettlement) panel.hass = original;
+    assert.equal(panel._eocAuthenticationGeneration, 2);
+    assert.equal(toggle.disabled, false, "the original owner's retained switch is usable again");
+    assert.equal(writes, 1, "settlement never replays the setting write");
+    assert.equal(reads, 0, "the retired operation cannot refresh the returned session");
+    assert.deepEqual(panel.toasts, []);
+  });
+}
+
+test("retired Broadcast setting releases its original control without unlocking a replacement's pending save", async () => {
+  const {panel, control} = host();
+  panel._viewKey = () => "overview"; panel._e = String;
+  control("#broadcast-card");
+  const selector = "#broadcast-builtin-voice-command", originalToggle = control(selector);
+  const state = {enabled:false, builtin_voice_command:true, can_manage:true, catalog:{satellites:[]}};
+  const finish = [];
+  panel._hass.callWS = request => request.action === "snapshot" ? Promise.resolve(state)
+    : new Promise(resolve => { finish.push(() => resolve({builtin_voice_command:request.enabled})); });
+  await bindBroadcast(panel, Promise.resolve(state));
+  originalToggle.checked = false;
+  const originalPending = originalToggle.change({target:originalToggle});
+  authenticationRoundTrip(panel);
+  const replacement = {disabled:false, checked:true, addEventListener(event, callback) { this[event] = callback; }};
+  const query = panel.shadowRoot.querySelector;
+  panel.shadowRoot.querySelector = value => value === selector ? replacement : query(value);
+  await bindBroadcast(panel, Promise.resolve(state));
+  const replacementPending = replacement.change({target:replacement});
+  assert.equal(replacement.disabled, true);
+  finish[0](); await originalPending;
+  assert.equal(originalToggle.disabled, false);
+  assert.equal(replacement.disabled, true, "only the replacement's own settlement may release it");
+  finish[1](); await replacementPending;
+  assert.equal(replacement.disabled, false);
+});
