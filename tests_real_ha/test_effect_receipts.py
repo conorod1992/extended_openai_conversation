@@ -18,7 +18,7 @@ from custom_components.extended_openai_conversation_responses.ha_actions import 
 from custom_components.extended_openai_conversation_responses.tool_replay_guard import (
     bind_effect_replay_scope,
     remember_unacknowledged_calls,
-    was_unacknowledged_equivalent,
+    async_was_unacknowledged_equivalent,
 )
 
 
@@ -63,7 +63,7 @@ async def test_service_rejection_settles_only_current_effect_and_corrected_retry
     )
     remember_unacknowledged_calls(entity, log, set())
     corrected = llm.ToolInput(tool_name="effect", tool_args={}, id="corrected")
-    assert not was_unacknowledged_equivalent(entity, log, corrected)
+    assert not await async_was_unacknowledged_equivalent(entity, log, corrected)
     with (
         bind_effect_replay_scope(entity, "conversation"),
         execution_attempt(entity, corrected, tool),
@@ -118,7 +118,7 @@ async def test_completed_handler_then_schema_rejection_remains_partial(hass):
         ],
     )
     remember_unacknowledged_calls(entity, log, set())
-    assert not was_unacknowledged_equivalent(
+    assert not await async_was_unacknowledged_equivalent(
         entity,
         log,
         llm.ToolInput(tool_name="effect", tool_args={"changed": True}, id="retry"),

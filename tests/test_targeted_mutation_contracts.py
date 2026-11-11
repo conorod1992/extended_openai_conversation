@@ -27,7 +27,6 @@ from custom_components.extended_openai_conversation_responses.ha_tool_result_com
     tool_result_data,
 )
 from custom_components.extended_openai_conversation_responses.parallel_tool_execution import (
-    async_execute_parallel_safe_batch,
     async_execute_parallel_safe_batch_outcomes,
     is_parallel_safe_integration_tool,
 )
@@ -158,15 +157,15 @@ async def test_parallel_batch_passes_each_resolved_tool_to_executor() -> None:
         seen[tool_input.id] = function_tool
         return _result(tool_input)
 
-    results = await async_execute_parallel_safe_batch(calls, execute)
+    results = await async_execute_parallel_safe_batch_outcomes(calls, execute)
 
     assert seen["1"] is first
     assert seen["2"] is second
     assert [result.tool_call_id for result in results] == ["1", "2"]
 
 
-async def test_parallel_batch_cancels_pending_sibling_after_ordered_failure() -> None:
-    """An earlier failure cancels and drains a still-running sibling before propagating."""
+async def test_parallel_outcomes_wait_for_pending_sibling_after_failure() -> None:
+    """A failed call does not cancel or discard a still-running sibling."""
     first = _tool("first", {"type": "knowledge", "operation": "search"})
     second = _tool("second", {"type": "knowledge", "operation": "list"})
     calls = [(first, _call("first", "1")), (second, _call("second", "2"))]
@@ -186,12 +185,17 @@ async def test_parallel_batch_cancels_pending_sibling_after_ordered_failure() ->
         except asyncio.CancelledError:
             second_cancelled.set()
             raise
-        raise AssertionError("blocked sibling unexpectedly resumed")
+        return _result(tool_input)
 
-    with pytest.raises(RuntimeError, match="first failed"):
-        await async_execute_parallel_safe_batch(calls, execute)
-
-    assert second_cancelled.is_set()
+    batch = asyncio.create_task(async_execute_parallel_safe_batch_outcomes(calls, execute))
+    await second_started.wait()
+    await asyncio.sleep(0)
+    assert not batch.done()
+    never_release.set()
+    outcomes = await batch
+    assert isinstance(outcomes[0], RuntimeError)
+    assert outcomes[1].tool_call_id == "2"
+    assert not second_cancelled.is_set()
 
 
 async def test_parallel_outcomes_capture_child_exception_without_aborting_batch() -> (
@@ -220,8 +224,8 @@ async def test_parallel_outcomes_capture_child_exception_without_aborting_batch(
 
 @pytest.mark.parametrize(
     "runner",
-    [async_execute_parallel_safe_batch, async_execute_parallel_safe_batch_outcomes],
-    ids=["ordered", "outcomes"],
+    [async_execute_parallel_safe_batch_outcomes],
+    ids=["outcomes"],
 )
 async def test_parallel_helpers_cancel_children_when_parent_is_cancelled(
     runner: Any,

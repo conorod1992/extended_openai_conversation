@@ -18,7 +18,7 @@ from custom_components.extended_openai_conversation_responses.tool_replay_guard 
     bind_effect_replay_scope,
     clear_unacknowledged_calls,
     remember_unacknowledged_calls,
-    was_unacknowledged_equivalent,
+    async_was_unacknowledged_equivalent,
 )
 from homeassistant.exceptions import HomeAssistantError
 from tests.test_function_tool_error_recovery import (
@@ -313,7 +313,7 @@ async def predispatch_witness(hass, http_boundary):
         )
     assert http_boundary.received == []
     remember_unacknowledged_calls(entity, log, set())
-    assert not was_unacknowledged_equivalent(
+    assert not await async_was_unacknowledged_equivalent(
         entity, log, _call("corrected", "rest_effect")
     ), "predispatch failures must allow a corrected provider retry"
     await dispatch(

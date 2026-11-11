@@ -362,7 +362,7 @@ async def test_failed_tool_result_remains_ambiguous_with_fresh_call_id(monkeypat
     from custom_components.extended_openai_conversation_responses.tool_replay_guard import (
         clear_unacknowledged_calls,
         remember_unacknowledged_calls,
-        was_unacknowledged_equivalent,
+        async_was_unacknowledged_equivalent,
     )
 
     _patch_content_types(monkeypatch)
@@ -385,7 +385,7 @@ async def test_failed_tool_result_remains_ambiguous_with_fresh_call_id(monkeypat
     record_dispatch(entity, original)
     remember_unacknowledged_calls(entity, log, set())
     retry = _call("fresh-provider-id")
-    assert was_unacknowledged_equivalent(entity, log, retry)
+    assert await async_was_unacknowledged_equivalent(entity, log, retry)
     with pytest.raises(HomeAssistantError, match="Start a new conversation"):
         await tool_exchange.async_execute_tool_exchange(
             entity, log, [retry], [_tool()], FunctionCallBudget(2), None, []
@@ -393,16 +393,16 @@ async def test_failed_tool_result_remains_ambiguous_with_fresh_call_id(monkeypat
     execute.assert_not_awaited()
     fresh = FakeChatLog()
     fresh.conversation_id = "fresh"
-    assert not was_unacknowledged_equivalent(entity, fresh, retry)
+    assert not await async_was_unacknowledged_equivalent(entity, fresh, retry)
     clear_unacknowledged_calls(entity, "ambiguous")
-    assert not was_unacknowledged_equivalent(entity, log, retry)
+    assert not await async_was_unacknowledged_equivalent(entity, log, retry)
 
 
-def test_replay_guard_ignores_unscoped_or_empty_ledger_entries(monkeypatch) -> None:
+async def test_replay_guard_ignores_unscoped_or_empty_ledger_entries(monkeypatch) -> None:
     from custom_components.extended_openai_conversation_responses.tool_replay_guard import (
         clear_unacknowledged_calls,
         remember_unacknowledged_calls,
-        was_unacknowledged_equivalent,
+        async_was_unacknowledged_equivalent,
     )
 
     _patch_content_types(monkeypatch)
@@ -416,7 +416,7 @@ def test_replay_guard_ignores_unscoped_or_empty_ledger_entries(monkeypatch) -> N
     empty = FakeChatLog()
     empty.conversation_id = "conversation"
     remember_unacknowledged_calls(entity, empty, set())
-    assert not was_unacknowledged_equivalent(entity, empty, call)
+    assert not await async_was_unacknowledged_equivalent(entity, empty, call)
 
     replay_safety(entity).schemas = {"conversation": {"pending": {}}}
     clear_unacknowledged_calls(entity, None)

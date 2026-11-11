@@ -10,7 +10,6 @@ from custom_components.extended_openai_conversation_responses.ha_tool_result_com
     tool_result_data,
 )
 from custom_components.extended_openai_conversation_responses.parallel_tool_execution import (
-    async_execute_parallel_safe_batch,
     async_execute_parallel_safe_batch_outcomes,
     is_parallel_safe_integration_tool,
     resolve_parallel_safe_batch,
@@ -129,15 +128,15 @@ async def test_parallel_batch_overlaps_execution_and_preserves_provider_order() 
             tool_result={"result": tool_input.id},
         )
 
-    results = await async_execute_parallel_safe_batch(calls, execute)
+    results = await async_execute_parallel_safe_batch_outcomes(calls, execute)
 
     assert set(started) == {"1", "2"}
     assert [result.tool_call_id for result in results] == ["1", "2"]
 
 
 @pytest.mark.asyncio
-async def test_parallel_batch_preserves_first_failure_order() -> None:
-    """An earlier failing read is still surfaced before later successful results."""
+async def test_parallel_batch_retains_failure_and_later_success_in_order() -> None:
+    """A failed read cannot discard a completed sibling's provider result."""
     calls = [
         (_tool("first", "knowledge", operation="search"), _call("first", "1")),
         (_tool("second", "knowledge", operation="list"), _call("second", "2")),
@@ -159,8 +158,10 @@ async def test_parallel_batch_preserves_first_failure_order() -> None:
             tool_result={"result": tool_input.id},
         )
 
-    with pytest.raises(RuntimeError, match="first failed"):
-        await async_execute_parallel_safe_batch(calls, execute)
+    outcomes = await async_execute_parallel_safe_batch_outcomes(calls, execute)
+    assert isinstance(outcomes[0], RuntimeError)
+    assert str(outcomes[0]) == "first failed"
+    assert outcomes[1].tool_call_id == "2"
 
     assert set(started) == {"1", "2"}
 

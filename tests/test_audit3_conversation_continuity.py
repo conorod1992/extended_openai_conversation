@@ -26,7 +26,7 @@ from custom_components.extended_openai_conversation_responses.ha_tool_result_com
 from custom_components.extended_openai_conversation_responses.tool_replay_guard import (
     record_dispatch,
     remember_unacknowledged_calls,
-    was_unacknowledged_equivalent,
+    async_was_unacknowledged_equivalent,
 )
 from homeassistant.components import conversation
 from homeassistant.helpers import llm
@@ -107,7 +107,7 @@ async def test_preflight_applies_summary_before_pruning(hass):
         ({"type": "knowledge", "operation": "search"}, True, True),
     ],
 )
-def test_only_verified_reads_are_exempt_from_replay(function, delay, blocked):
+async def test_only_verified_reads_are_exempt_from_replay(function, delay, blocked):
     entity = SimpleNamespace()
     args = {"query": "tea towels", **({"delay": {"seconds": 600}} if delay else {})}
     retained = llm.ToolInput(id="first", tool_name="tool", tool_args=args)
@@ -126,7 +126,7 @@ def test_only_verified_reads_are_exempt_from_replay(function, delay, blocked):
     )
     remember_unacknowledged_calls(entity, chat, set())
     assert (
-        was_unacknowledged_equivalent(
+        await async_was_unacknowledged_equivalent(
             entity, chat, llm.ToolInput(id="fresh", tool_name="tool", tool_args=args)
         )
         is blocked
