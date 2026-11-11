@@ -91,7 +91,7 @@ async def test_distinct_keys_preserve_distinct_facts_even_with_same_content() ->
     }
 
 
-@pytest.mark.parametrize("operation", ["add", "upsert"])
+@pytest.mark.parametrize("operation", ["add", "propose"])
 async def test_new_key_promotes_exact_unique_unkeyed_fact(operation: str) -> None:
     storage = FakeStorage()
     memory = PersistentMemory(storage)
@@ -105,7 +105,7 @@ async def test_new_key_promotes_exact_unique_unkeyed_fact(operation: str) -> Non
         valid_from="2026-01-01T00:00:00+00:00",
     )
     assert first["status"] == "created"
-    call = memory.async_add if operation == "add" else memory.async_upsert
+    call = memory.async_add if operation == "add" else memory.async_propose
     promoted = await call(
         "alice",
         "Oscar is a Cavachon.",
@@ -114,6 +114,14 @@ async def test_new_key_promotes_exact_unique_unkeyed_fact(operation: str) -> Non
         subject="oscar",
         key="pet.oscar.breed",
     )
+    if operation == "propose":
+        assert promoted["status"] == "needs_resolution"
+        assert promoted["candidate"]["memory_id"] == first["memory"]["memory_id"]
+        assert promoted["candidate"]["key"] is None
+        assert promoted["candidate"]["source"] == "implicit"
+        [retained] = await memory.async_list("alice")
+        assert retained.key is None and retained.source == "implicit"
+        return
     assert promoted["status"] == "updated"
     assert promoted["memory"]["memory_id"] == first["memory"]["memory_id"]
     assert promoted["memory"]["created_at"] == first["memory"]["created_at"]
@@ -131,13 +139,13 @@ async def test_new_key_promotes_exact_unique_unkeyed_fact(operation: str) -> Non
     assert reloaded._key_index[("alice", "pet.oscar.breed")] == record.memory_id
 
 
-@pytest.mark.parametrize("operation", ["add", "upsert"])
+@pytest.mark.parametrize("operation", ["add", "propose"])
 async def test_new_key_never_rekeys_differently_keyed_fact(operation: str) -> None:
     memory = await _memory()
-    existing = await memory.async_upsert(
+    existing = await memory.async_propose(
         "alice", "Oscar is a Cavachon.", "pets", "explicit", key="pet.oscar.breed"
     )
-    call = memory.async_add if operation == "add" else memory.async_upsert
+    call = memory.async_add if operation == "add" else memory.async_propose
     second = await call(
         "alice",
         "Oscar is a Cavachon.",
@@ -145,6 +153,11 @@ async def test_new_key_never_rekeys_differently_keyed_fact(operation: str) -> No
         "explicit",
         key="pet.oscar.description",
     )
+    if operation == "propose":
+        assert second["status"] == "needs_resolution"
+        assert second["candidate"]["memory_id"] == existing["memory"]["memory_id"]
+        assert [r.key for r in await memory.async_list("alice")] == ["pet.oscar.breed"]
+        return
     assert second["status"] == "created"
     assert second["memory"]["memory_id"] != existing["memory"]["memory_id"]
     assert {r.key for r in await memory.async_list("alice")} == {
@@ -153,7 +166,7 @@ async def test_new_key_never_rekeys_differently_keyed_fact(operation: str) -> No
     }
 
 
-@pytest.mark.parametrize("operation", ["add", "upsert"])
+@pytest.mark.parametrize("operation", ["add", "propose"])
 async def test_ambiguous_unkeyed_duplicates_are_not_promoted(operation: str) -> None:
     memory = await _memory()
     first = await memory.async_add(
@@ -163,7 +176,7 @@ async def test_ambiguous_unkeyed_duplicates_are_not_promoted(operation: str) -> 
         "alice", "The light is on.", "devices", "explicit", subject="Hall"
     )
     assert first["memory"]["memory_id"] != second["memory"]["memory_id"]
-    call = memory.async_add if operation == "add" else memory.async_upsert
+    call = memory.async_add if operation == "add" else memory.async_propose
     result = await call(
         "alice",
         "The light is on.",
@@ -172,6 +185,12 @@ async def test_ambiguous_unkeyed_duplicates_are_not_promoted(operation: str) -> 
         subject="Kitchen",
         key="home.kitchen.light",
     )
+    if operation == "propose":
+        assert result["status"] == "needs_resolution"
+        assert result["candidate"]["memory_id"] == first["memory"]["memory_id"]
+        retained = await memory.async_list("alice")
+        assert len(retained) == 2 and all(r.key is None for r in retained)
+        return
     assert result["status"] == "created"
     original_ids = {
         first["memory"]["memory_id"],
@@ -187,7 +206,7 @@ async def test_ambiguous_unkeyed_duplicates_are_not_promoted(operation: str) -> 
     assert len(await memory.async_list("alice")) == 3
 
 
-@pytest.mark.parametrize("operation", ["add", "upsert"])
+@pytest.mark.parametrize("operation", ["add", "propose"])
 async def test_new_key_respects_subject_and_temporal_identity(operation: str) -> None:
     memory = await _memory()
     original = await memory.async_add(
@@ -198,7 +217,7 @@ async def test_new_key_respects_subject_and_temporal_identity(operation: str) ->
         subject="Kitchen",
         valid_from="2026-01-01T00:00:00+00:00",
     )
-    call = memory.async_add if operation == "add" else memory.async_upsert
+    call = memory.async_add if operation == "add" else memory.async_propose
     different_subject = await call(
         "alice",
         "The light is on.",
@@ -230,7 +249,7 @@ async def test_new_key_respects_subject_and_temporal_identity(operation: str) ->
     assert restored.valid_from == "2026-01-01T00:00:00+00:00"
 
 
-@pytest.mark.parametrize("operation", ["add", "upsert"])
+@pytest.mark.parametrize("operation", ["add", "propose"])
 async def test_implicit_new_key_cannot_relabel_explicit_memory(operation: str) -> None:
     storage = FakeStorage()
     memory = PersistentMemory(storage)
@@ -239,7 +258,7 @@ async def test_implicit_new_key_cannot_relabel_explicit_memory(operation: str) -
         "alice", "Oscar is a Cavachon.", "pets", "explicit", subject="Oscar"
     )
     before_saves = storage.save_count
-    call = memory.async_add if operation == "add" else memory.async_upsert
+    call = memory.async_add if operation == "add" else memory.async_propose
     result = await call(
         "alice",
         "Oscar is a Cavachon.",
@@ -247,22 +266,23 @@ async def test_implicit_new_key_cannot_relabel_explicit_memory(operation: str) -
         "implicit",
         key="pet.oscar.breed",
     )
-    assert result["status"] == ("duplicate" if operation == "add" else "unchanged")
-    assert result["memory"]["memory_id"] == original["memory"]["memory_id"]
-    assert result["memory"]["key"] is None
-    assert result["memory"]["source"] == "explicit"
-    assert result["memory"]["category"] == "pets"
+    assert result["status"] == ("duplicate" if operation == "add" else "needs_resolution")
+    record = result.get("memory", result.get("candidate"))
+    assert record["memory_id"] == original["memory"]["memory_id"]
+    assert record["key"] is None
+    assert record["source"] == "explicit"
+    assert record["category"] == "pets"
     assert storage.save_count == before_saves
     assert len(await memory.async_list("alice")) == 1
 
 
-@pytest.mark.parametrize("operation", ["add", "upsert"])
+@pytest.mark.parametrize("operation", ["add", "propose"])
 async def test_new_key_never_promotes_a_different_owner(operation: str) -> None:
     memory = await _memory()
     original = await memory.async_add(
         "alice", "Oscar is a Cavachon.", "pets", "explicit"
     )
-    call = memory.async_add if operation == "add" else memory.async_upsert
+    call = memory.async_add if operation == "add" else memory.async_propose
     result = await call(
         "bob", "Oscar is a Cavachon.", "pets", "explicit", key="pet.oscar.breed"
     )
@@ -275,7 +295,7 @@ async def test_new_key_never_promotes_a_different_owner(operation: str) -> None:
 
 
 @pytest.mark.parametrize("source", ["explicit", "implicit"])
-@pytest.mark.parametrize("operation", ["add", "upsert"])
+@pytest.mark.parametrize("operation", ["add", "propose"])
 async def test_card_like_identifiers_are_retained(source: str, operation: str) -> None:
     memory = await _memory()
     result = await getattr(memory, "async_" + operation)(
@@ -295,7 +315,7 @@ async def test_non_card_identifier_remains_allowed() -> None:
 
 async def test_key_promotion_preserves_an_existing_keyed_sibling() -> None:
     memory = await _memory()
-    sibling = await memory.async_upsert(
+    sibling = await memory.async_add(
         "alice", "Oscar is a Cavachon.", "pets", "explicit", key="pet.oscar.breed"
     )
     unkeyed = await memory.async_add(
@@ -305,7 +325,7 @@ async def test_key_promotion_preserves_an_existing_keyed_sibling() -> None:
         "alice", unkeyed["memory"]["memory_id"], content="Oscar is a Cavachon."
     )
 
-    promoted = await memory.async_upsert(
+    promoted = await memory.async_add(
         "alice",
         "Oscar is a Cavachon.",
         "pets",
@@ -324,14 +344,14 @@ async def test_key_promotion_preserves_an_existing_keyed_sibling() -> None:
 
 async def test_new_keyed_upsert_does_not_merge_with_another_key() -> None:
     memory = await _memory()
-    first = await memory.async_upsert(
+    first = await memory.async_add(
         "alice",
         "Oscar is a Cavachon.",
         "pets",
         "explicit",
         key="pet.oscar.breed",
     )
-    second = await memory.async_upsert(
+    second = await memory.async_add(
         "alice",
         "Oscar is a Cavachon.",
         "pets",
@@ -342,15 +362,15 @@ async def test_new_keyed_upsert_does_not_merge_with_another_key() -> None:
     assert first["status"] == second["status"] == "created"
     assert first["memory"]["memory_id"] != second["memory"]["memory_id"]
 
-    updated = await memory.async_upsert(
+    updated = await memory.async_update(
         "alice",
+        first["memory"]["memory_id"],
         "Oscar is a Cavapoo.",
         "pets",
-        "explicit",
+        source="explicit",
         key="pet.oscar.breed",
     )
-    assert updated["status"] == "updated"
-    assert updated["memory"]["memory_id"] == first["memory"]["memory_id"]
+    assert updated.memory_id == first["memory"]["memory_id"]
     other = next(
         item
         for item in await memory.async_list("alice")
@@ -372,18 +392,19 @@ async def test_unchanged_upsert_preserves_fact_timestamp(
     monkeypatch.setattr(memory_module.dt_util, "utcnow", lambda: next(moments))
     memory = await _memory()
 
-    created = await memory.async_upsert(
+    created = await memory.async_propose(
         "alice", "Oscar is a Cavachon.", "pets", "explicit", key="pet.oscar.breed"
     )
-    existing = await memory.async_upsert(
+    existing = await memory.async_propose(
         "alice", "Oscar is a Cavachon.", "pets", "explicit", key="pet.oscar.breed"
     )
-    changed = await memory.async_upsert(
-        "alice", "Oscar is a Cavapoo.", "pets", "explicit", key="pet.oscar.breed"
+    changed = await memory.async_update(
+        "alice", created["memory"]["memory_id"], "Oscar is a Cavapoo.",
+        expected_revision=existing["memory"]["revision"],
     )
 
     assert existing["memory"]["updated_at"] == created["memory"]["updated_at"]
-    assert changed["memory"]["updated_at"] > existing["memory"]["updated_at"]
+    assert changed.updated_at > existing["memory"]["updated_at"]
 
 
 async def test_metadata_change_during_unkeyed_upsert_updates_fact_timestamp(
@@ -397,12 +418,11 @@ async def test_metadata_change_during_unkeyed_upsert_updates_fact_timestamp(
     created = await memory.async_add(
         "alice", "Tea is in the pantry.", "home", "explicit"
     )
-    existing = await memory.async_upsert(
-        "alice", "Tea is in the pantry.", "preferences", "explicit"
+    existing = await memory.async_update(
+        "alice", created["memory"]["memory_id"], category="preferences",
     )
 
-    assert existing["status"] == "updated"
-    assert existing["memory"]["updated_at"] > created["memory"]["updated_at"]
+    assert existing.updated_at > created["memory"]["updated_at"]
 
 
 async def test_key_collision_does_not_mutate_memory_or_indexes() -> None:
@@ -429,7 +449,7 @@ async def test_key_collision_does_not_mutate_memory_or_indexes() -> None:
 
 async def test_keyed_upsert_embedding_invalidation_tracks_embedded_fields_only() -> None:
     memory = await _memory()
-    await memory.async_add(
+    created = await memory.async_add(
         "alice", "Oscar is a Cavachon.", "pets", "explicit", key="pet.oscar.breed"
     )
     calls: list[list[str]] = []
@@ -442,15 +462,15 @@ async def test_keyed_upsert_embedding_invalidation_tracks_embedded_fields_only()
     assert await memory.async_prepare_hybrid(["alice"], "breed")
     calls.clear()
 
-    await memory.async_upsert(
+    await memory.async_propose(
         "alice", "Oscar is a Cavachon.", "pets", "explicit", key="pet.oscar.breed"
     )
     assert await memory.async_prepare_hybrid(["alice"], "breed")
     assert calls == [["breed"]]
     calls.clear()
 
-    await memory.async_upsert(
-        "alice", "Oscar is a Cavapoo.", "pets", "explicit", key="pet.oscar.breed"
+    await memory.async_update(
+        "alice", created["memory"]["memory_id"], "Oscar is a Cavapoo.",
     )
     assert await memory.async_prepare_hybrid(["alice"], "breed")
     assert calls == [

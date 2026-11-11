@@ -71,12 +71,11 @@ to decide whether a proposal may be inserted.
   rollback, retirement and scope isolation remain unchanged. Content filters
   were retired subsequently without changing those protections.
 
-The older `_find_related_candidate()` remains exclusively in the *legacy
-non-model* `async_upsert()` path to preserve that API's existing behaviour.
-Authenticated Management has its own explicit add/update APIs and is not
-rerouted. The heuristic is **no longer consulted by model-facing proposals**,
-and is never an authorization source. Removing it from legacy direct upserts
-would be a separate compatibility decision.
+The older `_find_related_candidate()` and non-model `async_upsert()` were
+subsequently retired after verifying that they had no production callers.
+Authenticated Management retains its explicit add/update APIs. Model-facing
+`memory_upsert` and the hidden `memory_add` alias still use `async_propose()`;
+retrieval similarity is never an authorization source.
 
 This follow-up deliberately does not require proving that all user-chosen
 models make correct semantic decisions. Deterministic tests establish that

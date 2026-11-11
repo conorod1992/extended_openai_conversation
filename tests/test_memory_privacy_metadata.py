@@ -15,7 +15,7 @@ from homeassistant.util import dt as dt_util
 from tests.test_memory import FakeStorage
 
 
-@pytest.mark.parametrize("operation", ["add", "upsert", "update"])
+@pytest.mark.parametrize("operation", ["add", "propose", "update"])
 @pytest.mark.parametrize("field", ["category", "subject", "key"])
 @pytest.mark.parametrize("source", ["implicit", "explicit"])
 async def test_persistent_metadata_secrets_are_retained(
@@ -46,7 +46,7 @@ async def test_persistent_metadata_secrets_are_retained(
     assert await fresh.async_list("owner") == records
 
 
-@pytest.mark.parametrize("operation", ["add", "upsert", "update"])
+@pytest.mark.parametrize("operation", ["add", "propose", "update"])
 @pytest.mark.parametrize("field", ["category", "subject"])
 @pytest.mark.parametrize("source", ["implicit", "explicit"])
 async def test_sensitive_metadata_is_permitted_for_both_sources(

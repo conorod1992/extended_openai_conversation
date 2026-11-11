@@ -14,7 +14,7 @@ from custom_components.extended_openai_conversation_responses.memory import (
 from tests.test_memory import FakeStorage
 
 
-@pytest.mark.parametrize("operation", ["async_add", "async_upsert"])
+@pytest.mark.parametrize("operation", ["async_add", "async_propose"])
 @pytest.mark.parametrize(
     ("first_subject", "second_subject"),
     [("Oscar", "Luna"), ("C++", "C#"), ("Room 1.2", "Room 1/2")],
@@ -39,14 +39,19 @@ async def test_equal_content_for_distinct_subjects_remains_distinct(
         subject=first_subject.upper(),
     )
     assert first["status"] == second["status"] == "created"
-    assert repeated["memory"]["memory_id"] == first["memory"]["memory_id"]
+    assert repeated["status"] == (
+        "duplicate" if operation == "async_add" else
+        "unchanged" if first_subject.upper() == first_subject else "needs_resolution"
+    )
+    repeated_record = repeated.get("memory", repeated.get("candidate"))
+    assert repeated_record["memory_id"] == first["memory"]["memory_id"]
     assert len(memory._memories) == 2
 
 
 async def test_canonical_key_still_establishes_identity():
     memory = PersistentMemory(FakeStorage())
     await memory.async_initialize()
-    first = await memory.async_upsert(
+    first = await memory.async_propose(
         "user",
         "Likes chicken",
         "preferences",
@@ -54,14 +59,15 @@ async def test_canonical_key_still_establishes_identity():
         subject="Oscar",
         key="pet.food",
     )
-    second = await memory.async_upsert(
+    second = await memory.async_propose(
         "user", "Likes fish", "preferences", "explicit", subject="Luna", key="pet.food"
     )
-    assert first["memory"]["memory_id"] == second["memory"]["memory_id"]
-    assert second["status"] == "updated"
+    assert first["memory"]["memory_id"] == second["candidate"]["memory_id"]
+    assert second["status"] == "needs_resolution"
+    assert second["candidate"]["content"] == "Likes chicken"
 
 
-@pytest.mark.parametrize("operation", ["async_add", "async_upsert"])
+@pytest.mark.parametrize("operation", ["async_add", "async_propose"])
 @pytest.mark.parametrize("legacy_source", ["implicit", "explicit"])
 async def test_subject_confirmation_prevents_legacy_fact_matching_other_subjects(
     operation, legacy_source
@@ -75,6 +81,14 @@ async def test_subject_confirmation_prevents_legacy_fact_matching_other_subjects
     confirmed = await getattr(memory, operation)(
         "user", "Likes chicken", "preferences", "explicit", subject="Oscar"
     )
+    if operation == "async_propose":
+        assert confirmed["status"] == "needs_resolution"
+        assert confirmed["candidate"]["memory_id"] == original["memory"]["memory_id"]
+        updated = await memory.async_update(
+            "user", original["memory"]["memory_id"], subject="Oscar", source="explicit",
+            expected_revision=confirmed["candidate"]["revision"],
+        )
+        confirmed = {"memory": module.memory_as_dict(updated)}
     assert confirmed["memory"]["memory_id"] == original["memory"]["memory_id"]
     assert confirmed["memory"]["subject"] == "Oscar"
     assert confirmed["memory"]["source"] == "explicit"

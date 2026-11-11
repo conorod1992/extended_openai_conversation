@@ -128,15 +128,17 @@ async def test_compact_and_offset_archive_restore_survives_restart(instant):
 
 async def test_case_sensitive_unkeyed_facts_are_not_silently_discarded():
     memory = await _memory()
-    first = await memory.async_upsert(
+    first = await memory.async_propose(
         "alice", "Project directory: /config/Studio", "home", "explicit"
     )
-    second = await memory.async_upsert(
+    second = await memory.async_propose(
         "alice", "Project directory: /config/studio", "home", "explicit"
     )
     assert first["status"] == "created"
-    assert second["status"] == "needs_resolution"
-    assert (await memory.async_list("alice"))[0].content.endswith("Studio")
+    assert second["status"] == "created"
+    assert {r.content for r in await memory.async_list("alice")} == {
+        first["memory"]["content"], second["memory"]["content"]
+    }
 
 
 @pytest.mark.parametrize("operation", ["add", "upsert", "update", "delete"])
