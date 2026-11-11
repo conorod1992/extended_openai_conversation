@@ -48,6 +48,7 @@ from .agent_configuration import (
 )
 from .agent_maintenance import conversation_request_lease, get_agent_maintenance_gate
 from .assistant_response import final_assistant_text
+from .broadcast_command import async_try_broadcast_command
 from .completion_events import (
     CompletionMetadata,
     completion_event_scope,
@@ -1255,13 +1256,20 @@ class ExtendedOpenAIAgentEntity(
         """Dispatch within the caller's run; a local failure never retries via AI."""
         if try_locally:
             try:
-                local_intent = await async_try_handle_local_intent(
+                local_intent = await async_try_broadcast_command(
                     self.hass,
                     user_input,
-                    chat_log,
                     request_options,
                     guest_active=guest_active,
                 )
+                if local_intent is None:
+                    local_intent = await async_try_handle_local_intent(
+                        self.hass,
+                        user_input,
+                        chat_log,
+                        request_options,
+                        guest_active=guest_active,
+                    )
             except HomeAssistantError as err:
                 metadata = _ACTIVE_INVOCATION.get().metadata
                 if metadata is not None:

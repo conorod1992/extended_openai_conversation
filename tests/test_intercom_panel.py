@@ -34,6 +34,7 @@ async def test_websocket_broadcast_snapshot_returns_manager_state(
     """Snapshot exposes the current catalog, history, and permission state."""
     manager = SimpleNamespace(
         enabled=True,
+        builtin_voice_command=True,
         retry_token=lambda: "retry-window",
         pending=Mock(return_value=[]),
         catalog=Mock(return_value={"satellites": [{"id": "assist_satellite.kitchen"}]}),
@@ -58,6 +59,7 @@ async def test_websocket_broadcast_snapshot_returns_manager_state(
         1,
         {
             "enabled": True,
+            "builtin_voice_command": True,
             "retry_token": "retry-window",
             "can_manage": False,
             "pending": [],
@@ -236,6 +238,7 @@ async def test_pending_snapshot_uses_same_privacy_boundary_as_history(
     items = [visible, hidden, hidden_origin]
     manager = SimpleNamespace(
         enabled=True,
+        builtin_voice_command=True,
         retry_token=lambda: "retry-window",
         catalog=Mock(return_value={"satellites": []}),
         history=lambda: items,
@@ -253,3 +256,33 @@ async def test_pending_snapshot_uses_same_privacy_boundary_as_history(
     expected = items if is_admin else [{**visible, "origin_device_id": None}]
     assert snapshot["history"] == snapshot["pending"] == expected
     assert visible["origin_device_id"] == "private-device"
+
+
+@pytest.mark.parametrize("admin", [False, True])
+@pytest.mark.parametrize("enabled", [False, True, "yes", None])
+async def test_builtin_voice_command_requires_admin_boolean_and_acknowledges(hass, monkeypatch, admin, enabled):
+    manager = SimpleNamespace(enabled=False, builtin_voice_command=True)
+    async def set_value(value):
+        manager.builtin_voice_command = value
+    manager.async_set_builtin_voice_command = AsyncMock(side_effect=set_value)
+    monkeypatch.setattr(intercom_panel, "async_get_intercom", AsyncMock(return_value=manager))
+    connection = _connection(is_admin=admin)
+    await _call_handler(hass, connection, {"id": 42, "action": "set_builtin_voice_command", "enabled": enabled})
+    if admin and isinstance(enabled, bool):
+        manager.async_set_builtin_voice_command.assert_awaited_once_with(enabled)
+        connection.send_result.assert_called_once_with(42, {"builtin_voice_command": enabled})
+        assert manager.enabled is False
+    else:
+        manager.async_set_builtin_voice_command.assert_not_awaited()
+        connection.send_result.assert_not_called()
+        connection.send_error.assert_called_once()
+
+
+async def test_shortcut_write_failure_is_never_acknowledged(hass, monkeypatch):
+    from homeassistant.exceptions import HomeAssistantError
+    manager = SimpleNamespace(builtin_voice_command=True, async_set_builtin_voice_command=AsyncMock(side_effect=HomeAssistantError("disk full")))
+    monkeypatch.setattr(intercom_panel, "async_get_intercom", AsyncMock(return_value=manager))
+    connection = _connection()
+    await _call_handler(hass, connection, {"id": 42, "action": "set_builtin_voice_command", "enabled": False})
+    connection.send_result.assert_not_called()
+    connection.send_error.assert_called_once_with(42, "invalid_request", "disk full")

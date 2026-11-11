@@ -20,7 +20,6 @@ from custom_components.extended_openai_conversation_responses.ha_actions import 
 from custom_components.extended_openai_conversation_responses.intercom import (
     ANNOUNCE_FEATURE,
     IntercomManager,
-    parse_targeted_broadcast,
 )
 from homeassistant.components.light import ColorMode, LightEntity
 from homeassistant.const import ATTR_FRIENDLY_NAME, ATTR_SUPPORTED_FEATURES
@@ -152,8 +151,6 @@ async def test_broadcast_duplicate_names_are_ambiguous(hass, alias, reverse):
     manager = IntercomManager(hass)
     with pytest.raises(HomeAssistantError, match="Ambiguous Broadcast destination"):
         manager.resolve_named_target("Voice")
-    with pytest.raises(HomeAssistantError, match="Ambiguous Broadcast destination"):
-        parse_targeted_broadcast("broadcast to Voice dinner is ready", manager)
     assert manager.history() == []
     assert not manager._queues
 
@@ -179,10 +176,6 @@ async def test_satellite_and_device_same_destination_are_not_ambiguous(hass):
     )
     manager = IntercomManager(hass)
     assert manager.resolve_named_target("Voice")["entity_ids"] == [entity.entity_id]
-    assert parse_targeted_broadcast("broadcast to Voice dinner is ready", manager) == (
-        {"entity_ids": [entity.entity_id]},
-        "dinner is ready",
-    )
 
 
 @pytest.mark.parametrize("target_field", ["service_data", "target"])

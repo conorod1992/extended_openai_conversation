@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from custom_components.extended_openai_conversation_responses import (
+    broadcast_command,
     intercom_panel,
     intercom_services,
     local_intents,
@@ -342,15 +343,11 @@ async def test_broadcast_routes_cannot_queue_denied_targets(
     monkeypatch.setattr(
         manager, "resolve_named_target", lambda name: {"entity_id": target}
     )
-    for module in (intercom_services, intercom_panel, local_intents, native):
+    for module in (intercom_services, intercom_panel, broadcast_command, native):
         monkeypatch.setattr(
             module, "async_get_intercom", AsyncMock(return_value=manager)
         )
-    monkeypatch.setattr(
-        local_intents,
-        "parse_targeted_broadcast",
-        lambda *args: ({"entity_ids": [target]}, "Dinner"),
-    )
+
 
     async def execute():
         if route == "service":
@@ -381,15 +378,17 @@ async def test_broadcast_routes_cannot_queue_denied_targets(
             assert connection.send_error.called is not allowed
             return None
         if route == "local":
-            return await local_intents._async_try_targeted_broadcast(
+            return await broadcast_command.async_try_broadcast_command(
                 hass,
                 SimpleNamespace(
-                    text="broadcast to kitchen Dinner",
+                    text="broadcast Dinner",
                     context=context,
                     language="en",
                     satellite_id=None,
                     device_id=None,
                 ),
+                {},
+                guest_active=False,
             )
         with bind_active_ha_context(context):
             return await native.NativeFunction().send_broadcast(

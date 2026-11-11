@@ -15,11 +15,6 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er, intent as ha_intent
 
 from .ha_permissions import async_local_entity_reads_allowed
-from .intercom import (
-    async_get_intercom,
-    is_targeted_broadcast_request,
-    parse_targeted_broadcast,
-)
 
 CONF_LOCAL_INTENTS_ENABLED = "local_intents_enabled"
 CONF_LOCAL_INTENT_EXCLUSIONS = "local_intent_exclusions"
@@ -29,7 +24,6 @@ DEFAULT_LOCAL_INTENT_EXCLUSIONS: tuple[str, ...] = ()
 DEFAULT_LOCAL_INTENT_DELAYED_COMMANDS_TO_AI = False
 
 _FRIENDLY_INTENT_NAMES = {
-    "HassBroadcast": "Whole-home broadcast",
     "HassCancelAllTimers": "Cancel all timers",
     "HassCancelTimer": "Cancel a timer",
     "HassClimateGetTemperature": "Check temperature",
@@ -81,69 +75,13 @@ def should_handle_locally(
 ) -> bool:
     """Return whether this already-recognized Home Assistant intent may run locally."""
     intent_name = result.intent.name
-    if intent_name in excluded_intents:
+    if intent_name == "HassBroadcast" or intent_name in excluded_intents:
         return False
     return not (
         delayed_commands_to_ai
         and intent_name == ha_intent.INTENT_START_TIMER
         and _has_conversation_command(result)
     )
-
-
-async def _async_try_targeted_broadcast(
-    hass: HomeAssistant, user_input: ConversationInput
-) -> LocalIntentResult | None:
-    """Handle explicit targeted broadcast wording before HA's whole-home intent."""
-    text = getattr(user_input, "text", None)
-    if (
-        not isinstance(text, str)
-        or not text.strip()
-        or not is_targeted_broadcast_request(text)
-    ):
-        return None
-    manager = await async_get_intercom(hass)
-    if not manager.enabled:
-        return None
-    parsed = parse_targeted_broadcast(text, manager)
-    if parsed is None:
-        return None
-    target, message = parsed
-    origin_entity_id = getattr(user_input, "satellite_id", None)
-    origin_device_id = getattr(user_input, "device_id", None)
-    # A destination can be named in the catalog but still be ineligible when
-    # the speaking satellite itself is excluded. No send has been attempted:
-    # respond locally rather than retrying an announcement through the AI.
-    eligible = manager.resolve_targets(
-        whole_home=target.get("whole_home", False),
-        entity_ids=target.get("entity_ids"),
-        device_ids=target.get("device_ids"),
-        area_ids=target.get("area_ids"),
-        floor_ids=target.get("floor_ids"),
-        label_ids=target.get("label_ids"),
-        origin_entity_id=origin_entity_id,
-        origin_device_id=origin_device_id,
-    )
-    response = ha_intent.IntentResponse(
-        language=getattr(user_input, "language", None) or "en"
-    )
-    if not eligible:
-        response.async_set_speech(
-            "I couldn't find another available speaker for that announcement."
-        )
-        return LocalIntentResult(response=response, intent_name="ExtendedBroadcast")
-
-    # async_send still applies authorization and rechecks current eligibility.
-    # The preliminary destination check is never a permission grant.
-    await manager.async_send(
-        message,
-        **target,
-        origin_entity_id=origin_entity_id,
-        origin_device_id=origin_device_id,
-        source="local_voice",
-        context=user_input.context,
-    )
-    response.async_set_speech("Broadcast queued.")
-    return LocalIntentResult(response=response, intent_name="ExtendedBroadcast")
 
 
 async def async_try_handle_local_intent(
@@ -154,7 +92,7 @@ async def async_try_handle_local_intent(
     *,
     guest_active: bool,
 ) -> LocalIntentResult | None:
-    """Try integration local routing then Home Assistant registered intents."""
+    """Try eligible Home Assistant intents, always excluding HassBroadcast."""
     if not options.get(CONF_LOCAL_INTENTS_ENABLED, DEFAULT_LOCAL_INTENTS_ENABLED):
         return None
 
@@ -162,23 +100,6 @@ async def async_try_handle_local_intent(
     # Guest Mode policy. Keep Guest Mode on the existing policy-enforced model path.
     if guest_active:
         return None
-
-    # HA's HassBroadcast only has a message slot and broadcasts to every other
-    # satellite. Resolve explicit area/device/floor/label wording first so a command
-    # like "broadcast to the kitchen..." is deterministic and provider-free.
-    excluded = tuple(options.get(CONF_LOCAL_INTENT_EXCLUSIONS, ()))
-    targeted = (
-        None
-        if "HassBroadcast" in excluded
-        else await _async_try_targeted_broadcast(hass, user_input)
-    )
-    if targeted is not None:
-        return targeted
-
-    text = getattr(user_input, "text", None)
-    block_whole_home_broadcast = isinstance(
-        text, str
-    ) and is_targeted_broadcast_request(text)
 
     handle_intents = getattr(conversation, "async_handle_intents", None)
     if handle_intents is None:
@@ -205,8 +126,6 @@ async def async_try_handle_local_intent(
                 result.entities
             )
         ):
-            return True
-        if block_whole_home_broadcast and result.intent.name == "HassBroadcast":
             return True
         if not should_handle_locally(result, excluded, delayed_commands_to_ai):
             return True
@@ -251,6 +170,7 @@ def registered_intent_catalog(
         str(handler.intent_type)
         for handler in ha_intent.async_get(hass)
         if isinstance(getattr(handler, "intent_type", None), str)
+        and handler.intent_type != "HassBroadcast"
         and handler.intent_type
     }
     all_names = registered | {
@@ -260,7 +180,7 @@ def registered_intent_catalog(
         {
             "intent": name,
             "label": _friendly_intent_name(name),
-            "available": name in registered,
+            "available": name in registered and name != "HassBroadcast",
         }
         for name in sorted(
             all_names, key=lambda item: (_friendly_intent_name(item), item)
