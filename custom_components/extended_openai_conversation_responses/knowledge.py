@@ -966,28 +966,20 @@ def knowledge_tools() -> list[dict[str, Any]]:
         {
             "spec": {
                 "name": "knowledge_search",
-                "description": (
-                    "Search the agent's local Knowledge Library for relevant "
-                    "deliberately maintained reference information. Continue ranked results using next_offset as offset with the same query and filters. Restart at zero if sources change."
-                ),
+                "description": "Search the local Knowledge Library.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "query": {
                             "type": "string",
                             "minLength": 1,
-                            "description": "What information to find in the local knowledge library.",
+                            "description": "Short search keywords or phrase.",
                         },
                         "offset": {"type": "integer", "minimum": 0, "default": 0},
                         "source_ids": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": (
-                                "Optional exact source IDs returned by a previous "
-                                "Knowledge Library tool call. Omit this field when no "
-                                "exact returned IDs are available; never invent IDs or "
-                                "use titles or categories as IDs."
-                            ),
+                            "description": "Exact IDs returned by Knowledge tools.",
                         },
                         "limit": {
                             "type": "integer",
@@ -1005,20 +997,13 @@ def knowledge_tools() -> list[dict[str, Any]]:
         {
             "spec": {
                 "name": "knowledge_list",
-                "description": (
-                    "List bounded Knowledge source metadata when the right search "
-                    "terms or source ID are unknown. Returns titles and descriptions, "
-                    "never source content."
-                ),
+                "description": "Browse Knowledge source titles and descriptions.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": (
-                                "Optional short filter applied only to source titles "
-                                "and descriptions. Omit it to browse available sources."
-                            ),
+                            "description": "Optional title/description filter.",
                         },
                         "limit": {
                             "type": "integer",
@@ -1040,16 +1025,13 @@ def knowledge_tools() -> list[dict[str, Any]]:
         {
             "spec": {
                 "name": "knowledge_get",
-                "description": (
-                    "Retrieve one Knowledge source or a bounded section after "
-                    "identifying its exact source ID."
-                ),
+                "description": "Read a Knowledge source page by exact source ID.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "source_id": {
                             "type": "string",
-                            "description": "The exact knowledge-source ID to retrieve.",
+                            "description": "Exact returned source ID.",
                         },
                         "start_character": {
                             "type": "integer",
