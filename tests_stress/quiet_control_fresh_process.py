@@ -15,6 +15,7 @@ from custom_components.extended_openai_conversation_responses.quiet_hours import
 )
 from homeassistant import bootstrap, loader
 from homeassistant.core import Context, HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
 
@@ -61,6 +62,16 @@ async def main():
         "media_player.process_probe",
         "switch.process_probe",
     )
+    # Model the same registered physical controls in each process. State-only
+    # test entities cannot establish saved ownership after a real restart.
+    registry = er.async_get(hass)
+    for entity_id in (satellite, media, wake):
+        domain, object_id = entity_id.split(".", 1)
+        entry = registry.async_get_or_create(
+            domain, "test", f"quiet-process-{entity_id}",
+            suggested_object_id=object_id,
+        )
+        assert entry.entity_id == entity_id
     hass.states.async_set(satellite, "idle")
     context = (
         Context(id=device["context_id"])
