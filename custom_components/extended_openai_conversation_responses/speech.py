@@ -1350,7 +1350,20 @@ def _built_in_cleanup(text: str, *, markdown: bool, urls: bool) -> str:
 def _final_whitespace_cleanup(text: str) -> str:
     # Parentheses can be literal speech content (including a code-span call()).
     # Link suppression already removes the enclosing citation parentheses.
-    text = _SPACE_BEFORE_PUNCTUATION.sub(r"\1", text)
+    def punctuation_spacing(match: re.Match[str]) -> str:
+        position = match.end() - 1
+        punctuation = match.group(1)
+        # A leading dot belongs to the following filename/identifier. Emoticons
+        # similarly belong to the following token rather than the preceding word.
+        if punctuation == "." and re.match(r"\w", text[position + 1 : position + 2]):
+            return match.group()
+        if punctuation in {":", ";"} and re.match(
+            r"[:;]-?[()DPp/](?=\s|$)", text[position:]
+        ):
+            return match.group()
+        return punctuation
+
+    text = _SPACE_BEFORE_PUNCTUATION.sub(punctuation_spacing, text)
     text = _WHITESPACE.sub(" ", text)
     text = _BLANK_LINES.sub("\n", text)
     return text.strip()

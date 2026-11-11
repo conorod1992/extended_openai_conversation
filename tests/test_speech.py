@@ -1431,3 +1431,25 @@ def test_readable_and_empty_address_labels_stream_like_completed(original, expec
             _stream([original[:split], original[split:]])
         ) == expected, split
     assert speech._final_whitespace_cleanup(_stream(list(original))) == expected
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("this .env file", "this .env file"),
+    ("edit .gitignore and .config.json", "edit .gitignore and .config.json"),
+    ("10:30 :) nice ;)", "10:30 :) nice ;)"),
+    ("Great :-) okay :-D", "Great :-) okay :-D"),
+    ("Hello , world", "Hello, world"),
+    ("Correct . Next", "Correct. Next"),
+    ("call() .env :)", "call() .env :)"),
+    ("First .\n\nNext !", "First.\nNext!"),
+])
+def test_final_cleanup_preserves_leading_dot_and_emoticon_boundaries(text, expected):
+    assert speech._final_whitespace_cleanup(text) == expected
+    assert process_speech_text(text, _config()) == expected
+
+
+def test_final_cleanup_after_suppression_and_custom_replacements():
+    assert process_speech_text("[Open](https://example.com) .env file :)", _config()) == "Open .env file :)"
+    assert process_speech_text("See https://example.com . Next", _config()) == "See. Next"
+    assert process_speech_text("Use `call()` .env", _config()) == "Use call() .env"
+    assert process_speech_text("TOKEN", _config(speech_regex_replacements=[{"pattern": "TOKEN", "replacement": "this .env :)"}])) == "this .env :)"
