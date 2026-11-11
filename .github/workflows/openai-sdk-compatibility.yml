@@ -2,7 +2,17 @@ name: OpenAI SDK Compatibility
 
 on:
   workflow_dispatch:
+    inputs:
+      ha_dev_sha:
+        description: Optional immutable Home Assistant dev commit supplied by Full Validation
+        type: string
+        required: false
   workflow_call:
+    inputs:
+      ha_dev_sha:
+        description: Optional immutable Home Assistant dev commit supplied by Full Validation
+        type: string
+        required: false
   schedule:
     - cron: "17 4 * * 2"
 
@@ -103,6 +113,7 @@ jobs:
         id: ha
         env:
           HA_TRACK: ${{ matrix.track }}
+          REQUESTED_HA_DEV_SHA: ${{ inputs.ha_dev_sha }}
         run: |
           set -euo pipefail
           case "$HA_TRACK" in
@@ -113,7 +124,7 @@ jobs:
               ref="$(python3 -c 'import json; from urllib.request import urlopen; print(json.load(urlopen("https://pypi.org/pypi/homeassistant/json", timeout=30))["info"]["version"])')"
               ;;
             dev)
-              ref="$(python3 ci/ha_dev_snapshot.py)"
+              ref="$(python3 ci/ha_dev_snapshot.py --sha "$REQUESTED_HA_DEV_SHA")"
               ;;
           esac
           [[ "$ref" =~ ^([0-9]{4}\.[0-9]+\.[0-9]+|[0-9a-f]{40})$ ]]
