@@ -21,7 +21,7 @@ from typing import Any, cast
 from homeassistant.const import EVENT_CORE_CONFIG_UPDATE
 from homeassistant.core import Context, Event, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.event import (
     async_track_time_change,
     async_track_time_interval,
@@ -107,6 +107,7 @@ class SatelliteCapabilities:
     wake_sound_source: str | None
     media_player_candidates: tuple[str, ...] = ()
     wake_sound_candidates: tuple[str, ...] = ()
+    wake_sound_ambiguous: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -119,6 +120,7 @@ class SatelliteCapabilities:
             "wake_sound_source": self.wake_sound_source,
             "media_player_candidates": list(self.media_player_candidates),
             "wake_sound_candidates": list(self.wake_sound_candidates),
+            "wake_sound_ambiguous": self.wake_sound_ambiguous,
         }
 
 
@@ -287,72 +289,59 @@ def _current_switch(hass: HomeAssistant, entity_id: str) -> bool | None:
     return None
 
 
-def _entry_name(entry: er.RegistryEntry) -> str:
-    return " ".join(
-        str(value)
-        for value in (entry.name, entry.original_name, entry.entity_id)
-        if value
-    ).lower()
-
-
 def _override_map(config: QuietHoursConfig) -> dict[str, SatelliteOverride]:
     return {item.satellite_entity_id: item for item in config.overrides}
 
 
-def _pick_media_player(
-    hass: HomeAssistant, entries: list[er.RegistryEntry]
-) -> str | None:
+def _pick_media_player(entries: list[er.RegistryEntry]) -> str | None:
+    """Select only a unique registered, enabled player, irrespective of state."""
     candidates = [
         entry
         for entry in entries
         if entry.domain == "media_player" and entry.disabled_by is None
     ]
-    if not candidates:
-        return None
-
-    def score(entry: er.RegistryEntry) -> tuple[int, str]:
-        state = hass.states.get(entry.entity_id)
-        has_volume = bool(
-            state is not None
-            and isinstance(state.attributes.get("volume_level"), (int, float))
-            and not isinstance(state.attributes.get("volume_level"), bool)
-        )
-        name = _entry_name(entry)
-        return (
-            (8 if has_volume else 0)
-            + (4 if entry.platform == "esphome" else 0)
-            + (2 if "media player" in name or "speaker" in name else 0),
-            entry.entity_id,
-        )
-
-    return max(candidates, key=score).entity_id
+    return candidates[0].entity_id if len(candidates) == 1 else None
 
 
-def _pick_wake_sound(entries: list[er.RegistryEntry]) -> str | None:
-    candidates = [
+def _wake_sound_controls(
+    entries: list[er.RegistryEntry], device: dr.DeviceEntry | None
+) -> list[er.RegistryEntry]:
+    """Recognise the stock Voice PE firmware convention, not user-facing names.
+
+    Its ESPHome project sets Nabu Casa / Home Assistant Voice PE device metadata
+    and exposes the configuration switch with original_name="Wake sound".
+    Custom firmware and other devices require an explicit selection.
+    """
+    if device is None or (device.manufacturer, device.model) != (
+        "Nabu Casa",
+        "Home Assistant Voice PE",
+    ):
+        return []
+    return [
         entry
         for entry in entries
         if entry.domain == "switch"
         and entry.disabled_by is None
-        and "wake sound" in _entry_name(entry)
+        and entry.platform == "esphome"
+        and entry.original_name == "Wake sound"
+        and entry.entity_category == "config"
     ]
-    if not candidates:
-        return None
-    candidates.sort(
-        key=lambda entry: (entry.platform == "esphome", entry.entity_id), reverse=True
-    )
-    return candidates[0].entity_id
+
+
+def _pick_wake_sound(
+    entries: list[er.RegistryEntry], device: dr.DeviceEntry | None = None
+) -> str | None:
+    candidates = _wake_sound_controls(entries, device)
+    return candidates[0].entity_id if len(candidates) == 1 else None
 
 
 def discover_satellite_capabilities(
     hass: HomeAssistant, config: QuietHoursConfig
 ) -> list[SatelliteCapabilities]:
-    """Resolve controls for live Assist satellites without registry internals.
+    """Resolve controls using the public registry APIs (HA 2026.7 or later).
 
-    Entity-registry container details and some convenience helpers have changed
-    across Home Assistant releases.  The state machine already tells us which
-    entities are live, so correlate those states to registry entries one-by-one
-    through the stable ``async_get(entity_id)`` API and then match by device id.
+    Count all enabled entries on the device, including those without live state.
+    A partial live-state inventory cannot establish an unambiguous association.
     """
     registry = er.async_get(hass)
     overrides = _override_map(config)
@@ -362,28 +351,32 @@ def discover_satellite_capabilities(
         key=lambda item: item.entity_id,
     )
 
-    control_entries = []
-    for state in states:
-        if not state.entity_id.startswith(("media_player.", "switch.")):
-            continue
-        entry = registry.async_get(state.entity_id)
-        if entry is not None and entry.disabled_by is None:
-            control_entries.append(entry)
-
     result: list[SatelliteCapabilities] = []
     for state in satellites:
         satellite = registry.async_get(state.entity_id)
         if satellite is not None and satellite.disabled_by is not None:
             continue
         device_id = satellite.device_id if satellite is not None else None
-        same_device = (
-            [entry for entry in control_entries if entry.device_id == device_id]
-            if device_id is not None
-            else []
-        )
+        try:
+            same_device = (
+                [
+                    entry
+                    for entry in er.async_entries_for_device(registry, device_id)
+                    if entry.disabled_by is None
+                ]
+                if device_id is not None
+                else []
+            )
+        except AttributeError as err:
+            # Early setup can precede registry loading. Never infer uniqueness
+            # from the subset of controls that happens to have live state.
+            if err.name not in {"entities", "_entities_data"}:
+                raise
+            same_device = []
+        device = dr.async_get(hass).async_get(device_id) if device_id else None
         override = overrides.get(state.entity_id)
-        auto_media = _pick_media_player(hass, same_device)
-        auto_wake = _pick_wake_sound(same_device)
+        auto_media = _pick_media_player(same_device)
+        auto_wake = _pick_wake_sound(same_device, device)
         media = (
             override.media_player_entity_id
             if override and override.media_player_entity_id
@@ -435,6 +428,7 @@ def discover_satellite_capabilities(
                         if entry.entity_id.startswith("switch.")
                     )
                 ),
+                wake_sound_ambiguous=len(_wake_sound_controls(same_device, device)) > 1,
             )
         )
     return result
@@ -745,6 +739,28 @@ class QuietHoursManager:
             previous = self._config
             self._config = candidate
             try:
+                # An explicit selection edit uses the existing departure/restore
+                # contract, even when clearing it leaves automatic discovery
+                # ambiguous. Persist that intent atomically with the new policy.
+                previous_overrides = _override_map(previous)
+                candidate_overrides = _override_map(candidate)
+                for entity_id, control in (
+                    (self._active or {}).get("controls", {}).items()
+                ):
+                    satellite_id = control["satellite_entity_id"]
+                    old = previous_overrides.get(satellite_id)
+                    new = candidate_overrides.get(satellite_id)
+                    field = (
+                        "media_player_entity_id"
+                        if control["kind"] == "volume"
+                        else "wake_sound_entity_id"
+                    )
+                    if (
+                        old
+                        and getattr(old, field) == entity_id
+                        and (not new or getattr(new, field) != entity_id)
+                    ):
+                        control["restoration_pending"] = True
                 self._migrate_selected_entity_ids()
                 candidate = self._config
                 await self._async_save_locked()
@@ -955,6 +971,21 @@ class QuietHoursManager:
                     )
                     await self._async_save_locked()
             capabilities = self._discover_capabilities()
+            # A newly recognisable automatic candidate must not displace a
+            # verified current-period owner either. Blank only the application
+            # snapshot; the editor still shows fresh discovery for future periods.
+            for index, item in enumerate(capabilities):
+                for entity_id, control in (
+                    (self._active or {}).get("controls", {}).items()
+                ):
+                    if self._retain_ambiguous_control(entity_id, control, [item]):
+                        field = (
+                            "media_player_entity_id"
+                            if control["kind"] == "volume"
+                            else "wake_sound_entity_id"
+                        )
+                        item = replace(item, **{field: None})
+                capabilities[index] = item
             await self._async_reconcile_controls_locked(capabilities)
             await self._async_retry_pending_restores_locked()
 
@@ -1189,6 +1220,52 @@ class QuietHoursManager:
                 self._active["observed_identities"] = identities
         return changed
 
+    def _retain_ambiguous_control(
+        self,
+        entity_id: str,
+        control: dict[str, Any],
+        capabilities: list[SatelliteCapabilities],
+    ) -> bool:
+        """Keep verified ownership for this occurrence, without selecting it anew.
+
+        These records already survive restart and expire at period end. Do not
+        resurrect departing or released controls, or carry an old association
+        into a subsequent occurrence (restore_before_apply).
+        """
+        if control.get("restoration_pending") or control.get("restore_before_apply"):
+            return False
+        identity = control.get("registry_identity")
+        satellite_identity = control.get("satellite_registry_identity")
+        satellite_id = control["satellite_entity_id"]
+        if (
+            not identity
+            or identity != self._entity_registry_identity(entity_id)
+            or (
+                satellite_identity is not None
+                and satellite_identity != self._entity_registry_identity(satellite_id)
+            )
+        ):
+            return False
+        entry = er.async_get(self.hass).async_get(entity_id)
+        if entry is None or entry.disabled_by is not None:
+            return False
+        for item in capabilities:
+            if item.satellite_entity_id != satellite_id or not item.device_id:
+                continue
+            if entry.device_id != item.device_id:
+                return False
+            if control["kind"] == "volume":
+                return (
+                    item.media_player_entity_id != entity_id
+                    and item.media_player_source != "manual"
+                )
+            return (
+                self._config.wake_sound != "unchanged"
+                and item.wake_sound_entity_id != entity_id
+                and item.wake_sound_source != "manual"
+            )
+        return False
+
     async def _async_reconcile_controls_locked(
         self, capabilities: list[SatelliteCapabilities]
     ) -> None:
@@ -1230,6 +1307,19 @@ class QuietHoursManager:
             ):
                 await self._async_save_control_state_locked()
             target = desired.get(entity_id)
+            if target is None and self._retain_ambiguous_control(
+                entity_id, control, capabilities
+            ):
+                # Reuse reconciliation to observe independent changes and lost
+                # acknowledgements. Discovery and the fresh-application path
+                # still return no selection, so no new ownership is acquired.
+                target = (
+                    control["kind"],
+                    control["satellite_entity_id"],
+                    self._config.max_volume
+                    if control["kind"] == "volume"
+                    else self._config.wake_sound == "on",
+                )
             if target is None or target[0] != control["kind"]:
                 control["restoration_pending"] = True
                 continue

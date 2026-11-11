@@ -38,8 +38,8 @@ def _install_satellite_entities(
     device = dr.async_get(hass).async_get_or_create(
         config_entry_id=source_entry.entry_id,
         identifiers={("esphome", f"quiet-hours-{slug}-scheduling")},
-        manufacturer="Home Assistant",
-        model="Voice Preview Edition",
+        manufacturer="Nabu Casa",
+        model="Home Assistant Voice PE",
         name=name,
     )
     registry = er.async_get(hass)
@@ -69,6 +69,7 @@ def _install_satellite_entities(
         suggested_object_id=f"{slug}_voice_scheduling_wake_sound",
         device_id=device.id,
         original_name="Wake sound",
+        entity_category="config",
     )
 
     hass.states.async_set(
