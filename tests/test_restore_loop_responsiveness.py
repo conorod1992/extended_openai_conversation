@@ -105,9 +105,9 @@ async def test_restore_prepares_retained_history_in_workers(monkeypatch, count, 
     worker_threads = []
     build = restore_recovery._new_journal
 
-    def observed_build(*args):
+    def observed_build(*args, **kwargs):
         worker_threads.append(threading.get_ident())
-        return build(*args)
+        return build(*args, **kwargs)
 
     monkeypatch.setattr(restore_recovery, "_new_journal", observed_build)
     validate_usage = UsageManager.validate_backup_data

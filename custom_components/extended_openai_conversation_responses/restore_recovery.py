@@ -195,6 +195,9 @@ def _new_journal(
     subentry_id: str,
     target: backup.PreparedRestore,
     rollback: backup.PreparedRestore,
+    *,
+    target_provider: str | None = None,
+    rollback_provider: str | None = None,
 ) -> dict[str, Any]:
     """Build the complete write-ahead record before destructive work begins."""
     return {
@@ -205,7 +208,42 @@ def _new_journal(
         "created_at": dt_util.utcnow().isoformat(),
         "target": _prepared_document(target, entry_id, subentry_id),
         "rollback": _prepared_document(rollback, entry_id, subentry_id),
+        **(
+            {
+                "configuration_providers": {
+                    "target": target_provider,
+                    "rollback": rollback_provider,
+                }
+            }
+            if target_provider is not None and rollback_provider is not None
+            else {}
+        ),
     }
+
+
+def _journal_providers(
+    value: Mapping[str, Any], fallback: str | None
+) -> dict[str, str | None]:
+    """Read local validation hints without restoring or inferring credentials.
+
+    Older journals lack these hints and retain their existing parent-provider
+    fallback. New journals identify the two independently validated generations.
+    """
+    if "configuration_providers" not in value:
+        return {"target": fallback, "rollback": fallback}
+    from .const import API_PROVIDERS
+
+    contexts = value["configuration_providers"]
+    if (
+        not isinstance(contexts, Mapping)
+        or set(contexts) != {"target", "rollback"}
+        or any(
+            not isinstance(item, str) or item not in {p["key"] for p in API_PROVIDERS}
+            for item in contexts.values()
+        )
+    ):
+        raise backup.BackupError("Pending restore provider context is corrupted")
+    return dict(contexts)
 
 
 async def _async_load_journal(
@@ -221,7 +259,11 @@ async def _async_load_journal(
         "target",
         "rollback",
     }
-    if not isinstance(value, Mapping) or set(value) != required:
+    if (
+        not isinstance(value, Mapping)
+        or not required <= set(value)
+        or set(value) - required - {"configuration_providers"}
+    ):
         raise backup.BackupError("Pending restore transaction is corrupted")
     transaction_id = value["transaction_id"]
     phase = value["phase"]
@@ -237,6 +279,7 @@ async def _async_load_journal(
     ):
         raise backup.BackupError("Pending restore transaction is corrupted")
     journal = dict(value)
+    providers = _journal_providers(journal, provider)
     try:
         try:
             rollback = await backup.async_inspect_backup(
@@ -244,7 +287,7 @@ async def _async_load_journal(
                 subentry_id,
                 max_bytes=backup.MAX_BACKUP_BYTES,
                 private_journal=True,
-                provider=provider,
+                provider=providers["rollback"],
             )
         except backup.BackupError as err:
             # Older writers could journal an oversized rollback. Once committed,
@@ -256,7 +299,7 @@ async def _async_load_journal(
                 subentry_id,
                 max_bytes=backup.MAX_BACKUP_BYTES,
                 private_journal=True,
-                provider=provider,
+                provider=providers["target"],
             )
         try:
             target = await backup.async_inspect_backup(
@@ -264,7 +307,7 @@ async def _async_load_journal(
                 subentry_id,
                 max_bytes=backup.MAX_BACKUP_BYTES,
                 private_journal=True,
-                provider=provider,
+                provider=providers["target"],
             )
         except HomeAssistantError:
             if phase != _PHASE_APPLYING:
@@ -674,25 +717,38 @@ async def _update_configuration(
     entry: Any,
     subentry: Any,
     prepared: backup.PreparedRestore,
+    *,
+    provider: str | None = None,
+    previous_provider: str | None = None,
 ) -> None:
     # The owned restore already resets live subsystem runtimes. Apply its
     # configuration through the normal live-update path instead of starting an
     # unowned entry reload while exclusive recovery is still settling.
     from .helpers import entry_api_provider
 
+    destination_provider = (
+        provider if provider is not None else entry_api_provider(entry)
+    )
+    # A committed journal can be replayed after target configuration was already
+    # persisted. That exact generation must use its own context on both sides.
+    current_provider = (
+        destination_provider
+        if subentry.data == prepared.config
+        else previous_provider
+        if previous_provider is not None
+        else entry_api_provider(entry)
+    )
     if not configuration_supports_live_update(
         # Interpret authoritative private data as persisted on both sides.
         # A raw legacy [] must not look like a decoded empty edit and reload.
-        backup.private_configuration_snapshot(
-            subentry.data, provider=entry_api_provider(entry)
-        ),
+        backup.private_configuration_snapshot(subentry.data, provider=current_provider),
         (
             backup.private_configuration_snapshot(
-                prepared.config, provider=entry_api_provider(entry)
+                prepared.config, provider=destination_provider
             )
             if prepared.authoritative_config
             else backup.recoverable_configuration_snapshot(
-                prepared.config, provider=entry_api_provider(entry)
+                prepared.config, provider=destination_provider
             )
         ),
         title_changed=subentry.title != prepared.title,
@@ -789,8 +845,16 @@ async def _async_restore_backup_recoverably(
             )
 
         managers = await _durable_managers(hass, entry_id, subentry_id)
-        from .helpers import entry_api_provider
+        from .helpers import effective_api_provider, entry_api_provider
 
+        rollback_provider = entry_api_provider(entry)
+        target_provider = (
+            effective_api_provider(
+                provider_data.get("api_provider"), provider_data.get("base_url")
+            )
+            if provider_data is not None
+            else rollback_provider
+        )
         rollback = await backup._snapshot_for_restore(
             managers, subentry, provider=entry_api_provider(entry)
         )
@@ -817,7 +881,13 @@ async def _async_restore_backup_recoverably(
                 f"Restored request is not runtime-ready: {err}"
             ) from err
         journal = await asyncio.to_thread(
-            _new_journal, entry_id, subentry_id, prepared, rollback
+            _new_journal,
+            entry_id,
+            subentry_id,
+            prepared,
+            rollback,
+            target_provider=target_provider,
+            rollback_provider=rollback_provider,
         )
         # PreparedRestore bypasses inspect_backup's serialized-size validation.
         # Validate the actual journal documents before even the write-ahead save.
@@ -828,7 +898,9 @@ async def _async_restore_backup_recoverably(
                     subentry_id,
                     max_bytes=backup.MAX_BACKUP_BYTES,
                     private_journal=True,
-                    provider=entry_api_provider(entry),
+                    provider=target_provider
+                    if section == "target"
+                    else rollback_provider,
                 )
             except HomeAssistantError as err:
                 raise backup.BackupError(
@@ -897,7 +969,17 @@ async def _async_restore_backup_recoverably(
                 managers,
                 prepared.preserve_retained_continuity,
             )
-            await _update_configuration(hass, entry, subentry, prepared)
+            await _update_configuration(
+                hass,
+                entry,
+                subentry,
+                prepared,
+                **(
+                    {"provider": target_provider}
+                    if target_provider != rollback_provider
+                    else {}
+                ),
+            )
             await store.async_remove()
         except Exception as err:
             _LOGGER.exception("Agent restore committed but completion remains pending")
@@ -931,6 +1013,10 @@ async def _async_recover_pending_restore(
             raw, entry_id, subentry_id, provider=entry_api_provider(entry)
         )
         selected = target if journal["phase"] == _PHASE_COMMITTED else rollback
+        providers = _journal_providers(journal, entry_api_provider(entry))
+        selected_provider = providers[
+            "target" if journal["phase"] == _PHASE_COMMITTED else "rollback"
+        ]
 
         try:
             managers = await _recovery_managers(hass, entry_id, subentry_id, selected)
@@ -942,7 +1028,23 @@ async def _async_recover_pending_restore(
                 managers,
                 preserve_continuity=journal["phase"] != _PHASE_COMMITTED,
             )
-            await _update_configuration(hass, entry, subentry, selected)
+            await _update_configuration(
+                hass,
+                entry,
+                subentry,
+                selected,
+                **(
+                    {
+                        "provider": selected_provider,
+                        "previous_provider": providers["rollback"],
+                    }
+                    if any(
+                        value != entry_api_provider(entry)
+                        for value in providers.values()
+                    )
+                    else {}
+                ),
+            )
             await store.async_remove()
         except Exception as err:
             _LOGGER.exception(
