@@ -907,7 +907,9 @@ class _Compiler:
 
 def _normalize_literal(text: str) -> str:
     """Normalize literal spelling without interpreting it as pattern syntax."""
-    return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", text))
+    return re.sub(
+        r"\s+", " ", unicodedata.normalize("NFKC", text).replace("\u2019", "'")
+    )
 
 
 def prepare_match_text(text: str) -> PreparedSentenceText:
