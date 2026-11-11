@@ -59,6 +59,7 @@
     "tests_real_ha/test_live_subentry_removal.py",
     "tests_real_ha/test_management_command_contracts.py",
     "tests_real_ha/test_management_history_runtime.py",
+    "tests_real_ha/test_memory_intent_provider_wire.py",
     "tests_real_ha/test_memory_provider_wire_e2e.py",
     "tests_real_ha/test_model_catalog.py",
     "tests_real_ha/test_multilayer_authorization_conflict.py",
@@ -382,6 +383,12 @@
       "job": "stable",
       "selector": "tests_real_ha/",
       "reason": "test_management_history_runtime runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
+    },
+    "tests_real_ha/test_memory_intent_provider_wire.py": {
+      "workflow": "real-ha.yml",
+      "job": "stable",
+      "selector": "tests_real_ha/",
+      "reason": "Memory intent provider-wire regressions run in genuine HA acceptance alongside the existing Memory provider-wire suite; Enhanced retains its targeted stress campaigns."
     },
     "tests_real_ha/test_memory_provider_wire_e2e.py": {
       "workflow": "real-ha.yml",
