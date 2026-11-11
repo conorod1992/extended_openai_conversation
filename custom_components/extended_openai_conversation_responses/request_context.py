@@ -37,8 +37,6 @@ class ConversationTurnContext:
     temporary_scope: str | None = None
     function_group_session: FunctionGroupSession | None = None
     memory_session: tuple[str, int] | None = None
-    # Direct user utterance, never model- or retrieved-data-derived authority.
-    user_request_text: str | None = None
 
 
 _NO_TURN = ConversationTurnContext()
