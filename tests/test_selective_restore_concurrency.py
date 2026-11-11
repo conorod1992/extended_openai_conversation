@@ -77,7 +77,7 @@ class RestoreHarness:
             request_rules=manager("request_rules"),
         )
 
-        async def snapshot(*_args):
+        async def snapshot(*_args, **_kwargs):
             self.snapshots.append((self.gate._writer_active, self.lock.locked()))
             current = deepcopy(self.state)
             current.config = deepcopy(self.subentry.data)

@@ -32,7 +32,7 @@ async def test_restore_journal_uses_scalable_backup_limit(monkeypatch) -> None:
     target = object()
     rollback = object()
 
-    async def inspect(value, subentry_id, *, max_bytes, private_journal):
+    async def inspect(value, subentry_id, *, max_bytes, private_journal, provider=None):
         assert private_journal is True
         calls.append((value, subentry_id, max_bytes))
         return target if value["large"] == "target" else rollback

@@ -167,9 +167,9 @@ async def test_async_inspection_validates_usage_in_worker_but_configuration_on_l
         usage_threads.append(threading.get_ident())
         return usage_validate(*args)
 
-    def config_validation(*args):
+    def config_validation(*args, **kwargs):
         config_threads.append(threading.get_ident())
-        return config_validate(*args)
+        return config_validate(*args, **kwargs)
 
     monkeypatch.setattr(
         UsageManager, "validate_backup_data", staticmethod(usage_validation)

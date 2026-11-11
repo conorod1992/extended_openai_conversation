@@ -484,12 +484,15 @@ def persist_valid_function_configuration(
     require_agent_config_revision(subentry, expected_revision)
     revision_check_ms = (perf_counter() - started) * 1000
     phase = perf_counter()
+    from .helpers import entry_api_provider
+
     prepared = function_mutations.prepare_valid_function_configuration(
         subentry.data,
         tools,
         groups,
         extra_updates=extra_updates,
         validated_snapshot=persisted_config_projection(subentry).snapshot,
+        provider=entry_api_provider(entry),
     )
     normalized = prepared.persisted
     normalization_ms = (perf_counter() - phase) * 1000
@@ -982,10 +985,15 @@ async def async_function_repair(
             if key not in {CONF_FUNCTION_TOOLS, CONF_FUNCTION_GROUPS}
         }
 
+    from .helpers import entry_api_provider
+
     if action == "configuration_validate":
         result = management_ui._validation_result(
             lambda: management_ui.agent_config_snapshot(
-                management_ui.merge_agent_config(safe_base, filtered)
+                management_ui.merge_agent_config(
+                    safe_base, filtered, provider=entry_api_provider(entry)
+                ),
+                provider=entry_api_provider(entry),
             )
         )
         if result["valid"]:
@@ -1002,7 +1010,9 @@ async def async_function_repair(
 
     if action == "configuration_save":
         validation = management_ui._validation_result(
-            lambda: management_ui.merge_agent_config(safe_base, filtered)
+            lambda: management_ui.merge_agent_config(
+                safe_base, filtered, provider=entry_api_provider(entry)
+            )
         )
         if not validation.get("valid"):
             return validation

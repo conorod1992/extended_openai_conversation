@@ -60,11 +60,16 @@ async def test_repair_configuration_patch_rejects_stale_revision_before_write(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("reasoning", ["absent", None, "high"])
 async def test_repair_configuration_validate_and_save_preserve_quarantined_tools(
-    hass, monkeypatch: pytest.MonkeyPatch,
+    hass, monkeypatch: pytest.MonkeyPatch, reasoning,
 ) -> None:
     """Preview changes nothing; a valid unrelated setting commits without discarding raw tools."""
     entry, subentry = _repairable_agent()
+    entry.data = {"api_provider": "openai"}
+    subentry.data.update(chat_model="o3-pro", api_mode="responses")
+    if reasoning != "absent":
+        subentry.data["reasoning_effort"] = reasoning
     before = deepcopy(subentry.data)
     hass = SimpleNamespace(data={}, config_entries=_FakeConfigEntries())
     monkeypatch.setattr(

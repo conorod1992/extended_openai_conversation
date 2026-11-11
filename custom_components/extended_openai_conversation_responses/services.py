@@ -275,8 +275,10 @@ async def async_set_function_tools_enabled(
         if entry is None:
             raise HomeAssistantError("Config entry not found")
         subentry = entry.subentries[subentry_id]
+        from .helpers import entry_api_provider
+
         persisted = function_mutations.prepare_function_tools_enabled(
-            subentry.data, function_names, enabled
+            subentry.data, function_names, enabled, provider=entry_api_provider(entry)
         )
         validate_runtime_readiness(persisted, entry.data)
         update_live_subentry(hass, entry, subentry, data=persisted)
@@ -296,8 +298,10 @@ async def async_set_function_groups_enabled(
         if entry is None:
             raise HomeAssistantError("Config entry not found")
         subentry = entry.subentries[subentry_id]
+        from .helpers import entry_api_provider
+
         persisted = function_mutations.prepare_function_groups_enabled(
-            subentry.data, group_ids, enabled
+            subentry.data, group_ids, enabled, provider=entry_api_provider(entry)
         )
         validate_runtime_readiness(persisted, entry.data)
         update_live_subentry(hass, entry, subentry, data=persisted)

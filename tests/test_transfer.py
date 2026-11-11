@@ -62,7 +62,7 @@ async def test_current_snapshot_falls_back_when_durable_manager_api_is_unavailab
 
     assert await transfer._current_snapshot(hass, entry, subentry) is snapshot
     legacy_managers.assert_awaited_once_with(hass, "entry", "agent")
-    create_snapshot.assert_awaited_once_with(managers, subentry)
+    create_snapshot.assert_awaited_once_with(managers, subentry, provider="openai")
 
 
 def _rules_backup(rules: list[dict] | None = None) -> dict:

@@ -55,6 +55,7 @@ def prepare_valid_function_configuration(
     *,
     extra_updates: dict[str, Any] | None = None,
     validated_snapshot: dict[str, Any] | None = None,
+    provider: str | None = None,
 ) -> PreparedFunctionConfiguration:
     """Prepare a strict Management edit without materializing unrelated defaults.
 
@@ -87,6 +88,7 @@ def prepare_valid_function_configuration(
         updates,
         validated_functions=validated_functions,
         function_tools_as_list=True,
+        provider=provider,
     )
     # Keep the final validated objects for the response. Only persistence needs
     # YAML; unchanged tools retain their exact stored representation.
@@ -347,7 +349,12 @@ def prepare_quarantined_function_configuration(
 
 
 def _prepare_enabled(
-    data: Mapping[str, Any], identifiers: list[str], enabled: bool, *, group: bool
+    data: Mapping[str, Any],
+    identifiers: list[str],
+    enabled: bool,
+    *,
+    group: bool,
+    provider: str | None = None,
 ) -> dict[str, Any]:
     raw = dict(data)
     state = function_configuration_repair_state(raw)
@@ -394,19 +401,27 @@ def _prepare_enabled(
             raw, configured, groups, state
         ).persisted
     updates = {CONF_FUNCTION_GROUPS if group else CONF_FUNCTION_TOOLS: selected}
-    normalized = merge_agent_config(raw, updates)
+    normalized = merge_agent_config(raw, updates, provider=provider)
     return project_agent_config_updates(raw, updates, normalized)
 
 
 def prepare_function_tools_enabled(
-    raw: Mapping[str, Any], names: list[str], enabled: bool
+    raw: Mapping[str, Any],
+    names: list[str],
+    enabled: bool,
+    *,
+    provider: str | None = None,
 ) -> dict[str, Any]:
     """Change selected Tool flags using the service's existing defaults policy."""
-    return _prepare_enabled(raw, names, enabled, group=False)
+    return _prepare_enabled(raw, names, enabled, group=False, provider=provider)
 
 
 def prepare_function_groups_enabled(
-    raw: Mapping[str, Any], group_ids: list[str], enabled: bool
+    raw: Mapping[str, Any],
+    group_ids: list[str],
+    enabled: bool,
+    *,
+    provider: str | None = None,
 ) -> dict[str, Any]:
     """Change selected Group flags without owning the raw Tool field."""
-    return _prepare_enabled(raw, group_ids, enabled, group=True)
+    return _prepare_enabled(raw, group_ids, enabled, group=True, provider=provider)

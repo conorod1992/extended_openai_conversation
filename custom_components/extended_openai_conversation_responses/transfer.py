@@ -509,12 +509,16 @@ async def async_collect_transfer_snapshot(
     )
     if SECTION_CONFIGURATION not in selected:
         document.pop("provider_connection", None)
+    from .helpers import entry_api_provider
+
     payload = document["sections"]
     if SECTION_CONFIGURATION in selected:
         payload[SECTION_CONFIGURATION] = (
             deepcopy(dict(subentry.data))
             if mode == "custom"
-            else backup.export_configuration_snapshot(subentry.data)
+            else backup.export_configuration_snapshot(
+                subentry.data, provider=entry_api_provider(entry)
+            )
         )
     if SECTION_REQUEST_RULES in selected:
         request_rules_manager = await async_get_request_rules(
@@ -985,7 +989,9 @@ def _validate_transfer_document(
             if not isinstance(restored, dict):
                 raise ValueError("configuration must be an object")
             if private:
-                backup.private_configuration_snapshot(restored)
+                backup.private_configuration_snapshot(
+                    restored, provider=backup.source_api_provider(value)
+                )
             prepared.config = (
                 restored
                 if private or _collect_secret_paths(raw)
@@ -1337,6 +1343,8 @@ def _prepared_restore_from_selection(
     selected: frozenset[str],
     *,
     copy_categories: bool = True,
+    provider: str | None = None,
+    current_provider: str | None = None,
 ) -> tuple[backup.PreparedRestore, tuple[str, ...], tuple[str, ...]]:
     """Overlay selected replacement sections on one complete current snapshot."""
     copy_category = deepcopy if copy_categories else lambda value: value
@@ -1350,7 +1358,9 @@ def _prepared_restore_from_selection(
         if imported.raw_configuration is not None:
             raw, kept, absent = _restore_section_secrets(
                 imported.raw_configuration,
-                backup.recoverable_configuration_snapshot(current.config),
+                backup.recoverable_configuration_snapshot(
+                    current.config, provider=current_provider
+                ),
             )
             preserved.extend(f"configuration.{path}" for path in kept)
             missing.extend(f"configuration.{path}" for path in absent)
@@ -1361,7 +1371,7 @@ def _prepared_restore_from_selection(
                 )
             if not isinstance(raw, dict):
                 raise backup.BackupError("Transferred configuration is invalid")
-            config = backup.recoverable_configuration_snapshot(raw)
+            config = backup.recoverable_configuration_snapshot(raw, provider=provider)
         elif imported.config is not None:
             config = deepcopy(imported.config)
         else:
@@ -1369,11 +1379,13 @@ def _prepared_restore_from_selection(
     else:
         # Unselected configuration is authoritative private source. Validate a
         # separate projection without rewriting credentials, YAML or omissions.
-        backup.private_configuration_snapshot(current.config)
+        backup.private_configuration_snapshot(current.config, provider=current_provider)
         config = (
             deepcopy(current.config)
             if current.authoritative_config
-            else backup.private_configuration_snapshot(current.config)
+            else backup.private_configuration_snapshot(
+                current.config, provider=current_provider
+            )
         )
 
     rules = current.request_rules
@@ -1475,7 +1487,11 @@ async def _current_snapshot(
         managers = await _durable_managers(hass, entry.entry_id, subentry.subentry_id)
     except ImportError:
         managers = await backup._managers(hass, entry.entry_id, subentry.subentry_id)
-    return await backup._snapshot_for_restore(managers, subentry)
+    from .helpers import entry_api_provider
+
+    return await backup._snapshot_for_restore(
+        managers, subentry, provider=entry_api_provider(entry)
+    )
 
 
 async def async_materialize_restore(
@@ -1515,8 +1531,22 @@ async def async_materialize_restore(
         else await _current_snapshot(hass, entry, subentry)
     )
     prepared = await asyncio.to_thread(_copy_transfer_categories, prepared)
+    from .helpers import effective_api_provider, entry_api_provider
+
     target, preserved, missing = _prepared_restore_from_selection(
-        current, prepared, selected, copy_categories=False
+        current,
+        prepared,
+        selected,
+        copy_categories=False,
+        current_provider=entry_api_provider(entry),
+        provider=(
+            effective_api_provider(
+                provider_connection.get("api_provider"),
+                provider_connection.get("base_url"),
+            )
+            if provider_connection is not None
+            else entry_api_provider(entry)
+        ),
     )
     if missing:
         raise backup.BackupError(

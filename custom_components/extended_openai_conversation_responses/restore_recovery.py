@@ -209,7 +209,7 @@ def _new_journal(
 
 
 async def _async_load_journal(
-    value: Any, entry_id: str, subentry_id: str
+    value: Any, entry_id: str, subentry_id: str, *, provider: str | None = None
 ) -> tuple[dict[str, Any], backup.PreparedRestore, backup.PreparedRestore]:
     """Validate a pending transaction without trusting mutable journal fields."""
     required = {
@@ -244,6 +244,7 @@ async def _async_load_journal(
                 subentry_id,
                 max_bytes=backup.MAX_BACKUP_BYTES,
                 private_journal=True,
+                provider=provider,
             )
         except backup.BackupError as err:
             # Older writers could journal an oversized rollback. Once committed,
@@ -255,6 +256,7 @@ async def _async_load_journal(
                 subentry_id,
                 max_bytes=backup.MAX_BACKUP_BYTES,
                 private_journal=True,
+                provider=provider,
             )
         try:
             target = await backup.async_inspect_backup(
@@ -262,6 +264,7 @@ async def _async_load_journal(
                 subentry_id,
                 max_bytes=backup.MAX_BACKUP_BYTES,
                 private_journal=True,
+                provider=provider,
             )
         except HomeAssistantError:
             if phase != _PHASE_APPLYING:
@@ -675,14 +678,22 @@ async def _update_configuration(
     # The owned restore already resets live subsystem runtimes. Apply its
     # configuration through the normal live-update path instead of starting an
     # unowned entry reload while exclusive recovery is still settling.
+    from .helpers import entry_api_provider
+
     if not configuration_supports_live_update(
         # Interpret authoritative private data as persisted on both sides.
         # A raw legacy [] must not look like a decoded empty edit and reload.
-        backup.private_configuration_snapshot(subentry.data),
+        backup.private_configuration_snapshot(
+            subentry.data, provider=entry_api_provider(entry)
+        ),
         (
-            backup.private_configuration_snapshot(prepared.config)
+            backup.private_configuration_snapshot(
+                prepared.config, provider=entry_api_provider(entry)
+            )
             if prepared.authoritative_config
-            else backup.recoverable_configuration_snapshot(prepared.config)
+            else backup.recoverable_configuration_snapshot(
+                prepared.config, provider=entry_api_provider(entry)
+            )
         ),
         title_changed=subentry.title != prepared.title,
     ):
@@ -778,7 +789,11 @@ async def _async_restore_backup_recoverably(
             )
 
         managers = await _durable_managers(hass, entry_id, subentry_id)
-        rollback = await backup._snapshot_for_restore(managers, subentry)
+        from .helpers import entry_api_provider
+
+        rollback = await backup._snapshot_for_restore(
+            managers, subentry, provider=entry_api_provider(entry)
+        )
         if not isinstance(value, backup.PreparedRestore):
             from .transfer import async_materialize_restore
 
@@ -813,6 +828,7 @@ async def _async_restore_backup_recoverably(
                     subentry_id,
                     max_bytes=backup.MAX_BACKUP_BYTES,
                     private_journal=True,
+                    provider=entry_api_provider(entry),
                 )
             except HomeAssistantError as err:
                 raise backup.BackupError(
@@ -909,8 +925,10 @@ async def _async_recover_pending_restore(
         raw = await store.async_load()
         if raw is None:
             return False
+        from .helpers import entry_api_provider
+
         journal, target, rollback = await _async_load_journal(
-            raw, entry_id, subentry_id
+            raw, entry_id, subentry_id, provider=entry_api_provider(entry)
         )
         selected = target if journal["phase"] == _PHASE_COMMITTED else rollback
 
