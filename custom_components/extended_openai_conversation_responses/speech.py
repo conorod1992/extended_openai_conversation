@@ -41,10 +41,9 @@ _EMPHASIS_TOKENS = {"*": re.compile(r"`+|\*"), "_": re.compile(r"`+|_")}
 _NUMERIC_EMPHASIS_PREFIX = re.compile(r"[+-]?(?:\d+(?:\.\d*)?)?\*{0,2}\Z")
 _NUMERIC_EMPHASIS_COMPLETE = re.compile(r"[+-]?\d+(?:\.\d+)?\*\*(?=$|[\s.,;:!?])")
 
-# Suppress reference-only links but speak meaningful Markdown labels.
-_CITATION_LINK_LABEL = re.compile(
-    r"(?:\d+|sources?|references?|citations?|"
-    r"(?:www\.)?[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:/[^\s]*)?)",
+# Keep the existing address-removal contract without guessing a label's meaning.
+_ADDRESS_LINK_LABEL = re.compile(
+    r"(?:www\.)?[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:/[^\s]*)?",
     re.IGNORECASE,
 )
 
@@ -368,12 +367,12 @@ class StreamingSpeechSanitizer:
         return False
 
     def _emit_link_label(self, output: list[str], label: str) -> bool:
-        """Keep useful link labels; citation-like labels do not add spoken prose."""
+        """Speak nonempty labels unless the label itself is a URL or address."""
         label = label.strip()
         if (
             not label
             or label.casefold().startswith(("http://", "https://", "www."))
-            or _CITATION_LINK_LABEL.fullmatch(label)
+            or _ADDRESS_LINK_LABEL.fullmatch(label)
         ):
             return False
         self._emit(output, label)
