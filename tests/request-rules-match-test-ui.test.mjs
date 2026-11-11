@@ -63,12 +63,12 @@ const broadRouting = formatRequestRuleMatchResult(panel, {
   matched:true,
   rule:{name:"Think carefully",match_type:"starts_with",action_type:"model_routing"},
   matched_phrase:"think carefully",
-  fuzzy:true,
-  score:93.47,
+  fuzzy:false,
+  score:100,
   captured_values:{},
   would_do:{type:"model_routing",reset:false,model:"gpt-5",reasoning_effort:"high",scope:"conversation",consumed:false,provider_input:"original"},
 });
-assert.match(broadRouting, /Fuzzy match · 93\.5%/);
+assert.match(broadRouting, /Normal match/);
 assert.match(broadRouting, /model gpt-5 and high reasoning/);
 assert.match(broadRouting, /send the selected AI input/);
 assert.match(broadRouting, /this request and later requests in this conversation/);

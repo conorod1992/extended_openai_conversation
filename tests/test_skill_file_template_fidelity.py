@@ -149,13 +149,16 @@ async def test_read_holds_skill_boundary_until_bounded_read_finishes(
         )
     )
     await started.wait()
-    removal = asyncio.create_task(manager.async_remove_skill("heating"))
+    staged = manager.staging_dir / "heating.replacement"
+    staged.mkdir(parents=True)
+    (staged / "SKILL.md").write_text("---\ndescription: Replacement\n---\nNew instructions")
+    publication = asyncio.create_task(manager.async_publish_staged_skill("heating", staged))
     await asyncio.sleep(0)
-    assert not removal.done()
+    assert not publication.done()
     release.set()
     assert (await reading)["content"] == "heating setup"
-    assert await removal is True
-    assert manager.get_skill("heating") is None
+    await publication
+    assert manager.get_skill("heating").description == "Replacement"
 
 
 async def test_literal_helper_mention_needs_no_skill_manager(

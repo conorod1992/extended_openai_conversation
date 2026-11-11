@@ -4,7 +4,7 @@ import {expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers
 const policies = [
   {kind:"quiet",view:"capabilities/quiet-hours",section:"quiet_hours",get:"get",save:"update",primary:"#qh-wake",value:"unchanged",later:"on",original:"off",secondary:"#qh-start",second:"23:00"},
   {kind:"guest",view:"capabilities/guest-mode",section:"guest_mode",get:"get",save:"save_policy",primary:'[data-guest-mode="guest_function_policy"]',value:"custom",later:"on",original:"off",secondary:"#guest-web-search",second:true},
-  {kind:"rules",view:"capabilities/request-rules",section:"request_rules",get:"list",save:"settings",primary:"#rules-default-fuzzy",value:true,later:false,original:false,secondary:"#rules-default-word-forms",second:false},
+  {kind:"rules",view:"capabilities/request-rules",section:"request_rules",get:"list",save:"settings",primary:"#rules-default-wording",value:false,later:true,original:true,secondary:"#rules-default-word-forms",second:false},
 ];
 
 async function ready(panel, policy) {
@@ -39,7 +39,7 @@ async function persisted(page, kind) {
   return page.evaluate(kind => {
     const state=browserHarness.getState();
     return kind === "quiet" ? state.quiet.config.wake_sound
-      : kind === "guest" ? state.guest.config.guest_function_policy || "off" : state.requestRules.defaults.fuzzy;
+      : kind === "guest" ? state.guest.config.guest_function_policy || "off" : state.requestRules.defaults.wording_alternatives;
   },kind);
 }
 

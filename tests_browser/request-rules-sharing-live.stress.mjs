@@ -19,7 +19,7 @@ function rulePack(names) {
       action_type:"model_routing",
       action:{model:"gpt-5-mini",reasoning_effort:"",scope:"request",reset:false,continue_to_ai:true,success_response:"Updated"},
       matching_behavior:"custom",
-      matching:{word_forms:true,wording_alternatives:true,fuzzy:false,fuzzy_threshold:90},
+      matching:{word_forms:true,wording_alternatives:true},
       order,
       conditions:[],
       group_id:null,

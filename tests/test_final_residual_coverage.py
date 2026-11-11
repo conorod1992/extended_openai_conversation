@@ -392,46 +392,19 @@ async def test_quiet_hours_failed_restore_retains_control_for_retry(
     manager._log_control_failure.assert_called_once()
 
 
-def test_request_rule_fuzzy_fallback_skips_rule_already_seen_strictly() -> None:
+def test_request_rule_cursor_skips_duplicate_rule_before_later_rule() -> None:
+    """Continuing skips repeated phrases but still returns later matching rules."""
     from custom_components.extended_openai_conversation_responses import request_rules
-
-    seen_rule = {
-        "id": "seen",
-        "name": "Seen",
-        "match_type": "equals",
-        "order": 0,
-    }
-    other_rule = {
-        "id": "other",
-        "name": "Other",
-        "match_type": "contains",
-        "order": 1,
-    }
-    settings = {
-        "word_forms": False,
-        "wording_alternatives": False,
-        "fuzzy_threshold": 0,
-    }
-    strict = request_rules.CompiledPhrase("hello", normalized="hello")
-    seen_fuzzy = request_rules.CompiledPhrase("helo", normalized="helo")
-    other_fuzzy = request_rules.CompiledPhrase("hello", normalized="hello")
-    snapshot = request_rules._MatchingSnapshot(
-        phrases=((seen_rule, settings, strict),),
-        wording_groups=(),
-        deterministic=((seen_rule, settings, strict),),
-        fuzzy=(
-            (seen_rule, settings, seen_fuzzy),
-            (other_rule, settings, other_fuzzy),
-        ),
-    )
-    cursor = request_rules._MatchCursor(snapshot, "hello")
-
-    first = cursor.next_match()
-    second = cursor.next_match()
-
-    assert first is not None and first.rule["id"] == "seen"
-    assert second is not None and second.rule["id"] == "other"
-
+    rule = {"id": "one", "match_type": "equals", "order": 0}
+    later = {"id": "two", "match_type": "equals", "order": 1}
+    settings = dict(request_rules.DEFAULT_MATCHING)
+    phrase = request_rules.CompiledPhrase("hello", normalized="hello")
+    cursor = request_rules._MatchCursor(request_rules._MatchingSnapshot(
+        ((rule, settings, phrase),), (), ((rule, settings, phrase), (rule, settings, phrase), (later, settings, phrase))
+    ), "hello")
+    assert cursor.next_match().rule["id"] == "one"
+    assert cursor.next_match().rule["id"] == "two"
+    assert cursor.next_match() is None
 
 @pytest.mark.asyncio
 async def test_template_setup_failure_does_not_remove_replacement_manager(

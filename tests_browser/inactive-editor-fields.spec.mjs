@@ -3,7 +3,7 @@ import {expectHarnessClean, fixtureUrl, trackPageErrors} from "./browser-helpers
 import {openDataCollection} from "./data-collection-helpers.mjs";
 
 for (const bundled of [false, true]) for (const inactiveMode of ["defaults", "sentence_pattern"]) {
-  test(`Rule matching mode excludes an inactive fuzzy threshold: ${inactiveMode} bundle=${bundled}`, async ({page}) => {
+  test(`Rule matching mode saves without retired fuzzy controls: ${inactiveMode} bundle=${bundled}`, async ({page}) => {
     await page.goto(fixtureUrl("capabilities/request-rules", bundled ? "&bundle=1" : ""));
     const panel = page.locator("extended-openai-management-panel");
     await panel.locator(".rule-edit").first().click();
@@ -13,24 +13,10 @@ for (const bundled of [false, true]) for (const inactiveMode of ["defaults", "se
     await panel.locator("#rule-phrases").fill("route {room}");
     await panel.locator("#rule-advanced > summary").click();
     await panel.locator("#rule-matching-behavior").selectOption("custom");
-    await panel.locator("#rule-fuzzy").check();
-    const threshold = panel.locator("#rule-threshold");
-    await threshold.fill("69");
-    expect(await threshold.evaluate(input => input.validity.rangeUnderflow)).toBe(true);
-    await panel.locator("#rule-save").click();
-    expect(await page.evaluate(() => browserHarness.calls.filter(call => call.section === "request_rules" && call.action === "update"))).toHaveLength(0);
-    const switchMode = async active => {
-      if (inactiveMode === "defaults") await panel.locator("#rule-matching-behavior").selectOption(active ? "custom" : "defaults");
-      else await panel.locator("#rule-match").selectOption(active ? "contains" : "sentence_pattern");
-    };
-    await switchMode(false);
-    await expect(threshold).toBeDisabled();
-    expect(await threshold.evaluate(input => input.form.checkValidity())).toBe(true);
-    await switchMode(true);
-    await expect(threshold).toBeEnabled();
-    await expect(threshold).toHaveValue("69");
-    expect(await threshold.evaluate(input => input.form.checkValidity())).toBe(false);
-    await switchMode(false);
+    await expect(panel.locator("#rule-fuzzy")).toHaveCount(0);
+    await expect(panel.locator("#rule-threshold")).toHaveCount(0);
+    if (inactiveMode === "defaults") await panel.locator("#rule-matching-behavior").selectOption("defaults");
+    else await panel.locator("#rule-match").selectOption("sentence_pattern");
     await panel.locator("#rule-save").click();
     await expect(panel.locator("#rule-dialog")).not.toHaveJSProperty("open", true);
     expect(await page.evaluate(() => browserHarness.calls.filter(call => call.section === "request_rules" && call.action === "update"))).toHaveLength(1);

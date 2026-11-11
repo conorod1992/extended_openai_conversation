@@ -255,8 +255,6 @@ export function readRuleSettings(panel) {
     defaults: {
       word_forms: q("#rules-default-word-forms").checked,
       wording_alternatives: q("#rules-default-wording").checked,
-      fuzzy: q("#rules-default-fuzzy").checked,
-      fuzzy_threshold: Number(q("#rules-default-threshold").value),
     },
     wording_groups: [...root.querySelectorAll(".wording-group")].map((row) => {
       const canonical = row.querySelector(".wording-canonical").value.trim();
@@ -305,15 +303,11 @@ function syncRequestRulesSavedDom(panel) {
   const controls = [
     ["#rules-default-word-forms", "checked", Boolean(defaults.word_forms)],
     ["#rules-default-wording", "checked", Boolean(defaults.wording_alternatives)],
-    ["#rules-default-fuzzy", "checked", Boolean(defaults.fuzzy)],
-    ["#rules-default-threshold", "value", String(defaults.fuzzy_threshold ?? 90)],
   ];
   for (const [selector, property, value] of controls) {
     const control = q(selector);
     if (control) control[property] = value;
   }
-  const threshold = q("#rules-default-threshold");
-  if (threshold) threshold.disabled = !defaults.fuzzy;
 
   const rows = [...root.querySelectorAll(".wording-group")];
   const groups = draft.wording_groups || [];

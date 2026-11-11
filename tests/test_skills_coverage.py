@@ -20,6 +20,7 @@ from custom_components.extended_openai_conversation_responses.skills import (
     SkillMdParser,
 )
 from homeassistant.exceptions import HomeAssistantError
+from tests.skill_transaction_fixtures import stage_legacy_removal
 
 
 def _skill_text(description: str = "A useful skill", body: str = "Body") -> str:
@@ -260,27 +261,29 @@ async def test_invalid_replacement_rolls_back_existing_skill(hass, tmp_path: Pat
 
 
 @pytest.mark.asyncio
-async def test_remove_success_absent_and_discovery_failure_rollback(hass, tmp_path: Path, monkeypatch) -> None:
-    """Removal handles absence and restores the Skill if catalogue refresh fails."""
+async def test_legacy_removal_recovery_preserves_committed_and_prepared_states(hass, tmp_path: Path, monkeypatch) -> None:
+    """Loader recovery still supports both historical removal journal phases."""
     manager = SkillManager(hass)
     manager._user_skills_dir = tmp_path / "skills"
     target = manager.user_skills_dir / "alpha"
     _write_skill(target, description="Alpha")
     await manager.async_load_skills()
 
-    assert await manager.async_remove_skill("alpha") is True
+    assert stage_legacy_removal(manager, "alpha", committed=True)
+    await manager.async_load_skills()
     assert not target.exists()
     assert manager.get_skill("alpha") is None
-    assert await manager.async_remove_skill("alpha") is False
+    assert not stage_legacy_removal(manager, "alpha")
 
     _write_skill(target, description="Restored candidate")
+    assert stage_legacy_removal(manager, "alpha")
 
     async def fail_discovery():
         raise RuntimeError("refresh failed")
 
     monkeypatch.setattr(manager, "_async_discover_skills_locked", fail_discovery)
     with pytest.raises(RuntimeError, match="refresh failed"):
-        await manager.async_remove_skill("alpha")
+        await manager.async_load_skills()
     assert target.exists()
     assert not any(manager.staging_dir.glob("alpha.remove-*"))
 
@@ -305,19 +308,10 @@ def test_activate_staged_skill_restores_existing_target_on_rename_failure(tmp_pa
     assert not backup.exists()
 
 
-def test_sync_restore_and_remove_helpers_cover_file_directory_and_missing(tmp_path: Path) -> None:
+def test_sync_remove_helper_covers_file_directory_and_missing(tmp_path: Path) -> None:
     """Filesystem helpers are idempotent across their supported path shapes."""
-    target = tmp_path / "target"
     backup = tmp_path / "backup"
     _write_skill(backup)
-    SkillManager._restore_removed_skill_sync(target, backup)
-    assert target.exists() and not backup.exists()
-
-    # No-op when there is nothing to restore, and when a target already exists.
-    SkillManager._restore_removed_skill_sync(target, backup)
-    _write_skill(backup, description="Backup")
-    SkillManager._restore_removed_skill_sync(target, backup)
-    assert backup.exists()
 
     file_path = tmp_path / "plain-file"
     file_path.write_text("x", encoding="utf-8")

@@ -5,7 +5,7 @@ import pytest
 from custom_components.extended_openai_conversation_responses.function_call_budget import FunctionCallBudget
 from custom_components.extended_openai_conversation_responses.function_tool_recovery import ToolRecoveryState
 from custom_components.extended_openai_conversation_responses.tool_exchange import async_execute_tool_exchange
-from custom_components.extended_openai_conversation_responses.tool_replay_guard import record_dispatch, remember_unacknowledged_calls, was_unacknowledged_equivalent
+from custom_components.extended_openai_conversation_responses.tool_replay_guard import record_dispatch, remember_unacknowledged_calls, async_was_unacknowledged_equivalent
 from tests.test_function_tool_error_recovery import _call, _chat_log, _entity, _retain_calls, _result, _tool
 
 
@@ -33,7 +33,7 @@ async def test_recovery_records_retained_calls_after_real_dispatch(hass, paralle
     remember_unacknowledged_calls(entity, chat_log, before)
     for call in calls:
         retry = _call("fresh-id", call.tool_name, call.tool_args)
-        assert was_unacknowledged_equivalent(entity, chat_log, retry)
+        assert await async_was_unacknowledged_equivalent(entity, chat_log, retry)
     retry = _call("retry", "effect", {"amount": 1})
     _retain_calls(chat_log, [retry])
     from homeassistant.exceptions import HomeAssistantError
@@ -51,6 +51,6 @@ async def test_correctable_validation_failure_does_not_record_dispatch(hass):
     _retain_calls(chat_log, [call])
     await async_execute_tool_exchange(entity, chat_log, [call], [tool], FunctionCallBudget(10), None, [], recovery_state=ToolRecoveryState(enabled=True))
     remember_unacknowledged_calls(entity, chat_log, before)
-    assert not was_unacknowledged_equivalent(entity, chat_log, _call("fresh", "effect"))
+    assert not await async_was_unacknowledged_equivalent(entity, chat_log, _call("fresh", "effect"))
     entity._execute_function_tool.assert_not_awaited()
 

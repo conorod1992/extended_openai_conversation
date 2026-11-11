@@ -51,7 +51,8 @@ const local = requestRuleSummary({
 }, {word_forms:true, wording_alternatives:true, fuzzy:true, fuzzy_threshold:94});
 assert.match(local.action, /Runs 2 local steps without an AI request/);
 assert.match(local.action, /Good night/);
-assert.match(local.matching, /5 trigger phrases · Equals · Default matching · Fuzzy fallback: Conservative/);
+assert.doesNotMatch(local.matching, /Fuzzy/);
+assert.match(local.matching, /5 trigger phrases · Equals · Default matching/);
 assert.equal(local.hiddenPhrases, 1);
 
 const routing = requestRuleSummary({

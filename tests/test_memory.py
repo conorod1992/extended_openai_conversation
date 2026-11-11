@@ -184,7 +184,7 @@ async def test_explicit_update_blocks_later_implicit_key_replacement() -> None:
     """A manual correction cannot be silently replaced by later inference."""
     storage = FakeStorage()
     memory = await _memory(storage)
-    inferred = await memory.async_upsert(
+    inferred = await memory.async_propose(
         "user-1",
         "User prefers 22C.",
         "preferences",
@@ -202,7 +202,7 @@ async def test_explicit_update_blocks_later_implicit_key_replacement() -> None:
     )
     assert corrected.source == "explicit"
 
-    conflict = await memory.async_upsert(
+    conflict = await memory.async_propose(
         "user-1",
         "User prefers 22C.",
         "preferences",
@@ -716,7 +716,7 @@ async def test_memory_canonical_unicode_ranking_dedup_and_reload(form):
         "doorpin: 1234",
     ],
 )
-@pytest.mark.parametrize("operation", ["add", "upsert", "update", "backup", "load"])
+@pytest.mark.parametrize("operation", ["add", "propose", "update", "backup", "load"])
 async def test_category_credentials_survive_normalization(category, operation):
     storage = FakeStorage()
     manager = await _memory(storage)

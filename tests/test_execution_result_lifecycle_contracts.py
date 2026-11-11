@@ -49,7 +49,7 @@ from custom_components.extended_openai_conversation_responses.temporary_memory i
 from custom_components.extended_openai_conversation_responses.tool_replay_guard import (
     clear_unacknowledged_calls,
     remember_unacknowledged_calls,
-    was_unacknowledged_equivalent,
+    async_was_unacknowledged_equivalent,
 )
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
@@ -97,7 +97,7 @@ async def test_native_names_rejected_recursively_before_execution(hass, depth):
 
 
 @pytest.mark.parametrize("state", ["completed", "uncertain", "partial", "rejected"])
-def test_receipts_do_not_depend_on_result_history_or_business_payload(hass, state):
+async def test_receipts_do_not_depend_on_result_history_or_business_payload(hass, state):
     entity, log = _entity(hass), _chat_log(hass)
     call = _call("initial", "effect", {"value": 1})
     tool = _tool("effect", parameters={"type": "object"})
@@ -113,14 +113,14 @@ def test_receipts_do_not_depend_on_result_history_or_business_payload(hass, stat
             execution_rejected(receipt)
     # No ToolResultContent exists: normalization/serialization may have failed.
     remember_unacknowledged_calls(entity, log, set())
-    assert was_unacknowledged_equivalent(
+    assert await async_was_unacknowledged_equivalent(
         entity, log, _call("retry", "effect", {"value": 1})
     ) is (state != "rejected")
-    assert was_unacknowledged_equivalent(
+    assert await async_was_unacknowledged_equivalent(
         entity, log, _call("changed", "effect", {"value": 2})
     ) is (state in {"uncertain", "partial"})
     clear_unacknowledged_calls(entity, log.conversation_id)
-    assert not was_unacknowledged_equivalent(entity, log, call)
+    assert not await async_was_unacknowledged_equivalent(entity, log, call)
 
 
 @pytest.mark.parametrize(

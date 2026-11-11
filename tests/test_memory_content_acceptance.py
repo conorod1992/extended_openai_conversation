@@ -40,7 +40,7 @@ def expiry():
 
 @pytest.mark.parametrize("content", CONTENTS)
 @pytest.mark.parametrize("source", ["implicit", "explicit"])
-@pytest.mark.parametrize("operation", ["add", "upsert", "propose", "update"])
+@pytest.mark.parametrize("operation", ["add", "propose", "update"])
 async def test_persistent_content_and_metadata_round_trip(content, source, operation):
     storage = FakeStorage()
     manager = PersistentMemory(storage)
@@ -133,8 +133,11 @@ async def test_sensitive_proposal_conflicts_remain_no_write_and_cannot_promote()
     await manager.async_propose("alice", CONTENTS[1], CATEGORY, "explicit", key=KEY)
     assert storage.data == before and storage.save_count == saves
     assert (await manager.async_list("alice"))[0].source == "implicit"
-    trusted = await manager.async_upsert("alice", CONTENTS[1], CATEGORY, "explicit", key=KEY)
-    assert trusted["memory"]["source"] == "explicit"
+    trusted = await manager.async_update(
+        "alice", conflict["candidate"]["memory_id"], source="explicit",
+        expected_revision=conflict["candidate"]["revision"],
+    )
+    assert trusted.source == "explicit"
 
 
 @pytest.mark.parametrize("kind", ["persistent", "temporary"])

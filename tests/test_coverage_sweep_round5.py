@@ -90,8 +90,6 @@ def test_request_rule_matching_settings_accept_valid_custom_values() -> None:
     assert result == {
         "word_forms": False,
         "wording_alternatives": False,
-        "fuzzy": True,
-        "fuzzy_threshold": 75,
     }
 
 
@@ -1118,48 +1116,17 @@ def test_request_rule_wording_groups_deduplicate_exact_alternatives() -> None:
     ]
 
 
-def test_request_rule_match_cursor_ranks_one_fuzzy_result_per_rule(monkeypatch) -> None:
+def test_request_rule_cursor_returns_authored_rule_only_once() -> None:
+    """An authored phrase is returned once even when the rule has alternatives."""
     from custom_components.extended_openai_conversation_responses import request_rules
-
-    rule = {
-        "id": "rule",
-        "name": "Rule",
-        "order": 0,
-        "match_type": "equals",
-    }
-    settings = {
-        "word_forms": False,
-        "wording_alternatives": False,
-        "fuzzy_threshold": 0,
-    }
-    snapshot = request_rules._MatchingSnapshot(
-        phrases=(),
-        wording_groups=(),
-        deterministic=(),
-        fuzzy=(
-            (
-                rule,
-                settings,
-                request_rules.CompiledPhrase("first", normalized="first"),
-            ),
-            (
-                rule,
-                settings,
-                request_rules.CompiledPhrase("second", normalized="second"),
-            ),
-        ),
-    )
-    scores = iter([50.0, 90.0])
-    monkeypatch.setattr(request_rules, "_fuzzy_score", lambda *_args: next(scores))
-
-    cursor = request_rules._MatchCursor(snapshot, "input")
-    match = cursor.next_match()
-
-    assert match is not None
-    assert match.rule["id"] == "rule"
-    assert match.score == 90.0
+    rule = {"id": "one", "match_type": "equals", "order": 0}
+    settings = dict(request_rules.DEFAULT_MATCHING)
+    phrase = request_rules.CompiledPhrase("hello", normalized="hello")
+    cursor = request_rules._MatchCursor(request_rules._MatchingSnapshot(
+        ((rule, settings, phrase),), (), ((rule, settings, phrase), (rule, settings, phrase))
+    ), "hello")
+    assert cursor.next_match().rule["id"] == "one"
     assert cursor.next_match() is None
-
 
 def test_request_rule_direct_match_excludes_all_candidates() -> None:
     from custom_components.extended_openai_conversation_responses import request_rules
@@ -1181,13 +1148,6 @@ def test_request_rule_direct_match_excludes_all_candidates() -> None:
         phrases=(),
         wording_groups=(),
         deterministic=(
-            (
-                rule,
-                settings,
-                request_rules.CompiledPhrase("hello", normalized="hello"),
-            ),
-        ),
-        fuzzy=(
             (
                 rule,
                 settings,

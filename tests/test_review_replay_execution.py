@@ -31,7 +31,7 @@ from custom_components.extended_openai_conversation_responses.tool_exchange impo
 from custom_components.extended_openai_conversation_responses.functions import native
 from custom_components.extended_openai_conversation_responses.tool_replay_guard import (
     remember_unacknowledged_calls,
-    was_unacknowledged_equivalent,
+    async_was_unacknowledged_equivalent,
 )
 from homeassistant.core import SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
@@ -122,7 +122,7 @@ async def test_native_boundary_distinguishes_rejection_from_unknown(
     assert entity._execution_tool_outcomes[id(call)] == expected
     remember_unacknowledged_calls(entity, log, set())
     retry = _call("corrected", "effect", {**RAW, "entity_id": "light.other"})
-    assert was_unacknowledged_equivalent(entity, log, retry) is (
+    assert await async_was_unacknowledged_equivalent(entity, log, retry) is (
         expected == "uncertain"
     )
     if expected == "rejected":
@@ -153,7 +153,7 @@ async def test_scheduler_admission_has_no_effect_receipt(hass, monkeypatch, admi
     manager._store.async_save.assert_not_awaited()
     assert manager._records == {}
     remember_unacknowledged_calls(entity, log, set())
-    assert not was_unacknowledged_equivalent(
+    assert not await async_was_unacknowledged_equivalent(
         entity, log, _call("corrected", "effect", RAW)
     )
 
@@ -179,7 +179,7 @@ async def test_native_batch_keeps_unknown_adapter_failures_uncertain(
     assert hass.services.async_call.await_count == 2
     assert entity._execution_tool_outcomes[id(call)] == "uncertain"
     remember_unacknowledged_calls(entity, log, set())
-    assert was_unacknowledged_equivalent(
+    assert await async_was_unacknowledged_equivalent(
         entity, log, _call("retry", "effect", {"list": [RAW]})
     )
 
@@ -227,10 +227,10 @@ async def test_scheduler_receipts_follow_authoritative_queue_generation(hass, mo
     different = _call(
         "different", "effect", {**call.tool_args, "entity_id": "light.other"}
     )
-    assert was_unacknowledged_equivalent(entity, log, equivalent) is (
+    assert await async_was_unacknowledged_equivalent(entity, log, equivalent) is (
         mode != "rejected_write"
     )
-    assert was_unacknowledged_equivalent(entity, log, different) is (
+    assert await async_was_unacknowledged_equivalent(entity, log, different) is (
         mode == "unreadable"
     )
     if mode in {"success", "committed_error"}:
@@ -261,7 +261,7 @@ async def test_equivalent_multi_child_composite_cannot_repeat_effects(
     assert count == 2 + depth
     remember_unacknowledged_calls(entity, log, set())
     retry = _call("retry", "effect", ALIAS)
-    assert was_unacknowledged_equivalent(entity, log, retry)
+    assert await async_was_unacknowledged_equivalent(entity, log, retry)
 
     async def execute(definition, tool_input, *_args):
         return await _execute(entity, definition, tool_input)
@@ -272,7 +272,7 @@ async def test_equivalent_multi_child_composite_cannot_repeat_effects(
         await async_execute_tool_exchange(
             entity, log, [retry], [tool], FunctionCallBudget(10), None, []
         )
-    assert not was_unacknowledged_equivalent(
+    assert not await async_was_unacknowledged_equivalent(
         entity, log, _call("other", "effect", {**RAW, "entity_id": "light.other"})
     )
     assert hass.services.async_call.await_count == count

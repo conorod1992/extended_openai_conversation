@@ -148,10 +148,10 @@ async def test_revision_guard_accepts_current_revision_and_changes_after_save() 
     revision = rules.revision()
 
     updated = await rules.async_set_defaults(
-        {**rr.DEFAULT_MATCHING, "fuzzy": True}, expected_revision=revision
+        {**rr.DEFAULT_MATCHING, "word_forms": False}, expected_revision=revision
     )
 
-    assert updated["fuzzy"] is True
+    assert updated["word_forms"] is False
     assert rules.revision() != revision
     assert store.saves == 1
 
@@ -163,14 +163,14 @@ async def test_revision_guard_rejects_aba_after_committed_changes() -> None:
     await rules.async_initialize()
     original = rules.revision()
 
-    await rules.async_set_defaults({**rr.DEFAULT_MATCHING, "fuzzy": True})
+    await rules.async_set_defaults({**rr.DEFAULT_MATCHING, "word_forms": False})
     await rules.async_set_defaults(rr.DEFAULT_MATCHING)
     assert rules.snapshot()["defaults"] == rr.DEFAULT_MATCHING
     assert rules.revision() != original
 
     with pytest.raises(ValueError, match="changed in another tab"):
         await rules.async_set_defaults(
-            {**rr.DEFAULT_MATCHING, "fuzzy_threshold": 91},
+            {**rr.DEFAULT_MATCHING, "word_forms": False},
             expected_revision=original,
         )
     assert store.saves == 2
@@ -184,12 +184,12 @@ async def test_request_rule_settings_save_atomically_once() -> None:
     groups = [{"canonical": "turn on", "alternatives": ["switch on"]}]
 
     result = await rules.async_set_settings(
-        {**rr.DEFAULT_MATCHING, "fuzzy": True},
+        {**rr.DEFAULT_MATCHING, "word_forms": False},
         groups,
         expected_revision=revision,
     )
 
-    assert result["defaults"]["fuzzy"] is True
+    assert result["defaults"]["word_forms"] is False
     assert result["wording_groups"] == groups
     assert result["revision"] == rules.revision()
     assert store.saves == 1
@@ -197,7 +197,7 @@ async def test_request_rule_settings_save_atomically_once() -> None:
     saved = rules.snapshot()
     with pytest.raises(ValueError, match="changed in another tab"):
         await rules.async_set_settings(
-            {**rr.DEFAULT_MATCHING, "fuzzy_threshold": 91},
+            {**rr.DEFAULT_MATCHING, "word_forms": False},
             [{"canonical": "off", "alternatives": ["disable"]}],
             expected_revision=revision,
         )
@@ -1064,7 +1064,7 @@ async def test_function_reference_rename_rejects_stale_revision() -> None:
     manager, store = _manager([_function_rule("old_tool")])
     stale_revision = manager.revision()
     await manager.async_set_defaults(
-        {**DEFAULT_MATCHING, "fuzzy_threshold": 91},
+        {**DEFAULT_MATCHING, "word_forms": False},
         expected_revision=stale_revision,
     )
     store.async_save.reset_mock()

@@ -327,7 +327,7 @@ async def test_temporary_memory_update_rejects_invalid_source() -> None:
         )
 
 
-def test_request_rule_match_returns_best_fuzzy_candidate() -> None:
+def test_request_rule_match_returns_first_deterministic_candidate() -> None:
     from custom_components.extended_openai_conversation_responses import request_rules
     from tests.test_request_rules import MemoryStore
 
@@ -335,8 +335,7 @@ def test_request_rule_match_returns_best_fuzzy_candidate() -> None:
     manager._committed_matching_snapshot = request_rules._MatchingSnapshot(
         phrases=(),
         wording_groups=(),
-        deterministic=(),
-        fuzzy=(
+        deterministic=(
             (
                 {
                     "id": "lower",
@@ -371,8 +370,8 @@ def test_request_rule_match_returns_best_fuzzy_candidate() -> None:
     result = manager.match("hello")
 
     assert result is not None
-    assert result.rule["id"] == "higher"
-    assert result.fuzzy is True
+    assert result.rule["id"] == "lower"
+    assert result.fuzzy is False
 
 
 

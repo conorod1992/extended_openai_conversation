@@ -20,7 +20,8 @@ from custom_components.extended_openai_conversation_responses.request_rule_packs
     validate_rule_pack,
 )
 from custom_components.extended_openai_conversation_responses.request_rule_patterns import (
-    MatchBudget,
+    MAX_MATCH_INPUT_CHARS,
+    MAX_MATCH_INPUT_WORDS,
     SentenceMatchLimitError,
 )
 from custom_components.extended_openai_conversation_responses.skills import (
@@ -105,12 +106,16 @@ async def test_captures_reach_real_native_script_as_strings(hass, capture):
     assert result.response == capture + ":True"
 
 
-def test_fuzzy_comparisons_charge_shared_budget():
-    budget = MatchBudget(maximum=200)
-    assert rules._fuzzy_score("turn on lamp", "turn on lamp", "contains", budget) == 100
-    with pytest.raises(SentenceMatchLimitError):
-        for _ in range(20):
-            rules._fuzzy_score("turn on lamp", "turn of lamp", "contains", budget)
+@pytest.mark.parametrize("text", ["x" * (MAX_MATCH_INPUT_CHARS + 1), "x " * (MAX_MATCH_INPUT_WORDS + 1)])
+async def test_legacy_fuzzy_settings_cannot_bypass_matching_input_bounds(text):
+    manager = rules.RequestRules(MemoryStore({
+        "defaults": {**rules.DEFAULT_MATCHING, "fuzzy": True, "fuzzy_threshold": 70},
+        "rules": [local_rule(phrases=["turn on lamp"])],
+    }))
+    await manager.async_initialize()
+    assert manager.match("turn on lamp") is not None
+    with pytest.raises(SentenceMatchLimitError, match="at most"):
+        manager.match(text)
 
 
 @pytest.mark.asyncio

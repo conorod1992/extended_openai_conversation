@@ -18,11 +18,11 @@ test("Request Rules page save preserves the route DOM", async ({page}) => {
   await page.goto(fixtureUrl("capabilities/request-rules"));
   const panel = page.locator("extended-openai-management-panel");
   await panel.locator(".rule-settings details").first().evaluate((node) => { node.open = true; });
-  await expect(panel.locator("#rules-default-fuzzy")).toBeVisible();
+  await expect(panel.locator("#rules-default-wording")).toBeVisible();
   await trackRenders(panel);
 
   await panel.locator(".wording-editor").evaluate((node) => { node.open = true; });
-  await panel.locator("#rules-default-fuzzy").check();
+  await panel.locator("#rules-default-wording").uncheck();
   await expect(panel.locator(".save-bar")).toBeVisible();
   await panel.locator("#save-page").click();
   await expect(panel.locator(".save-bar")).toHaveCount(0);
@@ -31,8 +31,8 @@ test("Request Rules page save preserves the route DOM", async ({page}) => {
     sameMain: host.shadowRoot.querySelector("main") === window.pageSaveMain,
     renders: window.pageSaveRenderCount,
     wordingOpen: host.shadowRoot.querySelector(".wording-editor")?.open,
-    fuzzy: host.shadowRoot.querySelector("#rules-default-fuzzy")?.checked,
-  }))).toEqual({sameMain:true, renders:0, wordingOpen:true, fuzzy:true});
+    wording: host.shadowRoot.querySelector("#rules-default-wording")?.checked,
+  }))).toEqual({sameMain:true, renders:0, wordingOpen:true, wording:false});
   await expectHarnessClean(page, errors);
 });
 

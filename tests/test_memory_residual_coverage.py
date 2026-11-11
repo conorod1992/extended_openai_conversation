@@ -149,13 +149,13 @@ async def test_add_and_upsert_reject_invalid_source_and_capacity(monkeypatch) ->
     with pytest.raises(ValueError, match="source"):
         await manager.async_add("alice", "A durable fact.", "misc", "other")
     with pytest.raises(ValueError, match="source"):
-        await manager.async_upsert("alice", "A durable fact.", "misc", "other")
+        await manager.async_propose("alice", "A durable fact.", "misc", "other")
 
     monkeypatch.setattr(memory_module, "MAX_MEMORIES_PER_AGENT", 0)
     with pytest.raises(ValueError, match="memory limit"):
         await manager.async_add("alice", "Another fact.", "misc", "explicit")
     with pytest.raises(ValueError, match="memory limit"):
-        await manager.async_upsert("alice", "Another fact.", "misc", "explicit")
+        await manager.async_propose("alice", "Another fact.", "misc", "explicit")
 
 
 async def test_upsert_confirmation_applies_all_explicit_metadata() -> None:
@@ -168,21 +168,21 @@ async def test_upsert_confirmation_applies_all_explicit_metadata() -> None:
         key="pet.oscar.breed",
     )
 
-    existing = await manager.async_upsert(
+    existing = await manager.async_update(
         "alice",
+        created["memory"]["memory_id"],
         "Oscar is a Cavachon.",
         "animals",
-        "explicit",
+        source="explicit",
         subject="Oscar",
-        key=None,
+        clear_fields=["key"],
         valid_from="2025-01-01T00:00:00+00:00",
     )
 
-    assert existing["status"] == "updated"
-    assert existing["memory"]["memory_id"] == created["memory"]["memory_id"]
-    assert existing["memory"]["subject"] == "Oscar"
-    assert existing["memory"]["key"] is None
-    assert existing["memory"]["valid_from"] == "2025-01-01T00:00:00+00:00"
+    assert existing.memory_id == created["memory"]["memory_id"]
+    assert existing.subject == "Oscar"
+    assert existing.key is None
+    assert existing.valid_from == "2025-01-01T00:00:00+00:00"
 
 
 async def test_empty_search_and_noop_mutations_do_not_save() -> None:
@@ -293,23 +293,8 @@ def test_duplicate_related_and_index_edge_paths() -> None:
 
     assert manager._find_duplicate("alice", "Cavachon Oscar") is None
     assert manager._find_duplicate("alice", "Oscar is a Cavachon.") == first
-    assert (
-        manager._find_related_candidate("alice", "Cavachon Oscar", None, None)
-        == first
-    )
-    assert (
-        manager._find_related_candidate(
-            "alice", "Oscar is a Labrador.", "Oscar", "pet.oscar.color"
-        )
-        is not None
-    )
-    assert (
-        manager._find_related_candidate(
-            "alice", "Oscar is a Labrador.", None, "pet.oscar.color"
-        )
-        is not None
-    )
-    assert manager._find_related_candidate("bob", "Oscar", None, None) is None
+    assert manager._find_duplicate("bob", "Oscar is a Cavachon.") is None
+    assert manager._find_duplicate("alice", "Oscar is a Labrador.") is None
 
     manager._key_index[(first.user_id, first.key)] = "different"
     manager._unindex(first)

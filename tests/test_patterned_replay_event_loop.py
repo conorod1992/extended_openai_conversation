@@ -48,7 +48,6 @@ from custom_components.extended_openai_conversation_responses.tool_replay_guard 
     record_dispatch,
     remember_unacknowledged_calls,
     replay_safety,
-    was_unacknowledged_equivalent,
 )
 from homeassistant.components import conversation
 from homeassistant.exceptions import HomeAssistantError
@@ -179,7 +178,7 @@ async def test_patterned_replay_worker_failure_blocks_dispatch(hass, monkeypatch
     assert effects == [{"count": 3, "extra_note": "yes"}]
 
 
-def test_unprepared_patterned_dispatch_records_uncertain_provenance_without_regex(
+async def test_unprepared_patterned_dispatch_records_uncertain_provenance_without_regex(
     hass, monkeypatch
 ) -> None:
     entity, log = _entity(hass), _chat_log(hass)
@@ -201,7 +200,7 @@ def test_unprepared_patterned_dispatch_records_uncertain_provenance_without_rege
     entity._execution_tool_outcomes = {id(original): "completed"}
     remember_unacknowledged_calls(entity, log, before)
     assert "effect" in replay_safety(entity).uncertain_tools[log.conversation_id]
-    assert was_unacknowledged_equivalent(
+    assert await async_was_unacknowledged_equivalent(
         entity, log, _call("different", "effect", {"count": 4})
     )
 

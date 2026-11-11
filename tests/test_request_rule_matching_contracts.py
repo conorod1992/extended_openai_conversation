@@ -105,14 +105,11 @@ async def test_text_modes_preserve_signed_numeric_tokens_in_match_and_preview(
         assert match is not None and match.rule["id"] == expected and not match.fuzzy
         assert preview == request_rule_match_preview(match)
 
-        # A typo forces the fuzzy pass and must still preserve the signed token.
+        # Retired fuzzy settings never turn a typo into a match.
         typo = f"{prefix}ofset {sign}{magnitude}{suffix}"
         match = rules.match(typo)
         preview = request_rule_match_preview(await rules.async_match(hass, typo))
-        if fuzzy:
-            assert match is not None and match.rule["id"] == expected and match.fuzzy
-        else:
-            assert match is None
+        assert match is None
         assert preview == request_rule_match_preview(match)
 
 
@@ -319,7 +316,7 @@ async def test_fuzzy_equals_rejects_inserted_negation(hass, utterance):
         ("contains", "please turn on the kitchn lights now"),
     ],
 )
-async def test_fuzzy_preserves_typo_matching_in_all_text_modes(
+async def test_legacy_fuzzy_rejects_typos_in_all_text_modes(
     hass, match_type, utterance
 ):
     rules = await manager(
@@ -332,11 +329,8 @@ async def test_fuzzy_preserves_typo_matching_in_all_text_modes(
     )
     direct = rules.match(utterance)
     eligible = await rules.async_match(hass, utterance)
-    assert direct is not None and direct.fuzzy
-    assert eligible is not None and eligible.fuzzy
-    assert direct.rule["id"] == eligible.rule["id"] == "command"
-    assert direct.score == eligible.score >= 90
-
+    assert direct is None
+    assert eligible is None
 
 @pytest.mark.parametrize(
     ("phrase", "utterance", "match_type"),
@@ -354,7 +348,7 @@ async def test_fuzzy_preserves_typo_matching_in_all_text_modes(
         ("turn on the living room lights", "please turn on livingroom lights now", "contains"),
     ],
 )
-async def test_fuzzy_handles_safe_compounds_and_article_omissions(
+async def test_legacy_fuzzy_requires_authored_compounds_and_articles(
     hass, phrase: str, utterance: str, match_type: str
 ):
     rules = await manager(
@@ -367,10 +361,8 @@ async def test_fuzzy_handles_safe_compounds_and_article_omissions(
     )
     direct = rules.match(utterance)
     eligible = await rules.async_match(hass, utterance)
-    assert direct is not None and direct.fuzzy
-    assert eligible is not None and eligible.fuzzy
-    assert direct.rule["id"] == eligible.rule["id"] == "safe"
-
+    assert direct is None
+    assert eligible is None
 
 @pytest.mark.parametrize(
     ("phrase", "utterance"),
@@ -397,14 +389,13 @@ async def test_fuzzy_compounds_never_remove_sensitive_differences(
     assert await rules.async_match(hass, utterance) is None
 
 
-async def test_fuzzy_preserves_optional_article_and_inherited_safety(hass):
+async def test_legacy_inherited_fuzzy_does_not_add_articles(hass):
     rules = await manager(
         rule("command", "turn on kitchen light"),
         defaults={"fuzzy": True, "fuzzy_threshold": 90},
     )
     match = rules.match("turn on the kitchen light")
-    assert match is not None and match.fuzzy
-    assert 90 <= match.score < 100
+    assert match is None
     assert (await rules.async_match(hass, "turn on the kitchen light")) == match
     assert rules.match("turn off kitchen light") is None
     assert await rules.async_match(hass, "turn off kitchen light") is None
@@ -424,20 +415,15 @@ async def test_strict_contains_semantics_are_not_rewritten_by_fuzzy_guard():
     assert match.fuzzy is False
 
 
-@pytest.mark.parametrize("threshold,expected", [(79, True), (80, True), (81, False)])
-async def test_fuzzy_threshold_is_inclusive(threshold, expected):
-    # One substituted letter in five gives 80%, exactly representable; no mock
-    # score or approximate threshold hides the inclusive policy boundary.
+@pytest.mark.parametrize("threshold", [79, 80, 81])
+async def test_legacy_threshold_never_enables_similarity(threshold):
+    # Thresholds on either side of the old score never enable similarity.
     rules = await manager(
         rule("fuzzy", "light", matching={"fuzzy": True, "fuzzy_threshold": threshold})
     )
     match = rules.match("liagt")
-    assert (match is not None) is expected
-    if expected:
-        assert match.fuzzy is True
-        assert match.phrase == "light"
-        assert threshold <= match.score <= 100
-
+    assert match is None
+    assert rules.match("light") is not None
 
 @pytest.mark.parametrize("enabled", [False, True])
 async def test_inherited_settings_ignore_saved_custom_values(enabled):
@@ -465,10 +451,11 @@ async def test_fuzzy_fallback_skips_ineligible_earlier_candidates(earlier_type):
             "fuzzy", "light", order=1, matching={"fuzzy": True, "fuzzy_threshold": 70}
         ),
     )
-    assert rules.match("liagt").rule["id"] == "fuzzy"
+    assert rules.match("liagt") is None
+    assert rules.match("light").rule["id"] == "fuzzy"
 
 
-async def test_compiled_fuzzy_snapshot_contains_only_fuzzy_text_candidates():
+async def test_legacy_fuzzy_compilation_keeps_deterministic_and_sentence_rules():
     rules = await manager(
         rule("strict", "good night"),
         rule("pattern", "turn on {room}", "sentence_pattern", order=1),
@@ -480,10 +467,9 @@ async def test_compiled_fuzzy_snapshot_contains_only_fuzzy_text_candidates():
         ),
     )
 
-    assert [
-        candidate[0]["id"] for candidate in rules._matching_snapshot.fuzzy
-    ] == ["fuzzy"]
-
+    assert rules.match("liagt") is None
+    assert rules.match("light").rule["id"] == "fuzzy"
+    assert rules.match("turn on kitchen").slots == {"room": "kitchen"}
 
 @pytest.mark.parametrize(
     "match_type,text",
@@ -505,15 +491,15 @@ async def test_fuzzy_modes_do_not_match_the_wrong_position(match_type, text):
     assert rules.match(text) is None
 
 
-async def test_equal_fuzzy_phrase_variants_keep_the_first_variant():
+async def test_legacy_fuzzy_variants_require_authored_spelling():
     rules = await manager(
         rule(
             "fuzzy", ["light", "liant"], matching={"fuzzy": True, "fuzzy_threshold": 70}
         )
     )
     match = rules.match("liagt")
-    assert match is not None
-    assert match.phrase == "light"
+    assert match is None
+    assert rules.match("liant").phrase == "liant"
 
 
 async def test_sparse_saved_order_preserves_the_winner():
@@ -547,7 +533,7 @@ async def test_fuzzy_is_opt_in():
     assert rules.match("liagt") is None
 
 
-async def test_fuzzy_higher_score_beats_type_rank_and_order():
+async def test_legacy_fuzzy_does_not_rank_nonmatches():
     rules = await manager(
         rule("lower", "light axc", matching={"fuzzy": True, "fuzzy_threshold": 70}),
         rule(
@@ -558,10 +544,11 @@ async def test_fuzzy_higher_score_beats_type_rank_and_order():
             matching={"fuzzy": True, "fuzzy_threshold": 70},
         ),
     )
-    assert rules.match("liagt abcd").rule["id"] == "higher"
+    assert rules.match("liagt abcd") is None
+    assert rules.match("light abcd").rule["id"] == "higher"
 
 
-async def test_fuzzy_equal_score_uses_type_then_rule_order():
+async def test_legacy_fuzzy_preserves_global_order_after_move():
     rules = await manager(
         rule(
             "broad",
@@ -576,9 +563,11 @@ async def test_fuzzy_equal_score_uses_type_then_rule_order():
             "second", "light", order=2, matching={"fuzzy": True, "fuzzy_threshold": 70}
         ),
     )
-    assert rules.match("liagt").rule["id"] == "first"
+    assert rules.match("liagt") is None
+    assert rules.match("light").rule["id"] == "broad"
     await rules.async_move("second", "up")
-    assert rules.match("liagt").rule["id"] == "second"
+    assert rules.match("liagt") is None
+    assert rules.match("light").rule["id"] == "broad"
 
 
 @pytest.mark.parametrize(
@@ -780,10 +769,10 @@ async def test_empty_vs_omitted_condition_values(values, error):
             "equals",
             "light",
             {"fuzzy": True, "fuzzy_threshold": 80},
-            "light",
+            None,
             {},
-            True,
-            id="fuzzy",
+            False,
+            id="legacy-fuzzy-no-match",
         ),
         pytest.param(
             "goodbye", "equals", "hello", None, None, {}, False, id="no-match"

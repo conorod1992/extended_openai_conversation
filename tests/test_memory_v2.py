@@ -187,15 +187,15 @@ async def test_memory_new_doubled_roots_are_retrievable(
         ("I added reminder.", "I add reminder."),
     ],
 )
-async def test_memory_doubled_roots_enable_related_upsert_without_premature_update(
+async def test_memory_related_roots_do_not_suppress_distinct_proposals(
     original: str, revised: str
 ) -> None:
     memory = await _memory()
     created = await memory.async_add("alice", original, "personal", "explicit")
-    response = await memory.async_upsert("alice", revised, "personal", "explicit")
-    assert response["status"] == "needs_resolution"
-    assert response["candidate"]["memory_id"] == created["memory"]["memory_id"]
-    assert len(await memory.async_list("alice")) == 1
+    response = await memory.async_propose("alice", revised, "personal", "explicit")
+    assert response["status"] == "created"
+    assert response["memory"]["memory_id"] != created["memory"]["memory_id"]
+    assert len(await memory.async_list("alice")) == 2
 
 
 def test_memory_consonant_doubling_does_not_create_silent_e_word() -> None:
@@ -221,17 +221,17 @@ async def test_memory_lexical_search_keeps_hop_and_hope_separate() -> None:
     assert [row.memory_id for row in hope] == [hoped["memory"]["memory_id"]]
 
 
-async def test_memory_new_stems_retain_conservative_upsert_resolution() -> None:
+async def test_memory_retrieval_stems_do_not_determine_proposal_identity() -> None:
     memory = await _memory()
     original = await memory.async_add(
         "alice", "I liked coffee.", "preferences", "explicit"
     )
-    resolution = await memory.async_upsert(
+    resolution = await memory.async_propose(
         "alice", "I like coffee.", "preferences", "explicit"
     )
-    assert resolution["status"] == "needs_resolution"
-    assert resolution["candidate"]["memory_id"] == original["memory"]["memory_id"]
-    assert len(await memory.async_list("alice")) == 1
+    assert resolution["status"] == "created"
+    assert resolution["memory"]["memory_id"] != original["memory"]["memory_id"]
+    assert len(await memory.async_list("alice")) == 2
 
 
 
@@ -323,16 +323,22 @@ async def test_bm25_phrase_stemming_typo_metadata() -> None:
 
 async def test_upsert_key_uniqueness_duplicate_conflict_and_scope() -> None:
     memory = await _memory()
-    created = await memory.async_upsert(
+    created = await memory.async_propose(
         "alice", "Oscar is a Cavachon.", "pets", "explicit", key="pet.oscar.breed"
     )
-    updated = await memory.async_upsert(
+    conflict = await memory.async_propose(
         "alice", "Oscar is a Cockapoo.", "pets", "explicit", key="pet.oscar.breed"
     )
+    assert conflict["status"] == "needs_resolution"
+    assert conflict["candidate"]["memory_id"] == created["memory"]["memory_id"]
+    updated = await memory.async_update(
+        "alice", created["memory"]["memory_id"], content="Oscar is a Cockapoo.",
+        expected_revision=conflict["candidate"]["revision"],
+    )
     assert created["status"] == "created"
-    assert updated["status"] == "updated"
+    assert updated.content == "Oscar is a Cockapoo."
     assert len(await memory.async_list("alice")) == 1
-    household = await memory.async_upsert(
+    household = await memory.async_propose(
         SHARED_HOUSEHOLD_SCOPE_ID,
         "The household dog is a Cavachon.",
         "pets",
@@ -340,12 +346,13 @@ async def test_upsert_key_uniqueness_duplicate_conflict_and_scope() -> None:
         key="pet.oscar.breed",
     )
     assert household["status"] == "created"
-    existing = await memory.async_upsert(
+    existing = await memory.async_propose(
         "alice", "Oscar is a Cockapoo.", "pets", "explicit"
     )
-    assert existing["status"] == "unchanged"
-    conflict = await memory.async_upsert(
-        "alice", "Oscar is a Labrador.", "pets", "explicit", subject="Oscar"
+    assert existing["status"] == "needs_resolution"
+    assert existing["candidate"]["memory_id"] == created["memory"]["memory_id"]
+    conflict = await memory.async_propose(
+        "alice", "Oscar is a Labrador.", "pets", "explicit", subject="Oscar", key="pet.oscar.breed"
     )
     assert conflict["status"] == "needs_resolution"
 
@@ -371,7 +378,7 @@ async def test_upsert_key_uniqueness_duplicate_conflict_and_scope() -> None:
 async def test_upsert_preserves_omitted_metadata_for_key_and_duplicate() -> None:
     memory = await _memory()
     valid_from = "2025-01-01T00:00:00+00:00"
-    await memory.async_upsert(
+    created = await memory.async_propose(
         "alice",
         "Oscar is a Cavachon.",
         "pets",
@@ -381,29 +388,29 @@ async def test_upsert_preserves_omitted_metadata_for_key_and_duplicate() -> None
         valid_from=valid_from,
     )
 
-    updated = await memory.async_upsert(
+    updated = await memory.async_update(
         "alice",
+        created["memory"]["memory_id"],
         "Oscar is a Cavapoo.",
         "pets",
-        "explicit",
+        source="explicit",
         key="pet.oscar.breed",
     )
-    assert updated["status"] == "updated"
-    assert updated["memory"]["subject"] == "Oscar"
-    assert updated["memory"]["valid_from"] == valid_from
+    assert updated.subject == "Oscar"
+    assert updated.valid_from == valid_from
 
-    existing = await memory.async_upsert(
+    existing = await memory.async_propose(
         "alice", "Oscar is a Cavapoo.", "pets", "explicit"
     )
-    assert existing["status"] == "unchanged"
-    assert existing["memory"]["subject"] == "Oscar"
-    assert existing["memory"]["key"] == "pet.oscar.breed"
-    assert existing["memory"]["valid_from"] == valid_from
+    assert existing["status"] == "needs_resolution"
+    assert existing["candidate"]["subject"] == "Oscar"
+    assert existing["candidate"]["key"] == "pet.oscar.breed"
+    assert existing["candidate"]["valid_from"] == valid_from
 
 
 async def test_upsert_replaces_explicitly_supplied_metadata() -> None:
     memory = await _memory()
-    await memory.async_upsert(
+    created = await memory.async_propose(
         "alice",
         "Oscar is a Cavachon.",
         "pets",
@@ -413,17 +420,18 @@ async def test_upsert_replaces_explicitly_supplied_metadata() -> None:
         valid_from="2025-01-01T00:00:00+00:00",
     )
 
-    updated = await memory.async_upsert(
+    updated = await memory.async_update(
         "alice",
+        created["memory"]["memory_id"],
         "Oscar is a Cavapoo.",
         "pets",
-        "explicit",
+        source="explicit",
         subject="Oscar James",
         key="pet.oscar.breed",
         valid_from="2026-01-01T00:00:00+00:00",
     )
-    assert updated["memory"]["subject"] == "Oscar James"
-    assert updated["memory"]["valid_from"] == "2026-01-01T00:00:00+00:00"
+    assert updated.subject == "Oscar James"
+    assert updated.valid_from == "2026-01-01T00:00:00+00:00"
 
 
 async def test_hybrid_semantic_and_lexical_fallback() -> None:
@@ -933,17 +941,17 @@ async def test_memory_stem_regressions_restore_actual_lexical_retrieval(
     )
 
 
-async def test_memory_stem_regression_preserves_related_fact_resolution():
+async def test_memory_related_stems_preserve_both_proposed_facts():
     memory = await _memory()
     original = await memory.async_add(
         "alice", "My hobby is travelling.", "hobbies", "explicit"
     )
-    outcome = await memory.async_upsert(
+    outcome = await memory.async_propose(
         "alice", "My hobby is travel.", "hobbies", "explicit"
     )
-    assert outcome["status"] == "needs_resolution"
-    assert outcome["candidate"]["memory_id"] == original["memory"]["memory_id"]
-    assert len(await memory.async_list("alice")) == 1
+    assert outcome["status"] == "created"
+    assert outcome["memory"]["memory_id"] != original["memory"]["memory_id"]
+    assert len(await memory.async_list("alice")) == 2
 
 @pytest.mark.parametrize(
     ("stored", "incoming"),
@@ -961,15 +969,15 @@ async def test_memory_stem_regression_preserves_related_fact_resolution():
         ),
     ],
 )
-async def test_memory_additional_l_stems_retain_related_fact_resolution(
+async def test_memory_l_stems_do_not_mutate_existing_proposed_facts(
     stored, incoming
 ):
     memory = await _memory()
     original = await memory.async_add("alice", stored, "personal", "explicit")
-    outcome = await memory.async_upsert("alice", incoming, "personal", "explicit")
-    assert outcome["status"] == "needs_resolution"
-    assert outcome["candidate"]["memory_id"] == original["memory"]["memory_id"]
-    assert len(await memory.async_list("alice")) == 1
+    outcome = await memory.async_propose("alice", incoming, "personal", "explicit")
+    assert outcome["status"] == "created"
+    assert outcome["memory"]["memory_id"] != original["memory"]["memory_id"]
+    assert len(await memory.async_list("alice")) == 2
 
 
 @pytest.mark.parametrize(
@@ -994,7 +1002,7 @@ def test_memory_stem_does_not_strip_genuine_or_unknown_word_endings(
 async def test_memory_stemming_does_not_create_unrelated_upsert_conflicts():
     memory = await _memory()
     await memory.async_add("alice", "My dog patrols the garden.", "pets", "explicit")
-    outcome = await memory.async_upsert(
+    outcome = await memory.async_propose(
         "alice", "My dog watches the television.", "pets", "explicit"
     )
     assert outcome["status"] == "created"
@@ -1046,7 +1054,7 @@ async def test_memory_spelling_repairs_leave_unrelated_upserts_distinct(
 ):
     memory = await _memory()
     original = await memory.async_add("alice", source, "personal", "explicit")
-    outcome = await memory.async_upsert("alice", new_content, "personal", "explicit")
+    outcome = await memory.async_propose("alice", new_content, "personal", "explicit")
     assert outcome["status"] == "created"
     assert len(await memory.async_list("alice")) == 2
     assert outcome["memory"]["memory_id"] != original["memory"]["memory_id"]

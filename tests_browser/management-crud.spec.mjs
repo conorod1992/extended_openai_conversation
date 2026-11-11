@@ -131,7 +131,7 @@ test("Rule Sharing reviews before importing disabled rules at the bottom", async
   const pack={format:"extended_openai_request_rule_pack",version:1,groups:[],rules:[{
     id:"portable-rule",name:"Shared route",enabled:true,phrases:["shared route"],match_type:"equals",action_type:"model_routing",
     action:{model:"gpt-5-mini",reasoning_effort:"",scope:"request",reset:false,continue_to_ai:true,success_response:"Updated"},
-    matching_behavior:"custom",matching:{word_forms:true,wording_alternatives:true,fuzzy:false,fuzzy_threshold:90},order:0,
+    matching_behavior:"custom",matching:{word_forms:true,wording_alternatives:true},order:0,
     conditions:[],group_id:null,continue_matching:true,ai_input_mode:"original",ai_input_capture:null,
   }]};
   await panel.locator("#rule-pack-file").setInputFiles({name:"rules.json",mimeType:"application/json",buffer:Buffer.from(JSON.stringify(pack))});
