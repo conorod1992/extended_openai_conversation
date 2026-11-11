@@ -1600,7 +1600,10 @@ def memory_tools() -> list[dict[str, Any]]:
         {
             "spec": {
                 "name": "memory_upsert",
-                "description": "Propose a durable fact. Existing keyed facts require a separate revision-checked update; no automatic replacement.",
+                "description": (
+                    "Propose a NEW durable fact; never overwrite or bypass a conflict by changing "
+                    "keys. needs_resolution means no write; search and decide what the facts mean."
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -1610,11 +1613,30 @@ def memory_tools() -> list[dict[str, Any]]:
                             "type": "string",
                             "enum": ["explicit", "implicit"],
                             "description": (
-                                "Describes the proposed origin. A model's explicit "
-                                "label cannot grant permission or promote existing provenance."
+                                "Descriptive origin only; explicit is not model authorization."
                             ),
                         },
-                        **_memory_metadata_schema(include_scope=True),
+                        "subject": {
+                            "type": "string",
+                            "description": (
+                                "Specific person, device or item the assertion concerns; never infer "
+                                "another person's preference."
+                            ),
+                        },
+                        "key": {
+                            "type": "string",
+                            "maxLength": MAX_KEY_LENGTH,
+                            "pattern": r"^[a-z0-9_-]+(?:\.[a-z0-9_-]+)*$",
+                            "description": (
+                                "Stable canonical identifier for this exact subject; never change it "
+                                "to evade a conflict."
+                            ),
+                        },
+                        "valid_from": {
+                            "type": "string",
+                            "description": "ISO 8601 time when the fact became true, if known.",
+                        },
+                        "scope": {"type": "string", "enum": ["personal", "household"]},
                         **_memory_intent_schema(),
                     },
                     "required": ["content", "category", "source"],
@@ -1626,7 +1648,10 @@ def memory_tools() -> list[dict[str, Any]]:
         {
             "spec": {
                 "name": "memory_search",
-                "description": "Search ranked memories. Continue with next_offset as offset and identical query, category and scope. Restart at zero if memories change.",
+                "description": (
+                    "Find relevant facts for answers and before proposing or correcting. Rankings are "
+                    "candidates, not semantic matches; absence is not proof of novelty."
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -1645,7 +1670,7 @@ def memory_tools() -> list[dict[str, Any]]:
         {
             "spec": {
                 "name": "memory_list",
-                "description": "List the current user's memories, optionally by category.",
+                "description": "Browse existing facts, their provenance and exact revisions.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -1662,15 +1687,25 @@ def memory_tools() -> list[dict[str, Any]]:
         {
             "spec": {
                 "name": "memory_update",
-                "description": "Revision-checked correction of a scoped memory. Set intent for requested or Automatic corrections; provenance stays unchanged.",
+                "description": (
+                    "Correct a scoped record using its exact ID and current revision. "
+                    "Use intent=user_request for a current user correction request, or automatic "
+                    "for clear corrections in Automatic mode. Never guess missing fields."
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "memory_id": {"type": "string"},
+                        "memory_id": {
+                            "type": "string",
+                            "description": "Exact ID of the record found in this scope, not a similar record.",
+                        },
                         "expected_revision": {
                             "type": "string",
                             "pattern": "^[0-9a-f]{64}$",
-                            "description": "Exact revision from a scoped read.",
+                            "description": (
+                                "Current revision from memory_search, memory_list or opening context; "
+                                "never guess."
+                            ),
                         },
                         "source": {
                             "type": "string",
@@ -1701,7 +1736,11 @@ def memory_tools() -> list[dict[str, Any]]:
         {
             "spec": {
                 "name": "memory_delete",
-                "description": "Delete scoped memories by exact ID and revision. Set intent for requested or Automatic maintenance. Confirm before broad deletion.",
+                "description": (
+                    "Delete only specifically identified scoped records using their exact "
+                    "IDs and fresh revisions. Set intent=user_request for current user requests, "
+                    "or automatic for clear obsolete facts in Automatic mode. Confirm before broad deletion."
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {

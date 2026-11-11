@@ -1,0 +1,1601 @@
+{
+  "responses": [
+    {
+      "type": "function",
+      "name": "memory_upsert",
+      "description": "Propose a NEW durable fact; never overwrite or bypass a conflict by changing keys. needs_resolution means no write; search and decide what the facts mean.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "explicit",
+              "implicit"
+            ],
+            "description": "Descriptive origin only; explicit is not model authorization."
+          },
+          "subject": {
+            "type": "string",
+            "description": "Specific person, device or item the assertion concerns; never infer another person's preference."
+          },
+          "key": {
+            "type": "string",
+            "maxLength": 160,
+            "pattern": "^[a-z0-9_-]+(?:\\.[a-z0-9_-]+)*$",
+            "description": "Stable canonical identifier for this exact subject; never change it to evade a conflict."
+          },
+          "valid_from": {
+            "type": "string",
+            "description": "ISO 8601 time when the fact became true, if known."
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "personal",
+              "household"
+            ]
+          },
+          "intent": {
+            "type": "string",
+            "enum": [
+              "automatic",
+              "user_request"
+            ],
+            "description": "Your interpretation: user_request only when the current user asks to modify persistent Memory in the target scope; otherwise automatic. Not proof of consent. Omission means automatic; source never authorizes."
+          }
+        },
+        "required": [
+          "content",
+          "category",
+          "source"
+        ],
+        "additionalProperties": false
+      },
+      "strict": false
+    },
+    {
+      "type": "function",
+      "name": "memory_search",
+      "description": "Find relevant facts for answers and before proposing or correcting. Rankings are candidates, not semantic matches; absence is not proof of novelty.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0
+          },
+          "category": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "personal",
+              "household"
+            ]
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "strict": false
+    },
+    {
+      "type": "function",
+      "name": "memory_list",
+      "description": "Browse existing facts, their provenance and exact revisions.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "personal",
+              "household"
+            ]
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "strict": false
+    },
+    {
+      "type": "function",
+      "name": "memory_update",
+      "description": "Correct a scoped record using its exact ID and current revision. Use intent=user_request for a current user correction request, or automatic for clear corrections in Automatic mode. Never guess missing fields.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "memory_id": {
+            "type": "string",
+            "description": "Exact ID of the record found in this scope, not a similar record."
+          },
+          "expected_revision": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "Current revision from memory_search, memory_list or opening context; never guess."
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "explicit",
+              "implicit"
+            ],
+            "description": "Legacy descriptive origin only; cannot authorize edits or change provenance."
+          },
+          "content": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string",
+            "maxLength": 160,
+            "pattern": "^[a-z0-9_-]+(?:\\.[a-z0-9_-]+)*$",
+            "description": "Optional stable lowercase identifier such as pet.oscar.breed. Use only a-z, 0-9, underscore, hyphen, and dot-separated components."
+          },
+          "valid_from": {
+            "type": "string",
+            "description": "ISO 8601 time when the fact became true, if known."
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "personal",
+              "household"
+            ]
+          },
+          "intent": {
+            "type": "string",
+            "enum": [
+              "automatic",
+              "user_request"
+            ],
+            "description": "Your interpretation: user_request only when the current user asks to modify persistent Memory in the target scope; otherwise automatic. Not proof of consent. Omission means automatic; source never authorizes."
+          },
+          "clear_fields": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "subject",
+                "key",
+                "valid_from"
+              ]
+            },
+            "minItems": 1,
+            "maxItems": 3,
+            "description": "Optional metadata fields to clear explicitly."
+          }
+        },
+        "required": [
+          "memory_id",
+          "expected_revision"
+        ],
+        "additionalProperties": false
+      },
+      "strict": false
+    },
+    {
+      "type": "function",
+      "name": "memory_delete",
+      "description": "Delete only specifically identified scoped records using their exact IDs and fresh revisions. Set intent=user_request for current user requests, or automatic for clear obsolete facts in Automatic mode. Confirm before broad deletion.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "memory_id": {
+                  "type": "string"
+                },
+                "expected_revision": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              },
+              "required": [
+                "memory_id",
+                "expected_revision"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 1,
+            "maxItems": 50
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "personal",
+              "household"
+            ]
+          },
+          "intent": {
+            "type": "string",
+            "enum": [
+              "automatic",
+              "user_request"
+            ],
+            "description": "Your interpretation: user_request only when the current user asks to modify persistent Memory in the target scope; otherwise automatic. Not proof of consent. Omission means automatic; source never authorizes."
+          }
+        },
+        "required": [
+          "targets"
+        ],
+        "additionalProperties": false
+      },
+      "strict": false
+    },
+    {
+      "type": "function",
+      "name": "temporary_memory_add",
+      "description": "Silently store a short-lived fact.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string",
+            "description": "ISO 8601 with timezone."
+          },
+          "category": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "content",
+          "expires_at"
+        ],
+        "additionalProperties": false
+      },
+      "strict": false
+    },
+    {
+      "type": "function",
+      "name": "temporary_memory_update",
+      "description": "Silently update an active temporary memory.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "memory_id": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "memory_id"
+        ],
+        "additionalProperties": false
+      },
+      "strict": false
+    },
+    {
+      "type": "function",
+      "name": "temporary_memory_delete",
+      "description": "Silently delete active temporary memories.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "memory_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "maxItems": 50
+          }
+        },
+        "required": [
+          "memory_ids"
+        ],
+        "additionalProperties": false
+      },
+      "strict": false
+    },
+    {
+      "type": "function",
+      "name": "knowledge_search",
+      "description": "Search the local Knowledge Library.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Short search keywords or phrase."
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0
+          },
+          "source_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Exact IDs returned by Knowledge tools."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "default": 5
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "strict": false
+    },
+    {
+      "type": "function",
+      "name": "knowledge_list",
+      "description": "Browse Knowledge source titles and descriptions.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Optional title/description filter."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "default": 20
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "strict": false
+    },
+    {
+      "type": "function",
+      "name": "knowledge_get",
+      "description": "Read a Knowledge source page by exact source ID.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "description": "Exact returned source ID."
+          },
+          "start_character": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0
+          },
+          "max_characters": {
+            "type": "integer",
+            "minimum": 500,
+            "maximum": 20000,
+            "default": 6000
+          }
+        },
+        "required": [
+          "source_id"
+        ],
+        "additionalProperties": false
+      },
+      "strict": false
+    },
+    {
+      "type": "function",
+      "name": "conversation_search",
+      "description": "Search prior retained conversations.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000
+          },
+          "start_date": {
+            "type": "string"
+          },
+          "end_date": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "strict": false
+    },
+    {
+      "type": "function",
+      "name": "conversation_get",
+      "description": "Read a page from one retained conversation.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "start_turn": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "text_offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "additionalProperties": false
+      },
+      "strict": false
+    },
+    {
+      "type": "function",
+      "name": "conversation_private",
+      "description": "Stop retaining this conversation and delete its retained turns.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "strict": false
+    },
+    {
+      "type": "function",
+      "name": "conversation_resume_saving",
+      "description": "Start a new retained session after private mode.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "strict": false
+    },
+    {
+      "type": "function",
+      "name": "conversation_delete_current",
+      "description": "Delete the current retained conversation.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "strict": false
+    },
+    {
+      "type": "function",
+      "name": "conversation_delete_selected",
+      "description": "Delete confirmed selected retained sessions.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "session_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "maxItems": 50
+          },
+          "confirm": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "session_ids",
+          "confirm"
+        ],
+        "additionalProperties": false
+      },
+      "strict": false
+    },
+    {
+      "type": "function",
+      "name": "conversation_delete_date_range",
+      "description": "Delete confirmed retained sessions in a date range.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "start_date": {
+            "type": "string"
+          },
+          "end_date": {
+            "type": "string"
+          },
+          "confirm": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "start_date",
+          "end_date",
+          "confirm"
+        ],
+        "additionalProperties": false
+      },
+      "strict": false
+    },
+    {
+      "type": "function",
+      "name": "guest_mode_restrict",
+      "description": "Enable, start sooner, or extend Guest Mode; never weaken it.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "active_from": {
+            "type": "string",
+            "description": "ISO 8601; omit to start now."
+          },
+          "active_until": {
+            "type": "string",
+            "description": "ISO 8601 expiry; extensions only."
+          },
+          "make_indefinite": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "strict": false
+    },
+    {
+      "type": "function",
+      "name": "start_fresh_conversation",
+      "description": "Start a fresh Assist conversation after this response when the user explicitly asks to start over or reset the current discussion. This clears only current conversation context and conversation-scoped routing/tool state. It does not delete persistent memory, temporary memory, Knowledge Library sources, or archived history.",
+      "strict": true,
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "type": "function",
+      "name": "load_function_groups",
+      "description": "Load one or more on-demand tool groups. Loading only exposes schemas and performs no action.\ntravel: Travel — Routes and destinations.\nmedia: Media — TV, music — and films.\nKeep this catalogue detail.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "travel",
+                "media"
+              ]
+            }
+          }
+        },
+        "required": [
+          "groups"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "type": "function",
+      "name": "custom_omitted",
+      "description": "User-authored description, verbatim.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string",
+            "description": "User guidance.",
+            "enum": [
+              "first",
+              "second"
+            ],
+            "default": "second"
+          },
+          "nested": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "child": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "type": "function",
+      "name": "custom_true",
+      "description": "User-authored description, verbatim.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string",
+            "description": "User guidance.",
+            "enum": [
+              "first",
+              "second"
+            ],
+            "default": "second"
+          },
+          "nested": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "child": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
+      },
+      "strict": true
+    },
+    {
+      "type": "function",
+      "name": "custom_false",
+      "description": "User-authored description, verbatim.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string",
+            "description": "User guidance.",
+            "enum": [
+              "first",
+              "second"
+            ],
+            "default": "second"
+          },
+          "nested": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "child": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
+      },
+      "strict": false
+    },
+    {
+      "type": "function",
+      "name": "set_continue_conversation",
+      "description": "Return the final spoken answer and whether to listen for an immediate reply.",
+      "strict": true,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "response": {
+            "type": "string",
+            "description": "Complete spoken answer."
+          },
+          "continue_conversation": {
+            "type": "boolean",
+            "description": "Expect an immediate reply."
+          }
+        },
+        "required": [
+          "response",
+          "continue_conversation"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "chat_completions": [
+    {
+      "type": "function",
+      "function": {
+        "name": "memory_upsert",
+        "description": "Propose a NEW durable fact; never overwrite or bypass a conflict by changing keys. needs_resolution means no write; search and decide what the facts mean.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "content": {
+              "type": "string"
+            },
+            "category": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "explicit",
+                "implicit"
+              ],
+              "description": "Descriptive origin only; explicit is not model authorization."
+            },
+            "subject": {
+              "type": "string",
+              "description": "Specific person, device or item the assertion concerns; never infer another person's preference."
+            },
+            "key": {
+              "type": "string",
+              "maxLength": 160,
+              "pattern": "^[a-z0-9_-]+(?:\\.[a-z0-9_-]+)*$",
+              "description": "Stable canonical identifier for this exact subject; never change it to evade a conflict."
+            },
+            "valid_from": {
+              "type": "string",
+              "description": "ISO 8601 time when the fact became true, if known."
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "personal",
+                "household"
+              ]
+            },
+            "intent": {
+              "type": "string",
+              "enum": [
+                "automatic",
+                "user_request"
+              ],
+              "description": "Your interpretation: user_request only when the current user asks to modify persistent Memory in the target scope; otherwise automatic. Not proof of consent. Omission means automatic; source never authorizes."
+            }
+          },
+          "required": [
+            "content",
+            "category",
+            "source"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "memory_search",
+        "description": "Find relevant facts for answers and before proposing or correcting. Rankings are candidates, not semantic matches; absence is not proof of novelty.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "minLength": 1
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "category": {
+              "type": "string"
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "personal",
+                "household"
+              ]
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "memory_list",
+        "description": "Browse existing facts, their provenance and exact revisions.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "category": {
+              "type": "string"
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "personal",
+                "household"
+              ]
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "memory_update",
+        "description": "Correct a scoped record using its exact ID and current revision. Use intent=user_request for a current user correction request, or automatic for clear corrections in Automatic mode. Never guess missing fields.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "memory_id": {
+              "type": "string",
+              "description": "Exact ID of the record found in this scope, not a similar record."
+            },
+            "expected_revision": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "Current revision from memory_search, memory_list or opening context; never guess."
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "explicit",
+                "implicit"
+              ],
+              "description": "Legacy descriptive origin only; cannot authorize edits or change provenance."
+            },
+            "content": {
+              "type": "string"
+            },
+            "category": {
+              "type": "string"
+            },
+            "subject": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string",
+              "maxLength": 160,
+              "pattern": "^[a-z0-9_-]+(?:\\.[a-z0-9_-]+)*$",
+              "description": "Optional stable lowercase identifier such as pet.oscar.breed. Use only a-z, 0-9, underscore, hyphen, and dot-separated components."
+            },
+            "valid_from": {
+              "type": "string",
+              "description": "ISO 8601 time when the fact became true, if known."
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "personal",
+                "household"
+              ]
+            },
+            "intent": {
+              "type": "string",
+              "enum": [
+                "automatic",
+                "user_request"
+              ],
+              "description": "Your interpretation: user_request only when the current user asks to modify persistent Memory in the target scope; otherwise automatic. Not proof of consent. Omission means automatic; source never authorizes."
+            },
+            "clear_fields": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "subject",
+                  "key",
+                  "valid_from"
+                ]
+              },
+              "minItems": 1,
+              "maxItems": 3,
+              "description": "Optional metadata fields to clear explicitly."
+            }
+          },
+          "required": [
+            "memory_id",
+            "expected_revision"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "memory_delete",
+        "description": "Delete only specifically identified scoped records using their exact IDs and fresh revisions. Set intent=user_request for current user requests, or automatic for clear obsolete facts in Automatic mode. Confirm before broad deletion.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "targets": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "memory_id": {
+                    "type": "string"
+                  },
+                  "expected_revision": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                },
+                "required": [
+                  "memory_id",
+                  "expected_revision"
+                ],
+                "additionalProperties": false
+              },
+              "minItems": 1,
+              "maxItems": 50
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "personal",
+                "household"
+              ]
+            },
+            "intent": {
+              "type": "string",
+              "enum": [
+                "automatic",
+                "user_request"
+              ],
+              "description": "Your interpretation: user_request only when the current user asks to modify persistent Memory in the target scope; otherwise automatic. Not proof of consent. Omission means automatic; source never authorizes."
+            }
+          },
+          "required": [
+            "targets"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "temporary_memory_add",
+        "description": "Silently store a short-lived fact.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "content": {
+              "type": "string"
+            },
+            "expires_at": {
+              "type": "string",
+              "description": "ISO 8601 with timezone."
+            },
+            "category": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "content",
+            "expires_at"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "temporary_memory_update",
+        "description": "Silently update an active temporary memory.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "memory_id": {
+              "type": "string"
+            },
+            "content": {
+              "type": "string"
+            },
+            "expires_at": {
+              "type": "string"
+            },
+            "category": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "memory_id"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "temporary_memory_delete",
+        "description": "Silently delete active temporary memories.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "memory_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "maxItems": 50
+            }
+          },
+          "required": [
+            "memory_ids"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "knowledge_search",
+        "description": "Search the local Knowledge Library.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Short search keywords or phrase."
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "source_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Exact IDs returned by Knowledge tools."
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10,
+              "default": 5
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "knowledge_list",
+        "description": "Browse Knowledge source titles and descriptions.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "Optional title/description filter."
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 20
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "knowledge_get",
+        "description": "Read a Knowledge source page by exact source ID.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "source_id": {
+              "type": "string",
+              "description": "Exact returned source ID."
+            },
+            "start_character": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "max_characters": {
+              "type": "integer",
+              "minimum": 500,
+              "maximum": 20000,
+              "default": 6000
+            }
+          },
+          "required": [
+            "source_id"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "conversation_search",
+        "description": "Search prior retained conversations.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "minLength": 1
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            },
+            "start_date": {
+              "type": "string"
+            },
+            "end_date": {
+              "type": "string"
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "conversation_get",
+        "description": "Read a page from one retained conversation.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "session_id": {
+              "type": "string"
+            },
+            "start_turn": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "text_offset": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10
+            }
+          },
+          "required": [
+            "session_id"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "conversation_private",
+        "description": "Stop retaining this conversation and delete its retained turns.",
+        "parameters": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "conversation_resume_saving",
+        "description": "Start a new retained session after private mode.",
+        "parameters": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "conversation_delete_current",
+        "description": "Delete the current retained conversation.",
+        "parameters": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "conversation_delete_selected",
+        "description": "Delete confirmed selected retained sessions.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "session_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "maxItems": 50
+            },
+            "confirm": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "session_ids",
+            "confirm"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "conversation_delete_date_range",
+        "description": "Delete confirmed retained sessions in a date range.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "start_date": {
+              "type": "string"
+            },
+            "end_date": {
+              "type": "string"
+            },
+            "confirm": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "start_date",
+            "end_date",
+            "confirm"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "guest_mode_restrict",
+        "description": "Enable, start sooner, or extend Guest Mode; never weaken it.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "active_from": {
+              "type": "string",
+              "description": "ISO 8601; omit to start now."
+            },
+            "active_until": {
+              "type": "string",
+              "description": "ISO 8601 expiry; extensions only."
+            },
+            "make_indefinite": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "start_fresh_conversation",
+        "description": "Start a fresh Assist conversation after this response when the user explicitly asks to start over or reset the current discussion. This clears only current conversation context and conversation-scoped routing/tool state. It does not delete persistent memory, temporary memory, Knowledge Library sources, or archived history.",
+        "strict": true,
+        "parameters": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "load_function_groups",
+        "description": "Load one or more on-demand tool groups. Loading only exposes schemas and performs no action.\ntravel: Travel — Routes and destinations.\nmedia: Media — TV, music — and films.\nKeep this catalogue detail.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "groups": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "travel",
+                  "media"
+                ]
+              }
+            }
+          },
+          "required": [
+            "groups"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "custom_omitted",
+        "description": "User-authored description, verbatim.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "string",
+              "description": "User guidance.",
+              "enum": [
+                "first",
+                "second"
+              ],
+              "default": "second"
+            },
+            "nested": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "child": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "value"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "custom_true",
+        "description": "User-authored description, verbatim.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "string",
+              "description": "User guidance.",
+              "enum": [
+                "first",
+                "second"
+              ],
+              "default": "second"
+            },
+            "nested": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "child": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        "strict": true
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "custom_false",
+        "description": "User-authored description, verbatim.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "string",
+              "description": "User guidance.",
+              "enum": [
+                "first",
+                "second"
+              ],
+              "default": "second"
+            },
+            "nested": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "child": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        "strict": false
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "set_continue_conversation",
+        "description": "Return the final spoken answer and whether to listen for an immediate reply.",
+        "strict": true,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "response": {
+              "type": "string",
+              "description": "Complete spoken answer."
+            },
+            "continue_conversation": {
+              "type": "boolean",
+              "description": "Expect an immediate reply."
+            }
+          },
+          "required": [
+            "response",
+            "continue_conversation"
+          ],
+          "additionalProperties": false
+        }
+      }
+    }
+  ]
+}

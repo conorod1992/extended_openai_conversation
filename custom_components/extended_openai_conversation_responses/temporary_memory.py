@@ -828,14 +828,14 @@ def temporary_memory_tools() -> list[dict[str, Any]]:
         {
             "spec": {
                 "name": "temporary_memory_add",
-                "description": "Silently store one useful short-lived fact for the current context.",
+                "description": "Silently store a short-lived fact.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "content": {"type": "string"},
                         "expires_at": {
                             "type": "string",
-                            "description": "ISO date-time with timezone, inferred reasonably from ordinary language.",
+                            "description": "ISO 8601 with timezone.",
                         },
                         "category": {"type": "string"},
                     },
@@ -848,7 +848,7 @@ def temporary_memory_tools() -> list[dict[str, Any]]:
         {
             "spec": {
                 "name": "temporary_memory_update",
-                "description": "Silently supersede an active temporary fact when circumstances change.",
+                "description": "Silently update an active temporary memory.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -866,7 +866,7 @@ def temporary_memory_tools() -> list[dict[str, Any]]:
         {
             "spec": {
                 "name": "temporary_memory_delete",
-                "description": "Silently forget one or more active temporary facts for the current context.",
+                "description": "Silently delete active temporary memories.",
                 "parameters": {
                     "type": "object",
                     "properties": {

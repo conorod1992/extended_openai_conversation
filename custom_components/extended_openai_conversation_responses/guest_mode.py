@@ -791,23 +791,18 @@ def guest_mode_restrict_tool() -> dict[str, Any]:
         "spec": {
             "name": "guest_mode_restrict",
             "description": (
-                "Enable, start sooner, or extend Guest Mode. This operation cannot "
-                "disable, cancel, delay, or shorten Guest Mode. Omit active_until "
-                "for indefinite activation when enabling it for the first time."
+                "Enable, start sooner, or extend Guest Mode; never weaken it."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "active_from": {
                         "type": "string",
-                        "description": (
-                            "ISO 8601 start time. Omit to preserve an existing "
-                            "active or scheduled start, or start now if none exists."
-                        ),
+                        "description": "ISO 8601; omit to start now.",
                     },
                     "active_until": {
                         "type": "string",
-                        "description": "ISO 8601 expiry used only to extend restrictions.",
+                        "description": "ISO 8601 expiry; extensions only.",
                     },
                     "make_indefinite": {"type": "boolean"},
                 },
