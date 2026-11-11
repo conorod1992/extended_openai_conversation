@@ -44,13 +44,13 @@ This is intentionally **not** a claim that every advanced Function Tool, Home As
 
 The `request-rules` campaign selects exactly these functions in `custom_components/extended_openai_conversation_responses/request_rules.py`:
 
-- `RequestRules.match`: strict selection, sentence results, and fuzzy fallback/threshold/ranking;
+- `RequestRules.match`: deterministic selection and sentence results;
 - `RequestRules._sort_and_compile`: enabled-rule participation, effective matching settings, and strict ranking;
 - `_deterministic_match`: whole-phrase boundaries for equals, starts-with, ends-with, and contains.
 
-`tests/test_request_rule_matching_contracts.py` uses the public manager methods with an in-memory store. It exercises real validation, compilation and matching. Strict precedence is match type (equals, sentence pattern, starts-with, ends-with, contains), then longer phrase, then rule order. This is not first-in-list matching. Fuzzy candidates are considered only after strict matching fails, with inclusive thresholds and score/type/order precedence. Tests also cover disabled and absent rules, nonmatching candidates, phrase variants, inherited/custom normalization settings, and sentence captures without tolerant text transformations.
+`tests/test_request_rule_matching_contracts.py` uses the public manager methods with an in-memory store. It exercises real validation, compilation and matching. Deterministic precedence follows global rule order, regardless of match type. Retired fuzzy settings are normalized away; fuzzy-only phrases do not match. Tests also cover disabled and absent rules, nonmatching candidates, phrase variants, inherited/custom normalization settings, and sentence captures without tolerant text transformations.
 
-The compilation helper also contains storage diagnostics and pattern activation bounds. Those branches are not the objective of this campaign. Do not assert exact diagnostics, persistence bookkeeping, cache layout, or compiled-state counts just to kill their mutants. The sentence grammar engine, fuzzy similarity algorithm, normalization implementation, async scheduling, routing overrides, actions, providers, Function Tools, Guest Mode, permissions and UI are deliberately not Request Rules mutation targets. Calling some of them during test setup does not expand that claim.
+The compilation helper also contains storage diagnostics and pattern activation bounds. Those branches are not the objective of this campaign. Do not assert exact diagnostics, persistence bookkeeping, cache layout, or compiled-state counts just to kill their mutants. The sentence grammar engine, normalization implementation, async scheduling, routing overrides, actions, providers, Function Tools, Guest Mode, permissions and UI are deliberately not Request Rules mutation targets. Calling some of them during test setup does not expand that claim.
 
 ### `function-groups`
 

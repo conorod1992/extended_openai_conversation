@@ -273,7 +273,7 @@ Python equality. Native Script comparisons cover choose/repeat, templates,
 conditions, service and conversation responses, stops and event-controlled waits.
 
 Public competing-rule journeys shuffle disabled and condition-failed candidates
-ahead of eligible exact, captured and fuzzy matches, then verify ordered local
+ahead of eligible exact, captured and authored-alternative matches, then verify ordered local
 effects or real SDK routing on both APIs. Populated interaction journeys save
 live configuration through management WebSockets, disable retained features and
 restore them, with explicit private/shared Memory retrieval, Knowledge search,

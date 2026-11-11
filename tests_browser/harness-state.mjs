@@ -38,8 +38,8 @@ function freshState() {
     guest: {config: {guest_mode_enabled: false, guest_web_search: false}, revision: "guest-1", legacy_policy: false},
     quiet: {config: {enabled: false, start: "22:00", end: "07:00", max_volume: 0.2, wake_sound: "off", overrides: {}}, active: false, satellites: []},
     requestRules: {
-      revision: 3, defaults: {word_forms: true, wording_alternatives: true, fuzzy: false, fuzzy_threshold: 90}, wording_groups: [], groups: [], diagnostics: {},
-      rules: [{id: "rule-1", name: "Baseline rule", enabled: true, phrases: ["baseline route"], match_type: "contains", action_type: "model_routing", action: {model: "gpt-5-mini", reasoning_effort: "", scope: "request", reset: false, success_response: "Updated"}, matching_behavior: "defaults", matching: {word_forms: true, wording_alternatives: true, fuzzy: false, fuzzy_threshold: 90}, order: 0}],
+      revision: 3, defaults: {word_forms: true, wording_alternatives: true}, wording_groups: [], groups: [], diagnostics: {},
+      rules: [{id: "rule-1", name: "Baseline rule", enabled: true, phrases: ["baseline route"], match_type: "contains", action_type: "model_routing", action: {model: "gpt-5-mini", reasoning_effort: "", scope: "request", reset: false, success_response: "Updated"}, matching_behavior: "defaults", matching: {word_forms: true, wording_alternatives: true}, order: 0}],
     },
     requestDebug: {enabled: false, limit: 10, count: 0, runs: []},
     toolYamls: {baseline_tool: "spec:\n  name: baseline_tool\n  description: Baseline browser fixture Function Tool\n  parameters:\n    type: object\n    properties: {}\nfunction:\n  type: script\n  sequence: []\n"},

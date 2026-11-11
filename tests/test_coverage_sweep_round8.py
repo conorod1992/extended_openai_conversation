@@ -253,7 +253,6 @@ async def test_request_rules_instrumented_match_seam_returns_non_rule_match(hass
                 request_rules.CompiledPhrase("hello", normalized="hello"),
             ),
         ),
-        fuzzy=(),
     )
     sentinel = object()
     monkeypatch.setattr(manager, "match", Mock(return_value=sentinel))
@@ -285,7 +284,6 @@ async def test_request_rules_instrumented_match_seam_returns_none(hass, monkeypa
                 request_rules.CompiledPhrase("hello", normalized="hello"),
             ),
         ),
-        fuzzy=(),
     )
     monkeypatch.setattr(manager, "match", Mock(return_value=None))
     hass.async_add_executor_job = AsyncMock(return_value=None)

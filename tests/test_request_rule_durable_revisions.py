@@ -30,7 +30,7 @@ async def test_aba_changes_still_reject_old_writer_after_reload():
     manager = rr.RequestRules(store)
     await manager.async_initialize()
     original = manager.revision()
-    await manager.async_set_defaults({**rr.DEFAULT_MATCHING, "fuzzy": True})
+    await manager.async_set_defaults({**rr.DEFAULT_MATCHING, "word_forms": False})
 
     manager = rr.RequestRules(store)
     await manager.async_initialize()
@@ -59,7 +59,7 @@ async def test_failed_write_reconciles_durable_revision(write_reached_disk):
 
     store.async_save = fail
     with pytest.raises(OSError, match="acknowledgement"):
-        await manager.async_set_defaults({**rr.DEFAULT_MATCHING, "fuzzy": True})
+        await manager.async_set_defaults({**rr.DEFAULT_MATCHING, "word_forms": False})
     store.async_save = save
     reloaded = rr.RequestRules(store)
     await reloaded.async_initialize()

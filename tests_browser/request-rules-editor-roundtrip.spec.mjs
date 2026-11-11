@@ -3,6 +3,25 @@ import {acceptSharingReview, expectHarnessClean, fixtureUrl, trackPageErrors} fr
 
 const panelFor = (page) => page.locator("extended-openai-management-panel");
 
+for (const bundled of [false, true]) test(`Legacy fuzzy rule editor saves only deterministic settings (${bundled})`, async ({page}) => {
+  await page.goto(fixtureUrl("capabilities/request-rules", bundled ? "&bundle=1" : ""));
+  const panel = panelFor(page);
+  await panel.evaluate(host => {
+    const rule = host._result.rules[0];
+    rule.matching_behavior = "custom";
+    rule.matching = {word_forms:false, wording_alternatives:true, fuzzy:true, fuzzy_threshold:83};
+  });
+  await panel.locator(".rule-edit").first().click();
+  await expect(panel.locator("#rule-fuzzy")).toHaveCount(0);
+  await panel.locator("#rule-save").click();
+  await expect(panel.locator("#rule-dialog")).not.toHaveJSProperty("open", true);
+  expect(await panel.evaluate(host => host._result.rules[0].matching)).toEqual({word_forms:false, wording_alternatives:true});
+  await page.goto(fixtureUrl("capabilities/request-rules", bundled ? "&bundle=1" : ""));
+  await panel.locator(".rule-edit").first().click();
+  await expect(panel.locator("#rule-fuzzy")).toHaveCount(0);
+  await expect(panel.locator("#rule-word-forms")).not.toBeChecked();
+});
+
 async function createGroup(panel, name) {
   await panel.locator("#rule-groups-manage").click();
   await expect(panel.locator("#rule-groups-dialog")).toHaveJSProperty("open", true);
@@ -47,8 +66,8 @@ async function assertLocalRuleEditor(panel, {groupId, conditions, actions}) {
   await expect(panel.locator("#rule-matching-behavior")).toHaveValue("custom");
   await expect(panel.locator("#rule-word-forms")).not.toBeChecked();
   await expect(panel.locator("#rule-wording")).not.toBeChecked();
-  await expect(panel.locator("#rule-fuzzy")).toBeChecked();
-  await expect(panel.locator("#rule-threshold")).toHaveValue("83");
+  await expect(panel.locator("#rule-fuzzy")).toHaveCount(0);
+  await expect(panel.locator("#rule-threshold")).toHaveCount(0);
   await expect(panel.locator("#rule-conditions-body")).toBeVisible();
   expect(await panel.locator("#rule-condition-host ha-selector").evaluate((selector) => selector.value)).toEqual(conditions);
   expect(await panel.locator("#rule-action-sequence-host ha-selector").evaluate((selector) => selector.value)).toEqual(actions);
@@ -104,8 +123,6 @@ test("Request Rule editor round-trips local and routing forms through reopen and
   await panel.locator("#rule-matching-behavior").selectOption("custom");
   await panel.locator("#rule-word-forms").uncheck();
   await panel.locator("#rule-wording").uncheck();
-  await panel.locator("#rule-fuzzy").check();
-  await panel.locator("#rule-threshold").fill("83");
   await panel.locator("#rule-save").click();
 
   await openRule(panel, "Round-trip local");

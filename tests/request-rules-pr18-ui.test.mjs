@@ -35,12 +35,7 @@ assert.equal(
   "action-only ha-selector edits must make the Request Rule dialog dirty",
 );
 
-assert.equal(rulesUi.fuzzyThresholdValue(70), 70);
-assert.equal(rulesUi.fuzzyThresholdValue(91), 91);
-assert.equal(rulesUi.fuzzyThresholdValue("97"), 97);
-assert.equal(rulesUi.fuzzyThresholdValue(100), 100);
-assert.equal(rulesUi.fuzzyThresholdValue(69), 90);
-assert.match(rulesUi.requestRulesDialog(), /type="number" min="70" max="100" step="1"/);
+assert.doesNotMatch(rulesUi.requestRulesDialog(), /fuzzy|threshold/i);
 
 const escapeHtml = (value) => String(value)
   .replaceAll("&", "&amp;")

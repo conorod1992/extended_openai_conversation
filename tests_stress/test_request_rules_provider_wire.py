@@ -55,7 +55,7 @@ API_MODES = [API_MODE_CHAT_COMPLETIONS, API_MODE_RESPONSES]
 async def test_seeded_competing_rules_preserve_eligible_public_effects(
     hass, monkeypatch, stress_seed, stress_trace
 ):
-    """Independent eligibility witnesses exercise capture, fuzzy fallback and routing."""
+    """Eligibility witnesses exercise captures, authored alternatives and routing."""
     calls = []
 
     async def record_call(call):
@@ -110,6 +110,7 @@ async def test_seeded_competing_rules_preserve_eligible_public_effects(
                         }
                     if text == "liagt":
                         for rule in (first, final):
+                            rule["phrases"].append(text)
                             rule["matching_behavior"] = "custom"
                             rule["matching"] = {
                                 **DEFAULT_MATCHING,

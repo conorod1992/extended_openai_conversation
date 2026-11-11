@@ -34,9 +34,7 @@ export function formatRequestRuleMatchResult(panel, response) {
   }
   const rule = response.rule || {};
   const captured = Object.entries(response.captured_values || {});
-  const matchKind = response.fuzzy
-    ? `Fuzzy match · ${Number(response.score || 0).toFixed(1)}%`
-    : "Normal match";
+  const matchKind = "Normal match";
   const actionType = rule.action_type === "local_action" ? "Local command" : "AI routing";
   const wouldDo = rule.action_type === "local_action" ? localActionSummary(response) : routingSummary(response);
   const chain=(response.matched_rules || []).map((item)=>`<li>${panel._e(item.rule.name)} — ${item.status === "would_send_to_ai" ? "would send to AI, stopped" : item.status}${item.ai_input ? ` · ${item.ai_input.mode === "capture" ? `Captured value: ${panel._e(item.ai_input.capture)}` : "Original request"} → ${panel._e(item.ai_input.provider_input)}` : ""}</li>`).join("");

@@ -4,7 +4,7 @@ import {fixtureUrl, trackPageErrors, expectHarnessClean} from "./browser-helpers
 const policies = [
   {view:"capabilities/guest-mode", section:"guest_mode", action:"save_policy", field:"_guestDraft", selector:"#guest-web-search"},
   {view:"capabilities/quiet-hours", section:"quiet_hours", action:"update", field:"_quietHoursDraft", selector:"#qh-enabled"},
-  {view:"capabilities/request-rules", section:"request_rules", action:"settings", field:"_rulesSettingsDraft", selector:"#rules-default-fuzzy"},
+  {view:"capabilities/request-rules", section:"request_rules", action:"settings", field:"_rulesSettingsDraft", selector:"#rules-default-wording"},
 ];
 
 for(const bundled of [false,true]) for(const policy of policies) for(const owner of ["user","entry","session"]) {
