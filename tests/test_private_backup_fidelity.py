@@ -262,8 +262,9 @@ async def test_private_restore_commits_exact_configuration_without_local_secret(
     assert recovered.config == incoming
 
 
+@pytest.mark.parametrize("azure", [False, True])
 async def test_private_provider_restore_precedes_reload_and_preserves_exact_data(
-    monkeypatch, hass
+    monkeypatch, hass, azure
 ):
     from custom_components.extended_openai_conversation_responses import (
         restore_recovery,
@@ -274,6 +275,13 @@ async def test_private_provider_restore_precedes_reload_and_preserves_exact_data
     tx.entry.data = {"api_key": "old-provider"}
     expected = deepcopy(tx.entry.data)
     document = private_document()
+    if azure:
+        document["provider_connection"] = {
+            "api_key": "azure-key",
+            "base_url": "https://demo.openai.azure.com",
+            "api_version": "2025-04-01-preview",
+            "skip_authentication": True,
+        }
     events = []
 
     def update(entry, *, data):
@@ -302,6 +310,103 @@ async def test_private_provider_restore_precedes_reload_and_preserves_exact_data
     assert result["provider_connection_restored"] is True
     assert events == ["provider", "reload"]
     assert tx.subentry.data == document["agent"]["config"]
+
+
+@pytest.mark.parametrize(
+    "connection,error",
+    [
+        ({}, "api_key"),
+        ({"api_key": {"invalid": True}}, "api_key"),
+        ({"api_key": "", "skip_authentication": True}, "api_key"),
+        (
+            {"api_key": "incoming", "skip_authentication": "false"},
+            "skip_authentication",
+        ),
+        ({"api_key": "incoming", "organization": []}, "organization"),
+        ({"api_key": "incoming", "base_url": "secret-relative-endpoint"}, "base_url"),
+        ({"api_key": "incoming", "api_provider": []}, "api_provider"),
+        ({"api_key": "incoming", "api_provider": "azure"}, "custom base URL"),
+        (
+            {"api_key": "incoming", "base_url": "https://demo.openai.azure.com"},
+            "api_version",
+        ),
+    ],
+)
+async def test_provider_restore_rejects_malformed_connection_without_writes(
+    monkeypatch, connection, error
+):
+    from tests.test_selective_restore_concurrency import RestoreHarness
+
+    tx = RestoreHarness(monkeypatch)
+    tx.entry.data = {"api_key": "destination"}
+    original = (deepcopy(tx.entry.data), deepcopy(tx.subentry.data), deepcopy(tx.state))
+    document = private_document()
+    document["provider_connection"] = connection
+    artifact = backup.finalize_backup_snapshot(document)["document"]
+    imported = transfer.inspect_transfer(artifact, tx.subentry.subentry_id)
+    options = {
+        "sections": [transfer.SECTION_CONFIGURATION],
+        "provider_connection": imported.provider_connection,
+    }
+    with pytest.raises(backup.BackupError, match=error) as raised:
+        await transfer.async_materialize_restore(
+            tx.hass, tx.entry, tx.subentry, imported, **options
+        )
+    assert "secret-relative-endpoint" not in str(raised.value)
+    with pytest.raises(backup.BackupError, match=error):
+        await transfer.async_restore_transfer(
+            tx.hass,
+            tx.entry,
+            tx.subentry,
+            imported,
+            expected_provider_data=original[0],
+            **options,
+        )
+    assert (tx.entry.data, tx.subentry.data, tx.state) == original
+    assert tx.journal.saved == tx.writes == []
+
+
+@pytest.mark.parametrize("child_type", ["conversation", "ai_task_data"])
+async def test_provider_restore_rejects_incompatible_sibling_without_writes(
+    monkeypatch, child_type
+):
+    from tests.test_selective_restore_concurrency import RestoreHarness
+
+    tx = RestoreHarness(monkeypatch)
+    tx.entry.data = {"api_key": "destination"}
+    sibling = SimpleNamespace(
+        subentry_id="sibling",
+        subentry_type=child_type,
+        title="Search sibling",
+        data={"chat_model": "gpt-5.6", "api_mode": "responses", "web_search": True},
+    )
+    tx.entry.subentries[sibling.subentry_id] = sibling
+    document = private_document()
+    options = {
+        "sections": [transfer.SECTION_CONFIGURATION],
+        "provider_connection": document["provider_connection"],
+    }
+    artifact = backup.finalize_backup_snapshot(document)["document"]
+    before = deepcopy((tx.entry.data, vars(tx.subentry), vars(sibling), tx.state))
+    for operation in (
+        transfer.async_materialize_restore(
+            tx.hass, tx.entry, tx.subentry, artifact, **options
+        ),
+        transfer.async_restore_transfer(
+            tx.hass,
+            tx.entry,
+            tx.subentry,
+            artifact,
+            expected_provider_data=tx.entry.data,
+            **options,
+        ),
+    ):
+        with pytest.raises(
+            backup.BackupError, match="incompatible with agent Search sibling"
+        ):
+            await operation
+    assert (tx.entry.data, vars(tx.subentry), vars(sibling), tx.state) == before
+    assert tx.journal.saved == tx.writes == []
 
 
 async def test_changed_provider_after_preview_cannot_commit(monkeypatch, hass):

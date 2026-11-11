@@ -449,3 +449,203 @@ async def test_custom_backup_selection_round_trip_through_registered_websocket(
 
     assert dict(subentry.data) == original_raw_config
     assert agent_config_snapshot(subentry.data) == original_config
+
+
+@pytest.mark.parametrize("route_owner", ["target", "sibling"])
+async def test_private_provider_restore_checks_preserved_routes_through_websocket(
+    hass: HomeAssistant, hass_ws_client: Any, hass_storage, route_owner: str
+) -> None:
+    """An enabled Azure route must stop a switch to a compatible OpenAI endpoint."""
+    from custom_components.extended_openai_conversation_responses.request_rules import (
+        async_get_request_rules,
+    )
+    from tests_real_ha.test_acceptance_lifecycle import _make_entry, _subentry
+
+    source = _make_entry(
+        "Source",
+        include_ai_task=False,
+        base_url="http://local-provider.example/v1",
+        data={"api_key": "source-key", "organization": None},
+    )
+    await _setup_entry(hass, source)
+    target = MockConfigEntry(
+        domain=DOMAIN,
+        title="Destination",
+        data={
+            "api_key": "destination-key",
+            "api_provider": "azure",
+            "base_url": "https://destination.openai.azure.com",
+            "api_version": "2025-04-01-preview",
+            "skip_authentication": True,
+        },
+        version=CONFIG_ENTRY_VERSION,
+        subentries_data=[
+            _subentry(
+                "conversation", "Selected assistant", {"chat_model": "gpt-4.1-mini"}
+            ),
+            _subentry(
+                "conversation", "Sibling assistant", {"chat_model": "gpt-4.1-mini"}
+            ),
+            _subentry(
+                "ai_task_data", "Sibling AI Task", {"chat_model": "gpt-4.1-mini"}
+            ),
+        ],
+    )
+    await _setup_entry(hass, target)
+    target_agent = _conversation_subentry(target)
+    route_agent = (
+        target_agent
+        if route_owner == "target"
+        else next(
+            child
+            for child in target.subentries.values()
+            if child.title == "Sibling assistant"
+        )
+    )
+    rules = await async_get_request_rules(
+        hass, target.entry_id, route_agent.subentry_id
+    )
+    saved = await rules.async_create(
+        {
+            "name": "Azure deployment route",
+            "phrases": ["use another deployment"],
+            "match_type": "starts_with",
+            "action_type": "model_routing",
+            "action": {
+                "model": "other-deployment",
+                "azure_model": "gpt-4.1-mini",
+                "scope": "conversation",
+                "continue_to_ai": True,
+            },
+        }
+    )
+    admin = MockUser(
+        id="provider-restore-admin", name="Provider Restore Admin", is_owner=True
+    )
+    client = await hass_ws_client(hass, await _user_token(hass, admin))
+    archive, metadata = await _download_archive(client, entry=source, mode="full")
+
+    async def upload():
+        session_id = await _upload_archive(
+            client, entry=target, archive=archive, filename=metadata["filename"]
+        )
+        return {
+            "session_id": session_id,
+            "sections": ["configuration"],
+            "restore_provider_connection": True,
+        }
+
+    def state():
+        return deepcopy(
+            (
+                dict(target.data),
+                {
+                    key: (child.title, dict(child.data))
+                    for key, child in target.subentries.items()
+                },
+                {
+                    key: value
+                    for key, value in hass_storage.items()
+                    if DOMAIN in key or key == "core.config_entries"
+                },
+                rules.snapshot(),
+            )
+        )
+
+    data = await upload()
+    before = state()
+    rejected = await _transfer_call(
+        client, entry=target, action="import_inspect", data=data
+    )
+    assert not rejected["success"]
+    assert "Azure deployment route" in rejected["error"]["message"]
+    if route_owner == "sibling":
+        assert "Sibling assistant" in rejected["error"]["message"]
+    await hass.async_block_till_done()
+    assert state() == before
+
+    await rules.async_update(saved["id"], {**saved, "enabled": False})
+    preview = await _transfer_call(
+        client, entry=target, action="import_inspect", data=data
+    )
+    assert preview["success"], preview
+    if route_owner == "sibling":
+        # A sibling's changes do not alter the selected assistant's preview revision.
+        # The restore must revalidate before the first durable mutation.
+        await rules.async_update(saved["id"], {**saved, "enabled": True})
+        before = state()
+        rejected = await _transfer_call(
+            client,
+            entry=target,
+            action="import_restore",
+            data={**data, "preview_token": preview["result"]["preview_token"]},
+        )
+        assert not rejected["success"]
+        assert "Azure deployment route" in rejected["error"]["message"]
+        await hass.async_block_till_done()
+        assert state() == before
+        await rules.async_update(saved["id"], {**saved, "enabled": False})
+        data = await upload()
+        preview = await _transfer_call(
+            client, entry=target, action="import_inspect", data=data
+        )
+        assert preview["success"], preview
+
+    restored = await _transfer_call(
+        client,
+        entry=target,
+        action="import_restore",
+        data={**data, "preview_token": preview["result"]["preview_token"]},
+    )
+    assert restored["success"], restored
+    assert restored["result"]["provider_connection_restored"] is True
+    await hass.async_block_till_done()
+    assert target.state is ConfigEntryState.LOADED
+    assert dict(target.data) == dict(source.data)
+    preserved = await async_get_request_rules(
+        hass, target.entry_id, route_agent.subentry_id
+    )
+    assert preserved.rule_snapshot(saved["id"])["enabled"] is False
+
+
+@pytest.fixture
+def real_store_io():
+    """Select native Store files for the cold sibling validation test."""
+    return True
+
+
+async def test_cold_provider_validation_reads_legacy_sibling_rules_without_migrating(
+    hass: HomeAssistant, real_store_io
+) -> None:
+    from pathlib import Path
+
+    from custom_components.extended_openai_conversation_responses.request_rules import (
+        STORAGE_KEY_PREFIX,
+        RequestRuleStore,
+        async_read_committed_request_rules,
+    )
+
+    entry_id, sibling_id = "cold-provider-entry", "cold-provider-sibling"
+    legacy_store = RequestRuleStore(
+        hass, 1, f"{STORAGE_KEY_PREFIX}.{entry_id}.{sibling_id}"
+    )
+    await legacy_store.async_save(
+        {
+            "rules": [
+                {
+                    "id": "legacy-route",
+                    "name": "Legacy model route",
+                    "phrases": ["switch deployment"],
+                    "match_type": "starts_with",
+                    "action_type": "model_routing",
+                    "action": {"model": "gpt-4.1-mini", "scope": "conversation"},
+                }
+            ]
+        }
+    )
+    path = Path(legacy_store.path)
+    original = await hass.async_add_executor_job(path.read_bytes)
+    saved = await async_read_committed_request_rules(hass, entry_id, sibling_id)
+    assert saved[0]["id"] == "legacy-route"
+    assert saved[0]["enabled"] is True
+    assert await hass.async_add_executor_job(path.read_bytes) == original

@@ -63,7 +63,7 @@ or replacing the established Home Assistant Store transaction/repair machinery.
   foreign IDs rather than treating the entire batch as a conflict.
 - The model currently supplies `source=explicit|implicit`. That is a
   *claim*, not trusted evidence that a particular user instructed a write.
-  It presently influences both precedence and sensitive-information checks.
+  It influences precedence; the later content-filter retirement removes sensitive-information checks.
 - Memory search ranks a scoped snapshot with lexical BM25-like features,
   metadata and phrase bonuses, conservative fuzzy fallback and optional
   provider embeddings. Current hard thresholds are lexical `0.08` and
@@ -87,7 +87,7 @@ Existing protections to **retain**: owner/scope selection in
 per-agent maintenance gate, manager locks, search result revalidation, private
 Home Assistant Store, `_async_settle_transactional_save()`, strict write
 propagation/readback, corruption repair barriers, execution/replay receipts,
-embedding fingerprint/invalidation, bounded results and privacy filtering.
+embedding fingerprint/invalidation, bounded results and owner/scope isolation.
 
 ## Mutation contracts (Batch 2 model path; Batch 3/4 designs remain proposals)
 
@@ -140,8 +140,8 @@ Provisional safe direction:
 - Treat `source` as proposed descriptive provenance, **not authority**.
 - Distinguish model-origin execution from a trusted authenticated Management
   operation in one backend-owned policy, including nested/legacy call paths.
-- For model-origin data, apply automatic sensitive-data rules to creation,
-  update and metadata regardless of a forged `explicit` label.
+- Model-origin data follows the same structural validation as other writes;
+  content-based sensitivity checks were retired in the subsequent simplification.
 - Do not allow the model alone to promote provenance, delete or replace a
   protected explicitly confirmed fact. Use a trusted confirmation mechanism
   or Management UI for protected mutations.
@@ -151,8 +151,8 @@ Provisional safe direction:
 **Batch 2 provisional policy:** model-origin changes/deletions of explicit
 records require authenticated Memory Management. Model-origin creation with
 `source=explicit` remains available for ordinary Manual-mode requests as a
-**compatibility concession**, but automatic sensitive-data rules apply even
-when it claims explicit provenance. In shared Explicit mode, model-origin
+**compatibility concession**. The subsequent content-filter retirement permits
+credentials and sensitive personal topics without granting mutation authority. In shared Explicit mode, model-origin
 household mutations are blocked; trusted Management remains available.
 This is a visible restriction, not a claim to have implemented a trusted
 in-chat confirmation mechanism. A future real confirmation flow would be a

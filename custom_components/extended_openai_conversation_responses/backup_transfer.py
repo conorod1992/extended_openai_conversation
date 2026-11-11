@@ -1183,7 +1183,7 @@ async def _inspect_import_owned(
         restore_provider = data.get("restore_provider_connection") is True
         if restore_provider and (
             not prepared.private
-            or not prepared.provider_connection
+            or prepared.provider_connection is None
             or transfer.SECTION_CONFIGURATION not in selected
         ):
             raise backup.BackupError(
@@ -1355,7 +1355,7 @@ async def _restore_import(
     restore_provider = data.get("restore_provider_connection") is True
     if restore_provider and (
         not prepared.private
-        or not prepared.provider_connection
+        or prepared.provider_connection is None
         or transfer.SECTION_CONFIGURATION not in selected_sections
         or session.preview_provider_data is None
     ):

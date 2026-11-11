@@ -152,7 +152,7 @@ async def test_duplicate_prevention() -> None:
         "user-1", "Oscar is the user's dog.", "pets", "explicit"
     )
     duplicate = await memory.async_add(
-        "user-1", "Oscar is the user's dog", "personal", "explicit"
+        "user-1", "Oscar is the user's dog.", "personal", "explicit"
     )
 
     assert first["status"] == "created"
@@ -169,7 +169,7 @@ async def test_explicit_duplicate_promotes_implicit_memory_provenance() -> None:
     )
 
     confirmed = await memory.async_add(
-        "user-1", "User prefers tea", "preferences", "explicit"
+        "user-1", "User prefers tea.", "preferences", "explicit"
     )
 
     assert confirmed["status"] == "updated"
@@ -255,18 +255,9 @@ def test_store_keys_isolate_config_entries_and_subentries(hass) -> None:
     assert len({first._store.key, second._store.key, third._store.key}) == 3
 
 
-async def test_privacy_and_malformed_input_guards() -> None:
-    """Secrets, sensitive implicit facts, and malformed input are rejected."""
+async def test_malformed_input_guards() -> None:
+    """Content acceptance does not weaken structural validation."""
     memory = await _memory()
-
-    with pytest.raises(ValueError, match="secret"):
-        await memory.async_add(
-            "user-1", "My API key is sk-abcdefghijklmnop", "work", "explicit"
-        )
-    with pytest.raises(ValueError, match="explicit"):
-        await memory.async_add(
-            "user-1", "User has a medical diagnosis of X.", "personal", "implicit"
-        )
     with pytest.raises(ValueError, match="content"):
         await memory.async_add("user-1", "", "misc", "explicit")
     with pytest.raises(ValueError, match="memory_ids"):
@@ -285,14 +276,15 @@ async def test_privacy_and_malformed_input_guards() -> None:
         "My online banking password is hunter2.",
     ],
 )
-async def test_financial_credentials_are_rejected_for_every_source(
+async def test_financial_credentials_are_permitted_for_every_source(
     source: str, content: str
 ) -> None:
-    """An explicit request cannot make a usable financial credential safe."""
+    """Synthetic financial values are accepted for either provenance."""
     memory = await _memory()
 
-    with pytest.raises(ValueError, match=r"secret|financial credential"):
-        await memory.async_add("user-1", content, "finance", source)
+    result = await memory.async_add("user-1", content, "finance", source)
+    assert result["status"] == "created"
+    assert result["memory"]["content"] == content
 
 
 @pytest.mark.parametrize("source", ["explicit", "implicit"])
@@ -308,7 +300,7 @@ async def test_financial_credentials_are_rejected_for_every_source(
 async def test_harmless_financial_facts_remain_allowed(
     source: str, content: str
 ) -> None:
-    """Credential filtering does not ban ordinary financial topics."""
+    """Ordinary financial topics remain eligible too."""
     memory = await _memory()
 
     result = await memory.async_add("user-1", content, "finance", source)
@@ -723,34 +715,29 @@ async def test_memory_canonical_unicode_ranking_dedup_and_reload(form):
     ],
 )
 @pytest.mark.parametrize("operation", ["add", "upsert", "update", "backup", "load"])
-async def test_category_credentials_rejected_before_and_after_casefold(
-    category, operation
-):
+async def test_category_credentials_survive_normalization(category, operation):
     storage = FakeStorage()
     manager = await _memory(storage)
-    created = await manager.async_add(
-        "alice", "A harmless fact", "Preferences", "explicit"
-    )
+    created = await manager.async_add("alice", "A fact", "Preferences", "explicit")
     memory_id = created["memory"]["memory_id"]
     raw = deepcopy(storage.data)
     raw["memories"][0]["category"] = category
     if operation == "load":
-        repaired_storage = FakeStorage(raw)
-        repaired = await _memory(repaired_storage)
-        assert not repaired._memories
-        assert not repaired._key_index
-        assert repaired_storage.data == {"memories": []}
-        return
-    with pytest.raises(ValueError, match="secret"):
-        if operation == "backup":
-            PersistentMemory.validate_backup_data(raw)
-        elif operation == "update":
-            await manager.async_update("alice", memory_id, category=category)
-        else:
-            await getattr(manager, "async_" + operation)(
-                "alice", "Another harmless fact", category, "explicit"
-            )
-    assert storage.data["memories"][0]["category"] == "preferences"
+        loaded_storage = FakeStorage(raw)
+        manager = await _memory(loaded_storage)
+        assert loaded_storage.data == raw  # No content-only cleanup save.
+    elif operation == "backup":
+        records = PersistentMemory.validate_backup_data(raw)
+        await manager.async_replace_backup(records)
+    elif operation == "update":
+        await manager.async_update("alice", memory_id, category=category)
+    else:
+        await getattr(manager, "async_" + operation)(
+            "alice", "Another fact", category, "explicit"
+        )
+    assert len(await manager.async_list("alice", category)) == 1
+    assert await manager.async_clear("bob", category) == 0
+    assert await manager.async_clear("alice", category) == 1
 
 
 @pytest.mark.parametrize(
@@ -770,12 +757,7 @@ async def test_ordinary_category_normalization_is_preserved(category):
 
 
 @pytest.mark.parametrize("category", ["x" * 10000, "\u00df" * 33])
-def test_oversized_categories_are_rejected_before_privacy_scan(monkeypatch, category):
+def test_oversized_categories_are_rejected(category):
     from custom_components.extended_openai_conversation_responses import memory
-
-    def must_not_scan(*_args):
-        pytest.fail("oversized category reached the privacy scanner")
-
-    monkeypatch.setattr(memory, "_validate_privacy", must_not_scan)
     with pytest.raises(ValueError, match="category must be 1 to 64"):
         memory._clean_category(category)

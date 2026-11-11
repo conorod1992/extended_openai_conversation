@@ -148,7 +148,7 @@ async def test_knowledge_normalization_cannot_rewrite_a_damaged_generation(hass)
     assert Path(storage._store.path).read_bytes() == original
 
 
-async def test_privacy_cleanup_retains_unrelated_corruption(hass):
+async def test_sensitive_records_and_corrupt_evidence_are_preserved(hass):
     storage, manager, _ = _participants(hass, "memory")
     await manager.async_initialize()
     await _mutate(manager, "memory")
@@ -163,7 +163,8 @@ async def test_privacy_cleanup_retains_unrelated_corruption(hass):
     _, reloaded, _ = _participants(hass, "memory")
     await reloaded.async_initialize()
     persisted = json.loads(Path(storage._store.path).read_text())["data"]
-    assert persisted == {"memories": [*clean["memories"], damaged]}
+    assert persisted == {"memories": [*clean["memories"], private, damaged]}
+    assert {r.memory_id for r in await reloaded.async_list("alice")} == {clean["memories"][0]["memory_id"], "private"}
     with pytest.raises(ValueError, match="needs repair"):
         await reloaded.async_clear("alice")
 

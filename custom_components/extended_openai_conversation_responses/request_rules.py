@@ -503,14 +503,15 @@ class RequestRules:
         async with self._lock:
             self.async_unload()
 
-    async def async_initialize(self) -> None:
+    async def async_initialize(self, *, persist_migrations: bool = True) -> None:
         """Load stored rules while preserving newly unsupported patterns for repair."""
         async with self._lock:
             self._require_current_owner()
             if self._initialized:
                 return
             try:
-                await _async_repair_private_store_mode(self._store)
+                if persist_migrations:
+                    await _async_repair_private_store_mode(self._store)
                 stored = await self._store.async_load()
                 self._require_current_owner()
                 migrated = False
@@ -630,7 +631,7 @@ class RequestRules:
                         migrated = True
                         self._repair_required = True
                 migrated = self._sort_and_compile() or migrated
-                if migrated and not self._repair_required:
+                if persist_migrations and migrated and not self._repair_required:
                     await self._async_save_locked(reconcile_failure=False)
                 self._require_current_owner()
                 self._remember_committed_state()
@@ -4039,13 +4040,20 @@ async def _async_evaluate_matched_rule(
     )
 
 
+# Keep signed numbers and decimal fractions together for whole-token matching.
+# A hyphen after a word character is still a separator.
+_TEXT_PUNCTUATION = re.compile(
+    r"(?<!\w)([\u2212-]?(?:\d+\.\d+|\.\d+)|[\u2212-]\d+)(?!\w)|[^\w\s']"
+)
+
+
 def _basic_normalize(text: str) -> str:
-    """Normalize punctuation and spacing without semantic transformations."""
-    value = unicodedata.normalize("NFKC", str(text)).casefold()
-    value = value.replace("\u2019", "'").replace("-", " ")
-    value = re.sub(r"[^\w\s']+", " ", value, flags=re.UNICODE)
-    value = re.sub(r"\s+", " ", value).strip()
-    return value
+    """Normalize punctuation and spacing while preserving numeric values."""
+    value = unicodedata.normalize("NFKC", str(text)).casefold().replace("\u2019", "'")
+    value = _TEXT_PUNCTUATION.sub(
+        lambda match: match[1].replace("\u2212", "-") if match[1] else " ", value
+    )
+    return " ".join(value.split())
 
 
 @lru_cache(maxsize=16)
@@ -4547,14 +4555,36 @@ _RUNTIMES = "extended_openai_conversation_responses.request_rule_runtimes"
 
 
 def _request_rule_store(
-    hass: HomeAssistant, entry_id: str, subentry_id: str
+    hass: HomeAssistant, entry_id: str, subentry_id: str, *, read_only: bool = False
 ) -> RequestRuleStore:
-    """Construct the native rule store for ordinary load and journal recovery."""
-    return RequestRuleStore(
+    """Construct the native rule store for load, validation or recovery."""
+    store = RequestRuleStore(
         hass,
         STORAGE_VERSION,
         f"{STORAGE_KEY_PREFIX}.{entry_id}.{subentry_id}",
-    ).bind_agent(entry_id, subentry_id)
+    )
+    if read_only:
+        store.make_read_only()
+        return store
+    return store.bind_agent(entry_id, subentry_id)
+
+
+async def async_read_committed_request_rules(
+    hass: HomeAssistant, entry_id: str, subentry_id: str
+) -> list[dict[str, Any]]:
+    """Read a sibling's saved rules while the destination owns maintenance."""
+    # A second agent lease could deadlock two restores on the same connection.
+    get_agent_maintenance_gate(hass, entry_id, subentry_id).require_available()
+    managers: dict[tuple[str, str], RequestRules] = hass.data.get(_MANAGERS, {})
+    manager = managers.get((entry_id, subentry_id))
+    if manager is None or not manager._initialized:
+        manager = RequestRules(
+            _request_rule_store(hass, entry_id, subentry_id, read_only=True)
+        )
+        await manager.async_initialize(persist_migrations=False)
+    committed = manager._committed_state
+    assert committed is not None
+    return cast(list[dict[str, Any]], deepcopy(committed["rules"]))
 
 
 async def async_stage_request_rules_journal_recovery(

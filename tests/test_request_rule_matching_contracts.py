@@ -78,6 +78,66 @@ async def test_text_modes_require_whole_phrase_at_the_right_position(
 
 
 @pytest.mark.parametrize(
+    "match_type", ["equals", "starts_with", "ends_with", "contains"]
+)
+@pytest.mark.parametrize("fuzzy", [False, True])
+@pytest.mark.parametrize("negative_first", [False, True])
+@pytest.mark.parametrize("magnitude", ["5", "5.25", ".5"])
+async def test_text_modes_preserve_signed_numeric_tokens_in_match_and_preview(
+    hass, match_type, fuzzy, negative_first, magnitude
+):
+    rules = await manager(
+        rule("positive", f"offset {magnitude}", match_type, order=int(negative_first)),
+        rule(
+            "negative",
+            f"offset \u2212{magnitude}",
+            match_type,
+            order=int(not negative_first),
+        ),
+        defaults={"fuzzy": fuzzy, "fuzzy_threshold": 70},
+    )
+    prefix = "please " if match_type in {"contains", "ends_with"} else ""
+    suffix = " now" if match_type in {"contains", "starts_with"} else ""
+    for sign, expected in [("", "positive"), ("-", "negative"), ("\u2212", "negative")]:
+        text = f"{prefix}offset {sign}{magnitude}{suffix}"
+        match = rules.match(text)
+        preview = request_rule_match_preview(await rules.async_match(hass, text))
+        assert match is not None and match.rule["id"] == expected and not match.fuzzy
+        assert preview == request_rule_match_preview(match)
+
+        # A typo forces the fuzzy pass and must still preserve the signed token.
+        typo = f"{prefix}ofset {sign}{magnitude}{suffix}"
+        match = rules.match(typo)
+        preview = request_rule_match_preview(await rules.async_match(hass, typo))
+        if fuzzy:
+            assert match is not None and match.rule["id"] == expected and match.fuzzy
+        else:
+            assert match is None
+        assert preview == request_rule_match_preview(match)
+
+
+@pytest.mark.parametrize(
+    "match_type,text",
+    [
+        ("equals", "-5"),
+        ("contains", "set -5"),
+        ("starts_with", "-5 now"),
+        ("ends_with", "set -5"),
+        ("contains", "set 5.25"),
+        ("ends_with", "set -2.5"),
+    ],
+)
+async def test_positive_integer_cannot_match_part_of_another_numeric_token(
+    match_type, text
+):
+    rules = await manager(
+        rule("positive", "5", match_type),
+        defaults={"fuzzy": True, "fuzzy_threshold": 70},
+    )
+    assert rules.match(text) is None
+
+
+@pytest.mark.parametrize(
     ("later_type", "later_phrase", "earlier_type", "earlier_phrase"),
     [
         ("equals", "turn on kitchen", "sentence_pattern", "turn on {room}"),

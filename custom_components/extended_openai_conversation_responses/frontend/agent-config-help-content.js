@@ -58,18 +58,18 @@ export const HELP_METADATA = Object.freeze({
   }),
   memory_mode: Object.freeze({
     title: "Persistent memory modes",
-    paragraphs: ["Memories persist across conversations. They are separate from conversation archive/history, and Automatic does not store every conversation as memory."],
+    paragraphs: ["Durable facts persist across conversations, separate from archive/history.", "Credentials and sensitive facts are allowed within modes and permissions. Values may enter prompts/embeddings, private exports and opt-in debugging. Memory is not a secrets vault."],
     items: [
       { term: "Off", text: "Persistent memory is disabled for this agent." },
       { term: "Manual", text: "Memories are stored only when explicitly requested or added through the memory tools or UI." },
-      { term: "Automatic", text: "The agent may also save useful durable facts automatically, subject to the existing memory rules and safety restrictions." },
+      { term: "Automatic", text: "The agent may also save useful durable facts automatically, within the configured mode and access permissions." },
     ],
     keywords: "persistent remembered durable facts across conversations manual automatic safety history archive",
     href: `${DOCS_ROOT}/features/persistent-memory.md`,
   }),
   temporary_memory: Object.freeze({
     title: "Temporary memory",
-    paragraphs: ["Temporary memory is automatic, silent, scoped with Conversation continuity, and separate from durable persistent memory. The assistant infers practical expiry times in Home Assistant's local timezone."],
+    paragraphs: ["Temporary facts are owner-scoped and expire in local time. Sensitive content may enter prompts, private exports and opt-in debugging."],
     items: [
       { term: "Off", text: "No temporary facts are automatically created or injected." },
       { term: "Balanced", text: "Remembers clearly useful temporary context and infers reasonable expiry times." },

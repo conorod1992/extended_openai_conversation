@@ -1497,6 +1497,18 @@ async def async_materialize_restore(
         allowed=prepared.available_sections,
         default=prepared.available_sections,
     )
+    from .provider_credentials import (
+        incompatible_provider_agent,
+        validate_agent_provider_request,
+        validate_provider_connection,
+    )
+
+    if provider_connection is not None:
+        try:
+            validate_provider_connection(provider_connection)
+        except HomeAssistantError as err:
+            raise backup.BackupError(str(err)) from err
+
     current = (
         current_snapshot
         if current_snapshot is not None
@@ -1511,26 +1523,45 @@ async def async_materialize_restore(
             "Cannot safely restore unavailable secrets: " + ", ".join(missing[:50])
         )
     from .request_rules import (
+        async_read_committed_request_rules,
         validate_routed_request_options,
         validate_saved_model_routes,
     )
 
+    provider_data = (
+        provider_connection
+        if provider_connection is not None
+        else getattr(entry, "data", {})
+    )
     try:
-        provider_data = (
-            provider_connection
-            if provider_connection is not None
-            else getattr(entry, "data", {})
-        )
         validate_routed_request_options(target.config, provider_data)
         validate_saved_model_routes(
-            target.request_rules.get("rules", []),
-            target.config,
-            provider_data,
+            target.request_rules.get("rules", []), target.config, provider_data
         )
     except HomeAssistantError as err:
         raise backup.BackupError(
-            f"Restored request is incompatible with the destination provider: {err}"
+            f"Restored request is incompatible with the destination provider: {str(err)[:400]}"
         ) from err
+    if provider_connection is not None:
+        for child_id, child in tuple(entry.subentries.items()):
+            if child_id == subentry.subentry_id or child.subentry_type not in {
+                "conversation",
+                "ai_task_data",
+            }:
+                continue
+            try:
+                validate_agent_provider_request(
+                    child.subentry_type, child.data, provider_data
+                )
+                if child.subentry_type == "conversation":
+                    rules = await async_read_committed_request_rules(
+                        hass, entry.entry_id, child_id
+                    )
+                    validate_saved_model_routes(rules, child.data, provider_data)
+            except HomeAssistantError as err:
+                raise backup.BackupError(
+                    str(incompatible_provider_agent(child.title, err))
+                ) from err
     from .function_dependency_integrity import async_validate_disappearing_identifiers
 
     await async_validate_disappearing_identifiers(

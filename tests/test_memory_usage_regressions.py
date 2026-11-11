@@ -31,15 +31,18 @@ async def test_explicit_confirmation_promotes_implicit_memory_and_survives_impli
     assert retry["memory"]["source"] == "explicit"
 
 
-async def test_implicit_update_cannot_use_existing_explicit_source_to_bypass_privacy():
+async def test_implicit_update_cannot_replace_existing_explicit_record():
     memory = await _memory()
-    await memory.async_upsert(
+    original = await memory.async_upsert(
         "user", "I prefer tea", "preference", "explicit", key="preference.drink"
     )
-    with pytest.raises(ValueError):
-        await memory.async_upsert(
-            "user", "I have a medical diagnosis of diabetes", "health", "implicit", key="preference.drink"
-        )
+    result = await memory.async_upsert(
+        "user", "I have a medical diagnosis of synthetic-condition", "health", "implicit", key="preference.drink"
+    )
+    assert result["status"] == "needs_resolution"
+    assert result["candidate"]["memory_id"] == original["memory"]["memory_id"]
+    assert result["candidate"]["content"] == "I prefer tea"
+    assert result["candidate"]["source"] == "explicit"
 
 
 async def test_search_offset_returns_disjoint_ranked_pages():

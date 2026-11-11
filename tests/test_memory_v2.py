@@ -341,7 +341,7 @@ async def test_upsert_key_uniqueness_duplicate_conflict_and_scope() -> None:
     )
     assert household["status"] == "created"
     existing = await memory.async_upsert(
-        "alice", "Oscar is a Cockapoo", "pets", "explicit"
+        "alice", "Oscar is a Cockapoo.", "pets", "explicit"
     )
     assert existing["status"] == "unchanged"
     conflict = await memory.async_upsert(
@@ -393,7 +393,7 @@ async def test_upsert_preserves_omitted_metadata_for_key_and_duplicate() -> None
     assert updated["memory"]["valid_from"] == valid_from
 
     existing = await memory.async_upsert(
-        "alice", "Oscar is a Cavapoo", "pets", "explicit"
+        "alice", "Oscar is a Cavapoo.", "pets", "explicit"
     )
     assert existing["status"] == "unchanged"
     assert existing["memory"]["subject"] == "Oscar"

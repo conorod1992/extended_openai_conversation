@@ -81,44 +81,6 @@ _UNSET = _UnsetType()
 _TOKEN_PATTERN = re.compile(r"[\w'-]+", re.UNICODE)
 _SPACE_PATTERN = re.compile(r"\s+")
 _MEMORY_KEY_PATTERN = re.compile(r"^[a-z0-9_-]+(?:\.[a-z0-9_-]+)*$")
-_SECRET_PATTERN = re.compile(
-    # Accept separators and camelCase label starts; keep case transitions
-    # case-sensitive even though credential names themselves ignore case.
-    r"(?:(?<![^\W_])|(?<=(?-i:[a-z]))(?=(?-i:[A-Z])))"
-    r"(?:password|passcode|api[_ -]?key|access[_ -]?token|auth[_ -]?token|"
-    r"security[_ -]?code|secret|pin)\b\s*(?:is|:|=)\s*\S+|"
-    r"\bsk-[A-Za-z0-9_-]{12,}\b",
-    re.IGNORECASE,
-)
-# Categories were historically casefolded before privacy validation. Recognize
-# credential assignments even when a prefixed camelCase label lost its boundary.
-# Keep this conservative recovery rule local to category metadata.
-_CATEGORY_SECRET_PATTERN = re.compile(
-    r"(?:password|passcode|api[_ -]?key|access[_ -]?token|auth[_ -]?token|"
-    r"security[_ -]?code|secret|pin)\b\s*(?:is|:|=)\s*\S+",
-    re.IGNORECASE,
-)
-_PAYMENT_CARD_CANDIDATE_PATTERN = re.compile(r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)")
-_PAYMENT_CARD_CONTEXT_PATTERN = re.compile(
-    r"\b(?:card(?:\s+number)?|credit\s+card|debit\s+card|visa|mastercard|amex)\b",
-    re.IGNORECASE,
-)
-_FINANCIAL_CREDENTIAL_PATTERN = re.compile(
-    r"\b(?:cvv2?|cvc2?|card\s+security\s+code)\s*(?:is\s*)?(?::|=)?\s*\d{3,4}\b|"
-    r"\b(?:bank\s+)?account\s+(?:number|no\.?)\s*(?:is\s*)?(?::|=)?\s*"
-    r"(?:\d[ -]?){5,19}\d\b|"
-    r"\b(?:routing\s+number|sort\s+code)\s*(?:is\s*)?(?::|=)?\s*"
-    r"(?:\d[ -]?){5,8}\d\b",
-    re.IGNORECASE,
-)
-_IBAN_CANDIDATE_PATTERN = re.compile(
-    r"\b[A-Z]{2}\d{2}(?:[ -]?[A-Z0-9]){11,30}\b", re.IGNORECASE
-)
-_SENSITIVE_IMPLICIT_PATTERN = re.compile(
-    r"\b(?:medical diagnosis|health condition|religion|religious belief|"
-    r"political affiliation|sexual orientation)\b",
-    re.IGNORECASE,
-)
 _STOP_WORDS = {
     "a",
     "an",
@@ -405,7 +367,6 @@ class PersistentMemory:
         valid_from = _clean_timestamp(valid_from, "valid_from")
         if source not in {"explicit", "implicit"}:
             raise ValueError("source must be explicit or implicit")
-        _validate_privacy_fields(source, content, category, subject, key)
         async with async_storage_lock(self._storage, self._lock):
             self._require_writable()
             if key and (user_id, key) in self._key_index:
@@ -489,8 +450,7 @@ class PersistentMemory:
         """Model-origin create/no-op/conflict path; never edit an existing record.
 
         The model's requested source is descriptive provenance only. It cannot
-        authorize the sensitive-data exceptions available to authenticated
-        management actions, nor establish permission to mutate existing state.
+        establish permission to mutate existing state or promote its provenance.
         """
         content = _clean_content(content)
         category = _clean_category(category)
@@ -506,10 +466,6 @@ class PersistentMemory:
             _UNSET
             if isinstance(valid_from, _UnsetType)
             else _clean_timestamp(valid_from, "valid_from")
-        )
-        # A model-generated explicit label is not trusted user confirmation.
-        _validate_privacy_fields(
-            "implicit", content, category, cleaned_subject, cleaned_key
         )
 
         async with async_storage_lock(self._storage, self._lock):
@@ -633,9 +589,6 @@ class PersistentMemory:
         )
         if source not in {"explicit", "implicit"}:
             raise ValueError("source must be explicit or implicit")
-        _validate_privacy_fields(
-            source, content, category, cleaned_subject, cleaned_key
-        )
         async with async_storage_lock(self._storage, self._lock):
             self._require_writable()
             timestamp = dt_util.utcnow().isoformat()
@@ -994,7 +947,7 @@ class PersistentMemory:
         allow_explicit_edit: bool = True,
         model_origin: bool = False,
     ) -> MemoryRecord:
-        """Revision-checked update; model writes preserve privacy and provenance."""
+        """Revision-checked update; model writes preserve ownership and provenance."""
         if model_origin and expected_revision is None:
             raise ValueError("model-origin update requires expected_revision")
         if source is not None and source not in {"explicit", "implicit"}:
@@ -1081,13 +1034,6 @@ class PersistentMemory:
                     else current.valid_from
                 ),
             }
-            _validate_privacy_fields(
-                "implicit" if model_origin else effective_source,
-                new_content,
-                new_category,
-                changes["subject"],
-                new_key,
-            )
             if (
                 not model_origin
                 and current.source == "explicit"
@@ -1811,11 +1757,6 @@ def memory_revision(memory: MemoryRecord) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
-def validate_memory_privacy(content: str, *, automatic: bool) -> None:
-    """Apply the durable-memory secret and sensitivity safeguards to other stores."""
-    _validate_privacy(content, "implicit" if automatic else "explicit")
-
-
 def memory_tools() -> list[dict[str, Any]]:
     """Return internal function definitions for persistent memory."""
     return [
@@ -1861,7 +1802,7 @@ def memory_tools() -> list[dict[str, Any]]:
                             "enum": ["explicit", "implicit"],
                             "description": (
                                 "Describes the proposed origin. A model's explicit "
-                                "label cannot grant permission or bypass sensitive-data checks."
+                                "label cannot grant permission or promote existing provenance."
                             ),
                         },
                         **_memory_metadata_schema(include_scope=True),
@@ -2278,10 +2219,9 @@ def _prepare_stored_memories(
                 repair_required = True
 
     legacy_embeddings_found = False
-    privacy_rejected: set[int] = set()
     seen_ids: set[str] = set()
     seen_keys: set[tuple[str, str]] = set()
-    for index, raw in enumerate(raw_memories):
+    for raw in raw_memories:
         needs_save |= isinstance(raw, Mapping) and bool(
             {"importance", "last_confirmed_at"} & raw.keys()
         )
@@ -2295,11 +2235,6 @@ def _prepare_stored_memories(
                 if key_pair in seen_keys:
                     raise ValueError("duplicate canonical key in memory scope")
                 seen_keys.add(key_pair)
-        except MemoryPrivacyRejected:
-            needs_save = True
-            privacy_rejected.add(index)
-            _LOGGER.warning("Removing persistent memory rejected by privacy policy")
-            continue
         except TypeError, ValueError:
             needs_save = True
             repair_required = True
@@ -2316,19 +2251,7 @@ def _prepare_stored_memories(
     )
     if repair_required:
         # Keep corruption in place, including overflow records and opaque fields.
-        # A simultaneous privacy purge must remove only policy-rejected records.
-        payload = (
-            {
-                **data,
-                "memories": [
-                    raw
-                    for index, raw in enumerate(data["memories"])
-                    if index not in privacy_rejected
-                ],
-            }
-            if privacy_rejected
-            else None
-        )
+        payload = None
     return memories, key_index, payload, repair_required
 
 
@@ -2396,9 +2319,6 @@ def _validate_persistent_memory_record(raw: Any) -> MemoryRecord:
         subject=_clean_optional(record.subject, "subject", MAX_SUBJECT_LENGTH),
         key=_clean_key(record.key),
     )
-    _validate_privacy_fields(
-        record.source, record.content, record.category, record.subject, record.key
-    )
     if (
         dt_util.parse_datetime(record.created_at) is None
         or dt_util.parse_datetime(record.updated_at) is None
@@ -2424,8 +2344,8 @@ def _migrate_raw_record(raw: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _fact_equality(value: str) -> str:
-    """Normalize whitespace while preserving case-sensitive facts such as paths."""
-    return " ".join(unicodedata.normalize("NFC", value).split()).rstrip(".!?")
+    """Normalize whitespace without discarding significant case or punctuation."""
+    return " ".join(unicodedata.normalize("NFC", value).split())
 
 
 @lru_cache(maxsize=20_000)
@@ -2459,12 +2379,6 @@ def _clean_category(value: str) -> str:
     normalized = value.casefold()
     if not normalized or len(normalized) > MAX_CATEGORY_LENGTH:
         raise ValueError(f"category must be 1 to {MAX_CATEGORY_LENGTH} characters")
-    # Check bounded authored text, keeping camelCase clues until validation ends.
-    _validate_privacy(value, "explicit")
-    if _CATEGORY_SECRET_PATTERN.search(value):
-        raise MemoryPrivacyRejected(
-            "memory rejected because it appears to contain a secret"
-        )
     return normalized
 
 
@@ -2521,79 +2435,6 @@ def _set_updated_at_if_substantive(
         for field in substantive
     ):
         changes["updated_at"] = timestamp
-
-
-def _validate_privacy_fields(source: str, *values: object) -> None:
-    """Treat retained metadata as untrusted text under the same write policy."""
-    for value in values:
-        if isinstance(value, str):
-            _validate_privacy(value, source)
-
-
-class MemoryPrivacyRejected(ValueError):
-    """A deliberate privacy purge, distinct from recoverable record damage."""
-
-
-def _validate_privacy(content: str, source: str) -> None:
-    if _SECRET_PATTERN.search(content):
-        raise MemoryPrivacyRejected(
-            "memory rejected because it appears to contain a secret"
-        )
-    if _contains_financial_credential(content):
-        raise MemoryPrivacyRejected(
-            "memory rejected because it appears to contain a financial credential. "
-            "This conservative check can also flag unrelated long identifiers; "
-            "save a description without the identifier instead."
-        )
-    if source == "implicit" and _SENSITIVE_IMPLICIT_PATTERN.search(content):
-        raise MemoryPrivacyRejected(
-            "sensitive memories require an explicit user request"
-        )
-
-
-def _contains_financial_credential(content: str) -> bool:
-    """Conservatively detect usable payment or bank credentials."""
-    if _FINANCIAL_CREDENTIAL_PATTERN.search(content):
-        return True
-
-    has_card_context = _PAYMENT_CARD_CONTEXT_PATTERN.search(content) is not None
-    for match in _PAYMENT_CARD_CANDIDATE_PATTERN.finditer(content):
-        digits = re.sub(r"\D", "", match.group())
-        if has_card_context or _passes_luhn_checksum(digits):
-            return True
-
-    return any(
-        _is_valid_iban(re.sub(r"[ -]", "", match.group()))
-        for match in _IBAN_CANDIDATE_PATTERN.finditer(content)
-    )
-
-
-def _passes_luhn_checksum(value: str) -> bool:
-    """Return whether a payment-card candidate has a valid Luhn checksum."""
-    if not 13 <= len(value) <= 19 or not value.isdigit():
-        return False
-    total = 0
-    for index, character in enumerate(reversed(value)):
-        digit = int(character)
-        if index % 2:
-            digit *= 2
-            if digit > 9:
-                digit -= 9
-        total += digit
-    return total % 10 == 0
-
-
-def _is_valid_iban(value: str) -> bool:
-    """Return whether a compact IBAN candidate has a valid checksum."""
-    value = value.upper()
-    if not 15 <= len(value) <= 34 or not re.fullmatch(r"[A-Z]{2}\d{2}[A-Z0-9]+", value):
-        return False
-    rearranged = value[4:] + value[:4]
-    numeric = "".join(
-        character if character.isdigit() else str(ord(character) - 55)
-        for character in rearranged
-    )
-    return int(numeric) % 97 == 1
 
 
 @lru_cache(maxsize=20_000)

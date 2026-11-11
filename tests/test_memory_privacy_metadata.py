@@ -1,4 +1,4 @@
-"""Privacy invariants apply to every retained text field and operation."""
+"""Content-agnostic metadata acceptance preserves independent provenance guards."""
 
 from copy import deepcopy
 from datetime import timedelta
@@ -18,7 +18,7 @@ from tests.test_memory import FakeStorage
 @pytest.mark.parametrize("operation", ["add", "upsert", "update"])
 @pytest.mark.parametrize("field", ["category", "subject", "key"])
 @pytest.mark.parametrize("source", ["implicit", "explicit"])
-async def test_persistent_metadata_secrets_are_rejected_without_mutation(
+async def test_persistent_metadata_secrets_are_retained(
     operation, field, source
 ):
     storage = FakeStorage()
@@ -28,28 +28,28 @@ async def test_persistent_metadata_secrets_are_rejected_without_mutation(
     if operation == "update":
         created = await memory.async_add("owner", "Prefers tea", "general", source)
         ident = created["memory"]["memory_id"]
-    before = deepcopy(storage.data)
     values = {field: "sk-syntheticauditsecret123"}
-    with pytest.raises(ValueError, match="secret"):
-        if operation == "update":
-            await memory.async_update("owner", ident, source=source, **values)
-        else:
-            args = {
-                "content": "Prefers tea",
-                "category": "general",
-                "source": source,
-                **values,
-            }
-            await getattr(memory, f"async_{operation}")("owner", **args)
-    assert storage.data == before
+    if operation == "update":
+        await memory.async_update("owner", ident, source=source, **values)
+    else:
+        args = {
+            "content": "Prefers tea",
+            "category": "general",
+            "source": source,
+            **values,
+        }
+        await getattr(memory, f"async_{operation}")("owner", **args)
     records = await memory.async_list("owner")
-    assert all("syntheticauditsecret" not in str(record) for record in records)
+    assert getattr(records[0], field) == values[field]
+    fresh = PersistentMemory(storage)
+    await fresh.async_initialize()
+    assert await fresh.async_list("owner") == records
 
 
 @pytest.mark.parametrize("operation", ["add", "upsert", "update"])
 @pytest.mark.parametrize("field", ["category", "subject"])
 @pytest.mark.parametrize("source", ["implicit", "explicit"])
-async def test_sensitive_metadata_requires_current_explicit_operation(
+async def test_sensitive_metadata_is_permitted_for_both_sources(
     operation, field, source
 ):
     storage = FakeStorage()
@@ -74,19 +74,14 @@ async def test_sensitive_metadata_requires_current_explicit_operation(
             },
         )
 
-    if source == "implicit":
-        before = deepcopy(storage.data)
-        with pytest.raises(ValueError, match="explicit user request"):
-            await write()
-        assert storage.data == before
-    else:
-        await write()
-        assert getattr((await memory.async_list("owner"))[0], field) == values[field]
+    await write()
+    assert getattr((await memory.async_list("owner"))[0], field) == values[field]
+
 
 
 @pytest.mark.parametrize("operation", ["add", "update"])
 @pytest.mark.parametrize("source", ["automatic", "manual"])
-async def test_temporary_category_secrets_are_rejected_without_mutation(
+async def test_temporary_category_secrets_are_retained(
     operation, source
 ):
     storage = FakeStorage()
@@ -103,28 +98,28 @@ async def test_temporary_category_secrets_are_rejected_without_mutation(
             source=source,
         )
         ident = created["memory"]["memory_id"]
-    before = deepcopy(storage.data)
-    with pytest.raises(ValueError, match="secret"):
-        if operation == "update":
-            await memory.async_update(
-                "user:owner",
-                ident,
-                None,
-                None,
-                "password: synthetic-audit-secret",
-                owner_scope_id="user:owner",
-                source=source,
-            )
-        else:
-            await memory.async_add(
-                "user:owner",
-                "Prefers tea",
-                expiry,
-                "password: synthetic-audit-secret",
-                owner_scope_id="user:owner",
-                source=source,
-            )
-    assert storage.data == before
+    if operation == "update":
+        await memory.async_update(
+            "user:owner",
+            ident,
+            None,
+            None,
+            "password: synthetic-audit-secret",
+            owner_scope_id="user:owner",
+            source=source,
+        )
+    else:
+        await memory.async_add(
+            "user:owner",
+            "Prefers tea",
+            expiry,
+            "password: synthetic-audit-secret",
+            owner_scope_id="user:owner",
+            source=source,
+        )
+    [record] = await memory.async_list_owned("user:owner")
+    assert record.category == "password: synthetic-audit-secret"
+    assert record.source == source
 
 
 async def test_implicit_update_cannot_reclassify_an_explicit_fact():

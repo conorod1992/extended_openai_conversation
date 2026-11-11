@@ -2,7 +2,17 @@ name: OpenAI SDK Compatibility
 
 on:
   workflow_dispatch:
+    inputs:
+      ha_dev_sha:
+        description: Optional immutable Home Assistant dev commit supplied by Full Validation
+        type: string
+        required: false
   workflow_call:
+    inputs:
+      ha_dev_sha:
+        description: Optional immutable Home Assistant dev commit supplied by Full Validation
+        type: string
+        required: false
   schedule:
     - cron: "17 4 * * 2"
 
@@ -83,3 +93,51 @@ jobs:
           path: workflow-evidence.json
           if-no-files-found: error
           retention-days: 30
+
+  ha-manifest-constraints:
+    name: Manifest requirements / HA ${{ matrix.track }}
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        track: [oldest-supported, stable, dev]
+    steps:
+      - name: Checkout exact invocation source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Resolve Home Assistant source and constraints
+        id: ha
+        env:
+          HA_TRACK: ${{ matrix.track }}
+          REQUESTED_HA_DEV_SHA: ${{ inputs.ha_dev_sha }}
+        run: |
+          set -euo pipefail
+          case "$HA_TRACK" in
+            oldest-supported)
+              ref="$(python3 -c 'import json; print(json.load(open("hacs.json"))["homeassistant"])')"
+              ;;
+            stable)
+              ref="$(python3 -c 'import json; from urllib.request import urlopen; print(json.load(urlopen("https://pypi.org/pypi/homeassistant/json", timeout=30))["info"]["version"])')"
+              ;;
+            dev)
+              ref="$(python3 ci/ha_dev_snapshot.py --sha "$REQUESTED_HA_DEV_SHA")"
+              ;;
+          esac
+          [[ "$ref" =~ ^([0-9]{4}\.[0-9]+\.[0-9]+|[0-9a-f]{40})$ ]]
+          echo "Home Assistant $HA_TRACK: $ref"
+          base_url="https://raw.githubusercontent.com/home-assistant/core/$ref"
+          curl --fail --silent --show-error --retry 3 --max-time 30 \
+            "$base_url/homeassistant/package_constraints.txt" \
+            --output "$RUNNER_TEMP/ha-package-constraints.txt"
+          python_version="$(curl --fail --silent --show-error --retry 3 --max-time 30 "$base_url/.python-version" | cut -d. -f1,2)"
+          [[ "$python_version" =~ ^[0-9]+\.[0-9]+$ ]]
+          echo "python-version=$python_version" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ steps.ha.outputs.python-version }}
+      - name: Check all declared integration requirements
+        run: python ci/check_ha_manifest_constraints.py "$RUNNER_TEMP/ha-package-constraints.txt"

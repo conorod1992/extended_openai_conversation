@@ -146,7 +146,7 @@ async def test_loaded_memory_recovers_on_next_assist_without_config_change(
         "deviceaccesstoken=private_memory_value",
     ],
 )
-async def test_cold_memory_storage_removes_credential_categories_before_publication(
+async def test_cold_memory_storage_preserves_credential_categories_without_purge(
     hass, monkeypatch, caplog, category, real_store_io
 ):
     from copy import deepcopy
@@ -174,10 +174,10 @@ async def test_cold_memory_storage_removes_credential_categories_before_publicat
     await loaded.async_initialize()
     assert calls and loop_thread not in calls
     retained = await loaded.async_backup_data()
-    assert len(retained["memories"]) == 1
+    assert len(retained["memories"]) == 2
     assert retained["memories"][0]["content"] == "My plant is purple"
-    assert (await storage.async_load()) == retained
-    assert not loaded._key_index
-    assert "Removing persistent memory rejected by privacy policy" in caplog.text
+    assert (await storage.async_load()) == raw
+    assert loaded._key_index[("alice", "unsafe.key")] == "legacy-unsafe"
+    assert next(r for r in retained["memories"] if r["memory_id"] == "legacy-unsafe")["category"] == category.casefold()
     assert "PRIVATE_MEMORY_VALUE" not in caplog.text
     assert "private_memory_value" not in caplog.text

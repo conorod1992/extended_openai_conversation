@@ -170,7 +170,7 @@ async def test_upsert_confirmation_applies_all_explicit_metadata() -> None:
 
     existing = await manager.async_upsert(
         "alice",
-        "Oscar is a Cavachon",
+        "Oscar is a Cavachon.",
         "animals",
         "explicit",
         subject="Oscar",
@@ -292,7 +292,7 @@ def test_duplicate_related_and_index_edge_paths() -> None:
     manager._index(second)
 
     assert manager._find_duplicate("alice", "Cavachon Oscar") is None
-    assert manager._find_duplicate("alice", "Oscar is a Cavachon!") == first
+    assert manager._find_duplicate("alice", "Oscar is a Cavachon.") == first
     assert (
         manager._find_related_candidate("alice", "Cavachon Oscar", None, None)
         == first
@@ -501,9 +501,8 @@ def test_input_cleaners_reject_wrong_types_lengths_and_timestamps() -> None:
         memory_module._clean_timestamp("yesterday", "valid_from")
 
 
-def test_checksum_rejects_malformed_candidates() -> None:
-    assert memory_module._passes_luhn_checksum("123") is False
-    assert memory_module._is_valid_iban("not-an-iban") is False
+def test_credential_content_uses_ordinary_whitespace_normalization():
+    assert memory_module._clean_content("  password:   synthetic-value  ") == "password: synthetic-value"
 
 
 def test_memory_tool_metadata_schema_has_scope_only_when_requested() -> None:

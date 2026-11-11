@@ -253,7 +253,7 @@ async def test_expiry_pruned_at_startup_and_before_injection() -> None:
     assert memory.expired_pruned == 1
 
 
-async def test_update_supersedes_and_secret_is_rejected() -> None:
+async def test_update_supersedes_and_credentials_are_permitted() -> None:
     memory = TemporaryMemory(Storage())
     await memory.async_initialize()
     created = await memory.async_add(
@@ -274,13 +274,10 @@ async def test_update_supersedes_and_secret_is_rejected() -> None:
     assert updated.content.endswith("next weekend")
     assert updated.category == "family"
     assert dt_util.parse_datetime(updated.expires_at) > dt_util.utcnow()
-    with pytest.raises(ValueError):
-        await memory.async_add(
-            "user:alice",
-            "My PIN is 1234",
-            future(),
-            owner_scope_id="user:alice",
-        )
+    pin = await memory.async_add(
+        "user:alice", "My PIN is 1234", future(), owner_scope_id="user:alice",
+    )
+    assert pin["status"] == "created"
 
 
 async def test_management_list_is_not_limited_by_model_injection_selection() -> None:
@@ -823,7 +820,7 @@ async def test_unretained_request_has_no_active_temporary_memory_scope(monkeypat
     active.assert_not_awaited()
 
 
-async def test_model_update_cannot_inherit_manual_sensitive_permission(monkeypatch):
+async def test_model_sensitive_update_uses_automatic_provenance(monkeypatch):
     from custom_components.extended_openai_conversation_responses.conversation import (
     _ACTIVE_TURN,
 )
@@ -854,17 +851,16 @@ async def test_model_update_cannot_inherit_manual_sensitive_permission(monkeypat
         replace(_ACTIVE_TURN.get(), temporary_scope="user:alice")
     )
     try:
-        with pytest.raises(ValueError, match="explicit user request"):
-            await agent._async_execute_temporary_memory_tool(
-                "update",
-                {
-                    "memory_id": created["memory"]["memory_id"],
-                    "content": "My medical diagnosis is diabetes",
-                },
-            )
+        await agent._async_execute_temporary_memory_tool(
+            "update",
+            {
+                "memory_id": created["memory"]["memory_id"],
+                "content": "My medical diagnosis is diabetes",
+            },
+        )
         records = await memory.async_active("user:alice", owner_scope_id="user:alice")
-        assert records[0].content == "Visitors arrive tomorrow"
-        assert records[0].source == "manual"
+        assert records[0].content == "My medical diagnosis is diabetes"
+        assert records[0].source == "automatic"
         updated = await agent._async_execute_temporary_memory_tool("update", {
             "memory_id": created["memory"]["memory_id"], "content": "Visitors arrive Friday",
         })

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from copy import deepcopy
 import logging
 from typing import Any
+from urllib.parse import urlsplit
 
 from openai import OpenAIError
 import voluptuous as vol
@@ -16,17 +18,19 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
 from .const import (
+    API_PROVIDERS,
     CONF_API_PROVIDER,
     CONF_API_VERSION,
     CONF_BASE_URL,
     CONF_ORGANIZATION,
     CONF_SKIP_AUTHENTICATION,
     DEFAULT_API_PROVIDER,
+    DEFAULT_CONF_BASE_URL,
     DEFAULT_SKIP_AUTHENTICATION,
     DOMAIN,
 )
 from .ha_schema import websocket_command as ha_websocket_command
-from .helpers import get_authenticated_client
+from .helpers import effective_api_provider, get_authenticated_client
 from .operational_errors import log_handled_failure
 from .provider_errors import classify_config_provider_error
 
@@ -40,6 +44,76 @@ _VALIDATION_MESSAGES = {
     "provider_unavailable": "The provider is temporarily unavailable, so the new API key could not be validated.",
     "provider_error": "The provider rejected the credential validation request.",
 }
+
+
+def validate_provider_connection(connection: Any) -> str:
+    """Validate persisted client settings locally and return the effective provider."""
+    if not isinstance(connection, Mapping):
+        raise HomeAssistantError("The provider connection must be an object.")
+    api_key = connection.get(CONF_API_KEY)
+    if not isinstance(api_key, str) or not api_key.strip():
+        raise HomeAssistantError("Provider field api_key must be a non-empty string.")
+    if not isinstance(connection.get(CONF_SKIP_AUTHENTICATION, False), bool):
+        raise HomeAssistantError(
+            "Provider field skip_authentication must be a boolean."
+        )
+    for field in (CONF_BASE_URL, CONF_API_VERSION, CONF_ORGANIZATION):
+        if (value := connection.get(field)) is not None and not isinstance(value, str):
+            raise HomeAssistantError(f"Provider field {field} must be a string.")
+
+    provider = connection.get(CONF_API_PROVIDER)
+    if provider is not None and provider not in (
+        option["key"] for option in API_PROVIDERS
+    ):
+        raise HomeAssistantError(
+            "Unsupported API provider (api_provider). Choose 'openai' or 'azure'."
+        )
+    base_url = connection.get(CONF_BASE_URL)
+    if base_url is not None:
+        try:
+            endpoint = urlsplit(base_url)
+            _ = endpoint.port
+            if (
+                endpoint.scheme not in {"http", "https"}
+                or not endpoint.hostname
+                or any(char.isspace() for char in endpoint.netloc)
+            ):
+                raise ValueError
+        except ValueError:
+            raise HomeAssistantError(
+                "Provider field base_url must be an absolute HTTP or HTTPS URL."
+            ) from None
+    provider = effective_api_provider(provider, base_url)
+    if provider == "azure":
+        if not base_url or base_url.rstrip("/") == DEFAULT_CONF_BASE_URL.rstrip("/"):
+            raise HomeAssistantError("Azure OpenAI requires a custom base URL.")
+        if not (connection.get(CONF_API_VERSION) or "").strip():
+            raise HomeAssistantError(
+                "Azure OpenAI requires provider field api_version."
+            )
+    return provider
+
+
+def validate_agent_provider_request(
+    subentry_type: str, options: Mapping[str, Any], provider_data: Mapping[str, Any]
+) -> None:
+    """Use the agent's production request validation before changing its provider."""
+    from .request import build_provider_request_snapshot
+    from .request_rules import validate_routed_request_options
+
+    if subentry_type == "ai_task_data":
+        build_provider_request_snapshot(options, provider_data, tools_required=False)
+    else:
+        validate_routed_request_options(options, provider_data)
+
+
+def incompatible_provider_agent(
+    title: str, err: HomeAssistantError
+) -> HomeAssistantError:
+    """Identify one incompatible agent in a bounded message."""
+    return HomeAssistantError(
+        f"Provider change is incompatible with agent {title[:100]}: {str(err)[:400]}"
+    )
 
 
 def restore_private_provider_connection(
