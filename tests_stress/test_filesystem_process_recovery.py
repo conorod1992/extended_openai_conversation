@@ -16,6 +16,7 @@ import time
 import pytest
 
 from tests_real_ha.process_harness import child_process_env, run_python_child
+from tests.skill_transaction_fixtures import stage_legacy_removal
 from tests_real_ha.test_immediate_tool_process_crash import (
     DOMAIN,
     _assert_source_component,
@@ -226,7 +227,8 @@ async def _child(config: Path, phase: str, kind: str):
             if kind == "publish":
                 await manager.async_publish_staged_skill("owned-skill", staged)
             else:
-                await manager.async_remove_skill("owned-skill")
+                # Historical journal fixture: crash after its first rename.
+                stage_legacy_removal(manager, "owned-skill")
             raise AssertionError("operation escaped process-kill gate")
         else:
             skill = manager.get_skill("owned-skill")
@@ -275,7 +277,8 @@ async def _child(config: Path, phase: str, kind: str):
             assert (
                 "HEALTHY-NEW-BODY" in manager.get_skill("owned-skill").path.read_text()
             )
-            assert await manager.async_remove_skill("owned-skill")
+            assert stage_legacy_removal(manager, "owned-skill", committed=True)
+            await manager.async_load_skills()
             assert manager.get_skill("owned-skill") is None and not target.exists()
     await hass.async_stop()
 
