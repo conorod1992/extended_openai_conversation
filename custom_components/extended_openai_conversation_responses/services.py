@@ -70,7 +70,7 @@ from .const import (
 from .guest_mode import async_get_guest_mode
 from .ha_schema import schema_for_ha
 from .ha_tool_result_compat import tool_result_data
-from .helpers import effective_api_provider, get_api_mode, get_authenticated_client
+from .helpers import get_api_mode, get_authenticated_client
 from .live_subentry_updates import update_live_subentry
 from .memory import async_get_memory, memory_as_dict, memory_user_id
 from .model_capabilities import model_capability_snapshot
@@ -462,14 +462,14 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
 
         new_data = dict(original_data)
         new_data.update(updates)
-        valid_providers = {provider["key"] for provider in API_PROVIDERS}
-        if (
-            CONF_API_PROVIDER in new_data
-            and new_data[CONF_API_PROVIDER] not in valid_providers
-        ):
-            raise HomeAssistantError(
-                "Unsupported API provider. Choose 'openai' or 'azure'."
-            )
+        from .provider_credentials import (
+            incompatible_provider_agent,
+            request_provider_reload_after_update,
+            validate_agent_provider_request,
+            validate_provider_connection,
+        )
+
+        provider = validate_provider_connection(new_data)
 
         _LOGGER.debug(
             "Updating config entry %s fields: %s",
@@ -477,17 +477,11 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             ", ".join(sorted(updates)),
         )
 
-        base_url = new_data.get(CONF_BASE_URL)
-        if base_url == DEFAULT_CONF_BASE_URL:
-            # Do not set base_url if using OpenAI for case of OpenAI's base_url change
-            base_url = None
+        if new_data.get(CONF_BASE_URL) == DEFAULT_CONF_BASE_URL:
+            # Do not pin the SDK's default URL to the current OpenAI endpoint.
             new_data.pop(CONF_BASE_URL)
-
-        if effective_api_provider(new_data.get(CONF_API_PROVIDER), base_url) == "azure":
-            new_data[CONF_API_PROVIDER] = "azure"
-
-        if new_data.get(CONF_API_PROVIDER) == "azure" and not base_url:
-            raise HomeAssistantError("Azure OpenAI requires a custom base URL.")
+        if provider == "azure":
+            new_data[CONF_API_PROVIDER] = provider
 
         try:
             await get_authenticated_client(
@@ -507,12 +501,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                 f"Provider configuration validation failed: {provider_user_message(err)}"
             ) from err
 
-        from .request import build_provider_request_snapshot
-        from .request_rules import (
-            async_get_request_rules,
-            validate_routed_request_options,
-            validate_rule_model_request,
-        )
+        from .request_rules import async_get_request_rules, validate_saved_model_routes
 
         children = dict(getattr(entry, "subentries", {}))
         child_data = {key: dict(child.data) for key, child in children.items()}
@@ -522,21 +511,15 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                 continue
             options = child_data[child_id]
             try:
-                if child.subentry_type == "ai_task_data":
-                    build_provider_request_snapshot(
-                        options, new_data, tools_required=False
-                    )
-                else:
-                    validate_routed_request_options(options, new_data)
+                validate_agent_provider_request(child.subentry_type, options, new_data)
+                if child.subentry_type == "conversation":
                     rules = await async_get_request_rules(hass, entry_id, child_id)
                     rule_revisions.append((rules, rules.revision()))
-                    for rule in rules.snapshot()["rules"]:
-                        if rule.get("enabled", True):
-                            validate_rule_model_request(rule, options, new_data)
+                    validate_saved_model_routes(
+                        rules.snapshot()["rules"], options, new_data
+                    )
             except HomeAssistantError as err:
-                raise HomeAssistantError(
-                    f"Provider change is incompatible with agent {child.title}: {err}"
-                ) from err
+                raise incompatible_provider_agent(child.title, err) from err
         if dict(getattr(entry, "subentries", {})) != children or any(
             dict(child.data) != child_data[key] for key, child in children.items()
         ):
@@ -554,8 +537,6 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                 "Provider settings changed while this configuration was being "
                 "validated. No changes were saved by this operation. Try again."
             )
-
-        from .provider_credentials import request_provider_reload_after_update
 
         state_before = entry.state
         changed = hass.config_entries.async_update_entry(entry, data=new_data)
