@@ -110,7 +110,7 @@ def _compact_loader_description(description: str) -> str:
 def prepare_model_function_tools(
     function_tools: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Return independent provider-facing copies with loader boilerplate compacted.
+    """Return independent provider schemas with loader boilerplate compacted.
 
     Configured Function Tool JSON schemas are preserved exactly. Integration-owned
     tool descriptions live with their definitions. Only the internal Function Group
@@ -134,8 +134,9 @@ def prepare_model_function_tools(
             compacted.append(deepcopy(tool))
             continue
 
-        current = deepcopy(tool)
-        spec = current["spec"]
+        current = dict(tool)
+        spec = deepcopy(source_spec)
+        current["spec"] = spec
 
         if function.get("type") == "function_group_loader":
             description = spec.get("description")

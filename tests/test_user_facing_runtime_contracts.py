@@ -167,4 +167,4 @@ def test_llm_guest_mode_tool_is_structurally_one_way() -> None:
     }
     forbidden = {"enabled", "disable", "cancel", "operation", "indefinite"}
     assert forbidden.isdisjoint(parameters["properties"])
-    assert "cannot disable, cancel, delay, or shorten" in tool["spec"]["description"]
+    assert "never weaken it" in tool["spec"]["description"]

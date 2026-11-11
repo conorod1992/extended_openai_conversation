@@ -209,11 +209,10 @@ def test_all_explicit_strict_contracts_match_baseline(api_mode, strict) -> None:
     )
 
 
-def test_prepared_tools_share_no_mutable_objects_with_sources() -> None:
-    """Provider consumers can mutate nested schemas and execution metadata safely."""
+def test_prepared_tools_isolate_nested_provider_schemas() -> None:
+    """Provider consumers can mutate schemas without changing source definitions."""
     tools = deepcopy(_baseline_tools())
     tools.append({"spec": None, "function": {"type": "native", "steps": []}})
-    tools[1]["function"]["metadata"] = {"steps": []}
     before = deepcopy(tools)
     prepared = prepare_model_function_tools(tools)
 
@@ -228,9 +227,14 @@ def test_prepared_tools_share_no_mutable_objects_with_sources() -> None:
                 assert_independent(child, copied_child)
 
     for source, copy in zip(tools[1:], prepared, strict=True):
-        assert_independent(source, copy)
+        assert copy is not source
+        assert_independent(source["spec"], copy["spec"])
+        if isinstance(source["spec"], dict):
+            # Execution-only metadata retains its existing reference semantics.
+            assert copy.get("function") is source.get("function")
+        else:
+            assert_independent(source, copy)
     prepared[0]["spec"]["parameters"]["properties"]["source"]["enum"].append("new")
-    prepared[0]["function"]["metadata"]["steps"].append("new")
     assert tools == before
 
 
