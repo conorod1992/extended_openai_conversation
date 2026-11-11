@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import json
+from pathlib import Path
 from typing import Any
+
+import pytest
 
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_CHAT_COMPLETIONS,
@@ -29,7 +33,9 @@ from custom_components.extended_openai_conversation_responses.model_payload impo
 )
 from custom_components.extended_openai_conversation_responses.request import (
     CONTINUE_CONVERSATION_TOOL,
+    START_FRESH_CONVERSATION_TOOL,
     format_function_tools,
+    request_function_tools,
 )
 from custom_components.extended_openai_conversation_responses.temporary_memory import (
     temporary_memory_tools,
@@ -50,7 +56,57 @@ def _without_descriptions(value: Any) -> Any:
 
 
 def _compact_json(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    # Preserve key order too, including parameter declaration order.
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _baseline_tools() -> list[dict[str, Any]]:
+    """Exercise every built-in, dynamic catalogue entries and custom strict modes."""
+    tools = [
+        *memory_tools(),
+        *temporary_memory_tools(),
+        *knowledge_tools(),
+        *archive_tools(),
+        guest_mode_restrict_tool(),
+        START_FRESH_CONVERSATION_TOOL,
+        build_loader_tool([
+            {"id": "travel", "name": "Travel", "description": "Routes and destinations."},
+            {"id": "media", "name": "Media", "description": "TV, music — and films.\nKeep this catalogue detail."},
+        ]),
+    ]
+    for name, strict in (("custom_omitted", None), ("custom_true", True), ("custom_false", False)):
+        spec = {
+            "name": name,
+            "description": "User-authored description, verbatim.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "value": {"type": "string", "description": "User guidance.", "enum": ["first", "second"], "default": "second"},
+                    "nested": {"type": "array", "items": {"type": "object", "properties": {"child": {"type": "integer", "minimum": 0}}, "additionalProperties": False}},
+                },
+                "required": ["value"],
+                "additionalProperties": False,
+            },
+        }
+        if strict is not None:
+            spec["strict"] = strict
+        tools.append({"spec": spec, "function": {"type": "native", "name": "get_user_from_user_id"}})
+    return request_function_tools(tools, conditional_continue=True)
+
+
+@pytest.mark.parametrize("api_mode", [API_MODE_RESPONSES, API_MODE_CHAT_COMPLETIONS])
+@pytest.mark.parametrize("conditional_continue", [False, True])
+def test_complete_provider_payload_matches_develop_baseline(api_mode, conditional_continue) -> None:
+    """Compare complete serialized payloads captured before consolidation at 624d9f07."""
+    baseline = json.loads((Path(__file__).parent / "fixtures" / "model_tool_payloads.json").read_text(encoding="utf-8"))
+    tools = _baseline_tools()
+    expected = baseline[api_mode]
+    if not conditional_continue:
+        tools = tools[:-1]
+        expected = expected[:-1]
+    original = deepcopy(tools)
+    assert _compact_json(format_function_tools(tools, api_mode)) == _compact_json(expected)
+    assert tools == original
 
 
 def _normalized_text(value: str) -> str:
