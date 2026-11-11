@@ -156,8 +156,18 @@ def _install_quiet_hours_controls(
     wake: str,
     calls: list[tuple[str, str]] | None = None,
 ) -> None:
-    """Install deterministic state-backed controls for restart ownership coverage."""
+    """Install registry-backed controls for verified restart ownership coverage."""
     from homeassistant.core import ServiceCall
+    from homeassistant.helpers import entity_registry as er
+
+    registry = er.async_get(hass)
+    for entity_id in (_QH_SATELLITE_ID, _QH_MEDIA_PLAYER_ID, _QH_WAKE_SOUND_ID):
+        domain, object_id = entity_id.split(".", 1)
+        control = registry.async_get_or_create(
+            domain, "test", f"packaged-quiet-hours-{entity_id}",
+            suggested_object_id=object_id,
+        )
+        assert control.entity_id == entity_id
 
     hass.states.async_set(
         _QH_SATELLITE_ID,

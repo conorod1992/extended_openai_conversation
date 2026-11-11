@@ -60,6 +60,7 @@ def _discovery_entry(
         disabled_by=None,
         platform=platform,
         original_name=original_name,
+        entity_category="config",
         name=None,
     )
 
@@ -87,6 +88,9 @@ def _discovery_hass(monkeypatch):
     }
     registry = SimpleNamespace(async_get=entries.get)
     monkeypatch.setattr(runtime.er, "async_get", lambda _hass: registry)
+    monkeypatch.setattr(runtime.dr, "async_get", lambda _hass: SimpleNamespace(
+        async_get=lambda _id: SimpleNamespace(manufacturer="Nabu Casa", model="Home Assistant Voice PE")
+    ))
     monkeypatch.setattr(
         runtime.er,
         "async_entries_for_device",

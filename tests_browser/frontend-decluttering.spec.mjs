@@ -240,7 +240,7 @@ test("Quiet Hours uses compact healthy satellites and reveals problems and draft
     p._result.satellites=[
       {satellite_entity_id:"assist_satellite.kitchen",name:"Kitchen",media_player_entity_id:"media_player.kitchen",media_player_source:"auto",media_player_candidates:["media_player.kitchen","media_player.manual"],wake_sound_candidates:[]},
       {satellite_entity_id:"assist_satellite.problem",name:"Unavailable speaker",media_player_entity_id:"media_player.missing",media_player_source:"auto",wake_sound_candidates:[]},
-      {satellite_entity_id:"assist_satellite.ambiguous",name:"Ambiguous wake switch",media_player_entity_id:"media_player.kitchen",media_player_source:"auto",wake_sound_candidates:["switch.a","switch.b"]},
+      {satellite_entity_id:"assist_satellite.ambiguous",name:"Ambiguous wake switch",media_player_entity_id:"media_player.kitchen",media_player_source:"auto",wake_sound_candidates:["switch.a","switch.b"],wake_sound_ambiguous:true},
     ];
     p._eocMainMarkup=null;p._render();
   });

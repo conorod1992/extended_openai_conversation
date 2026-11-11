@@ -26,9 +26,15 @@ This controls the short sound played when a compatible satellite detects its wak
 
 ## Satellite discovery and overrides
 
-Extended OpenAI discovers Assist satellites from Home Assistant and tries to associate each one with its speaker media player and wake-word sound switch. The Quiet Hours page shows the detected entities and whether the speaker is currently usable. Manual selections follow the Home Assistant entity registry when a satellite, speaker or wake-sound switch is renamed, including across restarts. Removing a selected entity does not transfer its selection or restoration ownership to another entity that reuses its old ID.
+Extended OpenAI discovers Assist satellites from Home Assistant and selects controls automatically only when their association is unambiguous. The Quiet Hours page distinguishes automatic and manual selections, **Manual selection required**, no compatible control, and a selected control that is temporarily unavailable.
 
-Use the per-satellite overrides when automatic discovery finds the wrong entity or cannot identify one. Leaving an override empty returns that satellite to automatic discovery.
+For speaker volume, exactly one enabled media player registered to the satellite's Home Assistant device is selected automatically. With multiple registered media players, select the correct speaker manually. Offline players and players without a current volume attribute still count; changes in availability, names, entity IDs, or platforms cannot make one player win over another. With no registered player, no speaker is selected. A selected speaker is adjusted only when it reports a usable volume.
+
+Automatic wake-word sound selection is limited to one recognised stock Voice PE configuration switch: an ESPHome switch whose original firmware name is **Wake sound**, on a device identified as **Nabu Casa / Home Assistant Voice PE**. Multiple such switches require a manual selection. Generic switches, descriptive user names, and other devices or custom firmware do not establish this optional capability; select a switch manually only if it controls the wake-word chime. Unsupported wake-word sound is not a fault.
+
+Saved manual selections take precedence. They follow the Home Assistant entity registry when a satellite, speaker or wake-sound switch is renamed, including across restarts. Removing a selected entity does not transfer its selection or restoration ownership to another entity that reuses its old ID. Leaving an override empty returns that satellite to conservative automatic discovery.
+
+If discovery becomes ambiguous during a quiet period, EOAI retains verified existing ownership until that period ends, including after a restart. It does not transfer that ownership to a different automatic candidate or save the old association as a manual override. Your independent changes still release ownership, and explicit selection changes use the normal restoration and retargeting rules. The next quiet period uses the new discovery rules. An unavailable control's restoration obligation remains stored until restoration can be safely completed.
 
 ## Use the schedule in automations
 
@@ -59,6 +65,23 @@ Saving the same policy or changing only its schedule does not reclaim a manually
 ### Removal and reinstallation
 
 The global Quiet Hours policy and Broadcast enabled setting are retained when the final EOAI integration entry is removed. Reinstalling EOAI loads these settings again. Disable each feature before removing EOAI if you do not want it to reactivate after reinstallation. Quiet Hours restoration records are also retained so unavailable controls can be restored when EOAI returns.
+
+### Legacy ownership recovery
+
+Some early development installations saved original control values without a `registry_identity`. Those records cannot prove which physical device created the restoration obligation. A matching entity ID, device association, or current volume does not establish that identity.
+
+When an unresolved saved control or pending application lacks a valid registry identity, Quiet Hours pauses the entire feature and displays an administrator-review message. This includes the early volume-only `targets` format and stores containing both verified and unverified controls. No controls are applied, retargeted, or restored, and no settings or restoration records are rewritten. Verified controls in the same store are paused too; speakers may remain quiet until review. Other EOAI features continue normally.
+
+The complete store remains unchanged, including original values, manual overrides, and older metadata. Period expiry, an unavailable device, disabling the schedule, clearing a selection, or restarting does not resolve the missing evidence. A recorded control identity that temporarily cannot be resolved is different: it continues through the existing identity and restoration mechanisms. A missing satellite identity alone does not pause a record that has a valid control identity.
+
+Recovery requires administrator review:
+
+1. Stop Home Assistant and back up the complete `.storage/extended_openai_conversation_responses.quiet_hours` file. Preserve that original backup unchanged. Inspect its JSON `data.active` section for `controls`, `pending_controls`, and legacy `targets`; retain the `data.config` and `data.selection_identities` sections.
+2. Start Home Assistant with the original file still in place. Quiet Hours remains paused. Identify the actual physical controls using reliable historical records or direct device checks. Resolve each reviewed restoration obligation manually through Home Assistant. Preserve newer user or automation choices; do not blindly restore a saved value. If the original device cannot be identified or is unavailable, leave its record unresolved and keep Quiet Hours paused.
+3. Stop Home Assistant again before editing storage. Remove only the control, pending-application, or target records whose obligations have been reviewed and resolved. Do not insert today's registry identity into an old record. Keep unresolved records and all unrelated settings intact. Set `data.active` to `null` only if **every** remaining obligation, including verified controls, has been resolved.
+4. Restart Home Assistant and check the Quiet Hours page. It resumes only when no unverified obligations remain and the saved storage format is supported. Do not change the Store envelope's version fields to bypass a storage-version error; use a compatible backup or seek maintainer assistance. Normal verified restoration records keep their usual recovery behavior. If the saved schedule is currently active, normal conservative discovery and starting-volume adjustments can run immediately.
+
+This procedure preserves the evidence until an administrator can resolve it; it cannot reconstruct missing historical identities or promise automatic restoration of those legacy values. If you cannot establish ownership, retain the backup and unresolved store rather than clearing the records to dismiss the message.
 
 Quiet Hours saves check the policy revision loaded by the editor. If selections
 or settings change while the page is open, reload the latest policy before

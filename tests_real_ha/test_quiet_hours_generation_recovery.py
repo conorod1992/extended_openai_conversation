@@ -3,19 +3,122 @@
 import asyncio
 from copy import deepcopy
 from datetime import timedelta
+import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from custom_components.extended_openai_conversation_responses.const import DOMAIN
 from custom_components.extended_openai_conversation_responses.quiet_hours import (
+    QuietHoursManager,
     async_get_quiet_hours,
 )
 from homeassistant.core import Context
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 from tests_real_ha.test_quiet_hours_scheduling import (
     _install_control_services,
     _install_satellite_entities,
 )
+from tests_stress.test_os_storage_faults import real_store_io  # noqa: F401
+
+
+@pytest.mark.parametrize("layout", ["controls", "pending_controls", "targets", "mixed"])
+@pytest.mark.parametrize("version,minor_version", [(1, 1), (2, 0), (2, 1)])
+async def test_legacy_ownership_keeps_native_store_bytes_unchanged(
+    hass,
+    monkeypatch,
+    real_store_io,
+    layout,
+    version,
+    minor_version,
+):
+    """The actual HA Store must never migrate or overwrite unverified baselines."""
+    from unittest.mock import AsyncMock
+
+    satellite, media, wake = _install_satellite_entities(hass, volume=0.2)
+    calls = []
+    _install_control_services(hass, calls)
+    now = dt_util.now()
+    active = {
+        "period_started_at": (now - timedelta(hours=1)).isoformat(),
+        "period_ends_at": (now + timedelta(hours=1)).isoformat(),
+        "controls": {},
+        "unknown_legacy_metadata": {"preserve": "exactly"},
+    }
+    record = {
+        "kind": "volume",
+        "satellite_entity_id": satellite,
+        "original_value": 0.8,
+        "quiet_value": 0.2,
+    }
+    if layout == "targets":
+        active.pop("controls")
+        active["targets"] = {media: {"original_volume": 0.8, "quiet_volume": 0.2}}
+    elif layout == "mixed":
+        entry = er.async_get(hass).async_get(media)
+        active["controls"] = {
+            media: {
+                **record,
+                "registry_identity": [entry.domain, entry.platform, entry.unique_id],
+            },
+            wake: {
+                "kind": "switch",
+                "satellite_entity_id": satellite,
+                "original_value": True,
+                "quiet_value": False,
+            },
+        }
+    else:
+        active[layout] = {media: record}
+    generation = {
+        "config": {
+            "enabled": True,
+            "start": "22:00",
+            "end": "07:00",
+            "max_volume": 0.2,
+            "wake_sound": "off",
+            "overrides": {satellite: {"media_player_entity_id": media}},
+        },
+        "active": active,
+    }
+    manager = QuietHoursManager(hass)
+    path = Path(manager._store.path)
+    envelope = {
+        "version": version,
+        "minor_version": minor_version,
+        "key": f"{DOMAIN}.quiet_hours",
+        "data": generation,
+    }
+    original = (json.dumps(envelope, indent=3) + "\n").encode()
+
+    def write():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(original)
+
+    await hass.async_add_executor_job(write)
+    save = AsyncMock(wraps=manager._store.async_save)
+    monkeypatch.setattr(manager._store, "async_save", save)
+    await manager.async_setup()
+    assert manager.snapshot()["available"] is False
+    assert "verified registry identities" in manager.snapshot()["error"]
+    with pytest.raises(HomeAssistantError, match="Administrator review"):
+        await manager.async_set_enabled(False)
+    with pytest.raises(HomeAssistantError, match="Administrator review"):
+        await manager.async_update_config({"enabled": False})
+    await manager.async_reconcile(now=now + timedelta(days=2))
+    await manager.async_shutdown()
+    save.assert_not_awaited()
+    assert path.read_bytes() == original
+    assert not calls
+    replacement = QuietHoursManager(hass)
+    await replacement.async_setup()
+    await replacement.async_shutdown()
+    assert replacement.startup_unavailable
+    assert path.read_bytes() == original
+    assert not calls
 
 
 @pytest.mark.parametrize("ownership", ["observed_controls", "pending_controls"])

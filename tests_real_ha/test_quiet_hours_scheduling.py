@@ -15,6 +15,7 @@ from pytest_homeassistant_custom_component.common import (
 from custom_components.extended_openai_conversation_responses.quiet_hours import (
     async_get_quiet_hours,
 )
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.util import dt as dt_util
@@ -38,8 +39,8 @@ def _install_satellite_entities(
     device = dr.async_get(hass).async_get_or_create(
         config_entry_id=source_entry.entry_id,
         identifiers={("esphome", f"quiet-hours-{slug}-scheduling")},
-        manufacturer="Home Assistant",
-        model="Voice Preview Edition",
+        manufacturer="Nabu Casa",
+        model="Home Assistant Voice PE",
         name=name,
     )
     registry = er.async_get(hass)
@@ -69,6 +70,7 @@ def _install_satellite_entities(
         suggested_object_id=f"{slug}_voice_scheduling_wake_sound",
         device_id=device.id,
         original_name="Wake sound",
+        entity_category=EntityCategory.CONFIG,
     )
 
     hass.states.async_set(

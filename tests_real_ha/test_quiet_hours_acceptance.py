@@ -11,6 +11,7 @@ from custom_components.extended_openai_conversation_responses.const import DOMAI
 from custom_components.extended_openai_conversation_responses.quiet_hours import (
     async_get_quiet_hours,
 )
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.util import dt as dt_util
@@ -197,8 +198,8 @@ def _install_satellite_entities(hass: HomeAssistant) -> tuple[str, str, str]:
     device = dr.async_get(hass).async_get_or_create(
         config_entry_id=source_entry.entry_id,
         identifiers={("esphome", "quiet-hours-bedroom-voice")},
-        manufacturer="Home Assistant",
-        model="Voice Preview Edition",
+        manufacturer="Nabu Casa",
+        model="Home Assistant Voice PE",
         name="Bedroom Voice",
     )
     registry = er.async_get(hass)
@@ -228,6 +229,7 @@ def _install_satellite_entities(hass: HomeAssistant) -> tuple[str, str, str]:
         suggested_object_id="bedroom_voice_wake_sound",
         device_id=device.id,
         original_name="Wake sound",
+        entity_category=EntityCategory.CONFIG,
     )
 
     hass.states.async_set(
@@ -274,6 +276,64 @@ def _install_control_services(hass: HomeAssistant) -> None:
     hass.services.async_register("media_player", "volume_set", volume_set)
     hass.services.async_register("switch", "turn_on", turn_on)
     hass.services.async_register("switch", "turn_off", turn_off)
+
+
+async def test_discovery_counts_registered_controls_without_state(hass: HomeAssistant) -> None:
+    """Exercise the public HA inventory helper, including an absent candidate."""
+    from custom_components.extended_openai_conversation_responses.quiet_hours_runtime import (
+        QuietHoursConfig, discover_satellite_capabilities,
+    )
+    satellite, media, wake = _install_satellite_entities(hass)
+    registry = er.async_get(hass)
+    device_id = registry.async_get(satellite).device_id
+    config = QuietHoursConfig()
+    other = registry.async_get_or_create("media_player", "other", "unloaded-player", device_id=device_id)
+    assert hass.states.get(other.entity_id) is None
+    found = discover_satellite_capabilities(hass, config)[0]
+    assert set(found.media_player_candidates) == {media, other.entity_id}
+    assert found.media_player_entity_id is None
+    hass.states.async_set(other.entity_id, "unavailable")
+    assert discover_satellite_capabilities(hass, config)[0].media_player_entity_id is None
+    registry.async_remove(other.entity_id)
+    for state, attributes in (("idle", {}), ("unavailable", {}), ("idle", {"volume_level": 0.5})):
+        hass.states.async_set(media, state, attributes)
+        assert discover_satellite_capabilities(hass, config)[0].media_player_entity_id == media
+    generic = registry.async_get_or_create("switch", "esphome", "generic-switch", device_id=device_id, original_name="Mute")
+    assert discover_satellite_capabilities(hass, config)[0].wake_sound_entity_id == wake
+    registry.async_remove(wake)
+    assert discover_satellite_capabilities(hass, config)[0].wake_sound_entity_id is None
+    assert generic.entity_id in discover_satellite_capabilities(hass, config)[0].wake_sound_candidates
+
+
+async def test_active_ambiguous_controls_survive_real_store_restart(hass: HomeAssistant) -> None:
+    satellite, media, wake = _install_satellite_entities(hass)
+    _install_control_services(hass)
+    manager = await async_get_quiet_hours(hass)
+    start, end = _active_window()
+    await manager.async_update_config({"enabled": True, "start": start, "end": end,
+                                       "max_volume": 0.2, "wake_sound": "off"})
+    registry = er.async_get(hass)
+    device_id = registry.async_get(satellite).device_id
+    registry.async_get_or_create("media_player", "other", "other-player", device_id=device_id)
+    registry.async_get_or_create("switch", "esphome", "other-wake", device_id=device_id,
+                                 original_name="Wake sound", entity_category=EntityCategory.CONFIG)
+    await manager.async_reconcile()
+    assert hass.states.get(media).attributes["volume_level"] == 0.2
+    assert hass.states.get(wake).state == "off"
+    assert manager.discovery_snapshot()[0]["media_player_entity_id"] is None
+    assert manager.discovery_snapshot()[0]["wake_sound_entity_id"] is None
+    manager._cancel_scheduled_callbacks()
+    if manager._registry_unsubscribe is not None:
+        manager._registry_unsubscribe()
+        manager._registry_unsubscribe = None
+    hass.data[DOMAIN].pop(_RUNTIME_KEY)
+    restarted = await async_get_quiet_hours(hass)
+    assert set(restarted.active["controls"]) == {media, wake}
+    assert restarted.config.overrides == ()
+    assert hass.states.get(media).attributes["volume_level"] == 0.2
+    await restarted.async_set_enabled(False)
+    assert hass.states.get(media).attributes["volume_level"] == 0.6
+    assert hass.states.get(wake).state == "on"
 
 
 @pytest.mark.asyncio

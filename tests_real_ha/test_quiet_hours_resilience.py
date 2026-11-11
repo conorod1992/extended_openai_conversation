@@ -22,6 +22,7 @@ from custom_components.extended_openai_conversation_responses.quiet_hours_runtim
 )
 from homeassistant.core import Context, HomeAssistant, ServiceCall, State
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
 
@@ -60,6 +61,14 @@ def _seed(
     volume: float,
     wake: str = "on",
 ) -> None:
+    registry = er.async_get(hass)
+    for entity_id in (f"assist_satellite.{room}", f"media_player.{room}", f"switch.{room}_wake_sound"):
+        domain, object_id = entity_id.split(".", 1)
+        entry = registry.async_get_or_create(
+            domain, "test", f"quiet-resilience-{entity_id}",
+            suggested_object_id=object_id,
+        )
+        assert entry.entity_id == entity_id
     hass.states.async_set(
         f"assist_satellite.{room}",
         "idle",
@@ -353,7 +362,7 @@ async def test_replacement_keeps_period_releases_but_reapplies_owned_controls(
         async_save=AsyncMock(side_effect=save),
         async_load=AsyncMock(side_effect=lambda: deepcopy(persisted)),
     )
-    monkeypatch.setattr(runtime, "PropagatingWriteStore", lambda *_args: store)
+    monkeypatch.setattr(runtime, "_QuietHoursStore", lambda *_args: store)
     calls = []
 
     async def control(call):

@@ -119,7 +119,9 @@ def _room_entry(entity_id: str, domain: str, device_id: str, *, name: str):
         device_id=device_id,
         disabled_by=None,
         platform="esphome",
+        unique_id=entity_id,
         original_name=name,
+        entity_category="config",
         name=None,
     )
 
@@ -140,8 +142,20 @@ def _install_registry(monkeypatch, *rooms: str) -> None:
         entries[f"switch.{room}_wake_sound"] = _room_entry(
             f"switch.{room}_wake_sound", "switch", device_id, name="Wake sound"
         )
-    registry = SimpleNamespace(async_get=entries.get)
+    registry = SimpleNamespace(
+        async_get=entries.get,
+        async_get_entity_id=lambda domain, platform, unique: next((
+            item.entity_id for item in entries.values()
+            if (item.domain, item.platform, item.unique_id) == (domain, platform, unique)
+        ), None),
+    )
     monkeypatch.setattr(runtime.er, "async_get", lambda _hass: registry)
+    monkeypatch.setattr(runtime.er, "async_entries_for_device", lambda _reg, device: [
+        entry for entry in entries.values() if entry.device_id == device
+    ])
+    monkeypatch.setattr(runtime.dr, "async_get", lambda _hass: SimpleNamespace(
+        async_get=lambda _id: SimpleNamespace(manufacturer="Nabu Casa", model="Home Assistant Voice PE")
+    ))
 
 
 def _seed_room(hass, room: str, *, volume: float = 0.55, wake: str = "on") -> None:
@@ -475,6 +489,7 @@ def _registry_entry(
         platform="esphome",
         name=name,
         original_name=original_name,
+        entity_category="config",
     )
 
 
@@ -548,6 +563,12 @@ def test_discovery_filters_disabled_registryless_and_unrelated_controls(
         )
     )
     monkeypatch.setattr(quiet_hours.er, "async_get", lambda _hass: registry)
+    monkeypatch.setattr(runtime.er, "async_entries_for_device", lambda _reg, device: [
+        entry for entry in entries.values() if entry.device_id == device
+    ])
+    monkeypatch.setattr(runtime.dr, "async_get", lambda _hass: SimpleNamespace(
+        async_get=lambda _id: SimpleNamespace(manufacturer="Nabu Casa", model="Home Assistant Voice PE")
+    ))
 
     discovered = quiet_hours.discover_satellite_capabilities(hass, QuietHoursConfig())
 
@@ -1090,8 +1111,9 @@ def test_live_state_readers_and_picker_fallbacks() -> None:
         "media_player",
         disabled_by="user",
     )
-    assert runtime._pick_media_player(hass, [generic, speaker]) == "media_player.good"
-    assert runtime._pick_media_player(hass, [disabled]) is None
+    assert runtime._pick_media_player([generic, speaker]) is None
+    assert runtime._pick_media_player([generic]) == "media_player.good"
+    assert runtime._pick_media_player([disabled]) is None
     assert (
         runtime._pick_wake_sound([entry("switch.other", "switch", name="Other")])
         is None

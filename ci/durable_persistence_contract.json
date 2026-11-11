@@ -153,11 +153,11 @@
   {
     "owner": "quiet_hours",
     "classification": "transactional_durable",
-    "guarantee": "Policy, observation and prepared control ownership are persisted before device actions. Revalidation preserves newer independent values. Applied ownership is recorded after the service action; interrupted prepared intents reconcile against current values and the persisted HA service context. Unattributed effects are preserved without replay or uncertain restoration.",
+    "guarantee": "Policy, observation and prepared control ownership are persisted before device actions. Revalidation preserves newer independent values. Applied ownership is recorded after the service action; interrupted prepared intents reconcile against current values and the persisted HA service context. Unattributed effects are preserved without replay or uncertain restoration. Unverified saved obligations pause Quiet Hours without rewriting the store, including before HA load-time migration can write.",
     "stores": [
       {
         "module": "quiet_hours_runtime.py",
-        "constructor": "PropagatingWriteStore",
+        "constructor": "_QuietHoursStore",
         "count": 1
       }
     ],
@@ -168,7 +168,9 @@
       "tests_stress/test_quiet_hours_ownership_time.py::test_successful_quiet_control_save_preserves_newer_independent_value",
       "tests_stress/test_quiet_hours_ownership_time.py::test_quiet_control_reconciles_prepared_and_applied_write_outcomes",
       "tests_stress/test_quiet_hours_ownership_time.py::test_unacknowledged_quiet_intent_does_not_claim_independent_goal",
-      "tests_stress/test_quiet_hours_ownership_time.py::test_quiet_control_prepared_intent_recovers_in_fresh_process"
+      "tests_stress/test_quiet_hours_ownership_time.py::test_quiet_control_prepared_intent_recovers_in_fresh_process",
+      "tests/test_quiet_hours_legacy_ownership.py::test_legacy_store_is_unchanged_across_all_public_lifecycle_paths",
+      "tests_real_ha/test_quiet_hours_generation_recovery.py::test_legacy_ownership_keeps_native_store_bytes_unchanged"
     ]
   },
   {
