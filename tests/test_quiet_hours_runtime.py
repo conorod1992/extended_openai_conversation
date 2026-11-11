@@ -119,6 +119,7 @@ def _room_entry(entity_id: str, domain: str, device_id: str, *, name: str):
         device_id=device_id,
         disabled_by=None,
         platform="esphome",
+        unique_id=entity_id,
         original_name=name,
         entity_category="config",
         name=None,
@@ -141,7 +142,13 @@ def _install_registry(monkeypatch, *rooms: str) -> None:
         entries[f"switch.{room}_wake_sound"] = _room_entry(
             f"switch.{room}_wake_sound", "switch", device_id, name="Wake sound"
         )
-    registry = SimpleNamespace(async_get=entries.get)
+    registry = SimpleNamespace(
+        async_get=entries.get,
+        async_get_entity_id=lambda domain, platform, unique: next((
+            item.entity_id for item in entries.values()
+            if (item.domain, item.platform, item.unique_id) == (domain, platform, unique)
+        ), None),
+    )
     monkeypatch.setattr(runtime.er, "async_get", lambda _hass: registry)
     monkeypatch.setattr(runtime.er, "async_entries_for_device", lambda _reg, device: [
         entry for entry in entries.values() if entry.device_id == device

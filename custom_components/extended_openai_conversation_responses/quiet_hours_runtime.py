@@ -446,13 +446,34 @@ def discover_satellite_capabilities(
     return result
 
 
+class _QuietHoursStore(PropagatingWriteStore):
+    """Check historical ownership before HA's load-time migration can write."""
+
+    def __init__(
+        self, hass: HomeAssistant, ownership_check: Callable[[Any], bool]
+    ) -> None:
+        super().__init__(hass, _STORAGE_VERSION, _STORAGE_KEY)
+        self._ownership_check = ownership_check
+
+    async def _async_migrate_func(
+        self, old_major_version: int, old_minor_version: int, old_data: Any
+    ) -> Any:
+        if isinstance(old_data, Mapping) and not self._ownership_check(
+            old_data.get("active")
+        ):
+            raise HomeAssistantError("Quiet Hours saved ownership requires review")
+        return await super()._async_migrate_func(
+            old_major_version, old_minor_version, old_data
+        )
+
+
 class QuietHoursManager:
     """Apply a small global Quiet Hours policy without becoming an automation engine."""
 
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
-        self._store: Store[dict[str, Any]] = PropagatingWriteStore(
-            hass, _STORAGE_VERSION, _STORAGE_KEY
+        self._store: Store[dict[str, Any]] = _QuietHoursStore(
+            hass, self._check_saved_ownership
         )
         self._config = QuietHoursConfig()
         self._selection_identities: dict[str, list[str]] = {}
@@ -474,6 +495,48 @@ class QuietHoursManager:
     def _require_startup_available(self) -> None:
         if reason := getattr(self, "_startup_unavailable_reason", None):
             raise HomeAssistantError(reason)
+
+    def _check_saved_ownership(self, value: Any) -> bool:
+        """Quarantine unverified obligations before normalization can discard them.
+
+        A current registry entry cannot identify the original physical owner of
+        an old baseline. Preserve the entire stored generation for administrator
+        recovery, including verified controls in a mixed store. Observations
+        alone have no restoration/application obligation and need no quarantine.
+        """
+        if not isinstance(value, Mapping):
+            return True
+        unverified = bool(value.get("targets"))
+        for key in ("controls", "pending_controls"):
+            controls = value.get(key)
+            if not isinstance(controls, Mapping):
+                continue
+            for entity_id, control in controls.items():
+                if not isinstance(control, Mapping):
+                    continue
+                identity = control.get("registry_identity")
+                if not (
+                    isinstance(entity_id, str)
+                    and isinstance(identity, list)
+                    and len(identity) == 3
+                    and all(isinstance(part, str) and part for part in identity)
+                    and identity[0] == entity_id.partition(".")[0]
+                ):
+                    unverified = True
+        if not unverified:
+            return True
+        self._startup_unavailable_reason = (
+            "Quiet Hours is paused because saved control records lack "
+            "verified registry identities. All saved settings and restoration "
+            "values are preserved. Administrator review is required: stop Home "
+            "Assistant, back up the Quiet Hours store, and follow the legacy "
+            "ownership recovery steps in the Quiet Hours documentation."
+        )
+        self._cancel_scheduled_callbacks()
+        if self._initialized or self._config_recovery_pending:
+            self._unpublish_state()
+        logging.getLogger(__name__).error(self._startup_unavailable_reason)
+        return False
 
     @property
     def config(self) -> QuietHoursConfig:
@@ -513,6 +576,8 @@ class QuietHoursManager:
                     if stored is not None and not isinstance(stored, Mapping):
                         raise ValueError("Quiet Hours storage must be an object")
                     raw = stored if stored is not None else {}
+                    if not self._check_saved_ownership(raw.get("active")):
+                        return
                     config = _config_from_data(raw.get("config"))
                     identities = self._normalize_selection_identities(
                         raw.get("selection_identities"), config
@@ -527,6 +592,10 @@ class QuietHoursManager:
                     TypeError,
                     AttributeError,
                 ) as err:
+                    if self.startup_unavailable:
+                        # The Store's migration guard already recorded the
+                        # specific recovery reason without rewriting its file.
+                        return
                     # The feature remains unavailable for this process. In particular,
                     # neither an empty state nor speculative controls may be persisted.
                     self._startup_unavailable_reason = (
@@ -881,6 +950,9 @@ class QuietHoursManager:
         ):
             raise ValueError("Quiet Hours saved ownership is unavailable")
         raw = stored or {}
+        if not self._check_saved_ownership(raw.get("active")):
+            # A failed-save readback can encounter a historical generation too.
+            self._require_startup_available()
         config = _config_from_data(raw.get("config"))
         active = self._normalize_active(raw.get("active"))
         if raw.get("active") is not None and active is None:
@@ -1943,6 +2015,7 @@ class QuietHoursManager:
         self, domain: str, service: str, entity_id: str, data: dict[str, Any]
     ) -> None:
         """Associate an observable HA effect with its persisted prepared intent."""
+        self._require_startup_available()
         # Discovery can yield to storage after choosing a target. Never perform
         # a restoration or application from that snapshot if a manual selection
         # moved while it was being persisted.
@@ -1979,6 +2052,7 @@ class QuietHoursManager:
         await self._async_save_locked()
 
     async def _async_save_locked(self) -> None:
+        self._require_startup_available()
         await _async_settle_transactional_save(
             self._store.async_save(
                 {

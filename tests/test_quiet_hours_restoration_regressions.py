@@ -66,11 +66,17 @@ async def test_unavailable_control_retains_baseline_until_return(
 
 
 async def test_failed_configuration_save_leaves_devices_and_active_baseline_untouched(
-    hass,
+    hass, monkeypatch,
 ):
+    from tests.test_quiet_hours_runtime import _install_registry
+
+    _install_registry(monkeypatch, "bedroom")
     manager = _stateful_public_manager(hass)
     manager._config = runtime.QuietHoursConfig(enabled=True)
     manager._active = _active("media_player.bedroom", "volume")
+    manager._active["controls"]["media_player.bedroom"]["registry_identity"] = [
+        "media_player", "esphome", "media_player.bedroom"
+    ]
     before = deepcopy(manager.active)
     manager._store.async_load.return_value = {
         "config": manager.config.as_dict(),

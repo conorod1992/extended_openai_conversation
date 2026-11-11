@@ -479,6 +479,9 @@ async def test_prepare_control_does_not_reclaim_already_observed_control(hass) -
 async def test_control_save_failure_reloads_durable_generation(hass) -> None:
     manager = _stateful_public_manager(hass)
     durable = _active("media_player.bedroom", "volume")
+    durable["controls"]["media_player.bedroom"]["registry_identity"] = [
+        "media_player", "esphome", "media_player.bedroom"
+    ]
     manager._store.async_save = AsyncMock(side_effect=OSError("ack lost"))
     manager._store.async_load = AsyncMock(return_value={"active": deepcopy(durable)})
 
