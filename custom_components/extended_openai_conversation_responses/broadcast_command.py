@@ -23,10 +23,10 @@ def broadcast_message(text: Any) -> str | None:
     """
     if not isinstance(text, str):
         return None
-    match = re.fullmatch(r"\s*broadcast\s+(\S[\s\S]*?)\s*", text, re.IGNORECASE)
-    if match is None:
+    parts = text.strip().split(maxsplit=1)
+    if len(parts) != 2 or parts[0].casefold() != "broadcast":
         return None
-    message = match[1]
+    message = parts[1]
     if re.match(r"(?:to|in|at|after|for)\b|a\s+message\b", message, re.IGNORECASE):
         return None
     return message

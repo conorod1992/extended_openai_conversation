@@ -1002,3 +1002,25 @@ async def test_request_rules_precede_broadcast_even_for_ai_handoff(monkeypatch, 
     await process()
     shortcut.assert_not_awaited()
     assert entity._async_handle_message_with_ha_tools.await_count == int(not consume)
+
+
+async def test_broadcast_failure_after_queue_insertion_never_repeats_effect(hass, monkeypatch):
+    from custom_components.extended_openai_conversation_responses import broadcast_command
+    from custom_components.extended_openai_conversation_responses.intercom import IntercomManager
+    from homeassistant.exceptions import HomeAssistantError
+    entity, _, _, _, process = _pipeline_fixture(monkeypatch, text="Broadcast Dinner")
+    manager = IntercomManager(hass)
+    manager._enabled = True
+    monkeypatch.setattr(manager, "resolve_targets", lambda **_: ["assist_satellite.kitchen"])
+    def fail_after_insertion(_entity_id):
+        raise HomeAssistantError("delivery setup failed after insertion")
+    monkeypatch.setattr(manager, "_schedule_drain", fail_after_insertion)
+    monkeypatch.setattr(broadcast_command, "async_get_intercom", AsyncMock(return_value=manager))
+    send = AsyncMock(wraps=manager.async_send)
+    manager.async_send = send
+    result = await process()
+    assert result.response.error_code is not None
+    send.assert_awaited_once()
+    assert len(manager.history()) == len(manager._queues["assist_satellite.kitchen"]) == 1
+    entity._async_handle_message_with_ha_tools.assert_not_awaited()
+    assert entity.hass.bus.async_fire.call_args.args[1]["handled_locally"] is True

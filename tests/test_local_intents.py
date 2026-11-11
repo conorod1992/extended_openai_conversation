@@ -153,9 +153,6 @@ async def test_excluded_match_falls_through(
 async def test_unresolved_targeted_broadcast_blocks_greedy_whole_home_intent(
     hass, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def no_targeted_match(*args, **kwargs):
-        return None
-
     async def fake_handle(hass, user_input, chat_log, *, intent_filter=None):
         assert intent_filter is not None
         assert intent_filter(_recognize("HassBroadcast"))
@@ -176,14 +173,9 @@ async def test_unresolved_targeted_broadcast_blocks_greedy_whole_home_intent(
 
 
 @pytest.mark.asyncio
-async def test_disabled_broadcast_does_not_run_targeted_local_route(
+async def test_generic_broadcast_is_blocked_without_a_broadcast_manager(
     hass, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    manager = SimpleNamespace(enabled=False)
-
-    async def fake_get_manager(_hass):
-        return manager
-
     async def fake_handle(hass, user_input, chat_log, *, intent_filter=None):
         assert intent_filter is not None
         assert intent_filter(_recognize("HassBroadcast"))
@@ -290,9 +282,6 @@ async def test_delayed_command_setting_is_applied_to_home_assistant_filter(
 async def test_missing_home_assistant_intent_handler_falls_through(
     hass, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def no_targeted_match(*args, **kwargs):
-        return None
-
     monkeypatch.setattr(conversation, "async_handle_intents", None)
 
     assert (
@@ -312,9 +301,6 @@ async def test_response_without_filter_match_reports_unknown_intent(
     hass, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     response = ha_intent.IntentResponse(language="en")
-
-    async def no_targeted_match(*args, **kwargs):
-        return None
 
     async def fake_handle(hass, user_input, chat_log, *, intent_filter=None):
         return response
