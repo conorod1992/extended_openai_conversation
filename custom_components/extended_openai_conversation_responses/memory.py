@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
+from datetime import UTC, datetime
 from functools import lru_cache
 import hashlib
 import json
@@ -733,7 +734,7 @@ class PersistentMemory:
                 if memory.user_id in scope_ids
                 and (category_filter is None or memory.category == category_filter)
             ]
-            memories.sort(key=lambda memory: memory.updated_at, reverse=True)
+            memories.sort(key=lambda memory: _updated_at_instant(memory.updated_at), reverse=True)
             return memories[offset : offset + limit]
 
     async def async_list_page(
@@ -756,7 +757,7 @@ class PersistentMemory:
                 if memory.user_id in scope_ids
                 and (category_filter is None or memory.category == category_filter)
             ]
-            memories.sort(key=lambda memory: memory.updated_at, reverse=True)
+            memories.sort(key=lambda memory: _updated_at_instant(memory.updated_at), reverse=True)
             end = offset + limit
             return memories[offset:end], len(memories) > end
 
@@ -798,7 +799,7 @@ class PersistentMemory:
                     ),
                 ).casefold()
             ]
-            memories.sort(key=lambda memory: memory.updated_at, reverse=True)
+            memories.sort(key=lambda memory: _updated_at_instant(memory.updated_at), reverse=True)
             total = len(memories)
             return memories[offset : offset + limit], total
 
@@ -2343,6 +2344,18 @@ def _clean_key(value: str | None) -> str | None:
             "0-9, underscore, and hyphen (for example pet.oscar.breed)"
         )
     return value
+
+
+@lru_cache(maxsize=20_000)
+def _updated_at_instant(value: str) -> datetime:
+    """Sort validated timestamps by instant; legacy naive values mean UTC.
+
+    Keep stored strings intact and reuse parsing across management pages. Python's
+    stable sort retains storage insertion order when instants are equal.
+    """
+    parsed = dt_util.parse_datetime(value)
+    assert parsed is not None  # Record validation precedes publication.
+    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
 
 
 def _clean_timestamp(value: str | None, field: str) -> str | None:

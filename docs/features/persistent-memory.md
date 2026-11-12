@@ -24,6 +24,8 @@ Embedding-cache saves are best effort. If a save fails, current validated vector
 
 Every memory has content, category, source, and creation/update timestamps. Retrieval ranks relevance; equal scores use a stable memory ID tie-break, independent of when a fact was edited.
 
+Management lists memories by the actual update instant, newest first, preserving storage order for ties and across pages. Legacy timestamps without a timezone are interpreted as UTC for ordering. Stored timestamp strings are preserved.
+
 Optional advanced metadata includes:
 
 - `subject`, such as `Oscar`

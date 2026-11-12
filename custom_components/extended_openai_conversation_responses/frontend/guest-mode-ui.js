@@ -62,6 +62,19 @@ export function findPersistentMemory(panel, id) {
   return collectionState(panel).items.get(String(id));
 }
 
+function memoryUpdatedInstant(memory) {
+  // Match backend UTC interpretation of legacy naive ISO timestamps. Preserve
+  // microseconds so JS's millisecond Date precision does not introduce false ties.
+  let value = String(memory.updated_at).replace(",", ".");
+  if (/[T ]/.test(value)) {
+    value = value.replace(" ", "T").replace(/([+-]\d{2})$/, "$1:00");
+    if (!/(?:Z|[+-]\d{2}:?\d{2})$/i.test(value)) value += "Z";
+  }
+  const millis = Date.parse(value);
+  const fraction = value.match(/\.(\d+)/)?.[1] || "";
+  return Number.isFinite(millis) ? millis * 1000 + Number(fraction.slice(3, 6).padEnd(3, "0")) : -Infinity;
+}
+
 export async function applyPersistentMemoryMutation(panel, response, {deletedId = null, sourceScope = panel._scopeId} = {}) {
   if (!panel._result || !Array.isArray(panel._result.memories)) return false;
   if (deletedId && response?.deleted !== 1) return false;
@@ -79,9 +92,11 @@ export async function applyPersistentMemoryMutation(panel, response, {deletedId 
   const matchesQuery = !query || memorySearchProjection(memory).includes(query);
   const oldPage = panel._result.memories || [];
   const wasInPage = oldPage.some(item => String(item.memory_id) === id);
-  let page = oldPage.filter(item => String(item.memory_id) !== id);
-  if (remainsHere && matchesQuery) page.push(memory);
-  page.sort((left, right) => String(right.updated_at).localeCompare(String(left.updated_at)));
+  // Replace in place before a stable sort to retain backend order on equal instants.
+  let page = oldPage.flatMap(item => String(item.memory_id) === id ? (remainsHere && matchesQuery ? [memory] : []) : [item]);
+  if (remainsHere && matchesQuery && !wasInPage) page.push(memory);
+  const instants = new Map(page.map(item => [item, memoryUpdatedInstant(item)]));
+  page.sort((left, right) => instants.get(right) - instants.get(left));
   const limit = Number(panel._result.limit) || MEMORY_PAGE_SIZE;
   const hasMore = Boolean(panel._result.has_more || page.length > limit);
   page = page.slice(0, Math.max(limit, oldPage.length));
