@@ -620,6 +620,11 @@ class BashFunction(Function):
                     continue
                 if re.match(r"^(?:[^=]+=)?[A-Za-z][A-Za-z0-9+.-]*://", token):
                     continue
+                # POSIX utility options can attach their file operand (-f/path,
+                # including grep -Ef/path). Quoting does not make it pattern text.
+                file_option = re.fullmatch(r"-[A-Za-z]*f(/.+)", token)
+                if file_option:
+                    token = file_option[1]
                 posix_paths.extend(re.findall(r"(?<![\w./:])/[^\s\"\']+", token))
 
             safe_streams = {"/dev/null", "/dev/stdout", "/dev/stderr"}
