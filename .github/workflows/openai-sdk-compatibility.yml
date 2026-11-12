@@ -56,6 +56,12 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Install native build tools for isolated snapshots
+        # The runtime image omits its builder's compiler. Older HA snapshots
+        # can require source builds of their declared audio dependencies.
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends g++
       - name: Reconcile a compatible Home Assistant snapshot
         run: |
           set -euo pipefail
