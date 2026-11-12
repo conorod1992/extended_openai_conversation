@@ -125,8 +125,8 @@ Type-only schema declarations and credential metadata such as `access_key_name`
 remain portable. This export policy does not change live configuration, private
 backup contents or historical destination-bound credential recovery.
 
-`appid` is classified as a credential for query/REST parameters directed to the
-recognized OpenWeather API hosts (`api`, `pro`, and `history.openweathermap.org`).
+`appid` is classified as a credential for query/REST parameters and nested/JSON request payloads directed to the
+recognized OpenWeather API hosts (`api.openweathermap.org`, `pro.openweathermap.org`, and `history.openweathermap.org`).
 Generic application IDs, unknown providers and opaque/template payload aliases
 remain ambiguous reviewed content. Arbitrary `key` names outside the existing
 HTTP credential context are not globally classified as secrets. Review still

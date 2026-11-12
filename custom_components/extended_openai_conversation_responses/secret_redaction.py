@@ -350,6 +350,8 @@ def _redact_secrets(
             if payload
             else classifier(key)
         )
+        if for_export and provider_appid and str(key).casefold() == "appid":
+            secret_key = True
         http_cookie = (
             path
             and isinstance(path[-1], str)
@@ -402,7 +404,11 @@ def _redact_secrets(
                 and value.get("type") in ("rest", "scrape")
                 and key == "params"
             ),
-            provider_appid=_uses_credential_appid(value.get("resource")),
+            provider_appid=provider_appid
+            or (
+                value.get("type") in ("rest", "scrape")
+                and _uses_credential_appid(value.get("resource"))
+            ),
             schema_roots=schema_roots,
             for_export=for_export,
         )
@@ -415,6 +421,7 @@ def redact_secrets(
     schema: bool = False,
     schema_roots: bool = True,
     for_export: bool = False,
+    provider_appid: bool = False,
 ) -> Any:
     """Redact credential values without deleting their surrounding keys/structure."""
     redacted = _redact_secrets(
@@ -423,6 +430,7 @@ def redact_secrets(
         path=(),
         schema_roots=schema_roots,
         for_export=for_export,
+        provider_appid=provider_appid,
     )
     return (
         json_safe_function_fields(redacted)

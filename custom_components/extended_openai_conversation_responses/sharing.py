@@ -20,6 +20,7 @@ from .secret_redaction import (
     REDACTED_SECRET_SENTINEL,
     _is_export_secret_key,
     _is_function_tool_schema_root,
+    _uses_credential_appid,
     is_redacted_secret,
     redact_http_url,
     redact_secrets,
@@ -554,13 +555,20 @@ def _schema_annotations(
 
 
 def _structured_payloads(
-    value: Any, *, path: tuple[Any, ...] = (), function_schemas: bool = False
+    value: Any,
+    *,
+    path: tuple[Any, ...] = (),
+    function_schemas: bool = False,
+    provider_appid: bool = False,
 ) -> Any:
     """Do not put redaction markers inside executable opaque request strings."""
     if isinstance(value, list):
         return [
             _structured_payloads(
-                item, path=(*path, index), function_schemas=function_schemas
+                item,
+                path=(*path, index),
+                function_schemas=function_schemas,
+                provider_appid=provider_appid,
             )
             for index, item in enumerate(value)
         ]
@@ -568,6 +576,10 @@ def _structured_payloads(
         return value
     if function_schemas and _is_function_tool_schema_root(path):
         return _schema_annotations(value, value)
+    provider_appid = provider_appid or (
+        value.get("type") in ("rest", "scrape")
+        and _uses_credential_appid(value.get("resource"))
+    )
     result = {}
     for key, item in value.items():
         if key in {"payload", "payload_template"} and isinstance(item, str):
@@ -577,12 +589,20 @@ def _structured_payloads(
                 pass  # Arbitrary reviewed source remains explicitly uncertain.
             else:
                 if _unsafe(
-                    redact_secrets(structured, schema_roots=False, for_export=True)
+                    redact_secrets(
+                        structured,
+                        schema_roots=False,
+                        for_export=True,
+                        provider_appid=provider_appid,
+                    )
                 ):
                     result[key] = dict(REDACTED_SECRET_SENTINEL)
                     continue
         result[key] = _structured_payloads(
-            item, path=(*path, key), function_schemas=function_schemas
+            item,
+            path=(*path, key),
+            function_schemas=function_schemas,
+            provider_appid=provider_appid,
         )
     return result
 

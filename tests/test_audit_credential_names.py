@@ -138,7 +138,8 @@ def test_schema_literals_are_omitted_but_type_only_declarations_survive(name):
     )
 
 
-def test_appid_requires_known_provider_context_and_legacy_policy_is_unchanged():
+@pytest.mark.parametrize("location", ["params", "payload", "json_payload"])
+def test_appid_requires_known_provider_context_and_legacy_policy_is_unchanged(location):
     from custom_components.extended_openai_conversation_responses.secret_redaction import (
         redact_secrets,
     )
@@ -146,7 +147,12 @@ def test_appid_requires_known_provider_context_and_legacy_policy_is_unchanged():
     tool = _rest_tool()
     request = tool["function"]
     request["headers"] = {}
-    request["params"] = {"aPpId": SECRET}
+    field = "params" if location == "params" else "payload"
+    request[field] = (
+        json.dumps({"auth": {"aPpId": SECRET}})
+        if location == "json_payload"
+        else {"aPpId": SECRET}
+    )
     # Generic app identifiers remain reviewed public content.
     assert project_configuration({"functions": [tool]}, reviewed=True)[0][
         "functions"
