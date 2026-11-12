@@ -35,7 +35,7 @@ import{p as e}from"./management-core-Bt9DTlKk.js";import{t}from"./management-con
       .setup-health-footnote{display:flex;align-items:flex-start;gap:7px;margin:13px 0 0;color:var(--secondary-text-color);font-size:12px;line-height:1.45}.setup-health-footnote ha-icon{flex:0 0 auto;--mdc-icon-size:17px}
       @media (max-width:800px){.setup-health-grid{grid-template-columns:1fr}.setup-health-heading{display:grid}.setup-health-summary{min-width:0}.setup-health-check{grid-template-columns:auto minmax(0,1fr)}.setup-health-action{grid-column:2;justify-self:start}}
     </style>
-    <section class="page-intro"><h1>${e._e(t.title)}</h1><p>Your assistant at a glance. Open a card to change or inspect that area.</p></section>
+    <section class="page-intro"><h1>${e._e(t.title)}</h1><p>Review your assistant’s settings and current status.</p></section>
     ${v(e,a,`<section class="dashboard-grid" aria-label="Assistant overview">
       ${h(e,`Assistant`,`${t.provider} · ${t.model}`,`${o.provider_runtime?.state===`error`?`Connection unavailable`:o.provider_runtime?.value?`Connection available`:`Connection status unavailable`} · ${o.instructions?.value||`Instructions unavailable`}`,`assistant`,`basics`,`Configure`,`mdi:robot-outline`)}
       ${h(e,`Capabilities`,`${t.function_count==null?`Loading…`:`${Number(t.function_count).toLocaleString()} function${t.function_count===1?``:`s`}`} · ${t.function_group_count==null?`Unknown groups`:`${Number(t.function_group_count).toLocaleString()} group${t.function_group_count===1?``:`s`}`}`,`${o.home_assistant_exposure?.value||`Assist exposure unavailable`}${o.function_tools?.state===`warning`||o.function_tools?.state===`error`?` · ${o.function_tools.value}`:``}`,`capabilities`,`home-assistant`,`Manage`,`mdi:tools`)}

@@ -4,6 +4,44 @@ import {openDataCollection} from "./data-collection-helpers.mjs";
 
 for (const bundled of [false, true]) {
   const extra = bundled ? "&bundle=1" : "";
+  test(`Unavailable health keeps navigation accessible and reports unknown status (${bundled})`, async ({page}) => {
+    const errors = trackPageErrors(page);
+    await page.goto(fixtureUrl("guide", extra));
+    const panel = page.locator("extended-openai-management-panel");
+    await expect(panel.locator(".guide-search")).toBeVisible();
+    await panel.evaluate(async host => {
+      const send = host.hass.callWS.bind(host.hass);
+      window.unavailableHealthResponses = 0;
+      host.hass.callWS = async request => {
+        const result = await send(request);
+        if (request.section === "overview" && (request.action === "primary" || request.kind === "setup_health")) {
+          unavailableHealthResponses++;
+          return {...result, setup_health:{unavailable:true, can_manage:true}};
+        }
+        return result;
+      };
+      await host._navigate("overview");
+    });
+    await expect.poll(() => page.evaluate(() => unavailableHealthResponses)).toBe(2);
+    const parent = panel.getByRole("region", {name:"Configuration and health", exact:true});
+    await expect(parent.locator(".setup-health-summary")).toHaveText("Status incomplete1 check unavailable");
+    await expect(parent.locator(".configuration-health-issues")).toHaveCount(0);
+    await expect(parent.locator("#overview-health-details")).not.toHaveAttribute("open");
+    await expect(panel.locator(".page-intro")).toContainText("Review your assistant’s settings and current status.");
+    await expect(parent.locator(".dashboard-card")).toHaveCount(8);
+    for (const title of ["Assistant","Capabilities","Memory & Knowledge","Conversation history","Guest Mode","Web Search","Usage","Model Data"]) {
+      const card = parent.locator(".dashboard-card").filter({has:page.getByRole("heading", {name:title, exact:true})});
+      await expect(card.locator("button")).toBeVisible();
+      await expect(card.locator("button")).toBeEnabled();
+    }
+    await parent.locator("#overview-health-details > summary").click();
+    await expect(parent.locator(".setup-health-check-unknown")).toContainText("Unable to determine");
+    await expect(parent.locator(".setup-health-check-error,.setup-health-check-warning")).toHaveCount(0);
+    await parent.locator('.dashboard-action[data-page="assistant"]').click();
+    await expect(panel.locator('[data-config="chat_model"]')).toBeVisible();
+    await expectHarnessClean(page, errors);
+  });
+
   test(`Overview combines navigation and health without hiding problems (${bundled})`, async ({page}) => {
     const errors = trackPageErrors(page);
     await page.goto(fixtureUrl("overview", extra));
