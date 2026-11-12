@@ -213,6 +213,62 @@ def _shell_command_tokens(
     return tokens
 
 
+def _literal_text_operands(tokens: list[tuple[str, bool]]) -> set[int]:
+    """Prove a few non-path operands using the existing defensive lexer.
+
+    This is deliberately a closed grammar, not a sed/awk parser. Unknown flags,
+    programs, wrappers and expansion syntax retain ordinary path checking.
+    Redirections terminate operand classification; their targets never qualify.
+    """
+    exempt: set[int] = set()
+    start = 0
+    for end in range(len(tokens) + 1):
+        if end < len(tokens):
+            word, literal = tokens[end]
+            if not (literal and word and all(c in "();&|<>\n" for c in word)):
+                continue
+        segment = tokens[start:end]
+        if (
+            segment
+            and segment[0][1]
+            and not any(c in word for word, _ in segment for c in "$`")
+        ):
+            command = segment[0][0]
+            args = [word for word, _ in segment[1:]]
+            if (
+                command == "awk"
+                and args
+                and re.fullmatch(r"/[A-Za-z0-9 _^.*+?()-]+/\s*\{print\}", args[0])
+            ):
+                exempt.add(start + 1)
+            elif (
+                command == "sed"
+                and len(args) >= 2
+                and args[0] == "-n"
+                and re.fullmatch(
+                    r"/[A-Za-z0-9 _^.*+?()-]+/,/[A-Za-z0-9 _^.*+?()-]+/p", args[1]
+                )
+            ):
+                exempt.add(start + 2)
+            elif command == "grep" and len(args) >= 2 and args[0] in {"-E", "-F", "-e"}:
+                if not args[1].startswith("-"):
+                    exempt.add(start + 2)
+            elif command == "echo":
+                # Use absolute token indices bounded to this command's operands.
+                for index in range(start + 1, end):
+                    arg = tokens[index][0]
+                    if re.fullmatch(r"[A-Za-z ]+ /[A-Za-z][A-Za-z0-9_-]*", arg):
+                        exempt.add(index)
+        # Only shell command boundaries establish another command position.
+        # A redirect target (even one named echo/grep) cannot start an exemption.
+        start = (
+            end + 1
+            if end == len(tokens) or not any(c in tokens[end][0] for c in "<>")
+            else len(tokens)
+        )
+    return exempt
+
+
 def _contains_disk_format_command(command: str) -> bool:
     """Detect literal disk-format commands at executable positions only.
 
@@ -558,17 +614,19 @@ class BashFunction(Function):
             # Tokenize shell operators before recognizing URLs: a URL argument
             # must not hide a following command or redirection. This remains a
             # defensive literal-path guard, not a sandbox for arbitrary Bash.
-            lexer = shlex.shlex(
-                _without_shell_comments(command),
-                posix=True,
-                punctuation_chars="();&|<>",
-            )
-            lexer.whitespace_split = True
-            lexer.commenters = ""
+            path_tokens = _shell_command_tokens(command)
+            text_operands = _literal_text_operands(path_tokens)
             posix_paths = []
-            for token in lexer:
+            for index, (token, _) in enumerate(path_tokens):
+                if index in text_operands:
+                    continue
                 if re.match(r"^(?:[^=]+=)?[A-Za-z][A-Za-z0-9+.-]*://", token):
                     continue
+                # POSIX utility options can attach their file operand (-f/path,
+                # including grep -Ef/path). Quoting does not make it pattern text.
+                file_option = re.fullmatch(r"-[A-Za-z]*f(/.+)", token)
+                if file_option:
+                    token = file_option[1]
                 posix_paths.extend(re.findall(r"(?<![\w./:])/[^\s\"\']+", token))
 
             safe_streams = {"/dev/null", "/dev/stdout", "/dev/stderr"}

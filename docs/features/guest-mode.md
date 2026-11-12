@@ -119,3 +119,10 @@ floor or label selectors. The `entity_id: all` sentinel is rejected before dispa
 Home Assistant expands it too late for EOAI to authorize the actual targets.
 
 Scheduled dates entered in the panel use Home Assistant's timezone rules for both display and conversion. Nonexistent or ambiguous local times are rejected; an unchanged existing schedule keeps its original instant.
+
+**Activate now** uses Home Assistant server time, even if the browser clock is
+wrong or a future schedule is displayed. Explicit scheduled starts keep their
+configured Home Assistant timezone and DST validation. A finite interval still
+requires a valid end field; the server decides whether that end follows the
+immediate start. A rejected interval leaves the saved schedule unchanged and
+keeps the authored interval available for correction.

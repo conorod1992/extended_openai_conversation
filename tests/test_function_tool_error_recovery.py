@@ -312,7 +312,7 @@ async def test_pre_dispatch_argument_failures_are_recoverable(
     assert expected_text in result["error"]
 
 
-async def test_disabled_recovery_preserves_previous_execution_path(hass) -> None:
+async def test_disabled_recovery_validates_without_consuming_execution_slots(hass) -> None:
     """Opting out must not insert local pre-dispatch recovery behavior."""
     tool = _tool(
         "action",
@@ -329,20 +329,21 @@ async def test_disabled_recovery_preserves_previous_execution_path(hass) -> None
     entity = _entity(hass)
     entity._execute_function_tool.return_value = _result(entity, call, {"status": "legacy"})
 
-    await async_execute_tool_exchange(
-        entity,
-        chat_log,
-        [call],
-        [tool],
-        FunctionCallBudget(2),
-        None,
-        [],
-        recovery_state=ToolRecoveryState(enabled=False),
-    )
+    budget = FunctionCallBudget(2)
+    with pytest.raises(HomeAssistantError, match="Missing required function input"):
+        await async_execute_tool_exchange(
+            entity,
+            chat_log,
+            [call],
+            [tool],
+            budget,
+            None,
+            [],
+            recovery_state=ToolRecoveryState(enabled=False),
+        )
 
-    entity._execute_function_tool.assert_awaited_once()
-    assert entity._execute_function_tool.await_args.args[1].tool_args == {}
-    assert tool_result_data(_results(chat_log)[0]) == {"result": {"status": "legacy"}}
+    entity._execute_function_tool.assert_not_awaited()
+    assert budget.used == 0
 
 
 async def test_normal_function_budget_applies_before_execution(hass) -> None:
@@ -361,21 +362,20 @@ async def test_normal_function_budget_applies_before_execution(hass) -> None:
     entity = _entity(hass)
     state = ToolRecoveryState(enabled=True)
 
-    with pytest.raises(HomeAssistantError, match="Function call limit of 0 reached"):
-        await async_execute_tool_exchange(
-            entity,
-            chat_log,
-            [call],
-            [tool],
-            FunctionCallBudget(0),
-            None,
-            [],
-            recovery_state=state,
-        )
+    await async_execute_tool_exchange(
+        entity,
+        chat_log,
+        [call],
+        [tool],
+        FunctionCallBudget(0),
+        None,
+        [],
+        recovery_state=state,
+    )
 
     assert state.used == 0
     entity._execute_function_tool.assert_not_awaited()
-    assert tool_result_data(_results(chat_log)[0])["result"]["status"] == "error"
+    assert tool_result_data(_results(chat_log)[0])["result"]["status"] == "not_executed"
 
 
 async def test_recovery_limit_fails_closed_without_dispatch(hass) -> None:

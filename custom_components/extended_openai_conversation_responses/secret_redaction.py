@@ -25,6 +25,23 @@ _HTTP_CREDENTIAL_NAMES = frozenset(
 )
 _JINJA_DELIMITERS = ("{{", "{%", "{#")
 _DROP = object()
+_EXPORT_CREDENTIAL_NAMES = frozenset(
+    {
+        "ocpapimsubscriptionkey",
+        "xauthkey",
+        "xfunctionskey",
+        "accesskey",
+        "privatekey",
+        "appkey",
+        "licensekey",
+    }
+)
+
+
+def _is_export_secret_key(key: Any) -> bool:
+    """Extend sharing policy without changing historical recovery projections."""
+    canonical = _KEY_SEPARATOR.sub("", str(key)).casefold()
+    return _is_secret_key(key) or canonical in _EXPORT_CREDENTIAL_NAMES
 
 
 def _is_secret_key(key: Any) -> bool:
@@ -55,16 +72,43 @@ def _is_secret_key(key: Any) -> bool:
     return any(family in canonical for family in _SECRET_KEY_FAMILIES)
 
 
-def _is_http_credential_key(key: Any) -> bool:
+def _is_http_credential_key(
+    key: Any, *, for_export: bool = False, provider_appid: bool = False
+) -> bool:
     """Use one credential policy for HTTP query strings and request params."""
     name = unquote_plus(str(key))
-    return _is_secret_key(name) or name.casefold() in _HTTP_CREDENTIAL_NAMES
+    classifier = _is_export_secret_key if for_export else _is_secret_key
+    return (
+        classifier(name)
+        or name.casefold() in _HTTP_CREDENTIAL_NAMES
+        or (for_export and provider_appid and name.casefold() == "appid")
+    )
 
 
-def _is_payload_secret_key(key: Any) -> bool:
+def _uses_credential_appid(value: Any) -> bool:
+    """Recognize OpenWeather's documented API-key parameter, not generic app IDs."""
+    if not isinstance(value, str) or any(part in value for part in _JINJA_DELIMITERS):
+        return False
+    try:
+        parsed = urlsplit(value)
+        return parsed.scheme.lower() in {"http", "https"} and parsed.hostname in {
+            "api.openweathermap.org",
+            "pro.openweathermap.org",
+            "history.openweathermap.org",
+        }
+    except ValueError:
+        return False
+
+
+def _is_payload_secret_key(key: Any, *, for_export: bool = False) -> bool:
     """Distinguish credentials from user-defined Script variable/data names."""
     separated = _CAMEL_CASE_BOUNDARY.sub(" ", str(key))
     parts = tuple(part.casefold() for part in _KEY_SEPARATOR.split(separated) if part)
+    if (
+        for_export
+        and _KEY_SEPARATOR.sub("", str(key)).casefold() in _EXPORT_CREDENTIAL_NAMES
+    ):
+        return True
     if not _is_secret_key(key):
         return False
     # Arbitrary payload names such as token_index and secret_reference are not
@@ -103,14 +147,18 @@ def _is_literal_http_url(value: str) -> bool:
         return False
 
 
-def _redact_url_parameters(value: str) -> tuple[str, bool]:
+def _redact_url_parameters(
+    value: str, *, for_export: bool = False, provider_appid: bool = False
+) -> tuple[str, bool]:
     """Apply one credential policy to query and OAuth fragment parameters."""
     components = []
     changed = False
     for component in value.split("&"):
         name, separator, content = component.partition("=")
         if separator and (
-            _is_http_credential_key(name)
+            _is_http_credential_key(
+                name, for_export=for_export, provider_appid=provider_appid
+            )
             or _LIKELY_SECRET.search(unquote_plus(content))
         ):
             content = "[redacted]"
@@ -119,7 +167,9 @@ def _redact_url_parameters(value: str) -> tuple[str, bool]:
     return "&".join(components), changed
 
 
-def redact_http_url(value: str, *, require_http: bool = False) -> dict[str, Any] | None:
+def redact_http_url(
+    value: str, *, require_http: bool = False, for_export: bool = False
+) -> dict[str, Any] | None:
     """Hide HTTP user information/parameter credentials, retaining public URL bytes.
 
     The marker is a scalar replacement, not a runnable URL. Recovery compares
@@ -146,8 +196,13 @@ def redact_http_url(value: str, *, require_http: bool = False) -> dict[str, Any]
     changed = "@" in authority
     if changed:
         authority = "%5Bredacted%5D@" + authority.rsplit("@", 1)[1]
-    query, query_changed = _redact_url_parameters(parsed.query)
-    fragment, fragment_changed = _redact_url_parameters(parsed.fragment)
+    provider_appid = _uses_credential_appid(value)
+    query, query_changed = _redact_url_parameters(
+        parsed.query, for_export=for_export, provider_appid=provider_appid
+    )
+    fragment, fragment_changed = _redact_url_parameters(
+        parsed.fragment, for_export=for_export, provider_appid=provider_appid
+    )
     if not (changed or query_changed or fragment_changed):
         return None
     public = urlunsplit((parsed.scheme, authority, parsed.path, query, fragment))
@@ -160,7 +215,9 @@ def _sentinel() -> dict[str, bool]:
     return dict(REDACTED_SECRET_SENTINEL)
 
 
-def redact_text(value: str, *, url_field: str | None = None) -> Any:
+def redact_text(
+    value: str, *, url_field: str | None = None, for_export: bool = False
+) -> Any:
     """Classify a value independently of schema/name exemptions.
 
     Structural context controls how mapping keys are interpreted, never whether
@@ -171,7 +228,7 @@ def redact_text(value: str, *, url_field: str | None = None) -> Any:
         value
     ):
         redacted_url = redact_http_url(
-            value, require_http=url_field == "resource_template"
+            value, require_http=url_field == "resource_template", for_export=for_export
         )
         if redacted_url is not None:
             return redacted_url
@@ -222,16 +279,20 @@ def _redact_secrets(
     payload: bool = False,
     rule_action: bool = False,
     http_params: bool = False,
+    provider_appid: bool = False,
     schema_roots: bool = True,
+    for_export: bool = False,
 ) -> Any:
     """Recursively redact secrets while tracking structural schema context."""
     if is_redacted_url(value):
         # Marker-shaped persisted input is still untrusted on export. Normalize
         # its visible URL too, rather than allowing the wrapper to hide a secret.
         public = value[REDACTED_URL_KEY]
-        return (redact_http_url(public) if isinstance(public, str) else None) or {
-            REDACTED_URL_KEY: None
-        }
+        return (
+            redact_http_url(public, for_export=for_export)
+            if isinstance(public, str)
+            else None
+        ) or {REDACTED_URL_KEY: None}
     if value == REDACTED_SECRET_SENTINEL:
         return _sentinel()
     if is_literal_text(value):
@@ -252,7 +313,9 @@ def _redact_secrets(
                 action=action,
                 payload=payload,
                 http_params=http_params,
+                provider_appid=provider_appid,
                 schema_roots=schema_roots,
+                for_export=for_export,
             )
             for index, item in enumerate(value)
         ]
@@ -267,6 +330,7 @@ def _redact_secrets(
         return redact_text(
             value,
             url_field=path[-1] if path and isinstance(path[-1], str) else None,
+            for_export=for_export,
         )
     if not isinstance(value, dict):
         return value
@@ -280,7 +344,14 @@ def _redact_secrets(
         child_schema = schema or (
             schema_roots and _is_function_tool_schema_root(child_path)
         )
-        secret_key = _is_payload_secret_key(key) if payload else _is_secret_key(key)
+        classifier = _is_export_secret_key if for_export else _is_secret_key
+        secret_key = (
+            _is_payload_secret_key(key, for_export=for_export)
+            if payload
+            else classifier(key)
+        )
+        if for_export and provider_appid and str(key).casefold() == "appid":
+            secret_key = True
         http_cookie = (
             path
             and isinstance(path[-1], str)
@@ -288,7 +359,14 @@ def _redact_secrets(
             and str(key).casefold() in {"cookie", "set-cookie"}
         )
         if not schema and (
-            secret_key or http_cookie or (http_params and _is_http_credential_key(key))
+            secret_key
+            or http_cookie
+            or (
+                http_params
+                and _is_http_credential_key(
+                    key, for_export=for_export, provider_appid=provider_appid
+                )
+            )
         ):
             result[key] = _sentinel()
             continue
@@ -326,13 +404,24 @@ def _redact_secrets(
                 and value.get("type") in ("rest", "scrape")
                 and key == "params"
             ),
+            provider_appid=provider_appid
+            or (
+                value.get("type") in ("rest", "scrape")
+                and _uses_credential_appid(value.get("resource"))
+            ),
             schema_roots=schema_roots,
+            for_export=for_export,
         )
     return result
 
 
 def redact_secrets(
-    value: Any, *, schema: bool = False, schema_roots: bool = True
+    value: Any,
+    *,
+    schema: bool = False,
+    schema_roots: bool = True,
+    for_export: bool = False,
+    provider_appid: bool = False,
 ) -> Any:
     """Redact credential values without deleting their surrounding keys/structure."""
     redacted = _redact_secrets(
@@ -340,6 +429,8 @@ def redact_secrets(
         schema=schema,
         path=(),
         schema_roots=schema_roots,
+        for_export=for_export,
+        provider_appid=provider_appid,
     )
     return (
         json_safe_function_fields(redacted)

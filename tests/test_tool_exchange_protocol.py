@@ -269,15 +269,15 @@ async def test_serial_budget_failure_is_protocol_valid_on_following_turn(hass) -
     entity._execute_function_tool = AsyncMock(side_effect=execute)
     chat_log = _chat_log(hass)
 
-    with pytest.raises(HomeAssistantError, match="Function call limit of 1 reached"):
-        await entity._async_handle_chat_log(chat_log, [first, second], [])
+    await entity._async_handle_chat_log(chat_log, [first, second], [])
 
     assert executed == ["first"]
     results = _retained_results(chat_log)
     assert [result.tool_call_id for result in results] == ["call-1", "call-2"]
     assert tool_result_data(results[0]) == {"result": "ok"}
-    assert tool_result_data(results[1])["result"]["status"] == "error"
+    assert tool_result_data(results[1])["result"] == {"status": "not_executed", "reason": "not executed: request Function Tool limit reached"}
 
+    entity._client.responses.create.side_effect = [_final_stream("Following turn")]
     chat_log.async_add_user_content(conversation.UserContent(content="Continue"))
     await entity._async_handle_chat_log(chat_log, [first, second], [])
 
@@ -485,7 +485,7 @@ async def test_parallel_failure_preserves_successful_sibling_result(hass) -> Non
             tool_calls=[first_call, second_call],
         )
     )
-    entity = SimpleNamespace(entity_id="conversation.test")
+    entity = SimpleNamespace(hass=hass, entity_id="conversation.test")
 
     async def execute(
         _function_tool: dict[str, Any],

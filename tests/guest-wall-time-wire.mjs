@@ -1,6 +1,13 @@
 import {fixture, retire} from "./management-ownership-harness.mjs";
 import {routeAssetPromise} from "../custom_components/extended_openai_conversation_responses/frontend/management-route.js";
 import {readFile} from "node:fs/promises";
+if (process.argv[4]) {
+  const RealDate = Date, fixed = RealDate.parse(process.argv[4]);
+  globalThis.Date = class extends RealDate {
+    constructor(...args) {super(...(args.length ? args : [fixed]));}
+    static now() {return fixed;}
+  };
+}
 let bundlePanel;
 if (process.argv[3] === "bundle") {
   const dist = new URL("../custom_components/extended_openai_conversation_responses/frontend/dist/", import.meta.url);

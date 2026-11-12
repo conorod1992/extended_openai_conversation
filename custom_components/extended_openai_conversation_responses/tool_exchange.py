@@ -13,7 +13,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 
 from .exceptions import FunctionNotFound
-from .function_call_budget import FunctionCallBudget
+from .function_call_budget import FunctionCallBudget, FunctionCallLimitReached
 from .function_execution import (
     async_validate_function_arguments,
     validated_function_call,
@@ -46,6 +46,22 @@ from .tool_replay_guard import (
 )
 
 _MAX_ERROR_TEXT = 512
+FUNCTION_TOOL_LIMIT_REASON = "not executed: request Function Tool limit reached"
+
+
+def _budget_refusal(
+    agent_id: str, tool_input: llm.ToolInput
+) -> conversation.ToolResultContent:
+    """Emit source-free protocol feedback without dispatch or effect receipts."""
+    return make_tool_result_content(
+        agent_id=agent_id,
+        tool_call_id=tool_input.id,
+        tool_name=tool_input.tool_name,
+        tool_result={
+            "result": {"status": "not_executed", "reason": FUNCTION_TOOL_LIMIT_REASON}
+        },
+        error=True,
+    )
 
 
 def _error_text(error: BaseException | None) -> str:
@@ -500,22 +516,28 @@ async def _async_execute_with_recovery(
             str, conversation.ToolResultContent | BaseException
         ] = {}
         if prepared:
-            remaining = function_call_budget.remaining
             try:
-                function_call_budget.claim_many(
+                count = function_call_budget.claim_prefix(
                     tool_input.tool_name for _, tool_input in prepared
                 )
             except BaseException as err:
+                # Unexpected reservation failures still repair retained history
+                # and propagate. Ordinary exhaustion returns a prefix normally.
+                for result in recovery_results.values():
+                    chat_log.async_add_assistant_content_without_tools(result)
                 append_unresolved_tool_results(
                     chat_log,
                     entity.entity_id,
                     pending_tool_calls,
-                    failed_call_id=prepared[
-                        0 if remaining is None else min(remaining, len(prepared) - 1)
-                    ][1].id,
+                    failed_call_id=prepared[0][1].id,
                     error=err,
                 )
                 raise
+            execution_outcomes.update(
+                (tool_input.id, _budget_refusal(entity.entity_id, tool_input))
+                for _, tool_input in prepared[count:]
+            )
+            prepared = prepared[:count]
             try:
                 outcomes = await async_execute_parallel_safe_batch_outcomes(
                     prepared,
@@ -530,6 +552,14 @@ async def _async_execute_with_recovery(
                     ),
                 )
             except BaseException as err:
+                # Cancellation/infrastructure failure cannot replace already
+                # decided non-execution results with generic skipped history.
+                for tool_input in pending_tool_calls:
+                    settled = recovery_results.get(
+                        tool_input.id
+                    ) or execution_outcomes.get(tool_input.id)
+                    if settled is not None and not isinstance(settled, BaseException):
+                        chat_log.async_add_assistant_content_without_tools(settled)
                 append_unresolved_tool_results(
                     chat_log,
                     entity.entity_id,
@@ -537,12 +567,14 @@ async def _async_execute_with_recovery(
                     error=err,
                 )
                 raise
-            execution_outcomes = {
-                tool_input.id: execution_outcome
-                for (_, tool_input), execution_outcome in zip(
-                    prepared, outcomes, strict=True
-                )
-            }
+            execution_outcomes.update(
+                {
+                    tool_input.id: execution_outcome
+                    for (_, tool_input), execution_outcome in zip(
+                        prepared, outcomes, strict=True
+                    )
+                }
+            )
 
         first_error: BaseException | None = None
         for tool_input in pending_tool_calls:
@@ -567,8 +599,8 @@ async def _async_execute_with_recovery(
             raise first_error
         return
 
-    # Preserve the old serial ordering: resolve, claim, then cross into
-    # validation/recovery and finally dispatch.
+    # Availability and validation precede reservation. Validation-only failures
+    # use the independent recovery allowance, never an execution slot.
     for tool_input in pending_tool_calls:
         try:
             function_tool = _resolve_current_tool(
@@ -586,7 +618,13 @@ async def _async_execute_with_recovery(
                 ):
                     continue
                 raise outcome.original
-            function_call_budget.claim(tool_input.tool_name)
+            try:
+                function_call_budget.claim(tool_input.tool_name)
+            except FunctionCallLimitReached:
+                chat_log.async_add_assistant_content_without_tools(
+                    _budget_refusal(entity.entity_id, tool_input)
+                )
+                continue
             tool_result_content = await _execute_bound(
                 entity,
                 function_tool,
@@ -659,130 +697,18 @@ async def async_execute_tool_exchange(
             chat_log, entity.entity_id, pending_tool_calls, error=error
         )
         raise error
-    if recovery_state is not None and recovery_state.enabled:
-        await _async_execute_with_recovery(
-            entity,
-            chat_log,
-            pending_tool_calls,
-            request_function_tools,
-            function_call_budget,
-            llm_context,
-            exposed_entities,
-            function_tools_factory,
-            recovery_state,
-        )
-        return
-
-    # Disabled mode deliberately retains the previous fail-fast path byte-for-byte in
-    # behavior so opting out cannot change execution, budgets, or error history.
-    request_tools_by_name = _index_tools(request_function_tools)
-    potential_parallel = resolve_parallel_safe_batch(
-        pending_tool_calls, request_tools_by_name
+    # Both policies share pre-dispatch validation and exact budget admission.
+    # Disabled recovery still propagates validation failures immediately.
+    await _async_execute_with_recovery(
+        entity,
+        chat_log,
+        pending_tool_calls,
+        request_function_tools,
+        function_call_budget,
+        llm_context,
+        exposed_entities,
+        function_tools_factory,
+        recovery_state
+        if recovery_state is not None
+        else ToolRecoveryState(enabled=False),
     )
-    parallel_batch = None
-
-    if potential_parallel is not None:
-        current_tools: dict[str, dict[str, Any]] = {}
-        resolving_call: llm.ToolInput | None = None
-        try:
-            for resolving_call in pending_tool_calls:
-                current_tools[resolving_call.tool_name] = _resolve_current_tool(
-                    entity,
-                    resolving_call,
-                    request_tools_by_name,
-                    function_tools_factory,
-                )
-        except BaseException as err:
-            append_unresolved_tool_results(
-                chat_log,
-                entity.entity_id,
-                pending_tool_calls,
-                failed_call_id=resolving_call.id
-                if resolving_call is not None
-                else None,
-                error=err,
-            )
-            raise
-        parallel_batch = resolve_parallel_safe_batch(pending_tool_calls, current_tools)
-
-    if parallel_batch is not None:
-        remaining = function_call_budget.remaining
-        try:
-            function_call_budget.claim_many(
-                tool_input.tool_name for _, tool_input in parallel_batch
-            )
-        except BaseException as err:
-            failed_index = (
-                0 if remaining is None else min(remaining, len(parallel_batch) - 1)
-            )
-            append_unresolved_tool_results(
-                chat_log,
-                entity.entity_id,
-                pending_tool_calls,
-                failed_call_id=parallel_batch[failed_index][1].id,
-                error=err,
-            )
-            raise
-
-        try:
-            outcomes = await async_execute_parallel_safe_batch_outcomes(
-                parallel_batch,
-                lambda function_tool, tool_input: entity._execute_function_tool(
-                    function_tool,
-                    tool_input,
-                    llm_context,
-                    exposed_entities,
-                ),
-            )
-        except BaseException as err:
-            append_unresolved_tool_results(
-                chat_log,
-                entity.entity_id,
-                pending_tool_calls,
-                error=err,
-            )
-            raise
-
-        first_error: BaseException | None = None
-        for (_, tool_input), outcome in zip(parallel_batch, outcomes, strict=True):
-            if isinstance(outcome, BaseException):
-                append_unresolved_tool_results(
-                    chat_log,
-                    entity.entity_id,
-                    [tool_input],
-                    failed_call_id=tool_input.id,
-                    error=outcome,
-                )
-                if first_error is None:
-                    first_error = outcome
-            else:
-                chat_log.async_add_assistant_content_without_tools(outcome)
-        if first_error is not None:
-            raise first_error
-        return
-
-    for tool_input in pending_tool_calls:
-        try:
-            function_tool = _resolve_current_tool(
-                entity,
-                tool_input,
-                request_tools_by_name,
-                function_tools_factory,
-            )
-            function_call_budget.claim(tool_input.tool_name)
-            tool_result_content = await entity._execute_function_tool(
-                function_tool,
-                tool_input,
-                llm_context,
-                exposed_entities,
-            )
-        except BaseException as err:
-            append_unresolved_tool_results(
-                chat_log,
-                entity.entity_id,
-                pending_tool_calls,
-                failed_call_id=tool_input.id,
-                error=err,
-            )
-            raise
-        chat_log.async_add_assistant_content_without_tools(tool_result_content)

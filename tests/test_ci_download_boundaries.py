@@ -166,7 +166,11 @@ def test_stable_matrix_resolves_runtime_before_selecting_its_subject(
     step = next(
         step
         for step in steps
-        if step.get("name") == "Reconcile current stable test requirements"
+        if step.get("name") == (
+            "Reconcile a compatible Home Assistant snapshot"
+            if filename == "openai-sdk-compatibility.yml"
+            else "Reconcile current stable test requirements"
+        )
     )
     assert steps.index(step) < next(
         index
@@ -188,6 +192,9 @@ def test_stable_matrix_resolves_runtime_before_selecting_its_subject(
 python() {
   if [[ "$1" == -c && "$2" == *https://pypi.org/pypi/homeassistant/json* ]]; then
     printf '2026.11.0\n'
+  elif [[ "$1" == -m && "$2" == venv ]]; then
+    mkdir -p "$3/bin"
+    printf ':\n' > "$3/bin/activate"
   elif [[ "$1" == ci/resolve_ha_test_plugin.py && "$2" == 2026.11.0 ]]; then
     printf 'compatible-fixtures\n'
   else
@@ -204,10 +211,12 @@ bash() {
 """
     output, receipt = tmp_path / "outputs", tmp_path / "receipt"
     result = subprocess.run(
-        [bash, "--noprofile", "--norc", "-c", stubs + step["run"]],
+        [bash, "--noprofile", "--norc", "-c", stubs + step["run"].replace("${{ matrix.ha }}", "stable")],
         env={
             **os.environ,
             "GITHUB_ENV": output.as_posix(),
+            "GITHUB_PATH": (tmp_path / "github-path").as_posix(),
+            "RUNNER_TEMP": tmp_path.as_posix(),
             "RECONCILIATION_RECEIPT": receipt.as_posix(),
             "RECONCILIATION_RESULT": "0" if reconciliation_succeeds else "42",
         },

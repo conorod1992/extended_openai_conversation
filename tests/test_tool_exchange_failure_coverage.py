@@ -39,6 +39,7 @@ def _harness(call_ids: tuple[str, ...] = ("a", "b")):
         remaining=None,
         claim=MagicMock(),
         claim_many=MagicMock(),
+        claim_prefix=MagicMock(side_effect=lambda names: len(tuple(names))),
     )
     return pending, tools, pairs, chat_log, entity, budget
 
@@ -97,19 +98,19 @@ async def test_parallel_resolution_failure_closes_batch_before_budget_claim(
 
 @pytest.mark.parametrize(
     ("remaining", "expected_failed_call_id"),
-    [(None, "a"), (1, "b")],
+    [(None, "a"), (1, "a")],
 )
 @pytest.mark.asyncio
-async def test_recovery_parallel_budget_failure_marks_exhausted_call(
+async def test_recovery_parallel_reservation_failure_propagates(
     monkeypatch: pytest.MonkeyPatch,
     remaining: int | None,
     expected_failed_call_id: str,
 ) -> None:
     """Parallel budget failure is attributed after validation without dispatch."""
     pending, tools, pairs, chat_log, entity, budget = _harness()
-    error = RuntimeError("budget exhausted")
+    error = RuntimeError("reservation failed")
     budget.remaining = remaining
-    budget.claim_many.side_effect = error
+    budget.claim_prefix.side_effect = error
     unresolved = MagicMock()
 
     monkeypatch.setattr(
@@ -248,12 +249,11 @@ async def test_parallel_executor_failure_closes_entire_batch(
         ),
     )
     monkeypatch.setattr(tool_exchange, "append_unresolved_tool_results", unresolved)
-    if recovery_enabled:
-        monkeypatch.setattr(
-            tool_exchange,
-            "_async_validate_recoverable_call",
-            AsyncMock(side_effect=pending),
-        )
+    monkeypatch.setattr(
+        tool_exchange,
+        "_async_validate_recoverable_call",
+        AsyncMock(side_effect=pending),
+    )
     execute_parallel = AsyncMock(side_effect=error)
     monkeypatch.setattr(
         tool_exchange, "async_execute_parallel_safe_batch_outcomes", execute_parallel
@@ -359,6 +359,9 @@ async def test_legacy_parallel_multiple_failures_are_recorded_before_first_is_ra
 ) -> None:
     """Disabled recovery records every parallel failure before propagating the first."""
     pending, tools, pairs, chat_log, entity, budget = _harness(("a", "b", "c"))
+    monkeypatch.setattr(
+        tool_exchange, "_async_validate_recoverable_call", AsyncMock(side_effect=pending)
+    )
     first_error = RuntimeError("first failure")
     later_error = ValueError("later failure")
     unresolved = MagicMock()

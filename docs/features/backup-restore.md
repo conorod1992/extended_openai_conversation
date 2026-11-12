@@ -114,3 +114,20 @@ active conversation bindings. A failed restore does not resume saving a private
 conversation when its prior state is recovered.
 
 Local recovery snapshots also preserve content-free active unretained sessions. These sessions are excluded from portable backups and durable Archive metadata, and recovery validation rejects any turns attached to them.
+
+Reviewed public sharing also recognizes these credential field families, with
+case/separator variants: `Ocp-Apim-Subscription-Key`, `X-Auth-Key`,
+`x-functions-key`, `access_key`, `private_key`, `app_key`, and `license_key`.
+The check covers HTTP parameters (including encoded URL names), nested/JSON
+payloads and schema instance literals. The whole credential-bearing Function or
+Rule is omitted, rather than exporting partially rewritten executable code.
+Type-only schema declarations and credential metadata such as `access_key_name`
+remain portable. This export policy does not change live configuration, private
+backup contents or historical destination-bound credential recovery.
+
+`appid` is classified as a credential for query/REST parameters and nested/JSON request payloads directed to the
+recognized OpenWeather API hosts (`api.openweathermap.org`, `pro.openweathermap.org`, and `history.openweathermap.org`).
+Generic application IDs, unknown providers and opaque/template payload aliases
+remain ambiguous reviewed content. Arbitrary `key` names outside the existing
+HTTP credential context are not globally classified as secrets. Review still
+requires checking authored content; these checks are not a secret-free guarantee.

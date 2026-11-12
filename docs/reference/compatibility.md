@@ -75,3 +75,27 @@ Cumulative snapshots or repeated full identities on later chunks cannot be
 reliably distinguished from legitimate fragments. Compatible endpoints must
 emit identity deltas rather than such snapshots; the integration does not guess
 or deduplicate them. Responses API identity events retain their separate rules.
+
+## Python SDK requirement
+
+The declared SDK range remains `openai>=2.21.0,<=3.26.0`. The review on
+2026-11-12 found that the minimum HA 2026.7.0 pins 2.21.0, current stable
+2026.11.1 pins 3.26.0, and HA dev commit
+`fd864375b04b2b4ed1d6c383a4bd8b0293d6e809` pins 3.26.0. Both their
+`openai_conversation` manifests and Core package constraints were inspected;
+Cloud manifests agree where Cloud is present. Cloud is not a new dependency.
+
+PyPI's latest stable SDK was 3.49.0. Widening to `<4` would admit SDKs without
+verified compatible supported HA runtime evidence here. Keep the narrower
+ceiling until a compatible HA snapshot and the existing provider/transport
+contracts validate the newer SDK. Residual risk: a future HA upgrade that pins
+a newer SDK will require another compatibility update.
+
+The existing SDK workflow now pairs 2.21.0 with HA 2026.7.0, 2.45.0 with
+2026.8.0, 3.10.0 with 2026.10.0, and 3.26.0 with current stable. SDK installs
+also use the selected HA package constraints. Each lane uses a clean environment;
+current-only gazetteer bootstrapping is replaced by installing the selected HA
+integration manifests, retaining gazetteer whenever that snapshot requires it. The advisory newer-3.x lane can
+therefore fail at dependency resolution until HA admits it; a forced incompatible
+pair is not accepted as runtime evidence. This policy never upgrades runtime
+packages or bypasses Home Assistant dependencies.

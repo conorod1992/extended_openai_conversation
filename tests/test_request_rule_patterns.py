@@ -93,6 +93,21 @@ def test_constrained_and_numeric_captures() -> None:
     assert matched_signed.captures == {"amount": "-5"}
 
 
+@pytest.mark.parametrize("thing", ["kitchen", "Home Office", "AC/DC", "!", "#desk", "room-2"])
+@pytest.mark.parametrize("separator", ["", ","])
+def test_explicit_optional_capture_separator_preserves_display(thing, separator):
+    pattern = compile_sentence_pattern("turn on {thing}[,] please")
+    match = pattern.match(f"turn on {thing}{separator} please")
+    assert match is not None
+    assert match.captures == {"thing": thing}
+
+
+@pytest.mark.parametrize("display", ["Home Office", "HOME OFFICE", "home office"])
+def test_constrained_capture_returns_input_display_casing(display):
+    pattern = compile_sentence_pattern("set {room=home office|kitchen} mode")
+    assert pattern.match(f"set {display} mode").captures == {"room": display}
+
+
 def test_repeated_optionals_have_bounded_work() -> None:
     """The Hassil exponential repro should remain small in the bounded matcher."""
     pattern = compile_sentence_pattern(" ".join(["[a]"] * 20 + ["b"]))

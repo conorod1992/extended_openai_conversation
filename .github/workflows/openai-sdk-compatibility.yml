@@ -29,6 +29,17 @@ jobs:
       fail-fast: false
       matrix:
         sdk: ["2.21.0", "2.45.0", "3.10.0", "3.26.0", latest-3x-early-warning]
+        include:
+          - sdk: "2.21.0"
+            ha: "2026.7.0"
+          - sdk: "2.45.0"
+            ha: "2026.8.0"
+          - sdk: "3.10.0"
+            ha: "2026.10.0"
+          - sdk: "3.26.0"
+            ha: stable
+          - sdk: latest-3x-early-warning
+            ha: stable
     container:
       image: ghcr.io/${{ github.repository_owner }}/extended-openai-ci-stable:ha-stable
       credentials:
@@ -45,10 +56,28 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Reconcile current stable test requirements
+      - name: Install native build tools for isolated snapshots
+        # The runtime image omits its builder's compiler. Older HA snapshots
+        # can require source builds of their declared audio dependencies.
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends g++
+      - name: Reconcile a compatible Home Assistant snapshot
         run: |
           set -euo pipefail
-          VERSION="$(python -c 'import json; from urllib.request import urlopen; print(json.load(urlopen("https://pypi.org/pypi/homeassistant/json", timeout=30))["info"]["version"])')"
+          VERSION="${{ matrix.ha }}"
+          if [ "$VERSION" = stable ]; then
+            VERSION="$(python -c 'import json; from urllib.request import urlopen; print(json.load(urlopen("https://pypi.org/pypi/homeassistant/json", timeout=30))["info"]["version"])')"
+          fi
+          # A current image can retain dependencies not used by older HA.
+          # Use a clean venv; install integration dependencies from the selected
+          # HA manifests via the existing reconciliation script. Gazetteer is a
+          # bootstrap for current HA, not a universal historical requirement.
+          python -m venv "$RUNNER_TEMP/sdk-venv"
+          source "$RUNNER_TEMP/sdk-venv/bin/activate"
+          echo "$RUNNER_TEMP/sdk-venv/bin" >> "$GITHUB_PATH"
+          export EOAI_TEST_REQUIREMENTS="$RUNNER_TEMP/sdk-test-requirements.txt"
+          grep -v '^gazetteer-matcher==' requirements_test.txt > "$EOAI_TEST_REQUIREMENTS"
           PLUGIN_VERSION="$(python ci/resolve_ha_test_plugin.py "$VERSION")"
           export EOAI_EXPECTED_HA_VERSION="$VERSION"
           export EOAI_EXPECTED_HA_TEST_PLUGIN_VERSION="$PLUGIN_VERSION"
@@ -63,7 +92,10 @@ jobs:
           else
             SPEC="openai==${{ matrix.sdk }}"
           fi
-          python -m pip install --upgrade "$SPEC"
+          # Do not turn a wire pass into evidence for an unsupported HA/SDK pair.
+          # The advisory lane may stop here until HA admits a newer 3.x SDK.
+          CONSTRAINTS="$(python -c 'from pathlib import Path; import homeassistant; print(Path(homeassistant.__file__).parent / "package_constraints.txt")')"
+          python -m pip install --upgrade --constraint "$CONSTRAINTS" "$SPEC"
           python -m pip check
           python -c 'import openai; print("OpenAI SDK under test:", openai.__version__)'
       - name: Run focused real SDK wire contract
@@ -96,7 +128,6 @@ jobs:
 
   ha-manifest-constraints:
     name: Manifest requirements / HA ${{ matrix.track }}
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:

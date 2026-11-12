@@ -92,6 +92,7 @@ class _TaskDriver:
         self.entity._execute_function_tool = self._execute
         self.entity._async_handle_chat_log = self._provider
         self.mode = "success"
+        self.overflow = False
         self.text = "Acknowledged"
         self.dispatched = asyncio.Event()
         self.serial = count()
@@ -120,17 +121,20 @@ class _TaskDriver:
                 tool_args={"invalid": True} if self.mode == "reject" else {},
                 id=f"call-{next(self.serial)}",
             )
+            calls = [call]
+            if self.overflow:
+                calls.append(llm.ToolInput(tool_name=call.tool_name, tool_args={}, id=f"call-{next(self.serial)}"))
             log.content.append(
                 conversation.AssistantContent(
-                    agent_id=self.entity.entity_id, tool_calls=[call]
+                    agent_id=self.entity.entity_id, tool_calls=calls
                 )
             )
             await async_execute_tool_exchange(
                 self.entity,
                 log,
-                [call],
+                calls,
                 function_tools,
-                FunctionCallBudget(10),
+                FunctionCallBudget(1 if self.overflow else 10),
                 self.context,
                 [],
             )
@@ -183,9 +187,11 @@ def _assert_acknowledged(entity):
 
 
 @pytest.mark.parametrize("reused_conversation", [False, True])
+@pytest.mark.parametrize("overflow", [False, True])
 async def test_successful_ai_tasks_release_receipts_before_retention_eviction(
-    task_driver, monkeypatch, reused_conversation
+    task_driver, monkeypatch, reused_conversation, overflow
 ):
+    task_driver.overflow = overflow
     monkeypatch.setattr(guard, "_MAX_DISPATCH_RECORDS", 2)
     monkeypatch.setattr(guard, "_MAX_RETIRED_CONVERSATIONS", 2)
     monkeypatch.setattr(outcomes, "_MAX_RETAINED_EFFECT_RECEIPTS", 2)
@@ -200,10 +206,12 @@ async def test_successful_ai_tasks_release_receipts_before_retention_eviction(
     assert task_driver.instance.tools == [task_driver.tool]
 
 
+@pytest.mark.parametrize("overflow", [False, True])
 @pytest.mark.parametrize("failure", ["provider_error", "cancel", "tool_error"])
 async def test_failed_ai_task_continuations_retain_effects_until_acknowledged(
-    task_driver, failure
+    task_driver, failure, overflow
 ):
+    task_driver.overflow = overflow
     log = task_driver.log("failed-task")
     task_driver.mode = failure
     if failure == "cancel":
@@ -281,9 +289,11 @@ async def test_rejected_ai_task_tools_do_not_retire_effect_history(
 
 
 @pytest.mark.parametrize("invalid_result", ["not JSON", '{"answer":"wrong type"}'])
+@pytest.mark.parametrize("overflow", [False, True])
 async def test_structured_output_failure_follows_provider_acknowledgement(
-    task_driver, invalid_result
+    task_driver, invalid_result, overflow
 ):
+    task_driver.overflow = overflow
     log = task_driver.log("structured-task")
     task_driver.text = invalid_result
     with pytest.raises(HomeAssistantError, match=r"structured|structure"):
