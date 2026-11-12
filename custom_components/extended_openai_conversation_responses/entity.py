@@ -638,6 +638,8 @@ def _serialize_response_item(item: Any) -> dict[str, Any]:
 def _convert_content_to_responses_param(
     chat_content: Iterable[conversation.Content],
     prepared_user_content: Mapping[int, Any] | None = None,
+    *,
+    include_reasoning: bool = True,
 ) -> list[dict[str, Any]]:
     """Convert Home Assistant chat content to Responses API input items."""
     items: list[dict[str, Any]] = []
@@ -659,7 +661,7 @@ def _convert_content_to_responses_param(
         if isinstance(content, conversation.AssistantContent):
             native = content.native
             native_type = getattr(native, "type", "") if native is not None else ""
-            if native_type in {
+            if (include_reasoning or native_type != "reasoning") and native_type in {
                 "reasoning",
                 "web_search_call",
                 "message",
@@ -990,6 +992,21 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     strict=True,
                 )
             }
+
+            def responses_input(
+                content: Iterable[conversation.Content],
+            ) -> list[dict[str, Any]]:
+                return _convert_content_to_responses_param(
+                    content,
+                    prepared_user_content,
+                    include_reasoning=provider_snapshot.reasoning_supported,
+                )
+
+            # Initial attachment preparation precedes the final capability snapshot.
+            # Rebuild only the wire projection, retaining the encoded attachments and
+            # all stored history so a later reasoning model can replay it again.
+            if provider_snapshot.api_mode == API_MODE_RESPONSES:
+                messages = responses_input(chat_log.content)
             api_kwargs = dict(provider_snapshot.api_kwargs)
             # Use the effective wire request, not a saved setting that may differ.
             effective_output_limit = next(
@@ -1164,7 +1181,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     # Keep attachments/history intact while updating the system item in
                     # both provider formats. This is the actual diagnostic input too.
                     primary_items = (
-                        _convert_content_to_responses_param([chat_log.content[0]])
+                        responses_input([chat_log.content[0]])
                         if api_mode == API_MODE_RESPONSES
                         else _convert_content_to_param(
                             [chat_log.content[0]], shorten_tool_call_id
@@ -1186,9 +1203,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     tools: Any = tool_kwargs.get("tools"),
                 ) -> int:
                     prepared = (
-                        _convert_content_to_responses_param(
-                            content, prepared_user_content
-                        )
+                        responses_input(content)
                         if api_mode == API_MODE_RESPONSES
                         else _convert_content_to_param(
                             content, shorten_tool_call_id, prepared_user_content
@@ -1216,9 +1231,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     # remove the exact prefix it owns. End-of-turn deferral remains.
                     await async_apply_context_summary(self, chat_log)
                     messages = (
-                        _convert_content_to_responses_param(
-                            chat_log.content, prepared_user_content
-                        )
+                        responses_input(chat_log.content)
                         if api_mode == API_MODE_RESPONSES
                         else _convert_content_to_param(
                             chat_log.content,
@@ -1242,9 +1255,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                         )
                     ):
                         messages = (
-                            _convert_content_to_responses_param(
-                                chat_log.content, prepared_user_content
-                            )
+                            responses_input(chat_log.content)
                             if api_mode == API_MODE_RESPONSES
                             else _convert_content_to_param(
                                 chat_log.content,
@@ -1598,7 +1609,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
                 if api_mode == API_MODE_RESPONSES:
                     messages.extend(
-                        _convert_content_to_responses_param(
+                        responses_input(
                             content
                             for content in chat_log.content
                             if id(content) not in existing_content_ids
@@ -1705,9 +1716,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             if context_measurement is not None:
                 measured_prefix = chat_log.content[: context_measurement.history_length]
                 prepared_prefix = (
-                    _convert_content_to_responses_param(
-                        measured_prefix, prepared_user_content
-                    )
+                    responses_input(measured_prefix)
                     if api_mode == API_MODE_RESPONSES
                     else _convert_content_to_param(
                         measured_prefix, shorten_tool_call_id, prepared_user_content
@@ -1717,9 +1726,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     observed_input_tokens = context_measurement.tokens
                 else:
                     prepared_current = (
-                        _convert_content_to_responses_param(
-                            chat_log.content, prepared_user_content
-                        )
+                        responses_input(chat_log.content)
                         if api_mode == API_MODE_RESPONSES
                         else _convert_content_to_param(
                             chat_log.content,
