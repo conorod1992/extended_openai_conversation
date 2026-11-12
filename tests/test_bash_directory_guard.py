@@ -202,3 +202,8 @@ def test_crlf_delimiter_cannot_hide_executable_tail(tmp_path):
         BashFunction()._guard_command(
             "cat <<EOF\r\ntext\nEOF\r\ncd ..\n", tmp_path, True
         )
+
+
+def test_continued_comment_cannot_introduce_a_fake_heredoc(tmp_path):
+    with pytest.raises(ValueError, match="outside working directory"):
+        BashFunction()._guard_command("\\\n# <<EOF\ncd ..\nEOF\n", tmp_path, True)

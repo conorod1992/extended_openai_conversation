@@ -167,6 +167,10 @@ def _shell_command_tokens(
         word: list[str] = []
         while index < len(command):
             char = command[index]
+            if skip_heredoc_bodies and not word and quote is None and char == "#":
+                # An escaped newline alone does not start a shell word; let the
+                # outer loop recognize the following comment, not its fake <<.
+                break
             if char == "\\" and quote != "'":
                 # POSIX shells remove escaped newlines before tokenization,
                 # including inside double quotes. shlex retains the newline.
