@@ -919,6 +919,11 @@ class PersistentMemory:
                     raise ValueError(
                         "implicit updates cannot replace an explicitly confirmed memory"
                     )
+                changes["source"] = current.source
+            if all(value == getattr(current, field) for field, value in changes.items()):
+                # Validation and recovery barriers still apply to no-ops. Only
+                # the regenerable cache may need an independently settled retry.
+                await async_settle_owned_operation(self._async_save_embedding_cache_locked())
                 return current
             _set_updated_at_if_substantive(current, changes, timestamp)
             updated = self._replace_record(current, **changes)
