@@ -765,6 +765,23 @@ class DelayedToolManager:
                     bind_active_ha_context(execution_context),
                     bind_request_satellite(record.satellite_id),
                 ):
+                    exposed_entities = get_exposed_entities(self.hass)
+                    due_at = dt_util.parse_datetime(record.due_at)
+                    if due_at is not None:
+                        scheduled_utc = dt_util.as_utc(due_at)
+                        lateness = (dt_util.utcnow() - scheduled_utc).total_seconds()
+                        if lateness > 300:
+                            # Persisted IDs need not be UUIDs. Hash rather than
+                            # logging an arbitrary stored identifier or tool data.
+                            safe_id = hashlib.sha256(
+                                record.call_id.encode()
+                            ).hexdigest()[:12]
+                            _LOGGER.warning(
+                                "Delayed job %s is starting %.1f seconds late (scheduled UTC: %s)",
+                                safe_id,
+                                lateness,
+                                scheduled_utc.isoformat(),
+                            )
                     await agent._execute_function_tool(
                         current_tool,
                         llm.ToolInput(
@@ -774,7 +791,7 @@ class DelayedToolManager:
                             external=True,
                         ),
                         delayed_context,
-                        get_exposed_entities(self.hass),
+                        exposed_entities,
                     )
             except Exception:
                 _LOGGER.exception(

@@ -10,6 +10,7 @@ from functools import partial
 import logging
 import re
 from typing import Any
+from urllib.parse import urlsplit
 
 from .const import (
     CONF_SPEECH_PROCESSING_ENABLED,
@@ -41,7 +42,8 @@ _EMPHASIS_TOKENS = {"*": re.compile(r"`+|\*"), "_": re.compile(r"`+|_")}
 _NUMERIC_EMPHASIS_PREFIX = re.compile(r"[+-]?(?:\d+(?:\.\d*)?)?\*{0,2}\Z")
 _NUMERIC_EMPHASIS_COMPLETE = re.compile(r"[+-]?\d+(?:\.\d+)?\*\*(?=$|[\s.,;:!?])")
 
-# Keep the existing address-removal contract without guessing a label's meaning.
+# A dotted label alone cannot distinguish a filename/product from a hostname.
+# Use this address shape only together with the link's destination host.
 _ADDRESS_LINK_LABEL = re.compile(
     r"(?:www\.)?[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:/[^\s]*)?",
     re.IGNORECASE,
@@ -366,15 +368,27 @@ class StreamingSpeechSanitizer:
             cursor += 1
         return False
 
-    def _emit_link_label(self, output: list[str], label: str) -> bool:
-        """Speak nonempty labels unless the label itself is a URL or address."""
+    def _emit_link_label(self, output: list[str], label: str, destination: str) -> bool:
+        """Speak labels except explicit URLs and matching destination hosts."""
         label = label.strip()
-        if (
-            not label
-            or label.casefold().startswith(("http://", "https://", "www."))
-            or _ADDRESS_LINK_LABEL.fullmatch(label)
-        ):
+        if not label or label.casefold().startswith(("http://", "https://", "www.")):
             return False
+        if _ADDRESS_LINK_LABEL.fullmatch(label):
+            try:
+                host = urlsplit(
+                    "//" + destination
+                    if destination.casefold().startswith("www.")
+                    else destination
+                ).hostname
+            except ValueError:
+                host = None
+            label_host = (
+                label.partition("/")[0].casefold().removeprefix("www.").rstrip(".")
+            )
+            if host and label_host == host.casefold().removeprefix("www.").rstrip("."):
+                return False
+            # Mismatched hostname-like labels are authored readable text too.
+            # Preserve them rather than inferring meaning from file extensions.
         self._emit(output, label)
         return True
 
@@ -433,7 +447,9 @@ class StreamingSpeechSanitizer:
                         )
                         label_end = text.find("]", link_start + 1)
                         if text[index + 1] == "!" or not self._emit_link_label(
-                            output, text[link_start + 1 : label_end]
+                            output,
+                            text[link_start + 1 : label_end],
+                            text[label_end + 2 : link_end - 1],
                         ):
                             self._suppress(output, end)
                         index = end
@@ -519,7 +535,9 @@ class StreamingSpeechSanitizer:
                 if status == "complete":
                     label_end = text.find("]", markdown_start + 1)
                     if char == "!" or not self._emit_link_label(
-                        output, text[markdown_start + 1 : label_end]
+                        output,
+                        text[markdown_start + 1 : label_end],
+                        text[label_end + 2 : link_end - 1],
                     ):
                         self._suppress(output, link_end)
                     index = link_end

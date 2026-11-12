@@ -141,7 +141,7 @@ async def test_statistics_selection_has_a_runtime_upper_bound(
         )
 
 
-async def test_energy_configuration_rejects_hidden_entity_ids(
+async def test_energy_configuration_filters_hidden_entity_ids(
     hass, exposed_entities, monkeypatch
 ) -> None:
     """Energy preferences cannot disclose entity IDs hidden from Assist."""
@@ -157,6 +157,8 @@ async def test_energy_configuration_rejects_hidden_entity_ids(
                     "type": "grid",
                     "stat_energy_from": "sensor.secret_energy",
                     "stat_cost": "utility:cost",
+                    "cost_adjustment_day": 0,
+                    "name": "Private source metadata",
                 }
             ],
             "device_consumption": [],
@@ -167,8 +169,9 @@ async def test_energy_configuration_rejects_hidden_entity_ids(
         AsyncMock(return_value=manager),
     )
 
-    with pytest.raises(HomeAssistantError, match="not exposed to Assist"):
-        await function.get_energy(hass, {}, {}, None, exposed_entities)
+    assert await function.get_energy(hass, {}, {}, None, exposed_entities) == {
+        "energy_sources": [], "device_consumption": [],
+    }
 
 
 async def test_energy_configuration_keeps_external_statistics_supported(

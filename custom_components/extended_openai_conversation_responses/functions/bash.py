@@ -84,32 +84,95 @@ def _without_shell_comments(command: str) -> str:
     return "".join(result)
 
 
-def _shell_command_tokens(command: str) -> list[tuple[str, bool]]:
+def _shell_command_tokens(
+    command: str, *, skip_heredoc_bodies: bool = False
+) -> list[tuple[str, bool]]:
     """Retain whether words and operator runs were unquoted and unescaped.
 
     ``shlex`` alone removes that distinction, making a quoted semicolon look
     like a command boundary. Decode words with shlex only after finding their
     quote-aware boundaries. This remains a defensive lexer, not a shell parser.
+    Directory checks can omit ordinary heredoc bodies, consumed in declaration
+    order at the next newline. Unquoted substitutions are unverifiable and fail
+    closed in that mode; the other guards retain their existing behavior.
     """
-    command = _without_shell_comments(command)
+    if not skip_heredoc_bodies:
+        command = _without_shell_comments(command)
     tokens: list[tuple[str, bool]] = []
+    pending: list[tuple[str, bool, bool]] = []
+    delimiter_next = False
+    strip_tabs_next = False
+    arithmetic_depth = 0
     operators = "();&|<>\n"
     whitespace = " \t\r"
     index = 0
     while index < len(command):
+        if skip_heredoc_bodies and command[index] == "#":
+            newline = command.find("\n", index)
+            index = len(command) if newline < 0 else newline
+            continue
+        if skip_heredoc_bodies and command[index] == "\n":
+            if pending and index and command[index - 1] == "\r":
+                # Bash can include CR in an unquoted delimiter, unlike this
+                # lexer's whitespace rules. Never hide a tail on that mismatch.
+                raise ValueError(
+                    "Command blocked: heredoc CRLF delimiter cannot be verified"
+                )
+            if delimiter_next:
+                raise ValueError("Command blocked: missing heredoc delimiter")
+            tokens.append(("\n", True))
+            index += 1
+            for delimiter, strip_tabs, quoted in pending:
+                while index < len(command):
+                    end = command.find("\n", index)
+                    end = len(command) if end < 0 else end + 1
+                    line = command[index:end].removesuffix("\n")
+                    index = end
+                    if (line.lstrip("\t") if strip_tabs else line) == delimiter:
+                        break
+                    if not quoted and (
+                        line.endswith("\\") or any(char in line for char in "$`")
+                    ):
+                        raise ValueError(
+                            "Command blocked: heredoc substitution or continuation cannot be verified"
+                        )
+            pending.clear()
+            continue
         if command[index] in whitespace:
             index += 1
             continue
         start = index
         if command[index] in operators:
-            while index < len(command) and command[index] in operators:
+            while (
+                index < len(command)
+                and command[index] in operators
+                and not (skip_heredoc_bodies and command[index] == "\n")
+            ):
                 index += 1
-            tokens.append((command[start:index], True))
+            operator = command[start:index]
+            if skip_heredoc_bodies and (arithmetic_depth or "((" in operator):
+                arithmetic_depth = max(
+                    0, arithmetic_depth + operator.count("(") - operator.count(")")
+                )
+            tokens.append((operator, True))
+            delimiter_next = (
+                skip_heredoc_bodies
+                and not arithmetic_depth
+                and operator.endswith("<<")
+                and not operator.endswith("<<<")
+            )
+            strip_tabs_next = delimiter_next and command[index : index + 1] == "-"
+            if strip_tabs_next:
+                index += 1
             continue
         quote: str | None = None
         word: list[str] = []
         while index < len(command):
             char = command[index]
+            if skip_heredoc_bodies and not word and quote is None and char == "#":
+                # An escaped newline alone does not start a shell word; let the
+                # outer loop recognize the following comment, not its fake <<.
+                break
             if char == "\\" and quote != "'":
                 # POSIX shells remove escaped newlines before tokenization,
                 # including inside double quotes. shlex retains the newline.
@@ -131,6 +194,22 @@ def _shell_command_tokens(command: str) -> list[tuple[str, bool]]:
             continue
         value = shlex.split(raw, comments=False, posix=True)[0]
         tokens.append((value, value == raw))
+        if (
+            skip_heredoc_bodies
+            and any(char in raw for char in "$`")
+            and not (raw == "$" and command[index : index + 2] == "((")
+        ):
+            # Do not guess whether << inside expansion-like syntax is a
+            # redirection. Keep the original token analysis for this script.
+            return _shell_command_tokens(command)
+        if delimiter_next:
+            delimiter = value
+            if "\n" in delimiter or any(char in delimiter for char in "$`"):
+                raise ValueError(
+                    "Command blocked: heredoc delimiter cannot be verified"
+                )
+            pending.append((delimiter, strip_tabs_next, value != raw))
+            delimiter_next = False
     return tokens
 
 
@@ -394,22 +473,77 @@ class BashFunction(Function):
         # not an OS sandbox: arbitrary executable code can construct paths
         # dynamically, so callers must still treat Bash as trusted.
         if restrict_to_workspace:
+            uncommented = _without_shell_comments(command)
             # Block path traversal patterns.
-            if "../" in command or "..\\" in command:
+            if "../" in uncommented or "..\\" in uncommented:
                 raise ValueError("Command blocked: path traversal detected")
 
-            # Block directory changes that would escape the configured cwd even when
-            # the command uses the bare `cd ..` form rather than a ../ path token.
-            for match in re.finditer(
-                r"(?:^|[;&|]\s*)cd\s+([^\s;&|]+)", command, re.IGNORECASE
-            ):
-                raw_target = match.group(1).strip("\"'")
-                if not raw_target or raw_target == ".":
+            # Inspect executable positions, preserving the lexer's distinction
+            # between real operators and harmless quoted command-like text.
+            tokens = _shell_command_tokens(command, skip_heredoc_bodies=True)
+            at_command = True
+            wrapper_options = False
+            for index, (word, literal) in enumerate(tokens):
+                if literal and word and all(char in "();&|\n" for char in word):
+                    at_command = True
+                    wrapper_options = False
                     continue
-                if any(token in raw_target for token in ("$", "`", "$(`")):
+                if not at_command:
+                    continue
+                if word in {"command", "builtin"}:
+                    wrapper_options = True
+                    continue
+                if wrapper_options and word in {"--", "-p"}:
+                    continue
+                if literal and word in {
+                    "if",
+                    "then",
+                    "elif",
+                    "else",
+                    "while",
+                    "until",
+                    "do",
+                    "!",
+                    "{",
+                    "}",
+                }:
+                    continue
+                if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", word):
+                    continue
+                at_command = False
+                if word not in {"cd", "pushd", "popd"}:
+                    continue
+                if word == "popd":
                     raise ValueError(
-                        "Command blocked: dynamic cd target cannot be verified"
+                        "Command blocked: directory stack target cannot be verified"
                     )
+                target_index = index + 1
+                flags = {"-L", "-P", "-e"} if word == "cd" else {"-n"}
+                while target_index < len(tokens) and tokens[target_index][0] in flags:
+                    target_index += 1
+                if target_index < len(tokens) and tokens[target_index][0] == "--":
+                    target_index += 1
+                raw_target = (
+                    tokens[target_index][0] if target_index < len(tokens) else ""
+                )
+                if any(char in raw_target for char in "$`"):
+                    raise ValueError(
+                        f"Command blocked: dynamic {word} target cannot be verified"
+                    )
+                if (
+                    not raw_target
+                    or raw_target.startswith(("-", "+", "~"))
+                    or any(char in raw_target for char in "*?[]{}")
+                    or (
+                        tokens[target_index][1]
+                        and any(char in "();&|<>\n" for char in raw_target)
+                    )
+                ):
+                    raise ValueError(
+                        "Command blocked: directory change target cannot be verified"
+                    )
+                if raw_target == ".":
+                    continue
                 cd_target = Path(raw_target)
                 if not cd_target.is_absolute():
                     cd_target = cwd_path / cd_target
@@ -420,7 +554,7 @@ class BashFunction(Function):
                     )
 
             # Extract and validate literal absolute paths in command text.
-            win_paths = re.findall(r"[A-Za-z]:\\[^\\\"\' ]+", command)
+            win_paths = re.findall(r"[A-Za-z]:\\[^\\\"\' ]+", uncommented)
             # Tokenize shell operators before recognizing URLs: a URL argument
             # must not hide a following command or redirection. This remains a
             # defensive literal-path guard, not a sandbox for arbitrary Bash.

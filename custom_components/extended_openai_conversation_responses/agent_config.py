@@ -329,6 +329,11 @@ AGENT_CONFIG_DEFAULTS = MappingProxyType(
 AGENT_CONFIG_FIELDS = frozenset(
     {*AGENT_CONFIG_DEFAULTS, CONF_REASONING_EFFORT, CONF_SERVICE_TIER}
 )
+# Runtime deliberately treats these absent legacy keys as disabled. Creation
+# still uses AGENT_CONFIG_DEFAULTS; only persisted reads/edits use this baseline.
+LEGACY_CONTEXT_DEFAULTS = MappingProxyType(
+    {CONF_CURRENT_DATETIME_ENABLED: False, CONF_EXPOSED_ENTITIES_ENABLED: False}
+)
 GUEST_V2_FIELDS = frozenset(
     {
         CONF_GUEST_POLICY_VERSION,
@@ -422,15 +427,19 @@ def project_agent_config_transfer(
     *,
     preserve_unknown: bool = False,
 ) -> dict[str, Any]:
-    """Project a normalized transfer without adopting model/legacy Guest defaults.
+    """Project a transfer without adopting defaults for meaningful omissions.
 
     Takes ownership of the fresh normalized dictionary, never the raw source.
-    Ordinary defaults (including sampling) remain materialized. Recovery transfers
+    Legacy context and Guest policy omissions retain runtime semantics. Ordinary
+    defaults (including sampling) remain materialized. Recovery transfers
     can retain opaque fields; versioned portable documents keep their strict schema.
     """
     result = preserve_agent_model_setting_omissions(
         source, preserve_legacy_guest_policy(source, normalized)
     )
+    for key in LEGACY_CONTEXT_DEFAULTS:
+        if key not in source:
+            result.pop(key, None)
     if preserve_unknown:
         result.update(
             (key, deepcopy(value))
@@ -1357,6 +1366,7 @@ def merge_agent_config(
             "config", "unknown fields: " + ", ".join(sorted(unknown))
         )
     known = {key: value for key, value in current.items() if key in AGENT_CONFIG_FIELDS}
+    known = {**LEGACY_CONTEXT_DEFAULTS, **known}
     if CONF_FUNCTION_TOOLS not in updates and validated_functions is None:
         # Untouched fields belong to an existing agent, not a new collection edit.
         # Decode before merging so legacy falsy values and YAML null stay distinct.
@@ -1445,7 +1455,7 @@ def normalize_persisted_agent_config(
     list. Truthy YAML that decodes to null/[] means an empty collection. Once
     decoded, never apply the persisted fallback to that decoded value again.
     """
-    source = dict(data)
+    source = {**LEGACY_CONTEXT_DEFAULTS, **data}
     source[CONF_FUNCTION_TOOLS] = (
         data.get(CONF_FUNCTION_TOOLS)
         if preparsed_function_tools

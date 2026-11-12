@@ -34,6 +34,102 @@ from tests_real_ha.test_acceptance_lifecycle import _make_entry, _setup_entry
 _EXPOSED = [{"entity_id": "sensor.recorder_acceptance"}]
 
 
+async def test_energy_filters_real_assist_read_and_guest_boundaries(
+    hass: HomeAssistant, caplog
+):
+    """A loaded Energy manager must never publish inaccessible source metadata."""
+    from copy import deepcopy
+
+    from homeassistant.auth.models import Group
+    from homeassistant.auth.permissions.const import CAT_ENTITIES, POLICY_READ
+    from homeassistant.auth.permissions.entities import ENTITY_ENTITY_IDS
+    from homeassistant.components import energy
+    from pytest_homeassistant_custom_component.common import MockUser
+
+    from custom_components.extended_openai_conversation_responses.ha_permissions import (
+        async_setup_ha_permissions,
+        bind_active_ha_context,
+    )
+    from custom_components.extended_openai_conversation_responses.helpers import (
+        get_exposed_entities,
+    )
+    from custom_components.extended_openai_conversation_responses.native_read_scope import (
+        native_read_scope,
+    )
+
+    ids = [
+        f"sensor.energy_{name}"
+        for name in ("allowed", "unreadable", "unexposed", "guest_excluded")
+    ]
+    for entity_id in ids:
+        hass.states.async_set(entity_id, "42")
+        async_expose_entity(hass, conversation.DOMAIN, entity_id, entity_id != ids[2])
+    user = MockUser(
+        is_owner=False,
+        groups=[
+            Group(
+                id="energy-reader",
+                name="Energy reader",
+                policy={
+                    CAT_ENTITIES: {
+                        ENTITY_ENTITY_IDS: {
+                            entity_id: {POLICY_READ: True}
+                            for entity_id in ids
+                            if entity_id != ids[1]
+                        }
+                    }
+                },
+            )
+        ],
+    )
+    user.add_to_hass(hass)
+    await async_setup_ha_permissions(hass)
+    data = {
+        "energy_sources": [
+            {
+                "type": "solar",
+                "stat_energy_from": entity_id,
+                "name": f"metadata for {entity_id}",
+                "config_entry_solar_forecast": [f"forecast for {entity_id}"],
+            }
+            for entity_id in ids
+        ],
+        "device_consumption": [],
+    }
+    energy_manager = await energy.async_get_manager(hass)
+    energy_manager.data = deepcopy(data)
+    admitted = [{"entity_id": entity_id} for entity_id in ids]
+    # Fixture state creation legitimately appears in HA's own debug log. Only
+    # capture the reads below when checking for disclosure by the Energy tool.
+    caplog.clear()
+    with bind_active_ha_context(Context(user_id=user.id)):
+        result = await NativeFunction().get_energy(hass, {}, {}, None, admitted)
+        assert result["energy_sources"] == [
+            data["energy_sources"][0],
+            data["energy_sources"][3],
+        ]
+        # This is the same live, narrowing resolver used by the Guest dispatch path.
+        with native_read_scope(
+            lambda: [
+                item
+                for item in get_exposed_entities(hass)
+                if item["entity_id"] != ids[3]
+            ]
+        ):
+            result = await NativeFunction().get_energy(hass, {}, {}, None, admitted)
+        assert result["energy_sources"] == [data["energy_sources"][0]]
+        async_expose_entity(hass, conversation.DOMAIN, ids[0], False)
+        with native_read_scope(lambda: []):
+            assert await NativeFunction().get_energy(hass, {}, {}, None, admitted) == {
+                "energy_sources": [],
+                "device_consumption": [],
+            }
+    assert energy_manager.data == data
+    for hidden in ids[1:]:
+        assert hidden not in repr(result)
+        assert hidden not in caplog.text
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("current_state", ["later", "unavailable", "unknown"])
 async def test_native_history_reads_real_recorder_and_serializes_tool_result(

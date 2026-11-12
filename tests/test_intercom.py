@@ -474,6 +474,90 @@ def test_resolve_named_target_handles_whole_home_alias_and_unknown(monkeypatch, 
     assert manager.resolve_named_target("garage") is None
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        "whole house",
+        "the whole home",
+        "everybody",
+        "  WHOLE   House  ",
+        "everyone",
+        "everywhere",
+        "whole home",
+        "the whole house",
+        "all devices",
+        "all speakers",
+    ],
+)
+def test_whole_home_aliases_with_existing_normalization(hass, name):
+    catalog = {
+        group: [] for group in ("satellites", "devices", "areas", "floors", "labels")
+    }
+    assert IntercomManager(hass).resolve_named_target(name, catalog=catalog) == {
+        "whole_home": True,
+        "name": name.strip(),
+    }
+
+
+@pytest.mark.parametrize("name", ["whole house", "the whole home", "everybody"])
+@pytest.mark.parametrize(
+    "group,field",
+    [
+        ("satellites", "entity_ids"),
+        ("devices", "device_ids"),
+        ("areas", "area_ids"),
+        ("floors", "floor_ids"),
+        ("labels", "label_ids"),
+    ],
+)
+@pytest.mark.parametrize("alias", [False, True])
+def test_new_whole_home_alias_never_overrides_named_destination(
+    hass, name, group, field, alias
+):
+    catalog = {
+        key: [] for key in ("satellites", "devices", "areas", "floors", "labels")
+    }
+    catalog[group] = [
+        {
+            "id": "specific",
+            "name": "Room" if alias else name,
+            "aliases": [name.upper()] if alias else [],
+        }
+    ]
+    result = IntercomManager(hass).resolve_named_target(
+        f" {name.upper()} ", catalog=catalog
+    )
+    assert result == {field: ["specific"], "name": catalog[group][0]["name"]}
+    assert "whole_home" not in result
+
+
+def test_new_alias_keeps_ambiguous_destination_rejection(hass, monkeypatch):
+    for registry in (intercom.er, intercom.dr, intercom.ar):
+        monkeypatch.setattr(registry, "async_get", lambda _: SimpleNamespace())
+    catalog = {
+        key: [] for key in ("satellites", "devices", "areas", "floors", "labels")
+    }
+    catalog["areas"] = [
+        {"id": "one", "name": "Whole House", "aliases": []},
+        {"id": "two", "name": "Other", "aliases": ["whole house"]},
+    ]
+    with pytest.raises(HomeAssistantError, match="Ambiguous Broadcast destination"):
+        IntercomManager(hass).resolve_named_target("whole house", catalog=catalog)
+
+
+def test_new_alias_checks_the_prefix_name_matching_contract(hass):
+    catalog = {
+        key: [] for key in ("satellites", "devices", "areas", "floors", "labels")
+    }
+    catalog["areas"] = [{"id": "specific", "name": "Whole Home", "aliases": []}]
+    assert IntercomManager(hass).resolve_named_target(
+        "the whole home", catalog=catalog
+    ) == {
+        "area_ids": ["specific"],
+        "name": "Whole Home",
+    }
+
+
 def test_target_match_without_device_uses_entity_labels(hass, monkeypatch) -> None:
     """A satellite with no device registry link can still match its own labels."""
     manager = IntercomManager(hass)

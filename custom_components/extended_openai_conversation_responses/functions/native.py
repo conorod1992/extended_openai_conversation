@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable
+from copy import deepcopy
 from datetime import datetime, timedelta
 import logging
 import os
@@ -23,7 +24,7 @@ from homeassistant.const import (
     ATTR_LABEL_ID,
     SERVICE_RELOAD,
 )
-from homeassistant.core import HomeAssistant, State, valid_entity_id
+from homeassistant.core import HomeAssistant, State
 from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 from homeassistant.helpers import llm, target as target_helpers
 import homeassistant.util.dt as dt_util
@@ -107,25 +108,83 @@ def _exposed_entity_ids(exposed_entities: list[dict[str, Any]]) -> set[str]:
 
 
 def _energy_entity_ids(value: Any) -> set[str]:
-    """Collect entity IDs only from Energy fields that reference entities/stats."""
+    """Collect entity/unverifiable references, retaining the external-stat contract."""
     result: set[str] = set()
     if isinstance(value, dict):
         for key, item in value.items():
-            if (
-                isinstance(item, str)
-                and (
-                    key.startswith("entity_")
-                    or key.startswith("stat_")
-                    or key == "included_in_stat"
-                )
-                and valid_entity_id(item)
+            if isinstance(item, str) and (
+                key.startswith("entity_")
+                or key.startswith("stat_")
+                or key == "included_in_stat"
             ):
+                # Match get_statistics: valid integration-owned statistics are
+                # supported without entity exposure. Entity price fields still
+                # require Assist/HA READ authority, regardless of their spelling.
+                if (
+                    key.startswith("stat_") or key == "included_in_stat"
+                ) and recorder.statistics.valid_statistic_id(item):
+                    continue
                 result.add(item)
             elif isinstance(item, (dict, list, tuple)):
                 result.update(_energy_entity_ids(item))
     elif isinstance(value, (list, tuple)):
         for item in value:
             result.update(_energy_entity_ids(item))
+    return result
+
+
+def _filtered_energy_preferences(data: Any, allowed: set[str]) -> dict[str, Any]:
+    """Copy only complete, authorized Energy entries understood by this HA.
+
+    A source is indivisible: removing just one meter/price/power field can leave
+    misleading totals, orphaned metadata, or an invalid bidirectional source.
+    Use HA's schemas rather than guessing the shape of future Energy sources.
+    Valid external statistics retain the existing get_statistics access policy.
+    """
+    if not isinstance(data, dict):
+        return {}
+    result: dict[str, Any] = {}
+    for key in (
+        "energy_sources",
+        "device_consumption",
+        "device_consumption_water",
+        "device_consumption_gas",
+    ):
+        if key not in data and key not in {"energy_sources", "device_consumption"}:
+            continue
+        result[key] = []
+        entries = data.get(key, [])
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            candidate = deepcopy(entry)
+            try:
+                if key == "energy_sources":
+                    energy.data.ENERGY_SOURCE_SCHEMA([candidate])
+                else:
+                    energy.data.DEVICE_CONSUMPTION_SCHEMA(candidate)
+            except Exception:
+                # Unknown/malformed structures fail closed. Schema errors may
+                # include private values, so never return or log their details.
+                continue
+            if _energy_entity_ids(candidate) <= allowed:
+                result[key].append(candidate)
+        if key != "energy_sources":
+            # Do not leave child devices pointing to a parent that was filtered
+            # out (including a parent whose own power sensor was inaccessible).
+            while True:
+                parents = {item["stat_consumption"] for item in result[key]}
+                retained = [
+                    item
+                    for item in result[key]
+                    if "included_in_stat" not in item
+                    or item["included_in_stat"] in parents
+                ]
+                if len(retained) == len(result[key]):
+                    break
+                result[key] = retained
     return result
 
 
@@ -650,18 +709,10 @@ class NativeFunction(Function):
         energy_manager: energy.data.EnergyManager = await energy.async_get_manager(hass)
         if energy_manager.data is None:
             return {}
-        data = dict(energy_manager.data)
-        hidden_entity_ids = _energy_entity_ids(data) - _exposed_entity_ids(
+        allowed = _exposed_entity_ids(
             current_native_read_entities(hass, exposed_entities)
         )
-        if hidden_entity_ids:
-            # Do not include the identifiers in the error: the entire purpose of
-            # this boundary is to avoid disclosing hidden entities to the model.
-            error = entity_access_error(hass, hidden_entity_ids)
-            from ..exceptions import EntityNotExposed
-
-            raise EntityNotExposed("one or more Energy entities", reason=error.reason)
-        return data
+        return _filtered_energy_preferences(energy_manager.data, allowed)
 
     async def get_user_from_user_id(
         self,

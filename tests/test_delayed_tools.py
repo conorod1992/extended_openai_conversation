@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from contextvars import ContextVar
 from dataclasses import replace
-from datetime import timedelta
+from datetime import timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -511,6 +511,93 @@ def _valid_tool(*, function_type: str = "native") -> dict[str, Any]:
         "spec": {"name": "control_light"},
         "function": {"type": function_type, "name": "execute_service_single"},
     }
+
+
+@pytest.mark.parametrize("lateness", [0, 299, 300, 301, 86400])
+@pytest.mark.parametrize("restarted", [False, True])
+async def test_lateness_warns_once_only_when_execution_starts(
+    hass, monkeypatch, caplog, lateness, restarted
+):
+    from custom_components.extended_openai_conversation_responses import delayed_tools
+
+    now = dt_util.utcnow()
+    monkeypatch.setattr(dt_util, "utcnow", lambda: now)
+    record = replace(
+        _coverage_record(user_id=None),
+        call_id="private stored identifier\nnot for logs",
+        due_at=(now - timedelta(seconds=lateness))
+        .astimezone(timezone(timedelta(hours=2)))
+        .isoformat(),
+        arguments={"private argument": "do not disclose"},
+    )
+    manager = DelayedToolManager(hass)
+    manager._store = SimpleNamespace(
+        async_save=AsyncMock(),
+        async_load=AsyncMock(return_value={"calls": [record.as_dict()]}),
+    )
+    if restarted:
+        hass.state = CoreState.not_running
+        await manager.async_setup()
+    else:
+        manager._records = {record.call_id: record}
+    hass.config_entries.async_get_entry.return_value = _live_entry()
+    monkeypatch.setattr(
+        delayed_tools, "configured_function_tools_from_data", lambda _: [_valid_tool()]
+    )
+    monkeypatch.setattr(delayed_tools, "get_exposed_entities", lambda _: [])
+    monkeypatch.setattr(manager, "_resolve_agent", lambda *_: None)
+    # Reload retries must not warn before the job reaches its execution boundary.
+    for _ in range(2):
+        assert await manager._async_execute_due(record.call_id) is True
+    assert "is starting" not in caplog.text
+    agent = SimpleNamespace(_execute_function_tool=AsyncMock())
+    monkeypatch.setattr(manager, "_resolve_agent", lambda *_: agent)
+    assert await manager._async_execute_due(record.call_id) is False
+    assert await manager._async_execute_due(record.call_id) is False
+    agent._execute_function_tool.assert_awaited_once()
+    warnings = [
+        r.getMessage() for r in caplog.records if "is starting" in r.getMessage()
+    ]
+    assert len(warnings) == (1 if lateness > 300 else 0)
+    if warnings:
+        assert f"{lateness:.1f} seconds late" in warnings[0]
+        assert (now - timedelta(seconds=lateness)).isoformat() in warnings[0]
+        assert "private" not in warnings[0] and "do not disclose" not in warnings[0]
+        assert "downtime" not in warnings[0]
+
+
+@pytest.mark.parametrize("rejection", ["disabled", "executing", "persistence"])
+async def test_late_jobs_rejected_before_start_do_not_warn(
+    hass, monkeypatch, caplog, rejection
+):
+    from custom_components.extended_openai_conversation_responses import delayed_tools
+
+    record = _coverage_record(
+        user_id=None, due_at=(dt_util.utcnow() - timedelta(hours=1)).isoformat()
+    )
+    if rejection == "executing":
+        record = replace(record, status="executing")
+    manager = DelayedToolManager(hass)
+    manager._records = {record.call_id: record}
+    manager._store = SimpleNamespace(async_save=AsyncMock())
+    hass.config_entries.async_get_entry.return_value = _live_entry()
+    tool = _valid_tool()
+    if rejection == "disabled":
+        tool["enabled"] = False
+    monkeypatch.setattr(
+        delayed_tools, "configured_function_tools_from_data", lambda _: [tool]
+    )
+    agent = SimpleNamespace(_execute_function_tool=AsyncMock())
+    monkeypatch.setattr(manager, "_resolve_agent", lambda *_: agent)
+    if rejection == "persistence":
+        monkeypatch.setattr(
+            manager,
+            "_async_replace_record",
+            AsyncMock(side_effect=OSError("unavailable")),
+        )
+    await manager._async_execute_due(record.call_id)
+    agent._execute_function_tool.assert_not_awaited()
+    assert "is starting" not in caplog.text
 
 
 @pytest.mark.parametrize("legacy", [False, True])

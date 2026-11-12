@@ -103,6 +103,18 @@ def test_markdown_citation_and_bare_urls_are_removed_without_mutating_original()
         ("See [2](https://example.com) and continue.", "See 2 and continue."),
         ("Show ![a photograph](https://example.com/image.png) next.", "Show next."),
         ("Read [the documentation](https://example.com/a(b)c).", "Read the documentation."),
+        ("Edit [configuration.yaml](https://example.com/configuration.yaml).", "Edit configuration.yaml."),
+        ("Read ([README.md](https://github.com/org/repo/blob/main/README.md)).", "Read README.md."),
+        ("Use [Node.js](https://nodejs.org/docs(v1)).", "Use Node.js."),
+        ("Open [index.html](https://example.com/index.html).", "Open index.html."),
+        ("Read [other.example](https://destination.example/path).", "Read other.example."),
+        ("Read [example.com/path](https://www.EXAMPLE.com/other).", "Read."),
+        ("Read [example.com](https://example.com.evil.test).", "Read example.com."),
+        ("Read [example.com](https://example.com@other.test).", "Read example.com."),
+        ("Read [README.md](./README.md).", "Read README.md."),
+        ("Read [index.html](https://[invalid]/).", "Read index.html."),
+        ("Show ![configuration.yaml](https://example.com/image.png) now.", "Show now."),
+        ("Read [www.other.example](https://destination.example).", "Read."),
     ],
 )
 def test_speech_links_preserve_labels_across_provider_splits(
@@ -1278,6 +1290,23 @@ def test_completed_speech_many_links_keep_one_spoken_boundary() -> None:
     assert process_speech_text(source, _config()) == "Before " + "source " * 200 + "after."
 
 
+@pytest.mark.parametrize("chunk_size", [1, 7, 127, 4096])
+def test_long_filename_links_keep_bounded_streaming_and_completed_agreement(chunk_size):
+    labels = ["configuration.yaml", "README.md", "Node.js", "index.html"] * 60
+    source = "Before " + " ".join(
+        f"[{label}](https://docs.example/path(v1)/{label})" for label in labels
+    ) + " after."
+    expected = "Before " + " ".join(labels) + " after."
+    sanitizer = StreamingSpeechSanitizer()
+    output = []
+    for start in range(0, len(source), chunk_size):
+        output.append(sanitizer.feed(source[start:start + chunk_size]))
+        assert sanitizer.buffered_chars <= DEFAULT_STREAMING_BUFFER_LIMIT
+    output.append(sanitizer.finish())
+    assert speech._final_whitespace_cleanup("".join(output)) == expected
+    assert process_speech_text(source, _config()) == expected
+
+
 def test_completed_speech_many_unclosed_parentheses_do_not_block_later_text() -> None:
     source = "Start " + ("[broken](" * 900) + "\n## Heading\n- **Ready**."
     result = process_speech_text(source, _config())
@@ -1420,7 +1449,7 @@ def test_readable_link_labels_survive_every_stream_split(label, before, after):
     ("Read [Sources](https://a.example), [References](https://b.example)!", "Read Sources, References!"),
     ("Read [](https://a.example) first.", "Read first."),
     ("Read [https://a.example](https://b.example) first.", "Read first."),
-    ("Read [a.example/path](https://b.example) first.", "Read first."),
+    ("Read [a.example/path](https://b.example) first.", "Read a.example/path first."),
     ("Read **[Sources](https://a.example)** first.", "Read Sources first."),
     ("Choose [1](https://a.example) for the first option.", "Choose 1 for the first option."),
 ])
