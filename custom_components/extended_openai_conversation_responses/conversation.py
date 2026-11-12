@@ -1872,6 +1872,11 @@ class ExtendedOpenAIAgentEntity(
             if not hybrid and len(readable_scope_ids) == 1
             else readable_scope_ids
         )
+        search_options: dict[str, Any] = {}
+        if offset:
+            search_options["offset"] = offset
+        if not allow_fuzzy_only:
+            search_options["allow_fuzzy_only"] = False
         return await self._memory.async_search(
             search_scope,
             query,
@@ -1879,8 +1884,7 @@ class ExtendedOpenAIAgentEntity(
             limit,
             query_embedding=query_embedding,
             hybrid=hybrid and query_embedding is not None,
-            **({"offset": offset} if offset else {}),
-            **({"allow_fuzzy_only": False} if not allow_fuzzy_only else {}),
+            **search_options,
         )
 
     async def _async_create_embeddings(
@@ -2700,7 +2704,7 @@ class ExtendedOpenAIAgentEntity(
                 sorted(allowed_ids) if allowed_ids is not None else None,
                 limit,
                 lookahead=True,
-                **({"offset": offset} if offset else {}),
+                **cast(dict[str, Any], {"offset": offset} if offset else {}),
             )
             results = await KnowledgeLibrary.async_revalidate_search_results(
                 self._knowledge, results

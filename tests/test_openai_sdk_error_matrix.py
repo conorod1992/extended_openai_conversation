@@ -26,9 +26,9 @@ from tests.test_openai_sdk_wire import (
     _entity,
     _responses_text_stream,
     _responses_tool_stream,
+    _stream_response,
     _tool,
     _tool_result,
-    _stream_response,
     _Wire,
 )
 
@@ -151,27 +151,59 @@ class _InterruptedBody(httpx.AsyncByteStream):
 
 
 @pytest.mark.parametrize("api_mode", API_MODES)
-@pytest.mark.parametrize("error_type", [httpx.ReadError, httpx.RemoteProtocolError, httpx.ReadTimeout, asyncio.CancelledError])
+@pytest.mark.parametrize(
+    "error_type",
+    [
+        httpx.ReadError,
+        httpx.RemoteProtocolError,
+        httpx.ReadTimeout,
+        asyncio.CancelledError,
+    ],
+)
 @pytest.mark.parametrize("after_tool", [False, True])
 async def test_real_sdk_open_body_interruption(hass, api_mode, error_type, after_tool):
+    from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
-    tool_bytes = _responses_tool_stream() if api_mode == API_MODE_RESPONSES else _chat_tool_stream()
+    tool_bytes = (
+        _responses_tool_stream()
+        if api_mode == API_MODE_RESPONSES
+        else _chat_tool_stream()
+    )
     # Emit a partial function call, before the completion marker/arguments finish.
-    partial = (tool_bytes.split(b"\n\n")[0] + b"\n\n").replace(b"call_response_1", b"call_partial").replace(b"call_chat_1", b"call_partial").replace(b"fc_response_1", b"fc_partial")
+    partial = (
+        (tool_bytes.split(b"\n\n")[0] + b"\n\n")
+        .replace(b"call_response_1", b"call_partial")
+        .replace(b"call_chat_1", b"call_partial")
+        .replace(b"fc_response_1", b"fc_partial")
+    )
     raw = error_type("private transport detail")
     body = _InterruptedBody(partial, raw)
 
     def failure(request):
-        return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=body, request=request)
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=body,
+            request=request,
+        )
 
     wire = _Wire(([_stream_response(tool_bytes)] if after_tool else []) + [failure])
     client = _client(wire)
     entity = _entity(hass, client, api_mode)
-    entity._execute_function_tool = AsyncMock(side_effect=lambda _tool, call, *_: _tool_result(entity, call))
+    entity._execute_function_tool = AsyncMock(
+        side_effect=lambda _tool, call, *_: _tool_result(entity, call)
+    )
+    entity._usage = SimpleNamespace(
+        async_record_conversation=AsyncMock(), async_record_request=AsyncMock()
+    )
     log = _chat_log(hass)
     try:
-        with pytest.raises(asyncio.CancelledError if error_type is asyncio.CancelledError else OpenAIError) as caught:
+        with pytest.raises(
+            asyncio.CancelledError
+            if error_type is asyncio.CancelledError
+            else OpenAIError
+        ) as caught:
             await entity._async_handle_chat_log(log, [_tool()], [])
         if error_type is asyncio.CancelledError:
             assert caught.value is raw
@@ -181,9 +213,72 @@ async def test_real_sdk_open_body_interruption(hass, api_mode, error_type, after
             assert classify_config_provider_error(caught.value) == "cannot_connect"
         assert len(wire.requests) == (2 if after_tool else 1)
         assert entity._execute_function_tool.await_count == int(after_tool)
+        accounting = entity._usage.async_record_request.await_args_list
+        assert [entry.kwargs["successful"] for entry in accounting] == (
+            [True, False] if after_tool else [False]
+        )
+        assert accounting[-1].kwargs["request_stage"] == (
+            "after_tool" if after_tool else "initial"
+        )
         assert body.closed
-        calls = [call for item in log.content for call in (getattr(item, "tool_calls", None) or [])]
+        calls = [
+            call
+            for item in log.content
+            for call in (getattr(item, "tool_calls", None) or [])
+        ]
         results = {getattr(item, "tool_call_id", None) for item in log.content}
         assert all(call.id in results for call in calls)
+    finally:
+        await _close_client(client)
+
+
+@pytest.mark.parametrize("api_mode", API_MODES)
+@pytest.mark.parametrize(
+    "error_type", [httpx.ReadError, httpx.RemoteProtocolError, httpx.ReadTimeout]
+)
+async def test_ai_task_real_sdk_body_failure_uses_ha_error_and_hooks(
+    hass, monkeypatch, api_mode, error_type
+):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from custom_components.extended_openai_conversation_responses import ai_task
+    from homeassistant.exceptions import HomeAssistantError
+
+    body = _InterruptedBody(
+        b": opened stream\n\n", error_type("private stream details")
+    )
+
+    def failure(request):
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=body,
+            request=request,
+        )
+
+    wire = _Wire([failure])
+    client = _client(wire)
+    base = _entity(hass, client, api_mode)
+    base.entry.entry_id = "entry"
+    base.subentry.subentry_id = "task"
+    entity = ai_task.ExtendedOpenAITaskEntity.__new__(ai_task.ExtendedOpenAITaskEntity)
+    entity.__dict__.update(base.__dict__)
+    record, log = Mock(), Mock()
+    monkeypatch.setattr(ai_task, "record_current_provider_failure", record)
+    monkeypatch.setattr(ai_task, "log_provider_failure", log)
+    try:
+        with pytest.raises(
+            HomeAssistantError, match="AI Task provider request failed"
+        ) as caught:
+            await entity._async_generate_data(
+                SimpleNamespace(name="plain", structure=None), _chat_log(hass)
+            )
+        assert isinstance(caught.value.__cause__, OpenAIError)
+        record.assert_called_once_with(caught.value.__cause__)
+        log.assert_called_once()
+        assert body.closed
+        assert len(wire.requests) == 1
+        assert "private stream details" not in str(caught.value)
     finally:
         await _close_client(client)

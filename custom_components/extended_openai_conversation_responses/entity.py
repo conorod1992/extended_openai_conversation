@@ -1394,7 +1394,9 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             else "after_tool",
                             error_type=type(err).__name__,
                         )
-                    if isinstance(err, (TimeoutError, ConnectionError, httpx.RequestError)):
+                    if isinstance(
+                        err, (TimeoutError, ConnectionError, httpx.RequestError)
+                    ):
                         raise provider_transport_error(err) from err
                     if isinstance(err, ValueError):
                         raise ProviderStreamError(

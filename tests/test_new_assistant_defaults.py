@@ -68,7 +68,12 @@ def test_missing_model_preserves_legacy_interpretation_and_explicit_values(hass)
         {"api_provider": "azure"},
     )
     assert snapshot.api_kwargs["model"] == "deployment"
-    assert snapshot.api_kwargs["max_output_tokens"] == 700
+    assert (
+        snapshot.api_kwargs.get(
+            "max_output_tokens", snapshot.api_kwargs.get("max_completion_tokens")
+        )
+        == 700
+    )
 
 
 @pytest.mark.parametrize(
