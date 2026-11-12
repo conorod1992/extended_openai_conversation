@@ -112,3 +112,86 @@ def test_absolute_in_workspace_and_symlink_escape(tmp_path):
 @pytest.mark.parametrize("command", ["cd", "cd ..", "pushd ..", "popd", 'cd "$HOME"'])
 def test_opt_out_keeps_trusted_shell_contract(tmp_path, command):
     BashFunction()._guard_command(command, tmp_path, False)
+
+
+@pytest.mark.parametrize(
+    "header,terminator",
+    [
+        ("EOF", "EOF"),
+        ("'EOF'", "EOF"),
+        ('"EOF"', "EOF"),
+        (r"\EOF", "EOF"),
+        ("-EOF", "\tEOF"),
+        (" -EOF", "-EOF"),
+    ],
+)
+def test_heredoc_data_is_not_directory_code(tmp_path, header, terminator):
+    script = f"cat <<{header}\ncd ..\npushd ..\npopd\n{terminator}\ncd ."
+    BashFunction()._guard_command(script, tmp_path, True)
+    for change in ("cd ..", "pushd ..", "popd"):
+        with pytest.raises(ValueError, match="blocked"):
+            BashFunction()._guard_command(script + "\n" + change, tmp_path, True)
+
+
+def test_multiple_heredocs_and_comment_delimiters(tmp_path):
+    script = "cat <<'FIRST' <<SECOND # comment\ncd ..\n# not a comment here\nFIRST\npopd\nSECOND\ncd ."
+    BashFunction()._guard_command(script, tmp_path, True)
+    with pytest.raises(ValueError, match="blocked"):
+        BashFunction()._guard_command(script + "\npushd ..", tmp_path, True)
+
+
+@pytest.mark.parametrize("body", ["$(cd ..)", "`cd ..`", "$TARGET"])
+def test_unquoted_heredoc_substitution_is_unverifiable(tmp_path, body):
+    with pytest.raises(ValueError, match="heredoc substitution"):
+        BashFunction()._guard_command(f"cat <<EOF\n{body}\nEOF", tmp_path, True)
+
+
+def test_quoted_heredoc_substitutions_are_literal(tmp_path):
+    BashFunction()._guard_command(
+        "cat <<'EOF'\n$(cd ..)\n`pushd ..`\nEOF\ncd .", tmp_path, True
+    )
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "cat << EOF\ncd ..\nEOF\ncat <<'END'\npopd\nEND\ncd .",
+        "echo '<<EOF'\ncd . # <<FAKE\ncat <<'END'\npushd ..\nEND\ncd .",
+        "cat <<'HASH'\n# HASH\ncd ..\nHASH\ncd .",
+    ],
+)
+def test_sequential_and_literal_heredoc_syntax(tmp_path, script):
+    BashFunction()._guard_command(script, tmp_path, True)
+    with pytest.raises(ValueError, match="blocked"):
+        BashFunction()._guard_command(script + "\ncd ..", tmp_path, True)
+
+
+def test_directory_change_in_heredoc_header_is_still_checked(tmp_path):
+    with pytest.raises(ValueError, match="blocked"):
+        BashFunction()._guard_command("cat <<EOF && cd ..\ntext\nEOF", tmp_path, True)
+
+
+@pytest.mark.parametrize(
+    "script", ["echo $((1 << 2))\ncd ..", "(( value = 1 << 2 ))\npopd"]
+)
+def test_arithmetic_shift_cannot_hide_following_commands(tmp_path, script):
+    with pytest.raises(ValueError, match="blocked"):
+        BashFunction()._guard_command(script, tmp_path, True)
+
+
+def test_plain_arithmetic_before_heredoc(tmp_path):
+    BashFunction()._guard_command(
+        "echo $((1 + 2))\ncat <<EOF\ncd ..\nEOF\ncd .", tmp_path, True
+    )
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "echo $((1 << 2))",
+        "(( value = (1 << 2) + (2 << 1) ))",
+        "echo $((1 + 2))\ncat <<EOF\ncd ..\nEOF",
+    ],
+)
+def test_arithmetic_shifts_are_not_heredocs(tmp_path, script):
+    BashFunction()._guard_command(script, tmp_path, True)

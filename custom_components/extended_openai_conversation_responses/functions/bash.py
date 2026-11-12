@@ -84,27 +84,79 @@ def _without_shell_comments(command: str) -> str:
     return "".join(result)
 
 
-def _shell_command_tokens(command: str) -> list[tuple[str, bool]]:
+def _shell_command_tokens(
+    command: str, *, skip_heredoc_bodies: bool = False
+) -> list[tuple[str, bool]]:
     """Retain whether words and operator runs were unquoted and unescaped.
 
     ``shlex`` alone removes that distinction, making a quoted semicolon look
     like a command boundary. Decode words with shlex only after finding their
     quote-aware boundaries. This remains a defensive lexer, not a shell parser.
+    Directory checks can omit ordinary heredoc bodies, consumed in declaration
+    order at the next newline. Unquoted substitutions are unverifiable and fail
+    closed in that mode; the other guards retain their existing behavior.
     """
-    command = _without_shell_comments(command)
+    if not skip_heredoc_bodies:
+        command = _without_shell_comments(command)
     tokens: list[tuple[str, bool]] = []
+    pending: list[tuple[str, bool, bool]] = []
+    delimiter_next = False
+    strip_tabs_next = False
+    arithmetic_depth = 0
     operators = "();&|<>\n"
     whitespace = " \t\r"
     index = 0
     while index < len(command):
+        if skip_heredoc_bodies and command[index] == "#":
+            newline = command.find("\n", index)
+            index = len(command) if newline < 0 else newline
+            continue
+        if skip_heredoc_bodies and command[index] == "\n":
+            if delimiter_next:
+                raise ValueError("Command blocked: missing heredoc delimiter")
+            tokens.append(("\n", True))
+            index += 1
+            for delimiter, strip_tabs, quoted in pending:
+                while index < len(command):
+                    end = command.find("\n", index)
+                    end = len(command) if end < 0 else end + 1
+                    line = command[index:end].removesuffix("\n")
+                    index = end
+                    if (line.lstrip("\t") if strip_tabs else line) == delimiter:
+                        break
+                    if not quoted and any(char in line for char in "$`"):
+                        raise ValueError(
+                            "Command blocked: heredoc substitution cannot be verified"
+                        )
+            pending.clear()
+            continue
         if command[index] in whitespace:
             index += 1
             continue
         start = index
         if command[index] in operators:
-            while index < len(command) and command[index] in operators:
+            while (
+                index < len(command)
+                and command[index] in operators
+                and not (skip_heredoc_bodies and command[index] == "\n")
+            ):
                 index += 1
-            tokens.append((command[start:index], True))
+            operator = command[start:index]
+            if skip_heredoc_bodies:
+                if arithmetic_depth or "((" in operator:
+                    arithmetic_depth = max(
+                        0, arithmetic_depth + operator.count("(") - operator.count(")")
+                    )
+            tokens.append((operator, True))
+            delimiter_next = (
+                skip_heredoc_bodies
+                and not arithmetic_depth
+                and operator.endswith("<<")
+                and not operator.endswith("<<<")
+            )
+            strip_tabs_next = delimiter_next and command[index : index + 1] == "-"
+            if strip_tabs_next:
+                index += 1
             continue
         quote: str | None = None
         word: list[str] = []
@@ -131,6 +183,14 @@ def _shell_command_tokens(command: str) -> list[tuple[str, bool]]:
             continue
         value = shlex.split(raw, comments=False, posix=True)[0]
         tokens.append((value, value == raw))
+        if delimiter_next:
+            delimiter = value
+            if "\n" in delimiter or any(char in delimiter for char in "$`"):
+                raise ValueError(
+                    "Command blocked: heredoc delimiter cannot be verified"
+                )
+            pending.append((delimiter, strip_tabs_next, value != raw))
+            delimiter_next = False
     return tokens
 
 
@@ -401,7 +461,7 @@ class BashFunction(Function):
 
             # Inspect executable positions, preserving the lexer's distinction
             # between real operators and harmless quoted command-like text.
-            tokens = _shell_command_tokens(command)
+            tokens = _shell_command_tokens(command, skip_heredoc_bodies=True)
             at_command = True
             wrapper_options = False
             for index, (word, literal) in enumerate(tokens):
