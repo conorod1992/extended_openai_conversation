@@ -314,8 +314,9 @@ async def test_patterned_replay_invalid_arguments_keep_fail_fast_budget(
             recovery_state=ToolRecoveryState(enabled=False),
         )
 
-    assert attempts == [arguments]
-    assert budget.used == 1  # Legacy non-recovery boundary claims before validation.
+    assert attempts == []
+    entity._execute_function_tool.assert_not_awaited()
+    assert budget.used == 0  # Validation-only failures never reserve execution.
     assert effects == [{"count": 3, "extra_note": "yes"}]
     assert len(_results_for(log, retry.id)) == 1
 
