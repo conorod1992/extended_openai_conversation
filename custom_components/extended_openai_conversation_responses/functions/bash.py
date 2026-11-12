@@ -142,11 +142,10 @@ def _shell_command_tokens(
             ):
                 index += 1
             operator = command[start:index]
-            if skip_heredoc_bodies:
-                if arithmetic_depth or "((" in operator:
-                    arithmetic_depth = max(
-                        0, arithmetic_depth + operator.count("(") - operator.count(")")
-                    )
+            if skip_heredoc_bodies and (arithmetic_depth or "((" in operator):
+                arithmetic_depth = max(
+                    0, arithmetic_depth + operator.count("(") - operator.count(")")
+                )
             tokens.append((operator, True))
             delimiter_next = (
                 skip_heredoc_bodies
