@@ -627,7 +627,7 @@ async def test_embedding_model_change_regenerates_cached_vectors() -> None:
     assert len(calls) == 2
 
 
-async def test_hybrid_cache_failure_falls_back_without_harming_memory() -> None:
+async def test_hybrid_cache_failure_retains_semantics_without_harming_memory() -> None:
     durable = FakeStorage()
     memory = PersistentMemory(durable, FailingCacheStorage())
     await memory.async_initialize()
@@ -637,7 +637,7 @@ async def test_hybrid_cache_failure_falls_back_without_harming_memory() -> None:
         return [[1.0, 0.0] for _ in inputs]
 
     memory.set_embedding_provider(embeddings, "test-model")
-    assert await memory.async_prepare_hybrid(["alice"], "breed") is None
+    assert await memory.async_prepare_hybrid(["alice"], "breed") == [1.0, 0.0]
     assert (await memory.async_list("alice"))[0].content == "Oscar is a Cavachon."
     assert "embedding" not in durable.data["memories"][0]
 

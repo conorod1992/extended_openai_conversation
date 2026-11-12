@@ -184,7 +184,7 @@ async def test_failed_request_time_warmup_falls_back_cleanly() -> None:
     assert calls == [["pets | Oscar is a Cavachon."]]
 
 
-async def test_failed_cache_save_keeps_request_time_fallback() -> None:
+async def test_failed_cache_save_keeps_in_memory_semantic_retrieval() -> None:
     memory = await _memory(FailingCacheStorage())
     await memory.async_add("alice", "Oscar is a Cavachon.", "pets", "explicit")
     calls: list[list[str]] = []
@@ -195,8 +195,8 @@ async def test_failed_cache_save_keeps_request_time_fallback() -> None:
 
     memory.set_embedding_provider(embeddings, "test-model")
 
-    assert await memory.async_prepare_hybrid(["alice"], "breed") is None
-    assert calls == [["pets | Oscar is a Cavachon."]]
+    assert await memory.async_prepare_hybrid(["alice"], "breed") == [1.0, 0.0]
+    assert calls == [["pets | Oscar is a Cavachon."], ["breed"]]
 
 async def test_pending_query_discarded_after_same_dimension_model_replacement() -> None:
     """An old query cannot use the newly populated, incompatible model space."""
