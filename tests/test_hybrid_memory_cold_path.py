@@ -188,7 +188,7 @@ async def test_failed_request_time_warmup_falls_back_cleanly() -> None:
     assert calls == [["pets | Oscar is a Cavachon."]]
 
 
-async def test_failed_cache_save_keeps_request_time_fallback() -> None:
+async def test_failed_cache_save_keeps_in_memory_semantic_retrieval() -> None:
     memory = await _memory(FailingCacheStorage())
     await memory.async_add("alice", "Oscar is a Cavachon.", "pets", "explicit")
     calls: list[list[str]] = []
@@ -199,8 +199,8 @@ async def test_failed_cache_save_keeps_request_time_fallback() -> None:
 
     memory.set_embedding_provider(embeddings, "test-model")
 
-    assert await memory.async_prepare_hybrid(["alice"], "breed") is None
-    assert calls == [["pets | Oscar is a Cavachon."]]
+    assert await memory.async_prepare_hybrid(["alice"], "breed") == [1.0, 0.0]
+    assert calls == [["pets | Oscar is a Cavachon."], ["breed"]]
 
 
 async def test_pending_query_discarded_after_same_dimension_model_replacement() -> None:
@@ -243,7 +243,7 @@ async def test_remote_failure_backoff_expiry_reset_and_preserved_vectors(monkeyp
     )
 
     clock = [100.0]
-    monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(module, "monotonic", lambda: clock[0])
     memory = await _memory()
     await memory.async_add("alice", "Oscar is a Cavachon", "pets", "explicit")
     await memory.async_add("bob", "Private sibling fact", "test", "explicit")
@@ -310,7 +310,7 @@ async def test_backoff_is_bounded_and_cancellation_does_not_start_it(monkeypatch
     )
 
     clock = [100.0]
-    monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(module, "monotonic", lambda: clock[0])
     memory = await _memory()
     provider = AsyncMock(side_effect=asyncio.CancelledError())
     memory.set_embedding_provider(provider)

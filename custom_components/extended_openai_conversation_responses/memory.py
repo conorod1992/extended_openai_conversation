@@ -11,7 +11,7 @@ import json
 import logging
 import math
 import re
-import time
+from time import monotonic
 from types import MappingProxyType
 from typing import Any, Protocol
 import unicodedata
@@ -54,6 +54,7 @@ EMBEDDING_CACHE_VERSION = 1
 EMBEDDING_CACHE_BATCH_SIZE = 64
 HYBRID_RETRY_INITIAL_SECONDS = 30.0
 HYBRID_RETRY_MAX_SECONDS = 300.0
+EMBEDDING_CACHE_RETRY_SECONDS = 60
 ANONYMOUS_USER_ID = LEGACY_ANONYMOUS_SCOPE_ID
 MAX_MEMORIES_PER_AGENT = 10_000
 MAX_CONTENT_LENGTH = 1_000
@@ -268,6 +269,7 @@ class PersistentMemory:
         self._embedding_retry_identity: object = None
         self._hybrid_retry_at = 0.0
         self._hybrid_retry_delay = 0.0
+        self._embedding_cache_retry_at = 0.0
         self._hybrid_status: dict[str, Any] = {
             "configured": False,
             "status": "lexical_fallback",
@@ -346,7 +348,7 @@ class PersistentMemory:
         return {
             **self._hybrid_status,
             "retry_after_seconds": max(
-                0, math.ceil(self._hybrid_retry_at - time.monotonic())
+                0, math.ceil(self._hybrid_retry_at - monotonic())
             ),
         }
 
@@ -636,7 +638,7 @@ class PersistentMemory:
         if self._embedding_provider is None:
             self._set_hybrid_status("lexical_fallback", "provider_not_configured")
             return None
-        if time.monotonic() < self._hybrid_retry_at:
+        if monotonic() < self._hybrid_retry_at:
             return None
         attempt_identity = self._embedding_retry_identity
         try:
@@ -650,6 +652,7 @@ class PersistentMemory:
                 return None
             provider = self._embedding_provider
             model = self._embedding_model
+            space_id = self._embedding_space_id
             if provider is None:
                 self._set_hybrid_status("lexical_fallback", "provider_changed")
                 return None
@@ -657,6 +660,7 @@ class PersistentMemory:
             if (
                 self._embedding_provider is not provider
                 or self._embedding_model != model
+                or self._embedding_space_id != space_id
             ):
                 self._set_hybrid_status("lexical_fallback", "provider_changed")
                 return None
@@ -666,7 +670,12 @@ class PersistentMemory:
                 )
             vector = _clean_embedding(vectors[0])
             self._hybrid_retry_at = self._hybrid_retry_delay = 0.0
-            self._set_hybrid_status("active")
+            self._set_hybrid_status(
+                "active",
+                "embedding_cache_not_persisted"
+                if self._embedding_cache_write_failed and self._embedding_cache_dirty
+                else None,
+            )
             return vector
         except Exception as err:
             if attempt_identity != self._embedding_retry_identity:
@@ -675,7 +684,7 @@ class PersistentMemory:
                 HYBRID_RETRY_MAX_SECONDS,
                 max(HYBRID_RETRY_INITIAL_SECONDS, self._hybrid_retry_delay * 2),
             )
-            self._hybrid_retry_at = time.monotonic() + self._hybrid_retry_delay
+            self._hybrid_retry_at = monotonic() + self._hybrid_retry_delay
             reason = provider_failure_category(err)
             changed = (
                 self._hybrid_status.get("status") != "lexical_fallback"
@@ -1326,6 +1335,8 @@ class PersistentMemory:
                     current = self._memories.get(memory.memory_id)
                     if (
                         current is None
+                        or current.user_id != memory.user_id
+                        or current.user_id not in allowed_scopes
                         or _embedding_fingerprint(current)
                         != _embedding_fingerprint(memory)
                         or self._cached_embedding(current) is not None
@@ -1343,10 +1354,19 @@ class PersistentMemory:
                 self._embedding_cache_dirty = True
                 # Keep the manager lease until its best-effort native write has
                 # settled, including when reader retirement cancels this refresh.
-                if not await async_settle_owned_operation(
+                await async_settle_owned_operation(
                     self._async_save_embedding_cache_locked()
-                ):
-                    return False
+                )
+        # A warm scope still offers a retry opportunity after the cooldown.
+        # Best-effort persistence must never gate valid in-memory vectors.
+        async with async_storage_lock(self._storage, self._lock):
+            if (
+                self._embedding_provider is not provider
+                or self._embedding_model != model
+                or self._embedding_space_id != space_id
+            ):
+                return False
+            await async_settle_owned_operation(self._async_save_embedding_cache_locked())
         return True
 
     async def _async_save_locked(self, *, replacing: bool = False) -> None:
@@ -1439,6 +1459,8 @@ class PersistentMemory:
     async def _async_save_embedding_cache_locked(self) -> bool:
         if not self._embedding_cache_dirty:
             return True
+        if monotonic() < self._embedding_cache_retry_at:
+            return False
         if self._embedding_cache_storage is None:
             self._embedding_cache_dirty = False
             if self._initialized:
@@ -1455,6 +1477,7 @@ class PersistentMemory:
             if self._embedding_cache_write_failed:
                 _LOGGER.info("Persistent memory embedding cache persistence recovered")
             self._embedding_cache_write_failed = False
+            self._embedding_cache_retry_at = 0.0
             if self._initialized:
                 self._committed_state = self._snapshot_mutation_state()
             return True
@@ -1462,11 +1485,12 @@ class PersistentMemory:
             if not self._embedding_cache_write_failed:
                 log_handled_failure(
                     _LOGGER,
-                    "Persistent memory embedding cache could not be saved; using lexical retrieval. "
-                    "Memories remain available through word matching, but semantic matches may be missed",
+                    "Persistent memory embedding cache could not be saved; current in-memory "
+                    "vectors remain usable. Cache persistence will retry on demand after a cooldown",
                     err,
                 )
             self._embedding_cache_write_failed = True
+            self._embedding_cache_retry_at = monotonic() + EMBEDDING_CACHE_RETRY_SECONDS
             return False
 
     def _set_hybrid_status(
