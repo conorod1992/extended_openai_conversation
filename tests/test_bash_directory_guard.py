@@ -212,3 +212,12 @@ def test_continued_comment_cannot_introduce_a_fake_heredoc(tmp_path):
 def test_unquoted_body_continuation_cannot_form_a_hidden_terminator(tmp_path):
     with pytest.raises(ValueError, match="heredoc substitution or continuation"):
         BashFunction()._guard_command("cat <<EOF\nEO\\\nF\ncd ..\n", tmp_path, True)
+
+
+@pytest.mark.parametrize(
+    "header",
+    ["echo ${value/<<EOF/text}", "echo `printf '<<EOF'`", "echo $(printf '<<EOF')"],
+)
+def test_expansion_like_headers_cannot_create_fake_heredocs(tmp_path, header):
+    with pytest.raises(ValueError, match="blocked"):
+        BashFunction()._guard_command(header + "\ncd ..\nEOF\n", tmp_path, True)

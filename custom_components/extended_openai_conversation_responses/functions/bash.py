@@ -103,6 +103,7 @@ def _shell_command_tokens(
     delimiter_next = False
     strip_tabs_next = False
     arithmetic_depth = 0
+    uncertain_header = False
     operators = "();&|<>\n"
     whitespace = " \t\r"
     index = 0
@@ -157,6 +158,7 @@ def _shell_command_tokens(
             tokens.append((operator, True))
             delimiter_next = (
                 skip_heredoc_bodies
+                and not uncertain_header
                 and not arithmetic_depth
                 and operator.endswith("<<")
                 and not operator.endswith("<<<")
@@ -194,6 +196,16 @@ def _shell_command_tokens(
             continue
         value = shlex.split(raw, comments=False, posix=True)[0]
         tokens.append((value, value == raw))
+        if (
+            skip_heredoc_bodies
+            and any(char in raw for char in "$`")
+            and not (raw == "$" and command[index : index + 2] == "((")
+        ):
+            # Do not guess whether << inside expansion-like syntax is a
+            # redirection. Keep the original token analysis for this script.
+            uncertain_header = True
+            pending.clear()
+            delimiter_next = False
         if delimiter_next:
             delimiter = value
             if "\n" in delimiter or any(char in delimiter for char in "$`"):
