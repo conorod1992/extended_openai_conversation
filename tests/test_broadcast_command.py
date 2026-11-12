@@ -24,6 +24,14 @@ from custom_components.extended_openai_conversation_responses.intercom import (
         ("Broadcast kitchen is open", "kitchen is open"),
         ("Broadcast dinner is ready in ten minutes", "dinner is ready in ten minutes"),
         ("Broadcast tonight's dinner is ready", "tonight's dinner is ready"),
+        ("Broadcast, dinner is ready", "dinner is ready"),
+        ("Broadcast:dinner is ready", "dinner is ready"),
+        ("Broadcast! that dinner is ready", "that dinner is ready"),
+        ("Broadcast; dinner is ready in 10 minutes", "dinner is ready in 10 minutes"),
+        (
+            "Broadcast dinner is ready in ten minutes!",
+            "dinner is ready in ten minutes!",
+        ),
     ],
 )
 def test_literal_message(text, message):
@@ -52,6 +60,17 @@ def test_literal_message(text, message):
         "Broadcast at noon dinner",
         "Broadcast after ten minutes dinner",
         "Broadcast for tomorrow dinner",
+        "Broadcast,",
+        "Broadcast, on the kitchen speaker hello",
+        "Broadcast dinner is ready in the kitchen",
+        "Broadcast dinner is ready on the bedroom speaker",
+        "Broadcast dinner is ready in kitchen",
+        "Broadcast dinner is ready to bedroom",
+        "Broadcast dinner is ready at the kitchen speaker",
+        "Broadcast dinner in ten minutes in the kitchen",
+        "Broadcast dinner in ten minutes on the bedroom speaker",
+        "Broadcast dinner in ten minute speakers",
+        "Broadcast dinner IN\nthe kitchen",
     ],
 )
 def test_unmatched_or_reserved_syntax(text):
@@ -75,6 +94,9 @@ def _input(text="Broadcast Dinner"):
         (False, {"local_intent_exclusions": ["HassBroadcast"]}, "Broadcast Dinner"),
         (False, {}, "turn on kitchen lights"),
         (False, {}, "Broadcast to kitchen hello"),
+        (False, {}, "Broadcast, dinner is ready in the kitchen"),
+        (False, {}, "Broadcast dinner is ready on the bedroom speaker"),
+        (False, {}, "Broadcast dinner in ten minutes to the kitchen"),
     ],
 )
 async def test_no_manager_or_storage_for_ineligible_request(

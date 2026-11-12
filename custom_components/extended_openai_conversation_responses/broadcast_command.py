@@ -20,16 +20,27 @@ def broadcast_message(text: Any) -> str | None:
     """Extract a literal message; reserved leading syntax falls back normally.
 
     No destination lookup or language inference belongs in this command. Reserve
-    preposition-led arguments and the old "a message" form so obvious target/time
-    clauses cannot accidentally become an immediate whole-home announcement.
+    preposition-led arguments and the old "a message" form. Destination-like
+    prepositions later in the text also fall back, apart from literal durations.
     """
     if not isinstance(text, str):
         return None
-    parts = text.strip().split(maxsplit=1)
-    if len(parts) != 2 or parts[0].casefold() != "broadcast":
+    match = re.fullmatch(
+        r"broadcast(?:\s+|[,:;.!?]\s*)(.+)", text.strip(), re.IGNORECASE | re.DOTALL
+    )
+    if match is None:
         return None
-    message = parts[1]
-    if re.match(r"(?:to|in|at|after|for)\b|a\s+message\b", message, re.IGNORECASE):
+    message = match[1].lstrip()
+    if re.match(r"(?:to|in|on|at|after|for)\b|a\s+message\b", message, re.IGNORECASE):
+        return None
+    # Deliberately restrictive syntax, not destination inference. Only this
+    # small duration form is exempt from a later "in"; the message is unchanged.
+    # Check the whole suffix so a duration cannot hide a subsequent destination.
+    if re.search(
+        r"\b(?:to|on|at)\b|\bin\b(?!\s+(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(?:seconds?|minutes?|hours?)(?=[.!?,;]|$))",
+        message,
+        re.IGNORECASE,
+    ):
         return None
     return message
 
