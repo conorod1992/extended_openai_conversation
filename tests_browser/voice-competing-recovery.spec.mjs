@@ -39,18 +39,20 @@ for (const bundled of [false, true]) for (const decision of ["keep", "discard"])
     await expect(panel.locator("[data-voice-mapping-row][data-voice-bound]")).toHaveCount(2);
   };
   const chooseSatellite = async (index, value) => {
-    await mappingReady();
-    // A render can retire a child between locator resolution and evaluate.
-    // Resolve and dispatch on the mounted picker in the same browser task.
-    const accepted = await panel.evaluate((host, {index, selected}) => {
-      const picker = host.shadowRoot.querySelectorAll("[data-voice-mapping-row][data-voice-bound] .voice-satellite-picker")[index];
-      if (!picker?.isConnected) throw Error("The current Voice picker is not ready");
+    // Readiness, picker resolution and dispatch must share one browser task:
+    // a remount between separate checks can retire the previously ready rows.
+    // Retry only while no mounted handler has accepted the selection.
+    await expect.poll(() => panel.evaluate((host, {index, selected}) => {
+      const root = host.shadowRoot;
+      const rows = root.querySelectorAll("[data-voice-mapping-row][data-voice-bound]");
+      if (!root.querySelector("[data-voice-mapping-feature][data-ready]") || rows.length !== 2) return false;
+      const picker = rows[index]?.querySelector(".voice-satellite-picker");
+      if (!picker?.isConnected) return false;
       const prior = picker.__voiceSelection;
       picker.value = selected;
       picker.dispatchEvent(new CustomEvent("value-changed", {detail:{value:selected}, bubbles:true, composed:true}));
       return picker.__voiceSelection !== prior;
-    }, {index, selected:value});
-    expect(accepted).toBe(true);
+    }, {index, selected:value})).toBe(true);
   };
   await chooseSatellite(0, "assist_satellite.living");
   await panel.locator('[data-config="voice_unmapped_policy"]').selectOption("shared");
