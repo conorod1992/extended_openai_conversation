@@ -1,6 +1,7 @@
 """Native reads must recheck exposure at every Composite dispatch boundary."""
 
 import asyncio
+from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -158,7 +159,9 @@ async def test_each_native_read_narrows_current_scope_without_widening_guest_adm
         lambda _: SimpleNamespace(async_add_executor_job=read),
     )
     energy = SimpleNamespace(
-        data={"energy_sources": [{"stat_energy_from": "sensor.private"}]}
+        data={
+            "energy_sources": [{"type": "solar", "stat_energy_from": "sensor.private"}]
+        }
     )
     monkeypatch.setattr(
         native.energy, "async_get_manager", AsyncMock(return_value=energy)
@@ -173,20 +176,27 @@ async def test_each_native_read_narrows_current_scope_without_widening_guest_adm
     # A live resolver may see more entities than this Guest/caller admitted.
     with (
         native_read_scope(lambda: [{"entity_id": "sensor.private"}]),
-        pytest.raises(EntityNotExposed),
+        pytest.raises(EntityNotExposed) if name != "get_energy" else nullcontext(),
     ):
-        await getattr(function, name)(
+        result = await getattr(function, name)(
             hass, {"type": "native", "name": name}, args, None, []
         )
+        if name == "get_energy":
+            assert result == {"energy_sources": [], "device_consumption": []}
     # Conversely, an originally admitted entity may no longer be exposed.
-    with native_read_scope(lambda: []), pytest.raises(EntityNotExposed):
-        await getattr(function, name)(
+    with (
+        native_read_scope(lambda: []),
+        pytest.raises(EntityNotExposed) if name != "get_energy" else nullcontext(),
+    ):
+        result = await getattr(function, name)(
             hass,
             {"type": "native", "name": name},
             args,
             None,
             [{"entity_id": "sensor.private"}],
         )
+        if name == "get_energy":
+            assert result == {"energy_sources": [], "device_consumption": []}
     read.assert_not_awaited()
 
 
@@ -198,9 +208,16 @@ async def test_energy_revalidates_after_manager_load_yields(tmp_path, monkeypatc
         await asyncio.sleep(0)
         visible.clear()
         return SimpleNamespace(
-            data={"energy_sources": [{"stat_energy_from": "sensor.private"}]}
+            data={
+                "energy_sources": [
+                    {"type": "solar", "stat_energy_from": "sensor.private"}
+                ]
+            }
         )
 
     monkeypatch.setattr(native.energy, "async_get_manager", load_manager)
-    with native_read_scope(lambda: list(visible)), pytest.raises(EntityNotExposed):
-        await native.NativeFunction().get_energy(hass, {}, {}, None, list(visible))
+    with native_read_scope(lambda: list(visible)):
+        result = await native.NativeFunction().get_energy(
+            hass, {}, {}, None, list(visible)
+        )
+    assert result == {"energy_sources": [], "device_consumption": []}
