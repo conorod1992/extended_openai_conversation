@@ -8,6 +8,7 @@ import json
 import logging
 from typing import Any
 
+import httpx
 from openai import APIConnectionError, AuthenticationError, OpenAIError
 
 from homeassistant.const import CONF_API_KEY
@@ -81,14 +82,14 @@ def _root_cause_category(error: BaseException) -> tuple[str | None, str | None]:
 
 
 class ProviderTransportError(OpenAIError):
-    """Standard-library transport failure normalized into the provider path."""
+    """Raw transport failure normalized into the provider path."""
 
 
 def provider_transport_error(
-    error: TimeoutError | ConnectionError,
+    error: TimeoutError | ConnectionError | httpx.RequestError,
 ) -> ProviderTransportError:
     """Normalize a raw timeout/connection failure without exposing its details."""
-    if isinstance(error, TimeoutError):
+    if isinstance(error, (TimeoutError, httpx.TimeoutException)):
         return ProviderTransportError("Provider request timed out")
     return ProviderTransportError("Could not connect to provider")
 

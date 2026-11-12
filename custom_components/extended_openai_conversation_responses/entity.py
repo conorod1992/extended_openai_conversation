@@ -16,6 +16,7 @@ from pathlib import Path
 import time
 from typing import TYPE_CHECKING, Any, cast
 
+import httpx
 from openai import AsyncClient, AsyncStream
 from openai.types.chat import (
     ChatCompletionAssistantMessageParam,
@@ -1393,7 +1394,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                             else "after_tool",
                             error_type=type(err).__name__,
                         )
-                    if isinstance(err, (TimeoutError, ConnectionError)):
+                    if isinstance(err, (TimeoutError, ConnectionError, httpx.RequestError)):
                         raise provider_transport_error(err) from err
                     if isinstance(err, ValueError):
                         raise ProviderStreamError(
