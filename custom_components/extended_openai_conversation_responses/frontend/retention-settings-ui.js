@@ -19,6 +19,7 @@ function selectMarkup(panel, key, label) {
   return `<div class="setting" data-field="${key}" data-setting data-search="${panel._e(`${label} usage history retention details ${key}`.toLowerCase())}">
     <label for="config-${key}">${panel._e(label)}</label>
     <select id="config-${key}" data-config="${key}" data-retention-config="${key}" data-type="number">${choices.map((item) => optionMarkup(panel, item, value)).join("")}</select>
+    <small>${key === "usage_request_retention_days" ? "Individual provider calls within a conversation turn." : "Completed conversation turns, including their combined usage and timing."}</small>
     <span class="field-error" data-error="${key}"></span>
   </div>`;
 }
