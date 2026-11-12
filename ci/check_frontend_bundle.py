@@ -50,7 +50,10 @@ DIST = Path("custom_components/extended_openai_conversation_responses/frontend/d
 # keep the independent management-entry and CSS ceilings unchanged.
 # Retained Broadcast setting controls need 19 more bytes for owned cleanup.
 # Allow 887,550 total JS bytes; keep the entry and CSS ceilings unchanged.
-CEILINGS = {"javascript": 887_550, "css": 65_000, "management_entry": 120_000}
+# The consolidated Overview, contextual editor guidance and accessible capture
+# switch add 3,626 JS bytes (under 0.5%). Allow 891,300 bytes for this reviewed
+# presentation change; retain the independent entry and CSS ceilings.
+CEILINGS = {"javascript": 891_300, "css": 65_000, "management_entry": 120_000}
 
 
 def measure(dist: Path) -> dict[str, int]:
