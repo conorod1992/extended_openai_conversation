@@ -397,6 +397,28 @@ class PersistentMemory:
             if key is None:
                 duplicate = self._find_duplicate(user_id, content, subject)
                 if duplicate:
+                    conflict = None
+                    if duplicate.key is not None:
+                        conflict = "canonical keyed identity"
+                    elif duplicate.category != category:
+                        conflict = "category"
+                    elif (
+                        valid_from is not None
+                        and duplicate.valid_from is not None
+                        and duplicate.valid_from != valid_from
+                    ):
+                        conflict = "valid_from"
+                    elif duplicate.source == "explicit" and source == "implicit" and (
+                        (subject and not duplicate.subject)
+                        or (valid_from is not None and duplicate.valid_from is None)
+                    ):
+                        conflict = "explicit-memory metadata protection"
+                    if conflict:
+                        raise ValueError(
+                            f"Existing memory conflicts with requested {conflict}; "
+                            "no changes made. Open the existing memory and use Update "
+                            "to intentionally edit its metadata."
+                        )
                     changes: dict[str, Any] = {}
                     if duplicate.source == "implicit" and source == "explicit":
                         changes["source"] = "explicit"
@@ -406,6 +428,8 @@ class PersistentMemory:
                         and (source == "explicit" or duplicate.source == "implicit")
                     ):
                         changes["subject"] = subject
+                    if valid_from is not None and duplicate.valid_from is None:
+                        changes["valid_from"] = valid_from
                     if changes:
                         timestamp = dt_util.utcnow().isoformat()
                         _set_updated_at_if_substantive(duplicate, changes, timestamp)
@@ -1122,15 +1146,20 @@ class PersistentMemory:
             for memory in self._memories.values()
             if memory.user_id == user_id
             and _fact_equality(memory.content) == normalized
+            and (
+                not subject
+                or not memory.subject
+                or _subject_identity(memory.subject) == _subject_identity(subject)
+            )
         ]
-        for memory in matches:
-            if _subject_identity(memory.subject) == _subject_identity(subject):
-                return memory
-        # Omitted legacy metadata can be filled/preserved only when the content
-        # identifies one candidate. Two explicit subjects never establish a match.
-        if len(matches) == 1 and (not subject or not matches[0].subject):
-            return matches[0]
-        return None
+        # Missing subject metadata is compatible, not evidence that a candidate
+        # can be excluded. Never let dictionary order choose an existing identity.
+        if len(matches) > 1:
+            raise ValueError(
+                "Multiple existing memories could match this addition; no changes made. "
+                "Open the intended memory and use Update to edit its metadata."
+            )
+        return matches[0] if matches else None
 
     def _find_unique_unkeyed_duplicate(
         self,
