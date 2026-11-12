@@ -122,6 +122,14 @@ A constrained capture both validates and captures the selected value. For exampl
 
 `please switch bedroom lights on` captures `room = bedroom`. A value outside the listed choices does not match.
 
+Matching is case-insensitive, but captures retain the input's display casing:
+`set Home Office mode` with `set {room=home office|kitchen} mode` captures
+`Home Office`. Captures are not canonical identifiers. In supported Home Assistant
+action templates, normalize explicitly (`{{ room | lower }}`) or map to an entity
+(`{{ {'home office': 'light.office', 'kitchen': 'light.kitchen'}[room | lower] }}`).
+Simple `{room}` response substitution and **Value from request** preserve the
+captured text; they do not execute these Jinja expressions.
+
 Escapes also work inside constrained choices: `{value=a\|b|c}` accepts the literal values `a|b` and `c`, not separate `a` and `b` choices. Choices that become identical after Unicode, whitespace, and case normalization are rejected.
 
 Numeric captures accept integer digits (including a leading `+` or `-` where the configured range allows it) and validate the value without expanding the range into thousands of alternatives:
@@ -141,6 +149,13 @@ add {item} to {list_name}
 ```
 
 `add semi skimmed milk to weekly shopping` captures `item = semi skimmed milk` and `list_name = weekly shopping`.
+
+To exclude an optional comma separator, write `turn on {thing}[,] please`.
+Both `turn on kitchen, please` and `turn on kitchen please` capture `kitchen`.
+The explicit optional literal consumes the separator. Captures otherwise retain
+meaningful edge/internal punctuation, including punctuation-only values; the
+matcher does not trim punctuation globally. Broader automatic normalization is
+a separate semantic feature and does not rewrite existing rules.
 
 Free-text captures must be separated by required literal or constrained text. Ambiguous patterns such as `do {first} {second}` are rejected. A pattern also needs at least one required literal, constrained capture, or numeric capture, so a bare `{anything}` cannot intercept every request.
 
