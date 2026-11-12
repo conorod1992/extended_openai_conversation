@@ -130,8 +130,8 @@ for (const bundled of [false, true]) {
     await expect(panel.getByText("How memories are matched", {exact: true}).first()).toBeVisible();
     await expect(matching.locator('option[value="lexical"]')).toHaveText("Keyword matching");
     await expect(matching.locator('option[value="hybrid"]')).toHaveText("Keyword + meaning");
-    await expect(panel.locator("main")).toContainText("Keyword matching finds memories using similar words.");
-    await expect(panel.locator("main")).toContainText("Model used to compare memories by meaning.");
+    await expect(panel.locator("main")).toContainText("Keyword matches words locally; Keyword + meaning also finds memories with similar meaning.");
+    await expect(panel.locator("main")).toContainText("Saved but inactive with Keyword matching; used only for Keyword + meaning.");
     await go("assistant/voice");
     await expect(panel.getByText("Use saved data from", {exact: true})).toBeVisible();
     await expect(panel.locator('[data-config="voice_scope_policy"] option[value="unretained"]')).toHaveText("Don’t use saved personal data");
@@ -154,12 +154,12 @@ for (const bundled of [false, true]) {
     await expect(panel.locator(".usage-history-note")).toContainText("Daily usage history:");
     await expect(panel.locator(".usage-history-note")).toContainText("Older daily history is loaded only when you choose a longer history range.");
     await expect(panel.locator("main")).toContainText("This table shows saved individual runs.");
-    await expect(panel.locator("main")).toContainText("Usage totals are kept even when detailed records are deleted.");
+    await expect(panel.locator("main")).toContainText("Deleting detailed records keeps daily and lifetime usage totals.");
     await expect(panel.locator("main")).not.toContainText("loaded window");
     await expect(panel.locator("main")).toContainText("Retained runs without provider requests");
     await expect(panel.locator("main")).toContainText("individual run retention may exclude older runs.");
     await expect(panel.locator("main")).toContainText("Recent failed runs");
-    await expect(panel.locator("main")).toContainText("Recent individual runs are stored separately, so they may cover a shorter period.");
+    await expect(panel.locator("main")).toContainText("Changing the history range above does not load additional detailed records.");
   });
 }
 

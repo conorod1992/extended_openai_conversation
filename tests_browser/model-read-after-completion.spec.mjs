@@ -77,6 +77,7 @@ for (const bundled of [false, true]) test.describe(bundled ? "production complet
     });
     // The real catalogue action performs the ordinary full configuration read.
     // No subject Save/ACK can later hide a timing-dependent derived delta.
+    await panel.getByText("Recovery options", {exact:true}).click();
     await panel.locator('[data-model-data="reset"]').click();
     await expect.poll(() => panel.evaluate(host => host._configData.revision === window.completedModelReadRevision && !host._configDataStale)).toBe(true);
     const expected = choice === "automatic" ? "low" : choice === "explicit high" ? "high" : "minimal";

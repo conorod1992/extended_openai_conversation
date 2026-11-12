@@ -2,7 +2,7 @@
   "schema_version": 1,
   "purpose": "Reviewed source-level tripwire for interactive frontend markup. Runtime reachability is exercised by tests_browser/control-reachability.spec.mjs.",
   "interactive_marker_pattern": "<(?:button|input|select|textarea|summary|a)\\\\b|<ha-selector\\\\b|role=[\\\"'](?:button|switch|checkbox|link|tab)[\\\"']",
-  "expected_total_markers": 453,
+  "expected_total_markers": 467,
   "viewports": [
     {
       "name": "small-phone",
@@ -39,9 +39,9 @@
     "agent-config-sections-primary.js": 4,
     "agent-config-tools-base.js": 39,
     "assistant-configuration-actions.js": 4,
-    "backup-transfer-shell.js": 6,
+    "backup-transfer-shell.js": 7,
     "backup-transfer-ui.js": 5,
-    "debug-panel.js": 13,
+    "debug-panel.js": 16,
     "exposed-attributes-ui.js": 7,
     "function-add-menu.js": 4,
     "function-group-collection-repair.js": 4,
@@ -58,7 +58,7 @@
     "management-guest-feature.js": 19,
     "management-history-pagination.js": 6,
     "management-knowledge-feature.js": 7,
-    "management-memory-feature.js": 7,
+    "management-memory-feature.js": 8,
     "management-navigation-search.js": 3,
     "management-overview-health-clarity.js": 1,
     "management-panel.js": 34,
@@ -66,16 +66,16 @@
     "management-renderer.js": 3,
     "management-temporary-memory.js": 18,
     "memory-settings-ui.js": 5,
-    "model-catalog.js": 1,
+    "model-catalog.js": 2,
     "overview-broadcast.js": 10,
     "overview-onboarding.js": 2,
-    "overview-page-impl.js": 2,
+    "overview-page-impl.js": 3,
     "overview-page.js": 1,
     "quiet-hours-ui.js": 7,
     "request-rule-sharing-ui.js": 11,
     "request-rules-match-test-ui.js": 2,
-    "request-rules-ui-core.js": 39,
-    "request-rules-ui-impl.js": 31,
+    "request-rules-ui-core.js": 42,
+    "request-rules-ui-impl.js": 35,
     "retention-settings-ui.js": 1,
     "sharing-review.js": 7,
     "unsaved-state.js": 2,
@@ -174,6 +174,27 @@
         "#group-collection-discard"
       ],
       "browser_spec": "tests_browser/function-group-collection-repair.spec.mjs"
+    },
+    {
+      "source": "management-memory-feature.js",
+      "scenario": "Existing-memory advanced metadata remains reachable inside its disclosure without changing untouched values",
+      "selectors": [
+        "#memory-advanced > summary",
+        "#memory-subject",
+        "#memory-key",
+        "#memory-valid-from"
+      ],
+      "browser_spec": "tests_browser/control-reachability.spec.mjs"
+    },
+    {
+      "source": "model-catalog.js",
+      "scenario": "Recovery options disclose the existing restore action; checks and available-update actions retain their own visibility",
+      "selectors": [
+        "[data-model-data=\"check\"]",
+        "[data-model-data=\"apply\"]",
+        "[data-model-data=\"reset\"]"
+      ],
+      "browser_spec": "tests_browser/usability-polish.spec.mjs"
     }
   ]
 }

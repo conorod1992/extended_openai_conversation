@@ -87,6 +87,13 @@ const SURFACES = {
       ready: "#memory-dialog",
       close: "#memory-dialog .close-editor",
     },
+    {
+      name: "existing Memory advanced metadata",
+      open: [".memory-edit-button"],
+      ready: "#memory-dialog",
+      afterOpen: ["#memory-advanced > summary"],
+      close: "#memory-dialog .close-editor",
+    },
   ],
   "data-memory/knowledge": [
     {
