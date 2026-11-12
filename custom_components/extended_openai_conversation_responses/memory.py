@@ -11,6 +11,7 @@ import json
 import logging
 import math
 import re
+import time
 from types import MappingProxyType
 from typing import Any, Protocol
 import unicodedata
@@ -51,6 +52,8 @@ STORAGE_VERSION = 2
 
 EMBEDDING_CACHE_VERSION = 1
 EMBEDDING_CACHE_BATCH_SIZE = 64
+HYBRID_RETRY_INITIAL_SECONDS = 30.0
+HYBRID_RETRY_MAX_SECONDS = 300.0
 ANONYMOUS_USER_ID = LEGACY_ANONYMOUS_SCOPE_ID
 MAX_MEMORIES_PER_AGENT = 10_000
 MAX_CONTENT_LENGTH = 1_000
@@ -262,6 +265,9 @@ class PersistentMemory:
         self._embedding_cache: dict[str, EmbeddingCacheEntry] = {}
         self._embedding_cache_dirty = False
         self._embedding_cache_write_failed = False
+        self._embedding_retry_identity: object = None
+        self._hybrid_retry_at = 0.0
+        self._hybrid_retry_delay = 0.0
         self._hybrid_status: dict[str, Any] = {
             "configured": False,
             "status": "lexical_fallback",
@@ -311,16 +317,22 @@ class PersistentMemory:
         model: str = "default",
         *,
         space_id: str = "",
+        retry_identity: object = None,
     ) -> None:
         """Configure the optional provider used only by hybrid retrieval."""
-        # Unchanged live configuration must preserve diagnostics and avoid prewarming.
-        if (
-            self._embedding_provider == provider
-            and self._embedding_model == model
-            and self._embedding_space_id == space_id
-        ):
-            return
+        # This runtime-only identity must never enter vectors or diagnostics.
         model = str(model).strip() or "default"
+        identity = (
+            model,
+            space_id,
+            retry_identity if retry_identity is not None else provider,
+        )
+        if identity == self._embedding_retry_identity:
+            # Refresh an equivalent wrapper without resetting failure backoff/status.
+            self._embedding_provider = provider
+            return
+        self._embedding_retry_identity = identity
+        self._hybrid_retry_at = self._hybrid_retry_delay = 0.0
         self._embedding_provider = provider
         self._embedding_model = model
         self._embedding_space_id = space_id
@@ -331,7 +343,12 @@ class PersistentMemory:
 
     def hybrid_status(self) -> dict[str, Any]:
         """Return non-sensitive hybrid-retrieval availability diagnostics."""
-        return dict(self._hybrid_status)
+        return {
+            **self._hybrid_status,
+            "retry_after_seconds": max(
+                0, math.ceil(self._hybrid_retry_at - time.monotonic())
+            ),
+        }
 
     async def async_add(
         self,
@@ -619,10 +636,16 @@ class PersistentMemory:
         if self._embedding_provider is None:
             self._set_hybrid_status("lexical_fallback", "provider_not_configured")
             return None
+        if time.monotonic() < self._hybrid_retry_at:
+            return None
+        attempt_identity = self._embedding_retry_identity
         try:
             if not await self._async_refresh_missing_embeddings(scope_ids):
                 self._set_hybrid_status(
-                    "lexical_fallback", "embedding_preparation_failed"
+                    "lexical_fallback",
+                    "cache_write_failed"
+                    if self._embedding_cache_write_failed
+                    else "embedding_preparation_failed",
                 )
                 return None
             provider = self._embedding_provider
@@ -642,9 +665,17 @@ class PersistentMemory:
                     "embedding provider returned the wrong number of vectors"
                 )
             vector = _clean_embedding(vectors[0])
+            self._hybrid_retry_at = self._hybrid_retry_delay = 0.0
             self._set_hybrid_status("active")
             return vector
         except Exception as err:
+            if attempt_identity != self._embedding_retry_identity:
+                return None
+            self._hybrid_retry_delay = min(
+                HYBRID_RETRY_MAX_SECONDS,
+                max(HYBRID_RETRY_INITIAL_SECONDS, self._hybrid_retry_delay * 2),
+            )
+            self._hybrid_retry_at = time.monotonic() + self._hybrid_retry_delay
             reason = provider_failure_category(err)
             changed = (
                 self._hybrid_status.get("status") != "lexical_fallback"

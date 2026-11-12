@@ -106,7 +106,11 @@ async def test_scope_warmup_batches_only_requested_scope() -> None:
 
     assert await memory.async_prepare_hybrid(["alice"], "code")
     assert [len(batch) for batch in calls] == [EMBEDDING_CACHE_BATCH_SIZE, 1, 1]
-    assert all("Bob has an unrelated private memory." not in text for batch in calls for text in batch)
+    assert all(
+        "Bob has an unrelated private memory." not in text
+        for batch in calls
+        for text in batch
+    )
     assert cache.save_calls == 2
     assert len(cache.data["embeddings"]) == memory_count
 
@@ -198,6 +202,7 @@ async def test_failed_cache_save_keeps_request_time_fallback() -> None:
     assert await memory.async_prepare_hybrid(["alice"], "breed") is None
     assert calls == [["pets | Oscar is a Cavachon."]]
 
+
 async def test_pending_query_discarded_after_same_dimension_model_replacement() -> None:
     """An old query cannot use the newly populated, incompatible model space."""
     memory = await _memory()
@@ -228,3 +233,108 @@ async def test_pending_query_discarded_after_same_dimension_model_replacement() 
     finally:
         release.set()
         await asyncio.gather(pending, return_exceptions=True)
+
+
+async def test_remote_failure_backoff_expiry_reset_and_preserved_vectors(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from custom_components.extended_openai_conversation_responses import (
+        memory as module,
+    )
+
+    clock = [100.0]
+    monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
+    memory = await _memory()
+    await memory.async_add("alice", "Oscar is a Cavachon", "pets", "explicit")
+    await memory.async_add("bob", "Private sibling fact", "test", "explicit")
+    provider = AsyncMock(
+        side_effect=[
+            [[1.0, 0.0]],
+            OSError("unavailable"),
+            OSError("unavailable"),
+            [[1.0, 0.0]],
+        ]
+    )
+    memory.set_embedding_provider(provider, "model", retry_identity="client-a")
+    assert await memory.async_prepare_hybrid(["alice"], "puppy") is None
+    cache = dict(memory._embedding_cache)
+    assert len(cache) == 1
+    assert memory.hybrid_status()["retry_after_seconds"] == 30
+    for _ in range(3):
+        assert await memory.async_prepare_hybrid(["alice"], "puppy") is None
+    assert provider.await_count == 2
+    # Recreating a provider wrapper must not reset the failure or discard vectors.
+    memory.set_embedding_provider(provider, "model", retry_identity="client-a")
+    assert memory.hybrid_status()["retry_after_seconds"] == 30
+    clock[0] += 30
+    assert await memory.async_prepare_hybrid(["alice"], "puppy") is None
+    assert provider.await_count == 3
+    assert memory.hybrid_status()["retry_after_seconds"] == 60
+    clock[0] += 60
+    assert await memory.async_prepare_hybrid(["alice"], "puppy") == [1.0, 0.0]
+    assert provider.await_count == 4
+    assert memory._embedding_cache == cache
+    assert memory.hybrid_status()["retry_after_seconds"] == 0
+    assert memory.hybrid_status()["status"] == "active"
+
+
+async def test_meaningful_retry_identity_change_retries_immediately(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    memory = await _memory()
+    provider = AsyncMock(side_effect=OSError("unavailable"))
+    memory.set_embedding_provider(
+        provider, "model", space_id="space", retry_identity="client-a"
+    )
+    await memory.async_prepare_hybrid(["alice"], "query")
+    replacement = AsyncMock(return_value=[[1.0, 0.0]])
+    memory.set_embedding_provider(
+        replacement, "model", space_id="space", retry_identity="client-a"
+    )
+    assert await memory.async_prepare_hybrid(["alice"], "query") is None
+    replacement.assert_not_awaited()
+    memory.set_embedding_provider(
+        replacement, "model", space_id="space", retry_identity="client-b"
+    )
+    assert await memory.async_prepare_hybrid(["alice"], "query") == [1.0, 0.0]
+    assert "client-b" not in str(memory.hybrid_status())
+
+
+async def test_backoff_is_bounded_and_cancellation_does_not_start_it(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    import pytest
+
+    from custom_components.extended_openai_conversation_responses import (
+        memory as module,
+    )
+
+    clock = [100.0]
+    monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
+    memory = await _memory()
+    provider = AsyncMock(side_effect=asyncio.CancelledError())
+    memory.set_embedding_provider(provider)
+    with pytest.raises(asyncio.CancelledError):
+        await memory.async_prepare_hybrid(["alice"], "query")
+    assert memory.hybrid_status()["retry_after_seconds"] == 0
+    provider.side_effect = OSError("unavailable")
+    for _ in range(10):
+        await memory.async_prepare_hybrid(["alice"], "query")
+        delay = memory.hybrid_status()["retry_after_seconds"]
+        assert 30 <= delay <= 300
+        clock[0] += delay
+    assert delay == 300
+
+
+async def test_local_cache_write_failure_does_not_backoff_remote_provider():
+    memory = await _memory(FailingCacheStorage())
+    await memory.async_add("alice", "Oscar is a Cavachon", "pets", "explicit")
+    from unittest.mock import AsyncMock
+
+    provider = AsyncMock(return_value=[[1.0, 0.0]])
+    memory.set_embedding_provider(provider)
+    assert await memory.async_prepare_hybrid(["alice"], "query") is None
+    assert memory.hybrid_status()["reason"] == "cache_write_failed"
+    assert memory.hybrid_status()["retry_after_seconds"] == 0
+    assert await memory.async_prepare_hybrid(["alice"], "query") == [1.0, 0.0]
+    assert provider.await_count == 2

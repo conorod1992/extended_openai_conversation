@@ -10,6 +10,8 @@ import json
 import logging
 from typing import Any
 
+from homeassistant.const import CONF_API_KEY
+
 from .const import (
     CONF_API_PROVIDER,
     CONF_API_VERSION,
@@ -88,6 +90,13 @@ def sync_memory_embedding_provider(entity: Any) -> None:
             MemoryEmbeddingProvider(entity._async_create_embeddings, model),
             model,
             space_id=space_id,
+            # A transient, nonsecret identity: wrapper recreation is irrelevant,
+            # but replacing credentials or the runtime client permits retry.
+            retry_identity=(
+                space_id,
+                id(getattr(entity.entry, "runtime_data", None)),
+                hashlib.sha256(str(entry_data.get(CONF_API_KEY, "")).encode()).digest(),
+            ),
         )
     else:
         # The manager is shared per agent and can outlive one entity instance. Clear
