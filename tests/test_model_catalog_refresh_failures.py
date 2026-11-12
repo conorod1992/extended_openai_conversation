@@ -571,3 +571,151 @@ async def test_failed_refresh_keeps_downloaded_catalog_and_forced_retry_succeeds
     assert manager.etag == '"v3"'
     assert manager.store.saved["catalog"] == downloaded
     assert manager.store.saved["available_catalog"] == refreshed
+
+
+@pytest.mark.parametrize("pending", [False, True])
+@pytest.mark.parametrize("save_failure", [False, True])
+async def test_clock_rollback_preserves_catalogues_through_failed_refresh_and_restart(
+    hass, monkeypatch, pending, save_failure
+):
+    """A skewed saved clock cannot replace active/pending data with the bundle."""
+    active = _versioned_candidate(increment=1)
+    available = _versioned_candidate(increment=2) if pending else None
+    store = MemoryStore(
+        {
+            "catalog": active,
+            "available_catalog": available,
+            "etag": '"downloaded"',
+            "last_checked": 1_000_000.0,
+        }
+    )
+    store.fail = save_failure
+    now = 100.0  # Also proves zero/unchecked bypasses the near-epoch cooldown.
+    monkeypatch.setattr(runtime.time, "time", lambda: now)
+    get = _chunked_transport(monkeypatch, b"", error=TimeoutError())
+    manager = runtime.ModelCatalogManager(hass)
+    manager.store = store
+
+    await manager.async_load()
+
+    assert manager.catalog == active
+    assert manager.available_catalog == available
+    assert manager.etag == '"downloaded"'
+    assert manager.last_checked == 0.0
+    assert manager.last_error is None
+    assert data.model_metadata("gpt-6-astra")["display_name"] == "Updated 1"
+    get.assert_not_called()  # Startup remains network-independent.
+    assert store.save_calls == 0  # Normalize in memory; refresh owns persistence.
+
+    failed = await manager.async_check()
+    assert failed["last_error"]
+    assert get.call_count == 1
+    assert store.save_calls == 1
+    assert store.saved["catalog"] == active
+    assert store.saved["available_catalog"] == available
+    assert store.saved["last_checked"] == (1_000_000.0 if save_failure else now)
+
+    # Restart from the exact persisted snapshot, including an uncorrected future
+    # timestamp if the failed refresh could not write its check time.
+    restarted = runtime.ModelCatalogManager(hass)
+    restarted.store = MemoryStore(store.saved)
+    await restarted.async_load()
+    assert restarted.catalog == active
+    assert restarted.available_catalog == available
+    assert restarted.etag == '"downloaded"'
+    assert restarted.last_error is None
+    assert restarted.last_checked == (0.0 if save_failure else now)
+
+    now += runtime.UPDATE_INTERVAL
+    get = _chunked_transport(monkeypatch, b"", status=304)
+    refreshed = await restarted.async_check()
+    assert get.call_count == 1
+    assert get.call_args.kwargs["headers"] == {"If-None-Match": '"downloaded"'}
+    assert refreshed["last_error"] is None
+    assert refreshed["last_checked"] == now
+    assert restarted.store.saved["catalog"] == active
+    assert restarted.store.saved["available_catalog"] == available
+    assert restarted.store.saved["last_checked"] == now
+    final = runtime.ModelCatalogManager(hass)
+    final.store = MemoryStore(restarted.store.saved)
+    await final.async_load()
+    assert final.catalog == active
+    assert final.available_catalog == available
+    assert final.etag == '"downloaded"'
+    assert final.last_checked == now
+
+
+@pytest.mark.parametrize("now", [0.0, 0.1, 100.0])
+async def test_unchecked_catalogue_refreshes_near_epoch(hass, monkeypatch, now):
+    """A zero timestamp is an unchecked sentinel, even at the Unix epoch."""
+    active = _versioned_candidate(increment=1)
+    manager = runtime.ModelCatalogManager(hass)
+    manager.store = MemoryStore(
+        {"catalog": active, "etag": '"active"', "last_checked": 0}
+    )
+    monkeypatch.setattr(runtime.time, "time", lambda: now)
+    await manager.async_load()
+    get = _chunked_transport(monkeypatch, b"", status=304)
+    await manager.async_check()
+    assert get.call_count == 1
+    assert manager.catalog == active
+    assert manager.store.saved["last_checked"] == now
+    await manager.async_check()
+    assert get.call_count == (2 if now == 0 else 1)
+
+
+async def test_skewed_timestamp_download_keeps_explicit_apply_semantics(
+    hass, monkeypatch
+):
+    active = _versioned_candidate(increment=1)
+    pending = _versioned_candidate(increment=2)
+    downloaded = _versioned_candidate(increment=3)
+    manager = runtime.ModelCatalogManager(hass)
+    manager.store = MemoryStore(
+        {
+            "catalog": active,
+            "available_catalog": pending,
+            "etag": '"pending"',
+            "last_checked": 1_000_000,
+        }
+    )
+    monkeypatch.setattr(runtime.time, "time", lambda: 100.0)
+    await manager.async_load()
+    manager._candidate_preserves_saved_requests = AsyncMock(return_value=True)
+    get = _chunked_transport(monkeypatch, json.dumps(downloaded).encode(), etag='"new"')
+    await manager.async_check()
+    assert get.call_count == 1
+    assert manager.catalog == active
+    assert manager.available_catalog == downloaded
+    assert data.model_metadata("gpt-6-astra")["display_name"] == "Updated 1"
+    restarted = runtime.ModelCatalogManager(hass)
+    restarted.store = MemoryStore(manager.store.saved)
+    await restarted.async_load()
+    assert restarted.catalog == active
+    assert restarted.available_catalog == downloaded
+    assert restarted.etag == '"new"'
+    assert restarted.last_checked == 100.0
+
+
+@pytest.mark.parametrize(
+    "corruption", ["catalog", "available_catalog", "etag", "incompatible_catalog"]
+)
+async def test_future_timestamp_does_not_bypass_other_storage_validation(
+    hass, monkeypatch, corruption
+):
+    saved = {
+        "catalog": _versioned_candidate(increment=1),
+        "available_catalog": _versioned_candidate(increment=2),
+        "etag": '"valid"',
+        "last_checked": 1_000_000,
+    }
+    saved[corruption] = {"invalid": True} if corruption != "etag" else "bad\netag"
+    manager = runtime.ModelCatalogManager(hass)
+    manager.store = MemoryStore(saved)
+    monkeypatch.setattr(runtime.time, "time", lambda: 100.0)
+    await manager.async_load()
+    assert manager.catalog is None
+    assert manager.available_catalog is None
+    assert manager.etag is None
+    assert manager.last_error
+    assert manager.store.save_calls == 0

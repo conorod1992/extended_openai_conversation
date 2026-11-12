@@ -5,7 +5,6 @@ from __future__ import annotations
 from copy import deepcopy
 import inspect
 from pathlib import Path
-import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -692,11 +691,24 @@ def test_activate_catalog_can_restore_bundled_state() -> None:
     "saved",
     [
         {"catalog": None, "etag": None, "last_checked": True},
-        {"catalog": None, "etag": None, "last_checked": time.time() + 3600},
+        {"catalog": None, "etag": None, "last_checked": -1},
+        {"catalog": None, "etag": None, "last_checked": float("nan")},
+        {"catalog": None, "etag": None, "last_checked": float("inf")},
+        {"catalog": None, "etag": None, "last_checked": float("-inf")},
+        {"catalog": None, "etag": None, "last_checked": "123"},
         {"catalog": None, "etag": "bad\netag", "last_checked": 0},
         {"catalog": None, "etag": "x" * 257, "last_checked": 0},
     ],
-    ids=["boolean-check-time", "future-check-time", "newline-etag", "oversized-etag"],
+    ids=[
+        "boolean-check-time",
+        "negative-check-time",
+        "nan-check-time",
+        "infinite-check-time",
+        "negative-infinite-check-time",
+        "string-check-time",
+        "newline-etag",
+        "oversized-etag",
+    ],
 )
 async def test_load_rejects_invalid_storage_metadata(hass, saved) -> None:
     manager = _stored_manager(hass)
