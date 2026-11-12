@@ -307,7 +307,7 @@ Page intro
 
 The page intro may include a small number of subordinate contextual actions where they help the user continue the task, for example Manage stored memories or Learn more. Such actions should not compete visually with the main local task.
 
-Avoid stacking multiple introductory title blocks.
+Avoid stacking multiple introductory title blocks. A nested container should not repeat its parent's heading or tagline; give it a heading only when that identifies a distinct task or group.
 
 ### 3.2 Width
 
@@ -504,6 +504,8 @@ It should explain:
 
 Avoid repeating documentation-level detail in introductory text.
 
+Each explanation should serve a distinct purpose. Consolidate overlapping page, section, field, and warning copy while keeping decision-critical information beside the relevant control.
+
 ### 6.2 Keep descriptions concise
 
 Prefer:
@@ -512,6 +514,8 @@ Knowledge
 Give the assistant reference information it can retrieve when needed.
 
 Avoid several paragraphs describing every possible behaviour before the user reaches the controls.
+
+For mutually exclusive selections, generally explain the active choice near its control rather than describing all alternatives simultaneously. Keep comparisons where they materially help the user choose.
 
 Detailed explanation belongs in:
 - contextual help;
@@ -675,6 +679,8 @@ Use:
 
 Do not present routine explanatory copy as a warning simply because it is placed in a notice container.
 
+Show warnings relevant to the current selection close to the affected decision. Consolidate repetition, but keep material risks visible before a consequential action; progressive disclosure must not conceal them.
+
 ## 9. FORMS
 
 ### 9.1 Field structure
@@ -684,6 +690,8 @@ A normal field should contain:
 - control;
 - optional help text;
 - optional validation/error message.
+
+Prefer the established toggle pattern for independent on/off settings and checkboxes for selecting multiple items, unless the task benefits from another established convention. Keep labels readable and aligned with their controls, with accessible names, associated help, and keyboard operation.
 
 ### 9.2 Single-column by default for sequential decisions
 
@@ -1147,6 +1155,7 @@ Before merging a frontend change, check:
 - Are unsaved changes preserved or clearly protected?
 - Are native HA selectors/components used for Home Assistant-owned concepts where suitable, without forcing them onto ordinary EOAI scalar fields?
 - Are controls keyboard accessible?
+- Do boolean controls use the appropriate shared pattern, with readable, aligned labels and accessible help?
 - Does the UI remain stable after local actions?
 - Is the displayed state authoritative?
 - Are summaries semantically accurate?
@@ -1159,6 +1168,7 @@ Ask:
 - Can they tell what the main action is?
 - Can they understand each ordinary setting without leaving the page?
 - Is important help next to the decision?
+- Does each heading and explanation add distinct information, with active-choice descriptions and warnings where useful?
 - Is advanced complexity hidden until useful?
 - Will they understand what scope or assistant they are editing?
 - Could they accidentally lose work?
@@ -1170,6 +1180,7 @@ Ask:
 - Does it remain usable with keyboard navigation?
 - Does it feel like Home Assistant where a native HA pattern exists?
 - Does the page feel like the same product as the rest of EOAI?
+- Across the assembled workflow's important states, has accumulated clutter, duplicated copy, inconsistent control use, and excessive visual complexity been reviewed?
 
 ## 25. EXCEPTIONS
 

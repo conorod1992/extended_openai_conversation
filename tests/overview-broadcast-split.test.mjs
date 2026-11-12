@@ -32,7 +32,7 @@ const bindSource = overview.slice(overview.indexOf("export function bindOverview
 const bindOverview = new Function(`${bindSource}; return bindOverview;`)();
 const host = {innerHTML: "Loading Broadcast…"};
 const panel = {
-  shadowRoot: {querySelectorAll: () => [], querySelector: () => host},
+  shadowRoot: {querySelectorAll: () => [], querySelector: selector => selector === "#broadcast-card" ? host : null},
   _viewKey: () => "overview", _e: (text) => text,
 };
 bindOverview(panel, Promise.resolve({}));

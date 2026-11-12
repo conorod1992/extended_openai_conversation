@@ -236,7 +236,7 @@ function renderGettingStarted(panel, model) {
         <div class="getting-started-progress" role="status"><strong>${model.reviewed_count} of ${model.total_count} setup steps reviewed</strong><span>${model.remaining_count} ${model.remaining_count === 1 ? "step" : "steps"} remaining</span></div>
       </div>
       <div class="getting-started-grid">${steps}</div>
-      <div class="getting-started-footer"><p>Setup & health below remains the ongoing source of truth even after this one-time checklist is dismissed or completed.</p><button type="button" class="secondary getting-started-dismiss" id="eoc-dismiss-getting-started">Dismiss</button></div>
+      <div class="getting-started-footer"><p>Configuration & health below remains the ongoing source of truth even after this one-time checklist is dismissed or completed.</p><button type="button" class="secondary getting-started-dismiss" id="eoc-dismiss-getting-started">Dismiss</button></div>
     </section>`;
 }
 

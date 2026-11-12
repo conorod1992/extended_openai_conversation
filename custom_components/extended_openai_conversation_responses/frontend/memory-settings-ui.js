@@ -41,8 +41,8 @@ export function renderMemorySettings(panel) {
           </div>
           <div class="setting-group"><div class="subheading"><h2>Matching memories</h2><p>Choose which memories are included automatically and how they are matched.</p></div>
             ${numberField(panel, "memory_auto_retrieve_limit", "Automatically include memories", config.memory_auto_retrieve_limit, "Select up to this many relevant memories when a new conversation starts. Set to 0 to use long-term memory only on demand.", 0, 10)}
-            ${select(panel, "memory_retrieval_mode", "How memories are matched", config.memory_retrieval_mode, "Keyword matching finds memories using similar words. Keyword + meaning can also find memories that use different wording but mean something similar.")}
-            <div class="dependent ${hybrid ? "" : "is-disabled"}" data-memory-hybrid>${textField(panel, "memory_embedding_model", "Embedding model", config.memory_embedding_model || "text-embedding-3-small", "Model used to compare memories by meaning. Only needed when Keyword + meaning matching is selected. Your provider must support this model.", !hybrid)}</div>
+            ${select(panel, "memory_retrieval_mode", "How memories are matched", config.memory_retrieval_mode, "Keyword matches words locally; Keyword + meaning also finds memories with similar meaning.")}
+            <div class="dependent ${hybrid ? "" : "is-disabled"}" data-memory-hybrid>${textField(panel, "memory_embedding_model", "Embedding model", config.memory_embedding_model || "text-embedding-3-small", "Your provider must support this model for meaning matching.", !hybrid)}</div>
           </div>
           <div class="setting-group"><div class="subheading"><h2>Shared household memory</h2><p>Keep household-wide memory behavior separate from private user memories.</p></div>
             ${select(panel, "shared_memory_mode", "Shared household memory", config.shared_memory_mode, "Choose whether shared memories are disabled, saved only when explicitly requested, or may also be created automatically.")}

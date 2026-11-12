@@ -1,5 +1,5 @@
 import {updateDialogs} from "./management-dialogs.js";
-import {renderBackupTransferPanel} from "./backup-transfer-shell.js";
+import {bindExportOptions, renderBackupTransferPanel} from "./backup-transfer-shell.js";
 import {ensureCompactChoiceStyle} from "./compact-choice-styles.js";
 
 export {renderBackupTransferPanel};
@@ -29,9 +29,7 @@ export function bindBackupTransfer(panel) {
     return;
   }
   const root = panel.shadowRoot;
-  const exportMode = root.querySelector("#transfer-export-mode");
-  const customOptions = root.querySelector("#transfer-custom-options");
-  exportMode?.addEventListener("change", () => { customOptions.hidden = exportMode.value !== "custom"; });
+  bindExportOptions(root);
   const create = root.querySelector("#create-backup-transfer");
   create?.addEventListener("click", async () => {
     if (panel._backupTransferModule || panel._backupTransferStarting) return;

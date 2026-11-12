@@ -6,7 +6,8 @@ test("Sharing review displays exact content as text and requires custom-content 
   await page.goto(fixtureUrl("usage-maintenance/backup-restore"));
   const panel = page.locator("extended-openai-management-panel");
   await expect(panel.locator("#transfer-reviewed-custom")).not.toBeChecked();
-  await expect(panel.getByText("Custom content you choose to include may still contain secrets.", {exact:false})).toBeVisible();
+  await panel.getByRole("switch", {name:"Include custom content", exact:true}).check();
+  await expect(panel.locator("#transfer-custom-warning")).toContainText("Custom content may contain secrets.");
   await page.evaluate(async () => {
     const {reviewSharingExport} = await import("/custom_components/extended_openai_conversation_responses/frontend/sharing-review.js");
     const host = document.querySelector("extended-openai-management-panel");

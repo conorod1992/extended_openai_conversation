@@ -130,6 +130,7 @@ test("browser engines hand persisted state across one HA backend", async () => {
     const firstMemory = panel.locator(".memory-list .list-card").filter({hasText:"Éire 東京 first writer"});
     await expect(firstMemory).toBeVisible();
     await firstMemory.locator(".memory-edit-button").click();
+    await panel.locator("#memory-advanced > summary").click();
     await panel.locator("#memory-valid-from").fill("2026-10-05T12:34:56+01:00");
     await panel.locator("#memory-save").click();
     await expect(panel.locator("#memory-dialog")).not.toHaveJSProperty("open", true);

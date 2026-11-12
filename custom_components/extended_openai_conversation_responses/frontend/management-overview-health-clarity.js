@@ -70,7 +70,7 @@ export function renderOverviewModelDataCard(panel) {
   const article = document.createElement("article");
   article.className = `dashboard-card dashboard-tone-${state.tone}`;
   article.dataset.eocModelDataCard = "";
-  article.innerHTML = `<div class="dashboard-card-main"><span class="dashboard-icon" aria-hidden="true"><ha-icon icon="mdi:database-sync-outline"></ha-icon></span><div><h2>Model Data</h2><strong>${panel._e(state.status)}</strong><p>${panel._e(state.detail)}</p></div></div><button type="button" class="secondary dashboard-action" data-eoc-model-data-action="${state.mode}">${panel._e(state.action)}</button>`;
+  article.innerHTML = `<div class="dashboard-card-main"><span class="dashboard-icon" aria-hidden="true"><ha-icon icon="mdi:database-sync-outline"></ha-icon></span><div><h3>Model Data</h3><strong>${panel._e(state.status)}</strong><p>${panel._e(state.detail)}</p></div></div><button type="button" class="secondary dashboard-action" data-eoc-model-data-action="${state.mode}">${panel._e(state.action)}</button>`;
   grid.append(article);
 
   article.querySelector('[data-eoc-model-data-action="navigate"]')?.addEventListener("click", () => {

@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import {
   apiModeConsequence,
   dependencyGuidance,
-  hybridMemoryGuidance,
   skillLoaderConflict,
   modelParameterGuidance,
   webSearchConflict,
@@ -34,12 +33,6 @@ assert.match(
   dependencyGuidance("local_intents_enabled", {local_intents_enabled: false}, {supported: true}).text,
   /local handling is off/,
 );
-
-const lexical = hybridMemoryGuidance({memory_retrieval_mode: "lexical"});
-assert.equal(lexical.kind, "dormant");
-assert.match(lexical.text, /saved model is kept/);
-const hybrid = hybridMemoryGuidance({memory_retrieval_mode: "hybrid"});
-assert.match(hybrid.text, /keyword matching is used/);
 
 assert.deepEqual(
   apiModeConsequence(
@@ -99,6 +92,6 @@ assert.equal(
 
 const unsupportedTemperature = modelParameterGuidance("temperature", {supports_temperature: false});
 assert.match(unsupportedTemperature.title, /Not used/);
-assert.match(unsupportedTemperature.text, /saved value is retained/);
+assert.match(unsupportedTemperature.text, /Saved but inactive/);
 assert.equal(modelParameterGuidance("temperature", {supports_temperature: true}), null);
 

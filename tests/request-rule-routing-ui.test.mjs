@@ -68,6 +68,6 @@ syncRequestRuleRoutingControls(root, ["low", "medium", "high", "xhigh", "max"]);
 assert.equal(reasoning.querySelector('option[value="max"]').disabled, false);
 
 const dialog = requestRulesDialog({});
-assert.match(dialog, /complete commands/);
-assert.match(dialog, /selected AI input after applying the route/);
+assert.match(dialog, /rule-routing-match-help/);
+assert.match(dialog, /role="switch"/);
 assert.match(dialog, /rule-routing-scope-help/);

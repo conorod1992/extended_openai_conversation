@@ -86,7 +86,7 @@ describe("Voice & identity management UX", () => {
 
   it("explains the effective unidentified-voice path", () => {
     expect(voiceIdentitySummary(panel._result.config,voiceUsers(panel))).toBe(
-      "Unidentified voice requests use 2 saved device assignments. Devices without an assignment use the default user (Conor).",
+      "Unidentified voice requests use 2 device assignments. Devices without an assignment use the default user (Conor).",
     );
     expect(voiceIdentitySummary({...panel._result.config,voice_scope_policy:"default_user",voice_default_user_id:""},voiceUsers(panel))).toContain(
       "none is selected — so no personal data is used or saved",
