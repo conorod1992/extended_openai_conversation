@@ -1300,10 +1300,18 @@ class ExtendedOpenAIAgentEntity(
             config_data.get(CONF_FUNCTION_GROUPS, list(DEFAULT_FUNCTION_GROUPS)),
             configured,
         )
+        disabled_members = {
+            name
+            for group in groups
+            if group.get("enabled", True) is not True
+            for name in group["functions"]
+        }
         references = [
             tool["function"]
             for tool in configured
-            if is_ha_tool(tool) and function_tool_enabled(tool)
+            if is_ha_tool(tool)
+            and function_tool_enabled(tool)
+            and tool["spec"]["name"] not in disabled_members
         ]
         snapshot = ToolSnapshot()
         if (
