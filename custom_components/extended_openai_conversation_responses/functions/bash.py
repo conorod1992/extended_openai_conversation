@@ -130,9 +130,11 @@ def _shell_command_tokens(
                     index = end
                     if (line.lstrip("\t") if strip_tabs else line) == delimiter:
                         break
-                    if not quoted and any(char in line for char in "$`"):
+                    if not quoted and (
+                        line.endswith("\\") or any(char in line for char in "$`")
+                    ):
                         raise ValueError(
-                            "Command blocked: heredoc substitution cannot be verified"
+                            "Command blocked: heredoc substitution or continuation cannot be verified"
                         )
             pending.clear()
             continue
