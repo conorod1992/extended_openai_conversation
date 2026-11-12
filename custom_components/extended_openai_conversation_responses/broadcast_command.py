@@ -37,7 +37,7 @@ def broadcast_message(text: Any) -> str | None:
     # small duration form is exempt from a later "in"; the message is unchanged.
     # Check the whole suffix so a duration cannot hide a subsequent destination.
     if re.search(
-        r"\b(?:to|on|at)\b|\bin\b(?!\s+(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(?:seconds?|minutes?|hours?)(?=[.!?,;]|$))",
+        r"\b(?:to|on|at|for|after)\b|\bin\b(?!\s+(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(?:seconds?|minutes?|hours?)(?=[.!?,;]|$))",
         message,
         re.IGNORECASE,
     ):

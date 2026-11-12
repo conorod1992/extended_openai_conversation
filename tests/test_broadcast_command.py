@@ -67,6 +67,8 @@ def test_literal_message(text, message):
         "Broadcast dinner is ready in kitchen",
         "Broadcast dinner is ready to bedroom",
         "Broadcast dinner is ready at the kitchen speaker",
+        "Broadcast dinner is ready for the kitchen",
+        "Broadcast dinner is ready after ten minutes",
         "Broadcast dinner in ten minutes in the kitchen",
         "Broadcast dinner in ten minutes on the bedroom speaker",
         "Broadcast dinner in ten minute speakers",
@@ -97,6 +99,7 @@ def _input(text="Broadcast Dinner"):
         (False, {}, "Broadcast, dinner is ready in the kitchen"),
         (False, {}, "Broadcast dinner is ready on the bedroom speaker"),
         (False, {}, "Broadcast dinner in ten minutes to the kitchen"),
+        (False, {}, "Broadcast dinner is ready for the kitchen"),
     ],
 )
 async def test_no_manager_or_storage_for_ineligible_request(
