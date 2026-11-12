@@ -978,6 +978,10 @@ class IntercomManager:
                 if wanted in accepted:
                     matches.append((target_field, item))
         if not matches:
+            # New whole-home phrases must not steal an existing destination's
+            # name or alias. Keep the historical aliases' precedence above.
+            if wanted in {"whole house", "the whole home", "everybody"}:
+                return {"whole_home": True, "name": name.strip()}
             return None
         if len(matches) > 1:
             # Build memberships once, rather than resolving every alias against
