@@ -529,7 +529,8 @@ class PersistentMemory:
                 same = (
                     _fact_equality(candidate.content) == _fact_equality(content)
                     and candidate.category == category
-                    and candidate.source == source
+                    # Source describes the proposal, not permission to change
+                    # stored provenance. A source-only difference is a no-op.
                     and (
                         cleaned_subject is _UNSET
                         or candidate.subject == cleaned_subject
