@@ -8,6 +8,10 @@ from dataclasses import dataclass
 from homeassistant.exceptions import HomeAssistantError
 
 
+class FunctionCallLimitReached(HomeAssistantError):
+    """Expected refusal of execution, distinct from backend/provider failure."""
+
+
 @dataclass(slots=True)
 class FunctionCallBudget:
     """Enforce an exact per-conversation Function Tool execution ceiling."""
@@ -39,8 +43,16 @@ class FunctionCallBudget:
         if self.limit >= 0 and self.used + len(names) > self.limit:
             allowed = max(0, self.limit - self.used)
             refused = names[min(allowed, len(names) - 1)]
-            raise HomeAssistantError(
+            raise FunctionCallLimitReached(
                 f"Function call limit of {self.limit} reached; refusing to execute "
                 f"additional tool `{refused}`"
             )
         self.used += len(names)
+
+    def claim_prefix(self, tool_names: Iterable[str]) -> int:
+        """Select and reserve the eligible prefix atomically, without awaiting."""
+        names = tuple(tool_names)
+        remaining = self.remaining
+        count = len(names) if remaining is None else min(remaining, len(names))
+        self.claim_many(names[:count])
+        return count

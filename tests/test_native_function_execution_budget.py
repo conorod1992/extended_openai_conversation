@@ -223,16 +223,18 @@ async def test_one_parallel_batch_cannot_overshoot_remaining_budget(hass) -> Non
                     ("call-1", "memory_one", {}),
                     ("call-2", "memory_two", {}),
                 ]
-            )
+            ),
+            _final_stream(),
         ],
         limit=1,
     )
     entity._execute_function_tool = _executor(entity)
 
-    with pytest.raises(HomeAssistantError, match="Function call limit of 1 reached"):
-        await entity._async_handle_chat_log(_chat_log(hass), tools, [])
+    await entity._async_handle_chat_log(_chat_log(hass), tools, [])
 
-    entity._execute_function_tool.assert_not_awaited()
+    assert entity._execute_function_tool.await_count == 1
+    assert entity._execute_function_tool.await_args.args[1].tool_name == "memory_one"
+    assert entity._client.responses.create.await_count == 2
 
 
 async def test_serial_over_budget_tool_is_not_called(hass) -> None:
@@ -248,14 +250,14 @@ async def test_serial_over_budget_tool_is_not_called(hass) -> None:
                     ("call-1", "first", {}),
                     ("call-2", "second", {}),
                 ]
-            )
+            ),
+            _final_stream(),
         ],
         limit=1,
     )
     entity._execute_function_tool = _executor(entity)
 
-    with pytest.raises(HomeAssistantError, match="Function call limit of 1 reached"):
-        await entity._async_handle_chat_log(_chat_log(hass), tools, [])
+    await entity._async_handle_chat_log(_chat_log(hass), tools, [])
 
     assert entity._execute_function_tool.await_count == 1
     assert entity._execute_function_tool.await_args_list[0].args[1].tool_name == "first"

@@ -71,6 +71,18 @@ See [Function groups](../features/function-groups.md) for lifecycle, compatibili
 
 **Assistant → Basics → Advanced request settings → Tool-call limit per request** limits executable tool calls during one conversation turn. The allowance resets on the next turn. A Function Group load has its own bound and does not use this allowance; reading a Skill file does.
 
+When a provider returns too many calls in one batch, eligible calls run in order
+up to the remaining allowance. Known read-only parallel batches reserve that
+eligible prefix together. Every excess call receives exactly one result:
+`not executed: request Function Tool limit reached`. These refusals do not run,
+consume error-correction attempts, or create effect receipts. The normal bounded
+provider loop continues so the model can acknowledge completed results; the hard
+provider-round limit still applies. A provider failure after completed effects
+retains replay protection until the existing acknowledgement cleanup succeeds.
+Validation of configured-tool arguments happens before execution accounting with
+error correction either on or off. HA-owned tools retain HA's own validation and
+permission boundary.
+
 **Correct safe tool-call errors automatically** is off by default. When enabled, malformed JSON or invalid configured-tool arguments can be returned to the model for correction only before dispatch, when that tool call has not started. There are at most two such corrections per request. Rejected arguments do not consume the execution allowance, but a corrected execution does, and extra model exchanges may increase latency and provider usage. Permission denials, changed or unavailable tools, and failures after dispatch do not qualify for this recovery. An action that may already have run is not automatically repeated.
 
 Arbitrary custom Function Tools and external Home Assistant tools run sequentially. Only batches made entirely of integration-owned, known read-only capabilities can run concurrently, such as memory/Knowledge searches and supported native history/statistics reads. A provider returning several tool calls does not make arbitrary actions parallel.

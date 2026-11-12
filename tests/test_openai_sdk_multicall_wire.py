@@ -11,6 +11,8 @@ import pytest
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_CHAT_COMPLETIONS,
     API_MODE_RESPONSES,
+    CONF_FUNCTION_TOOL_ERROR_RECOVERY,
+    CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
 )
 from tests.test_openai_sdk_wire import (
     _chat_chunk,
@@ -109,8 +111,11 @@ def _chat_calls() -> bytes:
 
 
 @pytest.mark.parametrize("api_mode", [API_MODE_RESPONSES, API_MODE_CHAT_COMPLETIONS])
+@pytest.mark.parametrize("limit", [1, 2, -1])
+@pytest.mark.parametrize("recovery", [False, True])
+@pytest.mark.parametrize("parallel", [False, True])
 async def test_two_sdk_wire_calls_keep_ids_arguments_and_outputs_paired(
-    hass, api_mode: str
+    hass, api_mode: str, limit, recovery, parallel
 ) -> None:
     first = _responses_calls() if api_mode == API_MODE_RESPONSES else _chat_calls()
     second = (
@@ -121,6 +126,8 @@ async def test_two_sdk_wire_calls_keep_ids_arguments_and_outputs_paired(
     wire = _Wire([_stream_response(first), _stream_response(second)])
     client = _client(wire)
     entity = _entity(hass, client, api_mode)
+    entity.subentry.data[CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION] = limit
+    entity.subentry.data[CONF_FUNCTION_TOOL_ERROR_RECOVERY] = recovery
     executed: list[tuple[str, str]] = []
 
     async def execute(_tool_definition, tool_input, _context, _exposed):
@@ -129,11 +136,15 @@ async def test_two_sdk_wire_calls_keep_ids_arguments_and_outputs_paired(
 
     entity._execute_function_tool = AsyncMock(side_effect=execute)
     chat_log = _chat_log(hass)
+    tool = _tool()
+    if parallel:
+        tool["function"] = {"type": "memory", "operation": "search"}
     try:
-        await entity._async_handle_chat_log(chat_log, [_tool()], [])
+        await entity._async_handle_chat_log(chat_log, [tool], [])
     finally:
         await _close_client(client)
-    assert executed == list(_CALLS)
+    count = 1 if limit == 1 else 2
+    assert executed == list(_CALLS[:count])
     assert len(wire.requests) == 2
     continuation = _json_body(wire.requests[1])
     if api_mode == API_MODE_RESPONSES:
@@ -153,5 +164,7 @@ async def test_two_sdk_wire_calls_keep_ids_arguments_and_outputs_paired(
             (item["tool_call_id"], json.loads(item["content"])["result"])
             for item in outputs
         ]
-    assert observed == list(_CALLS)
+    assert observed[:count] == list(_CALLS[:count])
+    if count == 1:
+        assert observed[1] == (_CALLS[1][0], {"status": "not_executed", "reason": "not executed: request Function Tool limit reached"})
     assert chat_log.content[-1].content == "Both done"

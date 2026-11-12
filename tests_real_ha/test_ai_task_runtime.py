@@ -352,7 +352,7 @@ async def test_caller_llm_tool_executes_with_the_original_home_assistant_context
 
 
 @pytest.mark.asyncio
-async def test_ai_task_tool_budget_rejects_an_over_limit_provider_batch(
+async def test_ai_task_tool_budget_acknowledges_refused_overflow(
     hass: HomeAssistant,
 ) -> None:
     """Serial caller tools execute the allowed prefix and refuse the excess call."""
@@ -376,7 +376,7 @@ async def test_ai_task_tool_budget_rejects_an_over_limit_provider_batch(
             )
         ]
 
-    _entry_obj, entity_id, _client = await _setup_entry(hass, [over_budget])
+    _entry_obj, entity_id, _client = await _setup_entry(hass, [over_budget, "Allowed calls completed"])
     tool = ContextProbeTool()
     caller_api = CallerAPI(hass=hass, id="budget-probe", name="Budget Probe")
     caller_api.tools = [tool]
@@ -384,21 +384,14 @@ async def test_ai_task_tool_budget_rejects_an_over_limit_provider_batch(
     user.mock_policy({"entities": {"entity_ids": {entity_id: {"control": True}}}})
     user.add_to_hass(hass)
 
-    with pytest.raises(
-        HomeAssistantError,
-        match=(
-            rf"Function call limit of {DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION} "
-            r"reached"
-        ),
-    ):
-        await ai_task.async_generate_data(
-            hass,
-            task_name="Budget Runtime Task",
-            entity_id=entity_id,
-            instructions="Attempt too many tool calls.",
-            llm_api=caller_api,
-            context=Context(user_id=user.id),
-        )
+    await ai_task.async_generate_data(
+        hass,
+        task_name="Budget Runtime Task",
+        entity_id=entity_id,
+        instructions="Attempt too many tool calls.",
+        llm_api=caller_api,
+        context=Context(user_id=user.id),
+    )
 
     assert [call.id for call, _context in tool.calls] == [
         f"call-{index}" for index in range(DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION)
@@ -408,7 +401,11 @@ async def test_ai_task_tool_budget_rejects_an_over_limit_provider_batch(
         and llm_context.context.user_id == user.id
         for call, llm_context in tool.calls
     )
-    assert len(_client.completions.calls) == 1
+    assert len(_client.completions.calls) == 2
+    messages = _client.completions.calls[1]["messages"]
+    refusals = [message for message in messages if message.get("role") == "tool" and "not executed: request Function Tool limit reached" in message.get("content", "")]
+    assert len(refusals) == 1
+    assert refusals[0]["tool_call_id"] == f"call-{DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION}"
 
 
 @pytest.mark.asyncio

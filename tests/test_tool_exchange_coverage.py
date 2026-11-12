@@ -540,7 +540,8 @@ async def test_parallel_exchange_budget_failure_marks_the_first_refused_call(
     calls = [_call("a", "alpha"), _call("b", "beta")]
     tools = [_tool("alpha"), _tool("beta")]
     chat_log = FakeChatLog([FakeAssistantContent(calls)])
-    entity = SimpleNamespace(entity_id="agent")
+    entity = SimpleNamespace(entity_id="agent", hass=None)
+    monkeypatch.setattr(tool_exchange, "async_validate_function_arguments", AsyncMock(return_value={}))
     monkeypatch.setattr(
         tool_exchange,
         "latest_function_tool_for_execution",
@@ -552,23 +553,26 @@ async def test_parallel_exchange_budget_failure_marks_the_first_refused_call(
         lambda pending, indexed: [(indexed[call.tool_name], call) for call in pending],
     )
 
-    with pytest.raises(HomeAssistantError, match="Function call limit"):
-        await tool_exchange.async_execute_tool_exchange(
-            entity,
-            chat_log,
-            calls,
-            tools,
-            FunctionCallBudget(1),
-            None,
-            [],
-        )
+    success = FakeToolResultContent("agent", "a", "alpha", {"result": "ok"})
+    execute = AsyncMock(return_value=[success])
+    monkeypatch.setattr(tool_exchange, "async_execute_parallel_safe_batch_outcomes", execute)
+    await tool_exchange.async_execute_tool_exchange(
+        entity,
+        chat_log,
+        calls,
+        tools,
+        FunctionCallBudget(1),
+        None,
+        [],
+    )
 
     assert [item.tool_call_id for item in chat_log.added] == ["b", "a"] or [
         item.tool_call_id for item in chat_log.added
     ] == ["a", "b"]
     by_id = {item.tool_call_id: item for item in chat_log.added}
-    assert tool_result_data(by_id["b"])["result"]["status"] == "error"
-    assert tool_result_data(by_id["a"])["result"]["status"] == "skipped"
+    assert tool_result_data(by_id["b"])["result"]["status"] == "not_executed"
+    assert len(execute.await_args.args[0]) == 1
+    assert tool_result_data(by_id["a"]) == {"result": "ok"}
 
 
 @pytest.mark.asyncio
@@ -581,7 +585,8 @@ async def test_parallel_exchange_records_success_and_failure_then_raises_first_e
     chat_log = FakeChatLog([FakeAssistantContent(calls)])
     success = FakeToolResultContent("agent", "a", "alpha", {"result": "ok"})
     failure = RuntimeError("beta failed")
-    entity = SimpleNamespace(entity_id="agent")
+    entity = SimpleNamespace(entity_id="agent", hass=None)
+    monkeypatch.setattr(tool_exchange, "async_validate_function_arguments", AsyncMock(return_value={}))
     monkeypatch.setattr(
         tool_exchange,
         "latest_function_tool_for_execution",
