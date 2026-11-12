@@ -394,22 +394,77 @@ class BashFunction(Function):
         # not an OS sandbox: arbitrary executable code can construct paths
         # dynamically, so callers must still treat Bash as trusted.
         if restrict_to_workspace:
+            uncommented = _without_shell_comments(command)
             # Block path traversal patterns.
-            if "../" in command or "..\\" in command:
+            if "../" in uncommented or "..\\" in uncommented:
                 raise ValueError("Command blocked: path traversal detected")
 
-            # Block directory changes that would escape the configured cwd even when
-            # the command uses the bare `cd ..` form rather than a ../ path token.
-            for match in re.finditer(
-                r"(?:^|[;&|]\s*)cd\s+([^\s;&|]+)", command, re.IGNORECASE
-            ):
-                raw_target = match.group(1).strip("\"'")
-                if not raw_target or raw_target == ".":
+            # Inspect executable positions, preserving the lexer's distinction
+            # between real operators and harmless quoted command-like text.
+            tokens = _shell_command_tokens(command)
+            at_command = True
+            wrapper_options = False
+            for index, (word, literal) in enumerate(tokens):
+                if literal and word and all(char in "();&|\n" for char in word):
+                    at_command = True
+                    wrapper_options = False
                     continue
-                if any(token in raw_target for token in ("$", "`", "$(`")):
+                if not at_command:
+                    continue
+                if word in {"command", "builtin"}:
+                    wrapper_options = True
+                    continue
+                if wrapper_options and word in {"--", "-p"}:
+                    continue
+                if literal and word in {
+                    "if",
+                    "then",
+                    "elif",
+                    "else",
+                    "while",
+                    "until",
+                    "do",
+                    "!",
+                    "{",
+                    "}",
+                }:
+                    continue
+                if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", word):
+                    continue
+                at_command = False
+                if word not in {"cd", "pushd", "popd"}:
+                    continue
+                if word == "popd":
                     raise ValueError(
-                        "Command blocked: dynamic cd target cannot be verified"
+                        "Command blocked: directory stack target cannot be verified"
                     )
+                target_index = index + 1
+                flags = {"-L", "-P", "-e"} if word == "cd" else {"-n"}
+                while target_index < len(tokens) and tokens[target_index][0] in flags:
+                    target_index += 1
+                if target_index < len(tokens) and tokens[target_index][0] == "--":
+                    target_index += 1
+                raw_target = (
+                    tokens[target_index][0] if target_index < len(tokens) else ""
+                )
+                if any(char in raw_target for char in "$`"):
+                    raise ValueError(
+                        f"Command blocked: dynamic {word} target cannot be verified"
+                    )
+                if (
+                    not raw_target
+                    or raw_target.startswith(("-", "+", "~"))
+                    or any(char in raw_target for char in "*?[]{}")
+                    or (
+                        tokens[target_index][1]
+                        and any(char in "();&|<>\n" for char in raw_target)
+                    )
+                ):
+                    raise ValueError(
+                        "Command blocked: directory change target cannot be verified"
+                    )
+                if raw_target == ".":
+                    continue
                 cd_target = Path(raw_target)
                 if not cd_target.is_absolute():
                     cd_target = cwd_path / cd_target
@@ -420,7 +475,7 @@ class BashFunction(Function):
                     )
 
             # Extract and validate literal absolute paths in command text.
-            win_paths = re.findall(r"[A-Za-z]:\\[^\\\"\' ]+", command)
+            win_paths = re.findall(r"[A-Za-z]:\\[^\\\"\' ]+", uncommented)
             # Tokenize shell operators before recognizing URLs: a URL argument
             # must not hide a following command or redirection. This remains a
             # defensive literal-path guard, not a sandbox for arbitrary Bash.
