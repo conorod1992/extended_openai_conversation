@@ -147,8 +147,6 @@ def test_new_flagships_condition_chat_tools_on_none(model):
     assert auto.api_mode == "responses"
 
 
-
-
 @pytest.mark.parametrize(
     "model",
     [
@@ -251,7 +249,9 @@ def test_pro_records_and_exact_output_ceiling(
     model, efforts, provider_default, context, output, stream, structured
 ):
     caps = get_model_capabilities(model)
-    assert caps["status"] == "current"
+    assert caps["status"] == (
+        "deprecated" if model in {"gpt-5-pro", "o3-pro"} else "current"
+    )
     assert caps["kind"] == "alias"
     assert caps["api"]["responses"] is True
     assert caps["api"]["chat_completions"] is False

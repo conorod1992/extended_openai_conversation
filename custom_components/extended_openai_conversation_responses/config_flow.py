@@ -280,7 +280,7 @@ DEFAULT_CONF_FUNCTION_TOOLS_STR = yaml.dump(
     DEFAULT_CONF_FUNCTION_TOOLS, sort_keys=False
 )
 
-DEFAULT_OPTIONS = types.MappingProxyType(agent_config_defaults())
+DEFAULT_OPTIONS = types.MappingProxyType(agent_config_defaults(new_assistant=True))
 
 
 def _ai_task_display_reasoning_effort(
@@ -579,7 +579,7 @@ class ExtendedOpenAISubentryFlowHandler(ConfigSubentryFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
         """Add a subentry."""
-        self.options = agent_config_defaults()
+        self.options = agent_config_defaults(new_assistant=True)
         return await self.async_step_init()
 
     async def async_step_reconfigure(

@@ -1,6 +1,6 @@
 {
   "schema_version": 8,
-  "catalog_version": 15,
+  "catalog_version": 16,
   "compatibility": {"minimum_eoai_version": "6.8.3"},
   "defaults": {
     "status": "unknown",
@@ -410,7 +410,9 @@
       "id": "gpt-5",
       "display_name": "gpt-5",
       "kind": "alias",
-      "status": "current",
+      "status": "deprecated",
+      "deprecated_at": "2026-06-11",
+      "shutdown_at": "2026-12-11",
       "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
       "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
       "reasoning": {"supported": true, "efforts": ["minimal", "low", "medium", "high"], "openai_default": "medium", "by_api": {"responses": {"efforts": ["minimal", "low", "medium", "high"]}, "chat_completions": {"efforts": ["minimal", "low", "medium", "high"]}}},
@@ -425,13 +427,16 @@
       "structured_outputs": true,
       "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "always"}}, "web_search": {"responses": {"support": "conditional",
           "requires": {"reasoning_effort": ["low", "medium", "high"]}}, "chat_completions": {"support": "never"}}},
-      "responses_web_search": true
+      "responses_web_search": true,
+      "lifecycle_note": "Deprecated 2026-06-11; OpenAI API shutdown 2026-12-11. Saved selections are retained; Azure deployments may differ."
     },
     {
       "id": "gpt-5-pro",
       "display_name": "gpt-5-pro",
       "kind": "alias",
-      "status": "current",
+      "status": "deprecated",
+      "deprecated_at": "2026-06-11",
+      "shutdown_at": "2026-12-11",
       "api": {"responses": true,"chat_completions": false,"completions_legacy": false},
       "function_calling": {"responses": true,"chat_completions": false,"preferred_api": "responses"},
       "reasoning": {"supported": true, "efforts": ["high"], "openai_default": "high", "by_api": {"responses": {"efforts": ["high"]}, "chat_completions": {"efforts": []}}},
@@ -446,13 +451,16 @@
       "structured_outputs": true,
       "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}, "web_search": {"responses": {"support": "never"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": false,
-      "auto_api": "responses"
+      "auto_api": "responses",
+      "lifecycle_note": "Deprecated 2026-06-11; OpenAI API shutdown 2026-12-11. Saved selections are retained; Azure deployments may differ."
     },
     {
       "id": "gpt-5-mini",
       "display_name": "gpt-5-mini",
       "kind": "alias",
-      "status": "current",
+      "status": "deprecated",
+      "deprecated_at": "2026-06-11",
+      "shutdown_at": "2026-12-11",
       "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
       "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
       "reasoning": {"supported": true, "efforts": ["minimal", "low", "medium", "high"], "openai_default": null, "by_api": {"responses": {"efforts": ["minimal", "low", "medium", "high"]}, "chat_completions": {"efforts": ["minimal", "low", "medium", "high"]}}},
@@ -466,13 +474,16 @@
       "explicit_prompt_cache": false,
       "structured_outputs": true,
       "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "always"}}, "web_search": {"responses": {"support": "conditional", "requires": {"reasoning_effort": ["low", "medium", "high"]}}, "chat_completions": {"support": "never"}}},
-      "responses_web_search": true
+      "responses_web_search": true,
+      "lifecycle_note": "Deprecated 2026-06-11; OpenAI API shutdown 2026-12-11. Saved selections are retained; Azure deployments may differ."
     },
     {
       "id": "gpt-5-nano",
       "display_name": "gpt-5-nano",
       "kind": "alias",
-      "status": "current",
+      "status": "deprecated",
+      "deprecated_at": "2026-06-11",
+      "shutdown_at": "2026-12-11",
       "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
       "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
       "reasoning": {"supported": true, "efforts": ["minimal", "low", "medium", "high"], "openai_default": null, "by_api": {"responses": {"efforts": ["minimal", "low", "medium", "high"]}, "chat_completions": {"efforts": ["minimal", "low", "medium", "high"]}}},
@@ -486,7 +497,8 @@
       "explicit_prompt_cache": false,
       "structured_outputs": true,
       "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "always"}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
-      "responses_web_search": true
+      "responses_web_search": true,
+      "lifecycle_note": "Deprecated 2026-06-11; OpenAI API shutdown 2026-12-11. Saved selections are retained; Azure deployments may differ."
     },
     {
       "id": "gpt-4.1",
@@ -584,7 +596,9 @@
       "id": "o3",
       "display_name": "o3",
       "kind": "alias",
-      "status": "current",
+      "status": "deprecated",
+      "deprecated_at": "2026-06-11",
+      "shutdown_at": "2026-12-11",
       "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
       "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
       "reasoning": {"supported": true, "efforts": ["low", "medium", "high"], "openai_default": null, "by_api": {"responses": {"efforts": ["low", "medium", "high"]}, "chat_completions": {"efforts": ["low", "medium", "high"]}}},
@@ -598,13 +612,16 @@
       "explicit_prompt_cache": false,
       "structured_outputs": true,
       "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "always"}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
-      "responses_web_search": true
+      "responses_web_search": true,
+      "lifecycle_note": "Deprecated 2026-06-11; OpenAI API shutdown 2026-12-11. Saved selections are retained; Azure deployments may differ."
     },
     {
       "id": "o3-pro",
       "display_name": "o3-pro",
       "kind": "alias",
-      "status": "current",
+      "status": "deprecated",
+      "deprecated_at": "2026-06-11",
+      "shutdown_at": "2026-12-11",
       "api": {"responses": true,"chat_completions": false,"completions_legacy": false},
       "function_calling": {"responses": true,"chat_completions": false,"preferred_api": "responses"},
       "reasoning": {"supported": false, "efforts": [], "openai_default": null, "by_api": {"responses": {"efforts": []}, "chat_completions": {"efforts": []}}},
@@ -619,7 +636,8 @@
       "structured_outputs": true,
       "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}, "web_search": {"responses": {"support": "never"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": false,
-      "auto_api": "responses"
+      "auto_api": "responses",
+      "lifecycle_note": "Deprecated 2026-06-11; OpenAI API shutdown 2026-12-11. Saved selections are retained; Azure deployments may differ."
     },
     {
       "id": "gpt-4o-2024-08-06",
@@ -660,6 +678,8 @@
       "display_name": "gpt-4-turbo",
       "kind": "alias",
       "status": "deprecated",
+      "deprecated_at": "2026-04-22",
+      "shutdown_at": "2026-10-23",
       "api": {"responses": true, "chat_completions": true, "completions_legacy": false},
       "function_calling": {"responses": true, "chat_completions": true, "preferred_api": "responses"},
       "reasoning": {"supported": false, "efforts": [], "openai_default": null, "by_api": {"responses": {"efforts": []}, "chat_completions": {"efforts": []}}},
@@ -674,7 +694,7 @@
       "structured_outputs": false,
       "tools": {"function": {"responses": {"support": "always"}, "chat_completions": {"support": "always"}}, "web_search": {"responses": {"support": "always"}, "chat_completions": {"support": "never"}}},
       "responses_web_search": true,
-      "lifecycle_note": "Deprecated legacy alias retained for existing configurations."
+      "lifecycle_note": "Retired from the OpenAI API on 2026-10-23; saved selections are retained. Azure deployments may differ."
     }
   ]
 }

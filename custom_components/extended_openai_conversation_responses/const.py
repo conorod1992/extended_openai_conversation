@@ -165,7 +165,9 @@ LEGACY_DEFAULT_PROMPTS = (
 )
 
 CONF_CHAT_MODEL = "chat_model"
+# Legacy missing-model fallback: changing this would migrate saved assistants.
 DEFAULT_CHAT_MODEL = "gpt-5-mini"
+NEW_ASSISTANT_CHAT_MODEL = "gpt-6-luna"
 
 # OpenAI API mode
 CONF_API_MODE = "api_mode"
@@ -537,11 +539,17 @@ CONF_ADVANCED_OPTIONS = "advanced_options"
 DEFAULT_ADVANCED_OPTIONS = False
 
 # AI Task default options (simpler than conversation - no prompt, just model/token settings)
-DEFAULT_AI_TASK_OPTIONS = {
+LEGACY_AI_TASK_OPTIONS = {
     CONF_CHAT_MODEL: DEFAULT_CHAT_MODEL,
     CONF_API_MODE: DEFAULT_API_MODE,
     CONF_MAX_TOKENS: DEFAULT_MAX_TOKENS,
     CONF_ADVANCED_OPTIONS: DEFAULT_ADVANCED_OPTIONS,
+}
+DEFAULT_AI_TASK_OPTIONS = {
+    **LEGACY_AI_TASK_OPTIONS,
+    CONF_CHAT_MODEL: NEW_ASSISTANT_CHAT_MODEL,
+    CONF_REASONING_EFFORT: DEFAULT_REASONING_EFFORT,
+    CONF_SERVICE_TIER: DEFAULT_SERVICE_TIER,
 }
 
 # Skill System Constants

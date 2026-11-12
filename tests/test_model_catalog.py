@@ -187,10 +187,6 @@ def test_required_current_models_and_invalid_aliases():
         "gpt-5.4",
         "gpt-5.4-mini",
         "gpt-5.2",
-        "gpt-5",
-        "gpt-5-mini",
-        "gpt-5-nano",
-        "o3",
     }
     current = {item["id"] for item in data.catalog_picker_models()}
     assert expected <= current

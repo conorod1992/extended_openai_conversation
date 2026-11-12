@@ -66,7 +66,6 @@ from .const import (
     CONF_VOICE_UNMAPPED_POLICY,
     CONFIG_ENTRY_VERSION,
     DEFAULT_AI_TASK_NAME,
-    DEFAULT_AI_TASK_OPTIONS,
     DEFAULT_API_PROVIDER,
     DEFAULT_ARCHIVE_ENABLED,
     DEFAULT_ARCHIVE_MODEL_SEARCH_ENABLED,
@@ -90,6 +89,7 @@ from .const import (
     DEFAULT_VOICE_SCOPE_POLICY,
     DEFAULT_VOICE_UNMAPPED_POLICY,
     DOMAIN,
+    LEGACY_AI_TASK_OPTIONS,
     LEGACY_CONTEXT_TRUNCATE_STRATEGY,
     LEGACY_DEFAULT_PROMPTS,
     MEMORY_MODE_AUTOMATIC,
@@ -604,7 +604,7 @@ async def async_migrate_integration(hass: HomeAssistant) -> None:
                 hass.config_entries.async_add_subentry(entry, conversation_subentry)
             if "ai_task_data" not in existing_types:
                 ai_task_subentry = ConfigSubentry(
-                    data=MappingProxyType(dict(DEFAULT_AI_TASK_OPTIONS)),
+                    data=MappingProxyType(dict(LEGACY_AI_TASK_OPTIONS)),
                     subentry_type="ai_task_data",
                     title=DEFAULT_AI_TASK_NAME,
                     unique_id=None,
