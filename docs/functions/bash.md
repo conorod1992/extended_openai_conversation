@@ -23,3 +23,10 @@ Commands run through the host shell, so available programs depend on the Home As
 These checks reduce risk; they do not create an operating-system sandbox. Shell syntax, interpreters, and dynamically constructed paths can bypass lexical checks. Do not claim that Bash is safely confined to the workspace. Grant it only to trusted agents, keep its commands narrow, and avoid secrets in prompts or output.
 
 Use `read_file`, `write_file`, or `edit_file` when a task only needs file access; those tools have path containment checks without arbitrary shell execution. See [File Function Tools](file-tools.md).
+
+The literal-path guard recognizes only bounded non-path operand forms: plain
+`awk '/error/ {print}' log.txt`, `sed -n '/start/,/end/p' f`, a pattern directly
+after `grep -E`, `-F` or `-e`, and simple `echo 'see /help'` prose. It still checks
+filenames, `-f` files, redirection targets and subsequent commands. Unknown flags,
+wrappers, expansions and other sed/awk programs keep conservative checking; quoted
+arguments alone never establish safety. Bash remains best-effort, not sandboxed.
