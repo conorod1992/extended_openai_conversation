@@ -96,6 +96,6 @@ The existing SDK workflow now pairs 2.21.0 with HA 2026.7.0, 2.45.0 with
 also use the selected HA package constraints. Each lane uses a clean environment;
 current-only gazetteer bootstrapping is replaced by installing the selected HA
 integration manifests, retaining gazetteer whenever that snapshot requires it. The advisory newer-3.x lane can
-therefore fail at dependency resolution until HA admits it; a forced incompatible
+report "not run" with skipped evidence when HA's exact pin excludes it; a forced incompatible
 pair is not accepted as runtime evidence. This policy never upgrades runtime
 packages or bypasses Home Assistant dependencies.
