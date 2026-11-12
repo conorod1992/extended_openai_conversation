@@ -32,7 +32,9 @@ migration journeys remain mandatory.
 Supported SDK lanes are `2.21.0`, `2.45.0`, `3.10.0` and `3.26.0`; these match the manifest's
 reviewed floor and ceiling. Each needs a successful job and an envelope recording
 that actual installed SDK on the candidate SHA. `latest-3x-early-warning` remains
-advisory beyond that ceiling and cannot replace a supported lane. These are offline
+advisory beyond that ceiling and cannot replace a supported lane. Each SDK lane selects a supported HA release whose Core constraints admit
+that SDK; all SDK installs enforce those constraints. The advisory lane can
+fail dependency resolution until current HA admits a newer 3.x release. These are offline
 protocol tests; no live OpenAI calls are required. Workflow policy unit tests require
 review when migration epochs, supported SDK lanes or manifest bounds change.
 Expired/missing artifacts fail closed and require a fresh exact-source run.

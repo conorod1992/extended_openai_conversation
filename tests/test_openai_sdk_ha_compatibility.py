@@ -29,6 +29,19 @@ def test_manifest_allows_supported_ha_pins_and_bounds_unvalidated_sdk(sdk):
     assert not requirement.specifier.contains("4.0.0")
 
 
+def test_sdk_matrix_selects_compatible_ha_snapshots_and_enforces_constraints():
+    import yaml
+
+    path = Path(__file__).parents[1] / ".github/workflows/openai-sdk-compatibility.yml"
+    job = yaml.safe_load(path.read_text())["jobs"]["sdk-contract"]
+    pairs = {row["sdk"]: row["ha"] for row in job["strategy"]["matrix"]["include"]}
+    assert pairs == {"2.21.0": "2026.7.0", "2.45.0": "2026.8.0", "3.10.0": "2026.10.0", "3.26.0": "stable", "latest-3x-early-warning": "stable"}
+    installs = [step.get("run", "") for step in job["steps"] if "pip install --upgrade" in step.get("run", "")]
+    assert len(installs) == 1
+    assert '--constraint "$CONSTRAINTS" "$SPEC"' in installs[0]
+    assert "package_constraints.txt" in installs[0]
+
+
 @pytest.mark.parametrize("provider", ["openai", "azure"])
 async def test_real_sdk_authentication_uses_ha_transport_once(
     hass, monkeypatch, provider
