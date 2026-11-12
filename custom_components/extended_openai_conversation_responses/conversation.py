@@ -1399,7 +1399,9 @@ class ExtendedOpenAIAgentEntity(
 
         # Call the LLM
 
-        existing_content_ids = {id(content) for content in chat_log.content}
+        # Keep originals alive through recovery even if preparation/pruning replaces them.
+        existing_content = tuple(chat_log.content)
+        existing_content_ids = {id(content) for content in existing_content}
         continuation_accepted = False
         try:
             check_aba = getattr(self, "_assert_no_aba_configuration", None)

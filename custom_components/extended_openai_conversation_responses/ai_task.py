@@ -390,7 +390,9 @@ class ExtendedOpenAITaskEntity(
             if chat_log.llm_api is not None
             else (ToolSnapshot(), [])
         )
-        existing_content_ids = {id(content) for content in chat_log.content}
+        # Core prompt preparation and history pruning may replace these objects.
+        existing_content = tuple(chat_log.content)
+        existing_content_ids = {id(content) for content in existing_content}
         continuation_accepted = False
         try:
             if chat_log.llm_api is not None:

@@ -132,7 +132,8 @@ async def async_try_handle_local_intent(
         accepted_intent = result.intent.name
         return False
 
-    existing_content_ids = {id(item) for item in getattr(chat_log, "content", ())}
+    existing_content = tuple(getattr(chat_log, "content", ()))
+    existing_content_ids = {id(item) for item in existing_content}
     try:
         response = await handle_intents(
             hass,
