@@ -40,7 +40,7 @@ from .persistence_hardening import (
     _async_settle_transactional_save,
 )
 from .provider_errors import provider_failure_category, provider_log_remediation
-from .retrieval_text import _stem
+from .retrieval_text import _stem, bounded_phrase, ordered_term_phrase
 from .scope import LEGACY_ANONYMOUS_SCOPE_ID
 from .storage_namespaces import MEMORY_PREFIX as STORAGE_KEY_PREFIX
 from .strict_store import PropagatingWriteStore, async_storage_lock
@@ -573,6 +573,7 @@ class PersistentMemory:
         query_embedding: list[float] | None = None,
         hybrid: bool = False,
         offset: int = 0,
+        allow_fuzzy_only: bool = True,
     ) -> list[MemoryRecord]:
         """Return deterministic BM25-style lexical or hybrid results."""
         limit = max(1, min(limit, MAX_LIST_LIMIT))
@@ -600,6 +601,7 @@ class PersistentMemory:
             cache,
             model,
             space,
+            allow_fuzzy_only,
         )
         async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
@@ -1880,6 +1882,7 @@ def _rank_memory_snapshot(
     embedding_cache: Mapping[str, EmbeddingCacheEntry],
     embedding_model: str,
     embedding_space_id: str,
+    allow_fuzzy_only: bool = True,
 ) -> list[MemoryRecord]:
     """Rank an immutable generation without holding the live store lock."""
     query_terms = _token_list(query)
@@ -1914,11 +1917,12 @@ def _rank_memory_snapshot(
         if (
             normalized_query
             and query_tokens & token_set
-            and normalized_query in normalized_content
+            and bounded_phrase(normalized_query, normalized_content)
         ):
             lexical += 0.35
-        elif len(query_terms) > 1 and " ".join(query_terms) in " ".join(terms):
+        elif len(query_terms) > 1 and ordered_term_phrase(query_terms, terms):
             lexical += 0.18
+        genuine_lexical = lexical
         if lexical <= 0:
             lexical = _fuzzy_relevance(query_tokens, token_set)
         semantic = (
@@ -1936,7 +1940,8 @@ def _rank_memory_snapshot(
             semantic = max(0.0, semantic)
             relevance = 0.58 * lexical + 0.42 * semantic
         if not (
-            lexical >= MIN_LEXICAL_RELEVANCE_SCORE
+            (lexical if allow_fuzzy_only else genuine_lexical)
+            >= MIN_LEXICAL_RELEVANCE_SCORE
             or (semantic is not None and semantic >= MIN_SEMANTIC_SIMILARITY)
         ):
             continue

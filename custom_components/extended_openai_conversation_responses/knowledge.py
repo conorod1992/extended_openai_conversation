@@ -24,6 +24,7 @@ from .persistence_hardening import (
     StorageRepairRequired,
     _async_settle_transactional_save,
 )
+from .retrieval_text import bounded_phrase
 from .runtime_hardening import MAX_MODEL_TOOL_RESULT_CHARACTERS
 from .storage_namespaces import KNOWLEDGE_PREFIX as STORAGE_KEY_PREFIX
 from .strict_store import PropagatingWriteStore, async_storage_lock
@@ -636,11 +637,11 @@ class KnowledgeLibrary:
                 + weighted_overlap(title_tokens) * 8
                 + weighted_overlap(description_tokens) * 4
             )
-            if normalized_query in normalized_title:
+            if bounded_phrase(normalized_query, normalized_title):
                 score += 8
-            if normalized_query in normalized_description:
+            if bounded_phrase(normalized_query, normalized_description):
                 score += 5
-            if normalized_query in chunk.normalized_text:
+            if bounded_phrase(normalized_query, chunk.normalized_text):
                 score += 4
             current = best_by_source.get(chunk.source_id)
             if (

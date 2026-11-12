@@ -453,6 +453,7 @@ async def test_automatic_retrieval_respects_runtime_options() -> None:
         2,
         query_embedding=None,
         hybrid=False,
+        allow_fuzzy_only=False,
     )
     assert {tool["spec"]["name"] for tool in entity._get_function_tools()} == (
         MEMORY_TOOL_NAMES
