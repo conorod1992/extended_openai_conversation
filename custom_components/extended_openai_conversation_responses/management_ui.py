@@ -42,7 +42,6 @@ from .agent_config import (
     normalize_persisted_agent_config,
     parse_configured_function_tools,
     preserve_agent_model_setting_omissions,
-    preserve_legacy_guest_policy,
     project_agent_config_transfer,
     project_agent_config_updates,
     starter_function_tool_yaml,
@@ -1810,13 +1809,10 @@ async def async_configuration_command(request: _ManagementRequest) -> dict[str, 
         }
         duplicate = ConfigSubentry(
             data=MappingProxyType(
-                preserve_legacy_guest_policy(
+                project_agent_config_transfer(
                     duplicate_source,
-                    preserve_agent_model_setting_omissions(
-                        duplicate_source,
-                        normalize_persisted_agent_config(
-                            duplicate_source, provider=provider
-                        ),
+                    normalize_persisted_agent_config(
+                        duplicate_source, provider=provider
                     ),
                 )
             ),
