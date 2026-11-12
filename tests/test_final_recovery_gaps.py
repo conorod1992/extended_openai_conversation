@@ -14,6 +14,7 @@ from custom_components.extended_openai_conversation_responses import (
     conversation_archive as archives,
     guest_mode,
     management_history_queries as history,
+    memory as memory_module,
     usage,
 )
 from custom_components.extended_openai_conversation_responses.functions.file import (
@@ -181,6 +182,8 @@ async def test_memory_owned_update_rejects_invalid_source_before_mutation():
 
 
 async def test_embedding_cache_recovers_after_repeated_save_failure(monkeypatch):
+    now = 100.0
+    monkeypatch.setattr(memory_module, "monotonic", lambda: now)
     memory = await _memory()
     store = SimpleNamespace(
         async_save=AsyncMock(side_effect=[OSError("full"), OSError("full"), None])
@@ -189,7 +192,11 @@ async def test_embedding_cache_recovers_after_repeated_save_failure(monkeypatch)
     memory._embedding_cache_dirty = True
     assert not await memory._async_save_embedding_cache_locked()
     assert not await memory._async_save_embedding_cache_locked()
+    assert store.async_save.await_count == 1
     assert memory._embedding_cache_write_failed and memory._embedding_cache_dirty
+    now += memory_module.EMBEDDING_CACHE_RETRY_SECONDS
+    assert not await memory._async_save_embedding_cache_locked()
+    now += memory_module.EMBEDDING_CACHE_RETRY_SECONDS
     assert await memory._async_save_embedding_cache_locked()
     assert (
         not memory._embedding_cache_write_failed and not memory._embedding_cache_dirty

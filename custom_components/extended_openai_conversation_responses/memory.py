@@ -412,9 +412,13 @@ class PersistentMemory:
                         and duplicate.valid_from != valid_from
                     ):
                         conflict = "valid_from"
-                    elif duplicate.source == "explicit" and source == "implicit" and (
-                        (subject and not duplicate.subject)
-                        or (valid_from is not None and duplicate.valid_from is None)
+                    elif (
+                        duplicate.source == "explicit"
+                        and source == "implicit"
+                        and (
+                            (subject and not duplicate.subject)
+                            or (valid_from is not None and duplicate.valid_from is None)
+                        )
                     ):
                         conflict = "explicit-memory metadata protection"
                     if conflict:
@@ -734,7 +738,9 @@ class PersistentMemory:
                 if memory.user_id in scope_ids
                 and (category_filter is None or memory.category == category_filter)
             ]
-            memories.sort(key=lambda memory: _updated_at_instant(memory.updated_at), reverse=True)
+            memories.sort(
+                key=lambda memory: _updated_at_instant(memory.updated_at), reverse=True
+            )
             return memories[offset : offset + limit]
 
     async def async_list_page(
@@ -757,7 +763,9 @@ class PersistentMemory:
                 if memory.user_id in scope_ids
                 and (category_filter is None or memory.category == category_filter)
             ]
-            memories.sort(key=lambda memory: _updated_at_instant(memory.updated_at), reverse=True)
+            memories.sort(
+                key=lambda memory: _updated_at_instant(memory.updated_at), reverse=True
+            )
             end = offset + limit
             return memories[offset:end], len(memories) > end
 
@@ -799,7 +807,9 @@ class PersistentMemory:
                     ),
                 ).casefold()
             ]
-            memories.sort(key=lambda memory: _updated_at_instant(memory.updated_at), reverse=True)
+            memories.sort(
+                key=lambda memory: _updated_at_instant(memory.updated_at), reverse=True
+            )
             total = len(memories)
             return memories[offset : offset + limit], total
 
@@ -921,10 +931,14 @@ class PersistentMemory:
                         "implicit updates cannot replace an explicitly confirmed memory"
                     )
                 changes["source"] = current.source
-            if all(value == getattr(current, field) for field, value in changes.items()):
+            if all(
+                value == getattr(current, field) for field, value in changes.items()
+            ):
                 # Validation and recovery barriers still apply to no-ops. Only
                 # the regenerable cache may need an independently settled retry.
-                await async_settle_owned_operation(self._async_save_embedding_cache_locked())
+                await async_settle_owned_operation(
+                    self._async_save_embedding_cache_locked()
+                )
                 return current
             _set_updated_at_if_substantive(current, changes, timestamp)
             updated = self._replace_record(current, **changes)
@@ -1370,7 +1384,9 @@ class PersistentMemory:
                 or self._embedding_space_id != space_id
             ):
                 return False
-            await async_settle_owned_operation(self._async_save_embedding_cache_locked())
+            await async_settle_owned_operation(
+                self._async_save_embedding_cache_locked()
+            )
         return True
 
     async def _async_save_locked(self, *, replacing: bool = False) -> None:
@@ -2355,7 +2371,9 @@ def _updated_at_instant(value: str) -> datetime:
     """
     parsed = dt_util.parse_datetime(value)
     assert parsed is not None  # Record validation precedes publication.
-    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
+    return (
+        parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
+    )
 
 
 def _clean_timestamp(value: str | None, field: str) -> str | None:

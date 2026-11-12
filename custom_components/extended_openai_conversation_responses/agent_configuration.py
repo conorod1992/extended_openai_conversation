@@ -64,9 +64,12 @@ def sync_memory_embedding_provider(entity: Any) -> None:
         # synchronization applies only to the real PersistentMemory capability.
         return
     options = entity.subentry.data
-    model = str(
-        options.get(CONF_MEMORY_EMBEDDING_MODEL, DEFAULT_MEMORY_EMBEDDING_MODEL)
-    ).strip() or DEFAULT_MEMORY_EMBEDDING_MODEL
+    model = (
+        str(
+            options.get(CONF_MEMORY_EMBEDDING_MODEL, DEFAULT_MEMORY_EMBEDDING_MODEL)
+        ).strip()
+        or DEFAULT_MEMORY_EMBEDDING_MODEL
+    )
     if (
         options.get(CONF_MEMORY_RETRIEVAL_MODE, DEFAULT_MEMORY_RETRIEVAL_MODE)
         == MEMORY_RETRIEVAL_HYBRID

@@ -7,7 +7,10 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from custom_components.extended_openai_conversation_responses import memory as module
-from custom_components.extended_openai_conversation_responses.memory import MemoryRecord, PersistentMemory
+from custom_components.extended_openai_conversation_responses.memory import (
+    MemoryRecord,
+    PersistentMemory,
+)
 from tests.test_memory import FakeStorage
 
 
@@ -17,18 +20,30 @@ async def test_mixed_offset_naive_and_microsecond_sort_with_stable_pagination(re
         "2026-10-25T02:10:00+02:00",  # 00:10 UTC, sorts lexically too high
         "2026-10-25T00:20:00Z",
         "2026-10-25T01:15:00+01:00",  # equal to the next two, preserve insertion order
-        "2026-10-25T00:15:00",        # legacy naive is UTC, regardless of HA timezone
+        "2026-10-25T00:15:00",  # legacy naive is UTC, regardless of HA timezone
         "2026-10-24T19:15:00-05:00",
         "2026-10-25T00:20:00.000001+00:00",
     ]
     base = MemoryRecord("0", "alice", "Tea.", "home", "explicit", stamps[0], stamps[0])
-    storage = FakeStorage({"memories": [asdict(replace(base, memory_id=str(i), updated_at=value)) for i, value in enumerate(stamps)]})
+    storage = FakeStorage(
+        {
+            "memories": [
+                asdict(replace(base, memory_id=str(i), updated_at=value))
+                for i, value in enumerate(stamps)
+            ]
+        }
+    )
     memory = PersistentMemory(storage)
     await memory.async_initialize()
     before, saved = deepcopy(storage.data), storage.save_count
     ids = []
     for offset in (0, 2, 4):
-        result = await getattr(memory, reader)("alice", **({"query": ""} if reader == "async_browse" else {}), limit=2, offset=offset)
+        result = await getattr(memory, reader)(
+            "alice",
+            **({"query": ""} if reader == "async_browse" else {}),
+            limit=2,
+            offset=offset,
+        )
         rows = result[0] if isinstance(result, tuple) else result
         ids.extend(row.memory_id for row in rows)
         if reader == "async_list_page":
@@ -41,16 +56,30 @@ async def test_mixed_offset_naive_and_microsecond_sort_with_stable_pagination(re
 
 
 async def test_sort_parsing_is_bounded_and_reused_at_memory_limit(monkeypatch):
-    stamps = [(datetime(2026, 1, 1, tzinfo=UTC) + timedelta(seconds=i)).isoformat() for i in range(10_000)]
+    stamps = [
+        (datetime(2026, 1, 1, tzinfo=UTC) + timedelta(seconds=i)).isoformat()
+        for i in range(10_000)
+    ]
     base = MemoryRecord("0", "alice", "Tea.", "home", "explicit", stamps[0], stamps[0])
-    memory = PersistentMemory(FakeStorage({"memories": [asdict(replace(base, memory_id=str(i), updated_at=value)) for i, value in enumerate(stamps)]}))
+    memory = PersistentMemory(
+        FakeStorage(
+            {
+                "memories": [
+                    asdict(replace(base, memory_id=str(i), updated_at=value))
+                    for i, value in enumerate(stamps)
+                ]
+            }
+        )
+    )
     await memory.async_initialize()
     module._updated_at_instant.cache_clear()
     parsed = []
     original = module.dt_util.parse_datetime
+
     def parse(value):
         parsed.append(value)
         return original(value)
+
     monkeypatch.setattr(module.dt_util, "parse_datetime", parse)
     assert (await memory.async_list("alice"))[0].memory_id == "9999"
     assert (await memory.async_list_page("alice", offset=100))[0][0].memory_id == "9899"
