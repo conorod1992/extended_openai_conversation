@@ -317,6 +317,7 @@ class PersistentMemory:
         space_id: str = "",
     ) -> None:
         """Configure the optional provider used only by hybrid retrieval."""
+        model = str(model).strip() or "default"
         # Unchanged live configuration must preserve diagnostics and avoid prewarming.
         if (
             self._embedding_provider == provider
@@ -324,7 +325,6 @@ class PersistentMemory:
             and self._embedding_space_id == space_id
         ):
             return
-        model = str(model).strip() or "default"
         self._embedding_provider = provider
         self._embedding_model = model
         self._embedding_space_id = space_id
