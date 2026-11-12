@@ -195,3 +195,10 @@ def test_plain_arithmetic_before_heredoc(tmp_path):
 )
 def test_arithmetic_shifts_are_not_heredocs(tmp_path, script):
     BashFunction()._guard_command(script, tmp_path, True)
+
+
+def test_crlf_delimiter_cannot_hide_executable_tail(tmp_path):
+    with pytest.raises(ValueError, match="heredoc CRLF"):
+        BashFunction()._guard_command(
+            "cat <<EOF\r\ntext\nEOF\r\ncd ..\n", tmp_path, True
+        )

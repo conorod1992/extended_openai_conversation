@@ -112,6 +112,12 @@ def _shell_command_tokens(
             index = len(command) if newline < 0 else newline
             continue
         if skip_heredoc_bodies and command[index] == "\n":
+            if pending and index and command[index - 1] == "\r":
+                # Bash can include CR in an unquoted delimiter, unlike this
+                # lexer's whitespace rules. Never hide a tail on that mismatch.
+                raise ValueError(
+                    "Command blocked: heredoc CRLF delimiter cannot be verified"
+                )
             if delimiter_next:
                 raise ValueError("Command blocked: missing heredoc delimiter")
             tokens.append(("\n", True))
