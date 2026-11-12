@@ -427,10 +427,11 @@ def project_agent_config_transfer(
     *,
     preserve_unknown: bool = False,
 ) -> dict[str, Any]:
-    """Project a normalized transfer without adopting model/legacy Guest defaults.
+    """Project a transfer without adopting defaults for meaningful omissions.
 
     Takes ownership of the fresh normalized dictionary, never the raw source.
-    Ordinary defaults (including sampling) remain materialized. Recovery transfers
+    Legacy context and Guest policy omissions retain runtime semantics. Ordinary
+    defaults (including sampling) remain materialized. Recovery transfers
     can retain opaque fields; versioned portable documents keep their strict schema.
     """
     result = preserve_agent_model_setting_omissions(
