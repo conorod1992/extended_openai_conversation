@@ -186,7 +186,7 @@ const source = await readFile(
 assert.match(source, /Getting started/);
 assert.match(source, /First-time setup/);
 assert.match(source, /Optional capabilities such as Memory, Knowledge, Web Search and Function Tools are not required here/);
-assert.match(source, /Setup & health below remains the ongoing source of truth/);
+assert.match(source, /Configuration & health below remains the ongoing source of truth/);
 assert.match(source, /panel\._data\?\.is_admin === true && result\.setup_health\?\.can_manage === true/);
 assert.match(source, /panel\._pendingSettingFocus/);
 assert.match(source, /await panel\._navigate/);

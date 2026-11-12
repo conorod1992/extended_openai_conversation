@@ -53,7 +53,7 @@ function overviewAgentFeatureProjection(agent) {
 }
 
 function snapshotCard(panel, title, status, detail, pageName, section, action) {
-  return `<article class="dashboard-card eoc-overview-snapshot-card"><div><h2>${panel._e(title)}</h2><strong>${panel._e(String(status))}</strong><p>${panel._e(detail)}</p></div><button type="button" class="secondary dashboard-action" data-page="${pageName}" data-subsection="${section}">${action}</button></article>`;
+  return `<article class="dashboard-card eoc-overview-snapshot-card"><div><h3>${panel._e(title)}</h3><strong>${panel._e(String(status))}</strong><p>${panel._e(detail)}</p></div><button type="button" class="secondary dashboard-action" data-page="${pageName}" data-subsection="${section}">${action}</button></article>`;
 }
 
 export function renderOverviewSnapshot(panel, sourceAgent) {
@@ -62,14 +62,16 @@ export function renderOverviewSnapshot(panel, sourceAgent) {
   const memoryMode = panel._titleCase?.(agent?.memory_mode || "Unknown") || String(agent?.memory_mode || "Unknown");
   const guestState = panel._titleCase?.(String(guest.state || "inactive").replaceAll("_", " ")) || String(guest.state || "inactive");
   return `<section class="page-intro eoc-overview-snapshot-intro"><h1>${panel._e(agent?.title || "Assistant")}</h1><p>Your assistant at a glance. Detailed health, usage, and stored-data counts are still loading.</p></section>
-    <section class="dashboard-grid eoc-overview-snapshot" aria-label="Assistant overview" aria-busy="true">
+    <section class="content-card configuration-health"><div class="section-heading"><h2>Configuration & health</h2></div><section class="dashboard-grid eoc-overview-snapshot" aria-label="Assistant overview" aria-busy="true">
       ${snapshotCard(panel, "Assistant", `${agent?.provider || "Unknown"} · ${agent?.model || "Unknown"}`, "Model, responses, conversation behavior, prompt, and voice.", "assistant", "basics", "Configure")}
       ${snapshotCard(panel, "Capabilities", `${agent?.function_count == null ? "Loading…" : `${Number(agent.function_count).toLocaleString()} functions`} · ${agent?.function_group_count == null ? "Unknown" : Number(agent.function_group_count).toLocaleString()} groups`, "Home Assistant access, custom functions, and visitor restrictions.", "capabilities", "home-assistant", "Manage")}
       ${snapshotCard(panel, "Memory & Knowledge", memoryMode, "Stored memory and Knowledge counts are loading.", "data-memory", "memories", "Manage")}
       ${snapshotCard(panel, "Conversation history", agent?.archive_enabled ? "Archive enabled" : "Archive disabled", "Retention details are loading.", "data-memory", "conversations", "View")}
       ${snapshotCard(panel, "Guest Mode", guestState, "Integration-enforced visitor access and data restrictions.", "capabilities", "guest-mode", "Configure")}
+      ${snapshotCard(panel, "Web Search", "Loading…", "Checking availability.", "capabilities", "web-skills", "Configure")}
+      ${snapshotCard(panel, "Model Data", "Loading…", "Checking capability data.", "assistant", "model-responses", "View")}
       ${snapshotCard(panel, "Usage", "Loading usage…", "Today's and monthly token totals are loading.", "usage-maintenance", "usage", "View")}
-    </section>`;
+    </section></section>`;
 }
 
 function bindSnapshotOverview(panel) {

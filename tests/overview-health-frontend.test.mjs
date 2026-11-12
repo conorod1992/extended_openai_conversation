@@ -127,8 +127,9 @@ const agent = {
 };
 
 const markup = renderOverview(panel, agent);
-assert.match(markup, /Setup & health/);
-assert.match(markup, /Optional features that are off by choice are not treated as problems/);
+assert.match(markup, /Configuration & health/);
+assert.match(markup, /<summary>Detailed health checks<\/summary>/);
+assert.doesNotMatch(markup, /id="overview-health-details" open/);
 assert.match(markup, /Off by choice/);
 assert.match(markup, /Run live test/);
 assert.match(markup, /data-target="config-api_mode"/);
@@ -168,7 +169,7 @@ assert.doesNotMatch(
 );
 assert.match(
   claritySource,
-  /<h2>Model Data<\/h2>/,
+  /<h3>Model Data<\/h3>/,
   "Overview should surface model catalogue health as its own card",
 );
 assert.match(claritySource, /status: "Update available"/);
