@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import timedelta
 import logging
+import math
 import time
 from typing import Any
 
@@ -113,8 +114,12 @@ class ModelCatalogManager:
                     )
                 ):
                     raise ValueError("Invalid incompatible catalogue status")
-                if type(checked) not in (float, int) or not 0 <= checked <= time.time():
+                if type(checked) not in (float, int) or not 0 <= checked < math.inf:
                     raise ValueError("Invalid catalogue check time")
+                if checked > time.time():
+                    # A wall-clock rollback does not invalidate downloaded data.
+                    # Mark it unchecked; the next refresh persists the corrected time.
+                    checked = 0.0
                 if etag is not None and (
                     not isinstance(etag, str)
                     or len(etag) > 256
@@ -467,7 +472,11 @@ class ModelCatalogManager:
         """Check trusted catalogue data without changing the active catalogue."""
         async with self._lock:
             now = time.time()
-            if not force and now - self.last_checked < UPDATE_INTERVAL:
+            if (
+                not force
+                and self.last_checked > 0
+                and now - self.last_checked < UPDATE_INTERVAL
+            ):
                 return self.status()
             try:
                 headers = {"If-None-Match": self.etag} if self.etag else {}

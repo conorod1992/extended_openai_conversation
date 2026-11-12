@@ -14,6 +14,9 @@ from custom_components.extended_openai_conversation_responses.exceptions import 
 from custom_components.extended_openai_conversation_responses.provider_errors import (
     ProviderStreamError,
 )
+from custom_components.extended_openai_conversation_responses.request import (
+    ProviderRequestSnapshot,
+)
 from homeassistant.components import conversation
 from homeassistant.exceptions import HomeAssistantError
 from tests.test_entity_remaining_branches import _entity, _Stream
@@ -218,10 +221,10 @@ async def test_native_schema_is_rejected_for_unsupported_model(
     monkeypatch.setattr(
         module,
         "build_provider_request_snapshot",
-        lambda *_args, **_kwargs: SimpleNamespace(
+        lambda *_args, **_kwargs: ProviderRequestSnapshot(
             api_kwargs={"model": "unsupported"},
             api_mode="responses",
-            provider_tools=[],
+            provider_tools=(),
             structured_outputs=False,
         ),
     )
@@ -251,8 +254,8 @@ async def test_chat_attachment_handoff_converts_images_and_rejects_pdf(
     monkeypatch.setattr(
         module,
         "build_provider_request_snapshot",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            api_kwargs={"model": "test"}, api_mode="chat_completions", provider_tools=[]
+        lambda *_args, **_kwargs: ProviderRequestSnapshot(
+            api_kwargs={"model": "test"}, api_mode="chat_completions", provider_tools=()
         ),
     )
     log = conversation.ChatLog(hass, "conversation")
@@ -342,8 +345,8 @@ async def test_responses_tool_prompt_is_inserted_and_removed_without_losing_user
     monkeypatch.setattr(
         module,
         "build_provider_request_snapshot",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            api_kwargs={"model": "test"}, api_mode="responses", provider_tools=[]
+        lambda *_args, **_kwargs: ProviderRequestSnapshot(
+            api_kwargs={"model": "test"}, api_mode="responses", provider_tools=()
         ),
     )
     monkeypatch.setattr(
@@ -445,10 +448,10 @@ async def test_supplied_structured_schema_is_copied_and_sent_for_both_transport_
     monkeypatch.setattr(
         module,
         "build_provider_request_snapshot",
-        lambda *_args, **_kwargs: SimpleNamespace(
+        lambda *_args, **_kwargs: ProviderRequestSnapshot(
             api_kwargs={"model": "test", "stream": streaming},
             api_mode=api_mode,
-            provider_tools=[],
+            provider_tools=(),
             structured_outputs=True,
         ),
     )

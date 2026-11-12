@@ -1,0 +1,828 @@
+{
+  "provenance": "Public async_search results from pre-Knowledge-fix knowledge.py (blob de91694f), same implementation at b59bdea5 and e21a1806. Distinct source timestamps avoid hash-order-dependent source ties.",
+  "sources": [
+    {
+      "source_id": "boiler",
+      "title": "Boiler reset manual",
+      "description": "Heating guide",
+      "content": "Reset the boiler using its power switch. Keep pressure at 1.2 bar.",
+      "created_at": "2026-01-01T00:00:00+00:00",
+      "updated_at": "2026-01-01T00:00:00+00:00",
+      "enabled": true
+    },
+    {
+      "source_id": "garage",
+      "title": "The garage door",
+      "description": "The door is in the garage",
+      "content": "The garage door uses two sensors and a remote. Do not reset the boiler here.",
+      "created_at": "2026-01-02T00:00:00+00:00",
+      "updated_at": "2026-01-02T00:00:00+00:00",
+      "enabled": true
+    },
+    {
+      "source_id": "tools",
+      "title": "C++ drill",
+      "description": "Masonry wall tools",
+      "content": "Use the concrete wall drill; C++ and C# are different identifiers.",
+      "created_at": "2026-01-03T00:00:00+00:00",
+      "updated_at": "2026-01-03T00:00:00+00:00",
+      "enabled": true
+    },
+    {
+      "source_id": "unicode",
+      "title": "Café 水温",
+      "description": "O’Brien household guide",
+      "content": "Café water temperature 水温 should be warm.",
+      "created_at": "2026-01-04T00:00:00+00:00",
+      "updated_at": "2026-01-04T00:00:00+00:00",
+      "enabled": true
+    },
+    {
+      "source_id": "morph",
+      "title": "Scheduled routines",
+      "description": "Colour and color reference",
+      "content": "Schedule the lights. Scheduling timers controls the colours.",
+      "created_at": "2026-01-05T00:00:00+00:00",
+      "updated_at": "2026-01-05T00:00:00+00:00",
+      "enabled": true
+    },
+    {
+      "source_id": "disabled",
+      "title": "Boiler reset",
+      "description": "Reset boiler",
+      "content": "Reset the boiler. This source is disabled.",
+      "created_at": "2026-01-06T00:00:00+00:00",
+      "updated_at": "2026-01-06T00:00:00+00:00",
+      "enabled": false
+    },
+    {
+      "source_id": "off",
+      "title": "Turn off heating",
+      "description": "Control guide",
+      "content": "Do not turn on the heating. Keep it switched off.",
+      "created_at": "2026-01-07T00:00:00+00:00",
+      "updated_at": "2026-01-07T00:00:00+00:00",
+      "enabled": true
+    }
+  ],
+  "cases": [
+    {
+      "query": "reset the boiler",
+      "options": {},
+      "expected": [
+        {
+          "source_id": "boiler",
+          "title": "Boiler reset manual",
+          "description": "Heating guide",
+          "excerpt": "Reset the boiler using its power switch. Keep pressure at 1.2 bar.",
+          "score": 14.561,
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        },
+        {
+          "source_id": "garage",
+          "title": "The garage door",
+          "description": "The door is in the garage",
+          "excerpt": "The garage door uses two sensors and a remote. Do not reset the boiler here.",
+          "score": 5.4878,
+          "updated_at": "2026-01-02T00:00:00+00:00"
+        }
+      ]
+    },
+    {
+      "query": "reset the boiler",
+      "options": {
+        "offset": 1,
+        "limit": 2,
+        "lookahead": true
+      },
+      "expected": [
+        {
+          "source_id": "garage",
+          "title": "The garage door",
+          "description": "The door is in the garage",
+          "excerpt": "The garage door uses two sensors and a remote. Do not reset the boiler here.",
+          "score": 5.4878,
+          "updated_at": "2026-01-02T00:00:00+00:00"
+        }
+      ]
+    },
+    {
+      "query": "reset the boiler",
+      "options": {
+        "source_ids": [
+          "boiler",
+          "disabled",
+          "missing",
+          " garage "
+        ],
+        "limit": 10
+      },
+      "expected": [
+        {
+          "source_id": "boiler",
+          "title": "Boiler reset manual",
+          "description": "Heating guide",
+          "excerpt": "Reset the boiler using its power switch. Keep pressure at 1.2 bar.",
+          "score": 14.561,
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        },
+        {
+          "source_id": "garage",
+          "title": "The garage door",
+          "description": "The door is in the garage",
+          "excerpt": "The garage door uses two sensors and a remote. Do not reset the boiler here.",
+          "score": 5.4878,
+          "updated_at": "2026-01-02T00:00:00+00:00"
+        }
+      ]
+    },
+    {
+      "query": "reset the boiler",
+      "options": {
+        "source_ids": []
+      },
+      "expected": []
+    },
+    {
+      "query": "how do I reset the boiler",
+      "options": {},
+      "expected": [
+        {
+          "source_id": "boiler",
+          "title": "Boiler reset manual",
+          "description": "Heating guide",
+          "excerpt": "Reset the boiler using its power switch. Keep pressure at 1.2 bar.",
+          "score": 9.8409,
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        },
+        {
+          "source_id": "garage",
+          "title": "The garage door",
+          "description": "The door is in the garage",
+          "excerpt": "The garage door uses two sensors and a remote. Do not reset the boiler here.",
+          "score": 1.4091,
+          "updated_at": "2026-01-02T00:00:00+00:00"
+        }
+      ]
+    },
+    {
+      "query": "how do I reset the boiler",
+      "options": {
+        "offset": 1,
+        "limit": 2,
+        "lookahead": true
+      },
+      "expected": [
+        {
+          "source_id": "garage",
+          "title": "The garage door",
+          "description": "The door is in the garage",
+          "excerpt": "The garage door uses two sensors and a remote. Do not reset the boiler here.",
+          "score": 1.4091,
+          "updated_at": "2026-01-02T00:00:00+00:00"
+        }
+      ]
+    },
+    {
+      "query": "how do I reset the boiler",
+      "options": {
+        "source_ids": [
+          "boiler",
+          "disabled",
+          "missing",
+          " garage "
+        ],
+        "limit": 10
+      },
+      "expected": [
+        {
+          "source_id": "boiler",
+          "title": "Boiler reset manual",
+          "description": "Heating guide",
+          "excerpt": "Reset the boiler using its power switch. Keep pressure at 1.2 bar.",
+          "score": 9.8409,
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        },
+        {
+          "source_id": "garage",
+          "title": "The garage door",
+          "description": "The door is in the garage",
+          "excerpt": "The garage door uses two sensors and a remote. Do not reset the boiler here.",
+          "score": 1.4091,
+          "updated_at": "2026-01-02T00:00:00+00:00"
+        }
+      ]
+    },
+    {
+      "query": "how do I reset the boiler",
+      "options": {
+        "source_ids": []
+      },
+      "expected": []
+    },
+    {
+      "query": "the",
+      "options": {},
+      "expected": [
+        {
+          "source_id": "garage",
+          "title": "The garage door",
+          "description": "The door is in the garage",
+          "excerpt": "The garage door uses two sensors and a remote. Do not reset the boiler here.",
+          "score": 30.0,
+          "updated_at": "2026-01-02T00:00:00+00:00"
+        },
+        {
+          "source_id": "off",
+          "title": "Turn off heating",
+          "description": "Control guide",
+          "excerpt": "Do not turn on the heating. Keep it switched off.",
+          "score": 5.0,
+          "updated_at": "2026-01-07T00:00:00+00:00"
+        },
+        {
+          "source_id": "morph",
+          "title": "Scheduled routines",
+          "description": "Colour and color reference",
+          "excerpt": "Schedule the lights. Scheduling timers controls the colours.",
+          "score": 5.0,
+          "updated_at": "2026-01-05T00:00:00+00:00"
+        },
+        {
+          "source_id": "tools",
+          "title": "C++ drill",
+          "description": "Masonry wall tools",
+          "excerpt": "Use the concrete wall drill; C++ and C# are different identifiers.",
+          "score": 5.0,
+          "updated_at": "2026-01-03T00:00:00+00:00"
+        },
+        {
+          "source_id": "boiler",
+          "title": "Boiler reset manual",
+          "description": "Heating guide",
+          "excerpt": "Reset the boiler using its power switch. Keep pressure at 1.2 bar.",
+          "score": 5.0,
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        }
+      ]
+    },
+    {
+      "query": "the",
+      "options": {
+        "offset": 1,
+        "limit": 2,
+        "lookahead": true
+      },
+      "expected": [
+        {
+          "source_id": "off",
+          "title": "Turn off heating",
+          "description": "Control guide",
+          "excerpt": "Do not turn on the heating. Keep it switched off.",
+          "score": 5.0,
+          "updated_at": "2026-01-07T00:00:00+00:00"
+        },
+        {
+          "source_id": "morph",
+          "title": "Scheduled routines",
+          "description": "Colour and color reference",
+          "excerpt": "Schedule the lights. Scheduling timers controls the colours.",
+          "score": 5.0,
+          "updated_at": "2026-01-05T00:00:00+00:00"
+        },
+        {
+          "source_id": "tools",
+          "title": "C++ drill",
+          "description": "Masonry wall tools",
+          "excerpt": "Use the concrete wall drill; C++ and C# are different identifiers.",
+          "score": 5.0,
+          "updated_at": "2026-01-03T00:00:00+00:00"
+        }
+      ]
+    },
+    {
+      "query": "the",
+      "options": {
+        "source_ids": [
+          "boiler",
+          "disabled",
+          "missing",
+          " garage "
+        ],
+        "limit": 10
+      },
+      "expected": [
+        {
+          "source_id": "garage",
+          "title": "The garage door",
+          "description": "The door is in the garage",
+          "excerpt": "The garage door uses two sensors and a remote. Do not reset the boiler here.",
+          "score": 30.0,
+          "updated_at": "2026-01-02T00:00:00+00:00"
+        },
+        {
+          "source_id": "boiler",
+          "title": "Boiler reset manual",
+          "description": "Heating guide",
+          "excerpt": "Reset the boiler using its power switch. Keep pressure at 1.2 bar.",
+          "score": 5.0,
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        }
+      ]
+    },
+    {
+      "query": "the",
+      "options": {
+        "source_ids": []
+      },
+      "expected": []
+    },
+    {
+      "query": "not turn on heating",
+      "options": {},
+      "expected": [
+        {
+          "source_id": "off",
+          "title": "Turn off heating",
+          "description": "Control guide",
+          "excerpt": "Do not turn on the heating. Keep it switched off.",
+          "score": 5.95,
+          "updated_at": "2026-01-07T00:00:00+00:00"
+        },
+        {
+          "source_id": "boiler",
+          "title": "Boiler reset manual",
+          "description": "Heating guide",
+          "excerpt": "Reset the boiler using its power switch. Keep pressure at 1.2 bar.",
+          "score": 1.2,
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        },
+        {
+          "source_id": "garage",
+          "title": "The garage door",
+          "description": "The door is in the garage",
+          "excerpt": "The garage door uses two sensors and a remote. Do not reset the boiler here.",
+          "score": 0.3,
+          "updated_at": "2026-01-02T00:00:00+00:00"
+        }
+      ]
+    },
+    {
+      "query": "not turn on heating",
+      "options": {
+        "offset": 1,
+        "limit": 2,
+        "lookahead": true
+      },
+      "expected": [
+        {
+          "source_id": "boiler",
+          "title": "Boiler reset manual",
+          "description": "Heating guide",
+          "excerpt": "Reset the boiler using its power switch. Keep pressure at 1.2 bar.",
+          "score": 1.2,
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        },
+        {
+          "source_id": "garage",
+          "title": "The garage door",
+          "description": "The door is in the garage",
+          "excerpt": "The garage door uses two sensors and a remote. Do not reset the boiler here.",
+          "score": 0.3,
+          "updated_at": "2026-01-02T00:00:00+00:00"
+        }
+      ]
+    },
+    {
+      "query": "not turn on heating",
+      "options": {
+        "source_ids": [
+          "boiler",
+          "disabled",
+          "missing",
+          " garage "
+        ],
+        "limit": 10
+      },
+      "expected": [
+        {
+          "source_id": "boiler",
+          "title": "Boiler reset manual",
+          "description": "Heating guide",
+          "excerpt": "Reset the boiler using its power switch. Keep pressure at 1.2 bar.",
+          "score": 1.2,
+          "updated_at": "2026-01-01T00:00:00+00:00"
+        },
+        {
+          "source_id": "garage",
+          "title": "The garage door",
+          "description": "The door is in the garage",
+          "excerpt": "The garage door uses two sensors and a remote. Do not reset the boiler here.",
+          "score": 0.3,
+          "updated_at": "2026-01-02T00:00:00+00:00"
+        }
+      ]
+    },
+    {
+      "query": "not turn on heating",
+      "options": {
+        "source_ids": []
+      },
+      "expected": []
+    },
+    {
+      "query": "C",
+      "options": {},
+      "expected": []
+    },
+    {
+      "query": "C",
+      "options": {
+        "offset": 1,
+        "limit": 2,
+        "lookahead": true
+      },
+      "expected": []
+    },
+    {
+      "query": "C",
+      "options": {
+        "source_ids": [
+          "boiler",
+          "disabled",
+          "missing",
+          " garage "
+        ],
+        "limit": 10
+      },
+      "expected": []
+    },
+    {
+      "query": "C",
+      "options": {
+        "source_ids": []
+      },
+      "expected": []
+    },
+    {
+      "query": "C++",
+      "options": {},
+      "expected": [
+        {
+          "source_id": "tools",
+          "title": "C++ drill",
+          "description": "Masonry wall tools",
+          "excerpt": "Use the concrete wall drill; C++ and C# are different identifiers.",
+          "score": 21.0,
+          "updated_at": "2026-01-03T00:00:00+00:00"
+        }
+      ]
+    },
+    {
+      "query": "C++",
+      "options": {
+        "offset": 1,
+        "limit": 2,
+        "lookahead": true
+      },
+      "expected": []
+    },
+    {
+      "query": "C++",
+      "options": {
+        "source_ids": [
+          "boiler",
+          "disabled",
+          "missing",
+          " garage "
+        ],
+        "limit": 10
+      },
+      "expected": []
+    },
+    {
+      "query": "C++",
+      "options": {
+        "source_ids": []
+      },
+      "expected": []
+    },
+    {
+      "query": "C#",
+      "options": {},
+      "expected": [
+        {
+          "source_id": "tools",
+          "title": "C++ drill",
+          "description": "Masonry wall tools",
+          "excerpt": "Use the concrete wall drill; C++ and C# are different identifiers.",
+          "score": 13.0,
+          "updated_at": "2026-01-03T00:00:00+00:00"
+        }
+      ]
+    },
+    {
+      "query": "C#",
+      "options": {
+        "offset": 1,
+        "limit": 2,
+        "lookahead": true
+      },
+      "expected": []
+    },
+    {
+      "query": "C#",
+      "options": {
+        "source_ids": [
+          "boiler",
+          "disabled",
+          "missing",
+          " garage "
+        ],
+        "limit": 10
+      },
+      "expected": []
+    },
+    {
+      "query": "C#",
+      "options": {
+        "source_ids": []
+      },
+      "expected": []
+    },
+    {
+      "query": "CAFÉ",
+      "options": {},
+      "expected": [
+        {
+          "source_id": "unicode",
+          "title": "Café 水温",
+          "description": "O’Brien household guide",
+          "excerpt": "Café water temperature 水温 should be warm.",
+          "score": 21.0,
+          "updated_at": "2026-01-04T00:00:00+00:00"
+        }
+      ]
+    },
+    {
+      "query": "CAFÉ",
+      "options": {
+        "offset": 1,
+        "limit": 2,
+        "lookahead": true
+      },
+      "expected": []
+    },
+    {
+      "query": "CAFÉ",
+      "options": {
+        "source_ids": [
+          "boiler",
+          "disabled",
+          "missing",
+          " garage "
+        ],
+        "limit": 10
+      },
+      "expected": []
+    },
+    {
+      "query": "CAFÉ",
+      "options": {
+        "source_ids": []
+      },
+      "expected": []
+    },
+    {
+      "query": "水温",
+      "options": {},
+      "expected": [
+        {
+          "source_id": "unicode",
+          "title": "Café 水温",
+          "description": "O’Brien household guide",
+          "excerpt": "Café water temperature 水温 should be warm.",
+          "score": 21.0,
+          "updated_at": "2026-01-04T00:00:00+00:00"
+        }
+      ]
+    },
+    {
+      "query": "水温",
+      "options": {
+        "offset": 1,
+        "limit": 2,
+        "lookahead": true
+      },
+      "expected": []
+    },
+    {
+      "query": "水温",
+      "options": {
+        "source_ids": [
+          "boiler",
+          "disabled",
+          "missing",
+          " garage "
+        ],
+        "limit": 10
+      },
+      "expected": []
+    },
+    {
+      "query": "水温",
+      "options": {
+        "source_ids": []
+      },
+      "expected": []
+    },
+    {
+      "query": "scheduling",
+      "options": {},
+      "expected": [
+        {
+          "source_id": "morph",
+          "title": "Scheduled routines",
+          "description": "Colour and color reference",
+          "excerpt": "Schedule the lights. Scheduling timers controls the colours.",
+          "score": 6.8,
+          "updated_at": "2026-01-05T00:00:00+00:00"
+        }
+      ]
+    },
+    {
+      "query": "scheduling",
+      "options": {
+        "offset": 1,
+        "limit": 2,
+        "lookahead": true
+      },
+      "expected": []
+    },
+    {
+      "query": "scheduling",
+      "options": {
+        "source_ids": [
+          "boiler",
+          "disabled",
+          "missing",
+          " garage "
+        ],
+        "limit": 10
+      },
+      "expected": []
+    },
+    {
+      "query": "scheduling",
+      "options": {
+        "source_ids": []
+      },
+      "expected": []
+    },
+    {
+      "query": "colours",
+      "options": {},
+      "expected": [
+        {
+          "source_id": "morph",
+          "title": "Scheduled routines",
+          "description": "Colour and color reference",
+          "excerpt": "Schedule the lights. Scheduling timers controls the colours.",
+          "score": 6.0,
+          "updated_at": "2026-01-05T00:00:00+00:00"
+        }
+      ]
+    },
+    {
+      "query": "colours",
+      "options": {
+        "offset": 1,
+        "limit": 2,
+        "lookahead": true
+      },
+      "expected": []
+    },
+    {
+      "query": "colours",
+      "options": {
+        "source_ids": [
+          "boiler",
+          "disabled",
+          "missing",
+          " garage "
+        ],
+        "limit": 10
+      },
+      "expected": []
+    },
+    {
+      "query": "colours",
+      "options": {
+        "source_ids": []
+      },
+      "expected": []
+    },
+    {
+      "query": "absentidentifier",
+      "options": {},
+      "expected": []
+    },
+    {
+      "query": "absentidentifier",
+      "options": {
+        "offset": 1,
+        "limit": 2,
+        "lookahead": true
+      },
+      "expected": []
+    },
+    {
+      "query": "absentidentifier",
+      "options": {
+        "source_ids": [
+          "boiler",
+          "disabled",
+          "missing",
+          " garage "
+        ],
+        "limit": 10
+      },
+      "expected": []
+    },
+    {
+      "query": "absentidentifier",
+      "options": {
+        "source_ids": []
+      },
+      "expected": []
+    },
+    {
+      "query": "!!!",
+      "options": {},
+      "expected": []
+    },
+    {
+      "query": "!!!",
+      "options": {
+        "offset": 1,
+        "limit": 2,
+        "lookahead": true
+      },
+      "expected": []
+    },
+    {
+      "query": "!!!",
+      "options": {
+        "source_ids": [
+          "boiler",
+          "disabled",
+          "missing",
+          " garage "
+        ],
+        "limit": 10
+      },
+      "expected": []
+    },
+    {
+      "query": "!!!",
+      "options": {
+        "source_ids": []
+      },
+      "expected": []
+    },
+    {
+      "query": "",
+      "options": {},
+      "expected": []
+    },
+    {
+      "query": "",
+      "options": {
+        "offset": 1,
+        "limit": 2,
+        "lookahead": true
+      },
+      "expected": []
+    },
+    {
+      "query": "",
+      "options": {
+        "source_ids": [
+          "boiler",
+          "disabled",
+          "missing",
+          " garage "
+        ],
+        "limit": 10
+      },
+      "expected": []
+    },
+    {
+      "query": "",
+      "options": {
+        "source_ids": []
+      },
+      "expected": []
+    }
+  ]
+}

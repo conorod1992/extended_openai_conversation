@@ -164,6 +164,7 @@ class ProviderRequestSnapshot:
     api_kwargs: dict[str, Any]
     provider_tools: tuple[dict[str, Any], ...]
     structured_outputs: bool = False
+    reasoning_supported: bool = False
 
 
 def canonical_json(value: Any) -> str:
@@ -569,6 +570,7 @@ def build_provider_request_snapshot(
         api_kwargs,
         (provider_tool,) if provider_tool is not None else (),
         capabilities["structured_outputs"],
+        reasoning_supported=capabilities["reasoning"]["supported"],
     )
 
 

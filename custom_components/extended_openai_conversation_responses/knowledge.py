@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
+from contextvars import copy_context
 from dataclasses import asdict, dataclass, replace
+from functools import partial
 import json
 import logging
 import re
@@ -17,6 +19,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
+from .operation_settlement import async_settle_owned_operation
 from .persistence_hardening import (
     StorageRepairRequired,
     _async_settle_transactional_save,
@@ -473,8 +476,11 @@ class KnowledgeLibrary:
                 updated_at=timestamp,
                 enabled=enabled,
             )
+            # The worker owns all derived structures. Cancellation before it
+            # returns cannot mutate or publish any part of the live index.
+            index = await asyncio.to_thread(_build_index, (source,))
             self._sources[source.source_id] = source
-            self._index(source)
+            self._merge_index(index)
             await self._async_save_locked()
             return source
 
@@ -506,7 +512,6 @@ class KnowledgeLibrary:
             new_enabled = (
                 current.enabled if enabled is None else _validated_enabled(enabled)
             )
-            self._unindex(source_id)
             updated = KnowledgeSource(
                 source_id=current.source_id,
                 title=new_title,
@@ -516,8 +521,10 @@ class KnowledgeLibrary:
                 updated_at=dt_util.utcnow().isoformat(),
                 enabled=new_enabled,
             )
+            index = await asyncio.to_thread(_build_index, (updated,))
+            self._unindex(source_id)
             self._sources[source_id] = updated
-            self._index(updated)
+            self._merge_index(index)
             await self._async_save_locked()
             return updated
 
@@ -544,106 +551,130 @@ class KnowledgeLibrary:
         """Search enabled indexed chunks and return at most one excerpt per source."""
         async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
-            if not isinstance(limit, int) or isinstance(limit, bool):
-                raise ValueError("limit must be an integer")
-            limit = max(1, min(limit, MAX_SEARCH_LIMIT))
-            if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
-                raise ValueError("offset must be a nonnegative integer")
-            raw_query_tokens = _tokens(query)
-            query_tokens = _search_tokens(query, raw_query_tokens)
-            normalized_query = _normalize(query)
-            if not query_tokens or not normalized_query:
-                return []
-            allowed, _ = self.resolve_source_filter(source_ids)
-            # Retain filler matches rather than removing them from the index.
-            # A filler-only query keeps the original equal weighting, while a
-            # substantive query is not overwhelmed by incidental title words.
-            has_salient_terms = bool(raw_query_tokens - _SEARCH_FILLER_TERMS)
-            query_weights = {
-                token: (
-                    0.2
-                    if token.startswith(("morph:", "spelling:"))
-                    else _SEARCH_FILLER_WEIGHT
-                    if has_salient_terms and token in _SEARCH_FILLER_TERMS
-                    else 1.0
-                )
-                for token in query_tokens
-            }
-            # Preserve the existing exact-term denominator and its score scale.
-            total_weight = sum(query_weights[token] for token in raw_query_tokens)
+            # Retain the lock until the executor future completes, including
+            # repeated/global task cancellation. Wrapping to_thread in a child
+            # task would allow cancellation of that child to abandon its thread.
+            operation = partial(
+                self._search_locked,
+                query,
+                source_ids.copy() if isinstance(source_ids, list) else source_ids,
+                limit,
+                offset=offset,
+                lookahead=lookahead,
+            )
+            worker = asyncio.get_running_loop().run_in_executor(
+                None, copy_context().run, operation
+            )
+            return await async_settle_owned_operation(worker)
 
-            def weighted_overlap(tokens: frozenset[str]) -> float:
-                return (
-                    sum(query_weights[token] for token in query_tokens & tokens)
-                    / total_weight
-                )
+    def _search_locked(
+        self,
+        query: str,
+        source_ids: list[str] | None,
+        limit: int,
+        *,
+        offset: int,
+        lookahead: bool,
+    ) -> list[SearchResult]:
+        """Score the existing index while the async owner retains its lock."""
+        if not isinstance(limit, int) or isinstance(limit, bool):
+            raise ValueError("limit must be an integer")
+        limit = max(1, min(limit, MAX_SEARCH_LIMIT))
+        if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
+            raise ValueError("offset must be a nonnegative integer")
+        raw_query_tokens = _tokens(query)
+        query_tokens = _search_tokens(query, raw_query_tokens)
+        normalized_query = _normalize(query)
+        if not query_tokens or not normalized_query:
+            return []
+        allowed, _ = self.resolve_source_filter(source_ids)
+        # Retain filler matches rather than removing them from the index.
+        # A filler-only query keeps the original equal weighting, while a
+        # substantive query is not overwhelmed by incidental title words.
+        has_salient_terms = bool(raw_query_tokens - _SEARCH_FILLER_TERMS)
+        query_weights = {
+            token: (
+                0.2
+                if token.startswith(("morph:", "spelling:"))
+                else _SEARCH_FILLER_WEIGHT
+                if has_salient_terms and token in _SEARCH_FILLER_TERMS
+                else 1.0
+            )
+            for token in query_tokens
+        }
+        # Preserve the existing exact-term denominator and its score scale.
+        total_weight = sum(query_weights[token] for token in raw_query_tokens)
 
-            candidates: set[tuple[str, int]] = set()
-            for token in query_tokens:
-                candidates.update(self._token_index.get(token, set()))
+        def weighted_overlap(tokens: frozenset[str]) -> float:
+            return (
+                sum(query_weights[token] for token in query_tokens & tokens)
+                / total_weight
+            )
 
-            best_by_source: dict[str, tuple[bool, float, _Chunk]] = {}
-            for chunk_key in candidates:
-                chunk = self._chunks[chunk_key]
-                if allowed is not None and chunk.source_id not in allowed:
-                    continue
-                features = self._source_features[chunk.source_id]
-                title_tokens = features.title_tokens
-                description_tokens = features.description_tokens
-                normalized_title = features.normalized_title
-                normalized_description = features.normalized_description
-                all_tokens = chunk.tokens | title_tokens | description_tokens
-                exact_salient = bool(
-                    (raw_query_tokens - _SEARCH_FILLER_TERMS) & all_tokens
-                )
-                if has_salient_terms and not (
-                    (query_tokens - _SEARCH_FILLER_TERMS) & all_tokens
-                ):
-                    continue
-                score = (
-                    weighted_overlap(chunk.tokens)
-                    + weighted_overlap(title_tokens) * 8
-                    + weighted_overlap(description_tokens) * 4
-                )
-                if normalized_query in normalized_title:
-                    score += 8
-                if normalized_query in normalized_description:
-                    score += 5
-                if normalized_query in chunk.normalized_text:
-                    score += 4
-                current = best_by_source.get(chunk.source_id)
-                if (
-                    current is None
-                    or (exact_salient, score) > (current[0], current[1])
-                    or (
-                        (exact_salient, score) == (current[0], current[1])
-                        and chunk.start < current[2].start
-                    )
-                ):
-                    best_by_source[chunk.source_id] = (exact_salient, score, chunk)
+        candidates: set[tuple[str, int]] = set()
+        for token in query_tokens:
+            candidates.update(self._token_index.get(token, set()))
 
-            ranked = [
-                (exact, score, self._sources[source_id].updated_at, source_id, chunk)
-                for source_id, (exact, score, chunk) in best_by_source.items()
-                if score > 0
-            ]
-            ranked.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
-            results: list[SearchResult] = []
-            for _, score, _, source_id, chunk in ranked[
-                offset : offset + limit + int(lookahead)
-            ]:
-                source = self._sources[source_id]
-                results.append(
-                    SearchResult(
-                        source_id=source.source_id,
-                        title=source.title,
-                        description=source.description,
-                        excerpt=chunk.text[:MAX_EXCERPT_CHARACTERS],
-                        score=round(score, 4),
-                        updated_at=source.updated_at,
-                    )
+        best_by_source: dict[str, tuple[bool, float, _Chunk]] = {}
+        for chunk_key in candidates:
+            chunk = self._chunks[chunk_key]
+            if allowed is not None and chunk.source_id not in allowed:
+                continue
+            features = self._source_features[chunk.source_id]
+            title_tokens = features.title_tokens
+            description_tokens = features.description_tokens
+            normalized_title = features.normalized_title
+            normalized_description = features.normalized_description
+            all_tokens = chunk.tokens | title_tokens | description_tokens
+            exact_salient = bool((raw_query_tokens - _SEARCH_FILLER_TERMS) & all_tokens)
+            if has_salient_terms and not (
+                (query_tokens - _SEARCH_FILLER_TERMS) & all_tokens
+            ):
+                continue
+            score = (
+                weighted_overlap(chunk.tokens)
+                + weighted_overlap(title_tokens) * 8
+                + weighted_overlap(description_tokens) * 4
+            )
+            if normalized_query in normalized_title:
+                score += 8
+            if normalized_query in normalized_description:
+                score += 5
+            if normalized_query in chunk.normalized_text:
+                score += 4
+            current = best_by_source.get(chunk.source_id)
+            if (
+                current is None
+                or (exact_salient, score) > (current[0], current[1])
+                or (
+                    (exact_salient, score) == (current[0], current[1])
+                    and chunk.start < current[2].start
                 )
-            return results
+            ):
+                best_by_source[chunk.source_id] = (exact_salient, score, chunk)
+
+        ranked = [
+            (exact, score, self._sources[source_id].updated_at, source_id, chunk)
+            for source_id, (exact, score, chunk) in best_by_source.items()
+            if score > 0
+        ]
+        ranked.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+        results: list[SearchResult] = []
+        for _, score, _, source_id, chunk in ranked[
+            offset : offset + limit + int(lookahead)
+        ]:
+            source = self._sources[source_id]
+            results.append(
+                SearchResult(
+                    source_id=source.source_id,
+                    title=source.title,
+                    description=source.description,
+                    excerpt=chunk.text[:MAX_EXCERPT_CHARACTERS],
+                    score=round(score, 4),
+                    updated_at=source.updated_at,
+                )
+            )
+        return results
 
     def resolve_source_filter(
         self, source_ids: list[str] | None
@@ -818,11 +849,18 @@ class KnowledgeLibrary:
             raise ValueError("knowledge source not found")
         return source
 
-    def _index(self, source: KnowledgeSource) -> None:
-        _index_source(
-            source,
-            _KnowledgeIndex(self._chunks, self._source_features, self._token_index),
-        )
+    def _merge_index(self, index: _KnowledgeIndex) -> None:
+        """Publish one completed source index synchronously under the lock."""
+        self._chunks.update(index.chunks)
+        self._source_features.update(index.source_features)
+        for token, keys in index.token_index.items():
+            # Match _index_source's per-token ascending chunk insertion order,
+            # retaining the existing candidate iteration/tie behavior too.
+            existing = self._token_index.get(token)
+            if existing is None:
+                self._token_index[token] = keys
+            else:
+                existing.update(sorted(keys))
 
     def _publish_index(self, index: _KnowledgeIndex) -> None:
         """Swap completed structures synchronously while the library lock is held."""

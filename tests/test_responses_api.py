@@ -413,6 +413,7 @@ async def test_responses_tool_chain_preserves_reasoning(
     """A Responses tool result is fed into a second streamed request."""
     reasoning_item = FakeReasoningItem()
     from openai.types.responses import ResponseFunctionToolCall
+
     from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
         make_tool_result_content,
     )
@@ -1858,6 +1859,7 @@ async def test_responses_overlapping_items_keep_native_replay(
 
 async def test_completed_responses_multiple_messages_preserve_indexed_text(hass):
     from openai.types.responses import ResponseOutputMessage, ResponseOutputText
+
     from custom_components.extended_openai_conversation_responses.non_streaming import (
         completed_responses_events,
     )
@@ -1890,3 +1892,382 @@ async def test_completed_responses_multiple_messages_preserve_indexed_text(hass)
     assert _convert_content_to_responses_param(retained) == [
         item.model_dump(exclude_none=True) for item in items
     ]
+
+
+@pytest.mark.parametrize("mode", [API_MODE_AUTO, API_MODE_RESPONSES])
+@pytest.mark.parametrize("change", ["request_rule", "admin"])
+async def test_reasoning_history_model_transitions(hass, mode, change, tmp_path):
+    """Real request turns filter only reasoning, then replay it after switching back."""
+    from copy import deepcopy
+    from dataclasses import replace
+
+    from custom_components.extended_openai_conversation_responses.request_rules import (
+        RequestRuleRuntime,
+        RequestRules,
+        async_evaluate_rule,
+    )
+
+    requests = []
+
+    async def respond(**kwargs):
+        requests.append(deepcopy(kwargs))
+        reasoning = FakeReasoningItem()
+        message = SimpleNamespace(type="message")
+        events = []
+        if kwargs["model"] == "gpt-5-mini":
+            events.extend(
+                [
+                    _event("response.output_item.added", item=reasoning),
+                    _event("response.output_item.done", item=reasoning),
+                ]
+            )
+        return FakeStream(
+            [
+                *events,
+                _event("response.output_item.added", item=message),
+                _event("response.output_text.delta", delta="Answer"),
+                _event("response.output_item.done", item=message),
+                _completed_event(),
+            ]
+        )
+
+    entity, log, create = _control_entity(hass, mode, [])
+    create.side_effect = respond
+    entity._usage = None
+    # Web Search selects Responses even when Auto would otherwise choose Chat.
+    entity.subentry.data.update(
+        {
+            CONF_CHAT_MODEL: "gpt-5-mini",
+            CONF_WEB_SEARCH: True,
+            CONF_REASONING_EFFORT: "medium",
+        }
+    )
+    await entity._async_handle_chat_log(log, [], [])
+    reasoning_content = next(
+        c
+        for c in log.content
+        if getattr(getattr(c, "native", None), "type", None) == "reasoning"
+    )
+    # A combined HA content object must keep its text and calls when its native
+    # reasoning projection is omitted. Include a completed historical exchange.
+    call = SimpleNamespace(id="historical", tool_name="get_state", tool_args={})
+    combined = replace(
+        reasoning_content, content="Historical explanation", tool_calls=[call]
+    )
+    log.content[log.content.index(reasoning_content)] = combined
+    reasoning_content = combined
+    log.content.extend(
+        [
+            conversation.ToolResultContent(
+                agent_id=entity.entity_id,
+                tool_call_id=call.id,
+                tool_name=call.tool_name,
+                tool_result={"state": "on"},
+            ),
+            conversation.AssistantContent(
+                agent_id=entity.entity_id, native=FakeWebSearchItem()
+            ),
+            conversation.AssistantContent(
+                agent_id=entity.entity_id, content="Historical answer"
+            ),
+        ]
+    )
+    retained = tuple(log.content)
+    image = tmp_path / "image.png"
+    image.write_bytes(b"image-data")
+    log.async_add_user_content(
+        conversation.UserContent(
+            content="Next",
+            attachments=[
+                conversation.Attachment(
+                    media_content_id="media-source://test/image",
+                    mime_type="image/png",
+                    path=image,
+                )
+            ],
+        )
+    )
+
+    options = None
+    if change == "admin":
+        entity.subentry.data = {**entity.subentry.data, CONF_CHAT_MODEL: "gpt-4.1"}
+    else:
+        rule = {
+            "id": "route",
+            "name": "Route",
+            "enabled": True,
+            "phrases": ["Next"],
+            "match_type": "equals",
+            "action_type": "model_routing",
+            "action": {
+                "model": "gpt-4.1",
+                "reasoning_effort": None,
+                "scope": "request",
+                "reset": False,
+                "success_response": "Updated",
+                "continue_to_ai": True,
+            },
+            "matching_behavior": "defaults",
+            "order": 0,
+        }
+        rules = RequestRules(
+            SimpleNamespace(
+                async_load=AsyncMock(return_value={"rules": [rule]}),
+                async_save=AsyncMock(),
+            )
+        )
+        await rules.async_initialize()
+        runtime = RequestRuleRuntime()
+        result = await async_evaluate_rule(
+            hass,
+            rules,
+            runtime,
+            "Next",
+            log.conversation_id,
+            configured_model="gpt-5-mini",
+            request_options=entity.subentry.data,
+        )
+        assert result is not None and not result.consume
+        assert runtime.get(log.conversation_id) == {}
+        options = runtime.effective_options(
+            entity.subentry.data, log.conversation_id, result.request_override
+        )
+        assert entity.subentry.data[CONF_CHAT_MODEL] == "gpt-5-mini"
+
+    await entity._async_handle_chat_log(log, [], [], request_options=options)
+    nonreasoning = requests[1]
+    assert nonreasoning["model"] == "gpt-4.1"
+    assert not any(item.get("type") == "reasoning" for item in nonreasoning["input"])
+    assert {item["type"] for item in nonreasoning["input"]} >= {
+        "message",
+        "function_call",
+        "function_call_output",
+        "web_search_call",
+    }
+    assert any(
+        item.get("content") == "Historical explanation"
+        for item in nonreasoning["input"]
+    )
+    assert (
+        next(
+            item
+            for item in nonreasoning["input"]
+            if item.get("call_id") == "historical"
+        )["type"]
+        == "function_call"
+    )
+    image_content = next(
+        item["content"]
+        for item in nonreasoning["input"]
+        if item.get("role") == "user" and isinstance(item["content"], list)
+    )
+    assert image_content[1]["type"] == "input_image"
+    assert image_content[1]["image_url"].startswith("data:image/png;base64,")
+    assert all(
+        any(item is content for item in log.content)
+        for content in retained
+        if not isinstance(
+            content, (conversation.ToolResultContent, conversation.SystemContent)
+        )
+    )
+    assert reasoning_content.native.model_dump()["encrypted_content"] == "encrypted"
+
+    entity.subentry.data = {**entity.subentry.data, CONF_CHAT_MODEL: "gpt-5-mini"}
+    log.async_add_user_content(conversation.UserContent(content="Back"))
+    await entity._async_handle_chat_log(log, [], [])
+    assert any(item.get("type") == "reasoning" for item in requests[2]["input"])
+    assert (
+        next(item for item in requests[2]["input"] if item.get("type") == "reasoning")[
+            "encrypted_content"
+        ]
+        == "encrypted"
+    )
+
+
+async def test_nonreasoning_tool_rounds_trimming_and_accounting(
+    hass, monkeypatch, tmp_path
+):
+    """Every input projection uses the filtered history and prepared attachments."""
+    from copy import deepcopy
+
+    from custom_components.extended_openai_conversation_responses import (
+        context_usage_hardening as usage,
+    )
+    from custom_components.extended_openai_conversation_responses.const import (
+        CONF_CONTEXT_THRESHOLD,
+        CONF_CONTEXT_TRUNCATE_STRATEGY,
+        CONTEXT_TRUNCATE_KEEP_RECENT,
+    )
+
+    entity, log, create = _control_entity(hass, API_MODE_RESPONSES, [])
+    entity.subentry.data.update(
+        {
+            CONF_CHAT_MODEL: "gpt-4.1",
+            CONF_CONTEXT_THRESHOLD: 600,
+            CONF_CONTEXT_TRUNCATE_STRATEGY: CONTEXT_TRUNCATE_KEEP_RECENT,
+        }
+    )
+    entity._usage = SimpleNamespace(
+        async_record_conversation=AsyncMock(), async_record_request=AsyncMock()
+    )
+    log.content[1] = conversation.UserContent(content="Old " * 3000)
+    log.content.append(
+        conversation.AssistantContent(agent_id=entity.entity_id, content="Old answer")
+    )
+    image = tmp_path / "camera.png"
+    image.write_bytes(b"image-data")
+    log.async_add_user_content(
+        conversation.UserContent(
+            content="Current",
+            attachments=[
+                conversation.Attachment(
+                    media_content_id="media-source://test/camera",
+                    mime_type="image/png",
+                    path=image,
+                )
+            ],
+        )
+    )
+    reasoning = conversation.AssistantContent(
+        agent_id=entity.entity_id, native=FakeReasoningItem()
+    )
+    log.content.append(reasoning)
+    tool = {
+        "spec": {
+            "name": "get_state",
+            "description": "Get state",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "function": {"type": "native", "name": "unused"},
+    }
+    entity._execute_function_tool = AsyncMock(
+        return_value=conversation.ToolResultContent(
+            agent_id=entity.entity_id,
+            tool_call_id="live",
+            tool_name="get_state",
+            tool_result={"state": "on"},
+        )
+    )
+    requests, estimates, revisions, matches = [], [], [], []
+    original_estimate = usage.estimate_provider_input_tokens
+    original_revision = usage.async_prepared_input_revision
+    original_applies = usage.ContextInputMeasurement.async_applies_to
+
+    def estimate(items, tools=None):
+        estimates.append(deepcopy(items))
+        return original_estimate(items, tools)
+
+    async def revision(items):
+        revisions.append(deepcopy(items))
+        return await original_revision(items)
+
+    async def applies(self, items):
+        result = await original_applies(self, items)
+        matches.append(result)
+        return result
+
+    monkeypatch.setattr(usage, "estimate_provider_input_tokens", estimate)
+    monkeypatch.setattr(
+        "custom_components.extended_openai_conversation_responses.entity.async_prepared_input_revision",
+        revision,
+    )
+    monkeypatch.setattr(usage.ContextInputMeasurement, "async_applies_to", applies)
+
+    async def respond(**kwargs):
+        requests.append(deepcopy(kwargs))
+        if len(requests) == 1:
+            call = _function_call("get_state", "{}", "live")
+            return FakeStream(
+                [
+                    _event("response.output_item.added", item=call),
+                    _event("response.output_item.done", item=call),
+                    _completed_event(),
+                ]
+            )
+        message = SimpleNamespace(type="message")
+        return FakeStream(
+            [
+                _event("response.output_item.added", item=message),
+                _event("response.output_text.delta", delta="On"),
+                _event("response.output_item.done", item=message),
+                _completed_event(),
+            ]
+        )
+
+    create.side_effect = respond
+    await entity._async_handle_chat_log(log, [tool], [])
+    assert len(requests) == 2
+    assert all(
+        not any(item.get("type") == "reasoning" for item in items)
+        for items in estimates + revisions
+    )
+    assert revisions == [request["input"] for request in requests]
+    assert matches == [True]
+    assert all(request["input"] in estimates for request in requests)
+    assert all(
+        not any("Old " in str(item) for item in request["input"])
+        for request in requests
+    )
+    assert reasoning in log.content  # Kept with the current turn, only wire-filtered.
+    for request in requests:
+        assert any("input_image" in str(item) for item in request["input"])
+    assert [
+        item["type"] for item in requests[1]["input"] if item.get("call_id") == "live"
+    ] == ["function_call", "function_call_output"]
+    assert all(
+        call.kwargs["usage"].input_tokens == 10
+        for call in entity._usage.async_record_request.await_args_list
+    )
+
+
+@pytest.mark.parametrize("attachments", [False, True])
+async def test_reasoning_filter_uses_final_snapshot_after_attachment_preparation(
+    hass, tmp_path, attachments
+):
+    """The final snapshot wins even if capabilities change during preparation."""
+    entity, log, create = _control_entity(hass, API_MODE_RESPONSES, [])
+    entity._usage = None
+    entity.subentry.data[CONF_CHAT_MODEL] = "gpt-5-mini"
+    native = FakeReasoningItem()
+    log.content.append(
+        conversation.AssistantContent(agent_id=entity.entity_id, native=native)
+    )
+    image = tmp_path / "image.png"
+    image.write_bytes(b"image-data")
+    log.async_add_user_content(
+        conversation.UserContent(
+            content="Next",
+            attachments=[
+                conversation.Attachment(
+                    media_content_id="media-source://test/image",
+                    mime_type="image/png",
+                    path=image,
+                )
+            ]
+            if attachments
+            else None,
+        )
+    )
+    add_attachments = entity._async_add_attachments
+
+    async def prepare(*args):
+        await add_attachments(*args)
+        entity.subentry.data[CONF_CHAT_MODEL] = "gpt-4.1"
+
+    entity._async_add_attachments = prepare
+    message = SimpleNamespace(type="message")
+    create.return_value = FakeStream(
+        [
+            _event("response.output_item.added", item=message),
+            _event("response.output_text.delta", delta="Answer"),
+            _event("response.output_item.done", item=message),
+            _completed_event(),
+        ]
+    )
+    create.side_effect = None
+    await entity._async_handle_chat_log(log, [], [])
+    request = create.await_args.kwargs
+    assert request["model"] == "gpt-4.1"
+    assert not any(item.get("type") == "reasoning" for item in request["input"])
+    assert any(getattr(content, "native", None) is native for content in log.content)
+    assert any("input_image" in str(item) for item in request["input"]) is attachments

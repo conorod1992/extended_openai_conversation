@@ -1,0 +1,1480 @@
+{
+  "baseline_commit": "b59bdea595676db951066bba5c0d51c904f50ab8",
+  "baseline_knowledge_blob": "de91694fbda68ae8f73915460ef0c54936e406c7",
+  "method": "Same host, fresh Python process per full run, five samples per operation/scenario; public async APIs; startup indexing excluded; in-memory storage excludes disk I/O but includes the production persistence snapshot. Loop heartbeat requests 5ms; Windows idle max gaps ranged 16-31ms. Baseline recorded before implementation.",
+  "observations": [
+    "Final executor-future design, worst-scale frequent search: median latency 118.92 -> 119.73ms; maximum heartbeat gap 138.51 -> 46.70ms.",
+    "Small median operations remained below 1ms; typical worker scheduling overhead was approximately 0.3-0.4ms.",
+    "Vocabulary-heavy maximum-size source create maximum heartbeat gap 111.02 -> 20.72ms; edit tail gap remained 91.03 -> 70.04ms. No universal responsiveness bound is claimed.",
+    "An earlier after-run with the same indexing implementation saw an 86ms varied-edit gap; a separate three-repeat limit-only diagnostic saw 21.75ms. These observations illustrate run/scheduler variation and are not substituted for the paired primary measurements."
+  ],
+  "deferred": [
+    "_unindex optimization: existing limit-scale public deletion was about 3ms; a direct numbered-chunk lookup saved only about 0.5ms and would rely on an extra contiguity assumption. Original removal retained.",
+    "Snapshot/copy-on-write search indexes, process workers, GC policy changes and retrieval algorithm changes: unnecessary complexity for the observed search blocking. Lock-owned search workers retain serialization and cancellation waits for running work."
+  ],
+  "before": {
+    "python": "3.14.2 (tags/v3.14.2:df79316, Dec  5 2025, 17:18:21) [MSC v.1944 64 bit (AMD64)]",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "heartbeat_interval_ms": 5,
+    "repeats": 5,
+    "storage": "in-memory; serialization included, disk I/O excluded",
+    "scenarios": {
+      "small": {
+        "sources": 10,
+        "characters_per_source": 2000,
+        "chunks": 10,
+        "operations": {
+          "create": {
+            "median_latency_ms": 0.371000001905486,
+            "max_loop_gap_ms": 24.248700006864965,
+            "samples": [
+              {
+                "latency_ms": 0.371000001905486,
+                "max_loop_gap_ms": 24.248700006864965
+              },
+              {
+                "latency_ms": 0.3312000189907849,
+                "max_loop_gap_ms": 15.833599987672642
+              },
+              {
+                "latency_ms": 0.3480000013951212,
+                "max_loop_gap_ms": 22.760899999411777
+              },
+              {
+                "latency_ms": 0.434000015957281,
+                "max_loop_gap_ms": 19.039200007682666
+              },
+              {
+                "latency_ms": 0.43420001748017967,
+                "max_loop_gap_ms": 15.956599992932752
+              }
+            ]
+          },
+          "edit": {
+            "median_latency_ms": 0.43410001671873033,
+            "max_loop_gap_ms": 22.35590000054799,
+            "samples": [
+              {
+                "latency_ms": 0.529499986441806,
+                "max_loop_gap_ms": 16.60410000476986
+              },
+              {
+                "latency_ms": 0.3012999950442463,
+                "max_loop_gap_ms": 15.92730000265874
+              },
+              {
+                "latency_ms": 0.43410001671873033,
+                "max_loop_gap_ms": 16.080800007330254
+              },
+              {
+                "latency_ms": 0.33379998058080673,
+                "max_loop_gap_ms": 15.718599985120818
+              },
+              {
+                "latency_ms": 0.4343999898992479,
+                "max_loop_gap_ms": 22.35590000054799
+              }
+            ]
+          },
+          "frequent_search": {
+            "median_latency_ms": 0.2238999877590686,
+            "max_loop_gap_ms": 22.074899985454977,
+            "samples": [
+              {
+                "latency_ms": 0.2238999877590686,
+                "max_loop_gap_ms": 15.840500011108816
+              },
+              {
+                "latency_ms": 0.14790002023801208,
+                "max_loop_gap_ms": 16.226799983996898
+              },
+              {
+                "latency_ms": 0.23090001195669174,
+                "max_loop_gap_ms": 22.074899985454977
+              },
+              {
+                "latency_ms": 0.2598999999463558,
+                "max_loop_gap_ms": 18.694400001550093
+              },
+              {
+                "latency_ms": 0.16070000128820539,
+                "max_loop_gap_ms": 15.770800004247576
+              }
+            ]
+          },
+          "filtered_search": {
+            "median_latency_ms": 0.10049997945316136,
+            "max_loop_gap_ms": 23.383299994748086,
+            "samples": [
+              {
+                "latency_ms": 0.08430000161752105,
+                "max_loop_gap_ms": 18.102699978044257
+              },
+              {
+                "latency_ms": 0.10049997945316136,
+                "max_loop_gap_ms": 19.86699999542907
+              },
+              {
+                "latency_ms": 0.09290000889450312,
+                "max_loop_gap_ms": 23.383299994748086
+              },
+              {
+                "latency_ms": 0.1134999911300838,
+                "max_loop_gap_ms": 15.918000019155443
+              },
+              {
+                "latency_ms": 0.10609999299049377,
+                "max_loop_gap_ms": 15.579400002025068
+              }
+            ]
+          },
+          "absent_search": {
+            "median_latency_ms": 0.05780000356025994,
+            "max_loop_gap_ms": 23.112499999115244,
+            "samples": [
+              {
+                "latency_ms": 0.07150002056732774,
+                "max_loop_gap_ms": 15.777900000102818
+              },
+              {
+                "latency_ms": 0.05780000356025994,
+                "max_loop_gap_ms": 19.871700002113357
+              },
+              {
+                "latency_ms": 0.0604000233579427,
+                "max_loop_gap_ms": 16.004900011466816
+              },
+              {
+                "latency_ms": 0.04600000102072954,
+                "max_loop_gap_ms": 15.613499999744818
+              },
+              {
+                "latency_ms": 0.04029998672194779,
+                "max_loop_gap_ms": 23.112499999115244
+              }
+            ]
+          },
+          "delete": {
+            "median_latency_ms": 0.14930000179447234,
+            "max_loop_gap_ms": 22.843999991891906,
+            "samples": [
+              {
+                "latency_ms": 0.12519999290816486,
+                "max_loop_gap_ms": 15.726399986306205
+              },
+              {
+                "latency_ms": 0.1860000193119049,
+                "max_loop_gap_ms": 19.787500001257285
+              },
+              {
+                "latency_ms": 0.17169999773614109,
+                "max_loop_gap_ms": 21.956699987640604
+              },
+              {
+                "latency_ms": 0.14930000179447234,
+                "max_loop_gap_ms": 22.843999991891906
+              },
+              {
+                "latency_ms": 0.14039999223314226,
+                "max_loop_gap_ms": 15.975300018908456
+              }
+            ]
+          },
+          "varied_create": {
+            "median_latency_ms": 0.5612999957520515,
+            "max_loop_gap_ms": 30.07929999148473,
+            "samples": [
+              {
+                "latency_ms": 0.6340000254567713,
+                "max_loop_gap_ms": 30.07929999148473
+              },
+              {
+                "latency_ms": 0.5612999957520515,
+                "max_loop_gap_ms": 24.87449999898672
+              },
+              {
+                "latency_ms": 0.5628999788314104,
+                "max_loop_gap_ms": 15.69169998401776
+              },
+              {
+                "latency_ms": 0.44189998880028725,
+                "max_loop_gap_ms": 15.757499990286306
+              },
+              {
+                "latency_ms": 0.5521999846678227,
+                "max_loop_gap_ms": 16.59549999749288
+              }
+            ]
+          },
+          "varied_edit": {
+            "median_latency_ms": 0.5480000108946115,
+            "max_loop_gap_ms": 24.665000004461035,
+            "samples": [
+              {
+                "latency_ms": 0.4955999902449548,
+                "max_loop_gap_ms": 15.718599985120818
+              },
+              {
+                "latency_ms": 0.5732999998144805,
+                "max_loop_gap_ms": 16.151499992702156
+              },
+              {
+                "latency_ms": 0.6101999897509813,
+                "max_loop_gap_ms": 15.741299983346835
+              },
+              {
+                "latency_ms": 0.5480000108946115,
+                "max_loop_gap_ms": 15.714199980720878
+              },
+              {
+                "latency_ms": 0.4778000002261251,
+                "max_loop_gap_ms": 24.665000004461035
+              }
+            ]
+          },
+          "idle": {
+            "median_latency_ms": 0.015700003132224083,
+            "max_loop_gap_ms": 29.75519999745302,
+            "samples": [
+              {
+                "latency_ms": 0.022100022761151195,
+                "max_loop_gap_ms": 16.049400001065806
+              },
+              {
+                "latency_ms": 0.0371999922208488,
+                "max_loop_gap_ms": 23.18419999210164
+              },
+              {
+                "latency_ms": 0.015700003132224083,
+                "max_loop_gap_ms": 24.134599982062355
+              },
+              {
+                "latency_ms": 0.01500002690590918,
+                "max_loop_gap_ms": 29.75519999745302
+              },
+              {
+                "latency_ms": 0.01409999094903469,
+                "max_loop_gap_ms": 15.699399984441698
+              }
+            ]
+          }
+        }
+      },
+      "representative": {
+        "sources": 100,
+        "characters_per_source": 20000,
+        "chunks": 1100,
+        "operations": {
+          "create": {
+            "median_latency_ms": 2.0441999949980527,
+            "max_loop_gap_ms": 31.087400013348088,
+            "samples": [
+              {
+                "latency_ms": 2.119999990100041,
+                "max_loop_gap_ms": 15.82199998665601
+              },
+              {
+                "latency_ms": 2.1721000084653497,
+                "max_loop_gap_ms": 26.518200000282377
+              },
+              {
+                "latency_ms": 2.0441999949980527,
+                "max_loop_gap_ms": 31.087400013348088
+              },
+              {
+                "latency_ms": 1.8514000112190843,
+                "max_loop_gap_ms": 17.826299997977912
+              },
+              {
+                "latency_ms": 2.0303000055719167,
+                "max_loop_gap_ms": 28.17000000504777
+              }
+            ]
+          },
+          "edit": {
+            "median_latency_ms": 2.0255999988876283,
+            "max_loop_gap_ms": 28.136900014942512,
+            "samples": [
+              {
+                "latency_ms": 2.557700005127117,
+                "max_loop_gap_ms": 18.507500004488975
+              },
+              {
+                "latency_ms": 1.923300005728379,
+                "max_loop_gap_ms": 16.10329997492954
+              },
+              {
+                "latency_ms": 1.9560999935492873,
+                "max_loop_gap_ms": 22.93049998115748
+              },
+              {
+                "latency_ms": 2.1018999977968633,
+                "max_loop_gap_ms": 28.136900014942512
+              },
+              {
+                "latency_ms": 2.0255999988876283,
+                "max_loop_gap_ms": 25.744699989445508
+              }
+            ]
+          },
+          "frequent_search": {
+            "median_latency_ms": 4.629700008081272,
+            "max_loop_gap_ms": 29.722699982812628,
+            "samples": [
+              {
+                "latency_ms": 4.6242999960668385,
+                "max_loop_gap_ms": 29.722699982812628
+              },
+              {
+                "latency_ms": 6.464000005507842,
+                "max_loop_gap_ms": 22.50560000538826
+              },
+              {
+                "latency_ms": 6.617100007133558,
+                "max_loop_gap_ms": 22.086599987233058
+              },
+              {
+                "latency_ms": 4.500299983192235,
+                "max_loop_gap_ms": 22.011199995176867
+              },
+              {
+                "latency_ms": 4.629700008081272,
+                "max_loop_gap_ms": 23.437800002284348
+              }
+            ]
+          },
+          "filtered_search": {
+            "median_latency_ms": 0.3476999991107732,
+            "max_loop_gap_ms": 24.91899998858571,
+            "samples": [
+              {
+                "latency_ms": 0.2324000233784318,
+                "max_loop_gap_ms": 15.997399983461946
+              },
+              {
+                "latency_ms": 0.3476999991107732,
+                "max_loop_gap_ms": 16.08129998203367
+              },
+              {
+                "latency_ms": 0.41000000783242285,
+                "max_loop_gap_ms": 15.823200024897233
+              },
+              {
+                "latency_ms": 0.5017000075895339,
+                "max_loop_gap_ms": 17.15730002615601
+              },
+              {
+                "latency_ms": 0.3423999878577888,
+                "max_loop_gap_ms": 24.91899998858571
+              }
+            ]
+          },
+          "absent_search": {
+            "median_latency_ms": 0.06839999696239829,
+            "max_loop_gap_ms": 28.099100018152967,
+            "samples": [
+              {
+                "latency_ms": 0.06970000686123967,
+                "max_loop_gap_ms": 24.824699998134747
+              },
+              {
+                "latency_ms": 0.06690001464448869,
+                "max_loop_gap_ms": 22.06129999831319
+              },
+              {
+                "latency_ms": 0.06839999696239829,
+                "max_loop_gap_ms": 21.25359998899512
+              },
+              {
+                "latency_ms": 0.11029999586753547,
+                "max_loop_gap_ms": 19.96889998554252
+              },
+              {
+                "latency_ms": 0.04509999416768551,
+                "max_loop_gap_ms": 28.099100018152967
+              }
+            ]
+          },
+          "delete": {
+            "median_latency_ms": 0.519299996085465,
+            "max_loop_gap_ms": 29.97589998994954,
+            "samples": [
+              {
+                "latency_ms": 0.6748000159859657,
+                "max_loop_gap_ms": 27.838400012115017
+              },
+              {
+                "latency_ms": 0.6898999854456633,
+                "max_loop_gap_ms": 29.97589998994954
+              },
+              {
+                "latency_ms": 0.5155999970156699,
+                "max_loop_gap_ms": 15.575400000670925
+              },
+              {
+                "latency_ms": 0.519299996085465,
+                "max_loop_gap_ms": 16.875899978913367
+              },
+              {
+                "latency_ms": 0.47400000039488077,
+                "max_loop_gap_ms": 15.85460000205785
+              }
+            ]
+          },
+          "varied_create": {
+            "median_latency_ms": 2.9316000000108033,
+            "max_loop_gap_ms": 28.763200010871515,
+            "samples": [
+              {
+                "latency_ms": 2.9316000000108033,
+                "max_loop_gap_ms": 20.466200017835945
+              },
+              {
+                "latency_ms": 2.7679000049829483,
+                "max_loop_gap_ms": 28.763200010871515
+              },
+              {
+                "latency_ms": 3.110100020421669,
+                "max_loop_gap_ms": 18.559100019047037
+              },
+              {
+                "latency_ms": 2.878900006180629,
+                "max_loop_gap_ms": 15.81009998335503
+              },
+              {
+                "latency_ms": 3.9363999967463315,
+                "max_loop_gap_ms": 19.62829998228699
+              }
+            ]
+          },
+          "varied_edit": {
+            "median_latency_ms": 3.5715999838430434,
+            "max_loop_gap_ms": 33.9207999932114,
+            "samples": [
+              {
+                "latency_ms": 3.5334000131115317,
+                "max_loop_gap_ms": 18.765300017548725
+              },
+              {
+                "latency_ms": 3.336099995067343,
+                "max_loop_gap_ms": 19.27429999341257
+              },
+              {
+                "latency_ms": 3.577600000426173,
+                "max_loop_gap_ms": 26.417499990202487
+              },
+              {
+                "latency_ms": 4.264199989847839,
+                "max_loop_gap_ms": 32.68709999974817
+              },
+              {
+                "latency_ms": 3.5715999838430434,
+                "max_loop_gap_ms": 33.9207999932114
+              }
+            ]
+          },
+          "idle": {
+            "median_latency_ms": 0.006799993570894003,
+            "max_loop_gap_ms": 30.876000004354864,
+            "samples": [
+              {
+                "latency_ms": 0.006099988240748644,
+                "max_loop_gap_ms": 16.04139999835752
+              },
+              {
+                "latency_ms": 0.006999995093792677,
+                "max_loop_gap_ms": 30.876000004354864
+              },
+              {
+                "latency_ms": 0.0051000097300857306,
+                "max_loop_gap_ms": 15.901900012977421
+              },
+              {
+                "latency_ms": 0.009200011845678091,
+                "max_loop_gap_ms": 15.938800002913922
+              },
+              {
+                "latency_ms": 0.006799993570894003,
+                "max_loop_gap_ms": 15.122399985557422
+              }
+            ]
+          }
+        }
+      },
+      "limit": {
+        "sources": 499,
+        "characters_per_source": 100000,
+        "chunks": 25449,
+        "operations": {
+          "create": {
+            "median_latency_ms": 10.627300012856722,
+            "max_loop_gap_ms": 29.47639999911189,
+            "samples": [
+              {
+                "latency_ms": 10.627300012856722,
+                "max_loop_gap_ms": 26.995799998985603
+              },
+              {
+                "latency_ms": 8.379199978662655,
+                "max_loop_gap_ms": 23.93949998077005
+              },
+              {
+                "latency_ms": 11.741900001652539,
+                "max_loop_gap_ms": 27.103800006443635
+              },
+              {
+                "latency_ms": 14.180600002873689,
+                "max_loop_gap_ms": 29.47639999911189
+              },
+              {
+                "latency_ms": 8.293699997011572,
+                "max_loop_gap_ms": 23.75920000486076
+              }
+            ]
+          },
+          "edit": {
+            "median_latency_ms": 9.914499998558313,
+            "max_loop_gap_ms": 26.341000018874183,
+            "samples": [
+              {
+                "latency_ms": 13.791099976515397,
+                "max_loop_gap_ms": 23.93840000149794
+              },
+              {
+                "latency_ms": 9.620600001653656,
+                "max_loop_gap_ms": 26.341000018874183
+              },
+              {
+                "latency_ms": 10.016699990956113,
+                "max_loop_gap_ms": 24.866199993994087
+              },
+              {
+                "latency_ms": 9.128500008955598,
+                "max_loop_gap_ms": 24.613600020529702
+              },
+              {
+                "latency_ms": 9.914499998558313,
+                "max_loop_gap_ms": 25.094599986914545
+              }
+            ]
+          },
+          "frequent_search": {
+            "median_latency_ms": 118.92030001035891,
+            "max_loop_gap_ms": 138.51469999644905,
+            "samples": [
+              {
+                "latency_ms": 122.10999999660999,
+                "max_loop_gap_ms": 137.68359998357482
+              },
+              {
+                "latency_ms": 118.92030001035891,
+                "max_loop_gap_ms": 134.6184000140056
+              },
+              {
+                "latency_ms": 118.31289998372085,
+                "max_loop_gap_ms": 136.31480000913143
+              },
+              {
+                "latency_ms": 122.49949999386445,
+                "max_loop_gap_ms": 138.51469999644905
+              },
+              {
+                "latency_ms": 115.00510000041686,
+                "max_loop_gap_ms": 115.06999999983236
+              }
+            ]
+          },
+          "filtered_search": {
+            "median_latency_ms": 9.14310000371188,
+            "max_loop_gap_ms": 31.6531999851577,
+            "samples": [
+              {
+                "latency_ms": 10.431200003949925,
+                "max_loop_gap_ms": 25.472200009971857
+              },
+              {
+                "latency_ms": 7.762199995340779,
+                "max_loop_gap_ms": 23.460500000510365
+              },
+              {
+                "latency_ms": 8.235199988121167,
+                "max_loop_gap_ms": 24.881299992557615
+              },
+              {
+                "latency_ms": 9.14310000371188,
+                "max_loop_gap_ms": 24.770299991359934
+              },
+              {
+                "latency_ms": 11.983399977907538,
+                "max_loop_gap_ms": 31.6531999851577
+              }
+            ]
+          },
+          "absent_search": {
+            "median_latency_ms": 0.0824000162538141,
+            "max_loop_gap_ms": 16.10769997932948,
+            "samples": [
+              {
+                "latency_ms": 0.07959999493323267,
+                "max_loop_gap_ms": 15.984700003173202
+              },
+              {
+                "latency_ms": 0.0824000162538141,
+                "max_loop_gap_ms": 16.10769997932948
+              },
+              {
+                "latency_ms": 0.07830001413822174,
+                "max_loop_gap_ms": 15.942700003506616
+              },
+              {
+                "latency_ms": 0.08709999383427203,
+                "max_loop_gap_ms": 15.895899996394292
+              },
+              {
+                "latency_ms": 0.09560000034980476,
+                "max_loop_gap_ms": 15.900900005362928
+              }
+            ]
+          },
+          "delete": {
+            "median_latency_ms": 3.0541000014636666,
+            "max_loop_gap_ms": 22.0848000026308,
+            "samples": [
+              {
+                "latency_ms": 2.870900003472343,
+                "max_loop_gap_ms": 17.93189998716116
+              },
+              {
+                "latency_ms": 3.0541000014636666,
+                "max_loop_gap_ms": 20.616099995095283
+              },
+              {
+                "latency_ms": 3.0476000101771206,
+                "max_loop_gap_ms": 19.04909999575466
+              },
+              {
+                "latency_ms": 3.118499997071922,
+                "max_loop_gap_ms": 22.0848000026308
+              },
+              {
+                "latency_ms": 3.486500005237758,
+                "max_loop_gap_ms": 15.57319998391904
+              }
+            ]
+          },
+          "varied_create": {
+            "median_latency_ms": 13.681499985978007,
+            "max_loop_gap_ms": 111.02240000036545,
+            "samples": [
+              {
+                "latency_ms": 14.274200017098337,
+                "max_loop_gap_ms": 29.733600007602945
+              },
+              {
+                "latency_ms": 13.514899997971952,
+                "max_loop_gap_ms": 28.524699999252334
+              },
+              {
+                "latency_ms": 13.541599997552112,
+                "max_loop_gap_ms": 28.733399987686425
+              },
+              {
+                "latency_ms": 13.681499985978007,
+                "max_loop_gap_ms": 29.105399997206405
+              },
+              {
+                "latency_ms": 95.61940000276081,
+                "max_loop_gap_ms": 111.02240000036545
+              }
+            ]
+          },
+          "varied_edit": {
+            "median_latency_ms": 18.14199998625554,
+            "max_loop_gap_ms": 91.02560000610538,
+            "samples": [
+              {
+                "latency_ms": 17.433100001653656,
+                "max_loop_gap_ms": 21.300699998391792
+              },
+              {
+                "latency_ms": 17.040500009898096,
+                "max_loop_gap_ms": 42.13960000197403
+              },
+              {
+                "latency_ms": 75.49899999867193,
+                "max_loop_gap_ms": 91.02560000610538
+              },
+              {
+                "latency_ms": 23.768900020513684,
+                "max_loop_gap_ms": 39.20959998504259
+              },
+              {
+                "latency_ms": 18.14199998625554,
+                "max_loop_gap_ms": 18.13030001358129
+              }
+            ]
+          },
+          "idle": {
+            "median_latency_ms": 0.01270000939257443,
+            "max_loop_gap_ms": 16.9778999988921,
+            "samples": [
+              {
+                "latency_ms": 0.006699992809444666,
+                "max_loop_gap_ms": 16.12270000623539
+              },
+              {
+                "latency_ms": 0.01170000177808106,
+                "max_loop_gap_ms": 15.589000016916543
+              },
+              {
+                "latency_ms": 0.01270000939257443,
+                "max_loop_gap_ms": 15.989899984560907
+              },
+              {
+                "latency_ms": 0.02400000812485814,
+                "max_loop_gap_ms": 16.9778999988921
+              },
+              {
+                "latency_ms": 0.016400008462369442,
+                "max_loop_gap_ms": 15.520699991611764
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "after": {
+    "python": "3.14.2 (tags/v3.14.2:df79316, Dec  5 2025, 17:18:21) [MSC v.1944 64 bit (AMD64)]",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "heartbeat_interval_ms": 5,
+    "repeats": 5,
+    "storage": "in-memory; serialization included, disk I/O excluded",
+    "scenarios": {
+      "small": {
+        "sources": 10,
+        "characters_per_source": 2000,
+        "chunks": 10,
+        "operations": {
+          "create": {
+            "median_latency_ms": 0.7767999777570367,
+            "max_loop_gap_ms": 18.66690002498217,
+            "samples": [
+              {
+                "latency_ms": 0.5851000023540109,
+                "max_loop_gap_ms": 16.054099978646263
+              },
+              {
+                "latency_ms": 0.5513000069186091,
+                "max_loop_gap_ms": 16.496600001119077
+              },
+              {
+                "latency_ms": 0.8087999885901809,
+                "max_loop_gap_ms": 18.66690002498217
+              },
+              {
+                "latency_ms": 0.7767999777570367,
+                "max_loop_gap_ms": 15.560500003630295
+              },
+              {
+                "latency_ms": 0.7798000006005168,
+                "max_loop_gap_ms": 15.97460001357831
+              }
+            ]
+          },
+          "edit": {
+            "median_latency_ms": 0.7195000071078539,
+            "max_loop_gap_ms": 23.407100001350045,
+            "samples": [
+              {
+                "latency_ms": 0.5328000115696341,
+                "max_loop_gap_ms": 15.9908999921754
+              },
+              {
+                "latency_ms": 0.8116000099107623,
+                "max_loop_gap_ms": 15.687400009483099
+              },
+              {
+                "latency_ms": 0.7195000071078539,
+                "max_loop_gap_ms": 16.166699992027134
+              },
+              {
+                "latency_ms": 0.6818000110797584,
+                "max_loop_gap_ms": 23.407100001350045
+              },
+              {
+                "latency_ms": 0.7639999967068434,
+                "max_loop_gap_ms": 16.184000007342547
+              }
+            ]
+          },
+          "frequent_search": {
+            "median_latency_ms": 0.44529998558573425,
+            "max_loop_gap_ms": 21.19419997325167,
+            "samples": [
+              {
+                "latency_ms": 0.370699999621138,
+                "max_loop_gap_ms": 20.033800014061853
+              },
+              {
+                "latency_ms": 0.40240000816993415,
+                "max_loop_gap_ms": 16.024000011384487
+              },
+              {
+                "latency_ms": 0.5288000102154911,
+                "max_loop_gap_ms": 16.055599990068004
+              },
+              {
+                "latency_ms": 0.44529998558573425,
+                "max_loop_gap_ms": 15.917099983198568
+              },
+              {
+                "latency_ms": 0.4912999866064638,
+                "max_loop_gap_ms": 21.19419997325167
+              }
+            ]
+          },
+          "filtered_search": {
+            "median_latency_ms": 0.34339999547228217,
+            "max_loop_gap_ms": 18.540300021413714,
+            "samples": [
+              {
+                "latency_ms": 0.34339999547228217,
+                "max_loop_gap_ms": 18.347700010053813
+              },
+              {
+                "latency_ms": 0.3772999916691333,
+                "max_loop_gap_ms": 18.540300021413714
+              },
+              {
+                "latency_ms": 0.3369000041857362,
+                "max_loop_gap_ms": 16.000800009351224
+              },
+              {
+                "latency_ms": 0.3488999791443348,
+                "max_loop_gap_ms": 15.88709998759441
+              },
+              {
+                "latency_ms": 0.33359997905790806,
+                "max_loop_gap_ms": 15.658699994673952
+              }
+            ]
+          },
+          "absent_search": {
+            "median_latency_ms": 0.32770002144388855,
+            "max_loop_gap_ms": 16.255399998044595,
+            "samples": [
+              {
+                "latency_ms": 0.3026000049430877,
+                "max_loop_gap_ms": 15.5938999960199
+              },
+              {
+                "latency_ms": 0.3375000087544322,
+                "max_loop_gap_ms": 16.203200008021668
+              },
+              {
+                "latency_ms": 0.32770002144388855,
+                "max_loop_gap_ms": 16.086899995571002
+              },
+              {
+                "latency_ms": 0.45819999650120735,
+                "max_loop_gap_ms": 16.255399998044595
+              },
+              {
+                "latency_ms": 0.3096000000368804,
+                "max_loop_gap_ms": 15.929299988783896
+              }
+            ]
+          },
+          "delete": {
+            "median_latency_ms": 0.169599981745705,
+            "max_loop_gap_ms": 19.28290000068955,
+            "samples": [
+              {
+                "latency_ms": 0.20099998801015317,
+                "max_loop_gap_ms": 17.05019999644719
+              },
+              {
+                "latency_ms": 0.15559999155811965,
+                "max_loop_gap_ms": 19.28290000068955
+              },
+              {
+                "latency_ms": 0.16830000095069408,
+                "max_loop_gap_ms": 17.378099990310147
+              },
+              {
+                "latency_ms": 0.169599981745705,
+                "max_loop_gap_ms": 15.589900023769587
+              },
+              {
+                "latency_ms": 0.1962999813258648,
+                "max_loop_gap_ms": 16.19850000133738
+              }
+            ]
+          },
+          "varied_create": {
+            "median_latency_ms": 0.7433999853674322,
+            "max_loop_gap_ms": 16.95710001513362,
+            "samples": [
+              {
+                "latency_ms": 0.7409999961964786,
+                "max_loop_gap_ms": 16.00259999395348
+              },
+              {
+                "latency_ms": 0.9136000007856637,
+                "max_loop_gap_ms": 16.279300005408004
+              },
+              {
+                "latency_ms": 0.9266000124625862,
+                "max_loop_gap_ms": 15.576499979943037
+              },
+              {
+                "latency_ms": 0.7105000258889049,
+                "max_loop_gap_ms": 16.15979999769479
+              },
+              {
+                "latency_ms": 0.7433999853674322,
+                "max_loop_gap_ms": 16.95710001513362
+              }
+            ]
+          },
+          "varied_edit": {
+            "median_latency_ms": 0.9083999902941287,
+            "max_loop_gap_ms": 16.22220000717789,
+            "samples": [
+              {
+                "latency_ms": 0.6678999925497919,
+                "max_loop_gap_ms": 16.22220000717789
+              },
+              {
+                "latency_ms": 0.9488000068813562,
+                "max_loop_gap_ms": 15.969700005371124
+              },
+              {
+                "latency_ms": 0.6978000164963305,
+                "max_loop_gap_ms": 15.961600001901388
+              },
+              {
+                "latency_ms": 1.119499997003004,
+                "max_loop_gap_ms": 15.422299999045208
+              },
+              {
+                "latency_ms": 0.9083999902941287,
+                "max_loop_gap_ms": 16.137099999468774
+              }
+            ]
+          },
+          "idle": {
+            "median_latency_ms": 0.026900001103058457,
+            "max_loop_gap_ms": 16.025299992179498,
+            "samples": [
+              {
+                "latency_ms": 0.02829998265951872,
+                "max_loop_gap_ms": 16.025299992179498
+              },
+              {
+                "latency_ms": 0.017700018361210823,
+                "max_loop_gap_ms": 15.897100005531684
+              },
+              {
+                "latency_ms": 0.037299992982298136,
+                "max_loop_gap_ms": 15.427699981955811
+              },
+              {
+                "latency_ms": 0.017600017599761486,
+                "max_loop_gap_ms": 15.541100001428276
+              },
+              {
+                "latency_ms": 0.026900001103058457,
+                "max_loop_gap_ms": 15.753300016513094
+              }
+            ]
+          }
+        }
+      },
+      "representative": {
+        "sources": 100,
+        "characters_per_source": 20000,
+        "chunks": 1100,
+        "operations": {
+          "create": {
+            "median_latency_ms": 2.5160000077448785,
+            "max_loop_gap_ms": 16.36579999467358,
+            "samples": [
+              {
+                "latency_ms": 2.5818999856710434,
+                "max_loop_gap_ms": 16.098599997349083
+              },
+              {
+                "latency_ms": 2.627599984407425,
+                "max_loop_gap_ms": 15.525599999818951
+              },
+              {
+                "latency_ms": 2.5160000077448785,
+                "max_loop_gap_ms": 16.217300028074533
+              },
+              {
+                "latency_ms": 2.3495000205002725,
+                "max_loop_gap_ms": 15.808500000275671
+              },
+              {
+                "latency_ms": 2.005599992116913,
+                "max_loop_gap_ms": 16.36579999467358
+              }
+            ]
+          },
+          "edit": {
+            "median_latency_ms": 2.5978999910876155,
+            "max_loop_gap_ms": 18.72770002228208,
+            "samples": [
+              {
+                "latency_ms": 2.648499998031184,
+                "max_loop_gap_ms": 16.326300014043227
+              },
+              {
+                "latency_ms": 2.127999992808327,
+                "max_loop_gap_ms": 16.028800018830225
+              },
+              {
+                "latency_ms": 3.3007000165525824,
+                "max_loop_gap_ms": 15.820100001292303
+              },
+              {
+                "latency_ms": 2.5978999910876155,
+                "max_loop_gap_ms": 16.01159997517243
+              },
+              {
+                "latency_ms": 2.563899994129315,
+                "max_loop_gap_ms": 18.72770002228208
+              }
+            ]
+          },
+          "frequent_search": {
+            "median_latency_ms": 5.5985999933909625,
+            "max_loop_gap_ms": 16.105599992442876,
+            "samples": [
+              {
+                "latency_ms": 5.365899996832013,
+                "max_loop_gap_ms": 16.105599992442876
+              },
+              {
+                "latency_ms": 5.5985999933909625,
+                "max_loop_gap_ms": 16.046700009610504
+              },
+              {
+                "latency_ms": 4.986100015230477,
+                "max_loop_gap_ms": 16.0475000157021
+              },
+              {
+                "latency_ms": 5.843899998581037,
+                "max_loop_gap_ms": 15.368099993793294
+              },
+              {
+                "latency_ms": 5.63460000557825,
+                "max_loop_gap_ms": 15.33160000690259
+              }
+            ]
+          },
+          "filtered_search": {
+            "median_latency_ms": 0.7004000071901828,
+            "max_loop_gap_ms": 20.71889999206178,
+            "samples": [
+              {
+                "latency_ms": 0.5691999976988882,
+                "max_loop_gap_ms": 15.991299995221198
+              },
+              {
+                "latency_ms": 0.600200000917539,
+                "max_loop_gap_ms": 16.008400009013712
+              },
+              {
+                "latency_ms": 0.7199999818112701,
+                "max_loop_gap_ms": 20.71889999206178
+              },
+              {
+                "latency_ms": 0.7004000071901828,
+                "max_loop_gap_ms": 16.057300003012642
+              },
+              {
+                "latency_ms": 0.7104999967850745,
+                "max_loop_gap_ms": 15.657300013117492
+              }
+            ]
+          },
+          "absent_search": {
+            "median_latency_ms": 0.3336999798193574,
+            "max_loop_gap_ms": 16.591999999945983,
+            "samples": [
+              {
+                "latency_ms": 0.3336999798193574,
+                "max_loop_gap_ms": 16.09779999125749
+              },
+              {
+                "latency_ms": 0.31010000384412706,
+                "max_loop_gap_ms": 15.556600003037602
+              },
+              {
+                "latency_ms": 0.2953999792225659,
+                "max_loop_gap_ms": 16.13319999887608
+              },
+              {
+                "latency_ms": 0.36589999217540026,
+                "max_loop_gap_ms": 16.18499998585321
+              },
+              {
+                "latency_ms": 0.37689998862333596,
+                "max_loop_gap_ms": 16.591999999945983
+              }
+            ]
+          },
+          "delete": {
+            "median_latency_ms": 0.6466999766416848,
+            "max_loop_gap_ms": 16.455200006021187,
+            "samples": [
+              {
+                "latency_ms": 0.5672000115737319,
+                "max_loop_gap_ms": 16.455200006021187
+              },
+              {
+                "latency_ms": 0.6895999831613153,
+                "max_loop_gap_ms": 15.984400000888854
+              },
+              {
+                "latency_ms": 0.6422000005841255,
+                "max_loop_gap_ms": 15.780999994603917
+              },
+              {
+                "latency_ms": 0.7447000243701041,
+                "max_loop_gap_ms": 16.234700015047565
+              },
+              {
+                "latency_ms": 0.6466999766416848,
+                "max_loop_gap_ms": 16.17320001241751
+              }
+            ]
+          },
+          "varied_create": {
+            "median_latency_ms": 3.7788000190630555,
+            "max_loop_gap_ms": 17.485400021541864,
+            "samples": [
+              {
+                "latency_ms": 3.2817000173963606,
+                "max_loop_gap_ms": 16.239399992628023
+              },
+              {
+                "latency_ms": 3.7788000190630555,
+                "max_loop_gap_ms": 16.95849999669008
+              },
+              {
+                "latency_ms": 3.6450999905355275,
+                "max_loop_gap_ms": 17.485400021541864
+              },
+              {
+                "latency_ms": 4.077599995071068,
+                "max_loop_gap_ms": 15.91389998793602
+              },
+              {
+                "latency_ms": 5.083099997136742,
+                "max_loop_gap_ms": 15.138599992496893
+              }
+            ]
+          },
+          "varied_edit": {
+            "median_latency_ms": 4.705500003183261,
+            "max_loop_gap_ms": 16.58240001415834,
+            "samples": [
+              {
+                "latency_ms": 4.537600005278364,
+                "max_loop_gap_ms": 16.412700002547354
+              },
+              {
+                "latency_ms": 4.726599989226088,
+                "max_loop_gap_ms": 15.819899999769405
+              },
+              {
+                "latency_ms": 5.8163999929092824,
+                "max_loop_gap_ms": 16.35550000355579
+              },
+              {
+                "latency_ms": 4.4824999931734055,
+                "max_loop_gap_ms": 16.58240001415834
+              },
+              {
+                "latency_ms": 4.705500003183261,
+                "max_loop_gap_ms": 16.009199986001477
+              }
+            ]
+          },
+          "idle": {
+            "median_latency_ms": 0.009299983503296971,
+            "max_loop_gap_ms": 16.51709998259321,
+            "samples": [
+              {
+                "latency_ms": 0.009000010322779417,
+                "max_loop_gap_ms": 16.086399991763756
+              },
+              {
+                "latency_ms": 0.01200000406242907,
+                "max_loop_gap_ms": 16.492299997480586
+              },
+              {
+                "latency_ms": 0.017699989257380366,
+                "max_loop_gap_ms": 16.20420001563616
+              },
+              {
+                "latency_ms": 0.009299983503296971,
+                "max_loop_gap_ms": 16.13309999811463
+              },
+              {
+                "latency_ms": 0.009299983503296971,
+                "max_loop_gap_ms": 16.51709998259321
+              }
+            ]
+          }
+        }
+      },
+      "limit": {
+        "sources": 499,
+        "characters_per_source": 100000,
+        "chunks": 25449,
+        "operations": {
+          "create": {
+            "median_latency_ms": 8.533500018529594,
+            "max_loop_gap_ms": 19.407099985983223,
+            "samples": [
+              {
+                "latency_ms": 8.990000002086163,
+                "max_loop_gap_ms": 19.407099985983223
+              },
+              {
+                "latency_ms": 8.54879998951219,
+                "max_loop_gap_ms": 16.924100025789812
+              },
+              {
+                "latency_ms": 8.533500018529594,
+                "max_loop_gap_ms": 16.72409998718649
+              },
+              {
+                "latency_ms": 8.201699994970113,
+                "max_loop_gap_ms": 16.018399997847155
+              },
+              {
+                "latency_ms": 8.423899998888373,
+                "max_loop_gap_ms": 16.969500022241846
+              }
+            ]
+          },
+          "edit": {
+            "median_latency_ms": 9.94899999932386,
+            "max_loop_gap_ms": 16.708699986338615,
+            "samples": [
+              {
+                "latency_ms": 9.79330000700429,
+                "max_loop_gap_ms": 16.303999989759177
+              },
+              {
+                "latency_ms": 10.544199991272762,
+                "max_loop_gap_ms": 16.139499988639727
+              },
+              {
+                "latency_ms": 9.992900013457984,
+                "max_loop_gap_ms": 16.052499995566905
+              },
+              {
+                "latency_ms": 9.785700007341802,
+                "max_loop_gap_ms": 16.708699986338615
+              },
+              {
+                "latency_ms": 9.94899999932386,
+                "max_loop_gap_ms": 16.031700011808425
+              }
+            ]
+          },
+          "frequent_search": {
+            "median_latency_ms": 119.72529999911785,
+            "max_loop_gap_ms": 46.7046000121627,
+            "samples": [
+              {
+                "latency_ms": 129.539300018223,
+                "max_loop_gap_ms": 31.21030001784675
+              },
+              {
+                "latency_ms": 118.12589998589829,
+                "max_loop_gap_ms": 31.08259997679852
+              },
+              {
+                "latency_ms": 121.49200000567362,
+                "max_loop_gap_ms": 33.66600000299513
+              },
+              {
+                "latency_ms": 117.73330002324656,
+                "max_loop_gap_ms": 46.7046000121627
+              },
+              {
+                "latency_ms": 119.72529999911785,
+                "max_loop_gap_ms": 33.77959999488667
+              }
+            ]
+          },
+          "filtered_search": {
+            "median_latency_ms": 7.420900015858933,
+            "max_loop_gap_ms": 16.157700010808185,
+            "samples": [
+              {
+                "latency_ms": 9.455500025069341,
+                "max_loop_gap_ms": 15.894100011792034
+              },
+              {
+                "latency_ms": 7.076600013533607,
+                "max_loop_gap_ms": 15.77459997497499
+              },
+              {
+                "latency_ms": 7.420900015858933,
+                "max_loop_gap_ms": 16.071499994723126
+              },
+              {
+                "latency_ms": 8.763299993006513,
+                "max_loop_gap_ms": 16.157700010808185
+              },
+              {
+                "latency_ms": 6.4978000009432435,
+                "max_loop_gap_ms": 16.034400003263727
+              }
+            ]
+          },
+          "absent_search": {
+            "median_latency_ms": 0.3121000190731138,
+            "max_loop_gap_ms": 16.28149999305606,
+            "samples": [
+              {
+                "latency_ms": 0.4157999937888235,
+                "max_loop_gap_ms": 16.010999999707565
+              },
+              {
+                "latency_ms": 0.2812999882735312,
+                "max_loop_gap_ms": 16.045299998950213
+              },
+              {
+                "latency_ms": 0.2975999959744513,
+                "max_loop_gap_ms": 16.200399986701086
+              },
+              {
+                "latency_ms": 0.3121000190731138,
+                "max_loop_gap_ms": 15.960999997332692
+              },
+              {
+                "latency_ms": 0.31590001890435815,
+                "max_loop_gap_ms": 16.28149999305606
+              }
+            ]
+          },
+          "delete": {
+            "median_latency_ms": 3.3509999921079725,
+            "max_loop_gap_ms": 20.3719999990426,
+            "samples": [
+              {
+                "latency_ms": 3.3509999921079725,
+                "max_loop_gap_ms": 20.3719999990426
+              },
+              {
+                "latency_ms": 3.175000019837171,
+                "max_loop_gap_ms": 18.769799993606284
+              },
+              {
+                "latency_ms": 3.0719000205863267,
+                "max_loop_gap_ms": 18.01629998954013
+              },
+              {
+                "latency_ms": 3.708000003825873,
+                "max_loop_gap_ms": 19.738999981200323
+              },
+              {
+                "latency_ms": 3.6757000198122114,
+                "max_loop_gap_ms": 19.29520000703633
+              }
+            ]
+          },
+          "varied_create": {
+            "median_latency_ms": 15.921700018225238,
+            "max_loop_gap_ms": 20.72040000348352,
+            "samples": [
+              {
+                "latency_ms": 22.070500010158867,
+                "max_loop_gap_ms": 20.72040000348352
+              },
+              {
+                "latency_ms": 16.449099988676608,
+                "max_loop_gap_ms": 16.613000014331192
+              },
+              {
+                "latency_ms": 15.60419998713769,
+                "max_loop_gap_ms": 16.40749999205582
+              },
+              {
+                "latency_ms": 15.921700018225238,
+                "max_loop_gap_ms": 18.426099995849654
+              },
+              {
+                "latency_ms": 15.801100002136081,
+                "max_loop_gap_ms": 16.516000003321096
+              }
+            ]
+          },
+          "varied_edit": {
+            "median_latency_ms": 20.691499987151474,
+            "max_loop_gap_ms": 70.04020002204925,
+            "samples": [
+              {
+                "latency_ms": 19.29050000035204,
+                "max_loop_gap_ms": 18.146299989894032
+              },
+              {
+                "latency_ms": 20.691499987151474,
+                "max_loop_gap_ms": 19.69929999904707
+              },
+              {
+                "latency_ms": 78.58000000123866,
+                "max_loop_gap_ms": 70.04020002204925
+              },
+              {
+                "latency_ms": 20.001099997898564,
+                "max_loop_gap_ms": 18.968099990161136
+              },
+              {
+                "latency_ms": 23.17679999396205,
+                "max_loop_gap_ms": 22.264900006121024
+              }
+            ]
+          },
+          "idle": {
+            "median_latency_ms": 0.009500014130026102,
+            "max_loop_gap_ms": 16.061400005128235,
+            "samples": [
+              {
+                "latency_ms": 0.005699985194951296,
+                "max_loop_gap_ms": 16.061400005128235
+              },
+              {
+                "latency_ms": 0.009099981980398297,
+                "max_loop_gap_ms": 15.982900018570945
+              },
+              {
+                "latency_ms": 0.010200019460171461,
+                "max_loop_gap_ms": 15.644599974621087
+              },
+              {
+                "latency_ms": 0.009500014130026102,
+                "max_loop_gap_ms": 15.647799998987466
+              },
+              {
+                "latency_ms": 0.011600001016631722,
+                "max_loop_gap_ms": 15.93319998937659
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "search_ownership": "A context-copied executor future is drained while the existing lock/maintenance admission is held, including repeated/global task cancellation. No independently cancellable child task wraps the worker. Regression detects early lock release in the child-task/to_thread design."
+}
