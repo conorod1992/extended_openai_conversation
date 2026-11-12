@@ -86,7 +86,7 @@ assert.match(zeroHtml, /id="rule-empty-add"/);
 assert.match(zeroHtml, /id="rule-add">Create rule/);
 assert.match(html, /Model: gpt-5 · High reasoning · rest of conversation/);
 const resetHtml = renderRequestRules({...panel,_result:{...panel._result,rules:[{...panel._result.rules[1],action:{...panel._result.rules[1].action,reset:true}}]}});
-assert.match(resetHtml, /Returns model and reasoning to the assistant's configured defaults for the active conversation/);
+assert.match(resetHtml, /Returns model and reasoning to the assistant's configured defaults for the rest of this conversation/);
 assert.doesNotMatch(resetHtml, /high reasoning/);
 assert.match(requestRulesDialog(panel), /Alternatives must use the same variable names/);
 assert.match(requestRulesDialog(panel), /Variable values let part of the request change each time/);
