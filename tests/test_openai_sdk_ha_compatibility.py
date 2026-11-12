@@ -40,6 +40,9 @@ def test_sdk_matrix_selects_compatible_ha_snapshots_and_enforces_constraints():
     assert len(installs) == 1
     assert '--constraint "$CONSTRAINTS" "$SPEC"' in installs[0]
     assert "package_constraints.txt" in installs[0]
+    preparation = next(step["run"] for step in job["steps"] if "EOAI_TEST_REQUIREMENTS" in step.get("run", ""))
+    assert 'python -m venv "$RUNNER_TEMP/sdk-venv"' in preparation
+    assert 'bash ci/reconcile_stable_environment.sh' in preparation
 
 
 @pytest.mark.parametrize("provider", ["openai", "azure"])
@@ -89,9 +92,10 @@ async def test_real_sdk_authentication_uses_ha_transport_once(
             assert requests[0].headers["authorization"] == "Bearer test-key"
 
 
+@pytest.mark.parametrize("gazetteer", [False, True])
 @pytest.mark.parametrize("sdk", ["2.21.0", "2.45.0", "3.10.0", "3.26.0"])
 def test_ci_dependency_install_respects_selected_ha_constraints(
-    tmp_path, monkeypatch, sdk
+    tmp_path, monkeypatch, sdk, gazetteer
 ):
     from types import SimpleNamespace
 
@@ -103,7 +107,7 @@ def test_ci_dependency_install_respects_selected_ha_constraints(
     constraints.write_text(
         f"openai=={sdk}\nvoluptuous-openapi==0.2.0\npydantic==2.13.5\n"
     )
-    (ha_package / "components" / "conversation" / "manifest.json").write_text("{}")
+    (ha_package / "components" / "conversation" / "manifest.json").write_text(json.dumps({"requirements": ["gazetteer-matcher==1.1.0"] if gazetteer else []}))
     manifest = tmp_path / "manifest.json"
     manifest.write_text(
         json.dumps(
@@ -150,5 +154,6 @@ def test_ci_dependency_install_respects_selected_ha_constraints(
     assert captured_constraints == [
         f"pydantic==2.13.5\naiohttp>=3.9\nvoluptuous-openapi==0.2.0\nopenai=={sdk}\nvoluptuous-openapi==0.2.0\npydantic==2.13.5\n"
     ]
+    assert ("gazetteer-matcher==1.1.0" in command) == gazetteer
     assert "voluptuous-openapi==0.4.1" in command
     assert "openai>=2.21.0,<=3.26.0" in command

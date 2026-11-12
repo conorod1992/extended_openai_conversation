@@ -2,6 +2,7 @@
 set -euo pipefail
 
 IDENTITY=/opt/eoai-ci/environment.identity.json
+REQUIREMENTS_FILE="${EOAI_TEST_REQUIREMENTS:-requirements_test.txt}"
 CURRENT_HOMEASSISTANT="$(python -c 'from importlib.metadata import PackageNotFoundError, version
 try:
     print(version("homeassistant"))
@@ -13,7 +14,7 @@ try:
 except PackageNotFoundError:
     print("")')"
 ARGS=(
-  --requirements requirements_test.txt
+  --requirements "$REQUIREMENTS_FILE"
   --manifest custom_components/extended_openai_conversation_responses/manifest.json
   --recipe ci/Dockerfile.stable
   --recipe ci/install_ha_dependencies.py
@@ -49,11 +50,11 @@ if [[ -s "$IDENTITY" ]] \
 fi
 
 echo "Prebuilt environment identity differs; reconciling declared dependencies."
-python -m pip install -r requirements_test.txt
+python -m pip install -r "$REQUIREMENTS_FILE"
 python ci/install_ha_test_plugin.py "$EOAI_EXPECTED_HA_VERSION" "$EOAI_EXPECTED_HA_TEST_PLUGIN_VERSION"
 python -m pip install --no-deps --force-reinstall "homeassistant==${EOAI_EXPECTED_HA_VERSION:?expected stable Home Assistant version is required}"
 python ci/install_ha_dependencies.py --manifest custom_components/extended_openai_conversation_responses/manifest.json
 python -m pip check
 python ci/environment_fingerprint.py "${ARGS[@]}" --write "$IDENTITY" > /dev/null
-cat requirements_test.txt custom_components/extended_openai_conversation_responses/manifest.json \
+cat "$REQUIREMENTS_FILE" custom_components/extended_openai_conversation_responses/manifest.json \
   | sha256sum | awk '{print $1}' > /opt/eoai-ci/environment.sha256

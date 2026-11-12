@@ -63,6 +63,15 @@ jobs:
           if [ "$VERSION" = stable ]; then
             VERSION="$(python -c 'import json; from urllib.request import urlopen; print(json.load(urlopen("https://pypi.org/pypi/homeassistant/json", timeout=30))["info"]["version"])')"
           fi
+          # A current image can retain dependencies not used by older HA.
+          # Use a clean venv; install integration dependencies from the selected
+          # HA manifests via the existing reconciliation script. Gazetteer is a
+          # bootstrap for current HA, not a universal historical requirement.
+          python -m venv "$RUNNER_TEMP/sdk-venv"
+          source "$RUNNER_TEMP/sdk-venv/bin/activate"
+          echo "$RUNNER_TEMP/sdk-venv/bin" >> "$GITHUB_PATH"
+          export EOAI_TEST_REQUIREMENTS="$RUNNER_TEMP/sdk-test-requirements.txt"
+          grep -v '^gazetteer-matcher==' requirements_test.txt > "$EOAI_TEST_REQUIREMENTS"
           PLUGIN_VERSION="$(python ci/resolve_ha_test_plugin.py "$VERSION")"
           export EOAI_EXPECTED_HA_VERSION="$VERSION"
           export EOAI_EXPECTED_HA_TEST_PLUGIN_VERSION="$PLUGIN_VERSION"
@@ -113,7 +122,6 @@ jobs:
 
   ha-manifest-constraints:
     name: Manifest requirements / HA ${{ matrix.track }}
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
