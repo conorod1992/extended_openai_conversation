@@ -2704,7 +2704,7 @@ class ExtendedOpenAIAgentEntity(
                 sorted(allowed_ids) if allowed_ids is not None else None,
                 limit,
                 lookahead=True,
-                **cast(dict[str, Any], {"offset": offset} if offset else {}),
+                **({"offset": offset} if offset else {}),
             )
             results = await KnowledgeLibrary.async_revalidate_search_results(
                 self._knowledge, results
@@ -2841,7 +2841,7 @@ class ExtendedOpenAIAgentEntity(
                 query,
                 limit + 1,
                 category,
-                **({"offset": offset} if offset else {}),
+                **cast(dict[str, Any], {"offset": offset} if offset else {}),
             )
             personal_id = self._personal_memory_scope_id(llm_context)
             return bounded_record_page(
