@@ -3357,10 +3357,14 @@ def rule_provider_input(match: RuleMatch, original_text: str) -> str | None:
     # omits it. Keep it in the provider text when the capture ends the request.
     tail = original_text.rstrip()
     end = len(tail)
-    while end and tail[end - 1] in ".!?。؟":
+    while end and all(
+        char in ".!?。؟" for char in unicodedata.normalize("NFKC", tail[end - 1])
+    ):
         end -= 1
-    if end < len(tail) and tail[:end].endswith(value):
-        return value + tail[end:]
+        while end and tail[end - 1].isspace():
+            end -= 1
+    if end < len(tail) and prepare_match_text(tail[:end]).display.endswith(value):
+        return value + original_text[end:]
     return value
 
 
