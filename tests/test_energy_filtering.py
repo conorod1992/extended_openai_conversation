@@ -111,7 +111,8 @@ async def test_energy_filtered_copy_and_private_metadata(hass, monkeypatch, visi
     [
         ("stat_cost", "sensor.hidden"),
         ("entity_energy_price", "sensor.hidden"),
-        ("stat_energy_from", "private:external_meter"),
+        ("stat_energy_from", "unverifiable statistic syntax"),
+        ("entity_energy_price", "external:price_is_not_an_entity"),
         ("unexpected", {"entity_id": "sensor.hidden", "secret": "private metadata"}),
     ],
 )
@@ -138,6 +139,25 @@ def test_unknown_structures_fail_conservatively(entry):
     assert native._filtered_energy_preferences(
         {"energy_sources": [entry]}, {"sensor.visible"}
     ) == {
+        "energy_sources": [],
+        "device_consumption": [],
+    }
+
+
+def test_external_statistics_do_not_bypass_nested_entity_price_authority():
+    source = {
+        "type": "grid",
+        "stat_energy_from": "utility:import",
+        "stat_cost": "utility:cost",
+        "stat_energy_to": "utility:export",
+        "stat_compensation": "utility:compensation",
+        "cost_adjustment_day": 0,
+    }
+    data = {"energy_sources": [source], "device_consumption": []}
+    assert native._filtered_energy_preferences(data, set()) == data
+    source["entity_energy_price_export"] = "sensor.hidden_price"
+    source["name"] = "Private export tariff"
+    assert native._filtered_energy_preferences(data, set()) == {
         "energy_sources": [],
         "device_consumption": [],
     }

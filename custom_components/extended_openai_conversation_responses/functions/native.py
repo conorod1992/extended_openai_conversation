@@ -108,7 +108,7 @@ def _exposed_entity_ids(exposed_entities: list[dict[str, Any]]) -> set[str]:
 
 
 def _energy_entity_ids(value: Any) -> set[str]:
-    """Collect entity IDs only from Energy fields that reference entities/stats."""
+    """Collect entity/unverifiable references, retaining the external-stat contract."""
     result: set[str] = set()
     if isinstance(value, dict):
         for key, item in value.items():
@@ -117,6 +117,13 @@ def _energy_entity_ids(value: Any) -> set[str]:
                 or key.startswith("stat_")
                 or key == "included_in_stat"
             ):
+                # Match get_statistics: valid integration-owned statistics are
+                # supported without entity exposure. Entity price fields still
+                # require Assist/HA READ authority, regardless of their spelling.
+                if (
+                    key.startswith("stat_") or key == "included_in_stat"
+                ) and recorder.statistics.valid_statistic_id(item):
+                    continue
                 result.add(item)
             elif isinstance(item, (dict, list, tuple)):
                 result.update(_energy_entity_ids(item))
@@ -132,7 +139,7 @@ def _filtered_energy_preferences(data: Any, allowed: set[str]) -> dict[str, Any]
     A source is indivisible: removing just one meter/price/power field can leave
     misleading totals, orphaned metadata, or an invalid bidirectional source.
     Use HA's schemas rather than guessing the shape of future Energy sources.
-    External statistics have no Assist entity authority here and are omitted.
+    Valid external statistics retain the existing get_statistics access policy.
     """
     if not isinstance(data, dict):
         return {}
