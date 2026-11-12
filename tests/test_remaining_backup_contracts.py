@@ -1,7 +1,7 @@
 """Backup transfer races must reject cancelled sessions and stale previews."""
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -12,11 +12,11 @@ from custom_components.extended_openai_conversation_responses import (
     backup_transfer as bt,
     transfer,
 )
+from tests.test_restore_recovery import _states
 
 
-@dataclass
-class _Snapshot:
-    config: dict
+def _Snapshot(config):
+    return replace(_states()[0], config=config)
 
 
 def _import(hass, tmp_path):
@@ -33,7 +33,9 @@ def _import(hass, tmp_path):
         10**12,
         received=2,
         preview_token="preview",
-        preview_revision=bt._snapshot_revision(_Snapshot({"prompt": "original"})),
+        preview_revision=bt._snapshot_revision(
+            _Snapshot({"prompt": "original"}), (transfer.SECTION_CONFIGURATION,), {}
+        ),
         preview_sections=(transfer.SECTION_CONFIGURATION,),
         preview_user_scope_mappings=(),
     )

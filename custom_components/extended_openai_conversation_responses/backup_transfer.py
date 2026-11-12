@@ -7,7 +7,7 @@ import base64
 import binascii
 from contextlib import suppress
 from copy import deepcopy
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, is_dataclass
 import hashlib
 import io
 import json
@@ -145,14 +145,52 @@ def _latest_previews(hass: HomeAssistant) -> dict[tuple[str, str], tuple[str, st
     )
 
 
-def _snapshot_revision(value: backup.PreparedRestore) -> str:
-    """Fingerprint the exact durable target state inspected by an administrator."""
-    snapshot = asdict(value)
-    # _snapshot_for_restore stamps each read with a fresh export timestamp. That
-    # timestamp is not target state and would make every preview immediately stale.
-    snapshot.pop("created_at", None)
-    snapshot.pop("integration_version", None)
-    canonical = json.dumps(snapshot, sort_keys=True, default=str, separators=(",", ":"))
+def _snapshot_revision(
+    value: backup.PreparedRestore,
+    sections: tuple[str, ...] | frozenset[str] | None = None,
+    provider_data: dict[str, Any] | None = None,
+) -> str:
+    """Hash selected destination data and conservative review dependencies off-loop."""
+    selected = set(transfer.SECTION_ORDER if sections is None else sections)
+    # Raw setup and rules affect secret preservation, routing and Function
+    # dependencies even when they are not selected for replacement. Never expose
+    # this private projection (including provider credentials) in diagnostics.
+    snapshot = {
+        "title": value.title,
+        "config": value.config,
+        "request_rules": value.request_rules,
+        "provider": provider_data,
+    }
+    category_fields = {
+        transfer.SECTION_PERSISTENT_MEMORY: ("memories",),
+        transfer.SECTION_TEMPORARY_MEMORY: ("temporary_memories",),
+        transfer.SECTION_KNOWLEDGE: ("knowledge",),
+        transfer.SECTION_CONVERSATION_ARCHIVE: (
+            "archive_sessions",
+            "archive_turns",
+            "archive_active",
+        ),
+        transfer.SECTION_USAGE: (
+            "usage_totals",
+            "usage_daily",
+            "usage_requests",
+            "usage_runs",
+        ),
+        transfer.SECTION_GUEST_MODE: ("guest_mode_schedule",),
+    }
+    for section, names in category_fields.items():
+        if section in selected:
+            snapshot.update((name, getattr(value, name)) for name in names)
+    canonical = json.dumps(
+        snapshot,
+        sort_keys=True,
+        default=lambda item: (
+            asdict(item)
+            if is_dataclass(item) and not isinstance(item, type)
+            else str(item)
+        ),
+        separators=(",", ":"),
+    )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
@@ -1237,7 +1275,9 @@ async def _inspect_import_owned(
             )
             preview["user_scope_mapping"] = mapping_plan
             token = uuid4().hex
-            revision = await asyncio.to_thread(_snapshot_revision, current)
+            revision = await asyncio.to_thread(
+                _snapshot_revision, current, selected, dict(getattr(entry, "data", {}))
+            )
             async with _registry_lock(hass):
                 if _imports(hass).get(session.session_id) is not session:
                     raise backup.BackupError(
@@ -1339,7 +1379,12 @@ async def _restore_import(
             ):
                 raise backup.BackupError("The backup preview is stale; preview again")
         current = await transfer._current_snapshot(hass, entry, subentry)
-        revision = await asyncio.to_thread(_snapshot_revision, current)
+        revision = await asyncio.to_thread(
+            _snapshot_revision,
+            current,
+            session.preview_sections,
+            dict(getattr(entry, "data", {})),
+        )
         if revision != session.preview_revision:
             raise backup.BackupError("The target changed after preview; preview again")
         async with _registry_lock(hass):
