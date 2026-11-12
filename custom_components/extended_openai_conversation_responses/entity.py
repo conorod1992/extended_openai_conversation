@@ -1000,7 +1000,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 return _convert_content_to_responses_param(
                     content,
                     prepared_user_content,
-                    include_reasoning=provider_snapshot.reasoning_supported,
+                    include_reasoning=provider_snapshot.reasoning_items_supported,
                 )
 
             # Initial attachment preparation precedes the final capability snapshot.
