@@ -357,10 +357,7 @@ async def test_caller_api_uses_existing_exchange_budget_and_single_execution(has
     chat_log.async_add_assistant_content_without_tools(
         conversation.AssistantContent(agent_id="conversation.test", tool_calls=calls)
     )
-    with (
-        tool_snapshot_scope(snapshot),
-        pytest.raises(HomeAssistantError, match="limit"),
-    ):
+    with tool_snapshot_scope(snapshot):
         await async_execute_tool_exchange(
             entity, chat_log, calls, tools, FunctionCallBudget(1), ctx, []
         )
@@ -371,6 +368,10 @@ async def test_caller_api_uses_existing_exchange_budget_and_single_execution(has
         if isinstance(item, conversation.ToolResultContent)
     ]
     assert [item.tool_call_id for item in results] == ["0", "1"]
+    assert tool_result_data(results[1])["result"] == {
+        "status": "not_executed",
+        "reason": "not executed: request Function Tool limit reached",
+    }
 
 
 async def test_guest_denies_external_even_if_policy_allows_name(hass):

@@ -187,9 +187,11 @@ def _assert_acknowledged(entity):
 
 
 @pytest.mark.parametrize("reused_conversation", [False, True])
+@pytest.mark.parametrize("overflow", [False, True])
 async def test_successful_ai_tasks_release_receipts_before_retention_eviction(
-    task_driver, monkeypatch, reused_conversation
+    task_driver, monkeypatch, reused_conversation, overflow
 ):
+    task_driver.overflow = overflow
     monkeypatch.setattr(guard, "_MAX_DISPATCH_RECORDS", 2)
     monkeypatch.setattr(guard, "_MAX_RETIRED_CONVERSATIONS", 2)
     monkeypatch.setattr(outcomes, "_MAX_RETAINED_EFFECT_RECEIPTS", 2)
@@ -287,9 +289,11 @@ async def test_rejected_ai_task_tools_do_not_retire_effect_history(
 
 
 @pytest.mark.parametrize("invalid_result", ["not JSON", '{"answer":"wrong type"}'])
+@pytest.mark.parametrize("overflow", [False, True])
 async def test_structured_output_failure_follows_provider_acknowledgement(
-    task_driver, invalid_result
+    task_driver, invalid_result, overflow
 ):
+    task_driver.overflow = overflow
     log = task_driver.log("structured-task")
     task_driver.text = invalid_result
     with pytest.raises(HomeAssistantError, match=r"structured|structure"):

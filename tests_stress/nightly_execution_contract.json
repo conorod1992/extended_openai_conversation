@@ -1163,7 +1163,7 @@
     "tests_real_ha/test_ai_task_provider_wire.py::test_truncated_provider_stream_cannot_complete_ai_task_or_poison_next[responses]",
     "tests_real_ha/test_ai_task_provider_wire.py::test_unavailable_local_attachment_never_reaches_provider[chat_completions]",
     "tests_real_ha/test_ai_task_provider_wire.py::test_unavailable_local_attachment_never_reaches_provider[responses]",
-    "tests_real_ha/test_ai_task_runtime.py::test_ai_task_tool_budget_rejects_an_over_limit_provider_batch",
+    "tests_real_ha/test_ai_task_runtime.py::test_ai_task_tool_budget_acknowledges_refused_overflow",
     "tests_real_ha/test_ai_task_runtime.py::test_caller_llm_tool_executes_with_the_original_home_assistant_context",
     "tests_real_ha/test_ai_task_runtime.py::test_generate_data_image_attachment_reaches_provider_request",
     "tests_real_ha/test_ai_task_runtime.py::test_generate_data_structured_output_flows_through_home_assistant",

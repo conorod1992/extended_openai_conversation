@@ -516,9 +516,23 @@ async def _async_execute_with_recovery(
             str, conversation.ToolResultContent | BaseException
         ] = {}
         if prepared:
-            count = function_call_budget.claim_prefix(
-                tool_input.tool_name for _, tool_input in prepared
-            )
+            try:
+                count = function_call_budget.claim_prefix(
+                    tool_input.tool_name for _, tool_input in prepared
+                )
+            except BaseException as err:
+                # Unexpected reservation failures still repair retained history
+                # and propagate. Ordinary exhaustion returns a prefix normally.
+                for result in recovery_results.values():
+                    chat_log.async_add_assistant_content_without_tools(result)
+                append_unresolved_tool_results(
+                    chat_log,
+                    entity.entity_id,
+                    pending_tool_calls,
+                    failed_call_id=prepared[0][1].id,
+                    error=err,
+                )
+                raise
             execution_outcomes.update(
                 (tool_input.id, _budget_refusal(entity.entity_id, tool_input))
                 for _, tool_input in prepared[count:]
