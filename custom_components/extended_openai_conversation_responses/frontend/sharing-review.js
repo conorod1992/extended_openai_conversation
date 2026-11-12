@@ -3,7 +3,7 @@ export const SHARING_CONTRACT = "Shareable exports exclude designated credential
 
 export function sharingSummary(security = {}) {
   const count = (security.omitted || []).reduce((total, item) => total + (Number.isSafeInteger(item.count) && item.count > 0 ? item.count : 0), 0);
-  return `${count} configuration items or custom units omitted. Omitted tools and rules are not executable in the imported setup. ${security.review_required ? "Included custom content requires your review; arbitrary secrets may remain." : "Restricted sharing excludes unreviewed custom content."}`;
+  return `${count} configuration items or custom units omitted. Omitted tools and rules are not executable in the imported setup and must be added or completed separately. Saved source configuration is unchanged. ${security.review_required ? "Included custom content requires your review; arbitrary secrets may remain." : "Restricted sharing excludes unreviewed custom content."}`;
 }
 
 function modal(panel, markup, bind) {

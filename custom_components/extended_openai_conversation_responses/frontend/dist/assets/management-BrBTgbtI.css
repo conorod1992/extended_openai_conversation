@@ -337,6 +337,7 @@
 .card-heading h2{margin:0;font-size:19px;font-weight:600;line-height:1.3}
 .card-heading p{margin:6px 0 0;color:var(--secondary-text-color);line-height:1.5}
 .card-heading + :is(p,.help,.section-actions,.backup-panel,.form-grid,.table,.chart){margin-top:0}
+.backup-panel .section-heading p,.backup-panel .setting-label-row label{color:var(--primary-text-color)}
 .retention-surface .save-bar{margin:28px 0 0}
 @media(max-width:600px){.card-heading{flex-direction:column;align-items:stretch}}
 

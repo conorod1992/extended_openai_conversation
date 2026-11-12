@@ -68,7 +68,7 @@ test("ordinary config routes do not load the Functions editor chunk", async ({pa
   await panel.evaluate(host => host._navigate("usage-maintenance", "retention"));
   await expect(panel.locator('[data-config="usage_request_retention_days"]')).toBeVisible();
   await panel.evaluate(host => host._navigate("usage-maintenance", "backup-restore"));
-  await expect(panel.getByRole("heading", {name:"Export / Backup", exact:true})).toBeVisible();
+  await expect(panel.getByRole("heading", {name:"Export type", exact:true})).toBeVisible();
 
   const beforeFunctions = assets.filter(file => file === "agent-config-tools.js" || file.startsWith("agent-config-tools-"));
   expect(beforeFunctions).toEqual([]);

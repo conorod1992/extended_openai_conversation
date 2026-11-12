@@ -87,7 +87,7 @@ for (const bundled of [false, true]) {
       const title = host.shadowRoot.querySelector('.page-intro'), card = host.shadowRoot.querySelector('.backup-surface');
       return !card.contains(title) && Boolean(title.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING);
     })).toBe(true);
-    await expect(panel.locator(".backup-surface")).toContainText("Export / Backup");
+    await expect(panel.locator(".backup-surface")).toContainText("Export type");
     await expect(panel.locator(".backup-surface")).toContainText("Import / Restore");
   });
 

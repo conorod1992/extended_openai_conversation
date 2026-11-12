@@ -1,6 +1,6 @@
 import {captureAuthentication} from "./authentication-presentation.js";
 import {restoreScopeMarkup} from "./management-decision-guidance.js";
-import {TRANSFER_SECTIONS} from "./backup-transfer-shell.js";
+import {bindExportOptions, TRANSFER_SECTIONS} from "./backup-transfer-shell.js";
 import {backupSummaryLines} from "./backup-summary.js";
 import {reviewSharingExport} from "./sharing-review.js";
 import {callMutation, captureConfigurationSubmission, captureConfigurationOwner, configurationSubmissionIsCurrent, presentAcknowledgedMutation, processMutationResponse, requireMutationAcknowledgement, retireReplacedConfigurationDraft} from "./configuration-acknowledgement.js";
@@ -14,7 +14,6 @@ const FILE_ID = "backup-file-transfer";
 const CANCEL_ID = "restore-transfer-cancel";
 const APPLY_ID = "restore-transfer-apply";
 const EXPORT_MODE_ID = "transfer-export-mode";
-const CUSTOM_OPTIONS_ID = "transfer-custom-options";
 const RESTORE_SECTIONS_ID = "restore-transfer-sections";
 const RESTORE_USER_MAPPINGS_ID = "restore-transfer-user-mappings";
 const RESTORE_STATUS_ID = "restore-transfer-status";
@@ -506,14 +505,7 @@ export function bindBackupTransfer(panel) {
   }
 
   const exportMode = root.querySelector(`#${EXPORT_MODE_ID}`);
-  const customOptions = root.querySelector(`#${CUSTOM_OPTIONS_ID}`);
-  const syncExportMode = () => {
-    if (customOptions) customOptions.hidden = exportMode?.value !== "custom";
-    const sharingOptions = root.querySelector("#transfer-sharing-options");
-    if (sharingOptions) sharingOptions.hidden = exportMode?.value !== "setup";
-  };
-  exportMode?.addEventListener("change", syncExportMode);
-  syncExportMode();
+  bindExportOptions(root);
 
   root.querySelector(`#${CREATE_ID}`)?.addEventListener("click", async () => {
     const button = root.querySelector(`#${CREATE_ID}`);
