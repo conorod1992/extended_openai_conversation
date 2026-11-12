@@ -254,9 +254,11 @@ def _literal_text_operands(tokens: list[tuple[str, bool]]) -> set[int]:
                 if not args[1].startswith("-"):
                     exempt.add(start + 2)
             elif command == "echo":
-                for offset, arg in enumerate(args, start + 1):
+                # Use absolute token indices bounded to this command's operands.
+                for index in range(start + 1, end):
+                    arg = tokens[index][0]
                     if re.fullmatch(r"[A-Za-z ]+ /[A-Za-z][A-Za-z0-9_-]*", arg):
-                        exempt.add(start + offset)
+                        exempt.add(index)
         # Only shell command boundaries establish another command position.
         # A redirect target (even one named echo/grep) cannot start an exemption.
         start = (
