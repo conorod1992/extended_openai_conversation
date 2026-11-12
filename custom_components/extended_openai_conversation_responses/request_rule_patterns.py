@@ -173,6 +173,8 @@ class CompiledSentencePattern:
         sentence_end = len(folded)
         while sentence_end and folded[sentence_end - 1] in _SENTENCE_END:
             sentence_end -= 1
+            while sentence_end and folded[sentence_end - 1].isspace():
+                sentence_end -= 1
         # A separator before STT punctuation may disappear only when the suffix
         # can finish without a capture. Explicit punctuation literals still use
         # normal matching, including after omitted optional words.

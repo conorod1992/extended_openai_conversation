@@ -220,7 +220,7 @@ async def test_omitted_restore_sections_reuses_preview_selection(
         AsyncMock(side_effect=lambda value, *_: value),
     )
     monkeypatch.setattr(transfer, "_current_snapshot", AsyncMock(return_value=object()))
-    monkeypatch.setattr(backup_transfer, "_snapshot_revision", lambda _: "revision")
+    monkeypatch.setattr(backup_transfer, "_snapshot_revision", lambda *_args: "revision")
     monkeypatch.setattr(backup_transfer, "_async_remove_path", AsyncMock())
 
     async def restore(*args, sections, precondition):

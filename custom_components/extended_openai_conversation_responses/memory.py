@@ -1091,8 +1091,17 @@ class PersistentMemory:
                 seen_keys.add(pair)
         async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
+            # Retain only exact local facts with valid fingerprints. Provider/model
+            # space is checked at use time, including after cold recovery binds it.
+            retained_cache = {
+                record.memory_id: entry
+                for record in records
+                if self._memories.get(record.memory_id) == record
+                and (entry := self._embedding_cache.get(record.memory_id)) is not None
+                and entry.fingerprint == _embedding_fingerprint(record)
+            }
             self._memories = {record.memory_id: record for record in records}
-            self._embedding_cache.clear()
+            self._embedding_cache = retained_cache
             self._embedding_cache_dirty = True
             self._key_index.clear()
             for record in records:

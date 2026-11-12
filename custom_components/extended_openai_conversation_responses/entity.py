@@ -972,19 +972,20 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 )
             if not attachment_io and provider_snapshot.api_mode != attachment_api:
                 messages = prepare_messages(provider_snapshot.api_mode)
+            prepared_users = tuple(
+                item
+                for item in chat_log.content
+                if isinstance(item, conversation.UserContent)
+                and (
+                    provider_snapshot.api_mode != API_MODE_RESPONSES
+                    or item.content
+                    or getattr(item, "attachments", None)
+                )
+            )
             prepared_user_content = {
                 id(content): message["content"]
                 for content, message in zip(
-                    (
-                        item
-                        for item in chat_log.content
-                        if isinstance(item, conversation.UserContent)
-                        and (
-                            provider_snapshot.api_mode != API_MODE_RESPONSES
-                            or item.content
-                            or getattr(item, "attachments", None)
-                        )
-                    ),
+                    prepared_users,
                     (item for item in messages if item.get("role") == "user"),
                     strict=True,
                 )
@@ -1073,6 +1074,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             )
             ha_prompt_applied = False
             draft_content_ids: set[int] = set()
+            draft_content: list[Any] = []
             context_measurement: ContextInputMeasurement | None = None
             loader_rounds = 0
             integration_loader_seen = False
@@ -1276,7 +1278,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 request_started = time.monotonic()
                 request_history_length = len(chat_log.content)
                 request_input_revision = await async_prepared_input_revision(messages)
-                existing_content_ids = {id(content) for content in chat_log.content}
+                existing_content = tuple(chat_log.content)
+                existing_content_ids = {id(content) for content in existing_content}
                 pending_tool_calls: list[llm.ToolInput] = []
                 web_search_used = False
                 provider_stream: AsyncStream[Any] | None = None
@@ -1614,13 +1617,16 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                     and not loader_calls
                 ):
                     if not finalization_retry_attempted:
-                        draft_content_ids.update(
-                            id(content)
+                        draft_content.extend(
+                            content
                             for content in chat_log.content
                             if id(content) not in existing_content_ids
                             and isinstance(content, conversation.AssistantContent)
                             and bool(content.content)
                             and not content.tool_calls
+                        )
+                        draft_content_ids.update(
+                            id(content) for content in draft_content
                         )
                         finalization_retry_attempted = True
                         force_finalizer_only = True
@@ -2296,7 +2302,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         conversation.AssistantContentDeltaDict | conversation.ToolResultContentDeltaDict
     ]:
         """Retain reasoning only when its provider output group completes."""
-        existing = {id(content) for content in getattr(chat_log, "content", ())}
+        existing_content = tuple(getattr(chat_log, "content", ()))
+        existing = {id(content) for content in existing_content}
         try:
             async with aclosing(
                 ExtendedOpenAIBaseLLMEntity._transform_responses_stream_events(

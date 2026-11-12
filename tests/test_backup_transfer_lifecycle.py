@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from dataclasses import dataclass, replace
+from dataclasses import replace
 import hashlib
 import os
 from types import SimpleNamespace
@@ -22,13 +22,11 @@ from custom_components.extended_openai_conversation_responses import (
 def test_preview_revision_excludes_generated_export_timestamp() -> None:
     """A second snapshot read stays valid until actual target state changes."""
 
-    @dataclass
-    class Target:
-        config: dict[str, str]
-        created_at: str
-        integration_version: str
+    from tests.test_restore_recovery import _states
 
-    original = Target({"prompt": "before"}, "first-read", "5.3.0")
+    original = replace(
+        _states()[0], config={"prompt": "before"}, created_at="first-read"
+    )
     reread = replace(original, created_at="second-read")
     changed = replace(reread, config={"prompt": "after"})
     assert backup_transfer._snapshot_revision(
@@ -185,7 +183,7 @@ async def test_import_can_be_inspected_then_restored_and_consumes_staging_file(
     )
     monkeypatch.setattr(transfer, "_current_snapshot", current_snapshot)
     monkeypatch.setattr(
-        backup_transfer, "_snapshot_revision", lambda _value: "revision"
+        backup_transfer, "_snapshot_revision", lambda *_args: "revision"
     )
     monkeypatch.setattr(
         transfer,
@@ -334,7 +332,7 @@ async def test_restore_failure_still_consumes_and_deletes_completed_upload(
     )
     monkeypatch.setattr(transfer, "_current_snapshot", AsyncMock(return_value=object()))
     monkeypatch.setattr(
-        backup_transfer, "_snapshot_revision", lambda _value: "revision"
+        backup_transfer, "_snapshot_revision", lambda *_args: "revision"
     )
     entry = SimpleNamespace(entry_id="entry-1")
     subentry = SimpleNamespace(subentry_id="agent-1")
@@ -581,7 +579,7 @@ async def test_cancelling_stalled_full_inspection_releases_maintenance_for_new_s
     monkeypatch.setattr(
         backup_transfer, "_resolve_agent", lambda *_: (object(), object())
     )
-    monkeypatch.setattr(backup_transfer, "_snapshot_revision", lambda _: "current")
+    monkeypatch.setattr(backup_transfer, "_snapshot_revision", lambda *_args: "current")
     monkeypatch.setattr(
         transfer, "validate_section_selection", lambda *_a, **_k: frozenset({"memory"})
     )

@@ -61,7 +61,7 @@ export function requestRuleSummary(rule = {}, defaults = {}) {
 
   if (rule.action?.reset) {
     return {
-      action: "Returns model and reasoning to the assistant's configured defaults for the active conversation.",
+      action: `Returns model and reasoning to the assistant's configured defaults for ${rule.action.scope === "conversation" ? "the rest of this conversation" : "this request only"}.`,
       matching,
       hiddenPhrases: Math.max(0, phrases.length - 4),
     };

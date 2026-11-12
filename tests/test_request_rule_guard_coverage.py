@@ -288,7 +288,7 @@ def test_rule_provider_input_preserves_trailing_sentence_punctuation() -> None:
     )
 
     assert request_rules.rule_provider_input(match, "ask weather tomorrow?!  ") == (
-        "weather tomorrow?!"
+        "weather tomorrow?!  "
     )
 
 

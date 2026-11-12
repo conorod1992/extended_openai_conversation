@@ -50,6 +50,24 @@ function previewHarness() {
   return {panel, calls, apply, status, select(next) { sections = next; refreshImportPreview(panel); }};
 }
 
+test("preserved secrets report success; missing secrets reject preview and keep Apply disabled", async () => {
+  const h = previewHarness();
+  h.select(["configuration"]);
+  await waitFor(() => h.calls.length === 1);
+  h.calls[0].resolve({preview: {selected_sections: ["configuration"], preserved_sensitive_field_count: 2, missing_sensitive_field_count: 0}, preview_token: "valid"});
+  await waitFor(() => h.apply.disabled === false);
+  assert.equal(h.status.className, "validation success");
+  assert.equal(h.status.textContent, "2 redacted secret fields were preserved from the current destination configuration.");
+  h.select(["request_rules"]);
+  assert.equal(h.apply.disabled, true);
+  await waitFor(() => h.calls.length === 2);
+  h.calls[1].reject(new Error("Cannot safely restore unavailable secrets: headers.Authorization"));
+  await waitFor(() => h.status.className === "validation error");
+  assert.equal(h.status.textContent, "Cannot safely restore unavailable secrets: headers.Authorization");
+  assert.equal(h.apply.disabled, true);
+  assert.equal(h.panel._backupTransferPreviewToken, null);
+});
+
 test("A in flight, then B and C: only C follows A and only C can enable Restore", async () => {
   const h = previewHarness();
   h.select(["configuration"]);

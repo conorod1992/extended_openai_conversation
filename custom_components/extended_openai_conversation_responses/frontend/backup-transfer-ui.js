@@ -308,11 +308,7 @@ function updateSensitiveStatus(panel, preview) {
   const status = root.querySelector(`#${RESTORE_STATUS_ID}`);
   if (!status) return;
   const preserved = Number(preview?.preserved_sensitive_field_count || 0);
-  const missing = Number(preview?.missing_sensitive_field_count || 0);
-  if (missing) {
-    status.className = "validation error";
-    status.textContent = `${missing} redacted secret field${missing === 1 ? "" : "s"} cannot be preserved from the destination and will need to be entered after restore.${preserved ? ` ${preserved} existing secret field${preserved === 1 ? " was" : "s were"} preserved.` : ""}`;
-  } else if (preserved) {
+  if (preserved) {
     status.className = "validation success";
     status.textContent = `${preserved} redacted secret field${preserved === 1 ? " was" : "s were"} preserved from the current destination configuration.`;
   } else {
