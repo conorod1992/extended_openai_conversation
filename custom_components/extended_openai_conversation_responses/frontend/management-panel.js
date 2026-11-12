@@ -2213,7 +2213,8 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         return;
       }
       const indefinite = root.querySelector("#guest-indefinite")?.checked ?? true;
-      const start = now ? new Date().toISOString() : root.querySelector("#guest-start")?.value;
+      // Omission asks the backend to start now, independently of browser time.
+      const start = now ? undefined : root.querySelector("#guest-start")?.value;
       const endInput = root.querySelector("#guest-end");
       const end = endInput?.value;
       const status = this._result?.status || {};
@@ -2227,15 +2228,9 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         if (!indefinite && (!end || !endInput.checkValidity())) {
           throw new Error("Choose an end time or select Remain active indefinitely.");
         }
-        if (now && !indefinite) {
-          const expired = status.active_until && end === this._dateTimeLocal(status.active_until)
-            ? Date.parse(status.active_until) <= Date.parse(start)
-            : end <= this._dateTimeLocal(start);
-          if (expired) throw new Error("Choose a future end time or select Remain active indefinitely before activating Guest Mode.");
-        }
         intervalSubmission.implicitStart = now || !start;
         const result = await this._call("guest_mode", "update", {
-          ...(start ? {active_from: now ? start : originalInstant("active_from", start, status.active_from)} : {}),
+          ...(start ? {active_from: originalInstant("active_from", start, status.active_from)} : {}),
           ...(!indefinite && end ? {active_until: originalInstant("active_until", end, status.active_until)} : {}),
           indefinite,
           local_times: localTimes,
