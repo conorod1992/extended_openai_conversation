@@ -19,8 +19,8 @@ export function memoryMetadataFields() {
     <label>Category<input id="memory-category" value="general" maxlength="64" required></label>
     <label>Owner<select id="memory-owner"></select></label>
     <label id="memory-expiry-field" hidden>Expires<input id="memory-expiry" type="datetime-local" step="1" disabled><small>Home Assistant local time. Choose a future time within one year.</small></label>
-    <div id="memory-advanced" hidden><label>Subject<input id="memory-subject"></label><label>Key<input id="memory-key"></label>
-    <label>Valid from<input id="memory-valid-from" placeholder="ISO 8601 date-time with timezone"></label></div>`;
+    <details id="memory-advanced" class="eoc-details-base" hidden><summary>Advanced metadata</summary><label>Subject<input id="memory-subject"></label><label>Key<input id="memory-key"></label>
+    <label>Valid from<input id="memory-valid-from" placeholder="ISO 8601 date-time with timezone"></label></details>`;
 }
 
 export function populateMemoryMetadata(panel, memory) {
@@ -39,6 +39,7 @@ export function populateMemoryMetadata(panel, memory) {
   type.value = memory ? "persistent" : panel._memoryKind;
   type.disabled = Boolean(memory);
   root.querySelector("#memory-advanced").hidden = !memory;
+  root.querySelector("#memory-advanced").open = false;
   root.querySelector("#memory-expiry").value = "";
   const updateType = () => {
     const temporary = type.value === "temporary";

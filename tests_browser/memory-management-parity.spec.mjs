@@ -21,6 +21,8 @@ for (const bundled of [false, true]) {
     await expect(panel.locator("#memory-valid-from")).toHaveValue("2026-09-01T00:00:00Z");
     await panel.locator("#memory-content").fill("Memory updated");
     await panel.locator("#memory-category").fill("chores");
+    await expect(panel.locator("#memory-advanced")).not.toHaveAttribute("open");
+    await panel.locator("#memory-advanced > summary").click();
     await panel.locator("#memory-subject").fill("");
     await beginDataMeasure(page);
     await panel.locator("#memory-save").click();

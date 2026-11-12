@@ -56,21 +56,6 @@ export function dependencyGuidance(parentKey, config = {}, localHandling = {}) {
   return null;
 }
 
-export function hybridMemoryGuidance(config = {}) {
-  if (config.memory_retrieval_mode === "hybrid") {
-    return {
-      kind: "info",
-      title: "Keyword + meaning uses a model to compare meaning",
-      text: "Keyword + meaning uses the configured model to compare memories by meaning. If this model is unavailable or fails, keyword matching is used.",
-    };
-  }
-  return {
-    kind: "dormant",
-    title: "Embedding model is inactive",
-    text: "It is used only with Keyword + meaning matching. The saved model is kept while Keyword matching is selected.",
-  };
-}
-
 export function apiModeConsequence(config = {}, guidance = {}) {
   if (config.api_mode !== "auto" || !guidance.effective_api_mode) return null;
   const resolved = guidance.effective_api_mode === "responses" ? "Responses API" : "Chat Completions API";
@@ -138,7 +123,7 @@ export function modelParameterGuidance(key, capabilities = {}) {
   return {
     kind: "unavailable",
     title: "Not used for the selected model",
-    text: "Extended OpenAI does not send this parameter for the selected model. Its saved value is retained and becomes active again if you choose a model for which the integration uses it.",
+    text: "Saved but inactive. Choose a compatible model to use this parameter.",
   };
 }
 
@@ -208,17 +193,11 @@ function decorateMemory(panel) {
   const embedding = root.querySelector('[data-field="memory_embedding_model"]');
   if (!retrieval && !embedding) return;
 
-  const guidance = hybridMemoryGuidance(config);
-  if (config.memory_retrieval_mode === "hybrid") {
-    placeGuidance(panel, retrieval, "beforeend", guidance, "memory-hybrid-consequence");
-  } else {
-    placeGuidance(panel, embedding, "beforeend", guidance, "memory-embedding-dormant");
-  }
   const description = embedding?.querySelector(":scope > small");
   if (description) {
     description.textContent = config.memory_retrieval_mode === "hybrid"
-      ? "Model used to compare memories by meaning. If meaning matching is unavailable, keyword matching is used."
-      : "Model used to compare memories by meaning. Only needed when Keyword + meaning matching is selected.";
+      ? "Your provider must support this model. If meaning matching fails or is unavailable, keyword matching is used."
+      : "Saved but inactive with Keyword matching; used only for Keyword + meaning.";
   }
 }
 
@@ -247,6 +226,7 @@ function decorateModelParameters(panel) {
   const capabilities = activeCapabilities(panel);
   for (const spec of MODEL_PARAMETERS) {
     const field = root.querySelector(`#config-model [data-field="${spec.key}"]`);
+    if (field?.querySelector(".capability-note")) continue;
     placeGuidance(
       panel,
       field,

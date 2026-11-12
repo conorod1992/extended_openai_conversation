@@ -65,7 +65,7 @@ function renderTemporaryMemories(panel) {
   return `<section class="content-card" data-temporary-memories data-collection-identity="${panel._e(memoryCollectionIdentity(panel))}">
     <div class="section-heading"><div><h2>Short-term memories</h2><p>Review short-term details saved for a Personal or Shared scope. <button type="button" class="guide-topic-link guide-link" data-guide-topic="memory">Learn more</button></p></div><div class="actions"><button type="button" id="add-memory">+ Add memory</button><button type="button" class="danger" id="clear-temporary">Clear short-term memories</button></div></div>
     <div data-temporary-feature-status>${temporaryMemoryStatus(panel)}</div>
-    <div class="config-jumps"><button type="button" class="secondary memory-kind" data-kind="persistent">Long-term</button><button type="button" class="secondary memory-kind" data-kind="temporary" disabled>Short-term</button></div>
+    <nav class="config-jumps memory-kind-nav" aria-label="Memory view"><button type="button" class="secondary memory-kind" data-kind="persistent">Long-term</button><button type="button" class="secondary memory-kind" data-kind="temporary" aria-current="page">Short-term</button></nav>
     <p class="help">Once stored, short-term memories remain until their expiry time, even if short-term memory is later turned off. Conversation and device continuity do not determine ownership.</p>
     <div data-temporary-diagnostics>${temporaryDiagnostics(panel)}</div>
     <input id="list-search" class="search" type="search" value="${panel._e(panel._query)}" placeholder="Search memories" aria-label="Search memories">
@@ -276,6 +276,7 @@ export function bindTemporaryMemory(panel) {
     if (control.matches("#clear-temporary")) { void clearTemporaryMemories(panel, control); return; }
     if (control.matches(".delete-temporary")) void deleteTemporaryMemory(panel, control.dataset.id, control);
     else if (control.matches(".memory-kind")) {
+      if (control.dataset.kind === panel._memoryKind) return;
       panel._memoryKind = control.dataset.kind; panel._query = "";
       void panel._loadSection();
     } else openTemporaryMemory(panel, control.dataset.id);
