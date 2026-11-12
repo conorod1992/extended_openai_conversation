@@ -1495,7 +1495,9 @@ class PersistentMemory:
             await self._embedding_cache_storage.async_save(payload)
             self._embedding_cache_dirty = False
             if self._embedding_cache_write_failed:
-                _LOGGER.info("Persistent memory embedding cache persistence recovered")
+                _LOGGER.info(
+                    "Persistent memory embedding cache save no longer reports a failure"
+                )
             self._embedding_cache_write_failed = False
             self._embedding_cache_retry_at = 0.0
             if self._initialized:

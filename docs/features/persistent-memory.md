@@ -18,7 +18,7 @@ Persistent memory keeps concise durable facts after chat history ends. It is off
 
 Hybrid uses embeddings, not another LLM, classifier, or reranker call. No vector database is used and raw embeddings are excluded from normal results, diagnostics, prompts, and backups. If the configured provider or embedding model does not support embeddings, retrieval logs the failure and falls back to lexical without breaking the conversation. Semantic matching remains probabilistic and should not be treated as perfect. Choose lightweight lexical matching if you want memory ranking to remain entirely local.
 
-Embedding-cache saves are best effort. If a save fails, current validated vectors remain usable in memory and all required batches continue preparing. Diagnostics report that the cache is not persisted; a later search or memory operation can retry at most once per minute while storage is failing. Unsaved vectors may need regeneration after restart.
+Embedding-cache saves are best effort. When cache storage reports a save failure, current validated vectors remain usable in memory and all required batches continue preparing. Diagnostics report that the cache is not persisted; a later search or memory operation can retry at most once per minute while storage reports failures. Home Assistant's native cache Store can log and swallow some file/serialization errors, which this manager cannot detect under the existing cache I/O policy. A successful cache-save call therefore does not guarantee durability; unsaved vectors may need regeneration after restart.
 
 ## Records and reliable updates
 
