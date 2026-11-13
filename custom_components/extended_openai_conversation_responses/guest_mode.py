@@ -316,6 +316,11 @@ class GuestModeManager:
     def schedule(self) -> GuestModeSchedule | None:
         return self._schedule
 
+    @property
+    def authoritative_available(self) -> bool:
+        """Read-only signal for presentation; never relax request admission."""
+        return self._initialized and not self._persistence_unavailable
+
     def status(self, now: Any | None = None) -> dict[str, Any]:
         """Return the current non-sensitive state and schedule."""
         if self._persistence_unavailable:
@@ -547,6 +552,7 @@ class GuestModeManager:
             self._initialized = False
 
         previous = self._schedule
+        was_available = self.authoritative_available
         try:
             await _async_settle_transactional_save(
                 self._store.async_save(payload),
@@ -556,7 +562,14 @@ class GuestModeManager:
                 invalidate,
             )
         finally:
-            if committed or self._schedule != previous:
+            # A failed write followed by a failed authoritative readback can
+            # leave the old in-memory schedule unchanged but untrustworthy.
+            # Notify once on that availability edge so HA stops polling status().
+            if (
+                committed
+                or self._schedule != previous
+                or self.authoritative_available != was_available
+            ):
                 self._notify()
 
     def _live_or_future_schedule(self, now: Any) -> GuestModeSchedule | None:
