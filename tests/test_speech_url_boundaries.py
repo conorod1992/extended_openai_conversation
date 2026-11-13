@@ -109,7 +109,7 @@ def test_url_at_end_of_readable_wrapper(source, expected):
 def test_unbalanced_quote_tracking_is_bounded():
     sanitizer = StreamingSpeechSanitizer()
     sanitizer.feed(("\"' " * 1000) + "text ")
-    assert len(sanitizer._link_quotes) <= 16
+    assert len(sanitizer._inline_scope.opened) <= 32
 
 
 @pytest.mark.parametrize(

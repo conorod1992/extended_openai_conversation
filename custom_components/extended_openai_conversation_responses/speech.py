@@ -52,7 +52,26 @@ _URL_MARKDOWN_WRAPPERS = (
     ("_", "_"),
 )
 _URL_QUOTE_WRAPPERS = (('"', '"'), ("'", "'"), ("“", "”"), ("\u2018", "\u2019"))
-_URL_FORMAT_TOKENS = re.compile(r"`+|\*+|_+|~+")
+_URL_WRAPPERS = (
+    *_URL_QUOTE_WRAPPERS,
+    *_URL_MARKDOWN_WRAPPERS,
+    *(
+        pair
+        for opening, closing in _URL_QUOTE_WRAPPERS
+        for opener, closer in _URL_MARKDOWN_WRAPPERS
+        for pair in (
+            (opening + opener, closer + closing),
+            (opener + opening, closing + closer),
+        )
+    ),
+)
+_URL_WRAPPERS_BY_INITIAL = {
+    initial: tuple(pair for pair in _URL_WRAPPERS if pair[0][0] == initial)
+    for initial in {pair[0][0] for pair in _URL_WRAPPERS}
+}
+_URL_QUOTES_BY_INITIAL = {pair[0]: (pair,) for pair in _URL_QUOTE_WRAPPERS}
+_URL_QUOTE_MAP = dict(_URL_QUOTE_WRAPPERS)
+_URL_QUOTE_CLOSERS = frozenset(_URL_QUOTE_MAP.values())
 _EMPHASIS_TOKENS = {"*": re.compile(r"`+|\*"), "_": re.compile(r"`+|_")}
 # A *viable prefix*, not merely a failed complete match, may suspend
 # progressive speech. This includes split closing asterisks.
@@ -69,6 +88,137 @@ _ADDRESS_LINK_LABEL = re.compile(
 DEFAULT_STREAMING_BUFFER_LIMIT = 4096
 COMPLETED_SPEECH_EXECUTOR_THRESHOLD = 4096
 _FORMAT_PREFIX_LIMIT = 32
+
+
+class _InlineScope:
+    """Bounded lexical evidence for URL-adjacent closers, independent of chunks.
+
+    This does not render Markdown. The existing formatter remains authoritative;
+    this tracker only keeps real flanking/escape/code context for removed spans.
+    """
+
+    def __init__(self, markdown: bool) -> None:
+        self.markdown = markdown
+        self.previous = ""
+        self.backslashes = 0
+        self.code = 0
+        self.opened: list[str] = []
+        self.overflow = False
+        self.run = ""
+        self.width = 0
+        self.before = ""
+        self.escaped = False
+        self.numeric: str | None = None
+
+    def _push(self, marker: str) -> None:
+        if len(self.opened) >= 32 or (
+            marker in _URL_QUOTE_CLOSERS and self.opened.count(marker) >= 16
+        ):
+            self.opened.clear()
+            self.overflow = True
+        elif not self.overflow:
+            self.opened.append(marker)
+
+    def _finish_run(self, after: str) -> None:
+        char, width = self.run, self.width
+        self.run, self.width = "", 0
+        if not char or (self.escaped and not self.code):
+            return
+        if char == "`":
+            self.code = 0 if self.code == width else (self.code or width)
+            return
+        if self.code or self.overflow or width > 3:
+            return
+        marker = char * width
+        if marker not in {"*", "_", "**", "__", "***", "___", "~~"}:
+            return
+        if marker == "**" and self.numeric is not None:
+            self.numeric = None
+            return
+        closing = ""
+        for count, opened in enumerate(reversed(self.opened), 1):
+            closing += opened
+            if closing == marker and self.before and not self.before.isspace():
+                del self.opened[-count:]
+                return
+            if len(closing) >= width:
+                break
+        if (
+            marker == "**"
+            and (self.before.isalnum() or self.before in {")", "]"})
+            and (after.isdigit() or after in {"+", "-", "("})
+        ):
+            self.numeric = ""
+            return
+        if (
+            after
+            and not after.isspace()
+            and (width > 1 or (not self.before.isalnum() and self.before != char))
+        ):
+            self._push(marker)
+
+    def feed(self, text: str) -> None:
+        for char in text:
+            if self.run and char != self.run:
+                self._finish_run(char)
+            if self.markdown and char in "`*_~":
+                if not self.run:
+                    self.run = char
+                    self.before = self.previous
+                    self.escaped = bool(self.backslashes % 2)
+                self.width += 1
+            elif not self.code:
+                if self.numeric is not None:
+                    if char in "+-0123456789." and len(self.numeric) < 32:
+                        self.numeric += char
+                    else:
+                        self.numeric = None
+                if char == "\n" and self.overflow:
+                    self.overflow = False
+                if not self.overflow and not self.backslashes % 2:
+                    if (
+                        self.opened
+                        and char == self.opened[-1]
+                        and char in _URL_QUOTE_CLOSERS
+                    ):
+                        if self.previous and not self.previous.isspace():
+                            self.opened.pop()
+                    elif char in _URL_QUOTE_MAP and not self.previous.isalnum():
+                        self._push(_URL_QUOTE_MAP[char])
+            self.backslashes = self.backslashes + 1 if char == "\\" else 0
+            self.previous = char
+
+    def url_suffix(self, text: str) -> int:
+        self._finish_run("h")
+        self.numeric = None
+        if self.code or self.overflow:
+            return 0
+        closer, result = "", 0
+        for marker in reversed(self.opened):
+            closer += marker
+            if text.endswith(closer):
+                boundary = len(text) - len(closer)
+                if (
+                    not StreamingSpeechSanitizer._is_escaped(text, boundary)
+                    and text[boundary - 1 : boundary] != closer[:1]
+                ):
+                    result = len(closer)
+        return result
+
+    def removed(self) -> None:
+        self._finish_run("x")
+        self.numeric = None
+        self.previous, self.backslashes = "x", 0
+
+    def discard(self, opener: str) -> None:
+        combined = ""
+        for count, marker in enumerate(reversed(self.opened), 1):
+            combined = marker + combined
+            if combined == opener:
+                del self.opened[-count:]
+                return
+            if len(combined) >= len(opener):
+                return
 
 
 class StreamingSpeechSanitizer:
@@ -116,10 +266,11 @@ class StreamingSpeechSanitizer:
         self._original_previous_list = False
         self._original_prefix_complete = False
         self._original_replayed_chars = 0
-        self._link_quotes: list[str] = []
-        self._quote_overflow = False
-        self._quote_previous = ""
-        self._quote_backslashes = 0
+        self._inline_scope = _InlineScope(markdown)
+        self._link_line_start = True
+        self._pending_list_prefix = ""
+        self._pending_list_link = False
+        self._pending_list_newline = False
         self._format_backslashes = 0
         self._paired_open = {"__": False, "~~": False}
         self._triple_open = {"*": False, "_": False}
@@ -175,12 +326,42 @@ class StreamingSpeechSanitizer:
         return self._format(link_safe, final=True)
 
     def _emit(self, output: list[str], text: str) -> None:
+        if self._pending_list_prefix:
+            if "\n" in text and text.isspace():
+                self._pending_list_prefix = ""
+                self._needs_separator = False
+                self._pending_list_link = False
+            elif text.isspace():
+                if not self._pending_list_link:
+                    self._pending_list_prefix += text[
+                        : max(0, _FORMAT_PREFIX_LIMIT - len(self._pending_list_prefix))
+                    ]
+                return
+            elif not text.isspace():
+                prefix = self._pending_list_prefix
+                self._pending_list_prefix = ""
+                if self._pending_list_link:
+                    self._needs_separator = False
+                    # Retain one real block prefix after removal; additional
+                    # held prefixes belong to the same now-empty nested item.
+                    _, count = self._line_prefix(prefix, True, preceding_list_item=True)
+                    prefix = prefix[:count]
+                    if self._pending_list_newline and not self._last_output.endswith(
+                        "\n"
+                    ):
+                        self._emit_plain(output, "\n")
+                self._pending_list_link = False
+                self._emit_plain(output, prefix)
+        self._emit_plain(output, text)
+
+    def _emit_plain(self, output: list[str], text: str) -> None:
         if not text:
             return
         if self._needs_separator:
             if text.isspace():
                 if "\n" in text:
                     self._suppressed_line_break = True
+                self._inline_scope.feed(text)
                 return
             self._needs_separator = False
             self._suppressed_line_break = False
@@ -191,29 +372,17 @@ class StreamingSpeechSanitizer:
                 and not self._last_output[-1:].isspace()
                 and not text[0].isspace()
                 and text[0] not in ",.;:!?)]}"
-                and not (self._link_quotes and text.startswith(self._link_quotes[-1]))
+                and not (
+                    self._inline_scope.opened
+                    and text.startswith(self._inline_scope.opened[-1])
+                    and text[0] in _URL_QUOTE_CLOSERS
+                )
             ):
                 output.append(" ")
+                self._inline_scope.feed(" ")
                 self._last_output += " "
-        if not self._link_code:
-            quotes = dict(_URL_QUOTE_WRAPPERS)
-            for char in text:
-                if char == "\n" and self._quote_overflow:
-                    self._quote_overflow = False
-                if not self._quote_overflow and not self._quote_backslashes % 2:
-                    if self._link_quotes and char == self._link_quotes[-1]:
-                        if self._quote_previous and not self._quote_previous.isspace():
-                            self._link_quotes.pop()
-                    elif char in quotes and not self._quote_previous.isalnum():
-                        if len(self._link_quotes) < 16:
-                            self._link_quotes.append(quotes[char])
-                        else:
-                            self._link_quotes.clear()
-                            self._quote_overflow = True
-                self._quote_backslashes = (
-                    self._quote_backslashes + 1 if char == "\\" else 0
-                )
-                self._quote_previous = char
+        self._inline_scope.feed(text)
+        self._link_line_start = text.endswith("\n")
         output.append(text)
         self._last_output += text
         significant = "".join(char for char in text if not char.isspace())
@@ -226,6 +395,9 @@ class StreamingSpeechSanitizer:
         # A closing delimiter (such as the final ** in **Result**) must not
         # be treated as the opener of an empty wrapper around this citation.
         # Longer nested wrappers are tested before shorter suffixes.
+        self._inline_scope.removed()
+        if self._pending_list_prefix:
+            self._pending_list_link = True
         self._suppressed_opener = None
         self._suppressed_closer = None
         if self.markdown:
@@ -245,15 +417,21 @@ class StreamingSpeechSanitizer:
             output[-1] = output[-1].rstrip()
             if not output[-1]:
                 output.pop()
+        if not output:
+            # The adjacent whitespace may still be waiting for an emphasis
+            # closer in the next stage. Apply the same removal in either stage.
+            self._format_buffer = self._format_buffer.rstrip()
         self._last_output = self._last_output.rstrip()
-        if self._quote_previous.isspace():
-            self._quote_previous = self._recent_nonspace[-1:]
         self._needs_separator = True
         self.suppressed_constructs += 1
         return end
 
     def _hold_preceding_whitespace(self, output: list[str]) -> str:
         """Hold emitted whitespace without rewinding consumed source characters."""
+        if self._pending_list_prefix:
+            # Its source prefix has already been consumed. Replaying an earlier
+            # newline after that prefix would reverse their order across chunks.
+            return ""
         held: list[str] = []
         while output and output[-1].isspace():
             held.append(output.pop())
@@ -287,6 +465,7 @@ class StreamingSpeechSanitizer:
             self._format_buffer = self._format_buffer[:-remaining]
         self._last_output = self._last_output[: -len(marker)]
         self._recent_nonspace = self._recent_nonspace[: -len(marker)]
+        self._inline_scope.discard(marker)
         return True
 
     def _resolve_suppression_boundary(
@@ -411,6 +590,7 @@ class StreamingSpeechSanitizer:
             return
         for char in text:
             if char == "\n":
+                self._link_line_start = True
                 prefix = self._original_line_prefix.lstrip(" \t")
                 action, _ = self._line_prefix(
                     prefix, True, preceding_list_item=self._original_previous_list
@@ -428,17 +608,9 @@ class StreamingSpeechSanitizer:
 
     def _wrapped_bare_url(self, text: str, index: int, final: bool) -> tuple[str, int]:
         """Remove wrappers only with an adjacent URL and a matching terminal pair."""
-        wrappers = list(_URL_QUOTE_WRAPPERS)
-        if self.markdown:
-            wrappers.extend(_URL_MARKDOWN_WRAPPERS)
-            for opening, closing in _URL_QUOTE_WRAPPERS:
-                for opener, closer in _URL_MARKDOWN_WRAPPERS:
-                    wrappers.extend(
-                        (
-                            (opening + opener, closer + closing),
-                            (opener + opening, closing + closer),
-                        )
-                    )
+        wrappers = (
+            _URL_WRAPPERS_BY_INITIAL if self.markdown else _URL_QUOTES_BY_INITIAL
+        ).get(text[index], ())
         for opener, closer in wrappers:
             tail = text[index : index + len(opener) + 8]
             if not text.startswith(opener, index):
@@ -473,61 +645,9 @@ class StreamingSpeechSanitizer:
                 return "complete", end
         return "none", index
 
-    def _bare_url_wrapper_end(
-        self, output: list[str], text: str, start: int, end: int
-    ) -> int:
-        """Leave proven prose-wrapper closers for the existing formatting stage.
-
-        Inspect pending, unformatted prose only when a URL ends in delimiters.
-        The bounded lookbehind never reclassifies an unpaired URL path suffix.
-        """
-        original_end = end
-        for closer in reversed(self._link_quotes):
-            if text[start:end].endswith(closer) and not self._is_escaped(
-                text, end - len(closer)
-            ):
-                end -= len(closer)
-            else:
-                break
-        if not self.markdown or text[end - 1 : end] not in {"*", "_", "~"}:
-            return end
-        tail: list[str] = []
-        size = 0
-        for part in reversed(output):
-            size += len(part)
-            if size + len(self._format_buffer) >= self.max_buffer_chars:
-                # A truncated prefix cannot prove delimiter or code scope.
-                # Keep the suffix inside the URL rather than guessing an opener.
-                return end
-            tail.append(part)
-        prefix = self._format_buffer + "".join(reversed(tail))
-        opened: list[str] = []
-        code = self._format_code
-        for match in _URL_FORMAT_TOKENS.finditer(prefix):
-            marker = match[0]
-            if self._is_escaped(prefix, match.start(), self._format_backslashes):
-                continue
-            if marker[0] == "`":
-                code = 0 if code == len(marker) else (code or len(marker))
-                continue
-            if code or marker not in {"*", "_", "**", "__", "***", "___", "~~"}:
-                continue
-            before = prefix[match.start() - 1 : match.start()] if match.start() else ""
-            after = prefix[match.end() : match.end() + 1] or "x"
-            if opened and marker == opened[-1] and before and not before.isspace():
-                opened.pop()
-            elif not after.isspace() and (len(marker) > 1 or not before.isalnum()):
-                opened.append(marker)
-        closer = ""
-        for marker in reversed(opened):
-            closer += marker
-            if text[start:end].endswith(closer) and not self._is_escaped(
-                text, end - len(closer)
-            ):
-                boundary = end - len(closer)
-                if text[boundary - 1 : boundary] != closer[:1]:
-                    original_end = boundary
-        return min(end, original_end)
+    def _bare_url_wrapper_end(self, text: str, start: int, end: int) -> int:
+        """Use bounded lexical scope, never rescan already emitted prose."""
+        return end - self._inline_scope.url_suffix(text[start:end])
 
     @classmethod
     def _has_closer(
@@ -620,6 +740,38 @@ class StreamingSpeechSanitizer:
                 self._emit(output, char)
                 index += 1
                 continue
+
+            if self.markdown and (
+                self._link_line_start
+                or (self._pending_list_prefix and not self._pending_list_link)
+            ):
+                action, count = self._line_prefix(
+                    text, final, index, preceding_list_item=True
+                )
+                if (
+                    action == "incomplete"
+                    and not final
+                    and len(text) - index <= _FORMAT_PREFIX_LIMIT
+                ):
+                    held_whitespace = self._hold_preceding_whitespace(output)
+                    break
+                if (
+                    action == "strip"
+                    and count + len(self._pending_list_prefix) <= _FORMAT_PREFIX_LIMIT
+                ):
+                    if not self._pending_list_prefix:
+                        self._resolve_suppression_boundary(
+                            output, text, index, final=final
+                        )
+                        self._pending_list_newline = (
+                            bool(self._recent_nonspace) and not self._needs_separator
+                        )
+                    self._pending_list_prefix += text[index : index + count]
+                    self._pending_list_link = False
+                    self._link_line_start = False
+                    index += count
+                    continue
+                self._link_line_start = False
 
             if (
                 self.urls
@@ -791,7 +943,7 @@ class StreamingSpeechSanitizer:
                         index += 1
                         continue
                     lexical_end = self._bare_url_end(text, index, end)
-                    end = self._bare_url_wrapper_end(output, text, index, lexical_end)
+                    end = self._bare_url_wrapper_end(text, index, lexical_end)
                     index = self._suppress(output, end)
                     if end < lexical_end:
                         # A proved closer belongs beside its preceding prose,
@@ -804,6 +956,10 @@ class StreamingSpeechSanitizer:
             # because the provider split them across multiple deltas.
             if char.isspace() and not final and index >= trailing_whitespace_start:
                 break
+            if char == "\n" and self._pending_list_prefix and self._pending_list_link:
+                self._emit(output, char)
+                index += 1
+                continue
             skip = self._resolve_suppression_boundary(output, text, index, final=final)
             if skip is None:
                 break
@@ -843,6 +999,12 @@ class StreamingSpeechSanitizer:
             self._emit(output, self._buffer)
             self._buffer = ""
 
+        if final and self._pending_list_prefix:
+            prefix = self._pending_list_prefix
+            self._pending_list_prefix = ""
+            if not self._pending_list_link:
+                self._emit(output, prefix)
+            self._pending_list_link = False
         return "".join(output)
 
     @staticmethod
