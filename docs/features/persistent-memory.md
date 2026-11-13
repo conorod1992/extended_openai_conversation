@@ -26,8 +26,6 @@ Semantic matching remains probabilistic and should not be treated as perfect. Ch
 
 Embedding-cache saves are best effort. When cache storage reports a save failure, current validated vectors remain usable in memory and all required batches continue preparing. Diagnostics report that the cache is not persisted; a later search or memory operation can retry at most once per minute while storage reports failures. Home Assistant's native cache Store can log and swallow some file/serialization errors, which this manager cannot detect under the existing cache I/O policy. A successful cache-save call therefore does not guarantee durability; unsaved vectors may need regeneration after restart.
 
-Embedding-cache saves are best effort. When cache storage reports a save failure, current validated vectors remain usable in memory and all required batches continue preparing. Diagnostics report that the cache is not persisted; a later search or memory operation can retry at most once per minute while storage reports failures. Home Assistant's native cache Store can log and swallow some file/serialization errors, which this manager cannot detect under the existing cache I/O policy. A successful cache-save call therefore does not guarantee durability; unsaved vectors may need regeneration after restart.
-
 ## Records and reliable updates
 
 Every memory has content, category, source, and creation/update timestamps. Retrieval ranks relevance; equal scores use a stable memory ID tie-break, independent of when a fact was edited.
