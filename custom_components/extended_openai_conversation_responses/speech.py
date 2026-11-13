@@ -1179,9 +1179,10 @@ class StreamingSpeechSanitizer:
                 return "complete", url_close + 1
             # Complex destination/title syntax uses exactly the streaming
             # validator, but only within this indexed closing delimiter.
-            return StreamingSpeechSanitizer._scan_markdown_destination(
+            status, end = StreamingSpeechSanitizer._scan_markdown_destination(
                 text, url_start, True, limit=url_close
             )
+            return (status, end) if status == "complete" else (status, start)
 
         label_end = text.find("]", start + 1)
         if label_end == -1:
@@ -1190,9 +1191,10 @@ class StreamingSpeechSanitizer:
             return ("no", start) if final else ("incomplete", start)
         if text[label_end + 1] != "(":
             return "no", start
-        return StreamingSpeechSanitizer._scan_markdown_destination(
+        status, end = StreamingSpeechSanitizer._scan_markdown_destination(
             text, label_end + 2, final
         )
+        return (status, end) if status == "complete" else (status, start)
 
     @classmethod
     def _index_complete_format(
