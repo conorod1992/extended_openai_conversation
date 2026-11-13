@@ -28,7 +28,7 @@ export const GUIDE_TOPICS = [
       {type: "p", text: "Auto chooses from model capability information before sending; it does not probe the provider or retry a failure through another API. Unknown model IDs use conservative capabilities and are not assumed to support tools. For an Azure deployment with a custom name, set Azure underlying model in Basics → Advanced request settings so capability checks use the actual model ID."},
       {type: "p", text: "If you are unsure what to choose, select your model, leave API format on Auto and keep the advanced response settings at their defaults. You can change them later if you find a specific reason to."},
     ],
-    action: {label: "Open model settings", page: "assistant", section: "model-responses"},
+    action: {label: "Choose a model", page: "assistant", section: "basics"},
   },
   {
     id: "model-data",
@@ -37,10 +37,10 @@ export const GUIDE_TOPICS = [
     terms: "model data catalog catalogue capabilities refresh update bundled fallback reasoning temperature service tier",
     body: [
       {type: "p", text: "Extended OpenAI keeps model capability information separately from your agent configuration. This lets the management UI show controls such as reasoning effort, temperature, service tier, and compatible API modes only where they are expected to work."},
-      {type: "p", text: "You can refresh the model data without updating or reloading the integration. Loaded agents use refreshed capability data immediately. If the remote update is unavailable or unsuitable, you can return to the model data bundled with the installed integration."},
+      {type: "p", text: "Under Assistant → Model & responses → Model parameters, Check for updates looks for new model data without activating it. Review and explicitly Apply the available update to make its capabilities active for loaded agents without an integration reload. Recovery options → Restore bundled data returns to the installed integration\'s bundled capabilities without resetting the existing automatic-check schedule."},
       {type: "note", title: "Model data is guidance, not a provider guarantee", text: "Custom or OpenAI-compatible providers may implement a model differently from the provider the catalogue describes. If a provider rejects an option, use the settings that provider actually supports."},
     ],
-    action: {label: "Open diagnostics", page: "usage-maintenance", section: "diagnostics"},
+    action: {label: "Manage model data", page: "assistant", section: "model-responses"},
   },
   {
     id: "continuity",
@@ -64,7 +64,7 @@ export const GUIDE_TOPICS = [
     terms: "context management trim history threshold keep recent clear summarize summary long conversation tokens",
     body: [
       {type: "p", text: "Long conversations can eventually become too large or expensive to keep sending in full. Trim history after defines when Extended OpenAI reduces older history, using provider-reported input tokens when available and a conservative local estimate otherwise. Estimates are never added to provider Usage totals."},
-      {type: "list", items: ["Keep recent messages removes the oldest complete user turns while preserving the newest useful context and complete tool call/result units.","Clear all messages removes the retained conversation history when the threshold is reached.","Summarize older messages makes one bounded model request after the current reply to condense older context. The next turn waits for that summary if it is still pending, and a failed summary falls back to keeping recent messages."]},
+      {type: "list", items: ["Keep recent messages removes the oldest complete user turns while preserving the newest useful context and complete tool call/result units.","Clear all messages removes the retained conversation history when the threshold is reached.","Summarize older messages normally makes a bounded summary request after the reply, but may summarize before sending oversized prepared input. The next turn waits for a pending summary. Output-token exhaustion permits one bounded retry; if summarization still fails, the integration keeps recent messages instead."]},
       {type: "note", title: "This does not delete saved memory", text: "Context trimming changes the live conversation history sent to the model. It does not delete Persistent Memory, Temporary Memory, Knowledge Library sources, or archived conversations."},
     ],
     action: {label: "Configure context management", page: "assistant", section: "conversation"},
