@@ -77,6 +77,74 @@ def test_parser_path_fallback_validation_and_body_extraction(tmp_path: Path) -> 
     assert SkillMdParser.extract_body(_skill_text(body="  body text  ")) == "body text"
 
 
+@pytest.mark.parametrize("bom", ["", "\ufeff"], ids=["plain", "bom"])
+@pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["lf", "crlf"])
+@pytest.mark.parametrize("ending", ["", "\n", "\n\n  Body\ntext  \n"])
+def test_frontmatter_encodings_and_empty_bodies(bom, newline, ending, tmp_path):
+    """Metadata and body extraction agree, including a closing delimiter at EOF."""
+    content = bom + ("---\ndescription: Useful\n---" + ending).replace("\n", newline)
+    skill_file = tmp_path / "alpha" / "SKILL.md"
+
+    assert SkillMdParser.parse(content, skill_file, tmp_path) == Skill(
+        name="alpha", description="Useful", path=skill_file
+    )
+    assert SkillMdParser.extract_body(content) == ending.replace("\n", newline).strip()
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "\ufeff\ufeff---\ndescription: Useful\n---",
+        "\n\ufeff---\ndescription: Useful\n---",
+        "\ufeff---description: Useful\n---",
+        "\ufeff---\ndescription: Useful",
+        "\ufeff---\ndescription: Useful\n---body",
+        "\ufeff---\ndescription: Useful\n----",
+    ],
+)
+def test_malformed_frontmatter_boundaries_remain_rejected(content, tmp_path):
+    """The BOM/EOF compatibility does not admit misplaced or broken delimiters."""
+    assert SkillMdParser.parse(content, tmp_path / "alpha" / "SKILL.md", tmp_path) is None
+    assert SkillMdParser.extract_body(content) == content
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        "description: [unterminated",
+        "- item",
+        "name: alpha",
+        "description: 42",
+        "description: " + "x" * 1025,
+    ],
+)
+def test_bom_and_eof_preserve_metadata_validation(metadata, tmp_path):
+    content = f"\ufeff---\n{metadata}\n---"
+    assert SkillMdParser.parse(content, tmp_path / "alpha" / "SKILL.md", tmp_path) is None
+
+
+@pytest.mark.parametrize("bom", ["", "\ufeff"], ids=["plain", "bom"])
+@pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["lf", "crlf"])
+@pytest.mark.parametrize("ending", ["", "\n", "\nBody\n"])
+async def test_filesystem_discovery_preserves_skill_content(
+    hass, tmp_path, bom, newline, ending
+):
+    manager = SkillManager(hass)
+    manager._user_skills_dir = tmp_path / "skills"
+    skill_file = manager.user_skills_dir / "alpha" / "SKILL.md"
+    skill_file.parent.mkdir(parents=True)
+    content = bom + ("---\ndescription: Useful\n---" + ending).replace("\n", newline)
+    raw = content.encode("utf-8")
+    skill_file.write_bytes(raw)
+
+    await manager.async_load_skills()
+
+    assert manager.get_skill("alpha") == Skill("alpha", "Useful", skill_file)
+    assert skills_module.read_bounded_skill_text(skill_file) == content
+    assert SkillMdParser.extract_body(content) == ending.replace("\n", newline).strip()
+    assert skill_file.read_bytes() == raw
+
+
 @pytest.mark.asyncio
 async def test_singleton_initialization_failure_is_retryable(hass, tmp_path: Path, monkeypatch) -> None:
     """A failed first discovery does not poison the process-wide singleton."""

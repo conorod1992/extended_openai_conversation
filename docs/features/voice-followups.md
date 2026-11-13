@@ -8,6 +8,8 @@ This setting only controls responses handled by ExtendedOpenAI. Home Assistant s
 
 Always also applies to successful local intents and consumed Request Rules inside ExtendedOpenAI. Failed local handling does not request follow-up listening. These local responses keep listening disabled in HA Default and Conditional modes; Conditional requires an actual model continuation decision.
 
+The recognised Home Assistant `HassNevermind` intent is a deliberate exception: it ends immediate listening even in Always mode. Its original response and normal local completion and conversation continuity are preserved. Other successful silent intents and consumed Request Rules retain their usual follow-up behavior.
+
 ## Modes
 
 ### HA Default

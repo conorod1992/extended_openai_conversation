@@ -1716,6 +1716,70 @@ async def test_continue_mode_controls_provider_finalizer_injection(
 
 
 @pytest.mark.parametrize("api_mode", [API_MODE_RESPONSES, API_MODE_CHAT_COMPLETIONS])
+async def test_captured_rule_punctuation_reaches_final_provider_input(
+    hass, monkeypatch, api_mode
+):
+    """The raw capture omits '?'; preview and both provider payloads restore it."""
+    from contextlib import nullcontext
+
+    from custom_components.extended_openai_conversation_responses import (
+        conversation as conversation_module,
+    )
+    from custom_components.extended_openai_conversation_responses.const import (
+        CONF_CONTINUE_CONVERSATION,
+    )
+    from custom_components.extended_openai_conversation_responses.request_rule_match_preview import (
+        async_request_rule_match_preview,
+    )
+    from custom_components.extended_openai_conversation_responses.request_rules import (
+        RequestRuleRuntime,
+        RequestRules,
+    )
+    from tests.test_conversation_orchestration import _assist_fixture
+    from tests.test_request_rule_packs import captured_routing_rule
+    from tests.test_request_rules import MemoryStore
+
+    text = "deep think why is the sky blue?"
+    entity, invoke, _, _ = _assist_fixture(monkeypatch)
+    entity.hass = hass
+    stream = _control_stream(
+        api_mode,
+        CONTINUE_CONVERSATION_TOOL_NAME,
+        {"response": "Scattered sunlight", "continue_conversation": False},
+    )
+    provider_entity, _, create = _control_entity(hass, api_mode, [stream])
+    entity.entry.runtime_data = provider_entity.entry.runtime_data
+    entity.subentry.data.update(provider_entity.subentry.data)
+    entity.subentry.data[CONF_CONTINUE_CONVERSATION] = CONTINUE_CONVERSATION_CONDITIONAL
+    del entity._async_handle_chat_log
+    rules = RequestRules(MemoryStore({"rules": [captured_routing_rule()]}))
+    await rules.async_initialize()
+    entity._request_rules = rules
+    entity._request_rule_runtime = RequestRuleRuntime()
+
+    def chat_log(_hass, _session, user_input):
+        log = conversation.ChatLog(hass, "conversation-id")
+        log.async_add_user_content(conversation.UserContent(content=user_input.text))
+        return nullcontext(log)
+
+    monkeypatch.setattr(conversation_module, "async_get_chat_log", chat_log)
+    assert rules.match(text).slots == {"question": "why is the sky blue"}
+    preview = await async_request_rule_match_preview(hass, rules, text)
+    assert preview["matched_rules"][0]["ai_input"]["provider_input"] == "why is the sky blue?"
+    create.assert_not_awaited()
+
+    result = await invoke(text)
+
+    assert result.response.error_code is None
+    create.assert_awaited_once()
+    request = create.await_args.kwargs
+    messages = request["input" if api_mode == API_MODE_RESPONSES else "messages"]
+    user_messages = [message for message in messages if message.get("role") == "user"]
+    assert len(user_messages) == 1
+    assert user_messages[0]["content"] == "why is the sky blue?"
+
+
+@pytest.mark.parametrize("api_mode", [API_MODE_RESPONSES, API_MODE_CHAT_COMPLETIONS])
 @pytest.mark.parametrize(
     "arguments",
     [{"response": "Done"}, {"response": "Done", "continue_conversation": "yes"}],
