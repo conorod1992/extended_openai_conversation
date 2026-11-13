@@ -16,7 +16,7 @@ delay:
   additionalProperties: false
 ```
 
-For example, `"delay": {"minutes": 10}` schedules the configured operation for later. The integration removes this scheduling object before passing the other arguments to the implementation. A non-object parameter named `delay` remains an ordinary tool argument. Home Assistant LLM Tool references cannot use this scheduler.
+For example, `"delay": {"minutes": 10}` schedules the configured operation for later. The integration removes this scheduling object before passing the other arguments to the implementation. A recognized delay containing only zero, null, or omitted duration fields executes immediately and returns the actual result or error. A non-object parameter named `delay` remains an ordinary tool argument. Home Assistant LLM Tool references cannot use this scheduler.
 
 ## What happens if Home Assistant restarts?
 
@@ -28,6 +28,28 @@ reloads verified pending calls and resumes their timers. Calls that crossed the
 durable execution boundary are excluded from recovery.
 
 If Home Assistant stops at a point where the action may already have begun, Extended OpenAI does **not** automatically run it again after restart. This avoids accidentally performing the same real-world action twice when the earlier result is uncertain. In technical terms, delayed execution follows an at-most-once restart boundary.
+
+## Overdue actions and clock changes
+
+New delayed calls expire 15 minutes after their scheduled UTC time. Calls still
+pending at or after that deadline are cancelled without execution, including
+after downtime, agent retries, or maintenance waits. If storage cannot persist
+the cancellation, it is retried; expired work is never executed as a fallback.
+The deadline is saved with each job and does not change on restart or tool edits.
+
+For actions that should still be attempted after a long outage, set
+`delay_catch_up: true` at the top level of that Function Tool's YAML, alongside
+`spec`, `function`, and `enabled`. This administrator-controlled option applies
+to new jobs only and preserves eventual execution subject to the normal
+validation and bounded agent-reload retries. It is not a model argument and does
+not change the function definition fingerprint. Omitted or false uses the
+15-minute grace period. Existing saved jobs without an expiry deadline keep
+their original eventual-execution semantics.
+
+Waiters resample the wall clock at least every 30 seconds and recheck it after
+maintenance and authorization waits, immediately before persisting execution.
+Backward clock corrections postpone execution; forward corrections make due or
+expired work eligible for processing within the bounded polling interval.
 
 ## Permission is checked again when the action is due
 

@@ -136,10 +136,13 @@ async def test_scheduled_waiter_drops_request_context_after_edit_and_revert(
         lambda _data: [tool],
     )
     sleeping, due = asyncio.Event(), asyncio.Event()
+    clock = [dt_util.utcnow()]
+    monkeypatch.setattr(dt_util, "utcnow", lambda: clock[0])
 
-    async def wait_until_due(_delay):
+    async def wait_until_due(delay):
         sleeping.set()
         await due.wait()
+        clock[0] += timedelta(seconds=delay)
 
     monkeypatch.setattr(
         "custom_components.extended_openai_conversation_responses.delayed_tools.asyncio.sleep",
@@ -592,7 +595,7 @@ async def test_late_jobs_rejected_before_start_do_not_warn(
     if rejection == "persistence":
         monkeypatch.setattr(
             manager,
-            "_async_replace_record",
+            "_async_claim_due",
             AsyncMock(side_effect=OSError("unavailable")),
         )
     await manager._async_execute_due(record.call_id)

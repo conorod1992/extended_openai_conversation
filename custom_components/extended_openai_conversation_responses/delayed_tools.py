@@ -51,6 +51,8 @@ MAX_DELAYED_CALLS = 256
 MAX_DELAYED_CALLS_PER_AGENT = 32
 MAX_DELAYED_ARGUMENT_BYTES = 16384
 _AGENT_RETRY_SECONDS = 30
+_CLOCK_RECHECK_SECONDS = 30
+_DEFAULT_GRACE_SECONDS = 15 * 60
 _MAX_AGENT_RETRIES = 10
 _PENDING = "pending"
 _EXECUTING = "executing"
@@ -152,6 +154,8 @@ class DelayedToolCall:
     retry_count: int = 0
     definition_fingerprint: str | None = None
     satellite_id: str | None = None
+    # Missing/null means eventual execution, including all pre-expiry jobs.
+    expires_at: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         """Serialize the call for Home Assistant storage."""
@@ -159,6 +163,8 @@ class DelayedToolCall:
         if self.satellite_id is None:
             # Preserve legacy queue shape when there is no physical origin.
             payload.pop("satellite_id")
+        # Persist an explicit null for eventual execution. Missing metadata from
+        # older queues loads with the same semantics, never today's default.
         return payload
 
     @classmethod
@@ -195,6 +201,18 @@ class DelayedToolCall:
         user_id = raw.get("user_id")
         device_id = raw.get("device_id")
         satellite_id = raw.get("satellite_id")
+        expires_at = raw.get("expires_at")
+        if expires_at is not None:
+            if not isinstance(expires_at, str):
+                raise ValueError("stored delayed call has invalid expires_at")
+            expiry = dt_util.parse_datetime(expires_at)
+            due = dt_util.parse_datetime(raw["due_at"])
+            if (
+                expiry is None
+                or due is None
+                or dt_util.as_utc(expiry) < dt_util.as_utc(due)
+            ):
+                raise ValueError("stored delayed call has invalid expires_at timestamp")
         fingerprint = raw.get("definition_fingerprint")
         if fingerprint is not None and (
             not isinstance(fingerprint, str)
@@ -222,6 +240,7 @@ class DelayedToolCall:
             retry_count=retry_count,
             definition_fingerprint=fingerprint,
             satellite_id=satellite_id,
+            expires_at=expires_at,
         )
 
 
@@ -438,6 +457,9 @@ class DelayedToolManager:
             execution_delay if execution_delay is not None else arguments.get("delay")
         )
         now = dt_util.utcnow()
+        catch_up = (function_tool or {}).get("delay_catch_up", False)
+        if not isinstance(catch_up, bool):
+            raise HomeAssistantError("Function Tool delay_catch_up must be a boolean")
         context = getattr(llm_context, "context", None)
         record = None
         from .execution_outcomes import execution_operation
@@ -460,6 +482,11 @@ class DelayedToolManager:
                     tool_name=tool_name,
                     arguments=deepcopy(arguments),
                     due_at=(now + delay).isoformat(),
+                    expires_at=None
+                    if catch_up
+                    else (
+                        now + delay + timedelta(seconds=_DEFAULT_GRACE_SECONDS)
+                    ).isoformat(),
                     created_at=now.isoformat(),
                     user_id=getattr(context, "user_id", None),
                     device_id=getattr(llm_context, "device_id", None),
@@ -632,11 +659,13 @@ class DelayedToolManager:
                         return
                     await asyncio.sleep(_AGENT_RETRY_SECONDS)
                     continue
-                await asyncio.sleep(
-                    max(
-                        0.0, (dt_util.as_utc(due_at) - dt_util.utcnow()).total_seconds()
-                    )
-                )
+                remaining = (dt_util.as_utc(due_at) - dt_util.utcnow()).total_seconds()
+                if remaining > 0:
+                    # asyncio sleeps against a monotonic clock. Bound the wait
+                    # and resample wall time for both forward and backward jumps.
+                    await asyncio.sleep(min(remaining, _CLOCK_RECHECK_SECONDS))
+                    continue
+                await asyncio.sleep(0)
                 record = self._records.get(call_id)
                 if record is None or record.status != _PENDING:
                     return
@@ -676,6 +705,19 @@ class DelayedToolManager:
         record = self._records.get(call_id)
         if record is None or record.status != _PENDING:
             return False
+
+        due_at = dt_util.parse_datetime(record.due_at)
+        if due_at is None:
+            return not await self._async_discard(call_id, "invalid due timestamp")
+        now = dt_util.utcnow()
+        if dt_util.as_utc(due_at) > now:
+            return True
+        if record.expires_at is not None:
+            expiry = dt_util.parse_datetime(record.expires_at)
+            if expiry is None or now >= dt_util.as_utc(expiry):
+                return not await self._async_discard(
+                    call_id, "execution grace period expired"
+                )
 
         with bind_active_ha_context(Context(user_id=record.user_id)):
             entry = self.hass.config_entries.async_get_entry(record.entry_id)
@@ -744,15 +786,16 @@ class DelayedToolManager:
                     call_id, f"Function Tool is unavailable: {err}"
                 )
 
-            executing = replace(record, status=_EXECUTING)
             try:
-                await self._async_replace_record(executing)
+                claimed, retry = await self._async_claim_due(call_id)
             except Exception:
                 _LOGGER.exception(
                     "Unable to persist execution boundary for delayed Function Tool `%s`",
                     record.tool_name,
                 )
                 return True
+            if not claimed:
+                return retry
 
             execution_context = Context(user_id=record.user_id)
             delayed_context = SimpleNamespace(
@@ -803,6 +846,38 @@ class DelayedToolManager:
             finally:
                 await self._async_finalize(call_id)
             return False
+
+    async def _async_claim_due(self, call_id: str) -> tuple[bool, bool]:
+        """Check time and cancellation under the storage lock before claiming work.
+
+        Authorization and maintenance/storage gate waits can cross either clock
+        boundary. An expired pending call is only removed transactionally; a
+        failed removal propagates to the waiter's retry path, never execution.
+        """
+        async with self._lock:
+            record = self._records.get(call_id)
+            if record is None or record.status != _PENDING:
+                return False, False
+            now = dt_util.utcnow()
+            due = dt_util.parse_datetime(record.due_at)
+            if due is None:
+                raise ValueError("invalid due timestamp")
+            if dt_util.as_utc(due) > now:
+                return False, True
+            updated = dict(self._records)
+            if record.expires_at is not None:
+                expiry = dt_util.parse_datetime(record.expires_at)
+                if expiry is None or now >= dt_util.as_utc(expiry):
+                    updated.pop(call_id)
+                    await self._async_save_records_transactionally(updated)
+                    _LOGGER.info(
+                        "Cancelled delayed Function Tool `%s`: execution grace period expired",
+                        record.tool_name,
+                    )
+                    return False, False
+            updated[call_id] = replace(record, status=_EXECUTING)
+            await self._async_save_records_transactionally(updated)
+            return True, False
 
     async def _async_retry_agent(self, record: DelayedToolCall) -> bool:
         """Retry a transient agent reload without losing the persisted call."""
