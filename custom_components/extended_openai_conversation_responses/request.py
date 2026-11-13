@@ -6,7 +6,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 import json
 import logging
+import re
 from typing import Any
+from urllib.parse import unquote
 
 from homeassistant.exceptions import HomeAssistantError
 
@@ -178,7 +180,7 @@ def canonical_json(value: Any) -> str:
 
 
 def _has_optional_properties(schema: Any) -> bool:
-    """Inspect schema positions only, including referenced definitions.
+    """Inspect reachable schema positions, following bounded local pointers.
 
     Responses' default normalization also changes optional nested properties.
     Do not interpret annotation/default data as schema or rewrite nullability.
@@ -189,7 +191,46 @@ def _has_optional_properties(schema: Any) -> bool:
         node = pending.pop()
         if not isinstance(node, dict) or id(node) in seen:
             continue
+        if len(seen) >= 512:
+            return True  # Unproved scope keeps the conservative opt-out.
         seen.add(id(node))
+        if node is not schema and any(
+            isinstance(node.get(key), str) for key in ("$id", "id")
+        ):
+            return True  # Embedded resource resolution is deliberately unsupported.
+        if "$dynamicRef" in node or "$recursiveRef" in node:
+            return True
+        if "$ref" in node:
+            reference = node["$ref"]
+            if not isinstance(reference, str) or not reference.startswith("#"):
+                return True
+            try:
+                if re.search(r"%(?![0-9a-fA-F]{2})", reference):
+                    return True
+                pointer = unquote(reference[1:], errors="strict")
+                if pointer and (
+                    not pointer.startswith("/") or re.search(r"~(?:[^01]|$)", pointer)
+                ):
+                    return True
+                parts = pointer[1:].split("/") if pointer else []
+                if len(parts) > 32:
+                    return True
+                target = schema
+                for part in parts:
+                    key = part.replace("~1", "/").replace("~0", "~")
+                    if (
+                        isinstance(target, list)
+                        and re.fullmatch(r"0|[1-9][0-9]*", key) is None
+                    ):
+                        return True
+                    target = (
+                        target[int(key)] if isinstance(target, list) else target[key]
+                    )
+                if not isinstance(target, (dict, bool)):
+                    return True
+                pending.append(target)
+            except KeyError, IndexError, TypeError, ValueError, UnicodeError:
+                return True
         properties = node.get("properties")
         if isinstance(properties, dict):
             required = node.get("required", [])
@@ -198,8 +239,6 @@ def _has_optional_properties(schema: Any) -> bool:
         for key in (
             "properties",
             "patternProperties",
-            "$defs",
-            "definitions",
             "dependentSchemas",
             "dependencies",
         ):
