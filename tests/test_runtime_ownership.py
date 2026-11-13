@@ -11,7 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from custom_components.extended_openai_conversation_responses.scope import user_scope
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import ANY, AsyncMock, Mock
 
 import pytest
 
@@ -229,7 +229,7 @@ async def test_live_memory_gate_and_embedding_provider(runtime_agent):
     }
     await agent._async_retrieve_memories(None, "query")
     agent._memory.set_embedding_provider.assert_called_with(
-        MemoryEmbeddingProvider(agent._async_create_embeddings, "changed"), "changed", space_id=agent._memory.set_embedding_provider.call_args.kwargs["space_id"]
+        MemoryEmbeddingProvider(agent._async_create_embeddings, "changed"), "changed", space_id=agent._memory.set_embedding_provider.call_args.kwargs["space_id"], retry_identity=ANY
     )
 
 

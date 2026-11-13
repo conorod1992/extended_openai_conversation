@@ -226,7 +226,10 @@ def test_specific_provider_evidence_guides_user(code, category, guidance) -> Non
     assert provider_failure_category(generic) != "model_unavailable"
 
 
-async def test_memory_fallback_records_cause_once_and_recovery(caplog) -> None:
+async def test_memory_fallback_records_cause_once_and_recovery(caplog, monkeypatch) -> None:
+    from custom_components.extended_openai_conversation_responses import memory as memory_module
+    now = 100.0
+    monkeypatch.setattr(memory_module, "monotonic", lambda: now)
     caplog.set_level(logging.DEBUG)
     memory = PersistentMemory(FakeStorage())
     await memory.async_initialize()
@@ -243,6 +246,9 @@ async def test_memory_fallback_records_cause_once_and_recovery(caplog) -> None:
     assert SECRET not in caplog.text
     provider.side_effect = None
     provider.return_value = [[1.0, 0.0]]
+    assert await memory.async_prepare_hybrid(["scope"], SECRET) is None
+    assert provider.await_count == 1
+    now += memory_module.HYBRID_RETRY_INITIAL_SECONDS
     assert await memory.async_prepare_hybrid(["scope"], SECRET) == [1.0, 0.0]
     assert "semantic retrieval recovered" in caplog.text
 

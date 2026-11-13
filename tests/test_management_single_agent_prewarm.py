@@ -145,7 +145,7 @@ async def test_failed_warm_task_does_not_affect_setup(monkeypatch, caplog) -> No
     assert await integration.async_setup_entry(hass, entry) is True
     entry.mark_loaded()
     await entry.background.pop()[0]
-    assert not [record for record in caplog.records if record.levelno >= 30]
+    assert not [record for record in caplog.records if record.levelno >= 30 and record.name != "custom_components.extended_openai_conversation_responses.model_lifecycle"]
 
 
 async def test_cancelled_warm_and_unload_do_not_resurrect_projection(

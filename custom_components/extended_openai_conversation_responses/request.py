@@ -164,7 +164,7 @@ class ProviderRequestSnapshot:
     api_kwargs: dict[str, Any]
     provider_tools: tuple[dict[str, Any], ...]
     structured_outputs: bool = False
-    reasoning_supported: bool = False
+    reasoning_items_supported: bool = False
 
 
 def canonical_json(value: Any) -> str:
@@ -540,9 +540,13 @@ def build_provider_request_snapshot(
             if effort is not None:
                 if api_mode == API_MODE_RESPONSES:
                     api_kwargs["reasoning"] = {"effort": effort}
-                    api_kwargs["include"] = ["reasoning.encrypted_content"]
                 else:
                     api_kwargs["reasoning_effort"] = effort
+
+            if api_mode == API_MODE_RESPONSES and capabilities.get(
+                "uses_reasoning_tokens", capabilities["reasoning"]["supported"]
+            ):
+                api_kwargs["include"] = ["reasoning.encrypted_content"]
 
             temperature = _sampling_value(options, model, CONF_TEMPERATURE, effort)
             if temperature is not None:
@@ -570,7 +574,11 @@ def build_provider_request_snapshot(
         api_kwargs,
         (provider_tool,) if provider_tool is not None else (),
         capabilities["structured_outputs"],
-        reasoning_supported=capabilities["reasoning"]["supported"],
+        reasoning_items_supported=bool(
+            capabilities.get(
+                "uses_reasoning_tokens", capabilities["reasoning"]["supported"]
+            )
+        ),
     )
 
 

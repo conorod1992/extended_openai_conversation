@@ -1,7 +1,7 @@
 """Tests for non-sensitive integration diagnostics."""
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -247,6 +247,7 @@ async def test_agent_startup_initializes_enabled_conversation_subsystems(
         space_id=dependencies.memory.set_embedding_provider.call_args.kwargs[
             "space_id"
         ],
+        retry_identity=ANY,
     )
     assert (
         len(dependencies.memory.set_embedding_provider.call_args.kwargs["space_id"])

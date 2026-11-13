@@ -42,7 +42,7 @@ from .persistence_hardening import (
     _async_settle_transactional_save,
 )
 from .provider_errors import provider_failure_category, provider_log_remediation
-from .retrieval_text import _stem
+from .retrieval_text import _stem, bounded_phrase, ordered_term_phrase
 from .scope import LEGACY_ANONYMOUS_SCOPE_ID
 from .storage_namespaces import MEMORY_PREFIX as STORAGE_KEY_PREFIX
 from .strict_store import PropagatingWriteStore, async_storage_lock
@@ -53,6 +53,8 @@ STORAGE_VERSION = 2
 
 EMBEDDING_CACHE_VERSION = 1
 EMBEDDING_CACHE_BATCH_SIZE = 64
+HYBRID_RETRY_INITIAL_SECONDS = 30.0
+HYBRID_RETRY_MAX_SECONDS = 300.0
 EMBEDDING_CACHE_RETRY_SECONDS = 60
 ANONYMOUS_USER_ID = LEGACY_ANONYMOUS_SCOPE_ID
 MAX_MEMORIES_PER_AGENT = 10_000
@@ -265,6 +267,9 @@ class PersistentMemory:
         self._embedding_cache: dict[str, EmbeddingCacheEntry] = {}
         self._embedding_cache_dirty = False
         self._embedding_cache_write_failed = False
+        self._embedding_retry_identity: object = None
+        self._hybrid_retry_at = 0.0
+        self._hybrid_retry_delay = 0.0
         self._embedding_cache_retry_at = 0.0
         self._hybrid_status: dict[str, Any] = {
             "configured": False,
@@ -315,16 +320,25 @@ class PersistentMemory:
         model: str = "default",
         *,
         space_id: str = "",
+        retry_identity: object = None,
     ) -> None:
         """Configure the optional provider used only by hybrid retrieval."""
+        # This runtime-only identity must never enter vectors or diagnostics.
         model = str(model).strip() or "default"
-        # Unchanged live configuration must preserve diagnostics and avoid prewarming.
-        if (
-            self._embedding_provider == provider
-            and self._embedding_model == model
-            and self._embedding_space_id == space_id
-        ):
+        identity = (
+            model,
+            space_id,
+            retry_identity if retry_identity is not None else provider,
+        )
+        if identity == self._embedding_retry_identity:
+            # Equality identifies equivalent wrappers. Retain their object identity
+            # so a repeated sync cannot retire a valid in-flight retrieval. A new
+            # entity/callback must still bind even when its retry identity matches.
+            if self._embedding_provider != provider:
+                self._embedding_provider = provider
             return
+        self._embedding_retry_identity = identity
+        self._hybrid_retry_at = self._hybrid_retry_delay = 0.0
         self._embedding_provider = provider
         self._embedding_model = model
         self._embedding_space_id = space_id
@@ -335,7 +349,12 @@ class PersistentMemory:
 
     def hybrid_status(self) -> dict[str, Any]:
         """Return non-sensitive hybrid-retrieval availability diagnostics."""
-        return dict(self._hybrid_status)
+        return {
+            **self._hybrid_status,
+            "retry_after_seconds": max(
+                0, math.ceil(self._hybrid_retry_at - monotonic())
+            ),
+        }
 
     async def async_add(
         self,
@@ -612,6 +631,7 @@ class PersistentMemory:
         query_embedding: list[float] | None = None,
         hybrid: bool = False,
         offset: int = 0,
+        allow_fuzzy_only: bool = True,
     ) -> list[MemoryRecord]:
         """Return deterministic BM25-style lexical or hybrid results."""
         limit = max(1, min(limit, MAX_LIST_LIMIT))
@@ -639,6 +659,7 @@ class PersistentMemory:
             cache,
             model,
             space,
+            allow_fuzzy_only,
         )
         async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
@@ -656,10 +677,15 @@ class PersistentMemory:
         if self._embedding_provider is None:
             self._set_hybrid_status("lexical_fallback", "provider_not_configured")
             return None
+        if monotonic() < self._hybrid_retry_at:
+            return None
+        attempt_identity = self._embedding_retry_identity
+        attempt_provider = self._embedding_provider
         try:
             if not await self._async_refresh_missing_embeddings(scope_ids):
                 self._set_hybrid_status(
-                    "lexical_fallback", "embedding_preparation_failed"
+                    "lexical_fallback",
+                    "embedding_preparation_failed",
                 )
                 return None
             provider = self._embedding_provider
@@ -673,6 +699,7 @@ class PersistentMemory:
                 self._embedding_provider is not provider
                 or self._embedding_model != model
                 or self._embedding_space_id != space_id
+                or self._embedding_retry_identity != attempt_identity
             ):
                 self._set_hybrid_status("lexical_fallback", "provider_changed")
                 return None
@@ -681,6 +708,7 @@ class PersistentMemory:
                     "embedding provider returned the wrong number of vectors"
                 )
             vector = _clean_embedding(vectors[0])
+            self._hybrid_retry_at = self._hybrid_retry_delay = 0.0
             self._set_hybrid_status(
                 "active",
                 "embedding_cache_not_persisted"
@@ -689,6 +717,16 @@ class PersistentMemory:
             )
             return vector
         except Exception as err:
+            if (
+                attempt_identity != self._embedding_retry_identity
+                or attempt_provider is not self._embedding_provider
+            ):
+                return None
+            self._hybrid_retry_delay = min(
+                HYBRID_RETRY_MAX_SECONDS,
+                max(HYBRID_RETRY_INITIAL_SECONDS, self._hybrid_retry_delay * 2),
+            )
+            self._hybrid_retry_at = monotonic() + self._hybrid_retry_delay
             reason = provider_failure_category(err)
             changed = (
                 self._hybrid_status.get("status") != "lexical_fallback"
@@ -1331,6 +1369,7 @@ class PersistentMemory:
             return False
         model = self._embedding_model
         space_id = self._embedding_space_id
+        retry_identity = self._embedding_retry_identity
         allowed_scopes = set(scope_ids)
         async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
@@ -1353,6 +1392,7 @@ class PersistentMemory:
                     self._embedding_provider is not provider
                     or self._embedding_model != model
                     or self._embedding_space_id != space_id
+                    or self._embedding_retry_identity != retry_identity
                 ):
                     return False
                 for memory, vector in zip(batch, vectors, strict=True):
@@ -1388,6 +1428,7 @@ class PersistentMemory:
                 self._embedding_provider is not provider
                 or self._embedding_model != model
                 or self._embedding_space_id != space_id
+                or self._embedding_retry_identity != retry_identity
             ):
                 return False
             await async_settle_owned_operation(
@@ -1965,6 +2006,7 @@ def _rank_memory_snapshot(
     embedding_cache: Mapping[str, EmbeddingCacheEntry],
     embedding_model: str,
     embedding_space_id: str,
+    allow_fuzzy_only: bool = True,
 ) -> list[MemoryRecord]:
     """Rank an immutable generation without holding the live store lock."""
     query_terms = _token_list(query)
@@ -1999,11 +2041,12 @@ def _rank_memory_snapshot(
         if (
             normalized_query
             and query_tokens & token_set
-            and normalized_query in normalized_content
+            and bounded_phrase(normalized_query, normalized_content)
         ):
             lexical += 0.35
-        elif len(query_terms) > 1 and " ".join(query_terms) in " ".join(terms):
+        elif len(query_terms) > 1 and ordered_term_phrase(query_terms, terms):
             lexical += 0.18
+        genuine_lexical = lexical
         if lexical <= 0:
             lexical = _fuzzy_relevance(query_tokens, token_set)
         semantic = (
@@ -2021,7 +2064,8 @@ def _rank_memory_snapshot(
             semantic = max(0.0, semantic)
             relevance = 0.58 * lexical + 0.42 * semantic
         if not (
-            lexical >= MIN_LEXICAL_RELEVANCE_SCORE
+            (lexical if allow_fuzzy_only else genuine_lexical)
+            >= MIN_LEXICAL_RELEVANCE_SCORE
             or (semantic is not None and semantic >= MIN_SEMANTIC_SIMILARITY)
         ):
             continue

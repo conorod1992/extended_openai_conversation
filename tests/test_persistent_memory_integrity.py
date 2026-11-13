@@ -479,13 +479,15 @@ async def test_keyed_upsert_embedding_invalidation_tracks_embedded_fields_only()
     ]
 
 
-async def test_hybrid_status_reports_configuration_fallback_and_recovery() -> None:
+async def test_hybrid_status_reports_configuration_fallback_and_recovery(monkeypatch) -> None:
+    monkeypatch.setattr(memory_module, "monotonic", lambda: 100.0)
     memory = await _memory()
     assert memory.hybrid_status() == {
         "configured": False,
         "status": "lexical_fallback",
         "model": "default",
         "reason": "provider_not_configured",
+        "retry_after_seconds": 0,
     }
 
     async def failing(_inputs: list[str]) -> list[list[float]]:
@@ -499,6 +501,7 @@ async def test_hybrid_status_reports_configuration_fallback_and_recovery() -> No
         "model": "test-model",
         "reason": "provider_error",
         "error_type": "OSError",
+        "retry_after_seconds": 30,
     }
 
     async def working(inputs: list[str]) -> list[list[float]]:
@@ -509,12 +512,14 @@ async def test_hybrid_status_reports_configuration_fallback_and_recovery() -> No
         "configured": True,
         "status": "ready",
         "model": "second-model",
+        "retry_after_seconds": 0,
     }
     assert await memory.async_prepare_hybrid(["alice"], "breed") == [1.0, 0.0]
     assert memory.hybrid_status() == {
         "configured": True,
         "status": "active",
         "model": "second-model",
+        "retry_after_seconds": 0,
     }
 
 

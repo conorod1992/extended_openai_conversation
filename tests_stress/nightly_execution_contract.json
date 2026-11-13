@@ -3216,7 +3216,23 @@
     "tests_real_ha/test_intercom_voice_acceptance.py::test_unmatched_or_disabled_command_never_uses_generic_hass_broadcast[targeted]",
     "tests_real_ha/test_intercom_voice_acceptance.py::test_unmatched_or_disabled_command_never_uses_generic_hass_broadcast[timed]",
     "tests_real_ha/test_intercom_voice_acceptance.py::test_pending_builtin_admission_rechecks_live_policy[guest]",
-    "tests_real_ha/test_intercom_voice_acceptance.py::test_pending_builtin_admission_rechecks_live_policy[shortcut]"
+    "tests_real_ha/test_intercom_voice_acceptance.py::test_pending_builtin_admission_rechecks_live_policy[shortcut]",
+    "tests/test_openai_sdk_error_matrix.py::test_real_sdk_open_body_interruption[False-ReadError-responses]",
+    "tests/test_openai_sdk_error_matrix.py::test_real_sdk_open_body_interruption[False-ReadError-chat_completions]",
+    "tests/test_openai_sdk_error_matrix.py::test_real_sdk_open_body_interruption[False-RemoteProtocolError-responses]",
+    "tests/test_openai_sdk_error_matrix.py::test_real_sdk_open_body_interruption[False-RemoteProtocolError-chat_completions]",
+    "tests/test_openai_sdk_error_matrix.py::test_real_sdk_open_body_interruption[False-ReadTimeout-responses]",
+    "tests/test_openai_sdk_error_matrix.py::test_real_sdk_open_body_interruption[False-ReadTimeout-chat_completions]",
+    "tests/test_openai_sdk_error_matrix.py::test_real_sdk_open_body_interruption[False-CancelledError-responses]",
+    "tests/test_openai_sdk_error_matrix.py::test_real_sdk_open_body_interruption[False-CancelledError-chat_completions]",
+    "tests/test_openai_sdk_error_matrix.py::test_real_sdk_open_body_interruption[True-ReadError-responses]",
+    "tests/test_openai_sdk_error_matrix.py::test_real_sdk_open_body_interruption[True-ReadError-chat_completions]",
+    "tests/test_openai_sdk_error_matrix.py::test_real_sdk_open_body_interruption[True-RemoteProtocolError-responses]",
+    "tests/test_openai_sdk_error_matrix.py::test_real_sdk_open_body_interruption[True-RemoteProtocolError-chat_completions]",
+    "tests/test_openai_sdk_error_matrix.py::test_real_sdk_open_body_interruption[True-ReadTimeout-responses]",
+    "tests/test_openai_sdk_error_matrix.py::test_real_sdk_open_body_interruption[True-ReadTimeout-chat_completions]",
+    "tests/test_openai_sdk_error_matrix.py::test_real_sdk_open_body_interruption[True-CancelledError-responses]",
+    "tests/test_openai_sdk_error_matrix.py::test_real_sdk_open_body_interruption[True-CancelledError-chat_completions]"
   ],
   "browser": {
     "browser": [
