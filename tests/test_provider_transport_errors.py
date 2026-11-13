@@ -5,6 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from custom_components.extended_openai_conversation_responses import async_setup_entry
@@ -38,11 +39,21 @@ from homeassistant.exceptions import ConfigEntryNotReady
     ("raw_error", "expected_message"),
     [
         (TimeoutError("upstream secret timeout detail"), "Provider request timed out"),
-        (ConnectionResetError("upstream secret connection detail"), "Could not connect to provider"),
+        (httpx.ReadTimeout("secret timeout detail"), "Provider request timed out"),
+        (httpx.ReadError("secret read detail"), "Could not connect to provider"),
+        (
+            httpx.RemoteProtocolError("secret protocol detail"),
+            "Could not connect to provider",
+        ),
+        (
+            ConnectionResetError("upstream secret connection detail"),
+            "Could not connect to provider",
+        ),
     ],
 )
 def test_standard_transport_errors_normalize_safely(
-    raw_error: TimeoutError | ConnectionError, expected_message: str
+    raw_error: TimeoutError | ConnectionError | httpx.RequestError,
+    expected_message: str,
 ) -> None:
     """Raw standard transport failures become bounded provider errors."""
     error = provider_transport_error(raw_error)

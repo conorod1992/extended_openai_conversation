@@ -4,26 +4,27 @@ import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-import pytest
 from openai.types.responses import (
     Response,
-    ResponseReasoningItem,
+    ResponseCompletedEvent,
     ResponseFunctionToolCall,
-    ResponseOutputMessage,
     ResponseOutputItemAddedEvent,
     ResponseOutputItemDoneEvent,
-    ResponseCompletedEvent,
+    ResponseOutputMessage,
+    ResponseReasoningItem,
     ResponseTextDeltaEvent,
 )
-from homeassistant.components import conversation
-from homeassistant.exceptions import HomeAssistantError
+import pytest
+
 from custom_components.extended_openai_conversation_responses.entity import (
-    ExtendedOpenAIBaseLLMEntity,
     CONTINUE_CONVERSATION_TOOL_NAME,
+    ExtendedOpenAIBaseLLMEntity,
 )
 from custom_components.extended_openai_conversation_responses.ha_tool_result_compat import (
     make_tool_result_content,
 )
+from homeassistant.components import conversation
+from homeassistant.exceptions import HomeAssistantError
 from tests.test_responses_api import FakeStream
 
 
@@ -383,3 +384,89 @@ async def test_finalizer_result_never_leaves_a_completed_turn_awaiting_response(
             sum(getattr(content, "content", None) == answer for content in log.content)
             == 1
         )
+
+
+@pytest.mark.parametrize("model", ["o3-pro", "o3-pro-2025-06-10"])
+@pytest.mark.parametrize("azure", [False, True])
+async def test_o3_pro_replays_reasoning_without_adjustable_effort(hass, model, azure):
+    from custom_components.extended_openai_conversation_responses.request import (
+        build_provider_request_snapshot,
+    )
+
+    obj, client = entity(
+        hass,
+        [
+            Response.model_construct(
+                id="first",
+                status="completed",
+                usage=None,
+                output=[reasoning("rs_saved"), call("effect", "business")],
+            ),
+            Response.model_construct(
+                id="answer",
+                status="completed",
+                usage=None,
+                output=[message("msg_answer", "Done")],
+            ),
+            events([message("msg_next", "Next")]),
+            Response.model_construct(
+                id="again",
+                status="completed",
+                usage=None,
+                output=[message("msg_again", "Again")],
+            ),
+        ],
+    )
+    obj.entry.data = {"api_provider": "azure"} if azure else {}
+    obj.subentry.data = {
+        "chat_model": "deployment" if azure else model,
+        "api_mode": "responses",
+        "reasoning_effort": "low" if azure else "none",
+    }
+    if azure:
+        obj.subentry.data["azure_model"] = model
+    snapshot = build_provider_request_snapshot(obj.subentry.data, obj.entry.data)
+    assert snapshot.reasoning_items_supported
+    assert snapshot.api_kwargs["include"] == ["reasoning.encrypted_content"]
+    assert snapshot.api_kwargs["store"] is False
+    if not azure:
+        assert "reasoning" not in snapshot.api_kwargs
+    obj._execute_function_tool = AsyncMock(
+        return_value=make_tool_result_content(
+            agent_id=obj.entity_id,
+            tool_call_id="business",
+            tool_name="effect",
+            tool_result={"result": "done"},
+        )
+    )
+    tool = {
+        "spec": {
+            "name": "effect",
+            "description": "Effect",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        "function": {"type": "template", "value_template": "unused"},
+    }
+    log = conversation.ChatLog(hass, "o3-pro-history")
+    log.async_add_user_content(conversation.UserContent(content="Start"))
+    await obj._async_handle_chat_log(log, [tool], [])
+    outgoing = client.responses.create.await_args_list[1].kwargs
+    assert [
+        item.get("type") for item in outgoing["input"] if item.get("type") != "message"
+    ] == ["reasoning", "function_call", "function_call_output"]
+    assert "previous_response_id" not in outgoing
+    obj.subentry.data = {"chat_model": "gpt-4.1", "api_mode": "responses"}
+    log.async_add_user_content(conversation.UserContent(content="Next"))
+    await obj._async_handle_chat_log(log, [], [])
+    assert not any(
+        item.get("type") == "reasoning"
+        for item in client.responses.create.await_args_list[2].kwargs["input"]
+    )
+    obj.subentry.data = {"chat_model": model, "api_mode": "responses"}
+    log.async_add_user_content(conversation.UserContent(content="Again"))
+    await obj._async_handle_chat_log(log, [], [])
+    assert any(
+        item.get("id") == "rs_saved"
+        for item in client.responses.create.await_args_list[3].kwargs["input"]
+    )
+    obj._execute_function_tool.assert_awaited_once()

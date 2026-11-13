@@ -1,6 +1,6 @@
 """Bounded lexical terms for continuous East Asian text."""
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 import re
 import unicodedata
 
@@ -153,6 +153,44 @@ def _stem(token: str) -> str:
 
 
 _CJK_RUN = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]+")
+
+
+def bounded_phrase(phrase: str, text: str) -> bool:
+    """Match normalized phrases at word edges, allowing continuous CJK text.
+
+    Inspect every occurrence: an embedded occurrence must not hide a later
+    genuine phrase. Hyphens/apostrophes remain parts of technical/compound words.
+    """
+    if not phrase:
+        return False
+
+    def word_edge(char: str) -> bool:
+        return bool(char) and (char.isalnum() or char in "_'-+#")
+
+    start = text.find(phrase)
+    while start >= 0:
+        end = start + len(phrase)
+        if (
+            start == 0
+            or _CJK_RUN.fullmatch(phrase[0])
+            or not word_edge(text[start - 1])
+        ) and (
+            end == len(text)
+            or _CJK_RUN.fullmatch(phrase[-1])
+            or not word_edge(text[end])
+        ):
+            return True
+        start = text.find(phrase, start + 1)
+    return False
+
+
+def ordered_term_phrase(phrase: list[str], terms: Sequence[str]) -> bool:
+    """Match contiguous whole normalized terms without substring collisions."""
+    size = len(phrase)
+    return bool(size) and any(
+        list(terms[start : start + size]) == phrase
+        for start in range(len(terms) - size + 1)
+    )
 
 
 def cjk_terms(value: str) -> set[str]:

@@ -204,7 +204,6 @@ def test_similar_or_custom_ids_do_not_inherit_january_retirement(model) -> None:
     assert lifecycle["shutdown_reached"] is False
 
 
-def test_default_model_remains_current_and_is_not_a_retiring_fallback() -> None:
+def test_creation_default_switch_is_deferred_and_explicit_luna_remains_current() -> None:
     assert DEFAULT_CHAT_MODEL == agent_config_defaults()["chat_model"] == "gpt-5-mini"
-    assert DEFAULT_CHAT_MODEL not in RETIRING_MODELS
-    assert model_lifecycle.lifecycle_snapshot(DEFAULT_CHAT_MODEL)["status"] == "current"
+    assert model_lifecycle.lifecycle_snapshot("gpt-6-luna")["status"] == "current"
