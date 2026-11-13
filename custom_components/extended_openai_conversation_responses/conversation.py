@@ -1561,6 +1561,7 @@ class ExtendedOpenAIAgentEntity(
             response=local_intent.response,
             conversation_id=chat_log.conversation_id,
             continue_conversation=local_intent.response.error_code is None
+            and local_intent.intent_name != intent.INTENT_NEVERMIND
             and _resolve_continue_conversation(
                 _get_continue_conversation_mode(self.subentry.data), False, None
             ),

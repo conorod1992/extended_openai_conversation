@@ -61,7 +61,9 @@ class Skill:
 class SkillMdParser:
     """Parse SKILL.md files following the Agent Skills format."""
 
-    FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
+    FRONTMATTER_PATTERN = re.compile(
+        r"^\ufeff?---\s*\n(.*?)\n---\s*(?:\n|\Z)", re.DOTALL
+    )
 
     @classmethod
     def parse(

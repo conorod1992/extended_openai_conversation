@@ -157,8 +157,9 @@ def _pipeline_fixture(monkeypatch, *, text: str = "hello"):
 )
 @pytest.mark.parametrize("successful", [False, True])
 @pytest.mark.parametrize("with_usage", [False, True])
+@pytest.mark.parametrize("speech", ["Handled locally", ""])
 async def test_consumed_request_rule_bypasses_local_intent_and_provider(
-    monkeypatch, mode, successful, with_usage
+    monkeypatch, mode, successful, with_usage, speech
 ):
     entity, _user_input, _chat_log, _policy, process = _pipeline_fixture(
         monkeypatch, text="good night"
@@ -178,7 +179,7 @@ async def test_consumed_request_rule_bypasses_local_intent_and_provider(
             100.0,
         ),
         consume=True,
-        response="Handled locally",
+        response=speech,
         successful=successful,
     )
     evaluate_rule = AsyncMock(return_value=evaluation)
@@ -190,7 +191,7 @@ async def test_consumed_request_rule_bypasses_local_intent_and_provider(
 
     result = await process()
 
-    assert result.response.speech["plain"]["speech"] == "Handled locally"
+    assert result.response.speech["plain"]["speech"] == speech
     assert result.continue_conversation is (
         successful and mode == CONTINUE_CONVERSATION_ALWAYS
     )
@@ -313,38 +314,68 @@ async def test_routing_rule_hands_captured_provider_input_to_ai(monkeypatch):
     ],
 )
 @pytest.mark.parametrize("successful", [False, True])
+@pytest.mark.parametrize(
+    ("intent_name", "speech"),
+    [
+        ("HassGetState", "The kitchen light is on."),
+        ("HassTurnOn", None),
+        ("HassNevermind", None),
+        ("HassNevermind", "Cancelled"),
+    ],
+)
 async def test_local_intent_bypasses_provider_and_records_continuity(
-    monkeypatch, mode, successful
+    monkeypatch, mode, successful, intent_name, speech
 ):
-    entity, _user_input, _chat_log, _policy, process = _pipeline_fixture(
+    entity, _user_input, chat_log, _policy, process = _pipeline_fixture(
         monkeypatch, text="is the kitchen light on"
     )
     entity.subentry.data[CONF_CONTINUE_CONVERSATION] = mode
     local_response = intent.IntentResponse(language="en")
     if not successful:
         local_response.async_set_error(intent.IntentResponseErrorCode.UNKNOWN, "Failed")
-    local_response.async_set_speech("The kitchen light is on.")
+    if speech is not None:
+        local_response.async_set_speech(speech)
+    original_response = local_response.as_dict()
     try_local_intent = AsyncMock(
         return_value=LocalIntentResult(
             response=local_response,
-            intent_name="HassGetState",
+            intent_name=intent_name,
         )
     )
     monkeypatch.setattr(
         conversation_module, "async_try_handle_local_intent", try_local_intent
     )
 
-    result = await process()
+    metadata = {}
+    token = conversation_module._ACTIVE_INVOCATION.set(
+        replace(conversation_module._ACTIVE_INVOCATION.get(), metadata=metadata)
+    )
+    try:
+        result = await process()
+    finally:
+        conversation_module._ACTIVE_INVOCATION.reset(token)
 
     assert result.response is local_response
+    assert result.response.as_dict() == original_response
+    assert result.conversation_id == chat_log.conversation_id
+    assert metadata == {"handled_locally": True, "matched_intent": intent_name}
     assert result.continue_conversation is (
-        successful and mode == CONTINUE_CONVERSATION_ALWAYS
+        successful
+        and intent_name != "HassNevermind"
+        and mode == CONTINUE_CONVERSATION_ALWAYS
     )
     try_local_intent.assert_awaited_once()
     assert try_local_intent.call_args.kwargs["guest_active"] is False
     entity._async_handle_message_with_ha_tools.assert_not_awaited()
     if successful:
         entity._continuity.async_record_success.assert_awaited_once()
+        assert chat_log.content[-1].content == (speech or "")
+        assert chat_log.content[-1].agent_id == conversation.HOME_ASSISTANT_AGENT
+        assert entity._continuity.async_record_success.call_args.args == (
+            "device:kitchen",
+            "claim-token",
+            chat_log.content,
+        )
     else:
         entity._continuity.async_record_success.assert_not_awaited()
     payload = entity.hass.bus.async_fire.call_args.args[1]
