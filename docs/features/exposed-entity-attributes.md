@@ -60,4 +60,4 @@ Custom prompt or exposed-device templates receive the same enriched `exposed_ent
 {% endfor %}
 ```
 
-Custom templates do not bypass Assist exposure or caller permissions; they only format the already-filtered entity data supplied to the renderer.
+The provided `exposed_entities` variable respects Assist exposure, caller permissions and the active Guest policy. **Administrator-authored custom templates are trusted configuration**, however: they can also use Home Assistant template helpers such as `states(...)` to read state outside that filtered variable. Review prompt and exposed-device templates before enabling them for Guest conversations; see [Guest Mode](guest-mode.md).

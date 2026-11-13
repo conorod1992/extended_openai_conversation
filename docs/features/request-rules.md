@@ -30,7 +30,7 @@ If a text-matching condition cannot be evaluated, Request Rules stop safely for 
 
 A **Local command** runs one or more Home Assistant actions or enabled ExtendedOpenAI functions in order. By default it consumes the request locally and does not make an OpenAI/API call. Select an action by its `domain.action` name, then choose an entity, device, or area through Home Assistant's native selectors. Fields published by the selected service, such as brightness, temperature, media, or a select option, appear as friendly controls when Home Assistant provides selector metadata.
 
-Existing `target` and `data` values are preserved when a rule is edited. **Advanced JSON** is a lossless fallback for service data or target keys that the friendly editor does not expose.
+Existing `target` and `data` values are preserved when a rule is edited. Use Home Assistant's native action editor or its YAML mode for service data or target keys that are not represented by the friendly selectors.
 
 If the native script fails or aborts, the remaining actions do not run and the configured failure response is returned. An action with `continue_on_error: true` may recover according to Home Assistant semantics; if the script then completes, the rule succeeds. While Guest Mode is active, the sequence is checked before the first action runs; an initial policy rejection prevents the sequence from starting. Relevant permissions and Guest policy are also checked as actions execute. A later denial, including a policy change during a delay or wait, stops remaining work without undoing earlier effects. Authorization denials cannot be bypassed with `continue_on_error`.
 
@@ -127,8 +127,9 @@ Matching is case-insensitive, but captures retain the input's display casing:
 `Home Office`. Captures are not canonical identifiers. In supported Home Assistant
 action templates, normalize explicitly (`{{ room | lower }}`) or map to an entity
 (`{{ {'home office': 'light.office', 'kitchen': 'light.kitchen'}[room | lower] }}`).
-Simple `{room}` response substitution and **Value from request** preserve the
-captured text; they do not execute these Jinja expressions.
+Simple `{room}` response substitution preserves the captured text without
+executing Jinja. Home Assistant action templates can deliberately transform
+captures, for example using `{{ room | lower }}`.
 
 Escapes also work inside constrained choices: `{value=a\|b|c}` accepts the literal values `a|b` and `c`, not separate `a` and `b` choices. Choices that become identical after Unicode, whitespace, and case normalization are rejected.
 
@@ -159,7 +160,7 @@ a separate semantic feature and does not rewrite existing rules.
 
 Free-text captures must be separated by required literal or constrained text. Ambiguous patterns such as `do {first} {second}` are rejected. A pattern also needs at least one required literal, constrained capture, or numeric capture, so a bare `{anything}` cannot intercept every request.
 
-All phrase variants in one rule must expose the same capture names. Captured values can be selected as **Value from request** in supported action/function fields or inserted into responses with simple `{name}` substitution. This substitution is deterministic and does not execute Jinja.
+All phrase variants in one rule must expose the same capture names. Use captured values in supported Home Assistant action templates (for example `{{ room }}`) or insert them into the separate Request Rule response with simple `{name}` substitution. Response substitution is deterministic and does not execute Jinja.
 
 Named expansion syntax such as `<device>`, Hassil permutations using `;`, predefined Hassil slot lists, arbitrary regular expressions, lookarounds, backreferences, and repetition operators are not part of the ExtendedOpenAI sentence-pattern language.
 
@@ -192,9 +193,9 @@ Inactive legacy rules can be disabled and repaired individually without blocking
 
 ## Function actions
 
-A rule can call an enabled Function Tool directly without sending the request to the AI provider. The function selector comes from the current agent's configured tools. Selecting one shows common string, number, integer, boolean, enum, and simple-array inputs from its existing schema. Each input can be a fixed value or a captured request value.
+A rule can call an enabled Function Tool directly without sending the request to the AI provider. In Home Assistant's native action editor, add **Call configured function**, supply the exact configured **Function tool** name and provide an **Arguments** object. Arguments may contain fixed values or supported templates for captured request values; use the native YAML editor when that is clearer. The tool does not open a schema-generated per-argument form.
 
-For example, use `Show {entity_id} attributes`, select the existing `get_attributes` function, and set `entity_id` to **Value from request → entity_id**. Direct execution uses the same implementation, argument validation, current enabled state, Guest Mode policy, and entity-access checks as a model-initiated call.
+For example, match `Show {entity_id} attributes`, add **Call configured function**, set **Function tool** to `get_attributes`, and set **Arguments** to `entity_id: "{{ entity_id }}"`. Direct execution uses the same implementation, argument validation, current enabled state, Guest Mode policy, and entity-access checks as a model-initiated call.
 
 To use a Function Tool's return value, set an optional **Result alias** on its action step. For `get_device_battery(device={device})`, name the result `battery`; an object result such as `{"name":"Kitchen tablet","level":62}` can then be used in the local success response as `{battery.name} is at {battery.level}%`. A scalar string, number, boolean, or null can be referenced as `{battery}`. Nested object paths and simple numeric array indexes such as `{battery.items.0.name}` are supported. A missing path in an executed action stops the sequence and uses the failure response. If only the separate success response cannot be constructed after actions finish, Extended OpenAI reports that the actions succeeded but the response failed. Completed actions are not retried, and placeholders are never spoken unresolved.
 

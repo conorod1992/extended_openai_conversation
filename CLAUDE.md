@@ -59,9 +59,10 @@ CI dynamically fetches dependency versions from HA core's dev branch (openai, ha
 All source lives under `custom_components/extended_openai_conversation_responses/`.
 
 ### Entry Point & Platforms
-`__init__.py` sets up the OpenAI API client (`AsyncClient` or `AsyncAzureOpenAI`) and registers two platforms:
-- **conversation** (`conversation.py`, `entity.py`) — `ExtendedOpenAIAgentEntity` handles user messages via `async_process()`: builds system prompt with exposed entities + skills, calls OpenAI API with tools, executes tool calls through Tools, iterates until completion.
-- **ai_task** (`ai_task.py`) — `ExtendedOpenAITaskEntity` handles background AI tasks with structured output (JSON schema), no tool calling.
+`__init__.py` sets up the OpenAI API clients and registers three platforms:
+- **conversation** (`conversation.py`, `entity.py`) — `ExtendedOpenAIAgentEntity` handles user messages via `async_process()`: builds the prompt with exposed entities + skills, calls the provider with configured tools, executes permitted tool calls and iterates until completion.
+- **sensor** — integration-wide Quiet Hours status exposed to Home Assistant.
+- **ai_task** (`ai_task.py`) — `ExtendedOpenAITaskEntity` handles AI tasks, including structured output, and can use caller-supplied Home Assistant LLM tools. Conversation custom Function Tools are not automatically available to AI Task.
 
 ### Functions (`functions/`)
 Abstract `Function` base class (`functions/base.py`) with implementations in separate files: `native` (HA services), `template` (Jinja2), `script` (HA scripts), `web` (REST/scrape), `bash`, `file` (read/write/edit), `sqlite`, `composite` (chains multiple). Each is registered by type string and resolved at tool-call time.
@@ -70,7 +71,7 @@ Abstract `Function` base class (`functions/base.py`) with implementations in sep
 `SkillManager` (singleton) discovers and loads skills from `config/extended_openai_conversation_responses/skills/`. Each skill is a directory with a `SKILL.md` file (YAML frontmatter + markdown content). `SkillMdParser` handles parsing. Skills are lazy-loaded — only metadata is kept in memory until content is requested.
 
 ### Config Flow (`config_flow.py`)
-`ConfigFlow` for initial setup (API key, base URL, provider). `ConfigSubentryFlow` for per-conversation and per-ai-task settings (model, tokens, temperature, prompt template, functions YAML, skills selection).
+`ConfigFlow` handles initial provider setup (API key, base URL and provider). Conversation assistants use the Extended OpenAI sidebar panel for detailed model, prompt, Functions, Skills and other settings; their native Home Assistant reconfiguration flow points to that panel. AI Task retains its native subentry configuration flow.
 
 ### Services (`services.py`)
 `query_image` (vision API), `change_config` (runtime config updates), `reload_skills`, `download_skill` (from GitHub).
@@ -94,7 +95,7 @@ tests/
 
 ## Key Conventions
 
-- Python 3.14+, HA minimum 2026.2.0b0
+- Python 3.14+, supported HA minimum 2026.7.0 (see `hacs.json` and the README)
 - Ruff rules: E, W, F, I, UP, RUF, B, SIM (E501 and B008 ignored)
 - Import aliases enforced: `voluptuous` → `vol`, `homeassistant.helpers.config_validation` → `cv`
 - All I/O is async; use `async_add_executor_job()` for sync code

@@ -19,8 +19,12 @@ best-effort persistence semantics are unchanged. Shared delayed-job Stores and
 per-agent, transaction-owned restore journals remain outside this live cleanup
 contract; sharing a storage implementation does not transfer their ownership.
 Hybrid refresh retains its manager lease through best-effort cache persistence,
-including native work that survives caller cancellation. Cache errors still
-degrade to lexical retrieval; cancellation propagates after that work settles.
+including native work that survives caller cancellation. A surfaced **local
+cache-save failure** retains valid vectors in memory, allows remaining batches
+to complete, and leaves persistence dirty for bounded retries; it does not
+force lexical fallback or remote embedding backoff. **Remote embedding or
+provider failures** instead fall back to lexical retrieval with the existing
+cooldown. Cancellation propagates after the owned work settles.
 
 Permanent deletion keeps the established order:
 
@@ -46,8 +50,11 @@ manager's private attribute names. A new durable namespace still needs an
 explicit orphan-discovery policy. Backup/restore schemas remain explicit and
 separate: live handle discovery does not determine export contents or privacy.
 
-Normal entity unload does not erase persisted data or stop a shared manager
-needed by management, recovery or a replacement registration. Permanent deletion
+Normal entity unload does not erase persisted data. Shared Quiet Hours and
+Broadcast managers keep running while another provider remains loaded, but
+unloading the last loaded provider shuts them down, including during reload.
+Broadcast's pending queue, recent delivery history and retry receipts are
+runtime-only and are cleared when its manager stops. Permanent deletion
 is a distinct, exclusive operation; its Store removal API rejects callers that
 do not own that maintenance boundary.
 
@@ -80,8 +87,8 @@ retry semantics. This boundary adds no work to ordinary conversation requests.
 | Usage | Agent; durable or existing volatile fallback | Retention tasks, final flush and permanent-erasure preparation have distinct policies |
 | Guest Mode and Request Rules | Agent; policy state is established before request processing | An unreadable policy must not silently become an unrestricted request; Rule condition listeners retain explicit unload |
 | Skills | Shared manager and working directory | Existing discovery, recovery and activation policy remain separate from agent-private Store erasure |
-| Quiet Hours | Integration-global manager and status entity | Scheduling, volume ownership and registry identity survive individual provider unload |
-| Broadcast | Global services/API; manager is acquired when needed | Successful registration alone publishes the API setup marker; a failed registration remains retryable |
+| Quiet Hours | Integration-global manager and status entity | Persisted schedule/ownership and recovery state survive unload; the manager stops on final loaded-provider unload and resumes on later setup |
+| Broadcast | Global services/API; manager is acquired when needed | Successful registration publishes the API setup marker; a failed registration remains retryable. Manager shutdown clears its runtime queue/history/retry receipts |
 | Diagnostics | Agent-scoped bounded runtime capture | Clearing captured data is separate from durable Store deletion |
 | Delayed Tools and transfers | Shared durable queues/staging with per-agent contents | Remove the departing agent's items through their specialized APIs; do not erase a shared Store |
 
