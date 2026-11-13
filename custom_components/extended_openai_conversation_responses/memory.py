@@ -2044,6 +2044,9 @@ def _rank_memory_snapshot(
     query_terms = _token_list(query)
     query_tokens = set(query_terms)
     query_weights = _automatic_query_weights(query_terms) if automatic_recall else None
+    anchor_terms = (
+        query_tokens - _AUTOMATIC_MEMORY_FILLER_TERMS if query_weights else set()
+    )
     if not corpus or (not query_tokens and not (hybrid and query_embedding)):
         return []
     document_data: dict[str, tuple[tuple[str, ...], frozenset[str]]] = {}
@@ -2062,15 +2065,23 @@ def _rank_memory_snapshot(
     ranked: list[tuple[float, str, MemoryRecord]] = []
     for memory in corpus:
         terms, token_set = document_data[memory.memory_id]
+        # Reweight framing only when the candidate matches substantial facts.
+        # Otherwise retain the original score, avoiding new name-only false
+        # positives from conversationally padded questions.
+        candidate_weights = query_weights
+        if query_weights is not None and (
+            sum(query_weights[term] for term in anchor_terms & token_set) < 1.5
+        ):
+            candidate_weights = None
         lexical = _bm25_score(
             query_terms,
             terms,
             document_frequency,
             len(corpus),
             average_length,
-            query_weights=query_weights,
+            query_weights=candidate_weights,
         )
-        lexical += _metadata_bonus(query_tokens, memory, query_weights)
+        lexical += _metadata_bonus(query_tokens, memory, candidate_weights)
         normalized_content = _normalize(memory.content)
         if (
             normalized_query

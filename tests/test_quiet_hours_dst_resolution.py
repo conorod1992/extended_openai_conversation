@@ -34,12 +34,15 @@ def test_repeated_hour_uses_earliest_start_and_latest_end():
     last = _resolve_quiet_wall_time(day, _parse_clock("01:30"), zone, ending=True)
     assert first.astimezone(UTC) == datetime(2026, 10, 25, 0, 30, tzinfo=UTC)
     assert last.astimezone(UTC) == datetime(2026, 10, 25, 1, 30, tzinfo=UTC)
-    for minute in (0, 10, 30, 45, 59):
+    for minute in (0, 10, 30, 44):
         current = datetime(2026, 10, 25, 1, minute, tzinfo=UTC).astimezone(zone)
         period = quiet_period_for(current, "01:15", "01:45")
         assert period is not None
         assert period.start.astimezone(UTC) == datetime(2026, 10, 25, 0, 15, tzinfo=UTC)
         assert period.end.astimezone(UTC) == datetime(2026, 10, 25, 1, 45, tzinfo=UTC)
+    for minute in (45, 59):
+        now = datetime(2026, 10, 25, 1, minute, tzinfo=UTC).astimezone(zone)
+        assert quiet_period_for(now, "01:15", "01:45") is None
 
 
 def test_forward_gap_boundary_and_collapsed_interval_are_minute_precise():

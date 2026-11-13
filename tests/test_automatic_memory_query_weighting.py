@@ -139,3 +139,32 @@ async def test_verbose_irrelevant_query_is_not_admitted_as_related():
     assert await memory.async_search(
         "other-user", _VERBOSE, automatic_recall=True, allow_fuzzy_only=False
     ) == []
+
+
+async def test_automatic_query_corpus_improves_recall_without_new_single_anchor_false_positives():
+    memory, target = await _populated()
+    unrelated = (
+        "Emma enjoys swimming in the mornings.",
+        "Emma drives a blue electric car.",
+        "Oliver attends St Patrick's Secondary School.",
+        "School holiday dates are announced in September.",
+        "The office is closed on Wednesdays.",
+        "The family dog is called Oscar.",
+        "St Brigid's National School is in Carlow.",
+        "The home lights switch on at sunset.",
+    )
+    for text in unrelated:
+        await memory.async_add("alice", text, "personal", "explicit")
+    old = await memory.async_search(
+        "alice", _VERBOSE, limit=50, allow_fuzzy_only=False
+    )
+    new = await memory.async_search(
+        "alice", _VERBOSE, limit=50, allow_fuzzy_only=False, automatic_recall=True
+    )
+    baseline = {item.memory_id for item in old}
+    weighted = {item.memory_id for item in new}
+    assert target in weighted
+    # Reweighting cannot newly admit a memory on Emma's name alone or on
+    # "school" alone, even when those words have high IDF in a larger corpus.
+    assert weighted - baseline <= {target}
+    assert len(weighted & baseline) >= 1
