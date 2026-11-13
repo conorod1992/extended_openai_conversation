@@ -177,6 +177,58 @@ def canonical_json(value: Any) -> str:
     )
 
 
+def _has_optional_properties(schema: Any) -> bool:
+    """Inspect schema positions only, including referenced definitions.
+
+    Responses' default normalization also changes optional nested properties.
+    Do not interpret annotation/default data as schema or rewrite nullability.
+    """
+    pending = [schema]
+    seen: set[int] = set()
+    while pending:
+        node = pending.pop()
+        if not isinstance(node, dict) or id(node) in seen:
+            continue
+        seen.add(id(node))
+        properties = node.get("properties")
+        if isinstance(properties, dict):
+            required = node.get("required", [])
+            if isinstance(required, list) and properties.keys() - set(required):
+                return True
+        for key in (
+            "properties",
+            "patternProperties",
+            "$defs",
+            "definitions",
+            "dependentSchemas",
+            "dependencies",
+        ):
+            children = node.get(key)
+            if isinstance(children, dict):
+                pending.extend(children.values())
+        for key in (
+            "items",
+            "prefixItems",
+            "additionalItems",
+            "contains",
+            "additionalProperties",
+            "unevaluatedProperties",
+            "unevaluatedItems",
+            "propertyNames",
+            "not",
+            "if",
+            "then",
+            "else",
+            "allOf",
+            "anyOf",
+            "oneOf",
+            "contentSchema",
+        ):
+            child = node.get(key)
+            pending.extend(child if isinstance(child, list) else [child])
+    return False
+
+
 def format_function_tools(
     function_tools: list[dict[str, Any]], api_mode: str
 ) -> list[dict[str, Any]]:
@@ -188,19 +240,25 @@ def format_function_tools(
         function = tool.get("function")
         # Responses may silently normalize omitted-strict schemas into required,
         # nullable fields. Our optional tool arguments must remain truly optional.
-        # Never change user-configured schemas or tools that explicitly set strict.
+        # Apply this only at the Responses boundary, preserving explicit policy
+        # and the original local/persisted schemas on every provider.
         if (
             api_mode == API_MODE_RESPONSES
-            and isinstance(function, dict)
-            and function.get("type")
-            in {
-                "memory",
-                "temporary_memory",
-                "knowledge",
-                "archive",
-                "guest_mode",
-            }
             and "strict" not in spec
+            and (
+                _has_optional_properties(spec.get("parameters"))
+                or (
+                    isinstance(function, dict)
+                    and function.get("type")
+                    in {
+                        "memory",
+                        "temporary_memory",
+                        "knowledge",
+                        "archive",
+                        "guest_mode",
+                    }
+                )
+            )
         ):
             spec = {**spec, "strict": False}
         formatted.append(
