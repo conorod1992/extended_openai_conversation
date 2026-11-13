@@ -67,6 +67,7 @@ def weather_tool(annotation, shape, host="api.openweathermap.org"):
     return tool
 
 
+@pytest.mark.parametrize("destination", ["resource", "resource_template"])
 @pytest.mark.parametrize("format", ["setup", "configuration"])
 @pytest.mark.parametrize("persisted", [False, True])
 @pytest.mark.parametrize(
@@ -77,9 +78,11 @@ def weather_tool(annotation, shape, host="api.openweathermap.org"):
     ["instance", "nested", "composed", "reference", "sensitive_reference", "pattern"],
 )
 def test_provider_schema_credentials_omit_whole_tool(
-    hass, format, persisted, annotation, shape
+    hass, format, persisted, annotation, shape, destination
 ):
     tool = weather_tool(annotation, shape)
+    if destination == "resource_template":
+        tool["function"][destination] = tool["function"].pop("resource")
     config = {"functions": yaml.safe_dump([tool]) if persisted else [tool]}
     before = deepcopy(config)
     artifact, public, serialized = configuration_artifact(config, format)
@@ -134,12 +137,63 @@ def test_composite_provider_evidence_reaches_schema(hass):
     assert public["functions"] == []
 
 
-def test_private_weather_configuration_is_exactly_preserved(hass):
+@pytest.mark.parametrize("destination", ["resource", "resource_template"])
+def test_private_weather_configuration_is_exactly_preserved(hass, destination):
     document = private_document()
-    document["agent"]["config"]["functions"] = yaml.safe_dump(
-        [weather_tool("default", "reference")]
-    )
+    tool = weather_tool("default", "reference")
+    if destination == "resource_template":
+        tool["function"][destination] = tool["function"].pop("resource")
+    document["agent"]["config"]["functions"] = yaml.safe_dump([tool])
     before = deepcopy(document)
     result = backup.finalize_backup_snapshot(document)
     assert decode_document(json.loads(result["json"])) == before
     assert document == before
+
+
+@pytest.mark.parametrize("kind", ["rest", "scrape", "composite"])
+@pytest.mark.parametrize("location", ["schema", "params", "payload"])
+@pytest.mark.parametrize("format", ["setup", "configuration"])
+def test_template_provider_context_reaches_every_public_walk(
+    hass, kind, location, format
+):
+    tool = weather_tool("default", "reference")
+    node = tool["function"]
+    node["resource_template"] = node.pop("resource")
+    if location != "schema":
+        tool["spec"]["parameters"] = {"type": "object", "properties": {}}
+        node[location] = (
+            {"appid": SECRET} if location == "params" else json.dumps({"appid": SECRET})
+        )
+    if kind == "scrape":
+        node["type"] = "scrape"
+        node["sensor"] = [{"name": "headline", "select": "h1"}]
+    elif kind == "composite":
+        tool["function"] = {"type": "composite", "sequence": [node]}
+    before = deepcopy(tool)
+    artifact, public, serialized = configuration_artifact({"functions": [tool]}, format)
+    assert public["functions"] == []
+    assert SECRET not in serialized
+    assert any(v["field"] == "function_tool_1" for v in artifact["security"]["omitted"])
+    assert tool == before
+
+
+@pytest.mark.parametrize(
+    "destination",
+    ["https://public.example/api", "https://{{ host }}/api", "{{ private_endpoint }}"],
+)
+def test_unverifiable_or_public_templates_do_not_classify_generic_appids(
+    hass, destination
+):
+    tool = weather_tool("default", "instance")
+    tool["function"].pop("resource")
+    tool["function"]["resource_template"] = destination
+    from custom_components.extended_openai_conversation_responses.secret_redaction import (
+        _rest_uses_credential_appid,
+    )
+
+    assert not _rest_uses_credential_appid(tool["function"])
+    _, public, _ = configuration_artifact({"functions": [tool]}, "setup")
+    # Dynamic destinations keep the established conservative URL-template policy.
+    assert public["functions"] == (
+        [tool] if destination == "https://public.example/api" else []
+    )

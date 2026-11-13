@@ -20,7 +20,7 @@ from .secret_redaction import (
     REDACTED_SECRET_SENTINEL,
     _is_export_secret_key,
     _is_function_tool_schema_root,
-    _uses_credential_appid,
+    _rest_uses_credential_appid,
     is_redacted_secret,
     redact_http_url,
     redact_secrets,
@@ -592,9 +592,8 @@ def _function_uses_credential_appid(value: Any) -> bool:
         if not isinstance(node, dict) or id(node) in seen:
             continue
         seen.add(id(node))
-        if node.get("type") in ("rest", "scrape"):
-            if _uses_credential_appid(node.get("resource")):
-                return True
+        if _rest_uses_credential_appid(node):
+            return True
         elif node.get("type") == "composite" and isinstance(node.get("sequence"), list):
             pending.extend(node["sequence"])
     return False
@@ -627,10 +626,7 @@ def _structured_payloads(
         provider_appid = _function_uses_credential_appid(value.get("function"))
     if function_schemas and _is_function_tool_schema_root(path):
         return _schema_annotations(value, value, provider_appid=provider_appid)
-    provider_appid = provider_appid or (
-        value.get("type") in ("rest", "scrape")
-        and _uses_credential_appid(value.get("resource"))
-    )
+    provider_appid = provider_appid or _rest_uses_credential_appid(value)
     result = {}
     for key, item in value.items():
         if key in {"payload", "payload_template"} and isinstance(item, str):

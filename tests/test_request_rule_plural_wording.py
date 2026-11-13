@@ -65,7 +65,8 @@ def test_singularization_collision_does_not_choose_a_mapping():
         [
             {"canonical": "light", "alternatives": ["lamp"]},
             {"canonical": "device", "alternatives": ["lamps"]},
-        ]
+        ],
+        strict=False,
     )
     settings = {"word_forms": True, "wording_alternatives": True}
     assert normalize_text("lamps", settings, groups) == "lamp"
