@@ -159,15 +159,17 @@ class ExtendedOpenAITemplateManager:
 
         def template_environment_init(
             template_env_self: TemplateEnvironment,
-            hass: HomeAssistant | None,
-            limited: bool | None = False,
-            strict: bool | None = False,
-            log_fn: Callable[[int, str], None] | None = None,
+            *args: Any,
+            **kwargs: Any,
         ) -> None:
-            original_init(template_env_self, hass, limited, strict, log_fn)
+            original_init(template_env_self, *args, **kwargs)
+            # HA supports hass as its first positional argument or by keyword.
+            # Identify ownership only after the delegate accepted the call; do
+            # not bind, rewrite or drop arguments owned by HA/another wrapper.
+            environment_hass = kwargs.get("hass", args[0] if args else None)
             if (
                 self._replacement_init is template_environment_init
-                and hass is self.hass
+                and environment_hass is self.hass
             ):
                 self._register_environment(template_env_self)
 

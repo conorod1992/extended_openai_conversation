@@ -257,7 +257,14 @@ def _literal_text_operands(tokens: list[tuple[str, bool]]) -> set[int]:
                 # Use absolute token indices bounded to this command's operands.
                 for index in range(start + 1, end):
                     arg = tokens[index][0]
-                    if re.fullmatch(r"[A-Za-z ]+ /[A-Za-z][A-Za-z0-9_-]*", arg):
+                    # A slash-word inside prose is literal echo data. Permit
+                    # a bounded text alphabet after it (including quoted pipe
+                    # choices), but never another path separator or expansion.
+                    if not tokens[index][1] and re.fullmatch(
+                        r"[A-Za-z ]+ /[A-Za-z][A-Za-z0-9_-]*"
+                        r"(?: [A-Za-z0-9 ,.!?:()|+-]+)?",
+                        arg,
+                    ):
                         exempt.add(index)
         # Only shell command boundaries establish another command position.
         # A redirect target (even one named echo/grep) cannot start an exemption.
