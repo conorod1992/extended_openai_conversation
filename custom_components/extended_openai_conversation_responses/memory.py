@@ -2137,9 +2137,9 @@ def _bm25_term_weights(
         # about the past or control requests. Never discount "was", "might",
         # "if", "or" or "happen" globally.
         for index, term in enumerate(query_terms):
-            if term == "hop" and index and query_terms[index - 1] == "was":
+            if term == "hope" and index and query_terms[index - 1] == "was":
                 weights["was"] = min(weights["was"], 0.03)
-                weights["hop"] = min(weights["hop"], 0.03)
+                weights["hope"] = min(weights["hope"], 0.03)
             if term == "happen" and "know" in query_terms[index + 1 : index + 3]:
                 weights["happen"] = min(weights["happen"], 0.03)
     # Compound expansion must not multiply the weight of an original word.

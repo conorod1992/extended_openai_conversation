@@ -94,7 +94,7 @@ async def test_automatic_recall_keeps_controls_negations_names_identifiers_numbe
     assert framed is not None
     for control in ("might", "if", "or"):
         assert framed[control] == 1.0
-    assert framed["was"] == framed["hop"] == framed["happen"] == 0.03
+    assert framed["was"] == framed["hope"] == framed["happen"] == 0.03
 
 
 def test_automatic_query_bm25_weights_numerator_and_denominator_together():
@@ -180,4 +180,6 @@ async def test_automatic_query_corpus_improves_recall_without_new_single_anchor_
     # Reweighting cannot newly admit a memory on Emma's name alone or on
     # "school" alone, even when those words have high IDF in a larger corpus.
     assert weighted - baseline <= {target}
-    assert len(weighted & baseline) >= 1
+    # Existing explicit-search results must remain eligible; an empty baseline
+    # is valid and is exactly the verbose-query defect we are fixing.
+    assert baseline <= weighted
