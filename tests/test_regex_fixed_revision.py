@@ -35,6 +35,17 @@ class ExecutorHass:
         "a" * 64 + "\n\n",
         "z" * 1_000_000,
     ],
+    ids=[
+        "hex-letters",
+        "hex-digits",
+        "uppercase",
+        "too-short",
+        "too-long",
+        "trailing-newline",
+        "leading-newline",
+        "two-newlines",
+        "million-character-invalid",
+    ],
 )
 async def test_fixed_revision_matches_exact_stdlib_semantics_without_worker(
     value, monkeypatch
