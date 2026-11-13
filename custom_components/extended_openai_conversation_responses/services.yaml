@@ -92,7 +92,7 @@ query_image:
         object:
     max_tokens:
       example: 300
-      default: 300
+      description: Output token limit including reasoning. Omit for model-aware defaults (300 for non-reasoning models, up to 8192 for reasoning models).
       selector:
         number:
           min: 1
