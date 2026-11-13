@@ -3232,7 +3232,13 @@
     "tests/test_openai_sdk_error_matrix.py::test_real_sdk_open_body_interruption[True-ReadTimeout-responses]",
     "tests/test_openai_sdk_error_matrix.py::test_real_sdk_open_body_interruption[True-ReadTimeout-chat_completions]",
     "tests/test_openai_sdk_error_matrix.py::test_real_sdk_open_body_interruption[True-CancelledError-responses]",
-    "tests/test_openai_sdk_error_matrix.py::test_real_sdk_open_body_interruption[True-CancelledError-chat_completions]"
+    "tests/test_openai_sdk_error_matrix.py::test_real_sdk_open_body_interruption[True-CancelledError-chat_completions]",
+    "tests/test_openai_sdk_error_matrix.py::test_ai_task_real_sdk_body_failure_uses_ha_error_and_hooks[ReadError-responses]",
+    "tests/test_openai_sdk_error_matrix.py::test_ai_task_real_sdk_body_failure_uses_ha_error_and_hooks[ReadError-chat_completions]",
+    "tests/test_openai_sdk_error_matrix.py::test_ai_task_real_sdk_body_failure_uses_ha_error_and_hooks[RemoteProtocolError-responses]",
+    "tests/test_openai_sdk_error_matrix.py::test_ai_task_real_sdk_body_failure_uses_ha_error_and_hooks[RemoteProtocolError-chat_completions]",
+    "tests/test_openai_sdk_error_matrix.py::test_ai_task_real_sdk_body_failure_uses_ha_error_and_hooks[ReadTimeout-responses]",
+    "tests/test_openai_sdk_error_matrix.py::test_ai_task_real_sdk_body_failure_uses_ha_error_and_hooks[ReadTimeout-chat_completions]"
   ],
   "browser": {
     "browser": [
