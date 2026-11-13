@@ -423,17 +423,16 @@ async def test_real_ha_spring_forward_normalizes_nonexistent_start_time(
             }
         )
 
-        # On 29 March 2026 Dublin jumps from 00:59:59 UTC / 00:59:59 local
-        # to 01:00 UTC / 02:00 local. The requested 01:30 wall time therefore
-        # normalizes to the corresponding real instant at 02:30 local.
-        await manager.async_reconcile(now=datetime(2026, 3, 29, 1, 15, tzinfo=UTC))
+        # On 29 March 2026 Dublin jumps directly from 00:59:59 local to
+        # 02:00. The missing 01:30 deadline resolves to 02:00, not 02:30.
+        await manager.async_reconcile(now=datetime(2026, 3, 29, 0, 59, tzinfo=UTC))
         assert hass.states.get(media_player_id).attributes[
             "volume_level"
         ] == pytest.approx(0.60)
         assert hass.states.get(wake_sound_id).state == "on"
         assert hass.states.get(_STATE_ENTITY_ID).state == "off"
 
-        await manager.async_reconcile(now=datetime(2026, 3, 29, 1, 35, tzinfo=UTC))
+        await manager.async_reconcile(now=datetime(2026, 3, 29, 1, 0, tzinfo=UTC))
         assert hass.states.get(media_player_id).attributes[
             "volume_level"
         ] == pytest.approx(0.20)
@@ -441,7 +440,7 @@ async def test_real_ha_spring_forward_normalizes_nonexistent_start_time(
         quiet_state = hass.states.get(_STATE_ENTITY_ID)
         assert quiet_state.state == "on"
         assert quiet_state.attributes["period_started_at"] == (
-            "2026-03-29T02:30:00+01:00"
+            "2026-03-29T02:00:00+01:00"
         )
 
         await manager.async_reconcile(now=datetime(2026, 3, 29, 2, 30, tzinfo=UTC))
