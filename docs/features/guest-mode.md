@@ -110,15 +110,17 @@ requested effects before starting a local sequence and again at dispatch. It doe
 not recursively inspect the indirect effects of permitted scripts or automations,
 and it cannot roll back effects after unrelated runtime failures.
 
-The Guest schedule editor displays browser-local times and sends explicit UTC
-instants to Home Assistant. Existing unchanged instants retain their original
-offset and seconds, including during repeated daylight-saving hours.
+The Guest schedule editor displays and interprets entered times in **Home
+Assistant's configured timezone**, not the browser's timezone. Newly entered
+nonexistent or ambiguous local times are rejected. Existing unchanged instants
+retain their original offset and seconds, including during repeated
+daylight-saving hours.
 
 Home Assistant actions through EOAI require explicit entity IDs or area, device,
 floor or label selectors. The `entity_id: all` sentinel is rejected before dispatch:
 Home Assistant expands it too late for EOAI to authorize the actual targets.
 
-Scheduled dates entered in the panel use Home Assistant's timezone rules for both display and conversion. Nonexistent or ambiguous local times are rejected; an unchanged existing schedule keeps its original instant.
+These Home Assistant timezone rules apply to both display and conversion; an unchanged existing schedule keeps its original instant.
 
 **Activate now** uses Home Assistant server time, even if the browser clock is
 wrong or a future schedule is displayed. Explicit scheduled starts keep their
