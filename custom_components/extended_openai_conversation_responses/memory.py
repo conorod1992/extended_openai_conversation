@@ -382,6 +382,12 @@ class PersistentMemory:
                     user_id, content, subject, valid_from
                 )
                 if duplicate is not None:
+                    if duplicate.category != category:
+                        raise ValueError(
+                            "Existing memory conflicts with requested category; "
+                            "no changes made. Open the existing memory and use Update "
+                            "to intentionally edit its metadata before assigning a key."
+                        )
                     if duplicate.source == "explicit" and source == "implicit":
                         return "duplicate", duplicate
                     promotion_changes: dict[str, Any] = {"key": key}
@@ -2373,9 +2379,9 @@ def _updated_at_instant(value: str) -> datetime:
     """
     parsed = dt_util.parse_datetime(value)
     assert parsed is not None  # Record validation precedes publication.
-    return (
-        parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
-    )
+    # Aware datetime comparisons already compare instants. Converting to UTC
+    # would overflow for valid offset timestamps at the year 1/9999 boundaries.
+    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed
 
 
 def _clean_timestamp(value: str | None, field: str) -> str | None:

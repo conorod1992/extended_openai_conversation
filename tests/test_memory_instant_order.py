@@ -86,3 +86,31 @@ async def test_sort_parsing_is_bounded_and_reused_at_memory_limit(monkeypatch):
     assert (await memory.async_browse("alice", ""))[1] == 10_000
     assert len(parsed) == 10_000
     assert module._updated_at_instant.cache_info().maxsize == 20_000
+
+
+@pytest.mark.parametrize("reader", ["async_list", "async_list_page", "async_browse"])
+async def test_valid_extreme_offset_timestamps_do_not_overflow_listing(reader):
+    stamps = [
+        "0001-01-01T00:00:00Z",
+        "9999-12-31T23:59:59-14:00",
+        "0001-01-01T00:00:00+14:00",
+        "9999-12-31T23:59:59Z",
+    ]
+    base = MemoryRecord("0", "alice", "Tea.", "home", "explicit", stamps[0], stamps[0])
+    storage = FakeStorage(
+        {
+            "memories": [
+                asdict(replace(base, memory_id=str(i), updated_at=value))
+                for i, value in enumerate(stamps)
+            ]
+        }
+    )
+    memory = PersistentMemory(storage)
+    await memory.async_initialize()
+    result = await getattr(memory, reader)(
+        "alice", **({"query": ""} if reader == "async_browse" else {})
+    )
+    rows = result[0] if isinstance(result, tuple) else result
+    assert [row.memory_id for row in rows] == ["1", "3", "0", "2"]
+    assert [row.updated_at for row in memory._memories.values()] == stamps
+    assert storage.save_count == 0

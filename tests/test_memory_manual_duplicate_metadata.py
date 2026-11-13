@@ -56,6 +56,35 @@ async def test_unique_unkeyed_add_fills_date_and_persists_revision():
     assert storage.save_count == saved
 
 
+@pytest.mark.parametrize("source", ["implicit", "explicit"])
+async def test_key_promotion_rejects_conflicting_category_without_metadata_loss(source):
+    memory, storage, [record] = await seeded({"source": source})
+    before, saves = deepcopy(storage.data), storage.save_count
+    with pytest.raises(ValueError, match="category; no changes made"):
+        await memory.async_add_record(
+            "alice",
+            record.content,
+            "personal",
+            "explicit",
+            key="drink.preference",
+            valid_from=DATE,
+        )
+    assert await memory.async_list("alice") == [record]
+    assert not memory._key_index
+    assert storage.data == before and storage.save_count == saves
+    status, promoted = await memory.async_add_record(
+        "alice",
+        record.content,
+        record.category,
+        "explicit",
+        key="drink.preference",
+        valid_from=DATE,
+    )
+    assert status == "updated" and promoted.memory_id == record.memory_id
+    assert promoted.key == "drink.preference" and promoted.valid_from == DATE
+    assert promoted.category == record.category and promoted.source == "explicit"
+
+
 @pytest.mark.parametrize(
     "existing,incoming,explanation",
     [
