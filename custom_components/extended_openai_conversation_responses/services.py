@@ -82,7 +82,7 @@ from .provider_errors import (
     request_reauthentication,
 )
 from .request import (
-    auxiliary_output_token_limit,
+    query_image_request_settings,
     request_model_capabilities,
     validate_runtime_readiness,
 )
@@ -114,7 +114,7 @@ QUERY_IMAGE_SCHEMA = vol.Schema(
             vol.Length(min=1, max=MAX_ATTACHMENT_COUNT),
             [{"url": cv.string}],
         ),
-        vol.Optional("max_tokens", default=300): cv.positive_int,
+        vol.Optional("max_tokens"): cv.positive_int,
         vol.Optional("azure_model"): cv.string,
     }
 )
@@ -344,7 +344,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         entry = None
         try:
             model = call.data["model"]
-            if call.data.get("max_tokens") in (None, ""):
+            if "max_tokens" in call.data and call.data["max_tokens"] in (None, ""):
                 raise HomeAssistantError("Output token limit is required")
             entry = hass.config_entries.async_get_entry(call.data["config_entry"])
             if entry is None or entry.domain != DOMAIN:
@@ -363,10 +363,9 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                 ),
             ):
                 api_mode = get_api_mode(call.data[CONF_API_MODE], model)
-            token_param, token_value = auxiliary_output_token_limit(
+            request_settings = query_image_request_settings(
                 model,
                 api_mode,
-                call.data["max_tokens"],
                 call.data,
                 getattr(entry, "data", {}),
             )
@@ -400,9 +399,10 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                 response = await client.responses.create(
                     model=model,
                     input=messages,
-                    **{token_param: token_value},
+                    **request_settings,
                     store=False,
                 )
+                _ensure_complete_image_result(response, api_mode)
                 ensure_successful_responses_result(response)
             else:
                 images = [
@@ -426,8 +426,9 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                 response = await client.chat.completions.create(
                     model=model,
                     messages=messages,
-                    **{token_param: token_value},
+                    **request_settings,
                 )
+                _ensure_complete_image_result(response, api_mode)
             response_dict: dict = response.model_dump()
             _LOGGER.debug("Image query completed using %s", model)
         except OpenAIError as err:
@@ -1028,6 +1029,37 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         schema=schema_for_ha(GUEST_MODE_DISABLE_SCHEMA),
         supports_response=SupportsResponse.ONLY,
     )
+
+
+def _ensure_complete_image_result(response: Any, api_mode: str) -> None:
+    """Reject incomplete auxiliary answers without a retry or reauthentication."""
+
+    def field(value: Any, key: str) -> Any:
+        return (
+            value.get(key) if isinstance(value, Mapping) else getattr(value, key, None)
+        )
+
+    exhausted = False
+    if api_mode == API_MODE_RESPONSES:
+        if field(response, "status") != "incomplete":
+            return
+        exhausted = (
+            field(field(response, "incomplete_details"), "reason")
+            == "max_output_tokens"
+        )
+    else:
+        exhausted = any(
+            field(choice, "finish_reason") == "length"
+            for choice in field(response, "choices") or []
+        )
+        if not exhausted:
+            return
+    if exhausted:
+        raise HomeAssistantError(
+            "Image query exhausted its output token limit before completing. "
+            "Increase max_tokens to allow room for the answer and any reasoning tokens."
+        )
+    raise HomeAssistantError("Image query returned an incomplete response")
 
 
 def _convert_image_param(

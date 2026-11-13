@@ -40,6 +40,7 @@ from homeassistant.components import conversation
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers import llm
+from homeassistant.util import dt as dt_util
 from tests_real_ha.test_provider_wire_e2e import _agent
 
 _ENTITY_ID = "light.delayed_due_reauthorization"
@@ -133,9 +134,9 @@ async def _schedule_delayed_call(
 
 
 async def _execute_now(
-    hass: HomeAssistant, manager: DelayedToolManager, call_id: str
+    hass: HomeAssistant, manager: DelayedToolManager, call_id: str, freezer
 ) -> None:
-    """Bypass only wall-clock waiting; retain the production due-time lease/seam."""
+    """Advance to the actual due time; retain production time and lease checks."""
     task = manager._tasks.get(call_id)  # noqa: SLF001
     if task is not None and not task.done():
         # Give the production waiter one event-loop turn so cancellation is handled
@@ -149,6 +150,9 @@ async def _execute_now(
     assert call_id not in manager._tasks  # noqa: SLF001
 
     record = manager._records[call_id]  # noqa: SLF001
+    due_at = dt_util.parse_datetime(record.due_at)
+    assert due_at is not None
+    freezer.move_to(due_at)
     gate = get_agent_maintenance_gate(hass, record.entry_id, record.subentry_id)
     async with gate.shared():
         retry = await manager._async_execute_due(call_id)  # noqa: SLF001
@@ -159,6 +163,7 @@ async def _execute_now(
 
 async def test_delayed_native_tool_reauthorizes_live_user_when_due(
     hass: HomeAssistant,
+    freezer,
 ) -> None:
     """Scheduling authorization must not survive later HA permission/user changes."""
     user = _restricted_user()
@@ -212,7 +217,7 @@ async def test_delayed_native_tool_reauthorizes_live_user_when_due(
     assert user.permissions.check_entity(_ENTITY_ID, POLICY_READ)
     assert not user.permissions.check_entity(_ENTITY_ID, POLICY_CONTROL)
 
-    await _execute_now(hass, manager, permission_call)
+    await _execute_now(hass, manager, permission_call, freezer)
     assert calls == []
 
     _set_control_permission(user, allowed=True)
@@ -223,7 +228,7 @@ async def test_delayed_native_tool_reauthorizes_live_user_when_due(
     await hass.async_block_till_done()
     assert user.is_active is False
 
-    await _execute_now(hass, manager, inactive_call)
+    await _execute_now(hass, manager, inactive_call, freezer)
     assert calls == []
 
     await hass.auth.async_update_user(user, is_active=True)
@@ -234,7 +239,7 @@ async def test_delayed_native_tool_reauthorizes_live_user_when_due(
     recovery_call = await _schedule_delayed_call(
         agent, manager, user, "call-delayed-reauthorization-recovered"
     )
-    await _execute_now(hass, manager, recovery_call)
+    await _execute_now(hass, manager, recovery_call, freezer)
 
     assert len(calls) == 1
     assert calls[0].data["entity_id"] == [_ENTITY_ID]

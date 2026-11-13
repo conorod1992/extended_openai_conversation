@@ -539,6 +539,8 @@ def validate_function_tools(value: Any) -> list[dict[str, Any]]:
             raise AgentConfigError(f"{field}.enabled", "must be a boolean")
         if "guest_allowed" in tool and not isinstance(tool["guest_allowed"], bool):
             raise AgentConfigError(f"{field}.guest_allowed", "must be a boolean")
+        if "delay_catch_up" in tool and not isinstance(tool["delay_catch_up"], bool):
+            raise AgentConfigError(f"{field}.delay_catch_up", "must be a boolean")
         spec = tool.get("spec")
         function_config = tool.get("function")
         if not isinstance(spec, dict):

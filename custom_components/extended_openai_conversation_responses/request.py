@@ -412,6 +412,43 @@ def auxiliary_output_token_limit(
     return result
 
 
+def query_image_request_settings(
+    model: str,
+    api_mode: str,
+    options: Mapping[str, Any],
+    entry_data: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Choose image-analysis defaults without overriding explicit token limits."""
+    capabilities = request_model_capabilities(
+        {**options, CONF_CHAT_MODEL: model}, entry_data
+    )
+    with model_capability_snapshot(model, capabilities):
+        reasoning = capabilities["reasoning"]
+        effort = recommended_reasoning_effort(model) if reasoning["supported"] else None
+        # Some models/providers use reasoning tokens without exposing effort,
+        # and an effort may be supported on only one API path.
+        if effort not in reasoning["by_api"][api_mode]["efforts"]:
+            effort = None
+        reasons = capabilities.get("uses_reasoning_tokens", reasoning["supported"])
+        limit = (
+            options.get("max_tokens")
+            if "max_tokens" in options
+            else min(
+                8192 if reasons else 300, capabilities["limits"]["max_output_tokens"]
+            )
+        )
+        field, value = auxiliary_output_token_limit(
+            model, api_mode, limit, options, entry_data
+        )
+    settings: dict[str, Any] = {field: value}
+    if effort is not None:
+        if api_mode == API_MODE_RESPONSES:
+            settings["reasoning"] = {"effort": effort}
+        else:
+            settings["reasoning_effort"] = effort
+    return settings
+
+
 def context_summary_request_settings(
     model: str,
     api_mode: str,

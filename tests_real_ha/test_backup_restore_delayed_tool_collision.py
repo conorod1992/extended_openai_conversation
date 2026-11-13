@@ -42,6 +42,7 @@ from homeassistant.components import conversation
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers import llm
+from homeassistant.util import dt as dt_util
 from tests_real_ha.test_provider_wire_e2e import _agent
 
 _ENTITY_ID = "light.delayed_restore_collision"
@@ -195,7 +196,7 @@ async def _execute_due_under_production_lease(
     manager: DelayedToolManager,
     call_id: str,
 ) -> None:
-    """Bypass wall time only; retain the scheduler's real shared maintenance lease."""
+    """Execute due work through the scheduler's real time checks and shared lease."""
     retry = await manager._async_execute_due(call_id)
     assert retry is False
 
@@ -213,6 +214,7 @@ async def _wait_for_writer(gate: Any) -> None:
 async def test_restore_wins_collision_and_due_tool_uses_restored_configuration(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
+    freezer,
 ) -> None:
     """A due call blocked by restore must revalidate against restored configuration."""
     agent, manager, user, calls = await _prepare_runtime(hass)
@@ -241,6 +243,9 @@ async def test_restore_wins_collision_and_due_tool_uses_restored_configuration(
     )
     await _cancel_wall_clock_waiter(manager, call_id)
     record = manager._records[call_id]
+    due_at = dt_util.parse_datetime(record.due_at)
+    assert due_at is not None
+    freezer.move_to(due_at)
     gate = get_agent_maintenance_gate(hass, record.entry_id, record.subentry_id)
 
     restore_entered = asyncio.Event()
@@ -297,6 +302,7 @@ async def test_restore_wins_collision_and_due_tool_uses_restored_configuration(
 async def test_due_tool_wins_collision_and_restore_waits_for_exactly_once_completion(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
+    freezer,
 ) -> None:
     """Restore queued behind an executing delayed call must wait through finalization."""
     agent, manager, user, calls = await _prepare_runtime(hass)
@@ -316,6 +322,9 @@ async def test_due_tool_wins_collision_and_restore_waits_for_exactly_once_comple
     )
     await _cancel_wall_clock_waiter(manager, call_id)
     record = manager._records[call_id]
+    due_at = dt_util.parse_datetime(record.due_at)
+    assert due_at is not None
+    freezer.move_to(due_at)
     gate = get_agent_maintenance_gate(hass, record.entry_id, record.subentry_id)
 
     delayed_entered = asyncio.Event()
