@@ -46,7 +46,7 @@ Restore first validates the format and every category, drops temporary memories 
 
 ## Speech cleanup
 
-Speech post-processing cleans both progressive and completed TTS. A bounded streaming sanitizer removes Markdown formatting and URL destinations before Home Assistant's shared ChatLog listener can feed progressive TTS. Human-readable link labels, including words such as Sources and numeric labels, are preserved; empty labels and explicit URL labels are suppressed. A bare address-looking label is suppressed only when its hostname matches the destination hostname (ignoring a leading `www.`). Meaningful dotted labels such as `configuration.yaml`, `README.md`, `Node.js` and `index.html` are retained when they differ from that hostname; mismatched bare-host labels are spoken too. The provider-neutral fallback works for Responses, Chat Completions, and compatible providers across arbitrary delta boundaries. The original provider text remains in ChatLog history, events, archive, and conversation context; Home Assistant currently shares one progressive listener between visual updates and TTS, so the live visual stream also receives the speech-safe deltas.
+Speech post-processing cleans both progressive and completed TTS. A bounded streaming sanitizer removes Markdown formatting and URL destinations before Home Assistant's shared ChatLog listener can feed progressive TTS. Human-readable link labels, including words such as Sources and numeric labels, are preserved; empty labels and explicit URL labels are suppressed. A bare address-looking label is suppressed only when its hostname matches the destination hostname (ignoring a leading `www.`). Meaningful dotted labels such as `configuration.yaml`, `README.md`, `Node.js` and `index.html` are retained when they differ from that hostname; mismatched bare-host labels are spoken too. The provider-neutral fallback works for Responses, Chat Completions, and compatible providers across arbitrary delta boundaries. The original provider text remains available in canonical conversation history/context and the archive when enabled. The EOAI conversation-finished event carries completion metadata only, not the request or response transcript; see [Credentials and privacy](features/credential-security.md). Home Assistant currently shares one progressive listener between visual updates and TTS, so the live visual stream also receives the speech-safe deltas.
 
 Responses API `url_citation` annotations are retained on the native response item for replay and context. Annotation events may arrive after their cited text, so structured metadata supplements rather than replaces the textual streaming sanitizer.
 
@@ -244,7 +244,7 @@ See [AI Task](features/ai-task.md).
 
 ## Refreshing model data
 
-Model capability metadata can be refreshed independently of the integration. Use **Update model data** or **Use bundled model data** under Model parameters. See [Model data catalogue](features/model-data.md) for the automatic update cadence, fallback, and storage details.
+Model capability metadata can be refreshed independently of the integration. Under **Assistant → Model & responses → Model parameters**, choose **Check for updates**, then review and explicitly **Apply vN update** if available. **Recovery options → Restore bundled data** returns to bundled capabilities without resetting the automatic check cadence. See [Model data catalogue](features/model-data.md) for the update, fallback, and storage details.
 
 
 ### Agent diagnostics for text-only configurations
