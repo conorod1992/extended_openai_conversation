@@ -113,3 +113,24 @@ def test_many_malformed_brackets_still_bounded_for_completed_parser():
     assert result.startswith("[invalid text")
     assert result.endswith("Final.")
     assert perf_counter() - start < 3.0
+
+
+
+def test_completed_titled_link_is_validated_once_across_many_openers(monkeypatch):
+    """Long link titles must not be rescanned for each malformed '[' prefix."""
+    text = "[" * 1500 + 'caption](<https://example.com/path> "' + "title " * 1100 + '")'
+    calls = 0
+    original = StreamingSpeechSanitizer._scan_markdown_destination
+
+    def counting_scanner(source, start, final, *, limit=None):
+        nonlocal calls
+        calls += 1
+        return original(source, start, final, limit=limit)
+
+    monkeypatch.setattr(
+        StreamingSpeechSanitizer, "_scan_markdown_destination",
+        staticmethod(counting_scanner),
+    )
+    result = StreamingSpeechSanitizer().process_complete(text)
+    assert result.endswith("caption")
+    assert calls == 1

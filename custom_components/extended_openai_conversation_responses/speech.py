@@ -1050,6 +1050,22 @@ class StreamingSpeechSanitizer:
                 if opening and text[opening - 1] == "]":
                     closed_parens[opening] = position
             escaped = False
+        # Many unmatched '[' can all point to the same ]( destination.
+        # Validate each *distinct* complicated destination here, once, rather
+        # than re-scanning a long title for every preceding opener. Keep the
+        # same 3-field index contract and the same shared streaming validator.
+        for opening, closing in tuple(closed_parens.items()):
+            url_start = opening + 1
+            invalid_index = bisect_left(invalid_url, url_start)
+            if (
+                invalid_index < len(invalid_url)
+                and invalid_url[invalid_index] < closing
+            ):
+                status, _ = StreamingSpeechSanitizer._scan_markdown_destination(
+                    text, url_start, True, limit=closing
+                )
+                if status != "complete":
+                    del closed_parens[opening]
         return brackets, invalid_url, closed_parens
 
     @staticmethod
@@ -1158,7 +1174,7 @@ class StreamingSpeechSanitizer:
         completed: tuple[array, array, dict[int, int]] | None = None,
     ) -> tuple[str, int]:
         if completed is not None:
-            brackets, invalid_url, closed_parens = completed
+            brackets, _, closed_parens = completed
             position = bisect_right(brackets, start)
             if position >= len(brackets):
                 return "no", start
@@ -1171,18 +1187,9 @@ class StreamingSpeechSanitizer:
             url_close = closed_parens.get(label_end + 1)
             if url_close is None:
                 return "no", start
-            next_invalid = bisect_left(invalid_url, url_start)
-            if (
-                next_invalid >= len(invalid_url)
-                or invalid_url[next_invalid] >= url_close
-            ):
-                return "complete", url_close + 1
-            # Complex destination/title syntax uses exactly the streaming
-            # validator, but only within this indexed closing delimiter.
-            status, end = StreamingSpeechSanitizer._scan_markdown_destination(
-                text, url_start, True, limit=url_close
-            )
-            return (status, end) if status == "complete" else (status, start)
+            # The completed index has already validated every complex
+            # destination. The lookup remains constant-time for all '['.
+            return "complete", url_close + 1
 
         label_end = text.find("]", start + 1)
         if label_end == -1:
