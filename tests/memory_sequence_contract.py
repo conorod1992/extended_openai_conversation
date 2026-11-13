@@ -58,10 +58,12 @@ async def run_memory_sequence(storage_factory, *, seed, steps, trace):
                 result = await memory.async_propose(
                     user, incoming_content, "preference", incoming_source, key=key
                 )
-                unchanged = source == incoming_source and content == incoming_content
+                unchanged = content == incoming_content
                 assert result["status"] == ("unchanged" if unchanged else "needs_resolution")
-                if not unchanged and operation in ("confirm", "explicit_change"):
-                    candidate = result["candidate"]
+                if (not unchanged or source != incoming_source) and operation in ("confirm", "explicit_change"):
+                    # An unchanged model proposal preserves provenance. A manual
+                    # confirmation still uses the separate authenticated update path.
+                    candidate = result["memory"] if unchanged else result["candidate"]
                     assert candidate["memory_id"] == memory_id
                     await memory.async_update(
                         user, memory_id, content=incoming_content, source=incoming_source,

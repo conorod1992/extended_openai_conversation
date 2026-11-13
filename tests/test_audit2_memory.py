@@ -111,12 +111,13 @@ async def test_implicit_add_does_not_assign_subject_to_explicit_legacy_fact():
     await memory.async_initialize()
     await memory.async_add("user", "Likes chicken", "preferences", "explicit")
     saved = storage.save_count
-    result = await memory.async_add(
-        "user", "Likes chicken", "preferences", "implicit", subject="Oscar"
-    )
-    assert result["status"] == "duplicate"
-    assert result["memory"]["subject"] is None
-    assert result["memory"]["source"] == "explicit"
+    with pytest.raises(ValueError, match="explicit-memory metadata protection"):
+        await memory.async_add(
+            "user", "Likes chicken", "preferences", "implicit", subject="Oscar"
+        )
+    [record] = await memory.async_list("user")
+    assert record.subject is None
+    assert record.source == "explicit"
     assert storage.save_count == saved
 
 

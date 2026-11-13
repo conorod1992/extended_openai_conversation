@@ -18,15 +18,23 @@ Persistent memory keeps concise durable facts after chat history ends. It is off
 
 Hybrid uses embeddings, not another LLM, classifier, or reranker call. No vector database is used and raw embeddings are excluded from normal results, diagnostics, prompts, and backups. If the configured provider or embedding model does not support embeddings, retrieval logs the failure and falls back to lexical without breaking the conversation. Semantic matching remains probabilistic and should not be treated as perfect. Choose lightweight lexical matching if you want memory ranking to remain entirely local.
 
+Embedding-cache saves are best effort. When cache storage reports a save failure, current validated vectors remain usable in memory and all required batches continue preparing. Diagnostics report that the cache is not persisted; a later search or memory operation can retry at most once per minute while storage reports failures. Home Assistant's native cache Store can log and swallow some file/serialization errors, which this manager cannot detect under the existing cache I/O policy. A successful cache-save call therefore does not guarantee durability; unsaved vectors may need regeneration after restart.
+
 ## Records and reliable updates
 
 Every memory has content, category, source, and creation/update timestamps. Retrieval ranks relevance; equal scores use a stable memory ID tie-break, independent of when a fact was edited.
+
+Management lists memories by the actual update instant, newest first, preserving storage order for ties and across pages. Legacy timestamps without a timezone are interpreted as UTC for ordering. Stored timestamp strings are preserved.
 
 Optional advanced metadata includes:
 
 - `subject`, such as `Oscar`
 - canonical `key`, such as `pet.oscar.breed`
 - `valid_from`, when the fact became true if known
+
+A manual unkeyed addition can fill a missing `valid_from` on one exact, compatible unkeyed record. Conflicting dates or categories, canonical keyed identities, and multiple plausible duplicates leave storage unchanged and explain how to edit the intended record through Update. Ordinary identical additions report that the memory already exists. Distinct known subjects remain separate facts. Adding metadata follows the usual revision and update-timestamp rules.
+
+Management acknowledges the confirmed result: **Memory added**, **Existing memory updated**, or **Memory already exists; no changes made**. A duplicate keeps the Add draft open, including unsaved metadata, and does not turn it into an editor for the existing record. Close the draft and open the intended record to make an intentional edit.
 
 A non-empty normalized key is unique inside one owner scope; the same key can exist in personal and household scopes. Memories never expire automatically, and age alone does not make a fact false.
 

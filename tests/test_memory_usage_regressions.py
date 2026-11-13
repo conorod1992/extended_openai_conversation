@@ -21,19 +21,19 @@ async def test_explicit_confirmation_promotes_implicit_memory_and_survives_impli
     proposed = await memory.async_propose(
         "user", "I prefer tea", "preference", "explicit", **extra
     )
-    assert proposed["status"] == "needs_resolution"
-    assert proposed["candidate"]["source"] == "implicit"
+    assert proposed["status"] == "unchanged"
+    assert proposed["memory"]["source"] == "implicit"
     confirmed = await memory.async_update(
         "user", created["memory"]["memory_id"], source="explicit",
-        expected_revision=proposed["candidate"]["revision"],
+        expected_revision=proposed["memory"]["revision"],
     )
     assert confirmed.memory_id == created["memory"]["memory_id"]
     assert confirmed.source == "explicit"
     retry = await memory.async_propose(
         "user", "I prefer tea", "preference", "implicit", **extra
     )
-    assert retry["status"] == "needs_resolution"
-    assert retry["candidate"]["source"] == "explicit"
+    assert retry["status"] == "unchanged"
+    assert retry["memory"]["source"] == "explicit"
 
 
 async def test_implicit_update_cannot_replace_existing_explicit_record():

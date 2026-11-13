@@ -82,3 +82,19 @@ export function memoryMutationValues(values, memory) {
   if (memory && clear.length) result.clear_fields = clear;
   return result;
 }
+
+export function persistentMemorySaveAcknowledgement(response, values, editingMemory) {
+  const memory = response?.memory;
+  const status = response?.status;
+  if (!(editingMemory ? status === "updated" : ["created", "updated", "duplicate"].includes(status))
+      || !memory || Array.isArray(memory) || typeof memory.memory_id !== "string" || !memory.memory_id
+      || typeof memory.content !== "string" || typeof memory.category !== "string" || !memory.revision
+      || typeof response.scope_id !== "string" || response.scope_id !== values.target_scope_id
+      || (editingMemory && memory.memory_id !== editingMemory.memory_id)) return null;
+  if (status !== "duplicate") return editingMemory ? "Memory updated" : status === "created" ? "Memory added" : "Existing memory updated";
+  const requested = memoryMutationValues(values, null);
+  const differing = ["category", "subject", "key", "valid_from"].filter(field =>
+    Object.hasOwn(requested, field) && requested[field] !== (memory[field] ?? ""));
+  return "Memory already exists; no changes made" + (differing.length
+    ? `. Existing metadata differs: ${differing.map(field => field.replaceAll("_", " ")).join(", ")}. Open the existing memory to intentionally edit it.` : "");
+}
