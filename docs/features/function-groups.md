@@ -48,7 +48,7 @@ A function belongs to at most one group. Group membership is stored separately f
 
 The overview shows a distinct card for each group, its availability, member count, description, and expandable member list. Search matches groups and functions. Editing a group can move selected functions from another group without editing YAML.
 
-Use the **Enabled** switch on a group card when you want to temporarily make the entire group unavailable without changing member-tool settings. A disabled group remains visible. Enable it again before editing its membership or other group details.
+Use the **Enabled** switch on a group card when you want to temporarily make the entire group unavailable without changing member-tool settings. A disabled group remains visible **and editable**. You can change its membership and other details while it is disabled; saving those edits does not enable it.
 
 Deleting a group persists immediately and never deletes its functions. They become ungrouped and therefore **Always available**. Deleting a function removes its group assignment. Renaming a function through the editor updates its assignment. Function and group changes do not save or discard an unrelated settings draft.
 
