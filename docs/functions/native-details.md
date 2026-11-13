@@ -65,9 +65,9 @@ Oversized requests fail explicitly without returning a partial series. Reduce th
 
 ## Automation creation and Broadcast
 
-`add_automation` can create real Home Assistant automations. Restrict access to a trusted agent, use a complete valid configuration, and review what was registered. Do not grant this capability casually.
+`add_automation` can create real Home Assistant automations, but **requires an active, authenticated Home Assistant administrator** as the request's user. A userless request (including a typical satellite request without a linked HA user), an unauthenticated request or a non-administrator cannot use this function, even when the tool is configured. Restrict access to a trusted agent, use a complete valid configuration, and review what was registered. Do not grant this capability casually.
 
-`send_broadcast` takes `message` and may take `destination` or `whole_home`. A whole-home announcement excludes the originating satellite. Broadcast behavior and delivery targets are also available as a separate Home Assistant action; see [Services and actions](../services.md).
+`send_broadcast` takes `message` and may take `destination` or `whole_home`. A whole-home announcement excludes the originating satellite. The Broadcast shortcut passes the composed message literally: a leading word such as `that` is **not** removed automatically. Broadcast behavior and delivery targets are also available as a separate Home Assistant action; see [Services and actions](../services.md).
 
 ## Availability
 
