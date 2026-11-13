@@ -5,8 +5,6 @@ from __future__ import annotations
 from dataclasses import replace
 from types import SimpleNamespace
 
-import pytest
-
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
     CONF_MEMORY_ENABLED,
@@ -82,7 +80,7 @@ async def test_automatic_recall_keeps_controls_negations_names_identifiers_numbe
     )
     weights = _automatic_query_weights(terms)
     assert weights is not None
-    for term in ("could", "emma", "not", "disable", "device", "a1_b2", "204"):
+    for term in ("could", "emma", "not", "disabl", "device", "a1_b2", "204"):
         assert weights[term] == 1.0
     assert weights["please"] < 1.0
     assert weights["you"] < 1.0

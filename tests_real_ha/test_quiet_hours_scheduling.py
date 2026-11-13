@@ -511,3 +511,113 @@ async def test_real_ha_fall_back_duplicate_time_is_one_quiet_period(
         assert manager.active is None
     finally:
         await manager.async_shutdown()
+
+
+@pytest.mark.asyncio
+async def test_real_ha_dst_skipped_start_uses_registered_utc_timer(
+    hass: HomeAssistant, freezer
+) -> None:
+    """The gap transition arrives at 02:00 local, before discovery's next tick."""
+    freezer.move_to(datetime(2026, 3, 29, 0, 58, tzinfo=UTC))
+    await hass.config.async_set_time_zone("Europe/Dublin")
+    _, media, wake = _install_satellite_entities(hass, slug="dst-timer")
+    calls: list[tuple[str, str]] = []
+    _install_control_services(hass, calls)
+    manager = await async_get_quiet_hours(hass)
+    try:
+        await manager.async_update_config(
+            {
+                "enabled": True,
+                "start": "01:30",
+                "end": "03:30",
+                "max_volume": 0.2,
+                "wake_sound": "off",
+                "overrides": {},
+            }
+        )
+        await hass.async_block_till_done(wait_background_tasks=True)
+        assert len(manager._unsubscribers) == 4  # daily clocks, DST point, discovery
+        assert hass.states.get(media).attributes["volume_level"] == pytest.approx(0.6)
+        assert hass.states.get(wake).state == "on"
+        assert calls == []
+
+        just_before = datetime(2026, 3, 29, 0, 59, 59, tzinfo=UTC)
+        freezer.move_to(just_before)
+        async_fire_time_changed(hass, just_before)
+        await hass.async_block_till_done(wait_background_tasks=True)
+        assert calls == []
+
+        boundary = datetime(2026, 3, 29, 1, 0, tzinfo=UTC)
+        freezer.move_to(boundary)
+        async_fire_time_changed(hass, boundary)
+        await hass.async_block_till_done(wait_background_tasks=True)
+        assert hass.states.get(media).attributes["volume_level"] == pytest.approx(0.2)
+        assert hass.states.get(wake).state == "off"
+        assert hass.states.get(_STATE_ENTITY_ID).attributes["period_started_at"] == (
+            "2026-03-29T02:00:00+01:00"
+        )
+        assert calls == [("volume_set", media), ("turn_off", wake)]
+
+        later = datetime(2026, 3, 29, 1, 30, tzinfo=UTC)
+        freezer.move_to(later)
+        async_fire_time_changed(hass, later)
+        await hass.async_block_till_done(wait_background_tasks=True)
+        assert calls == [("volume_set", media), ("turn_off", wake)]
+
+        end = datetime(2026, 3, 29, 2, 30, tzinfo=UTC)
+        freezer.move_to(end)
+        async_fire_time_changed(hass, end)
+        await hass.async_block_till_done(wait_background_tasks=True)
+        assert hass.states.get(media).attributes["volume_level"] == pytest.approx(0.6)
+        assert hass.states.get(wake).state == "on"
+        assert calls == [
+            ("volume_set", media), ("turn_off", wake),
+            ("volume_set", media), ("turn_on", wake),
+        ]
+        assert manager.active is None
+        await manager.async_set_enabled(False)
+        assert manager._unsubscribers == []
+    finally:
+        await manager.async_shutdown()
+
+
+@pytest.mark.asyncio
+async def test_real_ha_dst_repeated_start_does_not_reapply_owned_controls(
+    hass: HomeAssistant, freezer
+) -> None:
+    """Autumn's first 01:30 applies once; its second 01:30 is not a new period."""
+    freezer.move_to(datetime(2026, 10, 25, 0, 27, tzinfo=UTC))
+    await hass.config.async_set_time_zone("Europe/Dublin")
+    _, media, wake = _install_satellite_entities(hass, slug="dst-fold-timer")
+    calls: list[tuple[str, str]] = []
+    _install_control_services(hass, calls)
+    manager = await async_get_quiet_hours(hass)
+    try:
+        await manager.async_update_config(
+            {
+                "enabled": True, "start": "01:30", "end": "02:30",
+                "max_volume": 0.2, "wake_sound": "off", "overrides": {},
+            }
+        )
+        for instant in (
+            datetime(2026, 10, 25, 0, 30, tzinfo=UTC),
+            datetime(2026, 10, 25, 1, 30, tzinfo=UTC),
+        ):
+            freezer.move_to(instant)
+            async_fire_time_changed(hass, instant)
+            await hass.async_block_till_done(wait_background_tasks=True)
+            assert calls == [("volume_set", media), ("turn_off", wake)]
+            assert hass.states.get(media).attributes["volume_level"] == pytest.approx(0.2)
+            assert hass.states.get(wake).state == "off"
+        ending = datetime(2026, 10, 25, 2, 30, tzinfo=UTC)
+        freezer.move_to(ending)
+        async_fire_time_changed(hass, ending)
+        await hass.async_block_till_done(wait_background_tasks=True)
+        assert hass.states.get(media).attributes["volume_level"] == pytest.approx(0.6)
+        assert hass.states.get(wake).state == "on"
+        assert calls == [
+            ("volume_set", media), ("turn_off", wake),
+            ("volume_set", media), ("turn_on", wake),
+        ]
+    finally:
+        await manager.async_shutdown()

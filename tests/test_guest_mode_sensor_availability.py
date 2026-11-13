@@ -11,7 +11,6 @@ import pytest
 
 from custom_components.extended_openai_conversation_responses.guest_mode import (
     GuestModeManager,
-    GuestModeSchedule,
 )
 from custom_components.extended_openai_conversation_responses.sensor import GuestModeSensor
 from homeassistant.exceptions import HomeAssistantError
