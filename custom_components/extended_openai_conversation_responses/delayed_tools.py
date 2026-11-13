@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from contextvars import Context as TaskContext
 from copy import deepcopy
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import timedelta
 import hashlib
 import json
@@ -156,15 +156,19 @@ class DelayedToolCall:
     satellite_id: str | None = None
     # Missing/null means eventual execution, including all pre-expiry jobs.
     expires_at: str | None = None
+    # Preserve absent legacy metadata on read/write, while newly scheduled
+    # catch-up jobs explicitly persist null. This flag is never stored.
+    _expiry_metadata_present: bool = field(default=True, repr=False, compare=False)
 
     def as_dict(self) -> dict[str, Any]:
         """Serialize the call for Home Assistant storage."""
         payload = asdict(self)
+        payload.pop("_expiry_metadata_present")
         if self.satellite_id is None:
             # Preserve legacy queue shape when there is no physical origin.
             payload.pop("satellite_id")
-        # Persist an explicit null for eventual execution. Missing metadata from
-        # older queues loads with the same semantics, never today's default.
+        if self.expires_at is None and not self._expiry_metadata_present:
+            payload.pop("expires_at")
         return payload
 
     @classmethod
@@ -241,6 +245,7 @@ class DelayedToolCall:
             definition_fingerprint=fingerprint,
             satellite_id=satellite_id,
             expires_at=expires_at,
+            _expiry_metadata_present="expires_at" in raw,
         )
 
 

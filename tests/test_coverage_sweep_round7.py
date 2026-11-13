@@ -1200,6 +1200,8 @@ async def test_delayed_execute_due_missing_entry_discards(hass, monkeypatch) -> 
         user_id=None,
         entry_id="missing",
         subentry_id="agent",
+        due_at="2000-01-01T00:00:00+00:00",
+        expires_at=None,
     )
     hass.config_entries.async_get_entry = Mock(return_value=None)
     discard = AsyncMock(return_value=True)

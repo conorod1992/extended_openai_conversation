@@ -316,3 +316,16 @@ async def test_cancel_during_expiry_write_settles_removal_without_execution(
     assert manager._store.payload == {"calls": []}
     assert manager._records == {}
     execute.assert_not_awaited()
+
+
+@pytest.mark.parametrize("metadata", ["absent", "catch_up", "finite"])
+def test_loaded_expiry_metadata_retains_its_wire_shape_across_updates(metadata):
+    raw = _record().as_dict()
+    if metadata == "absent":
+        raw.pop("expires_at")
+    elif metadata == "finite":
+        raw["expires_at"] = (dt_util.utcnow() + timedelta(minutes=15)).isoformat()
+    record = delayed_tools.DelayedToolCall.from_dict(raw)
+    assert record.as_dict() == raw
+    assert replace(record, retry_count=1).as_dict() == {**raw, "retry_count": 1}
+    assert "_expiry_metadata_present" not in record.as_dict()

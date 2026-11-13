@@ -29,7 +29,12 @@ async def test_delayed_identity_covers_validation_and_restores_after_failure(
 ):
     manager = delayed_tools.DelayedToolManager(hass)
     manager._records["due"] = SimpleNamespace(
-        status="pending", user_id=user_id, entry_id="entry", subentry_id="agent"
+        status="pending",
+        user_id=user_id,
+        entry_id="entry",
+        subentry_id="agent",
+        due_at="2000-01-01T00:00:00+00:00",
+        expires_at=None,
     )
 
     def resolve(_entry_id):
