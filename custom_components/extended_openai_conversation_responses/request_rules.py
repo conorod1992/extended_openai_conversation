@@ -403,6 +403,7 @@ class RequestRules:
         self._condition_checkers: dict[str, _NativeConditions] = {}
         self._unsubscribe_stop: Callable[[], None] | None = None
         self._diagnostics: dict[str, str] = {}
+        self._wording_diagnostics: dict[str, int] = {}
         self._lock = asyncio.Lock()
         self._initialized = False
         self._retired = False
@@ -499,7 +500,8 @@ class RequestRules:
                         self._repair_required = True
                     try:
                         self._wording_groups = validate_wording_groups(
-                            stored.get("wording_groups", DEFAULT_WORDING_GROUPS)
+                            stored.get("wording_groups", DEFAULT_WORDING_GROUPS),
+                            strict=False,
                         )
                     except ValueError:
                         _LOGGER.warning(
@@ -636,6 +638,11 @@ class RequestRules:
             "groups": deepcopy(self._groups),
             "rules": [dict(rule) for rule in self._rules],
             "diagnostics": dict(self._diagnostics),
+            **(
+                {"wording_diagnostics": dict(self._wording_diagnostics)}
+                if self._wording_diagnostics
+                else {}
+            ),
             **({"storage_repair_required": True} if self._repair_required else {}),
         }
 
@@ -669,6 +676,7 @@ class RequestRules:
         snapshot = self.snapshot()
         snapshot.pop("revision", None)
         snapshot.pop("diagnostics", None)
+        snapshot.pop("wording_diagnostics", None)
         return snapshot
 
     @staticmethod
@@ -687,7 +695,7 @@ class RequestRules:
             raise ValueError("unknown request_rules fields")
         defaults = validate_matching_settings(value.get("defaults", DEFAULT_MATCHING))
         wording_groups = validate_wording_groups(
-            value.get("wording_groups", DEFAULT_WORDING_GROUPS)
+            value.get("wording_groups", DEFAULT_WORDING_GROUPS), strict=False
         )
         groups = validate_rule_groups(value.get("groups", []))
         raw_rules = value.get("rules", [])
@@ -1227,6 +1235,24 @@ class RequestRules:
 
     def _sort_and_compile(self) -> bool:
         """Sort, reindex, compile safe rules, and retain diagnostics for unsafe ones."""
+        raw_wording = tuple(
+            (g["canonical"], tuple(g["alternatives"])) for g in self._wording_groups
+        )
+        wording_diagnostics = {
+            mode: count
+            for mode, forms in (("basic", False), ("word_forms", True))
+            if (
+                count := len(
+                    _wording_conflicts(_normalized_wording_groups(raw_wording, forms))
+                )
+            )
+        }
+        if wording_diagnostics and wording_diagnostics != self._wording_diagnostics:
+            _LOGGER.warning(
+                "Ambiguous stored Request Rule wording terms are inactive; unrelated mappings retained (counts by mode: %s)",
+                wording_diagnostics,
+            )
+        self._wording_diagnostics = wording_diagnostics
         self._rules.sort(
             key=lambda item: (
                 item["order"],
@@ -1587,14 +1613,13 @@ def validate_matching_settings(value: Any) -> dict[str, Any]:
     return result
 
 
-def validate_wording_groups(value: Any) -> list[dict[str, Any]]:
+def validate_wording_groups(value: Any, *, strict: bool = True) -> list[dict[str, Any]]:
     """Validate an unambiguous, bounded synonym-group catalog."""
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
         raise ValueError("wording_groups must be a list")
     if len(value) > 100:
         raise ValueError("wording_groups may contain at most 100 groups")
     result: list[dict[str, Any]] = []
-    claimed: set[str] = set()
     for item in value:
         if not isinstance(item, Mapping) or set(item) != {"canonical", "alternatives"}:
             raise ValueError("each wording group needs canonical and alternatives")
@@ -1615,12 +1640,16 @@ def validate_wording_groups(value: Any) -> list[dict[str, Any]]:
         normalized = [_basic_normalize(term) for term in terms]
         if any(not term for term in normalized):
             raise ValueError("wording phrases must contain searchable text")
-        if len(set(normalized)) != len(normalized) or claimed.intersection(normalized):
-            raise ValueError("wording groups contain an ambiguous duplicate phrase")
-        claimed.update(normalized)
         result.append({"canonical": canonical, "alternatives": alternatives})
-    for group in result:
-        _normalize_wording(group["canonical"], result)
+    if strict:
+        catalog = tuple((g["canonical"], tuple(g["alternatives"])) for g in result)
+        for forms in (False, True):
+            if _wording_conflicts(_normalized_wording_groups(catalog, forms)):
+                raise ValueError(
+                    "wording groups contain an ambiguous duplicate or normalized phrase"
+                )
+            for group in result:
+                _normalize_wording(group["canonical"], result, word_forms=forms)
     return result
 
 
@@ -3973,16 +4002,54 @@ def _basic_normalize(text: str) -> str:
 
 
 @lru_cache(maxsize=16)
+def _normalized_wording_groups(
+    groups: tuple[tuple[str, tuple[str, ...]], ...],
+    word_forms: bool,
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Cache term normalization separately from effective-pattern compilation."""
+
+    def normalize(term: str) -> str:
+        value = _basic_normalize(term)
+        return (
+            " ".join(_singularize(token) for token in value.split())
+            if word_forms
+            else value
+        )
+
+    return tuple(
+        (normalize(canonical), tuple(normalize(term) for term in alternatives))
+        for canonical, alternatives in groups
+    )
+
+
+@lru_cache(maxsize=16)
+def _wording_conflicts(
+    groups: tuple[tuple[str, tuple[str, ...]], ...],
+) -> frozenset[str]:
+    """Identify ambiguous terms without choosing a catalog-order winner."""
+    claims: dict[str, str] = {}
+    blocked: set[str] = set()
+    for canonical, alternatives in groups:
+        for term in (canonical, *alternatives):
+            if term in claims and claims[term] != canonical:
+                blocked.add(term)
+            claims[term] = canonical
+    return frozenset(blocked)
+
+
+@lru_cache(maxsize=16)
 def _compiled_wording_replacements(
     groups: tuple[tuple[str, tuple[str, ...]], ...],
 ) -> tuple[tuple[re.Pattern[str], str], ...]:
-    """Compile one bounded catalog once, including during catalog validation."""
+    """Compile identical effective catalogs once across matching options/reloads."""
+    blocked = _wording_conflicts(groups)
     replacements = sorted(
-        (
-            (_basic_normalize(alternative), _basic_normalize(canonical))
+        {
+            (alternative, canonical)
             for canonical, alternatives in groups
             for alternative in alternatives
-        ),
+            if alternative != canonical and alternative not in blocked
+        },
         key=lambda item: (-len(item[0]), item[0], item[1]),
     )
     return tuple(
@@ -3991,13 +4058,20 @@ def _compiled_wording_replacements(
     )
 
 
-def _normalize_wording(text: str, wording_groups: Sequence[Mapping[str, Any]]) -> str:
+def _normalize_wording(
+    text: str, wording_groups: Sequence[Mapping[str, Any]], *, word_forms: bool = False
+) -> str:
     """Reach a bounded fixed point, rejecting cycles and expanding rewrites."""
     value = _basic_normalize(text)
+    if word_forms:
+        value = " ".join(_singularize(token) for token in value.split())
     replacements = _compiled_wording_replacements(
-        tuple(
-            (group["canonical"], tuple(group["alternatives"]))
-            for group in wording_groups
+        _normalized_wording_groups(
+            tuple(
+                (group["canonical"], tuple(group["alternatives"]))
+                for group in wording_groups
+            ),
+            word_forms,
         )
     )
     seen = {value}
@@ -4029,14 +4103,15 @@ def normalize_text(
 ) -> str:
     """Apply deterministic, conservative speech-text normalization."""
     value = _basic_normalize(text)
+    word_forms = bool(settings.get("word_forms"))
+    if word_forms:
+        value = " ".join(_singularize(token) for token in value.split())
     if settings.get("wording_alternatives"):
         # Individually safe phrases can interact across input boundaries.
         # If those rewrites do not converge, keep the original words rather
         # than aborting the request or matching a partially rewritten phrase.
         with suppress(ValueError):
-            value = _normalize_wording(value, wording_groups)
-    if settings.get("word_forms"):
-        value = " ".join(_singularize(token) for token in value.split())
+            value = _normalize_wording(text, wording_groups, word_forms=word_forms)
     return value
 
 

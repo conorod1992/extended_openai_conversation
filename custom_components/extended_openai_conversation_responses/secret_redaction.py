@@ -100,6 +100,19 @@ def _uses_credential_appid(value: Any) -> bool:
         return False
 
 
+def _rest_uses_credential_appid(value: dict[Any, Any]) -> bool:
+    """Classify only literal REST destinations, never evaluate template source.
+
+    Execution prefers resource_template when present. A dynamic template cannot
+    borrow provider evidence from an unused resource fallback.
+    """
+    return value.get("type") in ("rest", "scrape") and _uses_credential_appid(
+        value.get("resource_template")
+        if "resource_template" in value
+        else value.get("resource")
+    )
+
+
 def _is_payload_secret_key(key: Any, *, for_export: bool = False) -> bool:
     """Distinguish credentials from user-defined Script variable/data names."""
     separated = _CAMEL_CASE_BOUNDARY.sub(" ", str(key))
@@ -404,11 +417,7 @@ def _redact_secrets(
                 and value.get("type") in ("rest", "scrape")
                 and key == "params"
             ),
-            provider_appid=provider_appid
-            or (
-                value.get("type") in ("rest", "scrape")
-                and _uses_credential_appid(value.get("resource"))
-            ),
+            provider_appid=provider_appid or _rest_uses_credential_appid(value),
             schema_roots=schema_roots,
             for_export=for_export,
         )

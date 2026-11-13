@@ -113,7 +113,9 @@ async def _start_gated_assist(
     original_cleanup = integration_entity.async_streaming_speech_cleanup
 
     @contextmanager
-    def observe_cleanup(chat_log: Any, config: dict[str, Any]):
+    def observe_cleanup(
+        chat_log: Any, config: dict[str, Any], *, completed: bool = False
+    ):
         listener = chat_log.delta_listener
         assert listener is not None, "Assist did not install a ChatLog delta listener"
 
@@ -125,10 +127,12 @@ async def _start_gated_assist(
         captured["chat_log"] = chat_log
         captured["original_listener"] = listener
         try:
-            with original_cleanup(chat_log, config):
+            with original_cleanup(
+                chat_log, config, completed=completed
+            ) as presentation:
                 captured["sanitizer_listener"] = chat_log.delta_listener
                 captured["observed_listener"] = observed_listener
-                yield
+                yield presentation
         finally:
             captured["restored_listener"] = chat_log.delta_listener
 

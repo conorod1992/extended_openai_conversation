@@ -1082,7 +1082,6 @@ async def test_service_function_group_enable_missing_and_success_paths(
         [{"canonical": "on", "alternatives": "enable"}],
         [{"canonical": "on", "alternatives": []}],
         [{"canonical": "!!!", "alternatives": ["enable"]}],
-        [{"canonical": "turn on", "alternatives": ["turn on"]}],
         [
             {"canonical": "turn on", "alternatives": ["enable"]},
             {"canonical": "enable", "alternatives": ["activate"]},
@@ -1094,6 +1093,17 @@ def test_request_rule_wording_groups_reject_invalid_or_ambiguous_shapes(value) -
 
     with pytest.raises(ValueError):
         request_rules.validate_wording_groups(value)
+
+
+def test_request_rule_wording_noop_alias_is_harmless() -> None:
+    from custom_components.extended_openai_conversation_responses import request_rules
+
+    catalog = [{"canonical": "turn on", "alternatives": ["turn on"]}]
+    assert request_rules.validate_wording_groups(catalog) == catalog
+    for forms in (False, True):
+        assert request_rules.normalize_text(
+            "Turn on", {"word_forms": forms, "wording_alternatives": True}, catalog
+        ) == "turn on"
 
 
 def test_request_rule_wording_groups_deduplicate_exact_alternatives() -> None:

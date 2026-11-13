@@ -6,7 +6,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 import json
 import logging
+import re
 from typing import Any
+from urllib.parse import unquote
 
 from homeassistant.exceptions import HomeAssistantError
 
@@ -177,6 +179,95 @@ def canonical_json(value: Any) -> str:
     )
 
 
+def _has_optional_properties(schema: Any) -> bool:
+    """Inspect reachable schema positions, following bounded local pointers.
+
+    Responses' default normalization also changes optional nested properties.
+    Do not interpret annotation/default data as schema or rewrite nullability.
+    """
+    pending = [schema]
+    seen: set[int] = set()
+    while pending:
+        node = pending.pop()
+        if not isinstance(node, dict) or id(node) in seen:
+            continue
+        if len(seen) >= 512:
+            return True  # Unproved scope keeps the conservative opt-out.
+        seen.add(id(node))
+        if node is not schema and any(
+            isinstance(node.get(key), str) for key in ("$id", "id")
+        ):
+            return True  # Embedded resource resolution is deliberately unsupported.
+        if "$dynamicRef" in node or "$recursiveRef" in node:
+            return True
+        if "$ref" in node:
+            reference = node["$ref"]
+            if not isinstance(reference, str) or not reference.startswith("#"):
+                return True
+            try:
+                if re.search(r"%(?![0-9a-fA-F]{2})", reference):
+                    return True
+                pointer = unquote(reference[1:], errors="strict")
+                if pointer and (
+                    not pointer.startswith("/") or re.search(r"~(?:[^01]|$)", pointer)
+                ):
+                    return True
+                parts = pointer[1:].split("/") if pointer else []
+                if len(parts) > 32:
+                    return True
+                target = schema
+                for part in parts:
+                    key = part.replace("~1", "/").replace("~0", "~")
+                    if (
+                        isinstance(target, list)
+                        and re.fullmatch(r"0|[1-9][0-9]*", key) is None
+                    ):
+                        return True
+                    target = (
+                        target[int(key)] if isinstance(target, list) else target[key]
+                    )
+                if not isinstance(target, (dict, bool)):
+                    return True
+                pending.append(target)
+            except KeyError, IndexError, TypeError, ValueError, UnicodeError:
+                return True
+        properties = node.get("properties")
+        if isinstance(properties, dict):
+            required = node.get("required", [])
+            if isinstance(required, list) and properties.keys() - set(required):
+                return True
+        for key in (
+            "properties",
+            "patternProperties",
+            "dependentSchemas",
+            "dependencies",
+        ):
+            children = node.get(key)
+            if isinstance(children, dict):
+                pending.extend(children.values())
+        for key in (
+            "items",
+            "prefixItems",
+            "additionalItems",
+            "contains",
+            "additionalProperties",
+            "unevaluatedProperties",
+            "unevaluatedItems",
+            "propertyNames",
+            "not",
+            "if",
+            "then",
+            "else",
+            "allOf",
+            "anyOf",
+            "oneOf",
+            "contentSchema",
+        ):
+            child = node.get(key)
+            pending.extend(child if isinstance(child, list) else [child])
+    return False
+
+
 def format_function_tools(
     function_tools: list[dict[str, Any]], api_mode: str
 ) -> list[dict[str, Any]]:
@@ -188,19 +279,25 @@ def format_function_tools(
         function = tool.get("function")
         # Responses may silently normalize omitted-strict schemas into required,
         # nullable fields. Our optional tool arguments must remain truly optional.
-        # Never change user-configured schemas or tools that explicitly set strict.
+        # Apply this only at the Responses boundary, preserving explicit policy
+        # and the original local/persisted schemas on every provider.
         if (
             api_mode == API_MODE_RESPONSES
-            and isinstance(function, dict)
-            and function.get("type")
-            in {
-                "memory",
-                "temporary_memory",
-                "knowledge",
-                "archive",
-                "guest_mode",
-            }
             and "strict" not in spec
+            and (
+                _has_optional_properties(spec.get("parameters"))
+                or (
+                    isinstance(function, dict)
+                    and function.get("type")
+                    in {
+                        "memory",
+                        "temporary_memory",
+                        "knowledge",
+                        "archive",
+                        "guest_mode",
+                    }
+                )
+            )
         ):
             spec = {**spec, "strict": False}
         formatted.append(

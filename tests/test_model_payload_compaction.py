@@ -127,6 +127,10 @@ def test_complete_provider_payload_matches_develop_baseline(
     )
     tools = _baseline_tools()
     expected = baseline[api_mode]
+    if api_mode == API_MODE_RESPONSES:
+        next(item for item in expected if item["name"] == "custom_omitted")[
+            "strict"
+        ] = False
     if not conditional_continue:
         tools = tools[:-1]
         expected = expected[:-1]
@@ -183,9 +187,11 @@ def test_colliding_custom_tools_are_not_rewritten_or_hidden(api_mode) -> None:
             if api_mode == API_MODE_RESPONSES
             else {"type": "function", "function": spec}
         )
-        assert _compact_json(format_function_tools([tool], api_mode)) == _compact_json(
-            [expected]
-        )
+        actual = format_function_tools([tool], api_mode)
+        if api_mode == API_MODE_RESPONSES and "strict" not in spec:
+            # Optional contracts may now explicitly opt out of normalization.
+            assert actual[0].pop("strict", False) is False
+        assert _compact_json(actual) == _compact_json([expected])
         assert tool == before
 
 
@@ -465,7 +471,10 @@ def test_provider_formatter_respects_user_and_explicit_strict_contracts() -> Non
             item if api_mode == API_MODE_RESPONSES else item["function"]
             for item in result
         ]
-        assert "strict" not in specs[0]
+        if api_mode == API_MODE_RESPONSES:
+            assert specs[0]["strict"] is False
+        else:
+            assert "strict" not in specs[0]
         assert specs[1]["strict"] is True
 
 

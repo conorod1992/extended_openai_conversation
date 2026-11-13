@@ -8,6 +8,7 @@ from contextlib import suppress
 from functools import partial
 import json
 import logging
+import re
 import subprocess
 import sys
 from typing import Any
@@ -30,6 +31,11 @@ from .speech import _built_in_cleanup, _final_whitespace_cleanup
 
 _LOGGER = logging.getLogger(__name__)
 _CONFIGURED_REGEX_TIMEOUT_SECONDS = 1.0
+# This exact integration-owned revision expression has bounded work: the start
+# anchor and fixed 64-character class cannot backtrack catastrophically. Never
+# compile caller-supplied expressions in the parent. Matching the exact spelling
+# and flags also preserves stdlib `$` semantics (including a final newline).
+_FIXED_REVISION_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 MAX_SPEECH_REPLACEMENT_INPUT_CHARS = 32_768
 MAX_SPEECH_REPLACEMENT_OUTPUT_CHARS = 65_536
 MAX_SPEECH_REPLACEMENT_EXPANSION = 4
@@ -221,18 +227,30 @@ async def async_search_configured_patterns(
     hass: HomeAssistant,
     checks: list[tuple[str, str, int]],
 ) -> list[bool]:
-    """Evaluate configured searches with a hard process boundary and deadline."""
+    """Isolate configured searches, except the audited fixed revision expression."""
     if not checks:
         return []
+    results = [False] * len(checks)
+    isolated: list[tuple[int, str, str, int]] = []
+    for index, (pattern, text, flags) in enumerate(checks):
+        if pattern == _FIXED_REVISION_PATTERN.pattern and flags == 0:
+            results[index] = _FIXED_REVISION_PATTERN.search(text) is not None
+        else:
+            isolated.append((index, pattern, text, flags))
+    if not isolated:
+        return results
     payload = {
         "op": "search_many",
         "items": [
             {"pattern": pattern, "text": text, "flags": flags}
-            for pattern, text, flags in checks
+            for _, pattern, text, flags in isolated
         ],
     }
     result = await hass.async_add_executor_job(_run_regex_worker, payload)
-    return _checked_search_results(result, len(checks))
+    matches = _checked_search_results(result, len(isolated))
+    for (index, _, _, _), matched in zip(isolated, matches, strict=True):
+        results[index] = matched
+    return results
 
 
 def match_configured_property_keys(keys: list[str], patterns: list[str]) -> list[bool]:

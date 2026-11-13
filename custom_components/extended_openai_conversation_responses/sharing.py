@@ -20,7 +20,7 @@ from .secret_redaction import (
     REDACTED_SECRET_SENTINEL,
     _is_export_secret_key,
     _is_function_tool_schema_root,
-    _uses_credential_appid,
+    _rest_uses_credential_appid,
     is_redacted_secret,
     redact_http_url,
     redact_secrets,
@@ -332,7 +332,9 @@ def _local_schema_pointer(reference: Any) -> tuple[str, ...] | None:
     )
 
 
-def _sensitive_schema_property(name: Any, *, pattern: bool) -> bool:
+def _sensitive_schema_property(
+    name: Any, *, pattern: bool, provider_appid: bool = False
+) -> bool:
     """Classify literal names; never infer regex meaning from its spelling.
 
     An anchored literal is a bounded proof of the matched field name. Other
@@ -340,12 +342,18 @@ def _sensitive_schema_property(name: Any, *, pattern: bool) -> bool:
     references require omission. Type/shape-only schemas remain portable without
     executing an authored regex or changing the live/private definition.
     """
+
+    def sensitive(candidate: Any) -> bool:
+        return _is_export_secret_key(candidate) or (
+            provider_appid and str(candidate).casefold() == "appid"
+        )
+
     if not pattern:
-        return _is_export_secret_key(name)
+        return sensitive(name)
     literal = (
         _LITERAL_PROPERTY_PATTERN.fullmatch(name) if isinstance(name, str) else None
     )
-    return literal is None or _is_export_secret_key(literal[1])
+    return literal is None or sensitive(literal[1])
 
 
 def _classified_sensitive_schema_field(key: str, value: Any) -> bool:
@@ -384,6 +392,7 @@ def _schema_annotations(
     root: Any,
     *,
     sensitive: bool = False,
+    provider_appid: bool = False,
     schema_node: bool = True,
     references: frozenset[_ReferenceKey] = frozenset(),
     reference_results: dict[_ReferenceKey, bool] | None = None,
@@ -407,6 +416,7 @@ def _schema_annotations(
                 item,
                 root,
                 sensitive=sensitive,
+                provider_appid=provider_appid,
                 schema_node=schema_node,
                 references=references,
                 reference_results=reference_results,
@@ -449,6 +459,7 @@ def _schema_annotations(
                     target,
                     root,
                     sensitive=True,
+                    provider_appid=provider_appid,
                     references=references | {reference},
                     reference_results=reference_results,
                     single_resource=single_resource,
@@ -478,6 +489,7 @@ def _schema_annotations(
                 item,
                 root,
                 schema_node=False,
+                provider_appid=provider_appid,
                 reference_results=reference_results,
                 single_resource=single_resource,
             )
@@ -485,7 +497,13 @@ def _schema_annotations(
             # Instance data cannot acquire schema exemptions by using keys such
             # as functions/spec/parameters. No user content is executed here.
             classified = _structured_payloads(
-                redact_secrets(item, schema_roots=False, for_export=True)
+                redact_secrets(
+                    item,
+                    schema_roots=False,
+                    for_export=True,
+                    provider_appid=provider_appid,
+                ),
+                provider_appid=provider_appid,
             )
             result[key] = (
                 dict(REDACTED_SECRET_SENTINEL)
@@ -501,10 +519,13 @@ def _schema_annotations(
                     or (
                         key in {"properties", "patternProperties"}
                         and _sensitive_schema_property(
-                            name, pattern=key == "patternProperties"
+                            name,
+                            pattern=key == "patternProperties",
+                            provider_appid=provider_appid,
                         )
                     ),
                     references=references,
+                    provider_appid=provider_appid,
                     reference_results=reference_results,
                     single_resource=single_resource,
                 )
@@ -529,6 +550,7 @@ def _schema_annotations(
                 item,
                 root,
                 sensitive=sensitive or key in _SCHEMA_VALUE_WILDCARDS,
+                provider_appid=provider_appid,
                 references=references,
                 reference_results=reference_results,
                 single_resource=single_resource,
@@ -542,16 +564,41 @@ def _schema_annotations(
             # Include the annotation's own key: api_key at a schema node is
             # not the structural property declaration properties.api_key.
             data = _structured_payloads(
-                redact_secrets({key: item}, schema_roots=False, for_export=True)
+                redact_secrets(
+                    {key: item},
+                    schema_roots=False,
+                    for_export=True,
+                    provider_appid=provider_appid,
+                ),
+                provider_appid=provider_appid,
             )
             result[key] = _schema_annotations(
                 data[key],
                 root,
                 schema_node=False,
+                provider_appid=provider_appid,
                 reference_results=reference_results,
                 single_resource=single_resource,
             )
     return result
+
+
+def _function_uses_credential_appid(value: Any) -> bool:
+    """Inspect executable REST nodes, without interpreting Script data as tools."""
+    pending = [value]
+    seen: set[int] = set()
+    while pending:
+        node = pending.pop()
+        if not isinstance(node, dict) or id(node) in seen:
+            continue
+        seen.add(id(node))
+        if _rest_uses_credential_appid(node):
+            return True
+        elif node.get("type") == "composite":
+            # Composite's cv.ensure_list also accepts one function mapping.
+            sequence = node.get("sequence")
+            pending.extend(sequence if isinstance(sequence, list) else [sequence])
+    return False
 
 
 def _structured_payloads(
@@ -574,12 +621,14 @@ def _structured_payloads(
         ]
     if not isinstance(value, dict):
         return value
+    tool_node = function_schemas and len(path) == 2 and path[0] == "functions"
+    if tool_node:
+        # The provider lives beside spec, not above it. Scope the evidence to
+        # this coherent tool, including any executable Composite children.
+        provider_appid = _function_uses_credential_appid(value.get("function"))
     if function_schemas and _is_function_tool_schema_root(path):
-        return _schema_annotations(value, value)
-    provider_appid = provider_appid or (
-        value.get("type") in ("rest", "scrape")
-        and _uses_credential_appid(value.get("resource"))
-    )
+        return _schema_annotations(value, value, provider_appid=provider_appid)
+    provider_appid = provider_appid or _rest_uses_credential_appid(value)
     result = {}
     for key, item in value.items():
         if key in {"payload", "payload_template"} and isinstance(item, str):
@@ -602,7 +651,7 @@ def _structured_payloads(
             item,
             path=(*path, key),
             function_schemas=function_schemas,
-            provider_appid=provider_appid,
+            provider_appid=False if tool_node and key == "function" else provider_appid,
         )
     return result
 

@@ -53,7 +53,6 @@ def rule(rule_id: str, phrase: str, match_type: str = "equals", **extra) -> dict
         "matching": {
             "word_forms": False,
             "wording_alternatives": False,
-            "fuzzy": False,
         },
         **extra,
     }
