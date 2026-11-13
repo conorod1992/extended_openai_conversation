@@ -115,7 +115,6 @@ def test_many_malformed_brackets_still_bounded_for_completed_parser():
     assert perf_counter() - start < 3.0
 
 
-
 def test_completed_titled_link_is_validated_once_across_many_openers(monkeypatch):
     """Long link titles must not be rescanned for each malformed '[' prefix."""
     text = "[" * 1500 + 'caption](<https://example.com/path> "' + "title " * 1100 + '")'
