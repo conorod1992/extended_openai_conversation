@@ -1840,7 +1840,11 @@ class ExtendedOpenAIAgentEntity(
         if not query.strip():
             return []
         return await self._async_search_memories(
-            readable_scope_ids, query, limit, allow_fuzzy_only=False
+            readable_scope_ids,
+            query,
+            limit,
+            allow_fuzzy_only=False,
+            automatic_recall=True,
         )
 
     async def _async_search_memories(
@@ -1852,6 +1856,7 @@ class ExtendedOpenAIAgentEntity(
         *,
         offset: int = 0,
         allow_fuzzy_only: bool = True,
+        automatic_recall: bool = False,
     ) -> list[MemoryRecord]:
         """Search using the configured lexical or Hybrid retrieval semantics."""
         assert self._memory is not None
@@ -1878,6 +1883,8 @@ class ExtendedOpenAIAgentEntity(
             search_options["offset"] = offset
         if not allow_fuzzy_only:
             search_options["allow_fuzzy_only"] = False
+        if automatic_recall:
+            search_options["automatic_recall"] = True
         return await self._memory.async_search(
             search_scope,
             query,
