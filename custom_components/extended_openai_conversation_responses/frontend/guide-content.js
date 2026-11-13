@@ -37,7 +37,7 @@ export const GUIDE_TOPICS = [
     terms: "model data catalog catalogue capabilities refresh update bundled fallback reasoning temperature service tier",
     body: [
       {type: "p", text: "Extended OpenAI keeps model capability information separately from your agent configuration. This lets the management UI show controls such as reasoning effort, temperature, service tier, and compatible API modes only where they are expected to work."},
-      {type: "p", text: "Under Assistant → Model & responses → Model parameters, Check for updates looks for new model data without activating it. Review and explicitly Apply the available update to make its capabilities active for loaded agents without an integration reload. Recovery options → Restore bundled data returns to the installed integration\'s bundled capabilities without resetting the existing automatic-check schedule."},
+      {type: "p", text: "Under Assistant → Model & responses → Model parameters, Check for updates looks for new model data without activating it. Review and explicitly Apply the available update to make its capabilities active for loaded agents without an integration reload. Recovery options → Restore bundled data returns to the installed integration’s bundled capabilities without resetting the existing automatic-check schedule."},
       {type: "note", title: "Model data is guidance, not a provider guarantee", text: "Custom or OpenAI-compatible providers may implement a model differently from the provider the catalogue describes. If a provider rejects an option, use the settings that provider actually supports."},
     ],
     action: {label: "Manage model data", page: "assistant", section: "model-responses"},
