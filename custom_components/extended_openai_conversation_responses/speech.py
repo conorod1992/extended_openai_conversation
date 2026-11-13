@@ -1106,7 +1106,11 @@ class StreamingSpeechSanitizer:
                     depth += 1
                 elif char == ")":
                     if depth == 0:
-                        return ("complete", position + 1) if position > start else ("no", start)
+                        return (
+                            ("complete", position + 1)
+                            if position > start
+                            else ("no", start)
+                        )
                     depth -= 1
                 position += 1
             if position == end:
@@ -1122,7 +1126,7 @@ class StreamingSpeechSanitizer:
             return unfinished()
         if text[position] == ")":
             return "complete", position + 1
-        if position == whitespace_start or text[position] not in ("\"", "'", "("):
+        if position == whitespace_start or text[position] not in ('"', "'", "("):
             return "no", start
         closing = ")" if text[position] == "(" else text[position]
         position += 1
@@ -1144,11 +1148,7 @@ class StreamingSpeechSanitizer:
             position += 1
         if position >= end:
             return unfinished()
-        return (
-            ("complete", position + 1)
-            if text[position] == ")"
-            else ("no", start)
-        )
+        return ("complete", position + 1) if text[position] == ")" else ("no", start)
 
     @staticmethod
     def _markdown_link_end(

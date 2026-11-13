@@ -126,9 +126,25 @@ _STOP_WORDS = {
 _AUTOMATIC_MEMORY_FILLER_TERMS = frozenset(
     _stem(word)
     for word in (
-        "hey", "hi", "please", "kindly", "tell", "me", "you", "which",
-        "perhaps", "maybe", "just", "curious", "wondering", "know",
-        "recall", "remind", "remember", "about", "thanks",
+        "hey",
+        "hi",
+        "please",
+        "kindly",
+        "tell",
+        "me",
+        "you",
+        "which",
+        "perhaps",
+        "maybe",
+        "just",
+        "curious",
+        "wondering",
+        "know",
+        "recall",
+        "remind",
+        "remember",
+        "about",
+        "thanks",
     )
 )
 
@@ -2027,9 +2043,7 @@ def _rank_memory_snapshot(
     """Rank an immutable generation without holding the live store lock."""
     query_terms = _token_list(query)
     query_tokens = set(query_terms)
-    query_weights = (
-        _automatic_query_weights(query_terms) if automatic_recall else None
-    )
+    query_weights = _automatic_query_weights(query_terms) if automatic_recall else None
     if not corpus or (not query_tokens and not (hybrid and query_embedding)):
         return []
     document_data: dict[str, tuple[tuple[str, ...], frozenset[str]]] = {}
@@ -2144,9 +2158,7 @@ def _bm25_score(
     score = 0.0
     max_score = 0.0
     weights = (
-        query_weights
-        if query_weights is not None
-        else _bm25_term_weights(query_terms)
+        query_weights if query_weights is not None else _bm25_term_weights(query_terms)
     )
     for term, weight in weights.items():
         df = document_frequency.get(term, 0)

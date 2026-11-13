@@ -185,13 +185,14 @@ def _next_discontinuous_transition(
         wall = datetime.combine(day, clock)
         # No extra timer is needed on ordinary dates: HA's daily local-time
         # tracker already owns them. A different fold offset marks a transition.
-        if wall.replace(tzinfo=zone, fold=0).utcoffset() == wall.replace(
-            tzinfo=zone, fold=1
-        ).utcoffset():
+        if (
+            wall.replace(tzinfo=zone, fold=0).utcoffset()
+            == wall.replace(tzinfo=zone, fold=1).utcoffset()
+        ):
             continue
-        instant = _resolve_quiet_wall_time(
-            day, clock, zone, ending=ending
-        ).astimezone(UTC)
+        instant = _resolve_quiet_wall_time(day, clock, zone, ending=ending).astimezone(
+            UTC
+        )
         if instant > now:
             return instant
     return None
@@ -2428,9 +2429,12 @@ class QuietHoursManager:
                         (_parse_clock(self._config.start), False),
                         (_parse_clock(self._config.end), True),
                     )
-                    if (instant := _next_discontinuous_transition(
-                        now_utc, clock, zone, ending=ending
-                    )) is not None
+                    if (
+                        instant := _next_discontinuous_transition(
+                            now_utc, clock, zone, ending=ending
+                        )
+                    )
+                    is not None
                 }
                 for instant in sorted(deadlines):
                     self._unsubscribers.append(
