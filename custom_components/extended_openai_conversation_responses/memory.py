@@ -330,8 +330,11 @@ class PersistentMemory:
             retry_identity if retry_identity is not None else provider,
         )
         if identity == self._embedding_retry_identity:
-            # Refresh an equivalent wrapper without resetting failure backoff/status.
-            self._embedding_provider = provider
+            # Equality identifies equivalent wrappers. Retain their object identity
+            # so a repeated sync cannot retire a valid in-flight retrieval. A new
+            # entity/callback must still bind even when its retry identity matches.
+            if self._embedding_provider != provider:
+                self._embedding_provider = provider
             return
         self._embedding_retry_identity = identity
         self._hybrid_retry_at = self._hybrid_retry_delay = 0.0
@@ -641,13 +644,12 @@ class PersistentMemory:
         if monotonic() < self._hybrid_retry_at:
             return None
         attempt_identity = self._embedding_retry_identity
+        attempt_provider = self._embedding_provider
         try:
             if not await self._async_refresh_missing_embeddings(scope_ids):
                 self._set_hybrid_status(
                     "lexical_fallback",
-                    "cache_write_failed"
-                    if self._embedding_cache_write_failed
-                    else "embedding_preparation_failed",
+                    "embedding_preparation_failed",
                 )
                 return None
             provider = self._embedding_provider
@@ -661,6 +663,7 @@ class PersistentMemory:
                 self._embedding_provider is not provider
                 or self._embedding_model != model
                 or self._embedding_space_id != space_id
+                or self._embedding_retry_identity != attempt_identity
             ):
                 self._set_hybrid_status("lexical_fallback", "provider_changed")
                 return None
@@ -678,7 +681,10 @@ class PersistentMemory:
             )
             return vector
         except Exception as err:
-            if attempt_identity != self._embedding_retry_identity:
+            if (
+                attempt_identity != self._embedding_retry_identity
+                or attempt_provider is not self._embedding_provider
+            ):
                 return None
             self._hybrid_retry_delay = min(
                 HYBRID_RETRY_MAX_SECONDS,
@@ -1307,6 +1313,7 @@ class PersistentMemory:
             return False
         model = self._embedding_model
         space_id = self._embedding_space_id
+        retry_identity = self._embedding_retry_identity
         allowed_scopes = set(scope_ids)
         async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
@@ -1329,6 +1336,7 @@ class PersistentMemory:
                     self._embedding_provider is not provider
                     or self._embedding_model != model
                     or self._embedding_space_id != space_id
+                    or self._embedding_retry_identity != retry_identity
                 ):
                     return False
                 for memory, vector in zip(batch, vectors, strict=True):
@@ -1364,9 +1372,12 @@ class PersistentMemory:
                 self._embedding_provider is not provider
                 or self._embedding_model != model
                 or self._embedding_space_id != space_id
+                or self._embedding_retry_identity != retry_identity
             ):
                 return False
-            await async_settle_owned_operation(self._async_save_embedding_cache_locked())
+            await async_settle_owned_operation(
+                self._async_save_embedding_cache_locked()
+            )
         return True
 
     async def _async_save_locked(self, *, replacing: bool = False) -> None:

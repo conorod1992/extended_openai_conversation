@@ -333,8 +333,9 @@ async def test_local_cache_write_failure_does_not_backoff_remote_provider():
 
     provider = AsyncMock(return_value=[[1.0, 0.0]])
     memory.set_embedding_provider(provider)
-    assert await memory.async_prepare_hybrid(["alice"], "query") is None
-    assert memory.hybrid_status()["reason"] == "cache_write_failed"
+    assert await memory.async_prepare_hybrid(["alice"], "query") == [1.0, 0.0]
+    assert memory.hybrid_status()["reason"] == "embedding_cache_not_persisted"
     assert memory.hybrid_status()["retry_after_seconds"] == 0
     assert await memory.async_prepare_hybrid(["alice"], "query") == [1.0, 0.0]
-    assert provider.await_count == 2
+    assert provider.await_count == 3
+    assert memory._embedding_cache_dirty
