@@ -594,8 +594,10 @@ def _function_uses_credential_appid(value: Any) -> bool:
         seen.add(id(node))
         if _rest_uses_credential_appid(node):
             return True
-        elif node.get("type") == "composite" and isinstance(node.get("sequence"), list):
-            pending.extend(node["sequence"])
+        elif node.get("type") == "composite":
+            # Composite's cv.ensure_list also accepts one function mapping.
+            sequence = node.get("sequence")
+            pending.extend(sequence if isinstance(sequence, list) else [sequence])
     return False
 
 

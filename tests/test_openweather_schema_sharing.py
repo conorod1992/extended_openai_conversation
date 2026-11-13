@@ -137,12 +137,50 @@ def test_composite_provider_evidence_reaches_schema(hass):
     assert public["functions"] == []
 
 
+@pytest.mark.parametrize("format", ["setup", "configuration"])
 @pytest.mark.parametrize("destination", ["resource", "resource_template"])
-def test_private_weather_configuration_is_exactly_preserved(hass, destination):
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("host", ["api.openweathermap.org", "public.example"])
+def test_singleton_composite_sequence_keeps_provider_evidence(
+    hass, format, destination, nested, host
+):
+    tool = weather_tool("default", "instance", host)
+    node = tool["function"]
+    if destination == "resource_template":
+        node[destination] = node.pop("resource")
+    composite = {"type": "composite", "sequence": node}
+    tool["function"] = (
+        {"type": "composite", "sequence": [composite]} if nested else composite
+    )
+    before = deepcopy(tool)
+    artifact, public, serialized = configuration_artifact({"functions": [tool]}, format)
+    if host == "api.openweathermap.org":
+        assert public["functions"] == []
+        assert SECRET not in serialized
+        assert artifact["security"]["omitted"] == [
+            {
+                "field": "function_tool_1",
+                "reason": "requires_private_configuration",
+                "count": 1,
+            }
+        ]
+    else:
+        assert public["functions"] == [tool]
+        assert artifact["security"]["omitted"] == []
+    assert tool == before
+
+
+@pytest.mark.parametrize("destination", ["resource", "resource_template"])
+@pytest.mark.parametrize("composite", [False, True])
+def test_private_weather_configuration_is_exactly_preserved(
+    hass, destination, composite
+):
     document = private_document()
     tool = weather_tool("default", "reference")
     if destination == "resource_template":
         tool["function"][destination] = tool["function"].pop("resource")
+    if composite:
+        tool["function"] = {"type": "composite", "sequence": tool["function"]}
     document["agent"]["config"]["functions"] = yaml.safe_dump([tool])
     before = deepcopy(document)
     result = backup.finalize_backup_snapshot(document)
