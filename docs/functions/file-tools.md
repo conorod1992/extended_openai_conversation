@@ -41,4 +41,4 @@ function:
 
 These tools are not general backups. Review write/edit permissions and keep recovery copies of important configuration files.
 
-Relative `allow_dir` paths are anchored to Home Assistant's configuration directory, independent of the process working directory. Relative file targets continue to use the configured Function Tool working directory.
+Relative `allow_dir` paths are anchored to Home Assistant's configuration directory, independent of the process working directory. Relative file targets resolve under the fixed integration workspace, `<config>/extended_openai_conversation_responses/`; these file tools do not expose Bash's configurable `cwd` setting.
