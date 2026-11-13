@@ -724,6 +724,16 @@ def split_legacy_execution_delay(
     delay = {
         key: value for key, value in (delay_value or {}).items() if value is not None
     }
+    # Inspect individual units, not their sum: mixed positive/negative or
+    # malformed durations must still reach validation rather than execute now.
+    if all(
+        key in _LEGACY_DELAY_FIELDS
+        and isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and value == 0
+        for key, value in delay.items()
+    ):
+        return execution_arguments, None
     return execution_arguments, delay or None
 
 
