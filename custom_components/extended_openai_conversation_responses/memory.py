@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
+from datetime import UTC, datetime
 from functools import lru_cache
 import hashlib
 import json
@@ -400,6 +401,12 @@ class PersistentMemory:
                     user_id, content, subject, valid_from
                 )
                 if duplicate is not None:
+                    if duplicate.category != category:
+                        raise ValueError(
+                            "Existing memory conflicts with requested category; "
+                            "no changes made. Open the existing memory and use Update "
+                            "to intentionally edit its metadata before assigning a key."
+                        )
                     if duplicate.source == "explicit" and source == "implicit":
                         return "duplicate", duplicate
                     promotion_changes: dict[str, Any] = {"key": key}
@@ -419,6 +426,32 @@ class PersistentMemory:
             if key is None:
                 duplicate = self._find_duplicate(user_id, content, subject)
                 if duplicate:
+                    conflict = None
+                    if duplicate.key is not None:
+                        conflict = "canonical keyed identity"
+                    elif duplicate.category != category:
+                        conflict = "category"
+                    elif (
+                        valid_from is not None
+                        and duplicate.valid_from is not None
+                        and duplicate.valid_from != valid_from
+                    ):
+                        conflict = "valid_from"
+                    elif (
+                        duplicate.source == "explicit"
+                        and source == "implicit"
+                        and (
+                            (subject and not duplicate.subject)
+                            or (valid_from is not None and duplicate.valid_from is None)
+                        )
+                    ):
+                        conflict = "explicit-memory metadata protection"
+                    if conflict:
+                        raise ValueError(
+                            f"Existing memory conflicts with requested {conflict}; "
+                            "no changes made. Open the existing memory and use Update "
+                            "to intentionally edit its metadata."
+                        )
                     changes: dict[str, Any] = {}
                     if duplicate.source == "implicit" and source == "explicit":
                         changes["source"] = "explicit"
@@ -428,6 +461,8 @@ class PersistentMemory:
                         and (source == "explicit" or duplicate.source == "implicit")
                     ):
                         changes["subject"] = subject
+                    if valid_from is not None and duplicate.valid_from is None:
+                        changes["valid_from"] = valid_from
                     if changes:
                         timestamp = dt_util.utcnow().isoformat()
                         _set_updated_at_if_substantive(duplicate, changes, timestamp)
@@ -527,7 +562,8 @@ class PersistentMemory:
                 same = (
                     _fact_equality(candidate.content) == _fact_equality(content)
                     and candidate.category == category
-                    and candidate.source == source
+                    # Source describes the proposal, not permission to change
+                    # stored provenance. A source-only difference is a no-op.
                     and (
                         cleaned_subject is _UNSET
                         or candidate.subject == cleaned_subject
@@ -746,7 +782,9 @@ class PersistentMemory:
                 if memory.user_id in scope_ids
                 and (category_filter is None or memory.category == category_filter)
             ]
-            memories.sort(key=lambda memory: memory.updated_at, reverse=True)
+            memories.sort(
+                key=lambda memory: _updated_at_instant(memory.updated_at), reverse=True
+            )
             return memories[offset : offset + limit]
 
     async def async_list_page(
@@ -769,7 +807,9 @@ class PersistentMemory:
                 if memory.user_id in scope_ids
                 and (category_filter is None or memory.category == category_filter)
             ]
-            memories.sort(key=lambda memory: memory.updated_at, reverse=True)
+            memories.sort(
+                key=lambda memory: _updated_at_instant(memory.updated_at), reverse=True
+            )
             end = offset + limit
             return memories[offset:end], len(memories) > end
 
@@ -811,7 +851,9 @@ class PersistentMemory:
                     ),
                 ).casefold()
             ]
-            memories.sort(key=lambda memory: memory.updated_at, reverse=True)
+            memories.sort(
+                key=lambda memory: _updated_at_instant(memory.updated_at), reverse=True
+            )
             total = len(memories)
             return memories[offset : offset + limit], total
 
@@ -932,6 +974,15 @@ class PersistentMemory:
                     raise ValueError(
                         "implicit updates cannot replace an explicitly confirmed memory"
                     )
+                changes["source"] = current.source
+            if all(
+                value == getattr(current, field) for field, value in changes.items()
+            ):
+                # Validation and recovery barriers still apply to no-ops. Only
+                # the regenerable cache may need an independently settled retry.
+                await async_settle_owned_operation(
+                    self._async_save_embedding_cache_locked()
+                )
                 return current
             _set_updated_at_if_substantive(current, changes, timestamp)
             updated = self._replace_record(current, **changes)
@@ -1170,15 +1221,20 @@ class PersistentMemory:
             for memory in self._memories.values()
             if memory.user_id == user_id
             and _fact_equality(memory.content) == normalized
+            and (
+                not subject
+                or not memory.subject
+                or _subject_identity(memory.subject) == _subject_identity(subject)
+            )
         ]
-        for memory in matches:
-            if _subject_identity(memory.subject) == _subject_identity(subject):
-                return memory
-        # Omitted legacy metadata can be filled/preserved only when the content
-        # identifies one candidate. Two explicit subjects never establish a match.
-        if len(matches) == 1 and (not subject or not matches[0].subject):
-            return matches[0]
-        return None
+        # Missing subject metadata is compatible, not evidence that a candidate
+        # can be excluded. Never let dictionary order choose an existing identity.
+        if len(matches) > 1:
+            raise ValueError(
+                "Multiple existing memories could match this addition; no changes made. "
+                "Open the intended memory and use Update to edit its metadata."
+            )
+        return matches[0] if matches else None
 
     def _find_unique_unkeyed_duplicate(
         self,
@@ -2356,6 +2412,20 @@ def _clean_key(value: str | None) -> str | None:
             "0-9, underscore, and hyphen (for example pet.oscar.breed)"
         )
     return value
+
+
+@lru_cache(maxsize=20_000)
+def _updated_at_instant(value: str) -> datetime:
+    """Sort validated timestamps by instant; legacy naive values mean UTC.
+
+    Keep stored strings intact and reuse parsing across management pages. Python's
+    stable sort retains storage insertion order when instants are equal.
+    """
+    parsed = dt_util.parse_datetime(value)
+    assert parsed is not None  # Record validation precedes publication.
+    # Aware datetime comparisons already compare instants. Converting to UTC
+    # would overflow for valid offset timestamps at the year 1/9999 boundaries.
+    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed
 
 
 def _clean_timestamp(value: str | None, field: str) -> str | None:

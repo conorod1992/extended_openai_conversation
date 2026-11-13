@@ -2720,11 +2720,24 @@ export class ExtendedOpenAIManagementPanel extends HTMLElement {
         return;
       }
       const savedScope = response?.scope_id ?? (temporary && editing ? sourceScope : null);
-      requireMutationAcknowledgement(response?.memory?.memory_id && savedScope, "saving the memory");
+      const message = temporary ? (editing ? "Memory updated" : "Memory added")
+        : feature.persistentMemorySaveAcknowledgement(response, values, this._editingMemory);
+      if (!temporary && !editing && response?.status === "duplicate") {
+        // A confirmed no-op owns no saved edit. Preserve the Add draft and its
+        // baseline, counts, and identity, including fields changed while waiting.
+        // Incomplete duplicate details cannot make that no-op an uncertain write.
+        const acknowledgement = message || "Memory already exists; no changes made";
+        return await presentAcknowledgedMutation(this, submission, acknowledgement, () => {
+          if (current()) this._setDialogError("memory", message
+            ? `${message}. Your draft is preserved; close it and open the existing memory to edit.`
+            : "The server confirmed no changes, but existing memory details were incomplete or did not match this request. Your draft is preserved; refresh the list before editing the existing memory.");
+        }, response);
+      }
+      requireMutationAcknowledgement(response?.memory?.memory_id && savedScope && message, "saving the memory");
       this._editingMemory = {...response.memory};
       this._memoryMutationScope = savedScope;
       setDialogBaseline(this, "memory-dialog", values);
-      return await presentAcknowledgedMutation(this, submission, editing ? "Memory updated" : "Memory added", async () => {
+      return await presentAcknowledgedMutation(this, submission, message, async () => {
         const ownsList = this._ownsRetainedMutation(owner);
         if (ownsList && temporary) {
           if (savedScope === owner.scope && owner.kind === "temporary") {

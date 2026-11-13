@@ -259,15 +259,15 @@ async def test_implicit_new_key_cannot_relabel_explicit_memory(operation: str) -
     )
     before_saves = storage.save_count
     call = memory.async_add if operation == "add" else memory.async_propose
-    result = await call(
-        "alice",
-        "Oscar is a Cavachon.",
-        "other",
-        "implicit",
-        key="pet.oscar.breed",
-    )
-    assert result["status"] == ("duplicate" if operation == "add" else "needs_resolution")
-    record = result.get("memory", result.get("candidate"))
+    arguments = ("alice", "Oscar is a Cavachon.", "other", "implicit")
+    if operation == "add":
+        with pytest.raises(ValueError, match="category; no changes made"):
+            await call(*arguments, key="pet.oscar.breed")
+        record = memory_module.memory_as_dict((await memory.async_list("alice"))[0])
+    else:
+        result = await call(*arguments, key="pet.oscar.breed")
+        assert result["status"] == "needs_resolution"
+        record = result["candidate"]
     assert record["memory_id"] == original["memory"]["memory_id"]
     assert record["key"] is None
     assert record["source"] == "explicit"

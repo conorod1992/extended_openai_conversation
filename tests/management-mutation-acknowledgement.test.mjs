@@ -68,6 +68,57 @@ function authenticationRoundTrip(panel) {
   assert.equal(panel._eocAuthenticationGeneration, 2);
 }
 
+for (const differing of [false, true]) test(`persistent duplicate preserves Add identity, counts, and metadata draft (different=${differing})`, async () => {
+  const {panel, dialog} = host("memory");
+  const values = {...panel._memoryValues(), subject:"Alice", valid_from:"2026-01-01T00:00:00Z"};
+  panel._memoryValues = () => values;
+  panel._editingMemory = null;
+  panel._data.scopes = [{scope_id:panel._scopeId, memory_count:10}];
+  panel._selectedAgent().memory_count = 10;
+  const baseline = {untouched:true};
+  dialog.__eocBaseline = baseline;
+  const originalList = panel._result;
+  panel._call = async () => ({status:"duplicate", scope_id:panel._scopeId,
+    memory:{memory_id:"existing", content:"A", category:"general", source:"explicit", revision:"same-revision", subject:"Alice", valid_from:differing ? null : values.valid_from}});
+  await panel._saveMemory();
+  assert.match(panel.toasts.at(-1)[0], /^Memory already exists; no changes made/);
+  assert.match(panel.visibleError, /draft is preserved/);
+  if (differing) assert.match(panel.visibleError, /metadata differs: valid from/);
+  assert.equal(dialog.open, true);
+  assert.equal(dialog.__eocUncertainMutation, undefined);
+  assert.equal(dialog.__eocBaseline, baseline);
+  assert.equal(panel._editingMemory, null);
+  assert.equal(panel._result, originalList);
+  assert.equal(panel._data.scopes[0].memory_count, 10);
+  assert.equal(panel._selectedAgent().memory_count, 10);
+  assert.equal(panel._memoryValues().valid_from, "2026-01-01T00:00:00Z");
+});
+
+test("confirmed updated Add uses backend acknowledgement and adopts its committed identity", async () => {
+  const {panel, dialog} = host("memory");
+  panel._data.scopes = [{scope_id:panel._scopeId, memory_count:10}];
+  panel._selectedAgent().memory_count = 10;
+  panel._call = async () => ({status:"updated", scope_id:panel._scopeId,
+    memory:{memory_id:"existing", content:"A", category:"general", source:"explicit", revision:"new-revision"}});
+  await panel._saveMemory();
+  assert.equal(panel.toasts.at(-1)[0], "Existing memory updated");
+  assert.equal(panel._editingMemory.memory_id, "existing");
+  assert.equal(dialog.open, false);
+  assert.equal(panel._data.scopes[0].memory_count, 10);
+  assert.equal(panel._selectedAgent().memory_count, 10);
+});
+
+test("duplicate with incomplete details remains a confirmed no-op and preserves the draft", async () => {
+  const {panel, dialog, control} = host("memory");
+  panel._call = async () => ({status:"duplicate"});
+  await panel._saveMemory();
+  assert.equal(dialog.__eocUncertainMutation, undefined);
+  assert.equal(dialog.open, true);
+  assert.equal(control("#memory-save").disabled, false);
+  assert.match(panel.visibleError, /server confirmed no changes.*details were incomplete/i);
+  assert.equal(panel.toasts.at(-1)[0], "Memory already exists; no changes made");
+});
+
 async function createdIdentityWitness(PanelType = Panel, kind = "knowledge") {
   const context = host(kind, PanelType);
   const {panel, backend, dialog} = context;

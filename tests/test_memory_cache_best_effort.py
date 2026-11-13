@@ -17,8 +17,19 @@ from tests.test_memory import FakeStorage
 
 
 async def collection(count=1):
-    base = MemoryRecord("0", "alice", "Unique fact 0", "general", "explicit", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z")
-    rows = [asdict(replace(base, memory_id=str(i), content=f"Unique fact {i}")) for i in range(count)]
+    base = MemoryRecord(
+        "0",
+        "alice",
+        "Unique fact 0",
+        "general",
+        "explicit",
+        "2026-01-01T00:00:00Z",
+        "2026-01-01T00:00:00Z",
+    )
+    rows = [
+        asdict(replace(base, memory_id=str(i), content=f"Unique fact {i}"))
+        for i in range(count)
+    ]
     durable, cache = FakeStorage({"memories": rows}), FakeStorage()
     cache.async_save = AsyncMock(side_effect=OSError("cache unavailable"))
     memory = PersistentMemory(durable, cache)
@@ -26,7 +37,9 @@ async def collection(count=1):
     return memory, durable, cache
 
 
-async def test_failure_finishes_all_batches_and_retries_only_after_cooldown(monkeypatch, caplog):
+async def test_failure_finishes_all_batches_and_retries_only_after_cooldown(
+    monkeypatch, caplog
+):
     now = 100.0
     monkeypatch.setattr(module, "monotonic", lambda: now)
     count = 2 * EMBEDDING_CACHE_BATCH_SIZE + 1
@@ -41,7 +54,9 @@ async def test_failure_finishes_all_batches_and_retries_only_after_cooldown(monk
     assert memory.hybrid_status()["status"] == "active"
     assert memory.hybrid_status()["reason"] == "embedding_cache_not_persisted"
     assert "using lexical retrieval" not in caplog.text
-    found = await memory.async_search("alice", "unrelated words", query_embedding=[1.0, 0.0], hybrid=True)
+    found = await memory.async_search(
+        "alice", "unrelated words", query_embedding=[1.0, 0.0], hybrid=True
+    )
     assert found  # No lexical overlap: the in-memory semantic vectors are used.
     for _ in range(3):
         assert await memory.async_prepare_hybrid(["alice"], "again") == [1.0, 0.0]
@@ -68,8 +83,12 @@ async def test_cache_failure_does_not_mask_provider_or_vector_failure(bad):
     assert "64" not in memory._embedding_cache
 
 
-@pytest.mark.parametrize("mutation", ["edit", "delete", "move", "model", "provider", "space", "cancel"])
-async def test_inflight_vectors_are_rejected_after_mutation_or_reconfiguration(mutation):
+@pytest.mark.parametrize(
+    "mutation", ["edit", "delete", "move", "model", "provider", "space", "cancel"]
+)
+async def test_inflight_vectors_are_rejected_after_mutation_or_reconfiguration(
+    mutation,
+):
     memory, _, cache = await collection()
     entered, release = asyncio.Event(), asyncio.Event()
 
@@ -89,9 +108,11 @@ async def test_inflight_vectors_are_rejected_after_mutation_or_reconfiguration(m
         elif mutation == "move":
             await memory.async_update("alice", "0", target_user_id="bob")
         elif mutation in {"model", "provider", "space"}:
-            memory.set_embedding_provider(AsyncMock() if mutation == "provider" else provider,
-                                          "new" if mutation == "model" else "model",
-                                          space_id="new" if mutation == "space" else "space")
+            memory.set_embedding_provider(
+                AsyncMock() if mutation == "provider" else provider,
+                "new" if mutation == "model" else "model",
+                space_id="new" if mutation == "space" else "space",
+            )
         else:
             pending.cancel()
         release.set()
@@ -110,9 +131,11 @@ async def test_inflight_vectors_are_rejected_after_mutation_or_reconfiguration(m
 
 async def test_query_rejected_after_space_change_with_same_provider_and_model():
     memory, _, _ = await collection()
+
     async def provider(texts):
         if texts == ["query"]:
             memory.set_embedding_provider(provider, "model", space_id="new-space")
         return [[1.0, 0.0] for _ in texts]
+
     memory.set_embedding_provider(provider, "model", space_id="old-space")
     assert await memory.async_prepare_hybrid(["alice"], "query") is None

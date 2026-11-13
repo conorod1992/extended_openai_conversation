@@ -53,7 +53,10 @@ DIST = Path("custom_components/extended_openai_conversation_responses/frontend/d
 # The consolidated Overview, contextual editor guidance and accessible capture
 # switch add 3,626 JS bytes (under 0.5%). Allow 891,300 bytes for this reviewed
 # presentation change; retain the independent entry and CSS ceilings.
-CEILINGS = {"javascript": 891_300, "css": 65_000, "management_entry": 120_000}
+# Memory instant ordering and validated create/update/duplicate acknowledgement
+# add 1,602 JS bytes (890,720 -> 892,322, under 0.2%). Retain the independent
+# entry/CSS limits and a measured total-JS ceiling with under 100 bytes headroom.
+CEILINGS = {"javascript": 892_400, "css": 65_000, "management_entry": 120_000}
 
 
 def measure(dist: Path) -> dict[str, int]:
