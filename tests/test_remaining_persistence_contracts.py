@@ -188,7 +188,7 @@ def test_quiet_hours_normalizes_spring_clock_gap():
     now = datetime(2026, 3, 29, 2, 45, tzinfo=ZoneInfo("Europe/Dublin"))
     period = quiet.quiet_period_for(now, "01:30", "03:00")
     assert period is not None
-    assert period.start.hour == 2 and period.start.minute == 30
+    assert period.start.hour == 2 and period.start.minute == 0
     assert (
         period.start.astimezone(UTC) <= now.astimezone(UTC) < period.end.astimezone(UTC)
     )

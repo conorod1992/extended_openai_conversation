@@ -15,6 +15,10 @@ from custom_components.extended_openai_conversation_responses.continuity import 
 from custom_components.extended_openai_conversation_responses.conversation import (
     ExtendedOpenAIAgentEntity,
     _ACTIVE_TURN,
+    _ACTIVE_GUEST_POLICY,
+)
+from custom_components.extended_openai_conversation_responses.guest_mode import (
+    GuestCapabilityPolicy,
 )
 from custom_components.extended_openai_conversation_responses.memory import (
     PersistentMemory,
@@ -84,6 +88,13 @@ async def test_automatic_recall_keeps_controls_negations_names_identifiers_numbe
         assert weights[term] == 1.0
     assert weights["please"] < 1.0
     assert weights["you"] < 1.0
+    # Control/negation tokens remain full weight even in long polite requests.
+    assert weights["not"] == 1.0
+    framed = _automatic_query_weights(_token_list(_VERBOSE))
+    assert framed is not None
+    for control in ("might", "if", "or"):
+        assert framed[control] == 1.0
+    assert framed["was"] == framed["hop"] == framed["happen"] == 0.03
 
 
 def test_automatic_query_bm25_weights_numerator_and_denominator_together():
@@ -120,12 +131,14 @@ async def test_first_turn_bundle_retrieval_and_followup_keep_original_selection(
     session_token = _ACTIVE_TURN.set(
         replace(_ACTIVE_TURN.get(), memory_session=("verbose:auto", 5))
     )
+    policy_token = _ACTIVE_GUEST_POLICY.set(GuestCapabilityPolicy.unrestricted())
     try:
         first = await entity._async_select_memories(context, _VERBOSE)
         assert [record.memory_id for record in first] == [target]
         followup = await entity._async_select_memories(context, "Unrelated question")
         assert [record.memory_id for record in followup] == [target]
     finally:
+        _ACTIVE_GUEST_POLICY.reset(policy_token)
         _ACTIVE_TURN.reset(session_token)
         _ACTIVE_TURN.reset(scope_token)
 

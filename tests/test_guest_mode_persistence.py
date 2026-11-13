@@ -373,7 +373,10 @@ async def test_cancelled_update_with_save_failure_keeps_old_schedule(hass) -> No
 
     assert isinstance(exc_info.value.__cause__, OSError)
     assert manager.schedule is old_schedule
-    assert notifications == []
+    # An ambiguous cancelled save invalidates authoritative persistence. It
+    # must notify the sensor of the availability edge despite no value change.
+    assert not manager.authoritative_available
+    assert notifications == [True]
 
 
 @pytest.mark.asyncio

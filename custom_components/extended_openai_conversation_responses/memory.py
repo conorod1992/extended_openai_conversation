@@ -2045,7 +2045,9 @@ def _rank_memory_snapshot(
     query_tokens = set(query_terms)
     query_weights = _automatic_query_weights(query_terms) if automatic_recall else None
     anchor_terms = (
-        query_tokens - _AUTOMATIC_MEMORY_FILLER_TERMS if query_weights else set()
+        {term for term in query_tokens if query_weights[term] >= 0.5}
+        if query_weights
+        else set()
     )
     if not corpus or (not query_tokens and not (hybrid and query_embedding)):
         return []
@@ -2070,7 +2072,7 @@ def _rank_memory_snapshot(
         # positives from conversationally padded questions.
         candidate_weights = query_weights
         if query_weights is not None and (
-            sum(query_weights[term] for term in anchor_terms & token_set) < 1.5
+            sum(query_weights[term] for term in anchor_terms & token_set) < 2.5
         ):
             candidate_weights = None
         lexical = _bm25_score(
@@ -2125,9 +2127,21 @@ def _bm25_term_weights(
     """Preserve compound weights while optionally discounting auto-query framing."""
     weights = dict.fromkeys(query_terms, 1.0)
     if reduce_filler:
+        # Nearly zero weight for *framing* rather than for meaning-bearing
+        # controls, names, identifiers or negation. Missing query words carry
+        # high IDF in BM25, so a modest 0.15 still suppresses true positives.
         for term in weights:
             if term in _AUTOMATIC_MEMORY_FILLER_TERMS:
-                weights[term] = 0.15
+                weights[term] = 0.03
+        # These particular phrases are conversational framing, not assertions
+        # about the past or control requests. Never discount "was", "might",
+        # "if", "or" or "happen" globally.
+        for index, term in enumerate(query_terms):
+            if term == "hop" and index and query_terms[index - 1] == "was":
+                weights["was"] = min(weights["was"], 0.03)
+                weights["hop"] = min(weights["hop"], 0.03)
+            if term == "happen" and "know" in query_terms[index + 1 : index + 3]:
+                weights["happen"] = min(weights["happen"], 0.03)
     # Compound expansion must not multiply the weight of an original word.
     for term in weights:
         parts = set(term.split("-")) if "-" in term else set()

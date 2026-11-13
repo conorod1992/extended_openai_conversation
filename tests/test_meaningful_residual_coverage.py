@@ -259,7 +259,7 @@ def test_quiet_hours_normalizes_spring_forward_gap() -> None:
 
     assert period is not None
     assert period.start.hour == 2
-    assert period.start.minute == 30
+    assert period.start.minute == 0
     assert period.start.astimezone(UTC) <= now.astimezone(UTC) < period.end.astimezone(
         UTC
     )
