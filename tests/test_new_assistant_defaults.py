@@ -14,7 +14,6 @@ from custom_components.extended_openai_conversation_responses.config_flow import
 from custom_components.extended_openai_conversation_responses.const import (
     DEFAULT_AI_TASK_OPTIONS,
     DEFAULT_CHAT_MODEL,
-    LEGACY_AI_TASK_OPTIONS,
 )
 from custom_components.extended_openai_conversation_responses.model_lifecycle import (
     lifecycle_snapshot,
@@ -22,20 +21,51 @@ from custom_components.extended_openai_conversation_responses.model_lifecycle im
 from custom_components.extended_openai_conversation_responses.request import (
     build_provider_request_snapshot,
 )
+from homeassistant.exceptions import HomeAssistantError
 
 
 @pytest.mark.parametrize("options", [DEFAULT_OPTIONS, DEFAULT_AI_TASK_OPTIONS])
-def test_fresh_assistant_uses_luna_low_standard_and_keeps_500_token_cap(options):
-    snapshot = build_provider_request_snapshot(options, {}, tools_required=True)
-    assert options["chat_model"] == "gpt-6-luna"
-    assert snapshot.api_mode == "responses"
-    assert snapshot.api_kwargs["model"] == "gpt-6-luna"
-    assert snapshot.api_kwargs["reasoning"] == {"effort": "low"}
-    assert snapshot.api_kwargs["service_tier"] == "default"
-    assert snapshot.api_kwargs["max_output_tokens"] == 500
+@pytest.mark.parametrize("mode", ["auto", "responses", "chat_completions"])
+def test_fresh_assistant_defaults_support_tools_on_each_configured_api(options, mode):
+    snapshot = build_provider_request_snapshot(
+        {**options, "api_mode": mode}, {}, tools_required=True
+    )
+    assert options["chat_model"] == DEFAULT_CHAT_MODEL
+    assert snapshot.api_kwargs["model"] == DEFAULT_CHAT_MODEL
+    token_key = (
+        "max_output_tokens"
+        if snapshot.api_mode == "responses"
+        else "max_completion_tokens"
+    )
+    assert snapshot.api_kwargs[token_key] == 500
     assert snapshot.api_kwargs["stream"] is True
-    assert snapshot.api_kwargs["store"] is False
+    assert snapshot.api_kwargs.get("store", False) is False
     assert snapshot.structured_outputs is True
+
+
+@pytest.mark.parametrize(
+    "mode,effort", [("responses", "low"), ("chat_completions", "none")]
+)
+def test_explicit_luna_profile_supports_tools_without_rewriting_selection(mode, effort):
+    options = {"chat_model": "gpt-6-luna", "api_mode": mode, "reasoning_effort": effort}
+    before = dict(options)
+    snapshot = build_provider_request_snapshot(options, {}, tools_required=True)
+    assert snapshot.api_mode == mode and snapshot.api_kwargs["model"] == "gpt-6-luna"
+    assert options == before
+
+
+def test_explicit_incompatible_luna_profile_is_not_silently_rewritten():
+    options = {
+        "chat_model": "gpt-6-luna",
+        "api_mode": "chat_completions",
+        "reasoning_effort": "low",
+    }
+    before = dict(options)
+    with pytest.raises(
+        HomeAssistantError, match="does not support function/tool calling"
+    ):
+        build_provider_request_snapshot(options, {}, tools_required=True)
+    assert options == before
 
 
 def test_missing_model_preserves_legacy_interpretation_and_explicit_values(hass):
@@ -46,8 +76,8 @@ def test_missing_model_preserves_legacy_interpretation_and_explicit_values(hass)
         build_provider_request_snapshot({}, {}).api_kwargs["model"]
         == DEFAULT_CHAT_MODEL
     )
-    assert LEGACY_AI_TASK_OPTIONS["chat_model"] == DEFAULT_CHAT_MODEL
-    assert "reasoning_effort" not in LEGACY_AI_TASK_OPTIONS
+    assert DEFAULT_AI_TASK_OPTIONS["chat_model"] == DEFAULT_CHAT_MODEL
+    assert "reasoning_effort" not in DEFAULT_AI_TASK_OPTIONS
     for model in ["gpt-5-mini", "custom-model"]:
         options = {"chat_model": model, "max_tokens": 1200, "service_tier": "default"}
         assert normalize_agent_config(options)["chat_model"] == model

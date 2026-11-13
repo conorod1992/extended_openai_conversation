@@ -166,7 +166,6 @@ from .const import (
     MAX_SPEECH_REGEX_RULES,
     MEMORY_MODES,
     MEMORY_RETRIEVAL_MODES,
-    NEW_ASSISTANT_CHAT_MODEL,
     REASONING_EFFORT_OPTIONS,
     SERVICE_TIER_OPTIONS,
     SHARED_MEMORY_MODES,
@@ -450,12 +449,9 @@ def project_agent_config_transfer(
     return result
 
 
-def agent_config_defaults(*, new_assistant: bool = False) -> dict[str, Any]:
-    """Return isolated defaults, preserving legacy missing-model interpretation."""
-    result = deepcopy(dict(AGENT_CONFIG_DEFAULTS))
-    if new_assistant:
-        result[CONF_CHAT_MODEL] = NEW_ASSISTANT_CHAT_MODEL
-    return result
+def agent_config_defaults() -> dict[str, Any]:
+    """Return an isolated copy of authoritative defaults."""
+    return deepcopy(dict(AGENT_CONFIG_DEFAULTS))
 
 
 def _choice(value: Any, label: str | None = None) -> dict[str, Any]:

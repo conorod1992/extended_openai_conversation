@@ -1,4 +1,4 @@
-"""Fresh Luna defaults cross real SDK tool and structured-output wires."""
+"""Explicit Luna selections cross SDK tool and structured-output wires."""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -39,7 +39,12 @@ async def test_fresh_conversation_luna_tool_round_trip(hass):
     )
     client = _client(wire)
     entity = _entity(hass, client, "auto")
-    entity.subentry.data = dict(DEFAULT_OPTIONS)
+    entity.subentry.data = {
+        **DEFAULT_OPTIONS,
+        "chat_model": "gpt-6-luna",
+        "reasoning_effort": "low",
+        "api_mode": "responses",
+    }
     entity._execute_function_tool = AsyncMock(
         side_effect=lambda _tool, call, *_: _tool_result(entity, call)
     )
@@ -70,7 +75,12 @@ async def test_fresh_ai_task_luna_plain_and_structured_output(hass, structured):
     )
     client = _client(wire)
     base = _entity(hass, client, "auto")
-    base.subentry.data = dict(DEFAULT_AI_TASK_OPTIONS)
+    base.subentry.data = {
+        **DEFAULT_AI_TASK_OPTIONS,
+        "chat_model": "gpt-6-luna",
+        "reasoning_effort": "low",
+        "api_mode": "responses",
+    }
     base.entry.entry_id = "entry"
     base.subentry.subentry_id = "task"
     entity = ExtendedOpenAITaskEntity.__new__(ExtendedOpenAITaskEntity)
