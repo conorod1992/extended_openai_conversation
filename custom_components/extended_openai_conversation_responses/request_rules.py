@@ -3973,16 +3973,46 @@ def _basic_normalize(text: str) -> str:
 
 
 @lru_cache(maxsize=16)
+def _normalized_wording_groups(
+    groups: tuple[tuple[str, tuple[str, ...]], ...],
+    word_forms: bool,
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Cache term normalization separately from effective-pattern compilation."""
+
+    def normalize(term: str) -> str:
+        value = _basic_normalize(term)
+        return (
+            " ".join(_singularize(token) for token in value.split())
+            if word_forms
+            else value
+        )
+
+    return tuple(
+        (normalize(canonical), tuple(normalize(term) for term in alternatives))
+        for canonical, alternatives in groups
+    )
+
+
+@lru_cache(maxsize=16)
 def _compiled_wording_replacements(
     groups: tuple[tuple[str, tuple[str, ...]], ...],
 ) -> tuple[tuple[re.Pattern[str], str], ...]:
-    """Compile one bounded catalog once, including during catalog validation."""
+    """Compile identical effective catalogs once across matching options/reloads."""
+    claims: dict[str, str] = {}
+    for canonical, alternatives in groups:
+        for term in (canonical, *alternatives):
+            if term in claims and claims[term] != canonical:
+                raise ValueError(
+                    "wording groups contain an ambiguous normalized phrase"
+                )
+            claims[term] = canonical
     replacements = sorted(
-        (
-            (_basic_normalize(alternative), _basic_normalize(canonical))
+        {
+            (alternative, canonical)
             for canonical, alternatives in groups
             for alternative in alternatives
-        ),
+            if alternative != canonical
+        },
         key=lambda item: (-len(item[0]), item[0], item[1]),
     )
     return tuple(
@@ -3991,13 +4021,20 @@ def _compiled_wording_replacements(
     )
 
 
-def _normalize_wording(text: str, wording_groups: Sequence[Mapping[str, Any]]) -> str:
+def _normalize_wording(
+    text: str, wording_groups: Sequence[Mapping[str, Any]], *, word_forms: bool = False
+) -> str:
     """Reach a bounded fixed point, rejecting cycles and expanding rewrites."""
     value = _basic_normalize(text)
+    if word_forms:
+        value = " ".join(_singularize(token) for token in value.split())
     replacements = _compiled_wording_replacements(
-        tuple(
-            (group["canonical"], tuple(group["alternatives"]))
-            for group in wording_groups
+        _normalized_wording_groups(
+            tuple(
+                (group["canonical"], tuple(group["alternatives"]))
+                for group in wording_groups
+            ),
+            word_forms,
         )
     )
     seen = {value}
@@ -4029,14 +4066,15 @@ def normalize_text(
 ) -> str:
     """Apply deterministic, conservative speech-text normalization."""
     value = _basic_normalize(text)
+    word_forms = bool(settings.get("word_forms"))
+    if word_forms:
+        value = " ".join(_singularize(token) for token in value.split())
     if settings.get("wording_alternatives"):
         # Individually safe phrases can interact across input boundaries.
         # If those rewrites do not converge, keep the original words rather
         # than aborting the request or matching a partially rewritten phrase.
         with suppress(ValueError):
-            value = _normalize_wording(value, wording_groups)
-    if settings.get("word_forms"):
-        value = " ".join(_singularize(token) for token in value.split())
+            value = _normalize_wording(text, wording_groups, word_forms=word_forms)
     return value
 
 
