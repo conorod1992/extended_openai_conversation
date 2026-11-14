@@ -2044,6 +2044,11 @@ def _rank_memory_snapshot(
     query_terms = _token_list(query)
     query_tokens = set(query_terms)
     query_weights = _automatic_query_weights(query_terms) if automatic_recall else None
+    previous_weights = (
+        _automatic_query_weights(query_terms, composed_framing=False)
+        if query_weights is not None
+        else None
+    )
     anchor_terms = (
         {term for term in query_tokens if query_weights[term] >= 0.5}
         if query_weights
@@ -2070,11 +2075,24 @@ def _rank_memory_snapshot(
         # Reweight framing only when the candidate matches substantial facts.
         # Otherwise retain the original score, avoiding new name-only false
         # positives from conversationally padded questions.
+        previously_eligible = (
+            previous_weights is not None
+            and sum(
+                weight
+                for term, weight in previous_weights.items()
+                if weight >= 0.5 and term in token_set
+            )
+            >= 2.5
+        )
         candidate_weights = query_weights
         if query_weights is not None and (
             sum(query_weights[term] for term in anchor_terms & token_set) < 2.5
         ):
-            candidate_weights = None
+            # New phrase discounts must not turn a previously eligible
+            # weighted candidate into an unweighted threshold miss. Retain
+            # the previous weights only if that same gate admitted them;
+            # never give the stronger discounts to a two-anchor candidate.
+            candidate_weights = previous_weights if previously_eligible else None
         lexical = _bm25_score(
             query_terms,
             terms,
@@ -2084,15 +2102,35 @@ def _rank_memory_snapshot(
             query_weights=candidate_weights,
         )
         lexical += _metadata_bonus(query_tokens, memory, candidate_weights)
+        previous_lexical = None
+        if previously_eligible and candidate_weights != previous_weights:
+            previous_lexical = _bm25_score(
+                query_terms,
+                terms,
+                document_frequency,
+                len(corpus),
+                average_length,
+                query_weights=previous_weights,
+            ) + _metadata_bonus(query_tokens, memory, previous_weights)
         normalized_content = _normalize(memory.content)
+        phrase_bonus = 0.0
         if (
             normalized_query
             and query_tokens & token_set
             and bounded_phrase(normalized_query, normalized_content)
         ):
-            lexical += 0.35
+            phrase_bonus = 0.35
         elif len(query_terms) > 1 and ordered_term_phrase(query_terms, terms):
-            lexical += 0.18
+            phrase_bonus = 0.18
+        lexical += phrase_bonus
+        # Phrase words can match the memory itself, reducing the numerator
+        # as well as the denominator even when both anchor gates pass. Only
+        # previously admitted weighted scores receive a compatibility floor;
+        # new candidates still need the new weights and existing anchor gate.
+        if previous_lexical is not None:
+            previous_lexical += phrase_bonus
+            if previous_lexical >= MIN_LEXICAL_RELEVANCE_SCORE:
+                lexical = max(lexical, previous_lexical)
         genuine_lexical = lexical
         if lexical <= 0:
             lexical = _fuzzy_relevance(query_tokens, token_set)
@@ -2122,7 +2160,10 @@ def _rank_memory_snapshot(
 
 
 def _bm25_term_weights(
-    query_terms: Sequence[str], *, reduce_filler: bool = False
+    query_terms: Sequence[str],
+    *,
+    reduce_filler: bool = False,
+    composed_framing: bool = True,
 ) -> dict[str, float]:
     """Preserve compound weights while optionally discounting auto-query framing."""
     weights = dict.fromkeys(query_terms, 1.0)
@@ -2142,6 +2183,31 @@ def _bm25_term_weights(
                 weights["hope"] = min(weights["hope"], 0.03)
             if term == "happen" and "know" in query_terms[index + 1 : index + 3]:
                 weights["happen"] = min(weights["happen"], 0.03)
+        # Discount these words only in recall-framing phrases. In isolation,
+        # "previously", "details" and "right" can distinguish stored facts.
+        # Match the same tokenization as scoring (including stop-word removal).
+        framing_positions: set[int] = set()
+        for phrase in (
+            (
+                "help me remember",
+                "something we discussed previously",
+                "recall the details right now",
+            )
+            if composed_framing
+            else ()
+        ):
+            framing = _token_list(phrase)
+            for index in range(len(query_terms) - len(framing) + 1):
+                if list(query_terms[index : index + len(framing)]) == framing:
+                    framing_positions.update(range(index, index + len(framing)))
+        for term in {query_terms[index] for index in framing_positions}:
+            # A term also used outside framing may distinguish the question.
+            if all(
+                index in framing_positions
+                for index, other in enumerate(query_terms)
+                if other == term
+            ):
+                weights[term] = min(weights[term], 0.03)
     # Compound expansion must not multiply the weight of an original word.
     for term in weights:
         parts = set(term.split("-")) if "-" in term else set()
@@ -2153,7 +2219,9 @@ def _bm25_term_weights(
     return weights
 
 
-def _automatic_query_weights(query_terms: list[str]) -> dict[str, float] | None:
+def _automatic_query_weights(
+    query_terms: list[str], *, composed_framing: bool = True
+) -> dict[str, float] | None:
     """Use lower padding weights only for long queries with real search anchors."""
     unique = set(query_terms)
     if (
@@ -2162,7 +2230,9 @@ def _automatic_query_weights(query_terms: list[str]) -> dict[str, float] | None:
         or not unique & _AUTOMATIC_MEMORY_FILLER_TERMS
     ):
         return None
-    return _bm25_term_weights(query_terms, reduce_filler=True)
+    return _bm25_term_weights(
+        query_terms, reduce_filler=True, composed_framing=composed_framing
+    )
 
 
 def _bm25_score(
