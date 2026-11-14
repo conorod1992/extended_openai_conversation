@@ -215,3 +215,48 @@ def test_many_malformed_titled_links_do_not_rescan_the_remaining_answer():
     result = StreamingSpeechSanitizer().process_complete(text)
     assert "Tail." in result
     assert perf_counter() - start < 3.0
+
+
+@pytest.mark.parametrize("count", [500, 2000])
+def test_nested_malformed_destinations_have_bounded_primary_scan_work(monkeypatch, count):
+    class CountedText(str):
+        scanned = 0
+        scanning = False
+
+        def __getitem__(self, key):
+            if self.scanning and isinstance(key, int):
+                self.scanned += 1
+            return super().__getitem__(key)
+
+    source = CountedText('[x](a (' * count + ')' * (count * 2) + ' [Guide](a "title")')
+    original = StreamingSpeechSanitizer._scan_markdown_destination
+
+    def counting_scanner(text, start, final, *, limit=None):
+        source.scanning = True
+        try:
+            return original(text, start, final, limit=limit)
+        finally:
+            source.scanning = False
+
+    monkeypatch.setattr(
+        StreamingSpeechSanitizer, "_scan_markdown_destination",
+        staticmethod(counting_scanner),
+    )
+    index = StreamingSpeechSanitizer._index_complete_links(source)
+    assert source.scanned < 128 * len(source)
+    # Exhausting speculative work must still allow a normal subsequent link.
+    assert StreamingSpeechSanitizer._markdown_link_end(
+        source, source.rfind("[Guide]"), True, index
+    ) == ("complete", len(source))
+
+
+@pytest.mark.parametrize("destination", ["a", r"a\)b", "a(b)"])
+def test_parenthesized_title_with_unmatched_opener_has_same_indexed_fallback(destination):
+    source = f"Read [Guide]({destination} (a ( b)) next."
+    prefix = "An ordinary sentence. " * 230
+    for text in (source, prefix + source):
+        completed = _final_whitespace_cleanup(
+            StreamingSpeechSanitizer().process_complete(text)
+        )
+        assert completed.endswith("Read Guide next.")
+        assert _stream(text, len(text) - len(source)) == completed

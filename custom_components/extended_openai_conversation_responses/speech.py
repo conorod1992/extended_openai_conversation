@@ -1059,6 +1059,7 @@ class StreamingSpeechSanitizer:
         # than re-scanning a long title for every preceding opener. Keep the
         # same 3-field index contract and the same shared streaming validator.
         remaining_fallback_chars = max(16_384, len(text) * 4)
+        remaining_validation_chars = max(16_384, len(text) * 4)
         for opening, closing in tuple(closed_parens.items()):
             url_start = opening + 1
             invalid_index = bisect_left(invalid_url, url_start)
@@ -1067,8 +1068,14 @@ class StreamingSpeechSanitizer:
                 or invalid_url[invalid_index] >= closing
             ):
                 continue
+            # Structural pairs can overlap deeply on malformed input. Bound
+            # the primary validations too, not only their fallback scans.
+            # Reserve a short independent scan per candidate so exhausting the
+            # bulk budget cannot hide ordinary links later in the answer.
+            window = min(closing - url_start + 1, remaining_validation_chars + 256)
+            remaining_validation_chars -= max(0, window - 256)
             status, end = StreamingSpeechSanitizer._scan_markdown_destination(
-                text, url_start, True, limit=closing
+                text, url_start, True, limit=url_start + window - 1
             )
             if status == "complete" and end == closing + 1:
                 continue
@@ -1104,7 +1111,10 @@ class StreamingSpeechSanitizer:
             prefix = text[url_start : url_start + 2048]
             if not (
                 prefix.startswith("<")
-                or any(marker in prefix for marker in (' "', " '", '\t"', "\t'"))
+                or any(
+                    marker in prefix
+                    for marker in (' "', " '", " (", '\t"', "\t'", "\t(")
+                )
             ):
                 continue
             window = min(16_384, len(text) - url_start, remaining_probe_chars)
