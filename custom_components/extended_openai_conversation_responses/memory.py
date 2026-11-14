@@ -119,6 +119,35 @@ _STOP_WORDS = {
     "how",
 }
 
+# Query-only, automatic-recall hint. Do not change stored tokens, explicit
+# memory searches or the semantic threshold. These words supply conversational
+# framing rather than distinguishing a fact; retain modal/control/negation
+# words, numbers, names and identifiers at their original weight.
+_AUTOMATIC_MEMORY_FILLER_TERMS = frozenset(
+    _stem(word)
+    for word in (
+        "hey",
+        "hi",
+        "please",
+        "kindly",
+        "tell",
+        "me",
+        "you",
+        "which",
+        "perhaps",
+        "maybe",
+        "just",
+        "curious",
+        "wondering",
+        "know",
+        "recall",
+        "remind",
+        "remember",
+        "about",
+        "thanks",
+    )
+)
+
 
 @dataclass(slots=True, frozen=True)
 class MemoryRecord:
@@ -632,6 +661,7 @@ class PersistentMemory:
         hybrid: bool = False,
         offset: int = 0,
         allow_fuzzy_only: bool = True,
+        automatic_recall: bool = False,
     ) -> list[MemoryRecord]:
         """Return deterministic BM25-style lexical or hybrid results."""
         limit = max(1, min(limit, MAX_LIST_LIMIT))
@@ -660,6 +690,7 @@ class PersistentMemory:
             model,
             space,
             allow_fuzzy_only,
+            automatic_recall,
         )
         async with async_storage_lock(self._storage, self._lock):
             self._ensure_initialized()
@@ -2007,10 +2038,17 @@ def _rank_memory_snapshot(
     embedding_model: str,
     embedding_space_id: str,
     allow_fuzzy_only: bool = True,
+    automatic_recall: bool = False,
 ) -> list[MemoryRecord]:
     """Rank an immutable generation without holding the live store lock."""
     query_terms = _token_list(query)
     query_tokens = set(query_terms)
+    query_weights = _automatic_query_weights(query_terms) if automatic_recall else None
+    anchor_terms = (
+        {term for term in query_tokens if query_weights[term] >= 0.5}
+        if query_weights
+        else set()
+    )
     if not corpus or (not query_tokens and not (hybrid and query_embedding)):
         return []
     document_data: dict[str, tuple[tuple[str, ...], frozenset[str]]] = {}
@@ -2029,14 +2067,23 @@ def _rank_memory_snapshot(
     ranked: list[tuple[float, str, MemoryRecord]] = []
     for memory in corpus:
         terms, token_set = document_data[memory.memory_id]
+        # Reweight framing only when the candidate matches substantial facts.
+        # Otherwise retain the original score, avoiding new name-only false
+        # positives from conversationally padded questions.
+        candidate_weights = query_weights
+        if query_weights is not None and (
+            sum(query_weights[term] for term in anchor_terms & token_set) < 2.5
+        ):
+            candidate_weights = None
         lexical = _bm25_score(
             query_terms,
             terms,
             document_frequency,
             len(corpus),
             average_length,
+            query_weights=candidate_weights,
         )
-        lexical += _metadata_bonus(query_tokens, memory)
+        lexical += _metadata_bonus(query_tokens, memory, candidate_weights)
         normalized_content = _normalize(memory.content)
         if (
             normalized_query
@@ -2074,24 +2121,28 @@ def _rank_memory_snapshot(
     return [memory for _, _, memory in ranked[offset : offset + limit]]
 
 
-def _bm25_score(
-    query_terms: list[str],
-    document_terms: Sequence[str],
-    document_frequency: Mapping[str, int],
-    document_count: int,
-    average_length: float,
-) -> float:
-    """Calculate the existing BM25 score without rebuilding term frequencies."""
-    cached_terms = (
-        document_terms if isinstance(document_terms, tuple) else tuple(document_terms)
-    )
-    frequencies = _cached_memory_term_frequencies(cached_terms)
-    k1, b = 1.2, 0.75
-    score = 0.0
-    max_score = 0.0
+def _bm25_term_weights(
+    query_terms: Sequence[str], *, reduce_filler: bool = False
+) -> dict[str, float]:
+    """Preserve compound weights while optionally discounting auto-query framing."""
     weights = dict.fromkeys(query_terms, 1.0)
-    # Compound expansion improves recall, but must not multiply the influence
-    # of one query word and drown out other matching words in longer requests.
+    if reduce_filler:
+        # Nearly zero weight for *framing* rather than for meaning-bearing
+        # controls, names, identifiers or negation. Missing query words carry
+        # high IDF in BM25, so a modest 0.15 still suppresses true positives.
+        for term in weights:
+            if term in _AUTOMATIC_MEMORY_FILLER_TERMS:
+                weights[term] = 0.03
+        # These particular phrases are conversational framing, not assertions
+        # about the past or control requests. Never discount "was", "might",
+        # "if", "or" or "happen" globally.
+        for index, term in enumerate(query_terms):
+            if term == "hope" and index and query_terms[index - 1] == "was":
+                weights["was"] = min(weights["was"], 0.03)
+                weights["hope"] = min(weights["hope"], 0.03)
+            if term == "happen" and "know" in query_terms[index + 1 : index + 3]:
+                weights["happen"] = min(weights["happen"], 0.03)
+    # Compound expansion must not multiply the weight of an original word.
     for term in weights:
         parts = set(term.split("-")) if "-" in term else set()
         if parts and parts <= weights.keys():
@@ -2099,6 +2150,41 @@ def _bm25_score(
             weights[term] = min(weights[term], weight)
             for part in parts:
                 weights[part] = min(weights[part], weight)
+    return weights
+
+
+def _automatic_query_weights(query_terms: list[str]) -> dict[str, float] | None:
+    """Use lower padding weights only for long queries with real search anchors."""
+    unique = set(query_terms)
+    if (
+        len(unique) < 8
+        or len(unique - _AUTOMATIC_MEMORY_FILLER_TERMS) < 2
+        or not unique & _AUTOMATIC_MEMORY_FILLER_TERMS
+    ):
+        return None
+    return _bm25_term_weights(query_terms, reduce_filler=True)
+
+
+def _bm25_score(
+    query_terms: list[str],
+    document_terms: Sequence[str],
+    document_frequency: Mapping[str, int],
+    document_count: int,
+    average_length: float,
+    *,
+    query_weights: Mapping[str, float] | None = None,
+) -> float:
+    """Score BM25 with matching weighted numerator and normalization."""
+    cached_terms = (
+        document_terms if isinstance(document_terms, tuple) else tuple(document_terms)
+    )
+    frequencies = _cached_memory_term_frequencies(cached_terms)
+    k1, b = 1.2, 0.75
+    score = 0.0
+    max_score = 0.0
+    weights = (
+        query_weights if query_weights is not None else _bm25_term_weights(query_terms)
+    )
     for term, weight in weights.items():
         df = document_frequency.get(term, 0)
         idf = math.log(1 + (document_count - df + 0.5) / (df + 0.5))
@@ -2110,14 +2196,27 @@ def _bm25_score(
     return score / max_score if max_score else 0.0
 
 
-def _metadata_bonus(query_tokens: set[str], memory: MemoryRecord) -> float:
+def _metadata_bonus(
+    query_tokens: set[str],
+    memory: MemoryRecord,
+    query_weights: Mapping[str, float] | None = None,
+) -> float:
     category = _cached_memory_tokens(memory.category)
     subject = _cached_memory_tokens(memory.subject or "")
     key = _cached_memory_tokens((memory.key or "").replace(".", " "))
-    return (
-        0.10 * len(query_tokens & category)
-        + 0.16 * len(query_tokens & subject)
-        + 0.18 * len(query_tokens & key)
+    if query_weights is None:
+        return (
+            0.10 * len(query_tokens & category)
+            + 0.16 * len(query_tokens & subject)
+            + 0.18 * len(query_tokens & key)
+        )
+    return sum(
+        factor * sum(query_weights[term] for term in query_tokens & tokens)
+        for factor, tokens in (
+            (0.10, category),
+            (0.16, subject),
+            (0.18, key),
+        )
     )
 
 

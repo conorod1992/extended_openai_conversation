@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from hashlib import sha256
 import json
 import logging
@@ -23,6 +23,7 @@ from homeassistant.core import Context, Event, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.event import (
+    async_track_point_in_utc_time,
     async_track_time_change,
     async_track_time_interval,
 )
@@ -141,6 +142,62 @@ def _normalize_clock(value: str) -> str:
     return _parse_clock(value).strftime("%H:%M")
 
 
+def _resolve_quiet_wall_time(
+    day: date, clock: time, zone: tzinfo, *, ending: bool = False
+) -> datetime:
+    """Resolve daily wall time: first valid after a gap; outer folds on repeats.
+
+    The two fold candidates bracket a forward gap in UTC. Binary search for
+    the first real instant whose local wall time reaches the requested clock,
+    rather than shifting the requested minute by the full DST jump.
+    """
+    wall = datetime.combine(day, clock)
+    first = wall.replace(tzinfo=zone, fold=0).astimezone(UTC)
+    second = wall.replace(tzinfo=zone, fold=1).astimezone(UTC)
+    candidates = (first, second)
+    valid = [
+        instant
+        for instant in candidates
+        if instant.astimezone(zone).replace(tzinfo=None) == wall
+    ]
+    if valid:
+        return (max(valid) if ending else min(valid)).astimezone(zone)
+
+    lower, upper = min(candidates), max(candidates)
+    # IANA forward jumps can be 30 minutes, one hour, or even an entire day.
+    # The UTC interval is bounded by the offset jump, not the calendar year.
+    while upper - lower > timedelta(microseconds=1):
+        midpoint = lower + (upper - lower) // 2
+        if midpoint.astimezone(zone).replace(tzinfo=None) < wall:
+            lower = midpoint
+        else:
+            upper = midpoint
+    return upper.astimezone(zone)
+
+
+def _next_discontinuous_transition(
+    now: datetime, clock: time, zone: tzinfo, *, ending: bool
+) -> datetime | None:
+    """Find the next skipped/repeated daily deadline (UTC), within one year."""
+    local_day = now.astimezone(zone).date()
+    for days in range(371):
+        day = local_day + timedelta(days=days)
+        wall = datetime.combine(day, clock)
+        # No extra timer is needed on ordinary dates: HA's daily local-time
+        # tracker already owns them. A different fold offset marks a transition.
+        if (
+            wall.replace(tzinfo=zone, fold=0).utcoffset()
+            == wall.replace(tzinfo=zone, fold=1).utcoffset()
+        ):
+            continue
+        instant = _resolve_quiet_wall_time(day, clock, zone, ending=ending).astimezone(
+            UTC
+        )
+        if instant > now:
+            return instant
+    return None
+
+
 def quiet_period_for(
     now: datetime, start_value: str, end_value: str
 ) -> QuietPeriod | None:
@@ -152,26 +209,20 @@ def quiet_period_for(
     if start_time == end_time:
         raise ValueError("Quiet Hours start and end times must differ")
 
-    def at(day: date, clock: time, *, ending: bool = False) -> datetime:
-        candidate = datetime.combine(day, clock, tzinfo=now.tzinfo)
-        # Preserve spring-gap normalization. For a repeated hour, one daily
-        # occurrence starts at the first instant and ends at the last instant.
-        normalized = candidate.astimezone(UTC).astimezone(now.tzinfo)
-        if normalized.replace(fold=0) != candidate.replace(fold=0):
-            return normalized
-        if ending:
-            second = candidate.replace(fold=1)
-            if second.astimezone(UTC).astimezone(now.tzinfo) == second:
-                return max((candidate, second), key=lambda value: value.astimezone(UTC))
-        return candidate
-
     instant = now.astimezone(UTC)
     for day in (now.date(), now.date() - timedelta(days=1)):
-        start = at(day, start_time)
-        end = at(
-            day + timedelta(days=int(start_time > end_time)), end_time, ending=True
+        start = _resolve_quiet_wall_time(day, start_time, now.tzinfo)
+        end = _resolve_quiet_wall_time(
+            day + timedelta(days=int(start_time > end_time)),
+            end_time,
+            now.tzinfo,
+            ending=True,
         )
-        if start.astimezone(UTC) <= instant < end.astimezone(UTC):
+        # A forward gap can collapse both boundaries to the same instant.
+        # Such a period does not exist; never apply or restore on its behalf.
+        if start.astimezone(UTC) < end.astimezone(UTC) and (
+            start.astimezone(UTC) <= instant < end.astimezone(UTC)
+        ):
             return QuietPeriod(start, end)
     return None
 
@@ -2363,6 +2414,34 @@ class QuietHoursManager:
                     second=0,
                 )
             )
+        if self._config.enabled:
+            # HA's recurring wall-time listener may skip nonexistent times or
+            # move them to a later wall minute. Supplement it only on anomalous
+            # dates with cancellable UTC timers using quiet_period_for's exact
+            # gap/fold resolution, without changing ordinary daily scheduling.
+            zone_name = getattr(getattr(self.hass, "config", None), "time_zone", "UTC")
+            zone = dt_util.get_time_zone(zone_name)
+            if zone is not None:
+                now_utc = dt_util.utcnow()
+                deadlines = {
+                    instant
+                    for clock, ending in (
+                        (_parse_clock(self._config.start), False),
+                        (_parse_clock(self._config.end), True),
+                    )
+                    if (
+                        instant := _next_discontinuous_transition(
+                            now_utc, clock, zone, ending=ending
+                        )
+                    )
+                    is not None
+                }
+                for instant in sorted(deadlines):
+                    self._unsubscribers.append(
+                        async_track_point_in_utc_time(
+                            self.hass, self._handle_dst_transition, instant
+                        )
+                    )
         self._unsubscribers.append(
             async_track_time_interval(
                 self.hass,
@@ -2373,6 +2452,15 @@ class QuietHoursManager:
 
     async def _handle_time_transition(self, now: datetime) -> None:
         await self.async_reconcile(now=now)
+
+    async def _handle_dst_transition(self, now: datetime) -> None:
+        """Reconcile the exact resolved instant and own the next anomaly timer."""
+        try:
+            await self.async_reconcile(now=now)
+        finally:
+            async with self._lock:
+                if not self._stopping:
+                    self._reschedule()
 
     async def _handle_core_config_update(self, event: Event) -> None:
         """Rebind daily wall times and reconcile a runtime HA timezone change."""

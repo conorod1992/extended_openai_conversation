@@ -679,11 +679,30 @@ class StreamingSpeechSanitizer:
             cursor += 1
         return False
 
+    @staticmethod
+    def _markdown_link_destination(raw: str) -> str:
+        """Extract only the destination, excluding standard simple link titles."""
+        if raw.startswith("<"):
+            end = raw.find(">", 1)
+            return raw[1:end] if end >= 0 else raw
+        position = 0
+        while position < len(raw):
+            if raw[position] == "\\" and position + 1 < len(raw):
+                position += 2
+                continue
+            if raw[position].isspace():
+                break
+            position += 1
+        return raw[:position]
+
     def _emit_link_label(self, output: list[str], label: str, destination: str) -> bool:
         """Speak labels except explicit URLs and matching destination hosts."""
         label = label.strip()
         if not label or label.casefold().startswith(("http://", "https://", "www.")):
             return False
+        # The URL, not its optional quoted title, identifies matching-host
+        # citation labels. Angle destinations are unwrapped for urlsplit.
+        destination = self._markdown_link_destination(destination)
         if _ADDRESS_LINK_LABEL.fullmatch(label):
             try:
                 host = urlsplit(
@@ -805,7 +824,9 @@ class StreamingSpeechSanitizer:
                         end = link_end + (
                             link_end < len(text) and text[link_end] == ")"
                         )
-                        label_end = text.find("]", link_start + 1)
+                        label_end = self._markdown_label_end(
+                            text, link_start, self._completed_links
+                        )
                         if text[index + 1] == "!" or not self._emit_link_label(
                             output,
                             text[link_start + 1 : label_end],
@@ -893,7 +914,9 @@ class StreamingSpeechSanitizer:
                     held_whitespace = self._hold_preceding_whitespace(output)
                     break
                 if status == "complete":
-                    label_end = text.find("]", markdown_start + 1)
+                    label_end = self._markdown_label_end(
+                        text, markdown_start, self._completed_links
+                    )
                     if char == "!" or not self._emit_link_label(
                         output,
                         text[markdown_start + 1 : label_end],
@@ -1009,24 +1032,217 @@ class StreamingSpeechSanitizer:
 
     @staticmethod
     def _index_complete_links(text: str) -> tuple[array, array, dict[int, int]]:
-        """Index only source positions needed for bounded completed link scans."""
+        """Index matching closures for long completed messages in a single pass."""
         brackets = array("I")
         invalid_url = array("I")
         open_parens = array("I")
         closed_parens: dict[int, int] = {}
+        escaped = False
         for position, character in enumerate(text):
-            if character == "]":
+            if character == "\\" and not escaped:
+                invalid_url.append(position)
+                escaped = True
+                continue
+            if character == "]" and not escaped:
                 brackets.append(position)
             if character.isspace() or character in "<>":
                 invalid_url.append(position)
-            if character == "(":
+            if not escaped and character == "(":
                 open_parens.append(position)
-            elif character == ")" and open_parens:
+            elif not escaped and character == ")" and open_parens:
                 opening = open_parens.pop()
-                # Only ]( can introduce a Markdown URL in this recognizer.
                 if opening and text[opening - 1] == "]":
                     closed_parens[opening] = position
+            escaped = False
+        # Many unmatched '[' can all point to the same ]( destination.
+        # Validate each *distinct* complicated destination here, once, rather
+        # than re-scanning a long title for every preceding opener. Keep the
+        # same 3-field index contract and the same shared streaming validator.
+        remaining_fallback_chars = max(16_384, len(text) * 4)
+        remaining_validation_chars = max(16_384, len(text) * 4)
+        for opening, closing in tuple(closed_parens.items()):
+            url_start = opening + 1
+            invalid_index = bisect_left(invalid_url, url_start)
+            if (
+                invalid_index >= len(invalid_url)
+                or invalid_url[invalid_index] >= closing
+            ):
+                continue
+            # Structural pairs can overlap deeply on malformed input. Bound
+            # the primary validations too, not only their fallback scans.
+            # Reserve a short independent scan per candidate so exhausting the
+            # bulk budget cannot hide ordinary links later in the answer.
+            window = min(closing - url_start + 1, remaining_validation_chars + 256)
+            remaining_validation_chars -= max(0, window - 256)
+            status, end = StreamingSpeechSanitizer._scan_markdown_destination(
+                text, url_start, True, limit=url_start + window - 1
+            )
+            if status == "complete" and end == closing + 1:
+                continue
+            # A quoted title/angle destination may contain parentheses which
+            # confuse the structural stack. Only these otherwise-rejected
+            # candidates need a second scan; bound the aggregate malformed
+            # input work instead of rescanning to EOF for each candidate.
+            window = min(16_384, len(text) - url_start, remaining_fallback_chars)
+            remaining_fallback_chars -= window
+            if window <= 0:
+                del closed_parens[opening]
+                continue
+            status, end = StreamingSpeechSanitizer._scan_markdown_destination(
+                text, url_start, True, limit=url_start + window - 1
+            )
+            if status == "complete":
+                closed_parens[opening] = end - 1
+            else:
+                del closed_parens[opening]
+
+        # Such a link can also have no structural closing pair at all.
+        # Probe only complex candidates that the old fast index could not
+        # recognise. Bound those speculative probes so malformed bulk text
+        # cannot turn complete-response cleanup into quadratic rescanning.
+        remaining_probe_chars = max(16_384, len(text) * 4)
+        for label_end in brackets:
+            opening = label_end + 1
+            if opening >= len(text) or text[opening] != "(" or opening in closed_parens:
+                continue
+            url_start = opening + 1
+            if url_start >= len(text) or remaining_probe_chars <= 0:
+                continue
+            prefix = text[url_start : url_start + 2048]
+            if not (
+                prefix.startswith("<")
+                or any(
+                    marker in prefix
+                    for marker in (' "', " '", " (", '\t"', "\t'", "\t(")
+                )
+            ):
+                continue
+            window = min(16_384, len(text) - url_start, remaining_probe_chars)
+            if ")" not in text[url_start : url_start + window]:
+                continue
+            status, end = StreamingSpeechSanitizer._scan_markdown_destination(
+                text, url_start, True, limit=url_start + window - 1
+            )
+            remaining_probe_chars -= window
+            if status == "complete":
+                closed_parens[opening] = end - 1
         return brackets, invalid_url, closed_parens
+
+    @staticmethod
+    def _scan_markdown_destination(
+        text: str, start: int, final: bool, *, limit: int | None = None
+    ) -> tuple[str, int]:
+        """Recognize simple Markdown URL + optional title with escaped delimiters.
+
+        Streaming and indexed-complete parsing share this scanner. It only
+        accepts links fully closed inside the current bounded input.
+        """
+        end = len(text) if limit is None else min(len(text), limit + 1)
+        if start >= end:
+            return ("no", start) if final else ("incomplete", start)
+
+        def unfinished() -> tuple[str, int]:
+            return ("no", start) if final else ("incomplete", start)
+
+        position = start
+        if text[position] == "<":
+            position += 1
+            destination_start = position
+            while position < end:
+                char = text[position]
+                if char == "\\":
+                    if position + 1 >= end:
+                        return unfinished()
+                    position += 2
+                    continue
+                if char == ">" and position > destination_start:
+                    position += 1
+                    break
+                if char in "<\r\n":
+                    return "no", start
+                position += 1
+            else:
+                return unfinished()
+        else:
+            depth = 0
+            while position < end:
+                char = text[position]
+                if char == "\\":
+                    if position + 1 >= end:
+                        return unfinished()
+                    position += 2
+                    continue
+                if char in "<>\r\n":
+                    return "no", start
+                if char.isspace():
+                    if depth:
+                        return "no", start
+                    break
+                if char == "(":
+                    depth += 1
+                elif char == ")":
+                    if depth == 0:
+                        # An empty Markdown destination, [label](), is valid.
+                        return "complete", position + 1
+                    depth -= 1
+                position += 1
+            if position == end:
+                return unfinished()
+            if position == start:
+                return "no", start
+
+        # Whitespace before the optional title is required by Markdown.
+        whitespace_start = position
+        while position < end and text[position] in " \t":
+            position += 1
+        if position >= end:
+            return unfinished()
+        if text[position] == ")":
+            return "complete", position + 1
+        if position == whitespace_start or text[position] not in ('"', "'", "("):
+            return "no", start
+        closing = ")" if text[position] == "(" else text[position]
+        position += 1
+        while position < end:
+            if text[position] == "\\":
+                if position + 1 >= end:
+                    return unfinished()
+                position += 2
+                continue
+            if text[position] in "\r\n":
+                return "no", start
+            if text[position] == closing:
+                position += 1
+                break
+            position += 1
+        else:
+            return unfinished()
+        while position < end and text[position] in " \t":
+            position += 1
+        if position >= end:
+            return unfinished()
+        return ("complete", position + 1) if text[position] == ")" else ("no", start)
+
+    @staticmethod
+    def _markdown_label_end(
+        text: str,
+        start: int,
+        completed: tuple[array, array, dict[int, int]] | None = None,
+    ) -> int:
+        """Find the unescaped label closer, reusing the completed index."""
+        if completed is not None:
+            brackets = completed[0]
+            position = bisect_right(brackets, start)
+            return brackets[position] if position < len(brackets) else -1
+        # Use the C-level search for ordinary text. Only candidate closers
+        # require an escape-parity check, avoiding Python per-character scans
+        # for malformed labels with no closing bracket.
+        index = text.find("]", start + 1)
+        while index >= 0:
+            if not StreamingSpeechSanitizer._is_escaped(text, index):
+                return index
+            index = text.find("]", index + 1)
+        return -1
 
     @staticmethod
     def _markdown_link_end(
@@ -1036,7 +1252,7 @@ class StreamingSpeechSanitizer:
         completed: tuple[array, array, dict[int, int]] | None = None,
     ) -> tuple[str, int]:
         if completed is not None:
-            brackets, invalid_url, closed_parens = completed
+            brackets, _, closed_parens = completed
             position = bisect_right(brackets, start)
             if position >= len(brackets):
                 return "no", start
@@ -1049,37 +1265,21 @@ class StreamingSpeechSanitizer:
             url_close = closed_parens.get(label_end + 1)
             if url_close is None:
                 return "no", start
-            next_invalid = bisect_left(invalid_url, url_start)
-            if (
-                next_invalid < len(invalid_url)
-                and invalid_url[next_invalid] < url_close
-            ):
-                return "no", start
+            # The completed index has already validated every complex
+            # destination. The lookup remains constant-time for all '['.
             return "complete", url_close + 1
 
-        label_end = text.find("]", start + 1)
+        label_end = StreamingSpeechSanitizer._markdown_label_end(text, start)
         if label_end == -1:
             return ("no", start) if final else ("incomplete", start)
         if label_end + 1 >= len(text):
             return ("no", start) if final else ("incomplete", start)
         if text[label_end + 1] != "(":
             return "no", start
-
-        url_start = label_end + 2
-        if url_start >= len(text):
-            return ("no", start) if final else ("incomplete", start)
-        depth = 0
-        for index in range(url_start, len(text)):
-            char = text[index]
-            if char.isspace() or char in "<>\n":
-                return "no", start
-            if char == "(":
-                depth += 1
-            elif char == ")":
-                if depth == 0:
-                    return "complete", index + 1
-                depth -= 1
-        return ("no", start) if final else ("incomplete", start)
+        status, end = StreamingSpeechSanitizer._scan_markdown_destination(
+            text, label_end + 2, final
+        )
+        return (status, end) if status == "complete" else (status, start)
 
     @classmethod
     def _index_complete_format(
@@ -1197,6 +1397,15 @@ class StreamingSpeechSanitizer:
                 index += 1
                 continue
             if self._line_start:
+                rule_action, rule_count = self._horizontal_rule_line(
+                    self._format_buffer, final, index
+                )
+                if rule_action == "incomplete":
+                    break
+                if rule_action == "strip":
+                    index += rule_count
+                    self._line_start = False
+                    continue
                 action, count = self._line_prefix(
                     self._format_buffer,
                     final,
@@ -1486,6 +1695,35 @@ class StreamingSpeechSanitizer:
             output.append(self._format_buffer.replace("`", ""))
             self._format_buffer = ""
         return "".join(output)
+
+    @staticmethod
+    def _horizontal_rule_line(
+        text: str, final: bool, start: int = 0
+    ) -> tuple[str, int]:
+        """Remove only standalone Markdown rules, not prose or escaped markers."""
+        index = start
+        while index < len(text) and text[index] in " \t" and index - start < 4:
+            index += 1
+        if index - start > 3 or index == len(text):
+            return "none", 0
+        marker = text[index]
+        if marker not in "-*_":
+            return "none", 0
+        count = 0
+        while index < len(text):
+            char = text[index]
+            if char == marker:
+                count += 1
+            elif char == "\n":
+                return ("strip", index - start) if count >= 3 else ("none", 0)
+            elif char not in " \t":
+                return "none", 0
+            index += 1
+            if index - start >= _FORMAT_PREFIX_LIMIT:
+                return "none", 0
+        if final:
+            return ("strip", index - start) if count >= 3 else ("none", 0)
+        return "incomplete", 0
 
     @staticmethod
     def _line_prefix(

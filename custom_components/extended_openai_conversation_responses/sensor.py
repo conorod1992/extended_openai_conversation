@@ -111,11 +111,20 @@ class GuestModeSensor(SensorEntity):
         )
 
     @property
-    def native_value(self) -> str:
+    def available(self) -> bool:
+        """Do not present a speculative schedule after uncertain persistence."""
+        return self._guest_mode.authoritative_available
+
+    @property
+    def native_value(self) -> str | None:
+        if not self.available:
+            return None
         return str(self._guest_mode.status()["state"])
 
     @property
     def extra_state_attributes(self) -> dict:
+        if not self.available:
+            return {}
         status = self._guest_mode.status()
         return {
             key: status[key]

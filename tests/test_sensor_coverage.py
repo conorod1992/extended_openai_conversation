@@ -73,6 +73,7 @@ class FakeGuestMode:
 
     def __init__(self) -> None:
         self.listeners = []
+        self.authoritative_available = True
         self.current_status = {
             "state": "scheduled",
             "active_from": "2026-09-13T20:00:00+01:00",
