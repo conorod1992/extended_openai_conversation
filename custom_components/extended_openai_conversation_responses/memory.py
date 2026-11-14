@@ -2142,6 +2142,27 @@ def _bm25_term_weights(
                 weights["hope"] = min(weights["hope"], 0.03)
             if term == "happen" and "know" in query_terms[index + 1 : index + 3]:
                 weights["happen"] = min(weights["happen"], 0.03)
+        # Discount these words only in recall-framing phrases. In isolation,
+        # "previously", "details" and "right" can distinguish stored facts.
+        # Match the same tokenization as scoring (including stop-word removal).
+        framing_positions: set[int] = set()
+        for phrase in (
+            "help me remember",
+            "something we discussed previously",
+            "recall the details right now",
+        ):
+            framing = _token_list(phrase)
+            for index in range(len(query_terms) - len(framing) + 1):
+                if list(query_terms[index : index + len(framing)]) == framing:
+                    framing_positions.update(range(index, index + len(framing)))
+        for term in {query_terms[index] for index in framing_positions}:
+            # A term also used outside framing may distinguish the question.
+            if all(
+                index in framing_positions
+                for index, other in enumerate(query_terms)
+                if other == term
+            ):
+                weights[term] = min(weights[term], 0.03)
     # Compound expansion must not multiply the weight of an original word.
     for term in weights:
         parts = set(term.split("-")) if "-" in term else set()

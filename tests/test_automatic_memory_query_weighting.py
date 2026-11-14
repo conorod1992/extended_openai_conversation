@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import replace
 from types import SimpleNamespace
 
+import pytest
+
 from custom_components.extended_openai_conversation_responses.const import (
     CONF_MEMORY_AUTO_RETRIEVE_LIMIT,
     CONF_MEMORY_ENABLED,
@@ -13,9 +15,9 @@ from custom_components.extended_openai_conversation_responses.continuity import 
     ConversationContinuity,
 )
 from custom_components.extended_openai_conversation_responses.conversation import (
-    ExtendedOpenAIAgentEntity,
-    _ACTIVE_TURN,
     _ACTIVE_GUEST_POLICY,
+    _ACTIVE_TURN,
+    ExtendedOpenAIAgentEntity,
 )
 from custom_components.extended_openai_conversation_responses.guest_mode import (
     GuestCapabilityPolicy,
@@ -46,6 +48,79 @@ _VERBOSE = (
     "I was curious and wondering about it, thanks."
 )
 
+_CORE = "Where does Mira keep the cobalt observatory emergency key?"
+_PREFIX = "I was hoping you could help me remember something we discussed previously. "
+_SUFFIX = " Please tell me what you remember, as I cannot recall the details right now."
+
+
+@pytest.mark.parametrize("density", [0, 3, 7])
+async def test_composed_recall_framing_retains_strong_fact_and_precision(density):
+    memory = PersistentMemory(_Storage())
+    await memory.async_initialize()
+    fact = "Mira keeps the cobalt observatory emergency key in locker 47."
+    target = (await memory.async_add("alice", fact, "general", "explicit"))["memory"][
+        "memory_id"
+    ]
+    for text in (
+        "Mira keeps the cobalt observatory visitor key in locker 12.",
+        "Nora keeps the cobalt observatory emergency key in locker 28.",
+        "Mira keeps the saffron greenhouse emergency key in locker 35.",
+        "Mira enjoys swimming in the mornings.",
+        "The office is closed on Wednesdays.",
+        "The family dog is called Oscar.",
+        "The home lights switch on at sunset.",
+    )[:density]:
+        await memory.async_add("alice", text, "general", "explicit")
+    await memory.async_add("bob", fact, "general", "explicit")
+    for query in (
+        _CORE,
+        _PREFIX + _CORE,
+        _CORE + _SUFFIX,
+        _PREFIX + "If you happen to know, " + _CORE + _SUFFIX,
+    ):
+        explicit = await memory.async_search("alice", query, allow_fuzzy_only=False)
+        recalled = await memory.async_search(
+            "alice", query, automatic_recall=True, allow_fuzzy_only=False, limit=1
+        )
+        assert [item.memory_id for item in recalled] == [target]
+        assert (
+            await memory.async_search("alice", query, allow_fuzzy_only=False)
+            == explicit
+        )
+        assert await memory.async_search("charlie", query, automatic_recall=True) == []
+    unrelated = _PREFIX + "Explain volcanic basalt lithology." + _SUFFIX
+    assert (
+        await memory.async_search(
+            "alice", unrelated, automatic_recall=True, allow_fuzzy_only=False
+        )
+        == []
+    )
+
+
+def test_recall_phrase_words_remain_distinguishing_outside_phrases():
+    weights = _automatic_query_weights(
+        _token_list(
+            "Please tell me previously recorded details for the right emergency key now, not locker 47"
+        )
+    )
+    assert weights is not None
+    for term in _token_list("previously details right now not locker 47"):
+        assert weights[term] == 1.0
+    composed = _automatic_query_weights(_token_list(_PREFIX + _CORE + _SUFFIX))
+    assert composed is not None
+    for term in _token_list("could cannot Mira cobalt observatory emergency key"):
+        assert composed[term] == 1.0
+    repeated = _automatic_query_weights(
+        _token_list(
+            _PREFIX
+            + "Which details were previously recorded for Mira's emergency key?"
+            + _SUFFIX
+        )
+    )
+    assert repeated is not None
+    for term in _token_list("details previously"):
+        assert repeated[term] == 1.0
+
 
 async def _populated():
     memory = PersistentMemory(_Storage())
@@ -64,9 +139,7 @@ async def test_automatic_recall_recovers_verbose_question_without_changing_tool_
         "alice", _VERBOSE, automatic_recall=True, allow_fuzzy_only=False
     )
     assert [record.memory_id for record in recalled] == [target]
-    assert await memory.async_search(
-        "alice", _VERBOSE, allow_fuzzy_only=False
-    ) == []
+    assert await memory.async_search("alice", _VERBOSE, allow_fuzzy_only=False) == []
 
 
 async def test_automatic_recall_retains_short_and_padding_only_search_contracts():
@@ -104,9 +177,7 @@ def test_automatic_query_bm25_weights_numerator_and_denominator_together():
     tf = ("emma", "attend", "school")
     df = dict.fromkeys(query, 1)
     old = _bm25_score(query, tf, df, 1, float(len(tf)))
-    new = _bm25_score(
-        query, tf, df, 1, float(len(tf)), query_weights=weights
-    )
+    new = _bm25_score(query, tf, df, 1, float(len(tf)), query_weights=weights)
     assert 0 < old < new < 1
     compound = _automatic_query_weights(
         _token_list("Hey please tell me which school Emma attends in carlow-city?")
@@ -145,13 +216,21 @@ async def test_first_turn_bundle_retrieval_and_followup_keep_original_selection(
 
 async def test_verbose_irrelevant_query_is_not_admitted_as_related():
     memory, _ = await _populated()
-    unrelated = _VERBOSE.replace("school Emma attends", "favourite colour Oliver prefers")
-    assert await memory.async_search(
-        "alice", unrelated, automatic_recall=True, allow_fuzzy_only=False
-    ) == []
-    assert await memory.async_search(
-        "other-user", _VERBOSE, automatic_recall=True, allow_fuzzy_only=False
-    ) == []
+    unrelated = _VERBOSE.replace(
+        "school Emma attends", "favourite colour Oliver prefers"
+    )
+    assert (
+        await memory.async_search(
+            "alice", unrelated, automatic_recall=True, allow_fuzzy_only=False
+        )
+        == []
+    )
+    assert (
+        await memory.async_search(
+            "other-user", _VERBOSE, automatic_recall=True, allow_fuzzy_only=False
+        )
+        == []
+    )
 
 
 async def test_automatic_query_corpus_improves_recall_without_new_single_anchor_false_positives():
@@ -168,9 +247,7 @@ async def test_automatic_query_corpus_improves_recall_without_new_single_anchor_
     )
     for text in unrelated:
         await memory.async_add("alice", text, "personal", "explicit")
-    old = await memory.async_search(
-        "alice", _VERBOSE, limit=50, allow_fuzzy_only=False
-    )
+    old = await memory.async_search("alice", _VERBOSE, limit=50, allow_fuzzy_only=False)
     new = await memory.async_search(
         "alice", _VERBOSE, limit=50, allow_fuzzy_only=False, automatic_recall=True
     )
