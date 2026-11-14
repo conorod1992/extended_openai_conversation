@@ -1230,15 +1230,14 @@ class StreamingSpeechSanitizer:
             brackets = completed[0]
             position = bisect_right(brackets, start)
             return brackets[position] if position < len(brackets) else -1
-        escaped = False
-        for index in range(start + 1, len(text)):
-            char = text[index]
-            if char == "\\" and not escaped:
-                escaped = True
-                continue
-            if char == "]" and not escaped:
+        # Use the C-level search for ordinary text. Only candidate closers
+        # require an escape-parity check, avoiding Python per-character scans
+        # for malformed labels with no closing bracket.
+        index = text.find("]", start + 1)
+        while index >= 0:
+            if not StreamingSpeechSanitizer._is_escaped(text, index):
                 return index
-            escaped = False
+            index = text.find("]", index + 1)
         return -1
 
     @staticmethod
