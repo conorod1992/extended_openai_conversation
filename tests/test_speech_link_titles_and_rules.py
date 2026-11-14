@@ -203,3 +203,12 @@ def test_empty_link_destination_preserves_label_with_markdown_only():
         assert result == "Read Home before Settings next."
         for split in range(len(source) + 1):
             assert _stream(source, split, urls=urls) == result
+
+
+def test_many_malformed_titled_links_do_not_rescan_the_remaining_answer():
+    """Repeated malformed candidates cannot make completed cleanup quadratic."""
+    text = ('[bad](a "unclosed ) ' * 1600) + "Tail."
+    start = perf_counter()
+    result = StreamingSpeechSanitizer().process_complete(text)
+    assert "Tail." in result
+    assert perf_counter() - start < 3.0
