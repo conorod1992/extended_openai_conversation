@@ -1096,11 +1096,7 @@ class StreamingSpeechSanitizer:
         remaining_probe_chars = max(16_384, len(text) * 4)
         for label_end in brackets:
             opening = label_end + 1
-            if (
-                opening >= len(text)
-                or text[opening] != "("
-                or opening in closed_parens
-            ):
+            if opening >= len(text) or text[opening] != "(" or opening in closed_parens:
                 continue
             url_start = opening + 1
             if url_start >= len(text) or remaining_probe_chars <= 0:
