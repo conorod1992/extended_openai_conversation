@@ -2044,6 +2044,11 @@ def _rank_memory_snapshot(
     query_terms = _token_list(query)
     query_tokens = set(query_terms)
     query_weights = _automatic_query_weights(query_terms) if automatic_recall else None
+    previous_weights = (
+        _automatic_query_weights(query_terms, composed_framing=False)
+        if query_weights is not None
+        else None
+    )
     anchor_terms = (
         {term for term in query_tokens if query_weights[term] >= 0.5}
         if query_weights
@@ -2074,7 +2079,21 @@ def _rank_memory_snapshot(
         if query_weights is not None and (
             sum(query_weights[term] for term in anchor_terms & token_set) < 2.5
         ):
-            candidate_weights = None
+            # New phrase discounts must not turn a previously eligible
+            # weighted candidate into an unweighted threshold miss. Retain
+            # the previous weights only if that same gate admitted them;
+            # never give the stronger discounts to a two-anchor candidate.
+            candidate_weights = (
+                previous_weights
+                if previous_weights is not None
+                and sum(
+                    weight
+                    for term, weight in previous_weights.items()
+                    if weight >= 0.5 and term in token_set
+                )
+                >= 2.5
+                else None
+            )
         lexical = _bm25_score(
             query_terms,
             terms,
@@ -2122,7 +2141,10 @@ def _rank_memory_snapshot(
 
 
 def _bm25_term_weights(
-    query_terms: Sequence[str], *, reduce_filler: bool = False
+    query_terms: Sequence[str],
+    *,
+    reduce_filler: bool = False,
+    composed_framing: bool = True,
 ) -> dict[str, float]:
     """Preserve compound weights while optionally discounting auto-query framing."""
     weights = dict.fromkeys(query_terms, 1.0)
@@ -2147,9 +2169,13 @@ def _bm25_term_weights(
         # Match the same tokenization as scoring (including stop-word removal).
         framing_positions: set[int] = set()
         for phrase in (
-            "help me remember",
-            "something we discussed previously",
-            "recall the details right now",
+            (
+                "help me remember",
+                "something we discussed previously",
+                "recall the details right now",
+            )
+            if composed_framing
+            else ()
         ):
             framing = _token_list(phrase)
             for index in range(len(query_terms) - len(framing) + 1):
@@ -2174,7 +2200,9 @@ def _bm25_term_weights(
     return weights
 
 
-def _automatic_query_weights(query_terms: list[str]) -> dict[str, float] | None:
+def _automatic_query_weights(
+    query_terms: list[str], *, composed_framing: bool = True
+) -> dict[str, float] | None:
     """Use lower padding weights only for long queries with real search anchors."""
     unique = set(query_terms)
     if (
@@ -2183,7 +2211,9 @@ def _automatic_query_weights(query_terms: list[str]) -> dict[str, float] | None:
         or not unique & _AUTOMATIC_MEMORY_FILLER_TERMS
     ):
         return None
-    return _bm25_term_weights(query_terms, reduce_filler=True)
+    return _bm25_term_weights(
+        query_terms, reduce_filler=True, composed_framing=composed_framing
+    )
 
 
 def _bm25_score(

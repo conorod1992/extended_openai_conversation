@@ -53,6 +53,33 @@ _PREFIX = "I was hoping you could help me remember something we discussed previo
 _SUFFIX = " Please tell me what you remember, as I cannot recall the details right now."
 
 
+@pytest.mark.parametrize("previously_eligible", [True, False])
+async def test_phrase_discount_preserves_previous_gate(previously_eligible):
+    memory = PersistentMemory(_Storage())
+    await memory.async_initialize()
+    target = (
+        await memory.async_add(
+            "alice",
+            (
+                "Mira's key was previously stored in locker 47."
+                if previously_eligible
+                else "Mira's key was stored in locker 47."
+            ),
+            "general",
+            "explicit",
+        )
+    )["memory"]["memory_id"]
+    query = "Please tell me something we discussed previously about Mira's key?"
+    assert [
+        item.memory_id
+        for item in await memory.async_search(
+            "alice", query, automatic_recall=True, allow_fuzzy_only=False
+        )
+    ] == ([target] if previously_eligible else [])
+    assert await memory.async_search("alice", query, allow_fuzzy_only=False) == []
+    assert await memory.async_search("bob", query, automatic_recall=True) == []
+
+
 @pytest.mark.parametrize("density", [0, 3, 7])
 async def test_composed_recall_framing_retains_strong_fact_and_precision(density):
     memory = PersistentMemory(_Storage())
