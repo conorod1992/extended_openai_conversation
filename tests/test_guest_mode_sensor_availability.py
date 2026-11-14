@@ -129,3 +129,37 @@ def test_sensor_does_not_call_status_during_uncertain_generation(hass):
         assert sensor.native_value is None
         assert sensor.extra_state_attributes == {}
     manager.status.assert_not_called()
+
+
+@pytest.mark.parametrize("readback_recovers", [False, True])
+async def test_sensor_recovers_on_authoritative_mutation_without_another_getter(
+    hass, readback_recovers
+):
+    manager = _manager(hass)
+    await manager.async_initialize()
+    await manager.async_update_trusted(indefinite=True)
+    sensor = _status_sensor(manager)
+    listener = Mock()
+    manager.async_add_listener(listener)
+    manager._store.async_save.side_effect = OSError("write failed")
+    manager._store.async_load.side_effect = OSError("readback failed")
+    with pytest.raises(OSError):
+        await manager.async_disable_trusted()
+    assert not sensor.available
+    listener.assert_called_once_with()
+
+    # A retained manager reference can recover through a trusted write or a
+    # failed write with successful authoritative readback, without a getter.
+    manager._store.async_load.side_effect = None
+    manager._store.async_load.return_value = {"schedule": None}
+    if readback_recovers:
+        with pytest.raises(OSError, match="write failed"):
+            await manager.async_disable_trusted()
+    else:
+        manager._store.async_save.side_effect = None
+        await manager.async_disable_trusted()
+    assert manager.initialized
+    assert manager.authoritative_available
+    assert sensor.available
+    assert sensor.native_value == "inactive"
+    assert listener.call_count == 2

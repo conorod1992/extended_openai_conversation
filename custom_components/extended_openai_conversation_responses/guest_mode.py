@@ -539,6 +539,7 @@ class GuestModeManager:
             nonlocal committed
             self._schedule = schedule
             self._persistence_unavailable = False
+            self._initialized = True
             committed = True
 
         async def reconcile() -> None:
@@ -546,6 +547,7 @@ class GuestModeManager:
             durable = self._decode_stored_schedule(data)
             self._schedule = durable
             self._persistence_unavailable = False
+            self._initialized = True
 
         def invalidate() -> None:
             self._persistence_unavailable = True
