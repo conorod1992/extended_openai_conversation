@@ -1076,9 +1076,7 @@ class StreamingSpeechSanitizer:
             # confuse the structural stack. Only these otherwise-rejected
             # candidates need a second scan; bound the aggregate malformed
             # input work instead of rescanning to EOF for each candidate.
-            window = min(
-                16_384, len(text) - url_start, remaining_fallback_chars
-            )
+            window = min(16_384, len(text) - url_start, remaining_fallback_chars)
             remaining_fallback_chars -= window
             if window <= 0:
                 del closed_parens[opening]
