@@ -1058,6 +1058,7 @@ class StreamingSpeechSanitizer:
         # Validate each *distinct* complicated destination here, once, rather
         # than re-scanning a long title for every preceding opener. Keep the
         # same 3-field index contract and the same shared streaming validator.
+        remaining_fallback_chars = max(16_384, len(text) * 4)
         for opening, closing in tuple(closed_parens.items()):
             url_start = opening + 1
             invalid_index = bisect_left(invalid_url, url_start)
@@ -1071,11 +1072,19 @@ class StreamingSpeechSanitizer:
             )
             if status == "complete" and end == closing + 1:
                 continue
-            # The structural stack cannot identify the link's closing ')' when
-            # a quoted title or angle destination contains stray parentheses.
-            # Validate the entire destination with the shared streaming parser.
+            # A quoted title/angle destination may contain parentheses which
+            # confuse the structural stack. Only these otherwise-rejected
+            # candidates need a second scan; bound the aggregate malformed
+            # input work instead of rescanning to EOF for each candidate.
+            window = min(
+                16_384, len(text) - url_start, remaining_fallback_chars
+            )
+            remaining_fallback_chars -= window
+            if window <= 0:
+                del closed_parens[opening]
+                continue
             status, end = StreamingSpeechSanitizer._scan_markdown_destination(
-                text, url_start, True
+                text, url_start, True, limit=url_start + window - 1
             )
             if status == "complete":
                 closed_parens[opening] = end - 1
