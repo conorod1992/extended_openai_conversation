@@ -825,8 +825,8 @@ class StreamingSpeechSanitizer:
                             link_end < len(text) and text[link_end] == ")"
                         )
                         label_end = self._markdown_label_end(
-                        text, link_start, self._completed_links
-                    )
+                            text, link_start, self._completed_links
+                        )
                         if text[index + 1] == "!" or not self._emit_link_label(
                             output,
                             text[link_start + 1 : label_end],
