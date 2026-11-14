@@ -133,3 +133,73 @@ def test_completed_titled_link_is_validated_once_across_many_openers(monkeypatch
     result = StreamingSpeechSanitizer().process_complete(text)
     assert result.endswith("caption")
     assert calls == 1
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ('Read [Guide](https://example.com "Version (beta") next.', "Read Guide next."),
+        ('Read [Guide](https://example.com "Version ) beta") next.', "Read Guide next."),
+        ('Read [Guide](<https://example.com/a(b> "Version") next.', "Read Guide next."),
+        ('Read [Guide](<https://example.com/a)b> "Version") next.', "Read Guide next."),
+        ("Read [Empty]() next.", "Read Empty next."),
+    ],
+)
+def test_ambiguous_link_closers_match_complete_and_streaming(source, expected):
+    """Quoted-title and angle-destination parentheses are not URL boundaries."""
+    config = {
+        "speech_processing_enabled": True,
+        "speech_strip_markdown": True,
+        "speech_strip_urls": True,
+        "speech_regex_replacements": [],
+    }
+    assert process_speech_text(source, config) == expected
+    for split in range(len(source) + 1):
+        assert _stream(source, split) == expected, split
+
+    # Completed responses larger than the indexed threshold must still speak
+    # exactly the same label as the streaming path.
+    prefix = "An ordinary sentence. " * 230
+    long_text = prefix + source
+    cleaned = process_speech_text(long_text, config)
+    assert len(long_text) > 4096
+    assert cleaned.endswith(expected)
+    for split in (0, len(prefix) - 1, len(prefix), len(long_text)):
+        assert _stream(long_text, split) == cleaned, split
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        r"Read [Release \] preview](https://example.com) next.",
+        r"Read [Release \] preview](<https://example.com/a(b)> 'Title') next.",
+        r"Read [Release \\] preview](https://example.com) next.",
+        r"Read [Release \\\] preview](https://example.com) next.",
+    ],
+)
+def test_escaped_link_label_brackets_preserve_content_in_both_paths(source):
+    """Never use the first escaped ] as the end of a spoken link label."""
+    config = {
+        "speech_processing_enabled": True,
+        "speech_strip_markdown": True,
+        "speech_strip_urls": True,
+        "speech_regex_replacements": [],
+    }
+    for text in (source, "An ordinary sentence. " * 230 + source):
+        cleaned = process_speech_text(text, config)
+        assert "preview" in cleaned
+        assert _stream(text, 0) == cleaned
+        assert _stream(text, len(text) - len(source) + 12) == cleaned
+    for split in range(len(source) + 1):
+        assert _stream(source, split) == process_speech_text(source, config), split
+
+
+def test_empty_link_destination_preserves_label_with_markdown_only():
+    source = "Read [Home]() before [Settings]() next."
+    for urls in (False, True):
+        result = _final_whitespace_cleanup(
+            StreamingSpeechSanitizer(markdown=True, urls=urls).process_complete(source)
+        )
+        assert result == "Read Home before Settings next."
+        for split in range(len(source) + 1):
+            assert _stream(source, split, urls=urls) == result
