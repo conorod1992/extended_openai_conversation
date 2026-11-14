@@ -139,7 +139,10 @@ def test_completed_titled_link_is_validated_once_across_many_openers(monkeypatch
     ("source", "expected"),
     [
         ('Read [Guide](https://example.com "Version (beta") next.', "Read Guide next."),
-        ('Read [Guide](https://example.com "Version ) beta") next.', "Read Guide next."),
+        (
+            'Read [Guide](https://example.com "Version ) beta") next.',
+            "Read Guide next.",
+        ),
         ('Read [Guide](<https://example.com/a(b> "Version") next.', "Read Guide next."),
         ('Read [Guide](<https://example.com/a)b> "Version") next.', "Read Guide next."),
         ("Read [Empty]() next.", "Read Empty next."),
