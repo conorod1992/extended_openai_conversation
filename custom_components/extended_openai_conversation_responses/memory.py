@@ -2075,6 +2075,15 @@ def _rank_memory_snapshot(
         # Reweight framing only when the candidate matches substantial facts.
         # Otherwise retain the original score, avoiding new name-only false
         # positives from conversationally padded questions.
+        previously_eligible = (
+            previous_weights is not None
+            and sum(
+                weight
+                for term, weight in previous_weights.items()
+                if weight >= 0.5 and term in token_set
+            )
+            >= 2.5
+        )
         candidate_weights = query_weights
         if query_weights is not None and (
             sum(query_weights[term] for term in anchor_terms & token_set) < 2.5
@@ -2083,17 +2092,7 @@ def _rank_memory_snapshot(
             # weighted candidate into an unweighted threshold miss. Retain
             # the previous weights only if that same gate admitted them;
             # never give the stronger discounts to a two-anchor candidate.
-            candidate_weights = (
-                previous_weights
-                if previous_weights is not None
-                and sum(
-                    weight
-                    for term, weight in previous_weights.items()
-                    if weight >= 0.5 and term in token_set
-                )
-                >= 2.5
-                else None
-            )
+            candidate_weights = previous_weights if previously_eligible else None
         lexical = _bm25_score(
             query_terms,
             terms,
@@ -2103,15 +2102,35 @@ def _rank_memory_snapshot(
             query_weights=candidate_weights,
         )
         lexical += _metadata_bonus(query_tokens, memory, candidate_weights)
+        previous_lexical = None
+        if previously_eligible and candidate_weights != previous_weights:
+            previous_lexical = _bm25_score(
+                query_terms,
+                terms,
+                document_frequency,
+                len(corpus),
+                average_length,
+                query_weights=previous_weights,
+            ) + _metadata_bonus(query_tokens, memory, previous_weights)
         normalized_content = _normalize(memory.content)
+        phrase_bonus = 0.0
         if (
             normalized_query
             and query_tokens & token_set
             and bounded_phrase(normalized_query, normalized_content)
         ):
-            lexical += 0.35
+            phrase_bonus = 0.35
         elif len(query_terms) > 1 and ordered_term_phrase(query_terms, terms):
-            lexical += 0.18
+            phrase_bonus = 0.18
+        lexical += phrase_bonus
+        # Phrase words can match the memory itself, reducing the numerator
+        # as well as the denominator even when both anchor gates pass. Only
+        # previously admitted weighted scores receive a compatibility floor;
+        # new candidates still need the new weights and existing anchor gate.
+        if previous_lexical is not None:
+            previous_lexical += phrase_bonus
+            if previous_lexical >= MIN_LEXICAL_RELEVANCE_SCORE:
+                lexical = max(lexical, previous_lexical)
         genuine_lexical = lexical
         if lexical <= 0:
             lexical = _fuzzy_relevance(query_tokens, token_set)

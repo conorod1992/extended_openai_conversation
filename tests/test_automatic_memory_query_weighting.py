@@ -53,6 +53,73 @@ _PREFIX = "I was hoping you could help me remember something we discussed previo
 _SUFFIX = " Please tell me what you remember, as I cannot recall the details right now."
 
 
+async def test_phrase_discount_preserves_admitted_score_with_surviving_anchors():
+    memory = PersistentMemory(_Storage())
+    await memory.async_initialize()
+    target = (
+        await memory.async_add(
+            "alice",
+            "We discussed previously that Mira's emergency key is in locker 47.",
+            "general",
+            "explicit",
+        )
+    )["memory"]["memory_id"]
+    query = (
+        "Please tell me something we discussed previously about Mira's emergency key? "
+        "For clarity please remind me of the exact location and identification, thanks."
+    )
+    assert [
+        item.memory_id
+        for item in await memory.async_search(
+            "alice", query, automatic_recall=True, allow_fuzzy_only=False
+        )
+    ] == [target]
+    assert await memory.async_search("alice", query, allow_fuzzy_only=False) == []
+    assert await memory.async_search("bob", query, automatic_recall=True) == []
+
+
+async def test_phrase_weighting_retains_preexisting_admissions_in_competing_corpus(
+    monkeypatch,
+):
+    from custom_components.extended_openai_conversation_responses import (
+        memory as implementation,
+    )
+
+    memory = PersistentMemory(_Storage())
+    await memory.async_initialize()
+    for fact in (
+        "We discussed previously that Mira's emergency key is in locker 47.",
+        "Mira's key was previously stored in locker 47.",
+        "Mira keeps the cobalt observatory emergency key in locker 47.",
+        "Nora's emergency key is in locker 28.",
+        "We discussed previously that the office closes at sunset.",
+        "The family dog is called Oscar.",
+    ):
+        await memory.async_add("alice", fact, "general", "explicit")
+    original_weights = implementation._automatic_query_weights
+    for query in (
+        "Please tell me something we discussed previously about Mira's key?",
+        "Please tell me something we discussed previously about Mira's emergency key? "
+        "For clarity please remind me of the exact location and identification, thanks.",
+        _PREFIX + "If you happen to know, " + _CORE + _SUFFIX,
+    ):
+        with monkeypatch.context() as baseline:
+            baseline.setattr(
+                implementation,
+                "_automatic_query_weights",
+                lambda terms, **kwargs: original_weights(terms, composed_framing=False),
+            )
+            previous = await memory.async_search(
+                "alice", query, automatic_recall=True, allow_fuzzy_only=False, limit=50
+            )
+        current = await memory.async_search(
+            "alice", query, automatic_recall=True, allow_fuzzy_only=False, limit=50
+        )
+        assert {item.memory_id for item in previous} <= {
+            item.memory_id for item in current
+        }
+
+
 @pytest.mark.parametrize("previously_eligible", [True, False])
 async def test_phrase_discount_preserves_previous_gate(previously_eligible):
     memory = PersistentMemory(_Storage())
