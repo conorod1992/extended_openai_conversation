@@ -2,6 +2,7 @@
 
 import asyncio
 from datetime import timedelta
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -18,7 +19,7 @@ from tests.test_guest_websocket_storage_outcomes import send
 from tests.test_save_validation_reuse import _hass_with_agent
 
 
-@pytest.mark.parametrize("cancel_recovery", [None, "waiting", "reading"])
+@pytest.mark.parametrize("cancel_recovery", [None, "waiting"])
 async def test_recovery_does_not_erase_queued_restriction_or_weaken_next_action(
     hass,
     entry_agent,
@@ -115,11 +116,10 @@ async def test_recovery_does_not_erase_queued_restriction_or_weaken_next_action(
         acknowledged.send_error.assert_not_called()
         assert acknowledged.send_result.call_args.args[1]["status"]["currently_active"]
         if cancel_recovery != "waiting":
-            await read_started.wait()
-        if cancel_recovery == "reading":
-            recovery.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await recovery
+            # The queued writer has now installed a complete authoritative
+            # generation. A recovery waiter must reuse it without another read.
+            await asyncio.wait_for(recovery, 5)
+            assert not read_started.is_set()
         release_read.set()
         await get(hass, entry.entry_id, subentry.subentry_id)
         if not cancel_recovery:
@@ -148,3 +148,66 @@ async def test_recovery_does_not_erase_queued_restriction_or_weaken_next_action(
         ):
             event.set()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.parametrize("cancel_read", [False, True])
+async def test_queued_restriction_survives_recovery_read_or_read_cancellation(
+    hass, monkeypatch, cancel_read
+):
+    manager = GuestModeManager(hass, "entry", "agent")
+    await manager.async_initialize()
+    load, save = manager._store.async_load, manager._store.async_save
+    monkeypatch.setattr(
+        manager._store, "async_save", AsyncMock(side_effect=OSError("write failed"))
+    )
+    monkeypatch.setattr(
+        manager._store, "async_load", AsyncMock(side_effect=OSError("readback failed"))
+    )
+    with pytest.raises(OSError, match="write failed"):
+        await manager.async_disable_trusted()
+    assert not manager.authoritative_available
+
+    started, release, writer_waiting = (asyncio.Event() for _ in range(3))
+    writer = None
+    acquire = manager._mutation_lock.acquire
+
+    async def observed_acquire():
+        if asyncio.current_task() is writer:
+            writer_waiting.set()
+        return await acquire()
+
+    async def controlled_load():
+        snapshot = await load()
+        started.set()
+        await release.wait()
+        return snapshot
+
+    monkeypatch.setattr(manager._store, "async_save", save)
+    monkeypatch.setattr(manager._store, "async_load", controlled_load)
+    monkeypatch.setattr(manager._mutation_lock, "acquire", observed_acquire)
+    recovery = asyncio.create_task(manager.async_initialize())
+    try:
+        await asyncio.wait_for(started.wait(), 5)
+        writer = asyncio.create_task(manager.async_update_trusted(indefinite=True))
+        await asyncio.wait_for(writer_waiting.wait(), 5)
+        assert manager._mutation_lock.locked()
+        assert not writer.done()
+        if cancel_read:
+            recovery.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await recovery
+        else:
+            release.set()
+            await asyncio.wait_for(recovery, 5)
+        await asyncio.wait_for(writer, 5)
+        assert manager.authoritative_available
+        assert manager.is_active()
+        fresh = GuestModeManager(hass, "entry", "agent")
+        await fresh.async_initialize()
+        assert fresh.is_active()
+        assert fresh.schedule.active_until is None
+    finally:
+        release.set()
+        await asyncio.gather(
+            recovery, *([writer] if writer else []), return_exceptions=True
+        )
