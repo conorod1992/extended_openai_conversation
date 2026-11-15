@@ -113,6 +113,7 @@ from .continuity import (
 )
 from .conversation_archive import ArchiveSession, ConversationArchive, async_get_archive
 from .conversation_id_ownership import (
+    ProvisionalConversationIDClaim,
     bind_parent_conversation_id,
     claim_conversation_id,
     register_conversation_id_cleanup,
@@ -858,21 +859,27 @@ class ExtendedOpenAIAgentEntity(
                         else None
                     ),
                 )
-                resolved_conversation_id = getattr(
-                    resolution, "conversation_id", user_input.conversation_id
+                provisional_claim = ProvisionalConversationIDClaim(
+                    getattr(self, "hass", None)
                 )
-                claimed_conversation_id = claim_conversation_id(
-                    getattr(self, "hass", None),
-                    getattr(getattr(self, "subentry", None), "subentry_id", None),
-                    scope,
-                    resolved_conversation_id,
-                    guest_active=request_policy.guest_active,
-                )
-                if claimed_conversation_id != resolved_conversation_id:
-                    resolution = await self._continuity.async_replace_conversation_id(
-                        resolution, claimed_conversation_id
-                    )
                 try:
+                    resolved_conversation_id = getattr(
+                        resolution, "conversation_id", user_input.conversation_id
+                    )
+                    claimed_conversation_id = claim_conversation_id(
+                        getattr(self, "hass", None),
+                        getattr(getattr(self, "subentry", None), "subentry_id", None),
+                        scope,
+                        resolved_conversation_id,
+                        guest_active=request_policy.guest_active,
+                        provisional_claim=provisional_claim,
+                    )
+                    if claimed_conversation_id != resolved_conversation_id:
+                        resolution = (
+                            await self._continuity.async_replace_conversation_id(
+                                resolution, claimed_conversation_id
+                            )
+                        )
                     return await self._async_process_claimed(
                         user_input,
                         llm_context,
@@ -883,6 +890,7 @@ class ExtendedOpenAIAgentEntity(
                         resolution,
                     )
                 finally:
+                    provisional_claim.release_unused()
                     await asyncio.shield(
                         self._continuity.async_release(
                             resolution.key, resolution.claim_token
@@ -926,28 +934,13 @@ class ExtendedOpenAIAgentEntity(
         assist_chat_log = current_chat_log.get()
         incoming_conversation_id = user_input.conversation_id
         user_input.conversation_id = resolution.conversation_id
-        with (
-            async_get_chat_session(
-                self.hass, resolution.conversation_id, context=user_input.context
-            ) as session,
-            async_get_chat_log(self.hass, session, user_input) as chat_log,
-            forward_chat_log_deltas(
-                assist_chat_log,
-                chat_log,
-                user_input.text,
-                rerouted_input=(
-                    assist_chat_log is not None
-                    and assist_chat_log.conversation_id == incoming_conversation_id
-                ),
-            ),
-            processing_conversation_scope(
-                continuity, chat_log.conversation_id, resolution.conversation_id
-            ),
-        ):
-            # HA allocates a ChatLog ID when the initial request has no ID.
-            # Claim that actual ID before any processing can retain its history.
+        with async_get_chat_session(
+            self.hass, resolution.conversation_id, context=user_input.context
+        ) as session:
+            # Native admission has authorized this session. Protect its actual
+            # ID before ChatLog admission or later context entry can fail.
             subentry_id = getattr(getattr(self, "subentry", None), "subentry_id", None)
-            claimed_id = chat_log.conversation_id
+            claimed_id = session.conversation_id
             if claimed_id is not None and isinstance(subentry_id, str):
                 claim_conversation_id(
                     self.hass,
@@ -968,194 +961,236 @@ class ExtendedOpenAIAgentEntity(
                 bind_parent_conversation_id(
                     self.hass, incoming_conversation_id, claimed_id, claim_owner
                 )
-            if resolution.discard_history:
-                # A restore preserves only the private Archive identity. Core may
-                # still hold its old log; discard that context before this turn.
-                chat_log.content[:] = [chat_log.content[0], chat_log.content[-1]]
-                chat_log.extra_system_prompt = None
-                chat_log.llm_api = None
-            # HA consumes satellite context on its first pipeline invocation.
-            # Keep only that raw background for this owned logical conversation;
-            # current-turn input still overrides it, including an explicit empty value.
-            if user_input.extra_system_prompt is None:
-                user_input.extra_system_prompt = (
-                    resolution.extra_system_prompt
-                    if resolution.resumed
-                    else chat_log.extra_system_prompt
-                )
-            chat_log.extra_system_prompt = user_input.extra_system_prompt
-            context_id = getattr(getattr(llm_context, "context", None), "id", None)
-            session_key = (
-                f"continuity:{resolution.key}"
-                if resolution.key
-                else f"conversation:{chat_log.conversation_id}"
-                if chat_log.conversation_id
-                else f"context:{context_id or scope.device_id or 'unidentified'}"
-            )
-            archive_session = await self._async_begin_archive_session(
-                session_key,
-                scope,
-                chat_log.conversation_id,
-                request_policy,
-            )
-            rule_session_key = request_rule_session_id(
-                resolution.key, chat_log.conversation_id
-            )
-            temporary_scope = (
-                None
-                if request_policy.guest_active or not scope.allows_retention
-                else resolution.key or f"conversation:{chat_log.conversation_id}"
-            )
-            group_runtime = self._function_groups_runtime
-            rule_runtime = self._request_rule_runtime
-            function_group_session = (
-                group_runtime.begin(
-                    rule_session_key, timeout_minutes if resolution.key else 5
-                )
-                if group_runtime is not None
-                else None
-            )
-            group_request: object | None = None
-            rule_request: object | None = None
-            lifecycle_token: ConversationLifecycleToken | None = None
-            request_successful = False
-            turn_token = _ACTIVE_TURN.set(
-                ConversationTurnContext(
-                    scope=scope,
-                    archive=(session_key, archive_session.session_id)
-                    if archive_session
-                    else None,
-                    memory_session=(
-                        session_key,
-                        timeout_minutes if resolution.key else 5,
+            with (
+                async_get_chat_log(self.hass, session, user_input) as chat_log,
+                forward_chat_log_deltas(
+                    assist_chat_log,
+                    chat_log,
+                    user_input.text,
+                    rerouted_input=(
+                        assist_chat_log is not None
+                        and assist_chat_log.conversation_id == incoming_conversation_id
                     ),
-                    temporary_scope=temporary_scope,
-                    function_group_session=function_group_session,
-                )
-            )
-            try:
-                group_request = (
-                    group_runtime.begin_request(function_group_session)
-                    if group_runtime is not None and function_group_session is not None
-                    else None
-                )
-                rule_request = (
-                    rule_runtime.begin_request(rule_session_key, timeout_minutes)
-                    if rule_runtime is not None
-                    else None
-                )
-                lifecycle_token = begin_conversation_lifecycle()
-                if resolution.history and len(chat_log.content) <= 2:
-                    # Core history can expire before the integration's session.
-                    current_user = chat_log.content[-1]
-                    chat_log.content[:] = [*resolution.history, current_user]
-                async with (
-                    self._usage.async_run(
-                        home_assistant_conversation_id=user_input.conversation_id,
-                        source_device_id=source_device_id,
+                ),
+                processing_conversation_scope(
+                    continuity, chat_log.conversation_id, resolution.conversation_id
+                ),
+            ):
+                if resolution.discard_history:
+                    # A restore preserves only the private Archive identity. Core may
+                    # still hold its old log; discard that context before this turn.
+                    chat_log.content[:] = [chat_log.content[0], chat_log.content[-1]]
+                    chat_log.extra_system_prompt = None
+                    chat_log.llm_api = None
+                # HA consumes satellite context on its first pipeline invocation.
+                # Keep only that raw background for this owned logical conversation;
+                # current-turn input still overrides it, including an explicit empty value.
+                if user_input.extra_system_prompt is None:
+                    user_input.extra_system_prompt = (
+                        resolution.extra_system_prompt
+                        if resolution.resumed
+                        else chat_log.extra_system_prompt
                     )
-                    if self._usage is not None
-                    else nullcontext(None)
-                ) as run:
-                    try:
-                        if (
-                            isinstance(self._request_rules, RequestRules)
-                            and not self._request_rules.initialized
-                        ):
-                            try:
-                                self._request_rules = await async_get_request_rules(
-                                    self.hass,
-                                    self.entry.entry_id,
-                                    self.subentry.subentry_id,
-                                )
-                            except Exception:
-                                # Preserve the unavailable manager and reject this
-                                # turn through the existing local failure boundary.
-                                raise HomeAssistantError(
-                                    REQUEST_RULES_UNAVAILABLE
-                                ) from None
-                        evaluation = (
-                            await async_evaluate_rule(
-                                self.hass,
-                                self._request_rules,
-                                self._request_rule_runtime,
-                                user_input.text,
-                                rule_session_key,
-                                str(
-                                    self.subentry.data.get(
-                                        CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL
-                                    )
-                                ),
-                                request_policy,
-                                timeout_minutes,
-                                lambda name, arguments: (
-                                    self._async_execute_request_rule_function(
-                                        name, arguments, llm_context
-                                    )
-                                ),
-                                context=user_input.context,
-                                live_guest_policy=self._effective_guest_policy,
-                                request_options=self.subentry.data,
-                                entry_data=self.entry.data,
-                            )
-                            if self._request_rules is not None
-                            and self._request_rule_runtime is not None
-                            else None
-                        )
-                    except HomeAssistantError as err:
-                        _LOGGER.warning("Request Rule routing rejected: %s", err)
-                        return await self._async_complete_local_rule(
-                            user_input,
-                            chat_log,
-                            f"Sorry, this Request Rule cannot be used: {err}",
-                            archive_session,
-                            resolution.key,
-                            resolution.claim_token,
-                            source_device_id,
-                            successful=False,
-                        )
-                    metadata = _ACTIVE_INVOCATION.get().metadata
-                    if metadata is not None and evaluation is not None:
-                        metadata["matched_rule"] = {
-                            "id": evaluation.match.rule["id"],
-                            "name": evaluation.match.rule["name"],
-                        }
-                        metadata["captured_values"] = dict(evaluation.match.slots)
-                    if evaluation is not None and evaluation.consume:
-                        result = await self._async_complete_local_rule(
-                            user_input,
-                            chat_log,
-                            evaluation.response
-                            if evaluation.response is not None
-                            else "Done",
-                            archive_session,
-                            resolution.key,
-                            resolution.claim_token,
-                            source_device_id,
-                            successful=evaluation.successful,
-                        )
-                        request_successful = evaluation.successful
-                        return result
-                    if evaluation is not None and evaluation.provider_input is not None:
+                chat_log.extra_system_prompt = user_input.extra_system_prompt
+                context_id = getattr(getattr(llm_context, "context", None), "id", None)
+                session_key = (
+                    f"continuity:{resolution.key}"
+                    if resolution.key
+                    else f"conversation:{chat_log.conversation_id}"
+                    if chat_log.conversation_id
+                    else f"context:{context_id or scope.device_id or 'unidentified'}"
+                )
+                archive_session = await self._async_begin_archive_session(
+                    session_key,
+                    scope,
+                    chat_log.conversation_id,
+                    request_policy,
+                )
+                rule_session_key = request_rule_session_id(
+                    resolution.key, chat_log.conversation_id
+                )
+                temporary_scope = (
+                    None
+                    if request_policy.guest_active or not scope.allows_retention
+                    else resolution.key or f"conversation:{chat_log.conversation_id}"
+                )
+                group_runtime = self._function_groups_runtime
+                rule_runtime = self._request_rule_runtime
+                function_group_session = (
+                    group_runtime.begin(
+                        rule_session_key, timeout_minutes if resolution.key else 5
+                    )
+                    if group_runtime is not None
+                    else None
+                )
+                group_request: object | None = None
+                rule_request: object | None = None
+                lifecycle_token: ConversationLifecycleToken | None = None
+                request_successful = False
+                turn_token = _ACTIVE_TURN.set(
+                    ConversationTurnContext(
+                        scope=scope,
+                        archive=(session_key, archive_session.session_id)
+                        if archive_session
+                        else None,
+                        memory_session=(
+                            session_key,
+                            timeout_minutes if resolution.key else 5,
+                        ),
+                        temporary_scope=temporary_scope,
+                        function_group_session=function_group_session,
+                    )
+                )
+                try:
+                    group_request = (
+                        group_runtime.begin_request(function_group_session)
+                        if group_runtime is not None
+                        and function_group_session is not None
+                        else None
+                    )
+                    rule_request = (
+                        rule_runtime.begin_request(rule_session_key, timeout_minutes)
+                        if rule_runtime is not None
+                        else None
+                    )
+                    lifecycle_token = begin_conversation_lifecycle()
+                    if resolution.history and len(chat_log.content) <= 2:
+                        # Core history can expire before the integration's session.
                         current_user = chat_log.content[-1]
-                        if not isinstance(current_user, conversation.UserContent):
-                            raise HomeAssistantError(
-                                "Current request is unavailable for AI handoff"
+                        chat_log.content[:] = [*resolution.history, current_user]
+                    async with (
+                        self._usage.async_run(
+                            home_assistant_conversation_id=user_input.conversation_id,
+                            source_device_id=source_device_id,
+                        )
+                        if self._usage is not None
+                        else nullcontext(None)
+                    ) as run:
+                        try:
+                            if (
+                                isinstance(self._request_rules, RequestRules)
+                                and not self._request_rules.initialized
+                            ):
+                                try:
+                                    self._request_rules = await async_get_request_rules(
+                                        self.hass,
+                                        self.entry.entry_id,
+                                        self.subentry.subentry_id,
+                                    )
+                                except Exception:
+                                    # Preserve the unavailable manager and reject this
+                                    # turn through the existing local failure boundary.
+                                    raise HomeAssistantError(
+                                        REQUEST_RULES_UNAVAILABLE
+                                    ) from None
+                            evaluation = (
+                                await async_evaluate_rule(
+                                    self.hass,
+                                    self._request_rules,
+                                    self._request_rule_runtime,
+                                    user_input.text,
+                                    rule_session_key,
+                                    str(
+                                        self.subentry.data.get(
+                                            CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL
+                                        )
+                                    ),
+                                    request_policy,
+                                    timeout_minutes,
+                                    lambda name, arguments: (
+                                        self._async_execute_request_rule_function(
+                                            name, arguments, llm_context
+                                        )
+                                    ),
+                                    context=user_input.context,
+                                    live_guest_policy=self._effective_guest_policy,
+                                    request_options=self.subentry.data,
+                                    entry_data=self.entry.data,
+                                )
+                                if self._request_rules is not None
+                                and self._request_rule_runtime is not None
+                                else None
                             )
-                        chat_log.content[-1] = replace(
-                            current_user, content=evaluation.provider_input
+                        except HomeAssistantError as err:
+                            _LOGGER.warning("Request Rule routing rejected: %s", err)
+                            return await self._async_complete_local_rule(
+                                user_input,
+                                chat_log,
+                                f"Sorry, this Request Rule cannot be used: {err}",
+                                archive_session,
+                                resolution.key,
+                                resolution.claim_token,
+                                source_device_id,
+                                successful=False,
+                            )
+                        metadata = _ACTIVE_INVOCATION.get().metadata
+                        if metadata is not None and evaluation is not None:
+                            metadata["matched_rule"] = {
+                                "id": evaluation.match.rule["id"],
+                                "name": evaluation.match.rule["name"],
+                            }
+                            metadata["captured_values"] = dict(evaluation.match.slots)
+                        if evaluation is not None and evaluation.consume:
+                            result = await self._async_complete_local_rule(
+                                user_input,
+                                chat_log,
+                                evaluation.response
+                                if evaluation.response is not None
+                                else "Done",
+                                archive_session,
+                                resolution.key,
+                                resolution.claim_token,
+                                source_device_id,
+                                successful=evaluation.successful,
+                            )
+                            request_successful = evaluation.successful
+                            return result
+                        if (
+                            evaluation is not None
+                            and evaluation.provider_input is not None
+                        ):
+                            current_user = chat_log.content[-1]
+                            if not isinstance(current_user, conversation.UserContent):
+                                raise HomeAssistantError(
+                                    "Current request is unavailable for AI handoff"
+                                )
+                            chat_log.content[-1] = replace(
+                                current_user, content=evaluation.provider_input
+                            )
+                        request_options = (
+                            self._request_rule_runtime.effective_options(
+                                self.subentry.data,
+                                rule_session_key,
+                                evaluation.request_override if evaluation else None,
+                                timeout_minutes,
+                            )
+                            if self._request_rule_runtime is not None
+                            else dict(self.subentry.data)
                         )
-                    request_options = (
-                        self._request_rule_runtime.effective_options(
-                            self.subentry.data,
-                            rule_session_key,
-                            evaluation.request_override if evaluation else None,
-                            timeout_minutes,
-                        )
-                        if self._request_rule_runtime is not None
-                        else dict(self.subentry.data)
-                    )
-                    if self._usage is None:
+                        if self._usage is None:
+                            result = await self._async_dispatch_message(
+                                user_input,
+                                chat_log,
+                                request_options,
+                                try_locally=evaluation is None,
+                                guest_active=request_policy.guest_active,
+                            )
+                            if (
+                                result.response.error_code is None
+                                and chat_log.content
+                                and isinstance(
+                                    chat_log.content[-1], conversation.AssistantContent
+                                )
+                            ):
+                                await continuity.async_record_success(
+                                    resolution.key,
+                                    resolution.claim_token,
+                                    chat_log.content,
+                                    extra_system_prompt=chat_log.extra_system_prompt,
+                                )
+                            request_successful = result.response.error_code is None
+                            return result
+                        assert run is not None
                         result = await self._async_dispatch_message(
                             user_input,
                             chat_log,
@@ -1163,86 +1198,66 @@ class ExtendedOpenAIAgentEntity(
                             try_locally=evaluation is None,
                             guest_active=request_policy.guest_active,
                         )
-                        if (
-                            result.response.error_code is None
-                            and chat_log.content
-                            and isinstance(
-                                chat_log.content[-1], conversation.AssistantContent
-                            )
-                        ):
+                        await self._async_archive_turn(
+                            archive_session,
+                            run.run_id,
+                            user_input,
+                            chat_log,
+                            successful=run.successful,
+                        )
+                        if run.successful:
                             await continuity.async_record_success(
                                 resolution.key,
                                 resolution.claim_token,
                                 chat_log.content,
                                 extra_system_prompt=chat_log.extra_system_prompt,
                             )
-                        request_successful = result.response.error_code is None
+                        request_successful = run.successful
                         return result
-                    assert run is not None
-                    result = await self._async_dispatch_message(
-                        user_input,
-                        chat_log,
-                        request_options,
-                        try_locally=evaluation is None,
-                        guest_active=request_policy.guest_active,
-                    )
-                    await self._async_archive_turn(
-                        archive_session,
-                        run.run_id,
-                        user_input,
-                        chat_log,
-                        successful=run.successful,
-                    )
-                    if run.successful:
-                        await continuity.async_record_success(
-                            resolution.key,
-                            resolution.claim_token,
-                            chat_log.content,
-                            extra_system_prompt=chat_log.extra_system_prompt,
-                        )
-                    request_successful = run.successful
-                    return result
-            finally:
-                try:
+                finally:
                     try:
-                        # A failed admission must never consume its caller's reset.
-                        reset_request = (
-                            requested_conversation_reset()
-                            if lifecycle_token is not None
-                            else None
-                        )
-                        if reset_request is not None:
-                            await asyncio.shield(
-                                async_reset_conversation_context(
-                                    self.hass,
-                                    continuity,
-                                    self.entry.entry_id,
-                                    self.subentry.subentry_id,
-                                    continuity_key=resolution.key,
-                                    state_session_id=reset_request.state_session_id,
-                                    memory_session_id=reset_request.memory_session_id,
-                                )
-                            )
-                    finally:
                         try:
-                            if group_runtime is not None and group_request is not None:
-                                group_runtime.finish_request(
-                                    group_request, successful=request_successful
+                            # A failed admission must never consume its caller's reset.
+                            reset_request = (
+                                requested_conversation_reset()
+                                if lifecycle_token is not None
+                                else None
+                            )
+                            if reset_request is not None:
+                                await asyncio.shield(
+                                    async_reset_conversation_context(
+                                        self.hass,
+                                        continuity,
+                                        self.entry.entry_id,
+                                        self.subentry.subentry_id,
+                                        continuity_key=resolution.key,
+                                        state_session_id=reset_request.state_session_id,
+                                        memory_session_id=reset_request.memory_session_id,
+                                    )
                                 )
                         finally:
                             try:
                                 if (
-                                    rule_runtime is not None
-                                    and rule_request is not None
+                                    group_runtime is not None
+                                    and group_request is not None
                                 ):
-                                    rule_runtime.finish_request(
-                                        rule_request, successful=request_successful
+                                    group_runtime.finish_request(
+                                        group_request, successful=request_successful
                                     )
                             finally:
-                                if lifecycle_token is not None:
-                                    end_conversation_lifecycle(lifecycle_token)
-                finally:
-                    _ACTIVE_TURN.reset(turn_token)
+                                try:
+                                    if (
+                                        rule_runtime is not None
+                                        and rule_request is not None
+                                    ):
+                                        rule_runtime.finish_request(
+                                            rule_request, successful=request_successful
+                                        )
+                                finally:
+                                    if lifecycle_token is not None:
+                                        end_conversation_lifecycle(lifecycle_token)
+                    finally:
+                        _ACTIVE_TURN.reset(turn_token)
 
     async def _async_dispatch_message(
         self,
