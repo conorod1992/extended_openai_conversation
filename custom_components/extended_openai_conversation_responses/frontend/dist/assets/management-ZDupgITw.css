@@ -246,7 +246,8 @@
   .voice-policy-card>p,.voice-default-card>p,.voice-mappings-card .section-heading p{margin:0 0 11px;color:var(--secondary-text-color)}
   .voice-policy-card .setting,.voice-default-card .setting{margin:0}.voice-default-card{margin-bottom:14px}
   .voice-policy-card.is-disabled,.voice-default-card.is-disabled,.voice-mappings-card.is-disabled{opacity:.7}
-  .voice-native-picker{display:block;width:100%;margin-top:6px;--secondary-text-color:var(--primary-text-color)}
+  .voice-native-picker{display:block;width:100%;margin-top:6px}
+  .qh-override{--secondary-text-color:var(--primary-text-color)}
   .voice-picker-note{display:block;margin-top:5px;color:var(--secondary-text-color);line-height:1.35}
   .voice-picker-warning{display:block;margin-top:5px;color:var(--eoc-error-text);line-height:1.35}
   .voice-mapping-list{display:grid;gap:9px;margin-top:11px}.voice-mapping-empty{padding:13px;border:1px dashed var(--divider-color);border-radius:9px;color:var(--secondary-text-color)}
