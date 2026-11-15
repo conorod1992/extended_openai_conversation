@@ -1,8 +1,12 @@
 """Compact public EOAI journeys shared by supported Home Assistant versions."""
 
+import asyncio
+from contextlib import contextmanager
 from copy import deepcopy
+from datetime import timedelta
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from pytest_homeassistant_custom_component.common import MockUser
 
 from custom_components.extended_openai_conversation_responses.const import (
@@ -410,3 +414,82 @@ async def test_public_script_function_cleanup_abort_and_repeat(hass, monkeypatch
         "healthy before",
         "healthy after",
     ]
+
+
+@pytest.mark.parametrize(
+    "failure_type", [RuntimeError, asyncio.CancelledError], ids=["error", "cancel"]
+)
+@pytest.mark.parametrize("stage", ["admission", "processing"])
+@pytest.mark.parametrize("reused", [False, True], ids=["new", "reused"])
+async def test_failed_owned_session_remains_expirable(
+    hass, monkeypatch, failure_type, stage, reused
+):
+    """Every supported native helper must finish a failed owned session's lifetime."""
+    from custom_components.extended_openai_conversation_responses import (
+        conversation as agent_module,
+        conversation_id_ownership as ownership,
+    )
+    from homeassistant.components.conversation.chat_log import DATA_CHAT_LOGS
+    from homeassistant.helpers.chat_session import (
+        DATA_CHAT_SESSION,
+        DATA_CHAT_SESSION_CLEANUP,
+        current_session,
+    )
+    from homeassistant.util import dt as dt_util
+
+    entry = _make_entry(
+        "Failed native session", include_ai_task=False, local_intents=True
+    )
+    await _setup_entry(hass, entry)
+    agent = conversation.async_get_agent(hass, entry.entry_id)
+    conversation_id = None
+    retained = None
+    if reused:
+        first = await _say(hass, entry, "what time is it")
+        assert first.response.error_code is None
+        conversation_id = first.conversation_id
+        retained = list(hass.data[DATA_CHAT_LOGS][conversation_id].content)
+    error = failure_type("failed owned turn")
+    if stage == "admission":
+
+        @contextmanager
+        def reject(*args, **kwargs):
+            raise error
+            yield  # pragma: no cover
+
+        monkeypatch.setattr(agent_module, "async_get_chat_log", reject)
+    else:
+        monkeypatch.setattr(
+            agent, "_async_begin_archive_session", AsyncMock(side_effect=error)
+        )
+    request = conversation.ConversationInput(
+        text="what time is it",
+        context=Context(),
+        conversation_id=conversation_id,
+        device_id=None,
+        satellite_id=None,
+        language="en",
+        agent_id=agent.entity_id,
+    )
+    with pytest.raises(failure_type) as caught:
+        await agent.async_process(request)
+    assert caught.value is error
+    registrations = hass.data[ownership._CLEANUP_REGISTRATIONS]
+    assert len(registrations) == 1
+    actual_id, registration = next(iter(registrations.items()))
+    assert hass.data[DATA_CHAT_SESSION][actual_id] is registration.session
+    assert current_session.get() is None
+    assert hass.data[ownership._CONVERSATION_ID_OWNERS][actual_id] == registration.owner
+    if reused:
+        assert actual_id == conversation_id
+        assert hass.data[DATA_CHAT_LOGS][actual_id].content[: len(retained)] == retained
+    for session in hass.data[DATA_CHAT_SESSION].values():
+        session.last_updated = dt_util.utcnow() - timedelta(minutes=10)
+    cleanup = hass.data[DATA_CHAT_SESSION_CLEANUP]
+    if cleanup.unsub:
+        cleanup.unsub()
+    cleanup._cleanup(dt_util.utcnow())
+    assert not hass.data[DATA_CHAT_SESSION]
+    assert not hass.data.get(DATA_CHAT_LOGS)
+    assert not registrations
+    assert not hass.data[ownership._CONVERSATION_ID_OWNERS]

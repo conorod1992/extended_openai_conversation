@@ -1,5 +1,6 @@
 """Native session ownership is explicit without breaking older HA versions."""
 
+import asyncio
 from contextlib import contextmanager
 
 import pytest
@@ -43,3 +44,26 @@ def test_native_session_forwards_identity_and_preserves_outcome(
     assert calls == [
         ((hass, "retained-id"), {"context": context} if supports_context else {})
     ]
+
+
+@pytest.mark.parametrize("failure_type", [RuntimeError, asyncio.CancelledError])
+def test_legacy_failed_body_finishes_native_session_before_propagating(
+    monkeypatch, failure_type
+):
+    finished = []
+    error = failure_type("processing failed")
+    session = object()
+
+    @contextmanager
+    def legacy(*args):
+        yield session
+        finished.append(session)
+
+    monkeypatch.setattr(compat, "_HAS_CONTEXT", False)
+    monkeypatch.setattr(compat, "_native_session", legacy)
+    with pytest.raises(failure_type) as caught:
+        with compat.async_get_chat_session(object(), "id", context=Context()) as value:
+            assert value is session
+            raise error
+    assert caught.value is error
+    assert finished == [session]
