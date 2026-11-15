@@ -39,7 +39,9 @@ def test_citation_only_items_without_whitespace_cleanup(prefix, tail, ending):
     "source,expected",
     [
         ("2) https://a.com **[Guide](https://b.com)**", "2. Guide"),
-        ("2) https://example.com. Check", "2.. Check"),
+        ("2) https://example.com. Check", "2. Check"),
+        ("> 2) https://example.com. Check", "2. Check"),
+        ("2) https://example.com . 5 volts", "2. 5 volts"),
         ("2) https://example.com .5 volts", "2. .5 volts"),
         ("2) https://example.com -3 degrees", "2. -3 degrees"),
         ("2) https://example.com `2**3`", "2. 2**3"),

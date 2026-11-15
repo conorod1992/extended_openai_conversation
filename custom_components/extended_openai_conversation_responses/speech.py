@@ -378,6 +378,7 @@ class StreamingSpeechSanitizer:
                 prefix = self._pending_list_prefix
                 self._pending_list_prefix = ""
                 if self._pending_list_link:
+                    prefix = self._without_redundant_item_period(prefix)
                     self._needs_separator = False
                     if self._pending_list_newline and not self._last_output.endswith(
                         "\n"
@@ -386,6 +387,23 @@ class StreamingSpeechSanitizer:
                 self._pending_list_link = False
                 self._emit_plain(output, prefix)
         self._emit_plain(output, text)
+
+    def _without_redundant_item_period(self, prefix: str) -> str:
+        """Drop a held citation's standalone period after a numbered marker.
+
+        Only the bounded prefix is inspected. A period touching a following
+        digit is retained, so a readable quantity such as .5 is unchanged.
+        """
+        offset = 0
+        while offset < len(prefix):
+            action, count = self._line_prefix(prefix, True, offset)
+            if action not in {"strip", "number"} or not count:
+                break
+            offset += count
+            tail = prefix[offset:]
+            if action == "number" and tail.strip() == "." and tail[-1:].isspace():
+                return prefix[:offset]
+        return prefix
 
     def _held_prefix_has_numeric_payload(self, text: str) -> bool:
         """Distinguish ambiguous numbers from empty speculative list markers.
