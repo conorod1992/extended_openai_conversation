@@ -1,6 +1,8 @@
 """Campaign ownership changes must preserve cases and semantic obligations."""
 
+import ast
 from hashlib import sha256
+from itertools import product
 import json
 from pathlib import Path
 
@@ -9,6 +11,48 @@ import yaml
 from ci.execution_contract import CONTRACT, expected_cases, selected
 from ci.pr_validation import select
 from ci.validation_inventory import CERTIFICATION_WORKFLOW, TEST_WORKFLOWS
+
+
+def test_expanded_provider_parameter_cases_match_the_reviewed_inventory():
+    """Parameter expansion must update exact case obligations, not just function names."""
+    policy = json.loads(CONTRACT.read_text(encoding="utf-8"))
+    functions = {
+        "tests/test_ai_task_replay_lifecycle.py": {
+            "test_successful_ai_tasks_release_receipts_before_retention_eviction",
+            "test_failed_ai_task_continuations_retain_effects_until_acknowledged",
+            "test_structured_output_failure_follows_provider_acknowledgement",
+        },
+        "tests/test_openai_sdk_multicall_wire.py": {
+            "test_two_sdk_wire_calls_keep_ids_arguments_and_outputs_paired",
+        },
+    }
+    aliases = {
+        "API_MODE_RESPONSES": "responses",
+        "API_MODE_CHAT_COMPLETIONS": "chat_completions",
+    }
+    for path, names in functions.items():
+        tree = ast.parse(Path(path).read_text(encoding="utf-8"))
+        for function in tree.body:
+            if not isinstance(function, ast.AsyncFunctionDef) or function.name not in names:
+                continue
+            domains = []
+            for decorator in reversed(function.decorator_list):
+                if not (
+                    isinstance(decorator, ast.Call)
+                    and isinstance(decorator.func, ast.Attribute)
+                    and decorator.func.attr == "parametrize"
+                ):
+                    continue
+                domains.append([
+                    aliases[value.id] if isinstance(value, ast.Name) else ast.literal_eval(value)
+                    for value in decorator.args[1].elts
+                ])
+            prefix = f"{path}::{function.name}["
+            collected = {
+                prefix + "-".join(map(str, values)) + "]"
+                for values in product(*domains)
+            }
+            assert collected == {node for node in policy["pytest"] if node.startswith(prefix)}
 
 
 def test_owned_files_have_exactly_one_same_environment_campaign():
