@@ -39,7 +39,7 @@ _SPOKEN_RESPONSE = "Hello see and docs done."
     ("> 5.\n", "5."),
     ("The switch is ***off*** [a.com](https://a.com) [b.com](https://b.com) ***now***.", "The switch is off now."),
     (r"\![a photograph](https://example.com/image.png)", r"\!a photograph"),
-    ("Result\n5.\nDone\n***off*** [a.com](https://a.com) [b.com](https://b.com) ***now***. " + r"\![photo](https://example.com/image.png)" + "\n2) [Check documentation](https://example.com)\n3) **https://a.com https://b.com**\nBefore **https://a.com https://b.com** after.", "Result\n5.\nDone\noff now. " + r"\!photo" + "\n2. Check documentation\nBefore after."),
+    ("Result\n5.\nDone\n***off*** [a.com](https://a.com) [b.com](https://b.com) ***now***. " + r"\![photo](https://example.com/image.png)" + "\n2) [Check documentation](https://example.com)\n3) https://example.com.\n4) https://a.com **[b.com](https://b.com)**\n5) **https://a.com https://b.com**\nBefore **https://a.com https://b.com** after.", "Result\n5.\nDone\noff now. " + r"\!photo" + "\n2. Check documentation\nBefore after."),
 ], ids=["standalone-number", "quoted-number", "consecutive-links", "escaped-image", "combined"])
 async def test_assist_speech_regressions_preserve_provider_history(
     hass, hass_ws_client, monkeypatch, raw, expected

@@ -344,18 +344,34 @@ class StreamingSpeechSanitizer:
                 if removed_line:
                     return
             elif text.isspace():
-                if not self._pending_list_link:
+                if not (
+                    self._pending_list_link
+                    and self._suppressed_opener
+                    and self._pending_list_prefix.endswith(self._suppressed_opener)
+                ):
                     self._pending_list_prefix += text[
                         : max(0, _FORMAT_PREFIX_LIMIT - len(self._pending_list_prefix))
                     ]
                 return
-            elif (
-                not self._pending_list_link
-                and len(self._pending_list_prefix) + len(text) <= _FORMAT_PREFIX_LIMIT
-                and all(char in "*_~" for char in text)
-            ):
+            elif len(self._pending_list_prefix) + len(
+                text
+            ) <= _FORMAT_PREFIX_LIMIT and all(char in "*_~" for char in text):
                 # An inline wrapper is not yet readable list content. Keep its
                 # bounded opener with the prefix until text or removal proves it.
+                self._pending_list_prefix += text
+                if self._pending_list_link:
+                    # This is a new, still-held delimiter after the removal,
+                    # so the next citation must classify this opener afresh.
+                    self._needs_separator = False
+                    self._suppressed_opener = self._suppressed_closer = None
+                return
+            elif (
+                self._pending_list_link
+                and len(self._pending_list_prefix) + len(text) <= _FORMAT_PREFIX_LIMIT
+                and all(char in _URL_TRAILING_PUNCTUATION for char in text)
+            ):
+                # Terminal citation punctuation is not readable item content.
+                # Replay it if real text follows; otherwise retire it with the item.
                 self._pending_list_prefix += text
                 return
             elif not text.isspace():
