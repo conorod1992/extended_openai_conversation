@@ -30,6 +30,7 @@
     "tests_real_ha/test_configuration_preview_validation.py",
     "tests_real_ha/test_conversation_contract_remediation.py",
     "tests_real_ha/test_conversation_entry_ownership.py",
+    "tests_real_ha/test_provisional_conversation_ownership.py",
     "tests_real_ha/test_conversation_request_lifetimes.py",
     "tests_real_ha/test_conversation_runtime_lifecycle.py",
     "tests_real_ha/test_conversation_sequence_journeys.py",
@@ -251,6 +252,12 @@
       "job": "stable",
       "selector": "tests_real_ha/",
       "reason": "test_configuration_preview_validation runs in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
+    },
+    "tests_real_ha/test_provisional_conversation_ownership.py": {
+      "workflow": "real-ha.yml",
+      "job": "stable",
+      "selector": "tests_real_ha/",
+      "reason": "Native provisional ownership expiry, failed admission, cancellation and retained-history regressions run in genuine HA acceptance; Enhanced retains its separate targeted stress campaigns."
     },
     "tests_real_ha/test_conversation_entry_ownership.py": {
       "workflow": "real-ha.yml",
