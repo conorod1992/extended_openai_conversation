@@ -353,7 +353,9 @@ async def test_competing_knowledge_scores_track_edits_disabled_sources_and_rebui
             enabled=True,
         )
         model[source.source_id] = {
-            "score": content / 2 + 4 * title + 2 * description,
+            # Exact terms also contribute their separately weighted (0.2)
+            # morphology tokens. This corpus has no spelling or phrase bonus.
+            "score": round(1.2 * (content / 2 + 4 * title + 2 * description), 4),
             "enabled": True,
         }
 
@@ -387,7 +389,7 @@ async def test_competing_knowledge_scores_track_edits_disabled_sources_and_rebui
         description="Unrelated description",
         content="orion bridge",
     )
-    model[changed]["score"] = 0.5
+    model[changed]["score"] = 0.6
     assert changed not in [item.source_id for item in await check(library, "edit")]
     disabled = first[1].source_id
     await library.async_update(disabled, enabled=False)
@@ -435,7 +437,35 @@ def semantic_schema(value):
     return value
 
 
+def first_difference(actual, expected, path="$"):
+    """Locate a mismatch without flooding bounded CI evidence with whole prompts."""
+    if type(actual) is not type(expected):
+        return path, type(actual).__name__, type(expected).__name__
+    if isinstance(expected, dict):
+        if actual.keys() != expected.keys():
+            return path, sorted(actual), sorted(expected)
+        for key in expected:
+            if mismatch := first_difference(actual[key], expected[key], f"{path}.{key}"):
+                return mismatch
+    elif isinstance(expected, list):
+        if len(actual) != len(expected):
+            return path, len(actual), len(expected)
+        for index, (left, right) in enumerate(zip(actual, expected, strict=True)):
+            if mismatch := first_difference(left, right, f"{path}[{index}]"):
+                return mismatch
+    elif actual != expected:
+        if isinstance(expected, str):
+            offset = next((i for i, pair in enumerate(zip(actual, expected, strict=False)) if pair[0] != pair[1]), min(len(actual), len(expected)))
+            start = max(0, offset - 40)
+            return path, actual[start:offset + 120], expected[start:offset + 120]
+        return path, actual, expected
+    return None
+
+
 def test_semantic_comparison_preserves_types_and_meaningful_fields():
+    assert first_difference({"flag": False}, {"flag": 0}) == ("$.flag", "bool", "int")
+    assert first_difference(["prefix x"], ["prefix y"]) == ("$[0]", "prefix x", "prefix y")
+    assert first_difference({"flag": [False, 0]}, {"flag": [False, 0]}) is None
     assert semantic_schema({"enum": [False, 0, "0"]}) == semantic_schema(
         {"enum": ["0", 0, False]}
     )
@@ -645,7 +675,8 @@ async def test_equivalent_public_installations_preserve_context_tools_and_effect
                                     for item in right[key]
                                 },
                             )
-                assert normalized == baseline, (history, normalized, baseline)
+                difference = first_difference(normalized, baseline)
+                assert difference is None, (history, difference)
                 assert_typed_value(normalized, baseline)
             record(
                 stress_trace,
