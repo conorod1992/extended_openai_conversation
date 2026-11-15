@@ -928,7 +928,11 @@ class StreamingSpeechSanitizer:
                         continue
 
             markdown_start = index
-            if self.markdown and char == "!":
+            if (
+                self.markdown
+                and char == "!"
+                and not self._is_escaped(text, index, self._link_backslashes)
+            ):
                 if index + 1 == len(text) and not final:
                     break
                 if index + 1 < len(text) and text[index + 1] == "[":
