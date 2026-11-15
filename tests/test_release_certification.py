@@ -15,6 +15,7 @@ from ci.release_certification import (
     REQUIRED_WORKFLOWS,
     SCHEDULED_CERTIFICATION_WORKFLOWS,
     SPECIALIST_CERTIFICATION_WORKFLOWS,
+    SUPPORTED_SDK_HA_VERSIONS,
     SUPPORTED_SDK_LANES,
     UPGRADE_EPOCHS,
     certify,
@@ -75,6 +76,12 @@ class FakeActions:
                             **self._envelope(
                                 "release-" + kind,
                                 sdk=lane if kind == "sdk" else "3.10.0",
+                                ha=(
+                                    SUPPORTED_SDK_HA_VERSIONS[lane]
+                                    if kind == "sdk"
+                                    and SUPPORTED_SDK_HA_VERSIONS.get(lane, "stable") != "stable"
+                                    else "2026.9.4"
+                                ),
                             ),
                             "workflow_kind": kind,
                             "lane": lane,
@@ -132,10 +139,10 @@ class FakeActions:
                     "run_id": index, "run_attempt": 1, "executed_cases": cases,
                 })
 
-    def _envelope(self, campaign, *, sdk="3.10.0"):
+    def _envelope(self, campaign, *, sdk="3.10.0", ha="2026.9.4"):
         identity = {
             "python": "3.14.0",
-            "packages": {"homeassistant": "2026.9.4", "openai": sdk},
+            "packages": {"homeassistant": ha, "openai": sdk},
         }
         return {
             "schema": SCHEMA,
@@ -566,19 +573,31 @@ def test_specialist_execution_evidence_is_mandatory(workflow, fault):
     run_id = actions.runs[workflow][0]["id"]
     artifact = actions.artifacts[run_id][0]
     item = actions.contents[artifact["id"]]
-    if fault == "missing": actions.artifacts[run_id] = []
-    elif fault == "empty": artifact["size_in_bytes"] = 0
-    elif fault == "expired": artifact["expired"] = True
-    elif fault == "skipped-job": actions.jobs[run_id][0]["conclusion"] = "skipped"
-    elif fault == "skipped-step": actions.jobs[run_id][0]["steps"][0]["conclusion"] = "skipped"
-    elif fault == "zero-tests": item["executed_cases"] = []
+    if fault == "missing":
+        actions.artifacts[run_id] = []
+    elif fault == "empty":
+        artifact["size_in_bytes"] = 0
+    elif fault == "expired":
+        artifact["expired"] = True
+    elif fault == "skipped-job":
+        actions.jobs[run_id][0]["conclusion"] = "skipped"
+    elif fault == "skipped-step":
+        actions.jobs[run_id][0]["steps"][0]["conclusion"] = "skipped"
+    elif fault == "zero-tests":
+        item["executed_cases"] = []
     elif fault == "wrong-tests":
-        if workflow == "android-companion-app.yml": item["executed_cases"] = []
-        else: item["executed_cases"] = ["unrelated.test"]
-    elif fault == "candidate": item["candidate_sha"] = PARENT
-    elif fault == "run": item["run_id"] = 99999
-    else: item["run_attempt"] = 99999
-    with pytest.raises(RuntimeError, match=workflow): certify(actions, SOURCE)
+        if workflow == "android-companion-app.yml":
+            item["executed_cases"] = []
+        else:
+            item["executed_cases"] = ["unrelated.test"]
+    elif fault == "candidate":
+        item["candidate_sha"] = PARENT
+    elif fault == "run":
+        item["run_id"] = 99999
+    else:
+        item["run_attempt"] = 99999
+    with pytest.raises(RuntimeError, match=workflow):
+        certify(actions, SOURCE)
 
 
 @pytest.mark.parametrize("xml", ["<testsuites/>", '<testsuite><testcase name="skipped"><skipped/></testcase></testsuite>', '<testsuite><testcase name="failed"><failure/></testcase></testsuite>'])
@@ -589,7 +608,8 @@ def test_specialist_report_rejects_zero_execution(tmp_path, xml):
     if "skipped" in xml:
         assert execution_cases(path) == []
     else:
-        with pytest.raises(ValueError): execution_cases(path)
+        with pytest.raises(ValueError):
+            execution_cases(path)
 
 
 def test_specialist_report_records_only_executed_cases(tmp_path):
@@ -602,6 +622,7 @@ def test_specialist_report_records_only_executed_cases(tmp_path):
 @pytest.mark.parametrize("workflow", SPECIALIST_CERTIFICATION_WORKFLOWS)
 def test_specialist_producer_emits_candidate_bound_executed_report(tmp_path, monkeypatch, workflow):
     import sys
+
     from ci import specialist_evidence as producer
 
     monkeypatch.chdir(tmp_path)
@@ -640,8 +661,8 @@ class CohortActions(FakeActions):
 
     def __init__(self):
         super().__init__()
-        from ci.validation_inventory import TEST_WORKFLOWS, CERTIFICATION_WORKFLOW
         from ci.nightly_programme import collect
+        from ci.validation_inventory import CERTIFICATION_WORKFLOW, TEST_WORKFLOWS
 
         self.ref = "full-validation-100-1"
         for name in [*(name for name, _ in TEST_WORKFLOWS), CERTIFICATION_WORKFLOW]:
