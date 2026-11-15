@@ -196,6 +196,19 @@ def main():
             or previous.get("conclusion") == "success"
         ):
             return 0
+        if proof.get("passed") is False:
+            check = actions.get(f"check-runs/{state['check_id']}")
+            if (
+                check.get("head_sha") == state["candidate_sha"]
+                and check.get("external_id") == f"{parent['id']}-{parent['run_attempt']}"
+                and check.get("status") == "completed"
+                and check.get("conclusion") == "failure"
+            ):
+                # A failed validation is a terminal outcome, not a failed
+                # publication. Keep its proof on duplicate callbacks; only
+                # retry the idempotent cleanup if that was interrupted.
+                remove_validation_ref(proof)
+                return 1
         # An upload can succeed before the result/cleanup step fails. A manual
         # recovery replaces only that unsuccessful collector's bound proof.
         driver.api("DELETE", f"actions/artifacts/{artifact['id']}")
@@ -251,12 +264,16 @@ def finish():
             "output": {"title": "Full validation results", "summary": summary},
         },
     )
+    remove_validation_ref(proof)
+    return 0 if proof["passed"] else 1
+
+
+def remove_validation_ref(proof):
     try:
         driver.api("DELETE", f"git/refs/heads/{proof['validation_ref']}")
     except RuntimeError as error:
         if "returned 404:" not in str(error):
             raise
-    return 0 if proof["passed"] else 1
 
 
 if __name__ == "__main__":

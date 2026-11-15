@@ -36,6 +36,7 @@ async def late_controls(hass, phase):
     from custom_components.extended_openai_conversation_responses.quiet_hours import (
         async_get_quiet_hours,
     )
+    from homeassistant.const import STATE_UNAVAILABLE
     from homeassistant.helpers import entity_registry as er
     from homeassistant.util import dt as dt_util
 
@@ -91,9 +92,15 @@ async def late_controls(hass, phase):
         )
     else:
         assert manager.active is not None
-        assert hass.states.get(media) is None, (
-            "Fixture appeared before initial reconciliation"
-        )
+        # HA creates restored/unavailable placeholders for registry entries at
+        # startup. They are not live device states or an observed volume.
+        for entity_id in (media, satellite, late_media, late_satellite):
+            state = hass.states.get(entity_id)
+            assert state is None or (
+                state.state == STATE_UNAVAILABLE
+                and state.attributes.get("restored") is True
+                and "volume_level" not in state.attributes
+            ), "Fixture appeared before initial reconciliation"
         hass.states.async_set(satellite, "idle")
         hass.states.async_set(media, "idle", {"volume_level": 0.2})
         hass.states.async_set(late_satellite, "idle")
