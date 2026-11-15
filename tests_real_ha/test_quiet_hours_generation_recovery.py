@@ -272,6 +272,9 @@ async def test_public_getter_preserves_unresolved_generation(
 
 
 async def test_public_getter_repeated_cancellation_settles_recovery(hass):
+    # Count only ordinary daily/discovery listeners, independently of whether
+    # the current local hour would need a future DST gap/fold safety timer.
+    await hass.config.async_set_time_zone("UTC")
     _, media, _ = _install_satellite_entities(hass, volume=0.8)
     _install_control_services(hass)
     manager = await async_get_quiet_hours(hass)

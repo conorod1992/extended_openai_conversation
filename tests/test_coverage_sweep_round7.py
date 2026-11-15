@@ -692,6 +692,9 @@ async def test_authenticated_client_skip_authentication_and_transport_error(
 
     client = SimpleNamespace(
         platform_headers=Mock(return_value={}),
+        responses=object(),
+        chat=SimpleNamespace(completions=object()),
+        embeddings=object(),
         models=SimpleNamespace(list=Mock()),
     )
     constructor = Mock(return_value=client)
@@ -722,6 +725,9 @@ async def test_authenticated_client_materializes_coroutine_paginator(
 
     client = SimpleNamespace(
         platform_headers=Mock(return_value={}),
+        responses=object(),
+        chat=SimpleNamespace(completions=object()),
+        embeddings=object(),
         models=SimpleNamespace(list=Mock()),
     )
     monkeypatch.setattr(helpers, "AsyncOpenAI", Mock(return_value=client))

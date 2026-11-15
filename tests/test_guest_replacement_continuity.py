@@ -3,6 +3,7 @@
 from contextlib import nullcontext
 from dataclasses import replace
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -45,7 +46,10 @@ async def test_owner_replacement_preserves_b_followup_only(hass, monkeypatch, gu
         assert isinstance(context, Context)
         assert context.user_id in {"alice", "bob"}
         return nullcontext(
-            SimpleNamespace(conversation_id=conversation_id or f"ha-{len(histories)}")
+            SimpleNamespace(
+                conversation_id=conversation_id or f"ha-{len(histories)}",
+                async_on_cleanup=Mock(),
+            )
         )
 
     def chat(_hass, session, request):

@@ -137,6 +137,9 @@ async def test_real_ha_clock_callbacks_activate_and_restore(
     hass: HomeAssistant,
 ) -> None:
     """Prove HA's local wall-clock callbacks drive start and end transitions."""
+    # This case expects ordinary daily listeners. A DST zone can legitimately
+    # add future gap/fold safety timers for the clocks derived from today's hour.
+    await hass.config.async_set_time_zone("UTC")
     _satellite_id, media_player_id, wake_sound_id = _install_satellite_entities(hass)
     _install_control_services(hass)
 

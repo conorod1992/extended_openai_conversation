@@ -82,6 +82,9 @@ async def test_authentication_accepts_empty_model_page_on_both_sdk_shapes(
     listing = Mock(side_effect=lambda **_kwargs: get_page() if awaitable else page)
     client = SimpleNamespace(
         platform_headers=Mock(return_value={}),
+        responses=object(),
+        chat=SimpleNamespace(completions=object()),
+        embeddings=object(),
         models=SimpleNamespace(list=listing),
     )
     monkeypatch.setattr(helpers, "AsyncOpenAI", lambda **_kwargs: client)

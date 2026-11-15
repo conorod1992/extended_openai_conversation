@@ -20,6 +20,39 @@ _UNCLAIMED_CHAT_LOGS = f"{DOMAIN}.unclaimed_chat_logs"
 _CLEANUP_REGISTRATIONS = f"{DOMAIN}.conversation_id_cleanup"
 
 
+@dataclass(slots=True)
+class ProvisionalConversationIDClaim:
+    """Attribute a newly inserted mapping to its invocation until attachment."""
+
+    hass: HomeAssistant | None
+    conversation_id: str | None = None
+    owner: tuple[str, str] | None = None
+    newly_created: bool = False
+
+    def record(
+        self, conversation_id: str, owner: tuple[str, str], *, created: bool
+    ) -> str:
+        """Record the returned ID, which may differ from the supplied ID."""
+        self.conversation_id = conversation_id
+        self.owner = owner
+        self.newly_created = created
+        return conversation_id
+
+    def release_unused(self) -> None:
+        """Retire only a new claim lacking an authorized session attachment.
+
+        Reused mappings can protect retained history outside Core's log cache.
+        A matching cleanup registration proves attachment even if later ChatLog
+        admission or processing failed. Native cleanup retains its identity guard.
+        """
+        if not self.newly_created or self.conversation_id is None or self.owner is None:
+            return
+        data = getattr(self.hass, "data", {})
+        registration = data.get(_CLEANUP_REGISTRATIONS, {}).get(self.conversation_id)
+        if registration is None or registration.owner != self.owner:
+            release_conversation_id_claim(self.hass, self.conversation_id, self.owner)
+
+
 def conversation_id_is_owned(hass: HomeAssistant | None, conversation_id: str) -> bool:
     """Return whether an EOAI invocation has already claimed this history."""
     data = getattr(hass, "data", {})
@@ -132,6 +165,7 @@ def claim_conversation_id(
     conversation_id: str | None,
     *,
     guest_active: bool,
+    provisional_claim: ProvisionalConversationIDClaim | None = None,
 ) -> str | None:
     """Prevent a caller-selected HA ChatLog ID crossing EOAI privacy boundaries."""
     if (
@@ -146,33 +180,39 @@ def claim_conversation_id(
         _CONVERSATION_ID_OWNERS, {}
     )
     owner = (agent_id, f"guest:{scope.scope_id}" if guest_active else scope.scope_id)
+
+    def claimed(target: str, *, created: bool) -> str:
+        if provisional_claim is not None:
+            provisional_claim.record(target, owner, created=created)
+        return target
+
     existing = owners.get(conversation_id)
     history = _unclaimed_live_history(hass, conversation_id)
     if history is not None:
         target = history.bindings.get(owner)
         if target is not None and owners.get(target) == owner:
-            return target
+            return claimed(target, created=False)
         target = create_conversation_id(
             agent_id, GUEST_CONTINUITY_NAMESPACE if guest_active else None
         )
         owners[target] = owner
         history.bindings[owner] = target
-        return target
+        return claimed(target, created=True)
 
     if existing is None:
         owners[conversation_id] = owner
-        return conversation_id
+        return claimed(conversation_id, created=True)
 
     if existing == owner:
         owners.pop(conversation_id, None)
         owners[conversation_id] = owner
-        return conversation_id
+        return claimed(conversation_id, created=False)
 
-    claimed = create_conversation_id(
+    target = create_conversation_id(
         agent_id, GUEST_CONTINUITY_NAMESPACE if guest_active else None
     )
-    owners[claimed] = owner
-    return claimed
+    owners[target] = owner
+    return claimed(target, created=True)
 
 
 def release_conversation_id_claim(

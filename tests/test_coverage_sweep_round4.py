@@ -852,7 +852,7 @@ def test_knowledge_chunk_split_handles_paragraph_line_and_overlap_boundaries(
         ("-", False, ("incomplete", 0)),
         ("- item", True, ("strip", 2)),
         ("12.", False, ("incomplete", 0)),
-        ("12. item", True, ("none", 0)),
+        ("12. item", True, ("number", 4)),
         ("plain", True, ("none", 0)),
     ],
 )

@@ -328,24 +328,58 @@ class StreamingSpeechSanitizer:
     def _emit(self, output: list[str], text: str) -> None:
         if self._pending_list_prefix:
             if "\n" in text and text.isspace():
+                prefix = self._pending_list_prefix
+                removed_line = self._pending_list_link and (
+                    not self._last_output or self._last_output.endswith("\n")
+                )
+                preserve_number = (
+                    not self._pending_list_link
+                    and self._held_prefix_has_numeric_payload(prefix + text)
+                )
                 self._pending_list_prefix = ""
                 self._needs_separator = False
                 self._pending_list_link = False
+                if preserve_number:
+                    self._emit_plain(output, prefix)
+                if removed_line:
+                    return
             elif text.isspace():
-                if not self._pending_list_link:
+                if not (
+                    self._pending_list_link
+                    and self._suppressed_opener
+                    and self._pending_list_prefix.endswith(self._suppressed_opener)
+                ):
                     self._pending_list_prefix += text[
                         : max(0, _FORMAT_PREFIX_LIMIT - len(self._pending_list_prefix))
                     ]
+                return
+            elif len(self._pending_list_prefix) + len(
+                text
+            ) <= _FORMAT_PREFIX_LIMIT and all(char in "*_~" for char in text):
+                # An inline wrapper is not yet readable list content. Keep its
+                # bounded opener with the prefix until text or removal proves it.
+                self._pending_list_prefix += text
+                if self._pending_list_link:
+                    # This is a new, still-held delimiter after the removal,
+                    # so the next citation must classify this opener afresh.
+                    self._needs_separator = False
+                    self._suppressed_opener = self._suppressed_closer = None
+                return
+            elif (
+                self._pending_list_link
+                and len(self._pending_list_prefix) + len(text) <= _FORMAT_PREFIX_LIMIT
+                and all(char in _URL_TRAILING_PUNCTUATION for char in text)
+            ):
+                # Terminal citation punctuation is not readable item content.
+                # Replay it if real text follows; otherwise retire it with the item.
+                self._pending_list_prefix += text
                 return
             elif not text.isspace():
                 prefix = self._pending_list_prefix
                 self._pending_list_prefix = ""
                 if self._pending_list_link:
+                    prefix = self._without_redundant_item_period(prefix)
                     self._needs_separator = False
-                    # Retain one real block prefix after removal; additional
-                    # held prefixes belong to the same now-empty nested item.
-                    _, count = self._line_prefix(prefix, True, preceding_list_item=True)
-                    prefix = prefix[:count]
                     if self._pending_list_newline and not self._last_output.endswith(
                         "\n"
                     ):
@@ -353,6 +387,43 @@ class StreamingSpeechSanitizer:
                 self._pending_list_link = False
                 self._emit_plain(output, prefix)
         self._emit_plain(output, text)
+
+    def _without_redundant_item_period(self, prefix: str) -> str:
+        """Drop a held citation's standalone period after a numbered marker.
+
+        Only the bounded prefix is inspected. A period touching a following
+        digit is retained, so a readable quantity such as .5 is unchanged.
+        """
+        offset = 0
+        while offset < len(prefix):
+            action, count = self._line_prefix(prefix, True, offset)
+            if action not in {"strip", "number"} or not count:
+                break
+            offset += count
+            tail = prefix[offset:]
+            if action == "number" and tail.strip() == "." and tail[-1:].isspace():
+                return prefix[:offset]
+        return prefix
+
+    def _held_prefix_has_numeric_payload(self, text: str) -> bool:
+        """Distinguish ambiguous numbers from empty speculative list markers.
+
+        The held chain is bounded by _FORMAT_PREFIX_LIMIT. Include its newline
+        so the existing recognizer can classify a terminal numerical fragment.
+        Numerical fragments remain payload even after an established list item;
+        an empty item alone does not justify dropping numerical information.
+        """
+        offset = 0
+        while offset < len(text):
+            action, count = self._line_prefix(
+                text, True, offset, preceding_list_item=True
+            )
+            if action not in {"strip", "number"} or not count:
+                return False
+            if action == "number":
+                return True
+            offset += count
+        return False
 
     def _emit_plain(self, output: list[str], text: str) -> None:
         if not text:
@@ -363,6 +434,7 @@ class StreamingSpeechSanitizer:
                     self._suppressed_line_break = True
                 self._inline_scope.feed(text)
                 return
+            adjacent_opener = self._suppressed_opener is not None
             self._needs_separator = False
             self._suppressed_line_break = False
             self._suppressed_closer = None
@@ -370,6 +442,7 @@ class StreamingSpeechSanitizer:
             if (
                 (self._recent_nonspace or self._last_output)
                 and not self._last_output[-1:].isspace()
+                and not adjacent_opener
                 and not text[0].isspace()
                 and text[0] not in ",.;:!?)]}"
                 and not (
@@ -398,13 +471,19 @@ class StreamingSpeechSanitizer:
         self._inline_scope.removed()
         if self._pending_list_prefix:
             self._pending_list_link = True
-        self._suppressed_opener = None
-        self._suppressed_closer = None
-        if self.markdown:
+        # Consecutive removals share one unresolved boundary. The trimmed raw
+        # suffix cannot reclassify its original closing delimiter as an opener.
+        if not self._needs_separator:
+            self._suppressed_opener = None
+            self._suppressed_closer = None
+        if self.markdown and not self._needs_separator:
+            suffix = self._pending_list_prefix or self._last_output
             for opener, closer in _URL_MARKDOWN_WRAPPERS:
-                if not self._last_output.endswith(opener):
+                if not suffix.endswith(opener):
                     continue
-                preceding = self._last_output[-len(opener) - 1 : -len(opener)]
+                if self._is_escaped(suffix, len(suffix) - len(opener)):
+                    break
+                preceding = suffix[-len(opener) - 1 : -len(opener)]
                 if preceding and (preceding.isalnum() or preceding in ".,;:!?)]}"):
                     # A rejected closing ** must not turn into an opening *
                     # just because the shorter marker is also a suffix.
@@ -413,15 +492,23 @@ class StreamingSpeechSanitizer:
                 self._suppressed_closer = closer
                 break
         self._suppressed_line_break = False
-        while output and output[-1] and output[-1][-1].isspace():
+        # A held list prefix has emitted no content on this line. Keep its
+        # preceding line boundary so removing the item cannot duplicate it.
+        while (
+            not self._pending_list_prefix
+            and output
+            and output[-1]
+            and output[-1][-1].isspace()
+        ):
             output[-1] = output[-1].rstrip()
             if not output[-1]:
                 output.pop()
-        if not output:
+        if not output and not self._pending_list_prefix:
             # The adjacent whitespace may still be waiting for an emphasis
             # closer in the next stage. Apply the same removal in either stage.
             self._format_buffer = self._format_buffer.rstrip()
-        self._last_output = self._last_output.rstrip()
+        if not self._pending_list_prefix:
+            self._last_output = self._last_output.rstrip()
         self._needs_separator = True
         self.suppressed_constructs += 1
         return end
@@ -447,6 +534,10 @@ class StreamingSpeechSanitizer:
         Its delimiter has not been released: the formatter buffers an
         unfinished marker at the end of a streamed delta.
         """
+        if self._pending_list_prefix.endswith(marker):
+            # This wrapper has not reached either inline stage yet.
+            self._pending_list_prefix = self._pending_list_prefix[: -len(marker)]
+            return True
         tail = ""
         for part in reversed(output):
             if len(tail) >= len(marker):
@@ -486,7 +577,9 @@ class StreamingSpeechSanitizer:
             if remaining.startswith(closer) and self._discard_suppressed_opener(
                 output, self._suppressed_opener or closer
             ):
-                self._needs_separator = False
+                # Skip following whitespace until real text. The whitespace
+                # preceding the opener may already have reached a listener.
+                self._needs_separator = True
                 self._suppressed_line_break = False
                 self._suppressed_closer = None
                 self._suppressed_opener = None
@@ -536,7 +629,10 @@ class StreamingSpeechSanitizer:
             if action == "incomplete" and not final:
                 if len(text) - index <= _FORMAT_PREFIX_LIMIT:
                     return None
-            elif action == "strip":
+            elif action == "strip" or (
+                action == "number"
+                and (self._original_previous_list or previous_bullet or numbered)
+            ):
                 self._needs_separator = False
                 self._suppressed_line_break = False
                 self._suppressed_closer = None
@@ -596,7 +692,12 @@ class StreamingSpeechSanitizer:
                     prefix, True, preceding_list_item=self._original_previous_list
                 )
                 self._original_previous_list = bool(
-                    action == "strip" and prefix[:1] in "-+*0123456789" and prefix
+                    (
+                        action == "strip"
+                        or (action == "number" and self._original_previous_list)
+                    )
+                    and prefix[:1] in "-+*0123456789"
+                    and prefix
                 )
                 self._original_previous_prefix = self._original_line_prefix
                 self._original_line_prefix = ""
@@ -775,7 +876,7 @@ class StreamingSpeechSanitizer:
                     held_whitespace = self._hold_preceding_whitespace(output)
                     break
                 if (
-                    action == "strip"
+                    action in {"strip", "number"}
                     and count + len(self._pending_list_prefix) <= _FORMAT_PREFIX_LIMIT
                 ):
                     if not self._pending_list_prefix:
@@ -897,7 +998,11 @@ class StreamingSpeechSanitizer:
                         continue
 
             markdown_start = index
-            if self.markdown and char == "!":
+            if (
+                self.markdown
+                and char == "!"
+                and not self._is_escaped(text, index, self._link_backslashes)
+            ):
                 if index + 1 == len(text) and not final:
                     break
                 if index + 1 < len(text) and text[index + 1] == "[":
@@ -968,9 +1073,11 @@ class StreamingSpeechSanitizer:
                     lexical_end = self._bare_url_end(text, index, end)
                     end = self._bare_url_wrapper_end(text, index, lexical_end)
                     index = self._suppress(output, end)
-                    if end < lexical_end:
+                    if end < lexical_end and self._suppressed_closer is None:
                         # A proved closer belongs beside its preceding prose,
                         # rather than after the separator used for plain links.
+                        # An unresolved empty wrapper must still pass through
+                        # boundary resolution to discard its pending opener.
                         self._needs_separator = False
                     continue
 
@@ -1414,11 +1521,23 @@ class StreamingSpeechSanitizer:
                 )
                 if action == "incomplete":
                     break
-                if action == "strip":
-                    prefix = self._format_buffer[index:].lstrip(" \t")
-                    self._line_is_list = bool(prefix and prefix[0] in "-+*0123456789")
+                if action in {"strip", "number"}:
+                    prefix = self._format_buffer[index : index + count].lstrip(" \t")
+                    self._line_is_list = self._line_is_list or bool(
+                        prefix and prefix[0] in "-+*0123456789"
+                    )
+                    if action == "number":
+                        following = self._format_buffer[
+                            index + count : index + count + 1
+                        ]
+                        # Normalize only a marker with same-line content. Bare
+                        # N) remains ambiguous, even after another list item.
+                        if following and following not in "\r\n":
+                            output.append(prefix.rstrip(" \t")[:-1] + ". ")
+                        else:
+                            output.append(prefix)
                     index += count
-                    self._line_start = False
+                    # Recognize nested block/list prefixes before inline text.
                     continue
                 self._line_start = False
 
@@ -1762,7 +1881,14 @@ class StreamingSpeechSanitizer:
                     if end == len(text) and not final:
                         return "incomplete", 0
                     if end < len(text) and text[end].isdigit():
-                        return "none", 0
+                        nested_action, nested_count = (
+                            StreamingSpeechSanitizer._line_prefix(text, final, end)
+                        )
+                        if nested_action == "incomplete":
+                            return "incomplete", 0
+                        after = text[end + nested_count : end + nested_count + 1]
+                        if nested_action != "number" or not after or after in "\r\n":
+                            return "none", 0
                 return "strip", end - start
         elif marker in "0123456789":
             while (
@@ -1778,13 +1904,13 @@ class StreamingSpeechSanitizer:
                 if end == len(text):
                     return ("none", 0) if final else ("incomplete", 0)
                 if text[end].isspace():
-                    # A standalone "N." can be an ordinal date or a quantity.
-                    # Suppress it only when continuing an already marked list.
-                    if not preceding_list_item:
-                        return "none", 0
                     while end < len(text) and text[end] in " \t":
                         end += 1
-                    return "strip", end - start
+                    if end == len(text) and not final:
+                        return "incomplete", 0
+                    # Hold for citation-item removal, but retain numeric payload
+                    # in the formatter rather than treating it as decoration.
+                    return "number", end - start
         return "none", 0
 
 

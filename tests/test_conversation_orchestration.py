@@ -125,7 +125,9 @@ def _pipeline_fixture(monkeypatch, *, text: str = "hello"):
     monkeypatch.setattr(
         conversation_module,
         "async_get_chat_session",
-        lambda *_args, **_kwargs: nullcontext(SimpleNamespace()),
+        lambda *_args, **_kwargs: nullcontext(
+            SimpleNamespace(conversation_id=chat_log.conversation_id)
+        ),
     )
     monkeypatch.setattr(
         conversation_module,

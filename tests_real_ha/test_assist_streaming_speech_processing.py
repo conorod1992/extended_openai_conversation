@@ -34,6 +34,33 @@ _RAW_RESPONSE = (
 _SPOKEN_RESPONSE = "Hello see and docs done."
 
 
+@pytest.mark.parametrize("raw,expected", [
+    ("Result\n5.\nDone", "Result\n5.\nDone"),
+    ("> 5.\n", "5."),
+    ("The switch is ***off*** [a.com](https://a.com) [b.com](https://b.com) ***now***.", "The switch is off now."),
+    (r"\![a photograph](https://example.com/image.png)", r"\!a photograph"),
+    ("Result\n5.\nDone\n***off*** [a.com](https://a.com) [b.com](https://b.com) ***now***. " + r"\![photo](https://example.com/image.png)" + "\n2) [Check documentation](https://example.com)\n3) https://example.com.\n4) https://a.com **[b.com](https://b.com)**\n5) **https://a.com https://b.com**\nBefore **https://a.com https://b.com** after.", "Result\n5.\nDone\noff now. " + r"\!photo" + "\n2. Check documentation\nBefore after."),
+], ids=["standalone-number", "quoted-number", "consecutive-links", "escaped-image", "combined"])
+async def test_assist_speech_regressions_preserve_provider_history(
+    hass, hass_ws_client, monkeypatch, raw, expected
+):
+    from homeassistant.components.conversation.chat_log import DATA_CHAT_LOGS
+
+    agent = await _speech_agent(hass)
+    assert await async_setup_component(hass, "assist_pipeline", {})
+    _install_wire(monkeypatch, agent, [_chat_sse_deltas(list(raw))])
+    events = await _run_assist(await hass_ws_client(hass), pipeline_id=agent.entity_id,
+                               conversation_id="speech-regressions")
+    assert _progressive_text(events).strip() == expected
+    assert _final_speech(events) == expected
+    assert any(
+        item.content == raw
+        for log in hass.data[DATA_CHAT_LOGS].values()
+        for item in log.content
+        if isinstance(item, conversation.AssistantContent)
+    )
+
+
 def _chat_sse_deltas(parts: list[str]) -> bytes:
     """Return one real Chat Completions SSE response split across provider deltas."""
     events: list[str] = []

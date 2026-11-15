@@ -58,7 +58,7 @@ def assert_all_splits(source, expected):
         ),
         (
             "- First https://example.com\n2. Second https://example.com\n3. Third",
-            "First\nSecond\nThird",
+            "First\n2. Second\n3. Third",
         ),
         ("- First https://example.com\n- Second", "First\nSecond"),
         ("First https://example.com\n## Heading", "First\nHeading"),
@@ -116,7 +116,7 @@ def test_unbalanced_quote_tracking_is_bounded():
     "source,expected",
     [
         ("1. First https://example.com\n1. Second", "1. First\n1. Second"),
-        ("- First\n3. Third https://example.com\n7. Seventh", "First\nThird\nSeventh"),
+        ("- First\n3. Third https://example.com\n7. Seventh", "First\n3. Third\n7. Seventh"),
         ("- 3 degrees https://example.com\n7. Juli", "- 3 degrees 7. Juli"),
     ],
 )

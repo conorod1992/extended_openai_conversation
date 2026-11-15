@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from threading import get_ident
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -10,6 +11,7 @@ import pytest
 
 from custom_components.extended_openai_conversation_responses import (
     config_flow as config_flow_module,
+    helpers,
 )
 from custom_components.extended_openai_conversation_responses.const import (
     API_MODE_CHAT_COMPLETIONS,
@@ -17,7 +19,7 @@ from custom_components.extended_openai_conversation_responses.const import (
     DOMAIN,
 )
 from homeassistant.components import conversation
-from homeassistant.config_entries import ConfigEntryState, SOURCE_REAUTH
+from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntryState
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
@@ -40,6 +42,39 @@ _UNAUTHORIZED = {
         "code": "invalid_api_key",
     }
 }
+
+
+@pytest.mark.parametrize("skip_authentication", [False, True])
+async def test_sdk_preparation_uses_native_ha_executor(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, skip_authentication: bool
+) -> None:
+    """Real HA prepares the one shared-transport SDK client before wrappers."""
+    loop_thread = get_ident()
+    prepared = []
+    requests = []
+    prepare = helpers._prepare_openai_client
+
+    def track(client):
+        assert get_ident() != loop_thread
+        prepare(client)
+        prepared.append(client)
+
+    async def respond(request):
+        requests.append(request)
+        return httpx.Response(200, json={"object": "list", "data": []})
+
+    monkeypatch.setattr(helpers, "_prepare_openai_client", track)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as shared:
+        monkeypatch.setattr(helpers, "get_async_client", lambda _hass: shared)
+        client = await helpers.get_authenticated_client(
+            hass, "test-key", "https://mock.invalid/v1", None, None, "openai",
+            skip_authentication=skip_authentication,
+        )
+        assert prepared == [client]
+        assert {"responses", "chat", "embeddings", "models"} <= vars(client).keys()
+        assert "completions" in vars(client.chat)
+        assert client._client is shared and not shared.is_closed
+        assert len(requests) == (0 if skip_authentication else 1)
 
 
 class _SuccessfulAuthenticatedWire:

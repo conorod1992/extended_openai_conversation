@@ -214,7 +214,9 @@ def _provider_fixture(
     monkeypatch.setattr(
         conversation_module,
         "async_get_chat_session",
-        lambda *_args, **_kwargs: nullcontext(SimpleNamespace()),
+        lambda _hass, conversation_id, **_kwargs: nullcontext(
+            SimpleNamespace(conversation_id=conversation_id)
+        ),
     )
 
     def new_log(_hass, _session, user_input):
