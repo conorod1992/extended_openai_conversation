@@ -679,7 +679,7 @@ async def test_script_function_executes_local_ha_service_on_provider_wire(
 
 
 @pytest.mark.parametrize(
-    "safe_batch", [False, True], ids=["serial-prefix", "parallel-prefix"]
+    "safe_batch", [False, True], ids=["serial-prefix", "safe-atomic"]
 )
 async def test_public_budget_loading_multicall_and_completed_replay(
     hass, monkeypatch, stress_trace, safe_batch
