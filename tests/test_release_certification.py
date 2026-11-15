@@ -467,7 +467,8 @@ def test_all_new_certification_workflows_are_exact_sha_requirements():
     assert required <= set(REQUIRED_WORKFLOWS)
 
 
-def test_signed_artifact_download_never_forwards_github_authorization(monkeypatch):
+@pytest.mark.parametrize("failures", [0, 1])
+def test_signed_artifact_download_never_forwards_github_authorization(monkeypatch, failures):
     from io import BytesIO
     from urllib.error import HTTPError
     from zipfile import ZipFile
@@ -479,6 +480,7 @@ def test_signed_artifact_download_never_forwards_github_authorization(monkeypatc
         zipped.writestr("workflow-evidence.json", json.dumps({"eoai_sha": SOURCE}))
     archive = buffer.getvalue()
     requests = []
+    delays = []
 
     class Opener:
         def open(self, request, timeout):
@@ -497,15 +499,19 @@ def test_signed_artifact_download_never_forwards_github_authorization(monkeypatc
     def signed_download(request, timeout):
         requests.append(request)
         assert request.get_header("Authorization") is None
+        if len(requests) <= failures + 1:
+            raise HTTPError(request.full_url, 503, "temporary", {}, BytesIO())
         return BytesIO(archive)
 
     monkeypatch.setattr(module, "build_opener", lambda _: Opener())
     monkeypatch.setattr(module, "urlopen", signed_download)
+    monkeypatch.setattr(module.time, "sleep", delays.append)
     actions = module.GitHubActions("owner/repo", "fixture-token")
     assert actions.artifact_json(
         {"id": 1, "name": "sdk-evidence", "expired": False}, "workflow-evidence.json"
     ) == {"eoai_sha": SOURCE}
-    assert len(requests) == 2
+    assert len(requests) == 2 + failures
+    assert delays == [5] * failures
 
 
 def test_expired_matrix_artifact_fails_before_network_access():

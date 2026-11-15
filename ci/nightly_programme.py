@@ -196,6 +196,9 @@ def main():
     except (RuntimeError, OSError, ValueError, KeyError) as error:
         evidence, errors = {}, [str(error)]
     args.output.write_text(json.dumps({"candidate_sha": args.candidate, "ha_version": args.ha_version, "ha_dev_sha": args.ha_dev_sha, "passed": not errors, "errors": errors, "workflows": evidence}, indent=2) + "\n", encoding="utf-8")
+    print("Programme certification: " + ("FAILED" if errors else "PASSED"), flush=True)
+    for error in errors:
+        print(f"- {error}", flush=True)
     return int(bool(errors))
 
 
