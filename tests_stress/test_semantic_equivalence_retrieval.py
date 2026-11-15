@@ -17,6 +17,7 @@ from custom_components.extended_openai_conversation_responses.memory import (
     HomeAssistantEmbeddingCacheStorage,
     HomeAssistantMemoryStorage,
     PersistentMemory,
+    memory_revision,
 )
 from homeassistant.components import conversation
 from homeassistant.core import Context
@@ -634,10 +635,15 @@ async def test_equivalent_public_installations_preserve_context_tools_and_effect
             assert len(requests) == 2
             assert "Calibration setting is cobalt" in json.dumps(requests[0])
             assert "Calibration setting is outdated" not in json.dumps(requests)
-            # Only this known record identifier varies. No fields are omitted.
-            serialized = json.dumps(requests).replace(
-                memory_id, "<calibration-memory-id>"
-            )
+            # A revision hashes the installation-specific memory ID as well as
+            # substantive state. Verify that the wire advertises this exact
+            # current record, then normalize only its ID and corresponding token.
+            current = next(item for item in await agent._memory.async_list(OWNER) if item.memory_id == memory_id)
+            revision = memory_revision(current)
+            assert current.content == "Calibration setting is cobalt"
+            serialized = json.dumps(requests)
+            assert memory_id in serialized and revision in serialized
+            serialized = serialized.replace(memory_id, "<calibration-memory-id>").replace(revision, "<calibration-memory-revision>")
             normalized = json.loads(serialized)
             for request in normalized:
                 for item in request.get("tools", []):
@@ -684,7 +690,7 @@ async def test_equivalent_public_installations_preserve_context_tools_and_effect
                 history=history,
                 provider_requests=2,
                 actual_effects=1,
-                whitelisted_identifiers=["calibration-memory-id"],
+                whitelisted_identifiers=["calibration-memory-id", "calibration-memory-revision"],
             )
         record(
             stress_trace,

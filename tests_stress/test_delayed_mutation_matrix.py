@@ -72,6 +72,7 @@ async def test_delayed_tool_uses_live_state_at_due_time(
     hass: HomeAssistant,
     mutation: str,
     stress_trace: list[dict],
+    freezer,
 ) -> None:
     user = _restricted_user()
     user.add_to_hass(hass)
@@ -204,7 +205,7 @@ async def test_delayed_tool_uses_live_state_at_due_time(
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-    await _execute_now(hass, manager, call_id)
+    await _execute_now(hass, manager, call_id, freezer)
     assert len(calls) == (1 if mutation in SURVIVES else 0), mutation
     assert manager._records == {}
     record(

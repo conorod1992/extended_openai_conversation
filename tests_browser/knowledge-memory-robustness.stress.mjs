@@ -86,6 +86,7 @@ test("Memory date metadata survives backend failure, retry and fresh section loa
   const panel = await openDataCollection(page, "persistent", 30);
   await panel.locator('[data-memory-id="memory-1"] .memory-edit-button').click();
   await panel.locator("#memory-content").fill("Temporal fact");
+  await panel.locator("#memory-advanced > summary").click();
   await panel.locator("#memory-valid-from").fill("2026-09-17T12:30");
   await page.evaluate(() => {
     const backend = dataCollectionBackend, original = backend.call.bind(backend);

@@ -6,13 +6,13 @@ from hashlib import sha256
 import json
 from pathlib import Path
 
+import pytest
+
 from custom_components.extended_openai_conversation_responses import agent_config, const
 from custom_components.extended_openai_conversation_responses.model_catalog import (
     BUNDLED_CATALOG,
 )
-from tests_stress.generated_valid_states import (
-    DIMENSIONS,
-)
+from tests_stress.generated_valid_states import DIMENSIONS
 
 CONTRACT = Path(__file__).with_name("agent_field_contract.json")
 REVIEWED_CHOICES = (
