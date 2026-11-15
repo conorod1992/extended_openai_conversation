@@ -154,6 +154,9 @@ class _AsyncPage:
 def _fake_client(page=None):
     return SimpleNamespace(
         platform_headers=Mock(return_value={"X-Stainless-OS": "Linux"}),
+        responses=object(),
+        chat=SimpleNamespace(completions=object()),
+        embeddings=object(),
         models=SimpleNamespace(list=Mock(return_value=page or _AsyncPage([object()])))
     )
 
@@ -226,7 +229,9 @@ async def test_authenticated_client_builds_standard_client_and_validates_models(
     client.models.list.assert_called_once_with(timeout=10)
     client.platform_headers.assert_called_once_with()
     assert executor.await_count == 2
-    assert executor.await_args_list[0].args[0] is client.platform_headers
+    preparation = executor.await_args_list[0].args[0]
+    assert preparation.func is helpers._prepare_openai_client
+    assert preparation.args == (client,)
 
 
 @pytest.mark.asyncio
@@ -238,7 +243,7 @@ async def test_authenticated_client_normalizes_transport_failures(
     monkeypatch.setattr(helpers, "AsyncOpenAI", Mock(return_value=client))
     monkeypatch.setattr(helpers, "get_async_client", lambda _hass: sentinel.http_client)
     async def executor_job(function):
-        if function is client.platform_headers:
+        if getattr(function, "func", None) is helpers._prepare_openai_client:
             return function()
         raise error
 

@@ -1,13 +1,114 @@
 """SDK compatibility with Home Assistant's shared legacy HTTPX transport."""
 
+import asyncio
 import json
 from pathlib import Path
+from threading import get_ident
+from types import SimpleNamespace
 
 import httpx
 from packaging.requirements import Requirement
 import pytest
 
 from custom_components.extended_openai_conversation_responses import helpers
+from custom_components.extended_openai_conversation_responses.debug import (
+    DebugOpenAIClientProxy,
+)
+
+
+@pytest.mark.parametrize("provider", ["openai", "azure"])
+@pytest.mark.parametrize("skip_authentication", [False, True])
+async def test_sdk_resources_prepared_off_loop_before_debug_wrapper(
+    monkeypatch, provider, skip_authentication
+):
+    """Use real cached SDK resources and transport, with a genuine worker thread."""
+    from openai import AsyncOpenAI
+    from openai.resources.chat import AsyncChat
+
+    loop_thread = get_ident()
+    initialized = []
+    requests = []
+
+    def observe(cls, name):
+        descriptor = vars(cls)[name]
+
+        def get(instance):
+            if name not in vars(instance):
+                initialized.append((name, get_ident()))
+            return descriptor.__get__(instance, type(instance))
+
+        monkeypatch.setattr(cls, name, property(get))
+
+    for name in ("responses", "chat", "embeddings", "models"):
+        observe(AsyncOpenAI, name)
+    observe(AsyncChat, "completions")
+
+    async def respond(request):
+        requests.append(request)
+        return httpx.Response(200, json={"object": "list", "data": []})
+
+    async def executor(function, *args):
+        return await asyncio.to_thread(function, *args)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as shared:
+        monkeypatch.setattr(helpers, "get_async_client", lambda _hass: shared)
+        client = await helpers.get_authenticated_client(
+            SimpleNamespace(async_add_executor_job=executor),
+            "test-key",
+            "https://mock.invalid/v1",
+            "2024-10-21" if provider == "azure" else None,
+            "test-org",
+            provider,
+            skip_authentication=skip_authentication,
+        )
+        assert [name for name, _ in initialized] == [
+            "responses", "chat", "completions", "embeddings", "models"
+        ]
+        assert all(thread != loop_thread for _, thread in initialized)
+        before_wrapper = list(initialized)
+        wrapped = DebugOpenAIClientProxy(client)
+        assert initialized == before_wrapper
+        assert wrapped.responses._delegate is client.responses
+        assert wrapped.chat.completions._delegate is client.chat.completions
+        assert wrapped.embeddings._delegate is client.embeddings
+        assert client._client is shared
+        assert not shared.is_closed
+        assert len(requests) == (0 if skip_authentication else 1)
+
+
+@pytest.mark.parametrize("stage", ["constructor", "headers", "resources"])
+@pytest.mark.parametrize("skip_authentication", [False, True])
+async def test_required_sdk_initialization_errors_propagate(
+    monkeypatch, stage, skip_authentication
+):
+    """Required initialization is not an optional warm-up failure."""
+    from openai import AsyncOpenAI, OpenAIError
+
+    error = OpenAIError("initialization failed")
+
+    def fail(*_args, **_kwargs):
+        raise error
+
+    if stage == "constructor":
+        monkeypatch.setattr(helpers, "AsyncOpenAI", fail)
+    elif stage == "headers":
+        monkeypatch.setattr(AsyncOpenAI, "platform_headers", fail)
+    else:
+        monkeypatch.setattr(AsyncOpenAI, "responses", property(fail))
+
+    async def executor(function, *args):
+        return await asyncio.to_thread(function, *args)
+
+    async with httpx.AsyncClient() as shared:
+        monkeypatch.setattr(helpers, "get_async_client", lambda _hass: shared)
+        with pytest.raises(OpenAIError) as caught:
+            await helpers.get_authenticated_client(
+                SimpleNamespace(async_add_executor_job=executor),
+                "test-key", None, None, None, "openai",
+                skip_authentication=skip_authentication,
+            )
+        assert caught.value is error
+        assert not shared.is_closed
 
 
 @pytest.mark.parametrize("sdk", ["2.21.0", "2.45.0", "3.10.0", "3.26.0"])

@@ -170,6 +170,14 @@ def _convert_to_template(
             _convert_to_template(setting, template_keys, hass, parents)
 
 
+def _prepare_openai_client(client: AsyncClient) -> None:
+    """Resolve synchronous SDK metadata/resources before loop-side wrappers."""
+    client.platform_headers()
+    # These cached resources are also accessed by the debug/performance proxies.
+    # Access only: no requests, transports or additional clients are created.
+    _ = client.responses, client.chat.completions, client.embeddings, client.models
+
+
 async def get_authenticated_client(
     hass: HomeAssistant,
     api_key: str,
@@ -200,10 +208,9 @@ async def get_authenticated_client(
             http_client=cast(Any, get_async_client(hass)),
         )
 
-    # The SDK lazily reads OS metadata while constructing its first request.
-    # Prime cached platform headers off-loop even with authentication skipped,
-    # so the first provider request cannot perform that disk read on HA's loop.
-    await hass.async_add_executor_job(client.platform_headers)
+    # Prime SDK metadata and lazy resource imports in the existing executor job,
+    # including when authentication is skipped, before wrappers access them.
+    await hass.async_add_executor_job(partial(_prepare_openai_client, client))
 
     if skip_authentication:
         return client
