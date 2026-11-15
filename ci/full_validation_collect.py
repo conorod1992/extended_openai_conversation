@@ -116,10 +116,31 @@ def collect(state, parent, actions):
             "workflow": item["workflow"],
             "run_id": run["id"],
             "run_attempt": run["run_attempt"],
+            "conclusion": run["conclusion"],
         }
         for item, run in results
     ]
     return proof
+
+
+def result_summary(proof):
+    lines = [
+        f"**{proof['mode']} validation {'PASSED' if proof['passed'] else 'FAILED'}** "
+        f"for `{proof['candidate_sha']}`.",
+        "",
+        "| Workflow | Result | Run |",
+        "|---|---|---|",
+    ]
+    for row in proof["runs"]:
+        url = f"https://github.com/{os.environ['GH_REPOSITORY']}/actions/runs/{row['run_id']}"
+        lines.append(
+            f"| `{row['workflow']}` | {row.get('conclusion', 'recorded')} | [view run]({url}) |"
+        )
+    for name, error in proof.get("launch_errors", []):
+        lines.append(f"| `{name}` | launch failed | {error} |")
+    if proof["mode"] == "quick":
+        lines.extend(["", "Quick mode excludes iOS, generator proofs, long-lifetime and release certification."])
+    return "\n".join(lines)
 
 
 def main():
@@ -211,7 +232,7 @@ def main():
     )
     with output.open("a", encoding="utf-8") as stream:
         stream.write("complete=true\n")
-    summary = f"**{proof['mode']}** validation {'passed' if proof['passed'] else 'failed'} for `{proof['candidate_sha']}`."
+    summary = result_summary(proof)
     Path(os.environ["GITHUB_STEP_SUMMARY"]).write_text(summary + "\n", encoding="utf-8")
     return 0
 
@@ -219,7 +240,7 @@ def main():
 def finish():
     """Publish a terminal check only after Actions persisted the result proof."""
     proof = json.loads(Path("full-validation-cohort.json").read_text(encoding="utf-8"))
-    summary = f"**{proof['mode']}** validation {'passed' if proof['passed'] else 'failed'} for `{proof['candidate_sha']}`."
+    summary = result_summary(proof)
     driver.api(
         "PATCH",
         f"check-runs/{proof['check_id']}",
@@ -235,7 +256,7 @@ def finish():
     except RuntimeError as error:
         if "returned 404:" not in str(error):
             raise
-    return 0
+    return 0 if proof["passed"] else 1
 
 
 if __name__ == "__main__":

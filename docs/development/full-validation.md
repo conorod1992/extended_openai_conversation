@@ -17,41 +17,34 @@ gh workflow run full-validation.yml -f mode=quick
 gh workflow run full-validation.yml -f mode=full -f seed=42 -f ha_dev_sha=FULL_SHA
 ```
 
-## Completion without idle runners
+## Overall result
 
-The dispatch workflow creates an isolated `full-validation-RUN-ATTEMPT` branch,
-launches the selected children, records their IDs in a pending manifest and
-exits. Its success only means dispatch succeeded. Follow the **Full validation
-results** check on the candidate commit for the actual result.
+The **Full validation result** job creates an isolated
+`full-validation-RUN-ATTEMPT` branch, dispatches all selected children and waits
+for their terminal results. The parent remains running while tests run. It
+turns green only when every selected workflow succeeds, including programme
+certification in full mode. Failed launches, failed tests, cancellations and
+unavailable child status fail the parent. Its summary links every child and
+lists intentional quick-mode exclusions. The parent has a six-hour deadline;
+a timeout cannot be mistaken for a passing validation.
 
-`full-validation-collect.yml` handles completion events. Each invocation checks
-the recorded children once and exits if any are still running. Once all tests
-pass, it dispatches programme certification once; its completion event finishes
-the cohort. A repository-wide collector queue serializes callbacks before
-allocating runners. Child source SHA, workflow, branch and run attempt must
-match the manifest. Failures and cancellation produce a failed result.
+The parent uploads the completed `full-validation-cohort` proof used by release
+certification. Temporary refs are removed after completed cohorts; interrupted
+runs retain them for diagnosis. Quick runs never authorize a release.
 
-The listener must exist on the default branch for automatic completion events
-to run. Before that merge, candidate dispatches cannot finalize automatically.
-After installation, a missed event can be recovered without rerunning tests:
+`full-validation-collect.yml` remains available to recover older asynchronous
+cohorts. It identifies the parent by its workflow path, since a generated run
+title is not the workflow name. Recovery publishes the **Full validation
+results** check, a result table and a terminal artifact; unsuccessful validation
+also fails the collector job. The listener must be on the default branch for
+automatic completion callbacks. Missed callbacks can be recovered manually:
 
 ```sh
 gh workflow run full-validation-collect.yml -f parent_run_id=DISPATCH_RUN_ID
 ```
 
-The parent uploads a pending `full-validation-cohort` manifest. The collector
-uploads `full-validation-result-RUN-ATTEMPT` with the completed proof, then
-publishes the result check and deletes the temporary branch. Release
-certification verifies the successful collector workflow, parent/attempt
-binding, exact child inventory and attempts, and programme evidence. A pending
-dispatch, quick cohort, missing artifact, failed collector, expired evidence or
-superseded child attempt cannot authorize a release. Legacy completed cohorts
-remain readable.
-
-If collection fails before recording a result, fix the issue and use the
-recovery command. The temporary ref is retained for inspection until completion.
-Rerunning a child attempt changes its provenance: dispatch a new cohort instead
-of silently replacing a recorded attempt.
+Rerunning a child changes its provenance. Dispatch a new cohort instead of
+silently replacing a recorded attempt.
 
 ## Test ownership and cadence
 

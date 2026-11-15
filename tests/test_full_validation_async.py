@@ -311,3 +311,21 @@ def test_completion_callbacks_are_idempotent_and_can_recover_failed_publication(
         module.driver.api.assert_called_once_with("DELETE", "actions/artifacts/1")
         collect.assert_called_once()
         assert "complete=true" in (tmp_path / "output.txt").read_text()
+
+
+@pytest.mark.parametrize("passed", [True, False])
+def test_collector_finish_reports_failure_in_job_and_linked_check(monkeypatch, tmp_path, passed):
+    module, state, _, _ = setup_cohort(monkeypatch, tmp_path, "quick")
+    state.update(passed=passed)
+    state["runs"][0]["conclusion"] = "success" if passed else "failure"
+    monkeypatch.chdir(tmp_path)
+    Path("full-validation-cohort.json").write_text(json.dumps(state), encoding="utf-8")
+    api = Mock()
+    monkeypatch.setattr(module.driver, "api", api)
+    assert module.finish() == int(not passed)
+    _, endpoint, body = api.call_args_list[0].args
+    assert endpoint == "check-runs/900"
+    assert body["conclusion"] == ("success" if passed else "failure")
+    assert "view run" in body["output"]["summary"]
+    assert ("PASSED" if passed else "FAILED") in body["output"]["summary"]
+    assert api.call_args_list[1].args == ("DELETE", "git/refs/heads/full-validation-123-1")

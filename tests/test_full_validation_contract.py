@@ -14,6 +14,34 @@ import pytest
 DEV_SHA = "a" * 40
 
 
+def test_parent_waits_for_test_results_instead_of_succeeding_after_dispatch():
+    import yaml
+
+    data = yaml.safe_load(Path(".github/workflows/full-validation.yml").read_text(encoding="utf-8"))
+    job = data["jobs"]["dispatch"]
+    assert job["name"] == "Full validation result"
+    assert job["timeout-minutes"] == 360
+    step = next(step for step in job["steps"] if step.get("run") == "python3 ci/full_validation.py")
+    assert step["env"].get("FULL_VALIDATION_ASYNC") != "1"
+    assert not step.get("continue-on-error", False)
+
+
+@pytest.mark.parametrize("damage", [None, "head_sha", "head_branch", "event", "run_attempt"])
+def test_waiting_parent_rejects_replaced_child_attempt(monkeypatch, tmp_path, damage):
+    driver = _driver(monkeypatch, tmp_path)
+    item = {"run_id": 100, "run_attempt": 1}
+    run = {"head_sha": driver.TARGET_SHA, "head_branch": driver.REF_NAME,
+           "event": "workflow_dispatch", "run_attempt": 1}
+    if damage:
+        run[damage] = "replaced"
+    monkeypatch.setattr(driver, "api", Mock(return_value=run))
+    if damage:
+        with pytest.raises(RuntimeError, match="differs from dispatch"):
+            driver.run_status(item)
+    else:
+        assert driver.run_status(item) == (item, run)
+
+
 def _driver(monkeypatch, tmp_path):
     monkeypatch.delenv("FULL_VALIDATION_EXPLICIT_SEED", raising=False)
     monkeypatch.delenv("FULL_VALIDATION_ASYNC", raising=False)
@@ -129,6 +157,7 @@ def test_dispatch_and_discovery_use_same_ref_and_exact_candidate(
     driver = _driver(monkeypatch, tmp_path)
     run = {
         "id": 42,
+        "run_attempt": 1,
         "html_url": "https://github.com/owner/repository/actions/runs/42",
         "head_sha": "candidate-sha",
         "created_at": datetime.now(UTC).isoformat(),

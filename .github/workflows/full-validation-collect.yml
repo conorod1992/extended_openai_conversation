@@ -58,7 +58,7 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.event == 'workflow_dispatch' &&
-       (github.event.workflow_run.name == 'Full validation' ||
+       (github.event.workflow_run.path == '.github/workflows/full-validation.yml' ||
         startsWith(github.event.workflow_run.head_branch, 'full-validation-')))
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -73,7 +73,7 @@ jobs:
             const child = context.payload.workflow_run;
             let id = process.env.REQUESTED_PARENT;
             let attempt;
-            if (!id && child.name === 'Full validation') {
+            if (!id && child.path === '.github/workflows/full-validation.yml') {
               id = String(child.id);
               attempt = child.run_attempt;
             } else if (!id) {
