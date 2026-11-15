@@ -426,9 +426,12 @@ class StreamingSpeechSanitizer:
         self._inline_scope.removed()
         if self._pending_list_prefix:
             self._pending_list_link = True
-        self._suppressed_opener = None
-        self._suppressed_closer = None
-        if self.markdown:
+        # Consecutive removals share one unresolved boundary. The trimmed raw
+        # suffix cannot reclassify its original closing delimiter as an opener.
+        if not self._needs_separator:
+            self._suppressed_opener = None
+            self._suppressed_closer = None
+        if self.markdown and not self._needs_separator:
             for opener, closer in _URL_MARKDOWN_WRAPPERS:
                 if not self._last_output.endswith(opener):
                     continue
