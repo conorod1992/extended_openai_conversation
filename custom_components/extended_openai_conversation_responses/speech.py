@@ -329,6 +329,9 @@ class StreamingSpeechSanitizer:
         if self._pending_list_prefix:
             if "\n" in text and text.isspace():
                 prefix = self._pending_list_prefix
+                removed_line = self._pending_list_link and (
+                    not self._last_output or self._last_output.endswith("\n")
+                )
                 preserve_number = (
                     not self._pending_list_link
                     and self._held_prefix_has_numeric_payload(prefix + text)
@@ -338,11 +341,22 @@ class StreamingSpeechSanitizer:
                 self._pending_list_link = False
                 if preserve_number:
                     self._emit_plain(output, prefix)
+                if removed_line:
+                    return
             elif text.isspace():
                 if not self._pending_list_link:
                     self._pending_list_prefix += text[
                         : max(0, _FORMAT_PREFIX_LIMIT - len(self._pending_list_prefix))
                     ]
+                return
+            elif (
+                not self._pending_list_link
+                and len(self._pending_list_prefix) + len(text) <= _FORMAT_PREFIX_LIMIT
+                and all(char in "*_~" for char in text)
+            ):
+                # An inline wrapper is not yet readable list content. Keep its
+                # bounded opener with the prefix until text or removal proves it.
+                self._pending_list_prefix += text
                 return
             elif not text.isspace():
                 prefix = self._pending_list_prefix
@@ -386,6 +400,7 @@ class StreamingSpeechSanitizer:
                     self._suppressed_line_break = True
                 self._inline_scope.feed(text)
                 return
+            adjacent_opener = self._suppressed_opener is not None
             self._needs_separator = False
             self._suppressed_line_break = False
             self._suppressed_closer = None
@@ -393,6 +408,7 @@ class StreamingSpeechSanitizer:
             if (
                 (self._recent_nonspace or self._last_output)
                 and not self._last_output[-1:].isspace()
+                and not adjacent_opener
                 and not text[0].isspace()
                 and text[0] not in ",.;:!?)]}"
                 and not (
@@ -427,10 +443,13 @@ class StreamingSpeechSanitizer:
             self._suppressed_opener = None
             self._suppressed_closer = None
         if self.markdown and not self._needs_separator:
+            suffix = self._pending_list_prefix or self._last_output
             for opener, closer in _URL_MARKDOWN_WRAPPERS:
-                if not self._last_output.endswith(opener):
+                if not suffix.endswith(opener):
                     continue
-                preceding = self._last_output[-len(opener) - 1 : -len(opener)]
+                if self._is_escaped(suffix, len(suffix) - len(opener)):
+                    break
+                preceding = suffix[-len(opener) - 1 : -len(opener)]
                 if preceding and (preceding.isalnum() or preceding in ".,;:!?)]}"):
                     # A rejected closing ** must not turn into an opening *
                     # just because the shorter marker is also a suffix.
@@ -439,15 +458,23 @@ class StreamingSpeechSanitizer:
                 self._suppressed_closer = closer
                 break
         self._suppressed_line_break = False
-        while output and output[-1] and output[-1][-1].isspace():
+        # A held list prefix has emitted no content on this line. Keep its
+        # preceding line boundary so removing the item cannot duplicate it.
+        while (
+            not self._pending_list_prefix
+            and output
+            and output[-1]
+            and output[-1][-1].isspace()
+        ):
             output[-1] = output[-1].rstrip()
             if not output[-1]:
                 output.pop()
-        if not output:
+        if not output and not self._pending_list_prefix:
             # The adjacent whitespace may still be waiting for an emphasis
             # closer in the next stage. Apply the same removal in either stage.
             self._format_buffer = self._format_buffer.rstrip()
-        self._last_output = self._last_output.rstrip()
+        if not self._pending_list_prefix:
+            self._last_output = self._last_output.rstrip()
         self._needs_separator = True
         self.suppressed_constructs += 1
         return end
@@ -473,6 +500,10 @@ class StreamingSpeechSanitizer:
         Its delimiter has not been released: the formatter buffers an
         unfinished marker at the end of a streamed delta.
         """
+        if self._pending_list_prefix.endswith(marker):
+            # This wrapper has not reached either inline stage yet.
+            self._pending_list_prefix = self._pending_list_prefix[: -len(marker)]
+            return True
         tail = ""
         for part in reversed(output):
             if len(tail) >= len(marker):
@@ -512,7 +543,9 @@ class StreamingSpeechSanitizer:
             if remaining.startswith(closer) and self._discard_suppressed_opener(
                 output, self._suppressed_opener or closer
             ):
-                self._needs_separator = False
+                # Skip following whitespace until real text. The whitespace
+                # preceding the opener may already have reached a listener.
+                self._needs_separator = True
                 self._suppressed_line_break = False
                 self._suppressed_closer = None
                 self._suppressed_opener = None
@@ -1006,9 +1039,11 @@ class StreamingSpeechSanitizer:
                     lexical_end = self._bare_url_end(text, index, end)
                     end = self._bare_url_wrapper_end(text, index, lexical_end)
                     index = self._suppress(output, end)
-                    if end < lexical_end:
+                    if end < lexical_end and self._suppressed_closer is None:
                         # A proved closer belongs beside its preceding prose,
                         # rather than after the separator used for plain links.
+                        # An unresolved empty wrapper must still pass through
+                        # boundary resolution to discard its pending opener.
                         self._needs_separator = False
                     continue
 
