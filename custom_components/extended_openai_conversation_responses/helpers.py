@@ -5,7 +5,7 @@ from __future__ import annotations
 from functools import partial
 from inspect import isawaitable
 import logging
-from typing import Any, cast
+from typing import Annotated, Any, cast, get_args, get_origin
 from urllib.parse import urlsplit
 
 from openai import AsyncAzureOpenAI, AsyncClient, AsyncOpenAI
@@ -170,6 +170,35 @@ def _convert_to_template(
             _convert_to_template(setting, template_keys, hass, parents)
 
 
+def _warm_response_stream_adapter() -> None:
+    """Best-effort compatibility shim for the SDK's cached union validator."""
+    try:
+        from openai._models import TypeAdapter
+        from openai.types.responses import ResponseStreamEvent
+
+        # SDK 2.21/2.45/3.10/3.26 construct_type strips Annotated before
+        # validate_type uses this cached factory. A public Pydantic TypeAdapter
+        # would not populate that cache. Skip unfamiliar/uncached SDK versions.
+        if get_origin(ResponseStreamEvent) is not Annotated or not callable(
+            getattr(TypeAdapter, "cache_info", None)
+        ):
+            return
+        TypeAdapter(get_args(ResponseStreamEvent)[0])
+    except Exception:
+        # Private imports, type shapes and adapter construction may change.
+        # Only this optional optimization may fail without affecting setup.
+        pass
+
+
+def _prepare_openai_client(client: AsyncClient) -> None:
+    """Resolve synchronous SDK metadata/resources before loop-side wrappers."""
+    client.platform_headers()
+    # These cached resources are also accessed by the debug/performance proxies.
+    # Access only: no requests, transports or additional clients are created.
+    _ = client.responses, client.chat.completions, client.embeddings, client.models
+    _warm_response_stream_adapter()
+
+
 async def get_authenticated_client(
     hass: HomeAssistant,
     api_key: str,
@@ -200,10 +229,9 @@ async def get_authenticated_client(
             http_client=cast(Any, get_async_client(hass)),
         )
 
-    # The SDK lazily reads OS metadata while constructing its first request.
-    # Prime cached platform headers off-loop even with authentication skipped,
-    # so the first provider request cannot perform that disk read on HA's loop.
-    await hass.async_add_executor_job(client.platform_headers)
+    # Prime SDK metadata and lazy resource imports in the existing executor job,
+    # including when authentication is skipped, before wrappers access them.
+    await hass.async_add_executor_job(partial(_prepare_openai_client, client))
 
     if skip_authentication:
         return client

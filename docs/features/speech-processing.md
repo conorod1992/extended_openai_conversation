@@ -16,6 +16,8 @@ It works with Responses, Chat Completions and compatible providers. It also keep
 
 Link labels such as `Sources`, `References`, and `1` remain spoken. Only empty labels and labels that are themselves URLs or addresses are suppressed; cleanup does not guess whether a label is a citation.
 
+Numbered list items keep their numbers for TTS: `2) Check the switch` becomes `2. Check the switch`. Bullet markers are removed. Items containing only removed URLs or citations disappear with their markers, while standalone numerical text such as `5.` or `5)` stays intact. This also applies to streamed replies and nested lists.
+
 Inline code preserves literal operators and URLs while its backtick delimiters are removed, including when enclosed in emphasis. Final whitespace cleanup preserves parentheses such as `call()`. Configured replacement rules can deliberately change this content.
 
 Home Assistant currently uses the same progressive stream for live visual updates and TTS. This means the live on-screen stream also receives the speech-safe text, while the original model response is still retained for history and future conversation context.

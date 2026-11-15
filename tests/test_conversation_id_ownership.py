@@ -16,6 +16,40 @@ def _scope(user_id: str = "user-a"):
     return user_scope(user_id, source="test")
 
 
+def test_provisional_claim_records_returned_id_and_never_releases_another_owner():
+    hass = SimpleNamespace(data={ownership._CONVERSATION_ID_OWNERS: {"foreign": ("other", "user:x")}})
+    provisional = ownership.ProvisionalConversationIDClaim(hass)
+    target = ownership.claim_conversation_id(hass, "agent", _scope(), "foreign",
+                                           guest_active=False, provisional_claim=provisional)
+    assert provisional.conversation_id == target and target != "foreign"
+    assert provisional.owner == ("agent", "user:user-a")
+    assert provisional.newly_created
+    hass.data[ownership._CONVERSATION_ID_OWNERS][target] = ("new-owner", "user:y")
+    provisional.release_unused()
+    assert hass.data[ownership._CONVERSATION_ID_OWNERS] == {
+        "foreign": ("other", "user:x"), target: ("new-owner", "user:y"),
+    }
+
+
+def test_provisional_claim_keeps_session_attachment_and_reused_mapping():
+    hass = SimpleNamespace(data={})
+    first = ownership.ProvisionalConversationIDClaim(hass)
+    target = ownership.claim_conversation_id(hass, "agent", _scope(), "stable",
+                                           guest_active=False, provisional_claim=first)
+    assert first.newly_created
+    session = SimpleNamespace(async_on_cleanup=Mock())
+    ownership.register_conversation_id_cleanup(session, hass, target, first.owner)
+    first.release_unused()
+    reused = ownership.ProvisionalConversationIDClaim(hass)
+    assert ownership.claim_conversation_id(hass, "agent", _scope(), target,
+                                          guest_active=False, provisional_claim=reused) == target
+    assert not reused.newly_created
+    # No native cache or registration is required to retain an established claim.
+    hass.data.pop(ownership._CLEANUP_REGISTRATIONS)
+    reused.release_unused()
+    assert hass.data[ownership._CONVERSATION_ID_OWNERS] == {target: first.owner}
+
+
 def test_claim_short_circuits_invalid_inputs_without_mutation() -> None:
     scope = _scope()
     hass = SimpleNamespace(data={})

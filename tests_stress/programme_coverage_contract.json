@@ -1,6 +1,5 @@
 {
   "schema": 1,
-  "pytest_union_sha256": "0880a4800d7549b62615b42c8fa00d26e41a30dd58d5b029cb179eed7dd62bf5",
   "minimums": {
     "conversation_turns": 1,
     "process_soak_windows": 9,
@@ -242,5 +241,6 @@
     "quiet_process_healthy_periods": 8,
     "quiet_service_acknowledgement_recoveries": 2,
     "provider_endpoint_wire_cases": 4
-  }
+  },
+  "pytest_union_sha256": "3945d49392a99c594bf8b2bded4d7ab2c0e6a2e635684cf710a7ed603c6ae212"
 }

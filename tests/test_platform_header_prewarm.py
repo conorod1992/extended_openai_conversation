@@ -34,6 +34,9 @@ async def test_authenticated_client_primes_platform_headers_off_loop(
 
     client = SimpleNamespace(
         platform_headers=platform_headers,
+        responses=object(),
+        chat=SimpleNamespace(completions=object()),
+        embeddings=object(),
         models=SimpleNamespace(list=list_models),
     )
 
