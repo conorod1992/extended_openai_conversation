@@ -257,8 +257,9 @@ async def test_temporary_memory_forward_backward_jump_is_irreversible(
 
 @pytest.mark.parametrize("day", ["2026-03-29", "2026-10-25"])
 @pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
+@pytest.mark.usefixtures("real_store_io")
 async def test_populated_local_calendar_journey_preserves_visible_expiry_and_recovery(
-    hass, monkeypatch, freezer, real_store_io, stress_trace, day, api_mode
+    hass, monkeypatch, freezer, stress_trace, day, api_mode
 ):
     """One native runtime crosses DST, expiry, pruning and reload with visible effects."""
     from collections import Counter
