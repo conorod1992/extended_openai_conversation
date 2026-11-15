@@ -679,7 +679,7 @@ async def test_script_function_executes_local_ha_service_on_provider_wire(
 
 
 @pytest.mark.parametrize(
-    "safe_batch", [False, True], ids=["serial-prefix", "safe-atomic"]
+    "safe_batch", [False, True], ids=["serial-prefix", "parallel-prefix"]
 )
 async def test_public_budget_loading_multicall_and_completed_replay(
     hass, monkeypatch, stress_trace, safe_batch
@@ -755,6 +755,16 @@ async def test_public_budget_loading_multicall_and_completed_replay(
     await _setup_entry(hass, entry)
     agent = conversation.async_get_agent(hass, entry.entry_id)
 
+    executions = []
+    execute = agent._execute_function_tool
+
+    async def observed_execute(function_tool, tool_input, *args):
+        if tool_input.tool_name.startswith("budget_"):
+            executions.append(tool_input.tool_name)
+        return await execute(function_tool, tool_input, *args)
+
+    monkeypatch.setattr(agent, "_execute_function_tool", observed_execute)
+
     async def say(cid=None):
         return await conversation.async_converse(
             hass=hass,
@@ -783,7 +793,11 @@ async def test_public_budget_loading_multicall_and_completed_replay(
     # Budget refusals are returned as tool results so the model can finish the
     # response. They still prohibit every over-budget physical execution.
     assert _speech(failed) == "Function call limit reached"
-    assert "Function call limit" in json.dumps(wire.requests[-1]["body"])
+    refusal = next(message for message in wire.requests[-1]["body"]["messages"] if message.get("tool_call_id") == "batch-b")
+    assert json.loads(refusal["content"])["result"] == {
+        "status": "not_executed", "reason": "not executed: request Function Tool limit reached",
+    }
+    assert executions == ["budget_warm", "budget_a"]
     assert len(wire.requests) == 4
     ledger.append({"requests": len(wire.requests), "effects": len(effects)})
     assert effects == (["warm"] if safe_batch else ["warm", "a"])
@@ -812,6 +826,7 @@ async def test_public_budget_loading_multicall_and_completed_replay(
     assert replayed.response.error_code is not None
     assert "completed tool call" in str(replayed.response.as_dict())
     assert effects == before
+    assert executions == ["budget_warm", "budget_a", "budget_warm"]
     assert len(wire.requests) == 1
     ledger.append({"requests": len(wire.requests), "effects": len(effects)})
     wire = _install_wire(
@@ -830,6 +845,7 @@ async def test_public_budget_loading_multicall_and_completed_replay(
     )
     assert _speech(await say()) == "Fresh budget healthy"
     assert effects == (before if safe_batch else [*before, "a", "b"])
+    assert executions == ["budget_warm", "budget_a", "budget_warm", "budget_a", "budget_b"]
     assert len(wire.requests) == 3
     ledger.append({"requests": len(wire.requests), "effects": len(effects)})
     assert ledger == [{"requests": requests, "effects": completed} for requests, completed in zip([4, 3, 1, 3], [1, 2, 2, 2] if safe_batch else [2, 3, 3, 5], strict=True)]
