@@ -349,10 +349,6 @@ class StreamingSpeechSanitizer:
                 self._pending_list_prefix = ""
                 if self._pending_list_link:
                     self._needs_separator = False
-                    # Retain one real block prefix after removal; additional
-                    # held prefixes belong to the same now-empty nested item.
-                    _, count = self._line_prefix(prefix, True, preceding_list_item=True)
-                    prefix = prefix[:count]
                     if self._pending_list_newline and not self._last_output.endswith(
                         "\n"
                     ):
@@ -366,19 +362,18 @@ class StreamingSpeechSanitizer:
 
         The held chain is bounded by _FORMAT_PREFIX_LIMIT. Include its newline
         so the existing recognizer can classify a terminal numerical fragment.
-        Only a leading number can continue the preceding original list; numbers
-        after another block prefix are payload within that block.
+        Numerical fragments remain payload even after an established list item;
+        an empty item alone does not justify dropping numerical information.
         """
         offset = 0
         while offset < len(text):
             action, count = self._line_prefix(
                 text, True, offset, preceding_list_item=True
             )
-            if action != "strip" or not count:
+            if action not in {"strip", "number"} or not count:
                 return False
-            fragment = text[offset : offset + count].lstrip(" \t")
-            if fragment[:1] in "0123456789" and fragment:
-                return offset > 0 or not self._original_previous_list
+            if action == "number":
+                return True
             offset += count
         return False
 
@@ -567,7 +562,10 @@ class StreamingSpeechSanitizer:
             if action == "incomplete" and not final:
                 if len(text) - index <= _FORMAT_PREFIX_LIMIT:
                     return None
-            elif action == "strip":
+            elif action == "strip" or (
+                action == "number"
+                and (self._original_previous_list or previous_bullet or numbered)
+            ):
                 self._needs_separator = False
                 self._suppressed_line_break = False
                 self._suppressed_closer = None
@@ -627,7 +625,12 @@ class StreamingSpeechSanitizer:
                     prefix, True, preceding_list_item=self._original_previous_list
                 )
                 self._original_previous_list = bool(
-                    action == "strip" and prefix[:1] in "-+*0123456789" and prefix
+                    (
+                        action == "strip"
+                        or (action == "number" and self._original_previous_list)
+                    )
+                    and prefix[:1] in "-+*0123456789"
+                    and prefix
                 )
                 self._original_previous_prefix = self._original_line_prefix
                 self._original_line_prefix = ""
@@ -806,7 +809,7 @@ class StreamingSpeechSanitizer:
                     held_whitespace = self._hold_preceding_whitespace(output)
                     break
                 if (
-                    action == "strip"
+                    action in {"strip", "number"}
                     and count + len(self._pending_list_prefix) <= _FORMAT_PREFIX_LIMIT
                 ):
                     if not self._pending_list_prefix:
@@ -1449,11 +1452,23 @@ class StreamingSpeechSanitizer:
                 )
                 if action == "incomplete":
                     break
-                if action == "strip":
-                    prefix = self._format_buffer[index:].lstrip(" \t")
-                    self._line_is_list = bool(prefix and prefix[0] in "-+*0123456789")
+                if action in {"strip", "number"}:
+                    prefix = self._format_buffer[index : index + count].lstrip(" \t")
+                    self._line_is_list = self._line_is_list or bool(
+                        prefix and prefix[0] in "-+*0123456789"
+                    )
+                    if action == "number":
+                        following = self._format_buffer[
+                            index + count : index + count + 1
+                        ]
+                        # Normalize only a marker with same-line content. Bare
+                        # N) remains ambiguous, even after another list item.
+                        if following and following not in "\r\n":
+                            output.append(prefix.rstrip(" \t")[:-1] + ". ")
+                        else:
+                            output.append(prefix)
                     index += count
-                    self._line_start = False
+                    # Recognize nested block/list prefixes before inline text.
                     continue
                 self._line_start = False
 
@@ -1797,7 +1812,14 @@ class StreamingSpeechSanitizer:
                     if end == len(text) and not final:
                         return "incomplete", 0
                     if end < len(text) and text[end].isdigit():
-                        return "none", 0
+                        nested_action, nested_count = (
+                            StreamingSpeechSanitizer._line_prefix(text, final, end)
+                        )
+                        if nested_action == "incomplete":
+                            return "incomplete", 0
+                        after = text[end + nested_count : end + nested_count + 1]
+                        if nested_action != "number" or not after or after in "\r\n":
+                            return "none", 0
                 return "strip", end - start
         elif marker in "0123456789":
             while (
@@ -1813,13 +1835,13 @@ class StreamingSpeechSanitizer:
                 if end == len(text):
                     return ("none", 0) if final else ("incomplete", 0)
                 if text[end].isspace():
-                    # A standalone "N." can be an ordinal date or a quantity.
-                    # Suppress it only when continuing an already marked list.
-                    if not preceding_list_item:
-                        return "none", 0
                     while end < len(text) and text[end] in " \t":
                         end += 1
-                    return "strip", end - start
+                    if end == len(text) and not final:
+                        return "incomplete", 0
+                    # Hold for citation-item removal, but retain numeric payload
+                    # in the formatter rather than treating it as decoration.
+                    return "number", end - start
         return "none", 0
 
 

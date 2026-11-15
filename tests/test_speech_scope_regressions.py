@@ -41,7 +41,7 @@ def all_splits(source, expected, **options):
         ('Read more:\n- "https://example.com"\n\n2. Next', "Read more:\n2. Next"),
         ("* **https://example.com**", ""),
         ("* https://a.com (https://b.com) **Note** text", "Note text"),
-        ("- Read https://example.com now\n2. Next", "Read now\nNext"),
+        ("- Read https://example.com now\n2. Next", "Read now\n2. Next"),
         ("**read `code` https://example.com** after", "read code after"),
         ('**"read https://example.com"** after', '"read" after'),
         ('"**read https://example.com**" after', '"read" after'),

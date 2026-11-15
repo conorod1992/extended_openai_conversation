@@ -137,7 +137,7 @@ def test_speech_links_preserve_labels_across_provider_splits(
         ("The total is\n42. That's all.", "The total is\n42. That's all."),
         ("- 3 degrees tonight", "- 3 degrees tonight"),
         ("- 30 degrees tonight", "- 30 degrees tonight"),
-        ("## Report\n- **First** item\n2. Second item", "Report\nFirst item\nSecond item"),
+        ("## Report\n- **First** item\n2. Second item", "Report\nFirst item\n2. Second item"),
         ("1. First item\n2. Second item", "1. First item\n2. Second item"),
         ("- **First** item\n\n42. Total", "First item\n42. Total"),
     ],
@@ -392,7 +392,7 @@ def test_streaming_real_trace_shape() -> None:
         ),
         (
             "Answer.\n[example.com](https://example.com)\n- First\n2. Second\n> Note",
-            "Answer.\nFirst\nSecond\nNote",
+            "Answer.\nFirst\n2. Second\nNote",
         ),
         (
             "The result is **[here](https://example.com)**.",
@@ -444,7 +444,7 @@ def test_link_suppression_preserves_real_markdown_boundaries_at_all_splits(
 def test_streaming_common_markdown_formatting() -> None:
     assert (
         _stream(["# Head", "ing\n- **First** item\n2", ". `Second` item"])
-        == "Heading\nFirst item\nSecond item"
+        == "Heading\nFirst item\n2. Second item"
     )
 
 
@@ -751,8 +751,8 @@ def test_line_prefix_strips_supported_markers_and_rejects_near_misses() -> None:
     assert line_prefix("   ###   Heading", False) == ("strip", 9)
     assert line_prefix("\t>  Quote", False) == ("strip", 4)
     assert line_prefix("  -   Item", False) == ("strip", 6)
-    assert line_prefix("12)  Item", False) == ("none", 0)
-    assert line_prefix("12)  Item", False, preceding_list_item=True) == ("strip", 5)
+    assert line_prefix("12)  Item", False) == ("number", 5)
+    assert line_prefix("12)  Item", False, preceding_list_item=True) == ("number", 5)
     assert line_prefix("123x Item", False) == ("none", 0)
     assert line_prefix("####### Heading", False) == ("none", 0)
     assert line_prefix("-not-a-list", False) == ("none", 0)
