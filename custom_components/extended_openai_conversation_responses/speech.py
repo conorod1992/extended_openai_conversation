@@ -328,9 +328,16 @@ class StreamingSpeechSanitizer:
     def _emit(self, output: list[str], text: str) -> None:
         if self._pending_list_prefix:
             if "\n" in text and text.isspace():
+                prefix = self._pending_list_prefix
+                preserve_number = (
+                    not self._pending_list_link
+                    and self._held_prefix_has_numeric_payload(prefix + text)
+                )
                 self._pending_list_prefix = ""
                 self._needs_separator = False
                 self._pending_list_link = False
+                if preserve_number:
+                    self._emit_plain(output, prefix)
             elif text.isspace():
                 if not self._pending_list_link:
                     self._pending_list_prefix += text[
@@ -353,6 +360,27 @@ class StreamingSpeechSanitizer:
                 self._pending_list_link = False
                 self._emit_plain(output, prefix)
         self._emit_plain(output, text)
+
+    def _held_prefix_has_numeric_payload(self, text: str) -> bool:
+        """Distinguish ambiguous numbers from empty speculative list markers.
+
+        The held chain is bounded by _FORMAT_PREFIX_LIMIT. Include its newline
+        so the existing recognizer can classify a terminal numerical fragment.
+        Only a leading number can continue the preceding original list; numbers
+        after another block prefix are payload within that block.
+        """
+        offset = 0
+        while offset < len(text):
+            action, count = self._line_prefix(
+                text, True, offset, preceding_list_item=True
+            )
+            if action != "strip" or not count:
+                return False
+            fragment = text[offset : offset + count].lstrip(" \t")
+            if fragment[:1] in "0123456789" and fragment:
+                return offset > 0 or not self._original_previous_list
+            offset += count
+        return False
 
     def _emit_plain(self, output: list[str], text: str) -> None:
         if not text:
