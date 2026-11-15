@@ -5,7 +5,7 @@ from __future__ import annotations
 from functools import partial
 from inspect import isawaitable
 import logging
-from typing import Any, cast
+from typing import Annotated, Any, cast, get_args, get_origin
 from urllib.parse import urlsplit
 
 from openai import AsyncAzureOpenAI, AsyncClient, AsyncOpenAI
@@ -170,12 +170,33 @@ def _convert_to_template(
             _convert_to_template(setting, template_keys, hass, parents)
 
 
+def _warm_response_stream_adapter() -> None:
+    """Best-effort compatibility shim for the SDK's cached union validator."""
+    try:
+        from openai._models import TypeAdapter
+        from openai.types.responses import ResponseStreamEvent
+
+        # SDK 2.21/2.45/3.10/3.26 construct_type strips Annotated before
+        # validate_type uses this cached factory. A public Pydantic TypeAdapter
+        # would not populate that cache. Skip unfamiliar/uncached SDK versions.
+        if get_origin(ResponseStreamEvent) is not Annotated or not callable(
+            getattr(TypeAdapter, "cache_info", None)
+        ):
+            return
+        TypeAdapter(get_args(ResponseStreamEvent)[0])
+    except Exception:
+        # Private imports, type shapes and adapter construction may change.
+        # Only this optional optimization may fail without affecting setup.
+        pass
+
+
 def _prepare_openai_client(client: AsyncClient) -> None:
     """Resolve synchronous SDK metadata/resources before loop-side wrappers."""
     client.platform_headers()
     # These cached resources are also accessed by the debug/performance proxies.
     # Access only: no requests, transports or additional clients are created.
     _ = client.responses, client.chat.completions, client.embeddings, client.models
+    _warm_response_stream_adapter()
 
 
 async def get_authenticated_client(
