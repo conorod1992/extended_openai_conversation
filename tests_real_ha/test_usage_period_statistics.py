@@ -13,6 +13,9 @@ from pytest_homeassistant_custom_component.components.recorder.common import (
     statistics_during_period,
 )
 
+from custom_components.extended_openai_conversation_responses.agent_config import (
+    normalize_agent_config,
+)
 from custom_components.extended_openai_conversation_responses.sensor import UsageSensor
 from custom_components.extended_openai_conversation_responses.usage import (
     RequestUsage,
@@ -22,7 +25,23 @@ from homeassistant.components.sensor import SensorStateClass
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 from tests_real_ha.test_acceptance_lifecycle import _registry_entries
-from tests_real_ha.test_entry_point_contract_matrix import _contract_agent
+from tests_real_ha.test_cross_feature_acceptance import _agent
+
+
+async def _sensor_agent(hass, **options):
+    """Keep native lifecycle coverage independent of newer schema-only tests."""
+    return await _agent(
+        hass,
+        **normalize_agent_config(
+            {
+                "chat_model": "gpt-5.6",
+                "api_mode": "chat_completions",
+                "reasoning_effort": "none",
+                "functions": [],
+                **options,
+            }
+        ),
+    )
 
 
 async def _enabled_usage_entities(hass, agent):
@@ -64,7 +83,7 @@ async def test_guest_sensor_follows_scheduled_boundaries_and_unload_without_poll
 
     base = dt_util.parse_datetime("2026-11-16T12:00:00+00:00")
     freezer.move_to(base)
-    agent = await _contract_agent(hass, memory_mode="off")
+    agent = await _sensor_agent(hass, memory_mode="off")
     entry = agent.entry
     key = entry.entry_id, agent.subentry.subentry_id
     old = agent._guest_mode
@@ -153,7 +172,7 @@ async def test_usage_counter_and_restored_aggregates_publish_without_polling(
     hass, freezer
 ):
     freezer.move_to("2026-11-16T12:00:00+00:00")
-    agent = await _contract_agent(hass, memory_mode="off")
+    agent = await _sensor_agent(hass, memory_mode="off")
     entities = await _enabled_usage_entities(hass, agent)
     usage = entities["usage"]._usage
     await usage.async_record_conversation()
@@ -200,7 +219,7 @@ async def test_usage_sensors_rebind_from_volatile_to_durable_without_polling(has
         _VolatileUsageStorage,
     )
 
-    agent = await _contract_agent(hass, memory_mode="off")
+    agent = await _sensor_agent(hass, memory_mode="off")
     entities = await _enabled_usage_entities(hass, agent)
     durable = entities["usage"]._usage
     volatile = UsageManager(
@@ -248,7 +267,7 @@ async def test_last_response_poll_hides_expired_detail_without_new_usage(hass, f
 
     base = dt_util.parse_datetime("2026-11-16T12:00:00+00:00")
     freezer.move_to(base)
-    agent = await _contract_agent(hass, memory_mode="off", usage_run_retention_days=7)
+    agent = await _sensor_agent(hass, memory_mode="off", usage_run_retention_days=7)
     entities = await _enabled_usage_entities(hass, agent)
     usage = entities["usage"]._usage
     assert usage.run_retention_days == 7
@@ -293,7 +312,7 @@ async def test_cumulative_restore_corrects_recorder_sum_without_new_meter_cycle(
     await hass.config.async_set_time_zone("UTC")
     start = dt_util.parse_datetime("2026-11-06T12:00:00+00:00")
     freezer.move_to(start)
-    agent = await _contract_agent(hass, memory_mode="off")
+    agent = await _sensor_agent(hass, memory_mode="off")
     entry, subentry = agent.entry, agent.subentry
     entity_id = next(
         row.entity_id
@@ -396,7 +415,7 @@ async def test_period_rollover_keeps_recorder_sum_and_allows_corrections(
     boundary = dt_util.parse_datetime(boundary)
     start = boundary - timedelta(minutes=20)
     freezer.move_to(start)
-    agent = await _contract_agent(hass, memory_mode="off")
+    agent = await _sensor_agent(hass, memory_mode="off")
     entry = agent.entry
     subentry = agent.subentry
     row = next(
@@ -489,7 +508,7 @@ async def test_guest_sensor_recovers_boundary_timer_after_uncertain_save(
 
     base = dt_util.parse_datetime("2026-11-16T12:00:00+00:00")
     freezer.move_to(base)
-    agent = await _contract_agent(hass, memory_mode="off")
+    agent = await _sensor_agent(hass, memory_mode="off")
     manager = agent._guest_mode
     entity_id = next(
         row.entity_id
