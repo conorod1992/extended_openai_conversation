@@ -437,11 +437,15 @@ class NativeFunction(Function):
         """Resolve indirect HA targets and enforce the exposed-entity boundary."""
         selection = {}
         for key in SERVICE_TARGET_KEYS:
-            values = prepare_service_target(service_data.get(key))
+            value = service_data.get(key)
+            values = prepare_service_target(value)
             if values is not None and any(not isinstance(item, str) for item in values):
                 raise HomeAssistantError(f"{key} must be a string or list of strings")
             if values:
-                selection[key] = values
+                # Normalization is only for presence/type checks. The unchanged
+                # prepared payload must itself resolve, as HA does not trim or
+                # split indirect IDs when dispatching an entity service.
+                selection[key] = value if isinstance(value, list) else [value]
         if not selection:
             raise HomeAssistantError(
                 "Native service execution requires a nonempty target"

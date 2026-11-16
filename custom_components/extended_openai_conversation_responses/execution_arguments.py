@@ -38,8 +38,8 @@ def prepare_service_arguments(arguments: Mapping[str, Any]) -> dict[str, Any]:
     if entity_id is not None:
         data["entity_id"] = entity_id
     # Indirect selectors and entity-ID lists retain their handler-visible shape.
-    # Presence/authorization can normalize a selection, but replay identity must
-    # reflect the payload actually dispatched to arbitrary HA handlers.
+    # Presence can ignore empty selectors, but resolution and replay identity
+    # must reflect the payload actually dispatched to arbitrary HA handlers.
     result.pop("data", None)
     result.pop("entity_id", None)
     result["service_data"] = data

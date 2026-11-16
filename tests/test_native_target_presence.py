@@ -28,6 +28,35 @@ from tests.test_delayed_tools import (
 )
 
 
+@pytest.mark.parametrize("key", ["area_id", "device_id", "floor_id", "label_id"])
+@pytest.mark.parametrize(
+    "selector", [" kitchen ", [" kitchen "], "kitchen,hall", ["kitchen,hall"]]
+)
+def test_validation_resolves_the_raw_prepared_selector(
+    hass, monkeypatch, key, selector
+):
+    """A normalized interpretation cannot approve an unresolved raw payload."""
+    attribute = {
+        "area_id": "area_ids",
+        "device_id": "device_ids",
+        "floor_id": "floor_ids",
+        "label_id": "label_ids",
+    }[key]
+
+    def extract(_hass, selection):
+        selected = getattr(selection, attribute)
+        assert selected == set(selector if isinstance(selector, list) else [selector])
+        return SimpleNamespace(referenced=set(), indirectly_referenced=set())
+
+    monkeypatch.setattr(
+        ha_actions.target_helpers, "async_extract_referenced_entity_ids", extract
+    )
+    with pytest.raises(HomeAssistantError, match="does not resolve"):
+        NativeFunction().validate_service_targets(
+            hass, {key: selector}, [{"entity_id": "light.kitchen"}]
+        )
+
+
 @pytest.mark.parametrize("key", SERVICE_TARGET_KEYS)
 @pytest.mark.parametrize("empty", [None, [], "", " , ", ["", " , "]])
 @pytest.mark.parametrize("batch", [False, True])
