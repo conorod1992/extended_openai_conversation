@@ -3294,7 +3294,15 @@
     "tests_real_ha/test_config_flow.py::test_provider_retry_suggests_original_display_values_without_persisting_failures[openai-openai_advanced-submitted3-corrected3]",
     "tests_real_ha/test_config_flow.py::test_provider_retry_suggests_original_display_values_without_persisting_failures[openai-openai_advanced-submitted4-corrected4]",
     "tests_real_ha/test_config_flow.py::test_provider_retry_suggests_original_display_values_without_persisting_failures[openai-openai_advanced-submitted5-corrected5]",
-    "tests_real_ha/test_config_flow.py::test_provider_retry_suggests_original_display_values_without_persisting_failures[openai-openai_credentials-submitted1-corrected1]"
+    "tests_real_ha/test_config_flow.py::test_provider_retry_suggests_original_display_values_without_persisting_failures[openai-openai_credentials-submitted1-corrected1]",
+    "tests_real_ha/test_usage_period_statistics.py::test_guest_sensor_follows_scheduled_boundaries_and_unload_without_polling[active]",
+    "tests_real_ha/test_usage_period_statistics.py::test_guest_sensor_follows_scheduled_boundaries_and_unload_without_polling[expired]",
+    "tests_real_ha/test_usage_period_statistics.py::test_guest_sensor_follows_scheduled_boundaries_and_unload_without_polling[future]",
+    "tests_real_ha/test_usage_period_statistics.py::test_guest_sensor_follows_scheduled_boundaries_and_unload_without_polling[indefinite]",
+    "tests_real_ha/test_usage_period_statistics.py::test_guest_sensor_recovers_boundary_timer_after_uncertain_save",
+    "tests_real_ha/test_usage_period_statistics.py::test_last_response_poll_hides_expired_detail_without_new_usage",
+    "tests_real_ha/test_usage_period_statistics.py::test_usage_counter_and_restored_aggregates_publish_without_polling",
+    "tests_real_ha/test_usage_period_statistics.py::test_usage_sensors_rebind_from_volatile_to_durable_without_polling"
   ],
   "browser": {
     "browser": [
