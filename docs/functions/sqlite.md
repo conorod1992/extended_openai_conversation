@@ -23,7 +23,7 @@ function:
 ```
 
 - `query` is a Jinja template. When omitted, the implementation can use the model argument named `query`; unrestricted generated SQL should be used only when that data-access trade-off is acceptable.
-- `db_url` optionally chooses a SQLite filesystem path or `file:` URI; it is opened read-only. This Function Tool does not query a MariaDB or PostgreSQL Recorder database.
+- `db_url` optionally chooses a SQLite filesystem path or `file:` URI; it is opened read-only. When omitted, the tool uses the running Recorder's configured SQLite file, including a custom location, resolved with SQLAlchemy's path and URI semantics. Relative Recorder paths follow Recorder's working directory. It never falls back to a legacy `home-assistant_v2.db` file if Recorder is unavailable, uses another backend, or has an unsupported/in-memory URL. An explicit override is independent of Recorder and must be a valid path or `file:` URI (not a `sqlite:///` SQLAlchemy URL). Invalid overrides fail without falling back. This Function Tool does not query MariaDB or PostgreSQL.
 - `single` requests a single-result form.
 - `parameters` maps SQLite named placeholders to Jinja templates. Scalar values are bound separately from SQL. Bind caller-provided values rather than interpolating them into the query. SQL keywords and operators cannot be bound: choose them from an explicit whitelist.
 - `string_parameters` optionally lists parameter names whose rendered values must remain strings, including boundary spaces, tabs, and newlines authored in the parameter template. Home Assistant otherwise parses strings such as `None`, `True`, and `[1]` as native values. Unknown names are rejected before SQL execution; other parameters retain native scalar parsing.
