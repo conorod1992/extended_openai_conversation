@@ -20,11 +20,15 @@ Numbered list items keep their numbers for TTS: `2) Check the switch` becomes `2
 
 Inline code preserves literal operators and URLs while its backtick delimiters are removed, including when enclosed in emphasis. Final whitespace cleanup preserves parentheses such as `call()`. Configured replacement rules can deliberately change this content.
 
-Backtick block fences at the start of an original source line (with up to three
-spaces of indentation) also omit their opening info string, such as `yaml`.
-Code-body content remains protected. Recognition waits only for a bounded opener
-line; unfinished or oversized candidates keep their literal info text. Markdown
-tables currently retain their pipe and delimiter syntax.
+Backtick block fences omit their opening info string, such as `yaml`, at the
+start of an original source line (with up to three spaces), after list markers,
+under list continuation indentation, and inside blockquotes. Quoted code loses
+only the recognized outer quote prefix; operators such as `>` and `>>`, numeric
+lines, URLs and Markdown-looking code remain protected. Indented text outside
+lists does not gain fence recognition from formatting or URL removal.
+Recognition waits only for a bounded opener line; unfinished or oversized
+candidates keep their literal info text. Markdown tables currently retain their
+pipe and delimiter syntax.
 
 Home Assistant currently uses the same progressive stream for live visual updates and TTS. This means the live on-screen stream also receives the speech-safe text, while the original model response is still retained for history and future conversation context.
 

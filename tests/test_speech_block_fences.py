@@ -76,3 +76,49 @@ def test_replacements_run_after_fence_info_cleanup():
     }
     assert process_speech_text(original, config) == "setting: 1"
     assert original.startswith("```yaml")
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        ("- ```python\n  print('hello')\n  ```", "print('hello')"),
+        ("1. Example:\n   ```yaml\n   value: 1\n   ```", "1. Example:\n value: 1"),
+        ("> ```python\n> print('hello')\n> ```", "print('hello')"),
+        ("> ```text\n>code\n> >> 2\n>```", "code\n>> 2"),
+        (
+            "- Example:\n\n    ```python title=demo\n    x = 1 > 0\n    y = 8 >> 2\n    ```",
+            "Example:\n x = 1 > 0\n y = 8 >> 2",
+        ),
+        (
+            "> > ```text\n> > > operator\n> > >> shift\n> > https://example.com\n> > 123\n> > - **literal**\n> > ```",
+            "> operator\n>> shift\nhttps://example.com\n123\n- **literal**",
+        ),
+        (
+            "> - ```python\n>   `inline` and \\literal\n>   ```",
+            "`inline` and \\literal",
+        ),
+        ("Literal:\n    ```yaml\n    value: 1\n    ```", "Literal:\n yaml\n value: 1"),
+        ("https://example.com > ```yaml\nbody\n```", "yaml\nbody"),
+        ("- https://example.com ```yaml\nbody\n```", "yaml\nbody"),
+        (r"- \```yaml" + "\nbody\n", r"\`yaml" + "\nbody"),
+        (
+            "- Example:\n    ```text\n    # heading\n    1. numbered\n    > quote\n    ---\n    https://example.com\n    ```\nAfter",
+            "Example:\n # heading\n 1. numbered\n > quote\n ---\n https://example.com\nAfter",
+        ),
+    ],
+)
+def test_container_fences_use_original_structure_at_every_split(source, expected):
+    all_splits(source, expected)
+
+
+def test_container_fences_disabled_and_bounded_fallback():
+    source = "> ```python\n> 1 > 0\n> ```"
+    all_splits(source, source, markdown=False, urls=False)
+    source = "> ```" + "x" * 200 + "\n> code\n> ```"
+    expected = clean(Sanitizer(max_buffer_chars=64).process_complete(source))
+    assert "x" * 200 in expected
+    assert streamed(source, 1, max_buffer_chars=64) == expected
+    z = Sanitizer(max_buffer_chars=64)
+    for char in source:
+        z.feed(char)
+        assert z.buffered_chars <= 128

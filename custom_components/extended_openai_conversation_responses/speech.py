@@ -88,6 +88,9 @@ _ADDRESS_LINK_LABEL = re.compile(
 DEFAULT_STREAMING_BUFFER_LIMIT = 4096
 COMPLETED_SPEECH_EXECUTOR_THRESHOLD = 4096
 _FORMAT_PREFIX_LIMIT = 32
+_QUOTE_MARKER = re.compile(r" {0,3}>[ \t]?")
+_QUOTE_PREFIX = re.compile(r"^(?: {0,3}>[ \t]?)+")
+_LIST_PREFIX = re.compile(r"[ ]{0,3}(?:[-+*]|[0-9]{1,9}[.)])[ \t]+")
 
 
 class _InlineScope:
@@ -266,6 +269,8 @@ class StreamingSpeechSanitizer:
         self._original_previous_list = False
         self._original_prefix_complete = False
         self._original_replayed_chars = 0
+        self._original_list_indent: int | None = None
+        self._block_quote_prefix = ""
         self._inline_scope = _InlineScope(markdown)
         self._link_line_start = True
         self._pending_list_prefix = ""
@@ -687,6 +692,19 @@ class StreamingSpeechSanitizer:
         for char in text:
             if char == "\n":
                 self._link_line_start = True
+                if not self._link_code:
+                    # Only authored list structure permits continuation fences
+                    # deeper than three spaces. Code-looking lines inside a
+                    # block must never establish new list context.
+                    body = _QUOTE_PREFIX.sub("", self._original_line_prefix, count=1)
+                    if marker := _LIST_PREFIX.match(body):
+                        self._original_list_indent = marker.end()
+                    elif body.strip() and (
+                        self._original_list_indent is None
+                        or len(body) - len(body.lstrip(" "))
+                        < self._original_list_indent
+                    ):
+                        self._original_list_indent = None
                 prefix = self._original_line_prefix.lstrip(" \t")
                 action, _ = self._line_prefix(
                     prefix, True, preceding_list_item=self._original_previous_list
@@ -706,6 +724,49 @@ class StreamingSpeechSanitizer:
                 self._original_line_prefix += char
                 if len(self._original_line_prefix) >= _FORMAT_PREFIX_LIMIT:
                     self._original_prefix_complete = True
+
+    def _fence_container(self) -> tuple[bool, str, int | None]:
+        """Recognize bounded original quote/list prefixes before a backtick run."""
+        if self._original_prefix_complete:
+            return False, "", None
+        prefix = self._original_line_prefix
+        quote = _QUOTE_PREFIX.match(prefix)
+        quote_prefix = quote.group() if quote else ""
+        body = prefix[len(quote_prefix) :]
+        indent = self._original_list_indent
+        # A fence can be the first content in a list item, including a nested
+        # item. Consume markers only here, never in the fenced code body.
+        consumed = 0
+        while marker := _LIST_PREFIX.match(body):
+            consumed += marker.end()
+            body = body[marker.end() :]
+            indent = consumed
+        if body.strip(" "):
+            return False, "", None
+        spaces = len(body)
+        allowed = spaces <= 3 or (indent is not None and indent <= spaces <= indent + 3)
+        return allowed, quote_prefix, indent
+
+    def _quoted_code_prefix(self, text: str, index: int, final: bool) -> int | None:
+        """Match only the opener's quote depth, retaining any code > operators.
+
+        Quote spacing may vary between lines. None means a bounded prefix is
+        split across chunks, zero means this line has no matching outer prefix.
+        """
+        start = index
+        for _ in range(self._block_quote_prefix.count(">")):
+            remaining = text[index : index + 4]
+            if not final and (
+                not remaining or (len(remaining) <= 3 and not remaining.strip(" "))
+            ):
+                return None
+            marker = _QUOTE_MARKER.match(text, index)
+            if marker is None:
+                return 0
+            index = marker.end()
+            if index == len(text) and not final:
+                return None
+        return index - start
 
     def _wrapped_bare_url(self, text: str, index: int, final: bool) -> tuple[str, int]:
         """Remove wrappers only with an adjacent URL and a matching terminal pair."""
@@ -836,6 +897,19 @@ class StreamingSpeechSanitizer:
             tracked = max(tracked, index)
             char = text[index]
             if (
+                self._link_code
+                and self._block_quote_prefix
+                and not self._original_line_prefix
+            ):
+                # Remove exactly the opener's outer quote prefix. A following
+                # > or >> belongs to the code, not to generic Markdown cleanup.
+                prefix_length = self._quoted_code_prefix(text, index, final)
+                if prefix_length is None:
+                    break
+                if prefix_length:
+                    index += prefix_length
+                    continue
+            if (
                 self.markdown
                 and char == "`"
                 and (
@@ -852,18 +926,15 @@ class StreamingSpeechSanitizer:
                 # Inspect the original source before link removal/formatting can
                 # manufacture a line-start fence. Only a bounded genuine block
                 # opener may lose its info string; inline backticks stay literal.
-                if (
-                    not self._link_code
-                    and count >= 3
-                    and not self._original_prefix_complete
-                    and len(self._original_line_prefix) <= 3
-                    and not self._original_line_prefix.strip(" ")
-                ):
+                container, quote_prefix, list_indent = self._fence_container()
+                if not self._link_code and count >= 3 and container:
                     newline = text.find("\n", end, index + self.max_buffer_chars + 1)
                     info_end = newline if newline >= 0 else len(text)
                     if "`" not in text[end:info_end]:
                         if newline >= 0:
                             self._link_code = count
+                            self._block_quote_prefix = quote_prefix
+                            self._original_list_indent = list_indent
                             self._emit(output, text[index:end])
                             index = newline
                             continue
@@ -873,6 +944,7 @@ class StreamingSpeechSanitizer:
                     self._link_code = count
                 elif count == self._link_code:
                     self._link_code = 0
+                    self._block_quote_prefix = ""
                 self._emit(output, text[index:end])
                 index = end
                 continue
