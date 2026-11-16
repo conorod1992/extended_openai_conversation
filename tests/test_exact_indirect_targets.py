@@ -25,13 +25,14 @@ BAD = (
     "kitchen,hall",
     " kitchen",
     "kitchen ",
-    "",
-    " \t",
+    False,
+    0,
     ["kitchen", "hall,room"],
     ["kitchen", " "],
     [" kitchen"],
     [None],
 )
+EMPTY = (None, [], "", " \t", " , ", ["", " , "])
 
 
 @pytest.mark.parametrize("key", KEYS)
@@ -62,7 +63,7 @@ async def test_malformed_indirect_cannot_hide_beside_explicit_entity(
 
 
 @pytest.mark.parametrize("key", KEYS)
-@pytest.mark.parametrize("override", [None, [], "hall", ["hall", "hall", "kitchen"]])
+@pytest.mark.parametrize("override", [*EMPTY, "hall", ["hall", "hall", "kitchen"]])
 async def test_effective_target_overrides_data_even_when_empty(
     hass, monkeypatch, key, override
 ):
@@ -83,6 +84,45 @@ async def test_effective_target_overrides_data_even_when_empty(
     assert kwargs["target"] == target
     with pytest.raises(HomeAssistantError):
         validate_indirect_targets({key: "hall"}, {key: "bad, target"})
+
+
+@pytest.mark.parametrize("key", KEYS)
+@pytest.mark.parametrize("empty", EMPTY)
+@pytest.mark.parametrize("entrypoint", ["native", "action", "script"])
+async def test_empty_alternative_preserves_valid_entity_and_raw_payload(
+    hass, key, empty, entrypoint
+):
+    data = {"entity_id": ["light.kitchen"], key: empty}
+    original = deepcopy(data)
+    if entrypoint == "native":
+        result = await NativeFunction().execute_service_single(
+            hass,
+            {},
+            {"domain": "test", "service": "record", "service_data": data},
+            None,
+            [{"entity_id": "light.kitchen"}],
+        )
+        assert result["success"]
+    elif entrypoint == "script":
+        await _AuthorizedScriptServices(hass, None, []).async_call(
+            "test", "record", service_data=data
+        )
+    else:
+        await ha_actions.async_call_ha_action(hass, "test", "record", data=data)
+    assert data == original
+    hass.services.async_call.assert_awaited_once()
+    assert hass.services.async_call.call_args.kwargs["service_data"] == original
+
+
+@pytest.mark.parametrize("key", KEYS)
+@pytest.mark.parametrize("empty", EMPTY)
+async def test_empty_alternative_does_not_add_presence_requirement_to_trusted_action(
+    hass, key, empty
+):
+    data = {key: empty}
+    await ha_actions.async_call_ha_action(hass, "test", "record", data=data)
+    hass.services.async_call.assert_awaited_once()
+    assert hass.services.async_call.call_args.kwargs["service_data"] == data
 
 
 @pytest.mark.parametrize("key", KEYS)
