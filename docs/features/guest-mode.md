@@ -98,6 +98,16 @@ Each conversation agent has a `Guest Mode` sensor with `inactive`, `scheduled`,
 `active`, and `active_indefinitely` states. Attributes include `active_from`,
 `active_until`, `indefinite`, `currently_active`, and `scheduled`.
 
+The sensor does not poll. Schedule changes and storage recovery publish updates,
+and one manager-owned Home Assistant timer follows the next scheduled start or
+expiry while listeners are subscribed. Starts are inclusive and ends exclusive;
+offsets are converted to UTC for the timer. Replacing or disabling a schedule,
+losing authoritative storage state, or removing the last listener cancels its
+obsolete timer. After recovery, the next future boundary is recalculated from
+the authoritative schedule. Uncertain persistence makes the sensor unavailable.
+Guest Mode enforcement continues to evaluate the schedule live on every request;
+it does not depend on the sensor or its timer.
+
 ## Current limitations
 
 Native `add_automation`, `get_energy`, and `get_user_from_user_id` are unavailable

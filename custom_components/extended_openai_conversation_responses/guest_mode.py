@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, fields, replace
+from datetime import datetime
 import logging
 from typing import Any, cast
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import (
     area_registry as ar,
@@ -16,6 +17,7 @@ from homeassistant.helpers import (
     entity_registry as er,
     target as target_helpers,
 )
+from homeassistant.helpers.event import async_track_point_in_utc_time
 from homeassistant.util import dt as dt_util
 
 from .agent_config import CONF_GUEST_WEB_SEARCH, DEFAULT_GUEST_WEB_SEARCH
@@ -226,6 +228,8 @@ class GuestModeManager:
         ).bind_agent(entry_id, subentry_id)
         self._schedule: GuestModeSchedule | None = None
         self._listeners: set[Callable[[], None]] = set()
+        self._cancel_transition: Callable[[], None] | None = None
+        self._transition_token: object | None = None
         self._mutation_lock = asyncio.Lock()
         self._initialized = False
         self._persistence_unavailable = False
@@ -246,19 +250,21 @@ class GuestModeManager:
                 data = await self._store.async_load()
             except Exception:
                 self._persistence_unavailable = True
+                self._cancel_transition_timer()
                 raise
             recovering = self._persistence_unavailable
             try:
                 schedule = self._decode_stored_schedule(data)
             except TypeError, ValueError:
                 self._persistence_unavailable = True
+                self._cancel_transition_timer()
                 from .persistence_hardening import StorageRepairRequired
 
                 raise StorageRepairRequired("Guest Mode") from None
             self._schedule = schedule
             self._persistence_unavailable = False
             self._initialized = True
-            if recovering:
+            if recovering or self._listeners:
                 self._notify()
 
     def _decode_stored_schedule(self, data: Any) -> GuestModeSchedule | None:
@@ -513,12 +519,65 @@ class GuestModeManager:
             await self._async_commit_schedule(schedule)
 
     def async_add_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
+        """Observe schedule changes and own one shared boundary timer while needed."""
+        first_listener = not self._listeners
         self._listeners.add(listener)
+        if first_listener:
+            self._reschedule_transition()
 
         def remove() -> None:
             self._listeners.discard(listener)
+            if not self._listeners:
+                self._cancel_transition_timer()
 
         return remove
+
+    @callback
+    def _cancel_transition_timer(self) -> None:
+        """Retire queued callbacks as well as the registered HA timer."""
+        self._transition_token = None
+        cancel, self._cancel_transition = self._cancel_transition, None
+        if cancel is not None:
+            cancel()
+
+    @callback
+    def _reschedule_transition(self) -> None:
+        """Track only the next future boundary of the authoritative schedule."""
+        self._cancel_transition_timer()
+        if not self._listeners or not self.authoritative_available:
+            return
+        schedule = self._schedule
+        if schedule is None:
+            return
+        now = dt_util.utcnow()
+        boundaries = [_parse_timestamp(self.hass, schedule.active_from, "active_from")]
+        if schedule.active_until is not None:
+            boundaries.append(
+                _parse_timestamp(self.hass, schedule.active_until, "active_until")
+            )
+        future = [boundary for boundary in boundaries if now < boundary]
+        if not future:
+            return
+        next_boundary = min(future)
+        token = self._transition_token = object()
+
+        @callback
+        def transition(_now: datetime) -> None:
+            if self._transition_token is not token:
+                return
+            self._transition_token = None
+            self._cancel_transition = None
+            if not self._listeners or not self.authoritative_available:
+                return
+            if dt_util.utcnow() < next_boundary:
+                # A clock adjustment must not announce a transition early.
+                self._reschedule_transition()
+                return
+            self._notify()
+
+        self._cancel_transition = async_track_point_in_utc_time(
+            self.hass, transition, next_boundary
+        )
 
     @staticmethod
     def _schedule_value(start: Any, end: Any | None, source: str) -> GuestModeSchedule:
@@ -566,7 +625,7 @@ class GuestModeManager:
         finally:
             # A failed write followed by a failed authoritative readback can
             # leave the old in-memory schedule unchanged but untrustworthy.
-            # Notify once on that availability edge so HA stops polling status().
+            # Notify once on that availability edge and retire obsolete timers.
             if (
                 committed
                 or self._schedule != previous
@@ -586,6 +645,7 @@ class GuestModeManager:
         return schedule if now < end else None
 
     def _notify(self) -> None:
+        self._reschedule_transition()
         for listener in tuple(self._listeners):
             try:
                 listener()

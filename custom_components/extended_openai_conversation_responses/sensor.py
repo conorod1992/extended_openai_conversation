@@ -98,6 +98,7 @@ class GuestModeSensor(SensorEntity):
     _attr_has_entity_name = True
     _attr_translation_key = "guest_mode"
     _attr_icon = "mdi:account-lock"
+    _attr_should_poll = False
 
     def __init__(self, subentry: ConfigSubentry, guest_mode: GuestModeManager) -> None:
         self._guest_mode = guest_mode
