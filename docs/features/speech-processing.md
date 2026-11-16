@@ -20,6 +20,17 @@ Numbered list items keep their numbers for TTS: `2) Check the switch` becomes `2
 
 Inline code preserves literal operators and URLs while its backtick delimiters are removed, including when enclosed in emphasis. Final whitespace cleanup preserves parentheses such as `call()`. Configured replacement rules can deliberately change this content.
 
+With Markdown cleanup enabled, backslashes escaping ASCII punctuation are removed
+outside recognized code. The punctuation stays literal: `\*word\*` is spoken as
+`*word*`, without treating those stars as emphasis. Other backslashes and a final
+unpaired backslash remain. Streaming waits for the character after a trailing
+backslash before deciding how to speak it.
+
+Short, contiguous `=` Setext underlines after plain top-level heading text are
+removed. Standalone equals runs, spaced `= = =`, operators, escapes, and code stay
+literal. Recognition is deliberately bounded to 32 characters per underline and
+does not cover headings in list/quote containers or after complex inline syntax.
+
 Backtick block fences omit their opening info string, such as `yaml`, at the
 start of an original source line (with up to three spaces), after list markers,
 under list continuation indentation, and inside blockquotes. Quoted code loses

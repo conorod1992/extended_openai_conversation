@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from functools import partial
 import logging
 import re
+from string import punctuation
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -953,6 +954,25 @@ class StreamingSpeechSanitizer:
                 index += 1
                 continue
 
+            # Recognize only bounded, top-level Setext underlines using authored
+            # line context, before link removal can manufacture a heading.
+            if self.markdown and not self._original_line_prefix:
+                previous = self._original_previous_prefix
+                title = previous.lstrip(" ")
+                if (
+                    title[:1].isalnum()
+                    and len(previous) - len(title) <= 3
+                    and not self._original_previous_list
+                    and not any(marker in previous for marker in "\\`")
+                    and self._line_prefix(previous, True)[0] == "none"
+                ):
+                    action, count = self._setext_equals_line(text, final, index)
+                    if action == "incomplete":
+                        break
+                    if action == "strip":
+                        index += count
+                        continue
+
             if self.markdown and (
                 self._link_line_start
                 or (self._pending_list_prefix and not self._pending_list_link)
@@ -1208,11 +1228,17 @@ class StreamingSpeechSanitizer:
         if not final and len(self._buffer) > self.max_buffer_chars:
             # A malformed construct or exceptionally long URL must not stall TTS.
             overflow = self._buffer
-            self._buffer = ""
+            trailing = len(overflow) - len(overflow.rstrip("\\"))
+            # Even the literal overflow path must keep an unresolved escape
+            # together with the next original source character.
+            self._buffer = "\\" if trailing % 2 else ""
+            if self._buffer:
+                overflow = overflow[:-1]
             self._original_replayed_chars = 0
             self._emit(output, overflow)
             self._track_original_lines(overflow)
             self._link_previous = overflow[-1]
+            self._link_backslashes = len(overflow) - len(overflow.rstrip("\\"))
             _LOGGER.debug(
                 "Streaming speech sanitizer released malformed text at %d-char limit",
                 self.max_buffer_chars,
@@ -1562,6 +1588,17 @@ class StreamingSpeechSanitizer:
 
         while index < len(self._format_buffer):
             char = self._format_buffer[index]
+            if char == "\\" and not self._format_code:
+                following = self._format_buffer[index + 1 : index + 2]
+                if not following and not final:
+                    break
+                if following and following in punctuation:
+                    # Consume the original pair atomically. Its literal output
+                    # must never be interpreted as a new Markdown delimiter.
+                    output.append(following)
+                    index += 2
+                    self._line_start = False
+                    continue
             if (
                 not self._format_code
                 and char in "`*_~"
@@ -1891,21 +1928,40 @@ class StreamingSpeechSanitizer:
             self.max_buffer_chars if unresolved_emphasis else _FORMAT_PREFIX_LIMIT
         )
         if not final and len(self._format_buffer) > buffer_limit:
-            output.append(self._format_buffer)
-            self._format_previous = self._format_buffer[-1]
             overflow = self._format_buffer
+            trailing = len(overflow) - len(overflow.rstrip("\\"))
+            self._format_buffer = "\\" if trailing % 2 else ""
+            if self._format_buffer:
+                overflow = overflow[:-1]
+            output.append(overflow)
+            self._format_previous = overflow[-1]
             trailing = len(overflow) - len(overflow.rstrip("\\"))
             self._format_backslashes = (
                 self._format_backslashes + trailing
                 if trailing == len(overflow)
                 else trailing
             )
-            self._format_buffer = ""
             self._line_start = False
         elif final and self._format_buffer:
             output.append(self._format_buffer.replace("`", ""))
             self._format_buffer = ""
         return "".join(output)
+
+    @staticmethod
+    def _setext_equals_line(text: str, final: bool, start: int) -> tuple[str, int]:
+        """Recognize a short contiguous equals underline, never a spaced rule."""
+        end = text.find("\n", start, start + _FORMAT_PREFIX_LIMIT + 1)
+        tail = text[start : end if end >= 0 else start + _FORMAT_PREFIX_LIMIT + 1]
+        if end < 0 and not final and re.fullmatch(r" {0,3}", tail):
+            return "incomplete", 0
+        if (
+            len(tail) > _FORMAT_PREFIX_LIMIT
+            or re.fullmatch(r" {0,3}=+[ \t]*\r?", tail) is None
+        ):
+            return "none", 0
+        if end < 0 and not final:
+            return "incomplete", 0
+        return "strip", len(tail)
 
     @staticmethod
     def _horizontal_rule_line(

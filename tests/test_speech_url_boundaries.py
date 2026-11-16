@@ -72,7 +72,7 @@ def assert_all_splits(source, expected):
         ("Before https://example.com/path** after", "Before after"),
         ("Before https://example.com/path_ after", "Before after"),
         ('Before https://example.com/path" after', "Before after"),
-        (r"Before \*https://example.com* after", r"Before \* after"),
+        (r"Before \*https://example.com* after", "Before * after"),
         (
             "Before `**https://example.com**` after",
             "Before **https://example.com** after",

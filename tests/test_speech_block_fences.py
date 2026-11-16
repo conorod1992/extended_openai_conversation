@@ -26,7 +26,7 @@ from tests.test_speech_scope_regressions import all_splits, streamed
         ("Inline ```yaml``` text", "Inline yaml text"),
         ("```yaml```", "yaml"),
         ("`yaml`", "yaml"),
-        (r"\```yaml", r"\`yaml"),
+        (r"\```yaml", "`yaml"),
         ("```yam`l\nbody\n```", "yam`l\nbody"),
         ("```yaml", "yaml"),
         ("```yaml\n`inline` and \\literal\n```", "`inline` and \\literal"),
@@ -100,7 +100,7 @@ def test_replacements_run_after_fence_info_cleanup():
         ("Literal:\n    ```yaml\n    value: 1\n    ```", "Literal:\n yaml\n value: 1"),
         ("https://example.com > ```yaml\nbody\n```", "yaml\nbody"),
         ("- https://example.com ```yaml\nbody\n```", "yaml\nbody"),
-        (r"- \```yaml" + "\nbody\n", r"\`yaml" + "\nbody"),
+        (r"- \```yaml" + "\nbody\n", "`yaml\nbody"),
         (
             "- Example:\n    ```text\n    # heading\n    1. numbered\n    > quote\n    ---\n    https://example.com\n    ```\nAfter",
             "Example:\n # heading\n 1. numbered\n > quote\n ---\n https://example.com\nAfter",

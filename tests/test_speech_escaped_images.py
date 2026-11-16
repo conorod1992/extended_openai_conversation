@@ -15,7 +15,8 @@ from tests.test_speech_scope_regressions import all_splits
 def test_image_backslash_parity_at_every_boundary(slashes, parenthesized):
     prefix = "\\" * slashes
     source = prefix + "![a photograph](https://example.com/image.png)"
-    expected = prefix + "!a photograph" if slashes % 2 else prefix
+    spoken_prefix = "\\" * (slashes // 2)
+    expected = spoken_prefix + "!a photograph" if slashes % 2 else spoken_prefix
     if parenthesized:
         source = "(" + source + ")"
         # The literal parentheses around an escaped introducer remain speech.
@@ -26,9 +27,9 @@ def test_image_backslash_parity_at_every_boundary(slashes, parenthesized):
 @pytest.mark.parametrize("source,expected", [
     ("![a photograph](https://example.com/image.png)", ""),
     ("[a photograph](https://example.com/image.png)", "a photograph"),
-    (r"\![a photograph](https://example.com/image.png)", r"\!a photograph"),
-    (r"\!\[a photograph]", r"\!\[a photograph]"),
-    (r"\![unfinished", r"\![unfinished"),
+    (r"\![a photograph](https://example.com/image.png)", "!a photograph"),
+    (r"\!\[a photograph]", "![a photograph]"),
+    (r"\![unfinished", "![unfinished"),
     (r"`\![photo](https://example.com/image.png)`", r"\![photo](https://example.com/image.png)"),
     (r"![photo\]](https://example.com/image.png)", ""),
 ])
@@ -40,7 +41,7 @@ def test_images_links_malformed_escapes_and_code(source, expected):
 @pytest.mark.parametrize("urls", [False, True])
 def test_independent_cleanup_settings(markdown, urls):
     source = r"\![a photograph](https://example.com/image.png)"
-    expected = r"\!a photograph" if markdown else (
+    expected = "!a photograph" if markdown else (
         r"\![a photograph]" if urls else source
     )
     all_splits(source, expected, markdown=markdown, urls=urls)
@@ -50,10 +51,10 @@ def test_long_completed_index_and_custom_replacement_order():
     prefix = "Plain words. " * 400
     source = prefix + r"\![a photograph](https://example.com/image.png)"
     sanitizer = StreamingSpeechSanitizer()
-    assert sanitizer.process_complete(source) == prefix + r"\!a photograph"
+    assert sanitizer.process_complete(source) == prefix + "!a photograph"
     assert sanitizer._completed_links is not None
     assert process_speech_text(source, _config(speech_regex_replacements=[
-        {"pattern": r"\\!a photograph", "replacement": "photo"},
+        {"pattern": r"!a photograph", "replacement": "photo"},
     ])) == prefix + "photo"
 
 
@@ -63,4 +64,4 @@ def test_all_speech_fixes_together():
         "[a.com](https://a.com) [b.com](https://b.com) ***now***. "
         r"\![a photograph](https://example.com/image.png)"
     )
-    all_splits(source, "Result\n5.\nDone\nThe switch is off now. " + r"\!a photograph")
+    all_splits(source, "Result\n5.\nDone\nThe switch is off now.!a photograph")

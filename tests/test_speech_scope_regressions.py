@@ -33,7 +33,7 @@ def all_splits(source, expected, **options):
     [
         ("sensor_https://example.com_", "sensor_"),
         ("word*https://example.com*", "word*"),
-        (r"\***-https://example.com**", r"\***-"),
+        (r"\***-https://example.com**", "***-"),
         (
             "Sources:\n- https://example.com/a\n\n1. First step",
             "Sources:\n1. First step",

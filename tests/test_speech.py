@@ -173,7 +173,7 @@ def test_common_markdown_is_simplified_conservatively() -> None:
             "sensor.kitchen_temperature and ordinary_under_scores",
         ),
         ("2 * 3 and _ unmatched *", "2 * 3 and _ unmatched *"),
-        (r"\*literal\* and \_literal\_", r"\*literal\* and \_literal\_"),
+        (r"\*literal\* and \_literal\_", "*literal* and _literal_"),
         ("*one* https://example.com/a_b _two_", "one two"),
     ],
 )
@@ -1014,13 +1014,13 @@ def test_removed_citations_keep_spoken_boundaries_and_formatting(
         ("A ***unfinished span", "A ***unfinished span"),
         ("A ~~unfinished span", "A ~~unfinished span"),
         ("**This is bold** and __this too__.", "This is bold and this too."),
-        (r"A \*literal\* and **bold**.", r"A \*literal\* and bold."),
-        (r"A \_literal\_ and __strong__.", r"A \_literal\_ and strong."),
+        (r"A \*literal\* and **bold**.", "A *literal* and bold."),
+        (r"A \_literal\_ and __strong__.", "A _literal_ and strong."),
         (
             r"A \` literal; **important**. See https://example.com now.",
-            r"A \` literal; important. See now.",
+            "A ` literal; important. See now.",
         ),
-        (r"Type \[name](target) literally.", r"Type \[name](target) literally."),
+        (r"Type \[name](target) literally.", "Type [name](target) literally."),
         (
             "0871234567. That is the contact number.",
             "0871234567. That is the contact number.",

@@ -46,7 +46,7 @@ from tests.test_speech_scope_regressions import all_splits
             "3.14 volts\n2026.11 release\n1998.\n5.0",
             "3.14 volts\n2026.11 release\n1998.\n5.0",
         ),
-        (r"2\) Keep\n2\. Keep", r"2\) Keep\n2\. Keep"),
+        (r"2\) Keep\n2\. Keep", r"2) Keep\n2. Keep"),
         ("`2) Code`", "2) Code"),
         ("```\n2) Code\n3.14\n```", "2) Code\n3.14"),
         ("1234567890) Very long number", "1234567890) Very long number"),

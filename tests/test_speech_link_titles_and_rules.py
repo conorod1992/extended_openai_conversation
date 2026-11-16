@@ -39,7 +39,7 @@ def _stream(text: str, split: int | None = None, *, markdown=True, urls=True) ->
         ("First\n - - - \nSecond", "First\nSecond"),
         ("---\n# Title\n___", "Title"),
         ("Leave --- inline and a_b__identifier unchanged.", "Leave --- inline and a_b__identifier unchanged."),
-        (r"\--- is literal.", r"\--- is literal."),
+        (r"\--- is literal.", "--- is literal."),
         ("---text is literal", "---text is literal"),
         ("**bold** and 2 ** 3", "bold and 2 ** 3"),
     ],

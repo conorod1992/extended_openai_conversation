@@ -34,15 +34,17 @@ _RAW_RESPONSE = (
 _SPOKEN_RESPONSE = "Hello see and docs done."
 
 
-@pytest.mark.parametrize("raw,expected", [
-    ("Result\n5.\nDone", "Result\n5.\nDone"),
-    ("> 5.\n", "5."),
-    ("The switch is ***off*** [a.com](https://a.com) [b.com](https://b.com) ***now***.", "The switch is off now."),
-    (r"\![a photograph](https://example.com/image.png)", r"\!a photograph"),
-    ("Result\n5.\nDone\n***off*** [a.com](https://a.com) [b.com](https://b.com) ***now***. " + r"\![photo](https://example.com/image.png)" + "\n2) [Check documentation](https://example.com)\n3) https://example.com.\n4) https://a.com **[b.com](https://b.com)**\n5) **https://a.com https://b.com**\nBefore **https://a.com https://b.com** after.", "Result\n5.\nDone\noff now. " + r"\!photo" + "\n2. Check documentation\nBefore after."),
-], ids=["standalone-number", "quoted-number", "consecutive-links", "escaped-image", "combined"])
+@pytest.mark.parametrize("raw,expected,progressive_expected", [
+    ("Result\n5.\nDone", "Result\n5.\nDone", None),
+    ("> 5.\n", "5.", None),
+    ("The switch is ***off*** [a.com](https://a.com) [b.com](https://b.com) ***now***.", "The switch is off now.", None),
+    (r"\![a photograph](https://example.com/image.png)", "!a photograph", None),
+    ("Result\n5.\nDone\n***off*** [a.com](https://a.com) [b.com](https://b.com) ***now***. " + r"\![photo](https://example.com/image.png)" + "\n2) [Check documentation](https://example.com)\n3) https://example.com.\n4) https://a.com **[b.com](https://b.com)**\n5) **https://a.com https://b.com**\nBefore **https://a.com https://b.com** after.", "Result\n5.\nDone\noff now.!photo\n2. Check documentation\nBefore after.", "Result\n5.\nDone\noff now. !photo\n2. Check documentation\nBefore after."),
+    (r"\*literal\* `\*code\*`", r"*literal* \*code\*", None),
+    ("Heading\n===", "Heading", None),
+], ids=["standalone-number", "quoted-number", "consecutive-links", "escaped-image", "combined", "escaped-punctuation-code", "setext-equals"])
 async def test_assist_speech_regressions_preserve_provider_history(
-    hass, hass_ws_client, monkeypatch, raw, expected
+    hass, hass_ws_client, monkeypatch, raw, expected, progressive_expected
 ):
     from homeassistant.components.conversation.chat_log import DATA_CHAT_LOGS
 
@@ -51,7 +53,11 @@ async def test_assist_speech_regressions_preserve_provider_history(
     _install_wire(monkeypatch, agent, [_chat_sse_deltas(list(raw))])
     events = await _run_assist(await hass_ws_client(hass), pipeline_id=agent.entity_id,
                                conversation_id="speech-regressions")
-    assert _progressive_text(events).strip() == expected
+    # Punctuation spacing is a completed-response stage. The literal ! retains
+    # its authored preceding space in the progressive stream, as before.
+    assert _progressive_text(events).strip() == (
+        expected if progressive_expected is None else progressive_expected
+    )
     assert _final_speech(events) == expected
     assert any(
         item.content == raw
